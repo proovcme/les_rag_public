@@ -4,6 +4,17 @@ from types import SimpleNamespace
 import pytest
 
 from proxy.services import smeta_chat_application_service as service
+from proxy.services.smeta_chat_adapter_service import _smeta_document_turn_tokens
+
+
+def test_smeta_document_turn_budget_is_large_only_after_norm_cards_are_opened():
+    assert _smeta_document_turn_tokens([{"role": "user", "content": "ВОР"}], 8000) == 1600
+    assert _smeta_document_turn_tokens(
+        [{"role": "tool", "name": "search_norms_batch", "content": "{}"}], 8000
+    ) == 1000
+    assert _smeta_document_turn_tokens(
+        [{"role": "tool", "name": "read_norms_batch", "content": "{}"}], 8000
+    ) == 8000
 
 
 @pytest.mark.asyncio
@@ -100,6 +111,7 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
         "model_calls": 1,
     }
     assert workflow_call["candidate_limit"] == 12
+    assert workflow_call["batch_size"] == 0
     assert workflow_call["source_name"] == "ВОР тест.pdf"
     assert workflow_call["user_request"] == "Сделай ЛСР"
     assert exchange_attempts == 2
@@ -223,6 +235,51 @@ def test_document_application_contains_no_professional_selector():
     assert "bind_norm" not in source
     assert "selected_norm" not in source
     assert "resource_actions" not in source
+
+
+@pytest.mark.asyncio
+async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_path, monkeypatch):
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-test")
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source,
+        {"original_name": "source.pdf", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+    seen = {}
+
+    def run_workflow(_path, **kwargs):
+        seen.update(kwargs)
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {
+                "summary": {
+                    "result_status": "priced_complete",
+                    "input_rows": 1,
+                    "bound_rows": 1,
+                    "open_rows": 0,
+                },
+                "positions": [],
+            },
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="ollama",
+        model_name="gemma4:12b",
+        cloud_provider=False,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result is not None
+    assert seen["batch_size"] == 0
 
 
 def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(monkeypatch):

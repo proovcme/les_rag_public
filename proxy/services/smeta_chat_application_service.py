@@ -505,6 +505,7 @@ async def run_smeta_document_application(
             logger.warning("[SMETA_DOCUMENT] progress bridge failed: %s", error)
 
     try:
+        document_batch_size = int(os.getenv("LES_SMETA_DOCUMENT_BATCH_SIZE", "0") or 0)
         workflow = await asyncio.to_thread(
             run_vor_document_workflow,
             source_path,
@@ -515,6 +516,7 @@ async def run_smeta_document_application(
             progress=progress,
             source_name=str(attachment_meta.get("original_name") or source_path.name),
             user_request=user_request,
+            batch_size=document_batch_size,  # zero = one model-owned conversation over the whole VOR
         )
         workflow.setdefault("agent_trace", {})["document_model_calls"] = model_calls
         workflow["agent_trace"]["document_elapsed_ms"] = round(

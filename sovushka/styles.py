@@ -1734,19 +1734,30 @@ body, .nicegui-content {
   position: relative;
   width: calc(100% - 48px);
   max-width: 1440px;
-  padding: 12px !important;
+  padding: 8px 10px !important;
   border: 0 !important;
   border-radius: 18px !important;
   box-shadow:
     0 0 0 1px rgba(138,162,184,.24),
     0 12px 36px rgba(0,0,0,.14) !important;
 }
+.sov-composer-input .q-field__control,
+.sov-composer-input .q-field__native {
+  min-height: 34px !important;
+}
+.sov-composer-input .q-field__native {
+  max-height: 112px;
+  padding: 5px 2px !important;
+  line-height: 1.35;
+  overflow-y: auto !important;
+}
 .sov-mode-picker {
   width: 100%;
   align-items: center;
   gap: 6px;
-  margin: 6px 0 8px;
-  flex-wrap: wrap;
+  margin: 2px 0 0;
+  padding-right: 420px;
+  flex-wrap: nowrap;
 }
 .sov-mode-btn {
   min-height: 40px !important;
@@ -1760,7 +1771,7 @@ body, .nicegui-content {
   transition-timing-function: cubic-bezier(.2, 0, 0, 1) !important;
 }
 .sov-mode-guides {
-  width: 100%;
+  display: none;
 }
 .sov-mode-guide {
   width: 100%;
@@ -1825,8 +1836,8 @@ body, .nicegui-content {
 }
 .sov-composer-footer {
   position: absolute;
-  right: 18px;
-  bottom: 18px;
+  right: 10px;
+  bottom: 8px;
   z-index: 2;
   width: auto;
   min-height: 44px;
@@ -1862,9 +1873,12 @@ body, .nicegui-content {
   transform: none !important;
 }
 @media (max-width: 1100px) {
-  .sov-mode-examples {
-    padding-right: 0;
-    padding-bottom: 52px;
+  .sov-mode-picker { padding-right: 0; flex-wrap: wrap; }
+  .sov-composer-footer {
+    position: static;
+    width: 100%;
+    min-height: 40px;
+    margin-top: 3px;
   }
 }
 .sov-tools-menu {
@@ -2744,8 +2758,9 @@ body, .nicegui-content {
     width: calc(100% - 20px);
     margin: 0 10px 10px;
   }
-  .sov-mode-examples { padding-right: 0; padding-bottom: 52px; }
-  .sov-composer-footer { min-height: 44px; }
+  .sov-mode-picker { gap: 4px; }
+  .sov-mode-btn { padding-inline: 9px !important; }
+  .sov-composer-footer { min-height: 40px; }
   .sov-mode-guide-copy { min-width: 100%; }
   .sov-mode-example { width: 100%; justify-content: flex-start; }
   .sov-docs-topbar { align-items: stretch; flex-wrap: wrap; }

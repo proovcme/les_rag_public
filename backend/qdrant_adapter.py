@@ -82,6 +82,14 @@ def _pdf_page_node_overlap_chars() -> int:
         return 150
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class UnsupportedIndexingSourceError(RuntimeError):
     """Raised when intake accepted a source that needs a typed converter first."""
 
@@ -1135,6 +1143,111 @@ class MetaDB:
             ).fetchall()
         return [(r["file_name"], int(r["cc"])) for r in rows]
 
+    def dataset_integrity_rows(self, dataset_id: str) -> list[dict[str, Any]]:
+        """Source and index metadata used by the explicit dataset integrity audit."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, file_name, status, COALESCE(file_hash, '') AS file_hash, "
+                "COALESCE(file_mtime, 0) AS file_mtime, COALESCE(file_size, 0) AS file_size, "
+                "COALESCE(chunk_count, 0) AS chunk_count, COALESCE(source_path, '') AS source_path "
+                "FROM documents WHERE dataset_id=? ORDER BY file_name",
+                (dataset_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_document_source_fingerprint(
+        self,
+        dataset_id: str,
+        file_name: str,
+        *,
+        file_hash: str,
+        file_mtime: float,
+        file_size: int,
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE documents SET file_hash=?, file_mtime=?, file_size=? "
+                "WHERE dataset_id=? AND file_name=?",
+                (file_hash, file_mtime, file_size, dataset_id, file_name),
+            )
+
+    def lexical_integrity_projection(self, dataset_id: str) -> dict[str, Any]:
+        """Return exact lexical/FTS point ids by file without invoking retrieval."""
+        with self._get_conn() as conn:
+            lexical_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lexical_chunks'"
+            ).fetchone()
+            fts_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lexical_chunks_fts'"
+            ).fetchone()
+            if not lexical_exists:
+                return {"available": False, "fts_available": bool(fts_exists), "files": {}, "fts_ids": set()}
+            rows = conn.execute(
+                "SELECT doc_name, point_id FROM lexical_chunks "
+                "WHERE collection=? AND dataset_id=?",
+                (rag_collection_name(), dataset_id),
+            ).fetchall()
+            files: dict[str, set[str]] = {}
+            for row in rows:
+                files.setdefault(str(row["doc_name"] or ""), set()).add(str(row["point_id"] or ""))
+            fts_ids: set[int] = set()
+            if fts_exists:
+                fts_ids = {
+                    int(row["id"])
+                    for row in conn.execute(
+                        "SELECT c.id FROM lexical_chunks c "
+                        "JOIN lexical_chunks_fts f ON f.rowid=c.id "
+                        "WHERE c.collection=? AND c.dataset_id=?",
+                        (rag_collection_name(), dataset_id),
+                    ).fetchall()
+                }
+            lexical_ids = {
+                int(row["id"])
+                for row in conn.execute(
+                    "SELECT id FROM lexical_chunks WHERE collection=? AND dataset_id=?",
+                    (rag_collection_name(), dataset_id),
+                ).fetchall()
+            }
+        return {
+            "available": True,
+            "fts_available": bool(fts_exists),
+            "files": files,
+            "lexical_ids": lexical_ids,
+            "fts_ids": fts_ids,
+        }
+
+    def rebuild_lexical_fts(self) -> None:
+        from proxy.services.lexical_index_service import LexicalIndex
+
+        with LexicalIndex(self.db_path).connect() as conn:
+            conn.execute("INSERT INTO lexical_chunks_fts(lexical_chunks_fts) VALUES('rebuild')")
+
+    def set_documents_pending(self, dataset_id: str, file_names: set[str]) -> int:
+        if not file_names:
+            return 0
+        names = sorted(file_names)
+        placeholders = ",".join("?" for _ in names)
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                f"UPDATE documents SET status='PENDING', last_error='', stage='', chunk_count=0 "
+                f"WHERE dataset_id=? AND file_name IN ({placeholders})",
+                (dataset_id, *names),
+            )
+            return int(cur.rowcount)
+
+    def set_documents_missing(self, dataset_id: str, file_names: set[str]) -> int:
+        if not file_names:
+            return 0
+        names = sorted(file_names)
+        placeholders = ",".join("?" for _ in names)
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                f"UPDATE documents SET status='MISSING', last_error='Исходный файл не найден', "
+                f"stage='', chunk_count=0 WHERE dataset_id=? AND file_name IN ({placeholders})",
+                (dataset_id, *names),
+            )
+            return int(cur.rowcount)
+
     def get_pending_files_with_paths(
         self, dataset_id: str, limit: int | None = None
     ) -> List[tuple]:
@@ -1936,6 +2049,23 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     self.db.update_document_status(
                         dataset_id, db_file_key, "INDEXED", file_chunk_count, route=route
                     )
+                    try:
+                        set_fingerprint = getattr(self.db, "set_document_source_fingerprint", None)
+                        if callable(set_fingerprint):
+                            stat = file_path.stat()
+                            set_fingerprint(
+                                dataset_id,
+                                db_file_key,
+                                file_hash=_sha256_file(file_path),
+                                file_mtime=stat.st_mtime,
+                                file_size=stat.st_size,
+                            )
+                    except OSError as fingerprint_error:
+                        logger.warning(
+                            "[INTEGRITY] source fingerprint skipped %s: %s",
+                            db_file_key,
+                            fingerprint_error,
+                        )
                     _add_timing("db_sec", phase_start)
 
                 except UnsupportedIndexingSourceError as file_err:
@@ -2203,6 +2333,258 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         return {"dataset_id": dataset_id, "checked": checked,
                 "mismatched": len(mismatched), "requeued": len(requeued_files),
                 "details": mismatched[:50]}
+
+    def _sync_dataset_point_projection(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        projection: dict[str, dict[str, Any]] = {}
+        offset = None
+        dataset_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="dataset_id",
+                    match=models.MatchValue(value=dataset_id),
+                )
+            ]
+        )
+        while True:
+            points, offset = sync_qdrant.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=dataset_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = getattr(point, "payload", None) or {}
+                file_name = str(payload.get("file_name") or payload.get("doc_name") or "")
+                row = projection.setdefault(file_name, {"ids": set(), "pages": set()})
+                row["ids"].add(str(getattr(point, "id", "") or ""))
+                if payload.get("type") == "pdf_page_text" and payload.get("page") is not None:
+                    try:
+                        row["pages"].add(int(payload["page"]))
+                    except (TypeError, ValueError):
+                        pass
+            if offset is None:
+                break
+        return projection
+
+    @staticmethod
+    def _expected_pdf_text_pages(path: Path) -> set[int]:
+        if path.suffix.lower() not in PDF_PAGE_NODE_SUFFIXES:
+            return set()
+        try:
+            import fitz
+
+            with fitz.open(path) as document:
+                return {
+                    page_no
+                    for page_no, page in enumerate(document, start=1)
+                    if len((page.get_text("text") or "").strip()) >= MIN_CHUNK
+                }
+        except Exception as error:  # noqa: BLE001
+            logger.warning("[INTEGRITY] PDF page inventory failed %s: %s", path, error)
+            return set()
+
+    def _sync_count_file_vector_points(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+        file_key: str,
+        vector_name: str,
+    ) -> int:
+        file_filter = self._file_filter(dataset_id, file_key)
+        file_filter.must.append(models.HasVectorCondition(has_vector=vector_name))
+        result = sync_qdrant.count(
+            collection_name=self.collection_name,
+            count_filter=file_filter,
+            exact=True,
+        )
+        return int(result.count)
+
+    def audit_dataset_integrity(self, dataset_id: str, *, repair: bool = False) -> dict[str, Any]:
+        """Verify one dataset across source, MetaDB, Qdrant dense/sparse, lexical and FTS.
+
+        Repair is conservative: only damaged documents are requeued; missing sources are marked
+        MISSING, FTS is rebuilt from its content table, and points with no registered document are
+        removed.  The parse job itself is started by the API layer so the operator sees one job.
+        """
+        sync_qdrant = qdrant_client.QdrantClient(
+            url=self.qdrant_url,
+            timeout=60.0,
+            check_compatibility=False,
+        )
+        rows = self.db.dataset_integrity_rows(dataset_id)
+        registry = {str(row["file_name"]): row for row in rows}
+        try:
+            qdrant_files = self._sync_dataset_point_projection(sync_qdrant, dataset_id)
+        except Exception as error:  # noqa: BLE001
+            return {
+                "schema": "les.dataset_integrity.v1",
+                "dataset_id": dataset_id,
+                "state": "blocked",
+                "label": "Векторная база недоступна",
+                "checked_files": len(rows),
+                "indexed_files": 0,
+                "clean_files": 0,
+                "damaged_files": 0,
+                "missing_files": 0,
+                "contract_ok": False,
+                "fts_ok": False,
+                "orphan_qdrant_files": 0,
+                "orphan_lexical_files": 0,
+                "repaired": 0,
+                "requeued": 0,
+                "issues": [{"file": "", "status": "BLOCKED", "problems": [str(error)[:300]]}],
+            }
+        lexical = self.db.lexical_integrity_projection(dataset_id)
+        lexical_files: dict[str, set[str]] = lexical.get("files") or {}
+        contract = index_contract_status()
+        contract_ok = bool(contract.get("compatible"))
+
+        damaged: set[str] = set()
+        missing: set[str] = set()
+        issues: list[dict[str, Any]] = []
+        clean_files = 0
+        indexed_files = 0
+        pending_files = 0
+
+        for file_name, row in registry.items():
+            status = str(row.get("status") or "")
+            source = Path(str(row.get("source_path") or "")) if row.get("source_path") else (
+                self.content_dir / dataset_id / file_name
+            )
+            file_issues: list[str] = []
+            if status == "ERROR":
+                file_issues.append("Предыдущая индексация завершилась ошибкой")
+                damaged.add(file_name)
+            elif status == "PENDING":
+                pending_files += 1
+                file_issues.append("Ожидает индексации")
+            if status != "SKIPPED":
+                if not source.is_file():
+                    file_issues.append("Исходный файл не найден")
+                    missing.add(file_name)
+                else:
+                    stat = source.stat()
+                    expected_size = int(row.get("file_size") or 0)
+                    expected_mtime = float(row.get("file_mtime") or 0)
+                    if expected_size and stat.st_size != expected_size:
+                        file_issues.append("Исходный файл изменился")
+                        damaged.add(file_name)
+                    elif expected_mtime and abs(stat.st_mtime - expected_mtime) > 1.0:
+                        stored_hash = str(row.get("file_hash") or "")
+                        if stored_hash and _sha256_file(source) != stored_hash:
+                            file_issues.append("Содержимое исходного файла изменилось")
+                            damaged.add(file_name)
+
+            if status == "INDEXED":
+                indexed_files += 1
+                expected = int(row.get("chunk_count") or 0)
+                qrow = qdrant_files.get(file_name) or {"ids": set(), "pages": set()}
+                qids = set(qrow.get("ids") or set())
+                lexical_ids = set(lexical_files.get(file_name) or set())
+                dense = self._sync_count_file_vector_points(
+                    sync_qdrant, dataset_id, file_name, _dense_vector_name()
+                )
+                sparse = self._sync_count_file_vector_points(
+                    sync_qdrant, dataset_id, file_name, _sparse_vector_name()
+                )
+                if len(qids) != expected:
+                    file_issues.append(f"Векторный индекс: {len(qids)} из {expected}")
+                if dense != expected:
+                    file_issues.append(f"Смысловой поиск: {dense} из {expected}")
+                if sparse != expected:
+                    file_issues.append(f"Точный поиск: {sparse} из {expected}")
+                if lexical_ids != qids:
+                    file_issues.append(f"Текстовый поиск: {len(lexical_ids)} из {len(qids)}")
+                if source.is_file() and source.suffix.lower() in PDF_PAGE_NODE_SUFFIXES:
+                    expected_pages = self._expected_pdf_text_pages(source)
+                    indexed_pages = set(qrow.get("pages") or set())
+                    if expected_pages and indexed_pages != expected_pages:
+                        file_issues.append(
+                            f"Страницы PDF: {len(indexed_pages)} из {len(expected_pages)}"
+                        )
+                if file_issues and file_name not in missing:
+                    damaged.add(file_name)
+
+            if file_issues:
+                issues.append({"file": file_name, "status": status, "problems": file_issues})
+            elif status == "INDEXED":
+                clean_files += 1
+
+        orphan_qdrant = sorted(set(qdrant_files) - set(registry))
+        orphan_lexical = sorted(set(lexical_files) - set(registry))
+        fts_ok = bool(lexical.get("fts_available")) and (
+            set(lexical.get("lexical_ids") or set()) == set(lexical.get("fts_ids") or set())
+        )
+        if not contract_ok:
+            issues.insert(0, {"file": "", "status": "BLOCKED", "problems": ["Контракт индекса не совпадает"]})
+        if orphan_qdrant:
+            issues.append({"file": "", "status": "ORPHAN", "problems": [f"Лишние векторные документы: {len(orphan_qdrant)}"]})
+        if orphan_lexical:
+            issues.append({"file": "", "status": "ORPHAN", "problems": [f"Лишние текстовые документы: {len(orphan_lexical)}"]})
+        if not fts_ok:
+            issues.append({"file": "", "status": "FTS", "problems": ["Текстовый индекс требует пересборки"]})
+
+        repaired = 0
+        if repair and contract_ok:
+            for file_name in sorted(missing):
+                self._sync_delete_file_points(sync_qdrant, dataset_id, file_name)
+                self._sync_delete_file_lexical(dataset_id, file_name)
+            self.db.set_documents_missing(dataset_id, missing)
+            repaired += self.db.set_documents_pending(dataset_id, damaged - missing)
+            for file_name in orphan_qdrant:
+                point_ids = list((qdrant_files.get(file_name) or {}).get("ids") or [])
+                if point_ids:
+                    sync_qdrant.delete(
+                        collection_name=self.collection_name,
+                        points_selector=models.PointIdsList(points=point_ids),
+                        wait=True,
+                    )
+            for file_name in orphan_lexical:
+                self._sync_delete_file_lexical(dataset_id, file_name)
+            if not fts_ok and lexical.get("fts_available"):
+                self.db.rebuild_lexical_fts()
+            self.db.update_dataset_chunk_count(dataset_id)
+            repaired += len(missing) + len(orphan_qdrant) + len(orphan_lexical) + (0 if fts_ok else 1)
+
+        state = (
+            "blocked"
+            if not contract_ok or missing
+            else "repairable"
+            if damaged or orphan_qdrant or orphan_lexical or not fts_ok
+            else "building"
+            if pending_files
+            else "healthy"
+        )
+        return {
+            "schema": "les.dataset_integrity.v1",
+            "dataset_id": dataset_id,
+            "state": state,
+            "label": {
+                "healthy": "Датасет цел",
+                "repairable": "Найдены исправимые повреждения",
+                "building": "Индексация не завершена",
+                "blocked": "Нужно внимание оператора",
+            }[state],
+            "checked_files": len(rows),
+            "indexed_files": indexed_files,
+            "pending_files": pending_files,
+            "clean_files": clean_files,
+            "damaged_files": len(damaged),
+            "missing_files": len(missing),
+            "contract_ok": contract_ok,
+            "fts_ok": fts_ok,
+            "orphan_qdrant_files": len(orphan_qdrant),
+            "orphan_lexical_files": len(orphan_lexical),
+            "repaired": repaired,
+            "requeued": len(damaged - missing) if repair and contract_ok else 0,
+            "issues": issues[:100],
+        }
 
     def _sync_existing_file_vectors_by_hash(
         self,

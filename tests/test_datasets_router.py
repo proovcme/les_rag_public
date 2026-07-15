@@ -1122,6 +1122,34 @@ async def test_repair_detects_encoding_damage_and_starts_parse_job(monkeypatch, 
 
 
 @pytest.mark.asyncio
+async def test_integrity_repair_starts_visible_job_for_only_requeued_files(monkeypatch, dataset_state):
+    class IntegrityDB:
+        def update_dataset_status(self, dataset_id, status):
+            assert (dataset_id, status) == ("ds-1", "IDLE")
+
+    dataset_state.db = IntegrityDB()
+    dataset_state.pending_files["ds-1"] = 2
+    dataset_state.audit_dataset_integrity = lambda dataset_id, repair=False: {
+        "dataset_id": dataset_id,
+        "state": "repairable",
+        "label": "Найдены исправимые повреждения",
+        "repaired": 2,
+        "requeued": 2 if repair else 0,
+    }
+
+    async def _admit(state, **kwargs):
+        return None
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    result = await datasets.repair_dataset_integrity("ds-1", _admin=object())
+    await asyncio.sleep(0.05)
+
+    assert result["job_id"] == "job-1"
+    assert result["label"] == "Исправление запущено: 2 файла"
+    assert dataset_state.parses == [("ds-1", 2)]
+
+
+@pytest.mark.asyncio
 async def test_parse_batch_waiting_for_semaphore_is_reported_as_queued(monkeypatch, dataset_state):
     dataset_state.pending_files["ds-1"] = 1
     state = datasets.get_dataset_state()

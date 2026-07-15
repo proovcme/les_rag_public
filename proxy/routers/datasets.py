@@ -1296,6 +1296,44 @@ async def repair_dataset(dataset_id: str, _admin=Depends(require_admin)):
     }
 
 
+@router.get("/datasets/{dataset_id}/integrity")
+async def dataset_integrity(dataset_id: str, _admin=Depends(require_admin)):
+    """Operator-facing exact audit; it does not mutate the dataset."""
+    backend = get_dataset_state().backend
+    return await asyncio.to_thread(backend.audit_dataset_integrity, dataset_id)
+
+
+@router.post("/datasets/{dataset_id}/integrity/repair")
+async def repair_dataset_integrity(dataset_id: str, _admin=Depends(require_admin)):
+    """Repair only failed integrity components and start a bounded visible parse job."""
+    backend = get_dataset_state().backend
+    result = await asyncio.to_thread(backend.audit_dataset_integrity, dataset_id, repair=True)
+    parse_job = None
+    requeued = int(result.get("requeued") or 0)
+    if requeued:
+        backend.db.update_dataset_status(dataset_id, "IDLE")
+        parse_job = await parse_dataset_batch(
+            dataset_id,
+            limit=min(25, requeued),
+            background=True,
+            _admin=_admin,
+        )
+    result["job_id"] = (parse_job or {}).get("job_id")
+    file_word = (
+        "файл"
+        if requeued % 10 == 1 and requeued % 100 != 11
+        else "файла"
+        if requeued % 10 in {2, 3, 4} and requeued % 100 not in {12, 13, 14}
+        else "файлов"
+    )
+    result["label"] = (
+        f"Исправление запущено: {requeued} {file_word}"
+        if requeued
+        else ("Датасет цел" if result.get("state") == "healthy" else str(result.get("label") or ""))
+    )
+    return result
+
+
 @router.post("/datasets/{dataset_id}/reconcile")
 async def reconcile_dataset_endpoint(dataset_id: str, _admin=Depends(require_admin)):
     """РЕКОНСАЙЛ MetaDB↔Qdrant: сверяет точки каждого INDEXED-документа; рассинхронные → PENDING

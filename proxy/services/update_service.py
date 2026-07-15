@@ -33,7 +33,12 @@ VPS_PATCH_MANIFEST_URL = os.getenv(
 VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
 VPS_PATCH_SCHEMA = "les.vps-patch.v1"
 VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
-VPS_PATCH_ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py"}
+VPS_PATCH_ALLOWED_FILES = {
+    "sovushka_ng.py",
+    "proxy_server.py",
+    "tools/vps_patch_apply.py",
+    "config/version.json",
+}
 VPS_PATCH_DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "installers", "desktop"}
 VPS_PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"}
 _SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
@@ -258,10 +263,22 @@ def _validate_patch_feed(payload: dict) -> dict:
             raise UpdateError("Обновление содержит неподдерживаемый тип файла")
         target = root / Path(*rel.parts)
         current = sha256_file(target) if target.is_file() else None
-        if current == entry.get("sha256"):
+        target_hash = str(entry.get("sha256") or "")
+        accepted_hashes = {
+            str(value).lower()
+            for value in (entry.get("accepted_sha256") or [])
+            if re.fullmatch(r"[0-9a-fA-F]{64}", str(value))
+        }
+        accepted_hashes.update(
+            str(value).lower()
+            for value in (entry.get("base_sha256"), target_hash)
+            if value
+        )
+        if current == target_hash:
             target_matches += 1
-        if current in {entry.get("base_sha256"), entry.get("sha256")} or (
-            current is None and entry.get("base_sha256") is None
+        if current in accepted_hashes or (
+            current is None
+            and (entry.get("base_sha256") is None or bool(entry.get("accepted_missing")))
         ):
             compatible_files += 1
     available = target_matches != len(files)

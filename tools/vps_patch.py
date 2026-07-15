@@ -18,7 +18,12 @@ SCHEMA = "les.vps-patch.v1"
 FEED_SCHEMA = "les.vps-patch-feed.v1"
 DEFAULT_ORIGIN = "https://les.ovc.me/updates"
 ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
-ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py"}
+ALLOWED_FILES = {
+    "sovushka_ng.py",
+    "proxy_server.py",
+    "tools/vps_patch_apply.py",
+    "config/version.json",
+}
 DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "installers", "desktop"}
 
 
@@ -61,6 +66,30 @@ def git_bytes(commit: str, path: str) -> bytes | None:
     return result.stdout if result.returncode == 0 else None
 
 
+def accepted_file_hashes(base_commit: str, target_commit: str, path: str) -> tuple[list[str], bool]:
+    """Hashes of every committed file state on the bounded release ancestry.
+
+    A user may have installed any earlier VPS patch.  Accepting only the full-release base and the
+    newest target strands that user.  The ancestry is trusted release history, not arbitrary local
+    content, so every exact intermediate state is safe to advance from.
+    """
+    commits = subprocess.check_output(
+        ["git", "rev-list", "--reverse", "--ancestry-path", f"{base_commit}..{target_commit}"],
+        cwd=ROOT,
+        text=True,
+    ).split()
+    hashes: set[str] = set()
+    missing = False
+    for commit in [base_commit, *commits]:
+        data = git_bytes(commit, path)
+        if data is None:
+            missing = True
+            continue
+        hashes.add(sha256_bytes(data))
+        hashes.add(sha256_bytes(windows_runtime_bytes(data)))
+    return sorted(hashes), missing
+
+
 def build_patch(*, base: str, target: str, files: list[str], output: Path, origin: str) -> dict:
     base_commit = subprocess.check_output(["git", "rev-parse", base], cwd=ROOT, text=True).strip()
     target_commit = subprocess.check_output(["git", "rev-parse", target], cwd=ROOT, text=True).strip()
@@ -77,10 +106,13 @@ def build_patch(*, base: str, target: str, files: list[str], output: Path, origi
         if before == after:
             continue
         payload[path] = after
+        accepted_hashes, accepted_missing = accepted_file_hashes(base_commit, target_commit, path)
         entries.append(
             {
                 "path": path,
                 "base_sha256": sha256_bytes(windows_runtime_bytes(before)) if before is not None else None,
+                "accepted_sha256": accepted_hashes,
+                "accepted_missing": accepted_missing,
                 "sha256": sha256_bytes(after),
                 "bytes": len(after),
             }

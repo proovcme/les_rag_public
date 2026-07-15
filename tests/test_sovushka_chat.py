@@ -106,7 +106,10 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert ".sov-mode-guide" in styles
     assert ".sov-mode-example" in styles
     assert 'classes("sov-composer-footer")' in source
+    assert 'props("rows=1 autogrow borderless")' in source
     assert ".sov-composer-footer" in styles
+    assert ".sov-mode-guides {\n  display: none;" in styles
+    assert "padding-right: 420px" in styles
     assert "Shift+Enter — перенос строки" not in source
     assert "position: absolute" in styles
     assert "padding-right: 386px" in styles

@@ -495,17 +495,7 @@ async def _execute_chat_evidence_application(
     inventory_has_files = bool(project_inventory_payload and int(project_inventory_payload.get("file_count") or 0) > 0)
     strong_signal = bool(effective_dataset_filter) or inventory_has_files or (retrieval.quality.top_score >= 0.5)
     if retrieval.quality.status == "needs_clarification" and not strong_signal:
-        return {
-            # Навигационная память помогает модели выбрать путь, но не является ответом.
-            # Не печатаем LES.md и паспорт чата в пользовательский пузырь.
-            "answer": "Найденные источники слишком разнородны. Уточните область или датасет, чтобы я не смешал требования.",
-            "crag_status": "NEEDS_CLARIFICATION",
-            "sources": source_names(chunks),
-            "effective_dataset_filter": effective_dataset_filter,
-            "query_route": query_route_payload,
-            "retrieval_trace": retrieval_trace,
-            "cache": cache_marker,
-        }
+        retrieval_trace["wide_scope"] = {"model_final_allowed": True, "reason": "low_concentration"}
 
     is_structured = any(word in req.question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
     is_technical_or_legal = bool(effective_dataset_filter and effective_dataset_filter != "MAIL")
@@ -527,8 +517,8 @@ async def _execute_chat_evidence_application(
     local_big = (is_structured or is_technical_or_legal) and not will_be_cloud
 
     context_budget = _local_context_budget(local_big=local_big, big_context=big_context)
-    focus_max_chunks = context_budget["focus_max_chunks"]
-    context_max_chunks = context_budget["context_max_chunks"]
+    focus_max_chunks = context_budget["focus_max_chunks"] or None
+    context_max_chunks = context_budget["context_max_chunks"] or None
     context_chars_limit = context_budget["context_chars_limit"]
     context_window_chars = context_budget["context_window_chars"]
     context_radius = 0 if is_structured else None
@@ -539,19 +529,15 @@ async def _execute_chat_evidence_application(
     if notebook_study_pack is not None:
         protected_doc_names.extend([
             str(item.get("file_name") or "")
-            for item in getattr(notebook_study_pack, "targeted_files", [])[: _env_int("LES_NOTEBOOK_TARGET_CONTEXT_FILES", 8)]
+            for item in getattr(notebook_study_pack, "targeted_files", [])
             if item.get("file_name")
         ])
     protected_doc_names = list(dict.fromkeys(name for name in protected_doc_names if name))
-    focus_max_docs = _env_int("RAG_CHAT_FOCUS_MAX_DOCS", 3)
-    if topic_doc_filter:
-        # Topic pass narrows the first read, but wide fallback must still have room for
-        # strong adjacent project volumes that were absent from the compact topic map.
-        focus_max_docs = max(focus_max_docs, 5)
+    focus_max_docs = max(1, len({str(getattr(chunk, "doc_name", "") or "") for chunk in chunks}))
     chunks = concentrate_sources(
         chunks,
         max_docs=focus_max_docs,
-        min_score=_env_float("RAG_CHAT_FOCUS_MIN_SCORE", 0.35),
+        min_score=float("-inf"),
         max_chunks=focus_max_chunks,
         protected_doc_names=protected_doc_names,
     )
@@ -1048,11 +1034,7 @@ async def _execute_chat_evidence_application(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
                 )
-                tool_loop_enabled = _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True) and (
-                    is_cloud_provider(llm_runtime.provider)
-                    or _env_bool("LES_LOCAL_CHAT_TOOL_LOOP_ENABLED", False)
-                    or visual_tool_requested
-                )
+                tool_loop_enabled = _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True)
                 if tool_loop_enabled:
                     try:
                         from proxy.services.tool_harness_service import harness
@@ -1062,7 +1044,7 @@ async def _execute_chat_evidence_application(
                             tool_harness.shortlist,
                             req.question,
                             mode=str(req.mode or route.intent or ""),
-                            limit=max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 6)),
+                            limit=max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
                         )
                         allowed_tools = {
                             str(tool.get("name") or "")
@@ -1072,8 +1054,8 @@ async def _execute_chat_evidence_application(
                         selector_headers = {}
                         if llm_runtime.api_key:
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
-                        max_rounds = max(1, min(3, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 3)))
-                        max_calls = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 3))
+                        max_rounds = max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12)))
+                        max_calls = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48))
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
@@ -1196,26 +1178,20 @@ async def _execute_chat_evidence_application(
                     retrieval_trace["tool_loop"] = {
                         "schema": "les_model_research_loop_v1",
                         "enabled": False,
-                        "reason": "local_single_pass",
+                        "reason": "disabled_by_operator",
                         "model_owns_final_answer": True,
                     }
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
-                        # Ретрай НЕ должен выбрасывать релевантные чанки: max_docs 1→3 (синтез по
-                        # нескольким СП), min_score 0.5→0.0 (умеренные скоры на широком scope —
-                        # норма, не повод отказывать), max_chunks 3→6.
-                        strict_chunks = concentrate_sources(
-                            chunks,
-                            max_docs=3,
-                            min_score=0.0,
-                            max_chunks=6,
-                        )
+                        # Ретрай не выбрасывает найденные источники: повторная генерация получает
+                        # весь уже собранный evidence packet, а не новый кодовый shortlist.
+                        strict_chunks = list(chunks)
                         strict_windows = expand_context_windows(
                             strict_chunks if strict_chunks else chunks[:2],
                             collection=getattr(rag_backend, "collection_name", ""),
                             logger=logger,
-                            max_chunks=3,
+                            max_chunks=None,
                         )
                         ctx_chunks = strict_windows.chunks
                         evidence_packet = build_retrieval_evidence_packet(
@@ -1227,13 +1203,13 @@ async def _execute_chat_evidence_application(
                         )
                         context = render_retrieval_evidence_for_model(
                             evidence_packet,
-                            max_chars=6000,
+                            max_chars=context_chars_limit,
                             include_metadata=True,
                         )
-                        answer_source_map = evidence_packet.source_map(max_chars=6000, include_metadata=True)
-                        final_evidence_packet = evidence_packet.to_dict(max_chars=6000, include_metadata=True)
+                        answer_source_map = evidence_packet.source_map(max_chars=context_chars_limit, include_metadata=True)
+                        final_evidence_packet = evidence_packet.to_dict(max_chars=context_chars_limit, include_metadata=True)
                         retrieval_trace["evidence_packet"] = evidence_packet.trace_summary(
-                            max_chars=6000,
+                            max_chars=context_chars_limit,
                             include_metadata=True,
                         )
                         sys_msg = sys_strict
@@ -1269,7 +1245,7 @@ async def _execute_chat_evidence_application(
                                 "event": "sources",
                                 "data": {
                                     "sources": source_names(ctx_chunks),
-                                    "source_excerpts": source_excerpts(ctx_chunks, max_n=3, max_chars=280),
+                                    "source_excerpts": source_excerpts(ctx_chunks, max_n=len(ctx_chunks), max_chars=280),
                                     "source_map": answer_source_map,
                                 },
                             })

@@ -10,6 +10,7 @@ import pytest
 
 from proxy.services import update_service
 from tools import vps_patch
+from tools import vps_patch_apply
 
 
 def test_patch_allowlist_rejects_runtime_boundaries():
@@ -49,6 +50,8 @@ def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):
     assert manifest["base_commit"] == base
     assert manifest["target_commit"] == target
     assert manifest["files"][0]["base_sha256"] == hashlib.sha256(b"VALUE = 1\r\n").hexdigest()
+    assert hashlib.sha256(b"VALUE = 1\r\n").hexdigest() in manifest["files"][0]["accepted_sha256"]
+    assert hashlib.sha256(b"VALUE = 2\n").hexdigest() in manifest["files"][0]["accepted_sha256"]
     assert result["archive_sha256"] == vps_patch.sha256_file(result["archive"])
 
 
@@ -116,6 +119,44 @@ def test_cumulative_patch_accepts_mixed_base_and_already_updated_files(tmp_path,
     result = update_service._validate_patch_feed(payload)
     assert result["available"] is True
     assert result["compatible"] is True
+
+
+def test_cumulative_patch_accepts_an_exact_intermediate_release_state(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    target = runtime / "proxy" / "x.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"intermediate")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    hashes = {
+        name: hashlib.sha256(value).hexdigest()
+        for name, value in {
+            "base": b"base",
+            "intermediate": b"intermediate",
+            "target": b"target",
+        }.items()
+    }
+    entry = {
+        "path": "proxy/x.py",
+        "base_sha256": hashes["base"],
+        "accepted_sha256": list(hashes.values()),
+        "sha256": hashes["target"],
+        "bytes": 6,
+    }
+    payload = {
+        "schema": update_service.VPS_PATCH_FEED_SCHEMA,
+        "archive_url": "https://les.ovc.me/updates/cumulative.zip",
+        "archive_sha256": "a" * 64,
+        "patch": {
+            "schema": update_service.VPS_PATCH_SCHEMA,
+            "patch_id": "cumulative-intermediate",
+            "base_commit": "b" * 40,
+            "target_commit": "c" * 40,
+            "files": [entry],
+        },
+    }
+    assert update_service._validate_patch_feed(payload)["compatible"] is True
+    assert vps_patch_apply.entry_accepts_current(entry, hashes["intermediate"]) is True
+    assert vps_patch_apply.entry_accepts_current(entry, hashlib.sha256(b"foreign").hexdigest()) is False
 
 
 def test_patch_helper_is_launched_as_independent_interactive_task(tmp_path):

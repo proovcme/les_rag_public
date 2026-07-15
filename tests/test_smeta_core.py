@@ -121,7 +121,7 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     assert "basis_ref" in action["required"]
 
 
-def test_bind_submission_requires_complete_professional_evidence_and_resource_basis():
+def test_bind_submission_requires_analog_limits_and_resource_basis_without_questionnaire():
     from proxy.smeta_core.document_workflow import _bind_submission_errors
 
     incomplete = _bind_submission_errors({
@@ -133,7 +133,6 @@ def test_bind_submission_requires_complete_professional_evidence_and_resource_ba
         "reason": "похожая работа",
     })
     assert "analog requires explicit analog_limitations" in incomplete
-    assert "technology_check.matched_operations is required" in incomplete
     assert "resource_actions[0].basis_ref is required" in incomplete
 
     complete = _bind_submission_errors({
@@ -147,7 +146,7 @@ def test_bind_submission_requires_complete_professional_evidence_and_resource_ba
     assert complete == []
 
 
-def test_batch_agent_bounds_fifty_rows_and_keeps_full_coverage():
+def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation():
     from proxy.smeta_core import document_workflow as workflow
 
     rows = [
@@ -178,13 +177,45 @@ def test_batch_agent_bounds_fifty_rows_and_keeps_full_coverage():
         user_request="Собери ЛСР по всем строкам",
     )
 
-    assert [len(item["payload"]["work_items"]) for item in captured] == [12, 12, 12, 12, 2]
-    assert all(len(item["payload"]["all_source_rows_context"]) == 50 for item in captured)
+    assert [len(item["payload"]["work_items"]) for item in captured] == [50]
+    assert captured[0]["payload"]["all_source_rows_context"] == []
     assert captured[0]["payload"]["user_request"] == "Собери ЛСР по всем строкам"
     assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
     assert len(result["selections"]) == 50
-    assert result["agent_trace"]["batches"] == 5
+    assert result["agent_trace"]["turns"] == 1
     assert all(item["review_status"] == "model_batch_unbound" for item in result["selections"].values())
+
+
+def test_batch_agent_zero_batch_size_gives_model_the_whole_vor():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": f"w{index}", "title": f"Работа {index}", "unit": "шт", "quantity": 1}
+        for index in range(1, 20)
+    ]
+    payloads = []
+
+    def exchange(messages, _tools):
+        payload = json.loads(messages[1]["content"])
+        payloads.append(payload)
+        return {"tool_calls": [_native_call(
+            "submit", "submit_lsr_mapping",
+            rows=[
+                {"work_id": row["work_id"], "decision": "unbound", "reason": "нет точной нормы"}
+                for row in payload["work_items"]
+            ],
+        )]}
+
+    result = workflow._run_native_norm_agent(
+        rows,
+        exchange,
+        candidate_limit=8,
+        batch_size=0,
+    )
+
+    assert len(payloads) == 1
+    assert len(payloads[0]["work_items"]) == 19
+    assert len(result["selections"]) == 19
 
 
 def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
@@ -234,6 +265,52 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
     assert result["agent_trace"]["turns"] == 3
 
 
+def test_batch_agent_repairs_gemma_nested_work_id_without_changing_choice(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН67-01-003-01",
+            "title": "Прокладка кабеля",
+            "measure_unit": "100 м",
+            "work_steps": ["Прокладка кабеля"],
+            "resource_preview": [],
+        }]}
+        for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda *_args, **_kwargs: {
+        "name": "Прокладка кабеля", "unit": "100 м",
+        "work_steps": ["Прокладка кабеля"], "resources": [],
+    })
+    check = _technology_check(work_id="w1")
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["прокладка кабеля"],
+        }])],
+        [_native_call("read", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_codes": ["ГЭСН67-01-003-01"],
+        }])],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
+            "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
+            "selection_kind": "exact", "applicability": "exact",
+            "analog_limitations": [], "technology_check": check,
+            "resource_actions": [], "reason": "состав работ совпадает",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Прокладка кабеля", "unit": "м", "quantity": 10}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=6,
+        max_turns=3,
+    )
+
+    selection = result["selections"]["w1"]
+    assert selection["norm_code"] == "ГЭСН67-01-003-01"
+    assert "work_id" not in selection["technology_check"]
+
+
 def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
     from proxy.smeta_core import document_workflow as workflow
 
@@ -278,6 +355,30 @@ def test_batch_agent_has_configurable_transport_turn_budget():
             max_turns=2,
         )
     assert calls == 2
+
+
+def test_batch_agent_stops_after_four_invalid_mapping_corrections():
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = 0
+
+    def exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        return {"tool_calls": [_native_call(
+            f"submit-{calls}",
+            "submit_lsr_mapping",
+            rows=[{"work_id": "w1", "decision": "unbound", "reason": ""}],
+        )]}
+
+    with pytest.raises(RuntimeError, match="after 4 correction attempts"):
+        workflow._run_batch_norm_agent(
+            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+            exchange,
+            candidate_limit=5,
+        )
+
+    assert calls == 4
 
 
 def test_batch_agent_fails_closed_when_model_returns_no_tools():

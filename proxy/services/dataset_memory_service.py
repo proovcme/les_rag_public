@@ -1476,11 +1476,12 @@ def _reader_context(
     file_limit: int | None = None,
     char_limit: int | None = None,
 ) -> str:
+    cards = list(memory.get("file_cards") or [])
     if file_limit is None:
-        file_limit = _env_int("LES_DATASET_READER_FILE_LIMIT", 32, minimum=4)
+        configured_limit = os.getenv("LES_DATASET_READER_FILE_LIMIT", "").strip()
+        file_limit = _env_int("LES_DATASET_READER_FILE_LIMIT", len(cards), minimum=4) if configured_limit else len(cards)
     if char_limit is None:
         char_limit = _env_int("LES_DATASET_READER_CONTEXT_CHARS", 12000, minimum=4000)
-    cards = list(memory.get("file_cards") or [])
     selected_cards, corpus_groups, corpus_group_total = _reader_card_coverage(cards, file_limit=file_limit)
     section_map = memory.get("section_map") if isinstance(memory.get("section_map"), dict) else {}
     payload = {

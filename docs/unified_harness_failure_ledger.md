@@ -24,6 +24,29 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 вернула пустой message без tools, а тот же `gemma4:12b` через нативный `/api/chat` немедленно вызвал
 тестовый tool. Локальный smeta transport переведён на native Ollama; модельный контракт не менялся.
 
+Следующий чистый прогон выявил ещё две transport-особенности Gemma: служебная JSON-генерация
+search/read раздувалась при общем большом token budget, а иногда правильный `work_id` попадал внутрь
+`technology_check`. Workflow больше не режет ВОР на строки или скрытые пакеты: модель получает весь
+исходник одним разговором; transport даёт короткий бюджет только search/read и полный — итоговому
+mapping. Узкий нормализатор переносит только служебный идентификатор, не выбирая и не меняя норму,
+аналог, применимость или ресурсы. Чистый Mac-прогон 19 строк с отключённым fallback дошёл по реальным
+данным до `search_norms_batch` (370,7 с) и `read_norms_batch` (639,4 с); это подтверждает native tools,
+но одновременно показывает, что Mac/Gemma не является приемлемым production-профилем скорости.
+Полный XLSX и время на Legion остаются обязательным release-gate.
+
+**Rule:** tool-transport обязан быть терпим к безопасной перестановке служебного идентификатора, но
+не имеет права достраивать отсутствующее профессиональное решение модели.
+
+## Operational incident 2026-07-15: cumulative VPS patch rejected an installed intermediate patch
+
+Первый накопительный manifest разрешал для каждого файла только состояние полного release-base или
+конечного target. После установки одного патча следующий видел смесь файлов из промежуточного commit
+и ошибочно считал её посторонней локальной модификацией.
+
+**Rule:** builder фиксирует SHA каждого разрешённого файла на всей доверенной git ancestry между
+полным совместимым release-base и target (включая Windows CRLF-вариант). Клиент и helper принимают
+только один из этих точных SHA; произвольный локальный файл по-прежнему fail-closed отклоняется.
+
 ## Operational incident 2026-07-15: FGIS unified parquet diverged from structured manifest
 
 Legion bootstrap history recorded a real repair with reason `unified parquet does not match

@@ -889,7 +889,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             with ui.element("div").classes("sov-composer") as composer_box:
                 chat_input = ui.textarea(
                     placeholder="Спросить по нормативам, проекту или базе знаний..."
-                ).classes("sov-composer-input").props("rows=2 autogrow borderless")
+                ).classes("sov-composer-input").props("rows=1 autogrow borderless")
                 try:
                     preset_question = (context.client.request.query_params.get("question") or "").strip()
                     if preset_question:

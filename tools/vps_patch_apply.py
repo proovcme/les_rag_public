@@ -26,6 +26,23 @@ def sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def entry_accepts_current(entry: dict, current: str | None) -> bool:
+    expected = entry.get("base_sha256")
+    accepted = {
+        str(value).lower()
+        for value in (entry.get("accepted_sha256") or [])
+        if isinstance(value, str) and len(value) == 64
+    }
+    accepted.update(
+        str(value).lower()
+        for value in (expected, entry.get("sha256"))
+        if value
+    )
+    return current in accepted or (
+        current is None and (expected is None or bool(entry.get("accepted_missing")))
+    )
+
+
 def write_status(path: Path, **values) -> None:
     payload = {"schema": "les.vps-patch-status.v1", "updated_at": datetime.now(timezone.utc).isoformat(), **values}
     temporary = path.with_suffix(".tmp")
@@ -114,9 +131,8 @@ def main() -> int:
                 if rel.is_absolute() or ".." in rel.parts:
                     raise RuntimeError("unsafe path in patch")
                 target = runtime / Path(*rel.parts)
-                expected = entry.get("base_sha256")
                 current = sha(target) if target.is_file() else None
-                if current not in {expected, entry["sha256"]} and not (current is None and expected is None):
+                if not entry_accepts_current(entry, current):
                     raise RuntimeError(f"base checksum mismatch: {rel.as_posix()}")
                 if target.is_file():
                     destination = backup / Path(*rel.parts)

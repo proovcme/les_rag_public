@@ -52,13 +52,14 @@ def test_sovushka_moves_source_notes_to_artifact_instead_of_quote_blocks():
     assert "> Источники:" not in chat_ui
 
 
-def test_local_notebook_study_has_no_hidden_reader_or_selector_fanout_by_default():
+def test_local_notebook_study_uses_model_owned_tools_without_hidden_prefetch():
     router_source = inspect.getsource(chat_router._prepare_notebook_reader_memory)
     app_source = inspect.getsource(chat_evidence_application_service._execute_chat_evidence_application)
 
     assert '_env_bool("LES_NOTEBOOK_READER_ON_STUDY", False)' in router_source
-    assert "LES_LOCAL_CHAT_TOOL_LOOP_ENABLED" in app_source
-    assert '"reason": "local_single_pass"' in app_source
+    assert '_env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True)' in app_source
+    assert '"model_owns_selection": True' in app_source
+    assert '"reason": "local_single_pass"' not in app_source
     assert '"reason": "model_first_single_rrf"' in app_source
     assert "LES_TOPIC_GUIDED_PREFETCH_ENABLED" not in app_source
     assert "LES_NOTEBOOK_QUERY_PREFETCH_ENABLED" not in app_source

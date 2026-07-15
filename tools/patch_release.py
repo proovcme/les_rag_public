@@ -15,6 +15,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
@@ -144,6 +145,47 @@ def fetch_remote_artifacts(*, host: str, repo_root: str) -> None:
     DIST.mkdir(exist_ok=True)
     for name in ("LES-Setup.exe", "LES-Setup.exe.sha256", "windows-patch-release.json"):
         run(["scp", f"{host}:{repo_root.replace('\\', '/')}/dist/{name}", str(DIST / name)])
+
+
+def _last_json_object(text: str) -> dict[str, Any]:
+    for line in reversed(text.splitlines()):
+        candidate = line.strip()
+        if not candidate.startswith("{"):
+            continue
+        try:
+            payload = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    raise ValueError("no JSON object in output")
+
+
+def verify_remote_production_persistence(*, host: str, expected_version: str) -> dict[str, Any]:
+    """Probe production from a fresh SSH session after the build/deploy session has closed."""
+    time.sleep(5)
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        "$version=Invoke-RestMethod -TimeoutSec 15 'http://127.0.0.1:8050/api/version'; "
+        "$ui=Invoke-WebRequest -UseBasicParsing -TimeoutSec 15 'http://127.0.0.1:8051/healthz'; "
+        "$desktop=@(Get-Process -Name 'les-desktop' -ErrorAction SilentlyContinue).Count; "
+        "[ordered]@{product_version=[string]$version.product_version;"
+        "build_number=[int]$version.build_number;ui_status=[int]$ui.StatusCode;"
+        "desktop_processes=[int]$desktop}|ConvertTo-Json -Compress"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    raw = output(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded])
+    try:
+        payload = _last_json_object(raw)
+    except ValueError as error:
+        raise RuntimeError(f"independent Legion persistence probe returned invalid JSON: {raw[-500:]}") from error
+    if (
+        payload.get("product_version") != expected_version
+        or int(payload.get("ui_status") or 0) != 200
+        or int(payload.get("desktop_processes") or 0) < 1
+    ):
+        raise RuntimeError(f"production Legion did not survive release session: {payload}")
+    return payload
 
 
 def sha256(path: Path) -> str:
@@ -302,8 +344,13 @@ def main(argv: list[str] | None = None) -> int:
         commit=commit,
         smeta_baseline_archive=baseline,
     )
+    persistence = verify_remote_production_persistence(
+        host=args.legion_host,
+        expected_version=str(contract["product_version"]),
+    )
     fetch_remote_artifacts(host=args.legion_host, repo_root=args.legion_root)
     summary = verify_local_artifacts(contract, commit)
+    summary["independent_persistence"] = persistence
     notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else (
         "Исправительное обновление ЛЕС. Подробности зафиксированы в журнале выпуска."
     )

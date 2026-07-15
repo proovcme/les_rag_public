@@ -179,18 +179,15 @@ def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
     elif kind == "analog" and applicability not in {"close_analog", "weak_analog"}:
         errors.append("analog selection requires analog applicability")
 
-    if not isinstance(item.get("resource_actions"), list):
-        errors.append("bind requires explicit resource_actions array")
-
     check = item.get("technology_check")
-    if not isinstance(check, dict):
-        errors.append("bind requires a structured technology_check")
-    else:
+    if check is not None and not isinstance(check, dict):
+        errors.append("technology_check must be an object when provided")
+    elif isinstance(check, dict):
         for field, expected_type in _TECHNOLOGY_CHECK_FIELDS.items():
-            if field not in check or not isinstance(check.get(field), expected_type):
-                errors.append(f"technology_check.{field} is required")
+            if field in check and not isinstance(check.get(field), expected_type):
+                errors.append(f"technology_check.{field} has invalid type")
         conclusion = str(check.get("conclusion") or "")
-        if conclusion not in {"applicable", "applicable_with_limitations"}:
+        if conclusion and conclusion not in {"applicable", "applicable_with_limitations"}:
             errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
         overlap_ids = [str(value) for value in (check.get("overlaps_with_work_ids") or []) if str(value)]
         if overlap_ids and not str(check.get("overlap_resolution") or "").strip():
@@ -205,6 +202,20 @@ def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
         if not str(action.get("basis_ref") or "").strip():
             errors.append(f"resource_actions[{index}].basis_ref is required")
     return errors
+
+
+def _normalize_mapping_row_transport(item: dict[str, Any]) -> dict[str, Any]:
+    """Repair a harmless tool-schema placement error without changing model decisions."""
+    normalized = dict(item)
+    check = normalized.get("technology_check")
+    if not str(normalized.get("work_id") or "").strip() and isinstance(check, dict):
+        nested_work_id = str(check.get("work_id") or "").strip()
+        if nested_work_id:
+            normalized["work_id"] = nested_work_id
+            normalized["technology_check"] = {
+                key: value for key, value in check.items() if key != "work_id"
+            }
+    return normalized
 
 
 
@@ -227,12 +238,13 @@ def _run_native_norm_agent(
     *,
     candidate_limit: int,
     max_turns: int = 64,
-    batch_size: int = 12,
+    batch_size: int = 0,
     progress: Progress | None = None,
     user_request: str = "",
 ) -> dict[str, Any]:
-    """Give the model bounded row batches and merge its untouched decisions."""
-    size = max(1, int(batch_size))
+    """Give the model the source rows and merge its untouched decisions."""
+    requested_size = int(batch_size)
+    size = len(work_rows) if requested_size <= 0 else max(1, requested_size)
     batches = [work_rows[index:index + size] for index in range(0, len(work_rows), size)]
     if len(batches) <= 1:
         return _run_batch_norm_agent(
@@ -253,6 +265,7 @@ def _run_native_norm_agent(
         "valid_model_rows": 0,
     }
     batch_traces: list[dict[str, Any]] = []
+    batches_started = perf_counter()
     for batch_index, rows in enumerate(batches, 1):
         if progress:
             progress({
@@ -282,14 +295,24 @@ def _run_native_norm_agent(
         merged["valid_model_rows"] += int(result.get("valid_model_rows") or 0)
         batch_traces.append(result.get("agent_trace") or {})
         if progress:
+            elapsed_sec = max(0.0, perf_counter() - batches_started)
+            eta_sec = round((elapsed_sec / batch_index) * (len(batches) - batch_index))
+            eta_label = (
+                f" · осталось около {max(1, round(eta_sec / 60))} мин"
+                if eta_sec >= 60
+                else f" · осталось около {eta_sec} с"
+                if eta_sec > 0
+                else ""
+            )
             progress({
                 "phase": "source_batch",
                 "status": "done",
-                "label": f"Смета: обработано {merged['valid_model_rows']} из {len(work_rows)} строк",
+                "label": f"Смета: обработано {merged['valid_model_rows']} из {len(work_rows)} строк{eta_label}",
                 "batch": batch_index,
                 "batches": len(batches),
                 "completed_rows": merged["valid_model_rows"],
                 "total_rows": len(work_rows),
+                "eta_sec": eta_sec,
             })
     missing = [str(row["work_id"]) for row in work_rows if str(row["work_id"]) not in merged["selections"]]
     if missing:
@@ -330,25 +353,30 @@ def _run_batch_norm_agent(
         "Ты сметчик. Самостоятельно собери mapping для денежной ЛСР. Используй batch RAG tools в любом "
         "нужном порядке, прочитай фактические карточки и одним submit_lsr_mapping передай решения по всем "
         "строкам текущего пакета work_items. Код не выбирает нормы, аналоги, coverage или ресурсы — после submit он только "
-        "проверит ссылки и единицы, рассчитает твоё решение и сформирует XLSX."
+        "проверит ссылки и единицы, рассчитает твоё решение и сформирует XLSX. "
+        "Для decision=bind передай поля norm_code, selection_kind, applicability, "
+        "analog_limitations (пустой массив только для exact; для analog минимум одно конкретное ограничение), "
+        "resource_actions только если нужно изменить ресурсы нормы и кратко объясни технологическое решение. "
+        "technology_check можно добавить для операций, условий и пересечений, но это не обязательная анкета."
     )
     if skill_excerpt:
         system_prompt += "\n\n" + skill_excerpt
+    full_source_context = [] if set(by_id) == all_work_ids else [
+        {
+            "work_id": row.get("work_id"),
+            "title": str(row.get("title") or "")[:180],
+            "unit": row.get("unit"),
+            "quantity": row.get("quantity"),
+            "section": str(row.get("section") or "")[:100],
+        }
+        for row in all_rows
+    ]
     conversation: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": json.dumps({
             "user_request": str(user_request or "").strip(),
             "work_items": list(by_id.values()),
-            "all_source_rows_context": [
-                {
-                    "work_id": row.get("work_id"),
-                    "title": str(row.get("title") or "")[:180],
-                    "unit": row.get("unit"),
-                    "quantity": row.get("quantity"),
-                    "section": str(row.get("section") or "")[:100],
-                }
-                for row in all_rows
-            ],
+            "all_source_rows_context": full_source_context,
             "batch_contract": (
                 "submit decisions for every work_id in work_items only; all_source_rows_context is navigation "
                 "for overlap/coverage and is not an instruction to submit other batches"
@@ -358,6 +386,8 @@ def _run_batch_norm_agent(
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
+    consecutive_non_tool_turns = 0
+    invalid_submission_attempts = 0
     for turn in range(1, max_turns + 1):
         started = perf_counter()
         assistant = exchange(conversation, tools) or {}
@@ -387,7 +417,19 @@ def _run_batch_norm_agent(
                 "turn": turn, "model_wait_ms": model_wait_ms,
             })
         if not calls:
-            raise RuntimeError("smeta model returned no tool calls")
+            consecutive_non_tool_turns += 1
+            if consecutive_non_tool_turns <= 3 and turn < max_turns:
+                conversation.append({
+                    "role": "user",
+                    "content": (
+                        "Предыдущий ответ не был вызовом инструмента. Исправь последнюю ошибку из "
+                        "результата tool и продолжи только вызовом подходящего предоставленного инструмента; "
+                        "не объясняй ответ текстом."
+                    ),
+                })
+                continue
+            raise RuntimeError("smeta model returned no tool calls after correction attempts")
+        consecutive_non_tool_turns = 0
 
         submitted: dict[str, dict[str, Any]] | None = None
         for call_index, call in enumerate(calls, 1):
@@ -426,10 +468,8 @@ def _run_batch_norm_agent(
                         candidates[work_id][code] = card
                         compact.append({
                             "norm_code": code,
-                            "title": card.get("title"),
+                            "title": str(card.get("title") or "")[:180],
                             "measure_unit": card.get("measure_unit"),
-                            "work_steps": list(card.get("work_steps") or [])[:6],
-                            "resource_preview": list(card.get("resource_preview") or [])[:8],
                         })
                     rows_out.append({
                         "work_id": work_id, "ok": True, "candidates": compact,
@@ -454,7 +494,11 @@ def _run_batch_norm_agent(
                     rows_out.append({"work_id": work_id, "ok": bool(cards), "norms": cards})
                 result = {"ok": True, "rows": rows_out}
             elif name == "submit_lsr_mapping":
-                rows = [item for item in (args.get("rows") or []) if isinstance(item, dict)]
+                rows = [
+                    _normalize_mapping_row_transport(item)
+                    for item in (args.get("rows") or [])
+                    if isinstance(item, dict)
+                ]
                 proposed: dict[str, dict[str, Any]] = {}
                 errors: list[dict[str, Any]] = []
                 for item in rows:
@@ -515,7 +559,22 @@ def _run_batch_norm_agent(
                     if item.get("covered_by_work_id") and item["covered_by_work_id"] not in all_work_ids:
                         errors.append({"work_id": work_id, "error": "covered_by_work_id is absent"})
                 if errors:
+                    invalid_submission_attempts += 1
                     result = {"ok": False, "errors": errors}
+                    if progress:
+                        first_error = str((errors[0] or {}).get("error") or "некорректный mapping")
+                        progress({
+                            "phase": "mapping_retry",
+                            "status": "waiting",
+                            "label": f"Смета: модель исправляет решение — {first_error}",
+                            "attempt": invalid_submission_attempts,
+                            "errors": errors[:5],
+                        })
+                    if invalid_submission_attempts >= 4:
+                        raise RuntimeError(
+                            "smeta model could not produce a valid mapping after 4 correction attempts: "
+                            + json.dumps(errors[:5], ensure_ascii=False, default=str)
+                        )
                 else:
                     submitted = proposed
                     result = {"ok": True, "rows": len(proposed)}
@@ -621,6 +680,21 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "reason": {"type": "string"},
         },
         "required": ["work_id", "decision", "reason"],
+        "allOf": [
+            {
+                "if": {"properties": {"decision": {"const": "bind"}}, "required": ["decision"]},
+                "then": {"required": [
+                    "norm_code",
+                    "selection_kind",
+                    "applicability",
+                    "analog_limitations",
+                ]},
+            },
+            {
+                "if": {"properties": {"decision": {"const": "covered_by"}}, "required": ["decision"]},
+                "then": {"required": ["covered_by_work_id"]},
+            },
+        ],
     }
     return [
         {
@@ -801,6 +875,7 @@ def run_vor_document_workflow(
     source_name: str | None = None,
     lsr_meta: dict[str, Any] | None = None,
     user_request: str = "",
+    batch_size: int = 0,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     intake = intake_vor_document(path)
@@ -828,6 +903,7 @@ def run_vor_document_workflow(
         candidate_limit=candidate_limit,
         progress=progress,
         user_request=user_request,
+        batch_size=batch_size,
     )
     if work_rows and int(agent_result.get("valid_model_rows") or 0) == 0:
         if out_report:

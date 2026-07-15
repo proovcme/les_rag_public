@@ -22,9 +22,9 @@ from proxy.services.retrieval_quality_service import (
 )
 
 
-CHAT_TOP_K = int(os.getenv("RAG_CHAT_TOP_K", "8"))
-RERANK_POOL_K = int(os.getenv("RAG_CHAT_RERANK_POOL_K", "12"))
-RERANK_TOP_K = int(os.getenv("RAG_CHAT_RERANK_TOP_K", "6"))
+CHAT_TOP_K = int(os.getenv("RAG_CHAT_TOP_K", "64"))
+RERANK_POOL_K = int(os.getenv("RAG_CHAT_RERANK_POOL_K", "128"))
+RERANK_TOP_K = int(os.getenv("RAG_CHAT_RERANK_TOP_K", "64"))
 _SOURCE_EXACT_RE = re.compile(
     r"(?iu)(?:"
     r"[\w./\\:-]+\.(?:md|json|jsonl|dwg|dxf|rvt|rfa|ifc|ifczip|pdf|xlsx?|docx?)"
@@ -565,10 +565,10 @@ async def retrieve_chat_chunks(
     
     merged_top_k = CHAT_TOP_K
     if is_structured or is_technical_or_legal:
-        merged_top_k = 24
+        merged_top_k = max(CHAT_TOP_K, 256)
         
     has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
-    pool_k = max(36, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
+    pool_k = max(RERANK_POOL_K, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
     vector_top_k = pool_k if return_trace and lexical_enabled() else merged_top_k
     # ADR-12 стадия-1: для технических/правовых классов сначала маршрутизируем запрос
     # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет

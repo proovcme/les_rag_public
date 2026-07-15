@@ -328,13 +328,32 @@ def _smeta_document_timeout(runtime: LlmRuntime) -> float:
         180.0 if is_cloud_provider(runtime.provider) else 720.0,
     )
 
+
+def _smeta_document_turn_tokens(messages: list[dict[str, Any]], configured: int) -> int:
+    """Keep lookup calls compact; reserve the large budget for the final mapping."""
+    last_tool = next(
+        (
+            str(message.get("name") or "")
+            for message in reversed(messages)
+            if str(message.get("role") or "") == "tool"
+        ),
+        "",
+    )
+    if last_tool == "read_norms_batch":
+        return configured
+    if last_tool == "search_norms_batch":
+        return min(configured, 1000)
+    return min(configured, 1600)
+
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+    local_default_tokens = 5000 if "gemma" in str(runtime.model or "").casefold() else 900
     max_tokens = _env_int(
         "LES_SMETA_DOCUMENT_MAX_TOKENS",
-        3200 if is_cloud_provider(runtime.provider) else 900,
+        3200 if is_cloud_provider(runtime.provider) else local_default_tokens,
     )
+    turn_tokens = _smeta_document_turn_tokens(messages, max_tokens)
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
@@ -346,7 +365,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "tools": tools,
             "stream": False,
             "think": False,
-            "options": {"temperature": 0.0, "num_predict": max_tokens},
+            "options": {"temperature": 0.0, "num_predict": turn_tokens},
         }
         ollama_root = runtime.base_url.rstrip("/")
         if ollama_root.casefold().endswith("/v1"):
@@ -362,7 +381,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "messages": messages,
             "tools": tools,
             "temperature": 0.0,
-            "max_tokens": max_tokens,
+            "max_tokens": turn_tokens,
             "parallel_tool_calls": True,
         }
         body = _cloud_body_for_model(body, runtime.model, runtime.provider)

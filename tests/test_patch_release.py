@@ -134,3 +134,25 @@ def test_patch_release_requires_production_legion_heavy_pdf_gate():
     assert "Production index contract is not compatible after bootstrap" in production
     assert "dense+sparse RRF" in production
     assert "/api/rag/datasets/$smokeDatasetId" in production
+
+
+def test_patch_release_requires_independent_legion_persistence(monkeypatch):
+    monkeypatch.setattr(patch_release.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(
+        patch_release,
+        "output",
+        lambda _command, **_kwargs: (
+            '#< CLIXML\n'
+            '{"product_version":"0.24.17","build_number":428,'
+            '"ui_status":200,"desktop_processes":1}\n'
+            '<Objs Version="1.1.0.1" />'
+        ),
+    )
+
+    result = patch_release.verify_remote_production_persistence(
+        host="legion",
+        expected_version="0.24.17",
+    )
+
+    assert result["ui_status"] == 200
+    assert result["desktop_processes"] == 1

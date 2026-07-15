@@ -88,6 +88,8 @@ def build_documents() -> None:
         "dataset_index_brief_loading": False,
         "rag_readiness": {},
         "rag_readiness_loading": False,
+        "dataset_integrity": {},
+        "dataset_integrity_loading": False,
         "query": "",
         "view_title": "Выберите датасет",
         "view_note": "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу.",
@@ -582,6 +584,8 @@ def build_documents() -> None:
         state["document_map_label"] = ""
         state["dataset_index_brief"] = {}
         state["dataset_index_brief_loading"] = False
+        state["dataset_integrity"] = {}
+        state["dataset_integrity_loading"] = False
         state["dataset_kind"] = str(_selected_dataset_row().get("dataset_kind") or "")
         state["view_mode"] = "map"
         state["view_title"] = _dataset_title(_selected_dataset_row()) if dataset_id else "Выберите датасет"
@@ -595,6 +599,7 @@ def build_documents() -> None:
             _load_pdf_extract_summary(),
             _load_dataset_index_brief(),
             _load_rag_readiness(dataset_id),
+            _load_dataset_integrity(dataset_id),
         )
 
     async def _load_rag_readiness(dataset_id: str = "", *, force: bool = False) -> None:
@@ -610,6 +615,38 @@ def build_documents() -> None:
         state["rag_readiness"] = data if isinstance(data, dict) else {}
         _render_readiness_summary()
         _render_datasets()
+        _render_view()
+
+    async def _load_dataset_integrity(dataset_id: str = "") -> None:
+        if not dataset_id:
+            state["dataset_integrity"] = {}
+            return
+        state["dataset_integrity_loading"] = True
+        _render_view()
+        data = await api_get(
+            f"/api/rag/datasets/{quote(dataset_id, safe='')}/integrity"
+        )
+        state["dataset_integrity_loading"] = False
+        state["dataset_integrity"] = data if isinstance(data, dict) else {}
+        _render_view()
+
+    async def _repair_dataset_integrity() -> None:
+        dataset_id = str(state.get("selected_dataset") or "")
+        if not dataset_id:
+            ui.notify("Сначала выберите датасет", type="warning")
+            return
+        state["dataset_integrity_loading"] = True
+        _render_view()
+        data = await api_post(
+            f"/api/rag/datasets/{quote(dataset_id, safe='')}/integrity/repair"
+        )
+        state["dataset_integrity_loading"] = False
+        state["dataset_integrity"] = data if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            ui.notify(str(data.get("label") or "Проверка завершена"), type="positive")
+        else:
+            _render_status_error()
+        await _load_documents()
         _render_view()
 
     async def _load_dataset_index_brief() -> None:
@@ -1010,11 +1047,8 @@ def build_documents() -> None:
         selected = [str(value) for value in (state.get("selected_doc_ids") or [])]
         if doc_id in selected:
             selected.remove(doc_id)
-        elif len(selected) < 20:
-            selected.append(doc_id)
         else:
-            ui.notify("Можно выбрать не более 20 документов", type="warning")
-            return
+            selected.append(doc_id)
         state["selected_doc_ids"] = selected
         _render_documents()
 
@@ -1567,6 +1601,49 @@ def build_documents() -> None:
             _badge(f"RAG: {general_label}", general_cls)
             _badge(f"Сметы: {smeta_label}", smeta_cls)
 
+    def _render_dataset_integrity_card() -> None:
+        result = state.get("dataset_integrity") if isinstance(state.get("dataset_integrity"), dict) else {}
+        loading = bool(state.get("dataset_integrity_loading"))
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:12px;"
+            "background:var(--bg-panel);"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
+                ui.icon("o_verified_user").style("font-size:18px;color:var(--accent);")
+                _label("Целостность датасета", size="13px", weight=900)
+                if loading:
+                    ui.spinner(size="sm")
+                    _label("Проверяю источники и все каналы поиска…", size="11px", color="var(--dim)")
+                ui.element("div").style("flex:1;")
+                ui.button(
+                    "Проверить и починить",
+                    icon="o_build_circle",
+                    on_click=lambda: _schedule(_repair_dataset_integrity()),
+                ).props("flat dense no-caps").set_enabled(not loading)
+            if loading:
+                return
+            if not result:
+                _label("Проверка ещё не выполнялась.", size="11px", color="var(--dim)").style("margin-top:7px;")
+                return
+            integrity_state = str(result.get("state") or "blocked")
+            badge_cls = "tag-ok" if integrity_state == "healthy" else "tag-warn"
+            with ui.row().classes("items-center w-full").style("gap:6px;margin-top:9px;flex-wrap:wrap;"):
+                _badge(str(result.get("label") or "Статус неизвестен"), badge_cls)
+                _badge(f"Проверено файлов: {int(result.get('checked_files') or 0)}")
+                _badge(f"Целых: {int(result.get('clean_files') or 0)}", "tag-ok")
+                damaged_count = int(result.get("damaged_files") or 0)
+                if damaged_count:
+                    _badge(f"Повреждено: {damaged_count}", "tag-warn")
+                missing_count = int(result.get("missing_files") or 0)
+                if missing_count:
+                    _badge(f"Нет исходника: {missing_count}", "tag-warn")
+            issues = [item for item in (result.get("issues") or []) if isinstance(item, dict)]
+            if issues:
+                first = issues[0]
+                problem = "; ".join(str(value) for value in (first.get("problems") or [])[:3])
+                prefix = f"{first.get('file')}: " if first.get("file") else ""
+                _label(prefix + problem, size="10.8px", color="var(--warn)").style("margin-top:7px;")
+
     def _render_rag_readiness_card() -> None:
         readiness = state.get("rag_readiness") if isinstance(state.get("rag_readiness"), dict) else {}
         general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
@@ -2112,6 +2189,7 @@ def build_documents() -> None:
             ):
                 _label("Выберите датасет слева — покажу карту слоёв и маршрутов.", color="var(--dim)")
             return
+        _render_dataset_integrity_card()
         _render_rag_readiness_card()
         if not memory:
             with ui.element("div").style(
