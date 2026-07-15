@@ -130,7 +130,7 @@ try {
 
   # Only a clean isolated smoke may advance to the actual Legion production
   # state. The production gate installs in-place, starts the persistent runtime
-  # and proves the four real heavy project PDFs through dense+sparse RRF.
+  # and proves every current real heavy project PDF through dense+sparse RRF.
   Invoke-Checked "powershell.exe" @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
     (Join-Path $RepoRoot "tools\windows_production_deploy.ps1"),

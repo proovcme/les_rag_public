@@ -121,6 +121,12 @@ def test_patch_release_requires_production_legion_heavy_pdf_gate():
     assert 'indexed_files' in source and 'smoke_dataset_removed' in source
     assert "windows_production_deploy.ps1" in windows
     assert "production = $production" in windows
-    assert "Heavy PDF polygon must contain exactly 4 PDF files" in production
+    assert "Heavy PDF polygon must contain at least 4 PDF files" in production
+    assert "$expectedPdfCount = $pdfFiles.Count" in production
+    assert "$indexed.Count -eq $expectedPdfCount" in production
+    assert '"RAG_COLLECTION_NAME" $newCollection' in production
+    assert "previous_index_contract_incompatible" in production
+    assert "old_collection_preserved = $true" in production
+    assert "Production index contract is not compatible after bootstrap" in production
     assert "dense+sparse RRF" in production
     assert "/api/rag/datasets/$smokeDatasetId" in production

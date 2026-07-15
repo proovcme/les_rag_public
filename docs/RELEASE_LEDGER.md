@@ -7,16 +7,30 @@
 ## Текущее состояние (2026-07-15)
 
 ```
-версия продукта (SemVer):  0.24.11 (dev: проверяемая готовность Windows runtime, 2026-07-15)
-номер сборки:              422     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.422 (внутренняя совместимость обновления)
+версия продукта (SemVer):  0.24.12 (dev: production RAG generation migration, 2026-07-15)
+номер сборки:              423     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.423 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.8 / build 419 (live on Legion, 2026-07-15)
 Windows-выпуск:            0.24.8 / build 419 (public, live on Legion, 2026-07-15)
-следующий выпуск:          0.24.11 / build 422 (Mac gate green; Legion gate/publish pending)
+следующий выпуск:          0.24.12 / build 423 (Mac gate green; Legion gate/publish pending)
 рантайм /api/version:      проверяется отдельно; dev-правка не считается развёртыванием
 ```
+
+> 0.24.12 / build 423 — production получает чистую contract-compatible RAG generation
+>
+> Дата: 2026-07-15
+> Статус: dev release candidate; Legion gate/publish pending.
+> Build 422 полностью прошёл изолированный Windows smoke: baseline `49 756` норм / `504 259`
+> ресурсов / `1 576` ФСЭМ, bootstrap `ready`, API/UI, запуск ФСНБ и временный native
+> `dense + qdrant_sparse + lexical → RRF`. Production preflight затем честно остановился, потому что
+> в живом полигоне стало `7` PDF вместо зашитых `4`. Gate теперь берёт все текущие PDF (минимум 4)
+> и требует `N/N`. Одновременно вскрыт старый production-долг: активная `les_rag` содержит `100 525`
+> legacy-точек, включая ARTEL, и не имеет совместимого index contract. Такой индекс не усыновляется
+> и не переписывается: deploy атомарно переключает `.env` на чистую `les_rag_windows_v2`, старую
+> коллекцию сохраняет для явного аудита/миграции, а новый активный индекс доказывает семью реальными
+> проектными PDF и native RRF.
 
 > 0.24.11 / build 422 — readiness принимает живой пустой API без подмены RAG-гейта
 >

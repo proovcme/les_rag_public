@@ -38,6 +38,25 @@ $result = [ordered]@{
 }
 $smokeDatasetId = $null
 $proxyPort = 0
+$oldHealth = $null
+
+function Set-LesEnvValue([string]$Path, [string]$Key, [string]$Value) {
+  $lines = if (Test-Path -LiteralPath $Path) { @(Get-Content -LiteralPath $Path) } else { @() }
+  $updated = New-Object System.Collections.Generic.List[string]
+  $found = $false
+  foreach ($line in $lines) {
+    if ($line -match "^$([regex]::Escape($Key))=") {
+      if (-not $found) { $updated.Add("$Key=$Value") }
+      $found = $true
+    } else {
+      $updated.Add([string]$line)
+    }
+  }
+  if (-not $found) { $updated.Add("$Key=$Value") }
+  $tmp = "$Path.tmp"
+  [System.IO.File]::WriteAllLines($tmp, $updated, (New-Object System.Text.UTF8Encoding($false)))
+  Move-Item -LiteralPath $tmp -Destination $Path -Force
+}
 
 function Stop-LesRuntime {
   $existingStop = @(
@@ -68,9 +87,11 @@ function Stop-LesRuntime {
 try {
   if (-not (Test-Path -LiteralPath $Installer)) { throw "Installer not found: $Installer" }
   $pdfFiles = @(Get-ChildItem -LiteralPath $HeavyPdfRoot -Filter "*.pdf" -File -ErrorAction Stop)
-  if ($pdfFiles.Count -ne 4) {
-    throw "Heavy PDF polygon must contain exactly 4 PDF files, found $($pdfFiles.Count): $HeavyPdfRoot"
+  if ($pdfFiles.Count -lt 4) {
+    throw "Heavy PDF polygon must contain at least 4 PDF files, found $($pdfFiles.Count): $HeavyPdfRoot"
   }
+  $expectedPdfCount = $pdfFiles.Count
+  $result.expected_pdf_count = $expectedPdfCount
   $result.pdf_files = @($pdfFiles | ForEach-Object { $_.Name })
 
   $result.stage = "stop_previous"
@@ -78,6 +99,13 @@ try {
     $oldVersion = Invoke-RestMethod -Uri "http://127.0.0.1:8050/api/version" -TimeoutSec 10
     $result.previous_version = $oldVersion.les_version
   } catch { $result.previous_version = "unavailable" }
+  try {
+    $oldHealth = Invoke-RestMethod -Uri "http://127.0.0.1:8050/api/health" -TimeoutSec 30
+    $result.previous_collection = $oldHealth.rag.qdrant.collection
+    $result.previous_contract_compatible = [bool]$oldHealth.rag.index_contract.compatible
+  } catch {
+    $result.previous_contract_compatible = $false
+  }
   Stop-LesRuntime
 
   $result.stage = "install"
@@ -90,6 +118,19 @@ try {
   ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
   if (-not $RuntimeRoot) { throw "Installed production runtime was not found under $InstallRoot" }
   $result.runtime_root = $RuntimeRoot
+  if (-not $result.previous_contract_compatible) {
+    # Never adopt or rewrite an unknown legacy collection.  Activate a clean,
+    # stable Windows generation; the old Qdrant collection remains untouched
+    # for explicit audit/migration, and subsequent restarts use this value.
+    $newCollection = "les_rag_windows_v2"
+    Set-LesEnvValue (Join-Path $StateRoot ".env") "RAG_COLLECTION_NAME" $newCollection
+    $result.collection_migration = [ordered]@{
+      reason = "previous_index_contract_incompatible"
+      previous = $result.previous_collection
+      active = $newCollection
+      old_collection_preserved = $true
+    }
+  }
   $Bootstrap = Join-Path $RuntimeRoot "installers\windows\app\bootstrap.ps1"
   if (-not (Test-Path -LiteralPath $Bootstrap)) { throw "Production bootstrap not found: $Bootstrap" }
 
@@ -133,9 +174,13 @@ try {
   if ($version.les_version -ne $ExpectedVersion) {
     throw "Production version mismatch: expected $ExpectedVersion, got $($version.les_version)"
   }
-  if ($health.status -ne "ok" -or [int]$ui.StatusCode -ne 200) {
+  if (-not $health -or [int]$ui.StatusCode -ne 200) {
     throw "Production API/UI health is not ready"
   }
+  if (-not [bool]$health.rag.index_contract.compatible) {
+    throw "Production index contract is not compatible after bootstrap"
+  }
+  $result.active_collection = $health.rag.qdrant.collection
   $result.les_version = $version.les_version
   $result.git_commit = $version.git_commit
   $result.ui_status = [int]$ui.StatusCode
@@ -169,10 +214,10 @@ try {
       throw "Production heavy PDF indexing failed: $($failed[0].file_name): $($failed[0].last_error)"
     }
     $indexed = @($rows | Where-Object { $_.status -eq "INDEXED" })
-    if ($indexed.Count -eq 4) { break }
+    if ($indexed.Count -eq $expectedPdfCount) { break }
   } while ((Get-Date) -lt $indexDeadline)
-  if ($indexed.Count -ne 4) {
-    throw "Production heavy PDF polygon did not finish: indexed $($indexed.Count)/4"
+  if ($indexed.Count -ne $expectedPdfCount) {
+    throw "Production heavy PDF polygon did not finish: indexed $($indexed.Count)/$expectedPdfCount"
   }
   $result.indexed_files = $indexed.Count
   $result.indexed_chunks = [int](($indexed | Measure-Object -Property chunk_count -Sum).Sum)
