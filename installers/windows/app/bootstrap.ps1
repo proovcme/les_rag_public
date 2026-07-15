@@ -80,7 +80,10 @@ function Wait-LesApiReady([string]$Url, [int]$TimeoutSeconds = 180) {
   do {
     try {
       $health = Invoke-RestMethod -Uri $Url -TimeoutSec 5
-      if ($health -and $health.status -eq "ok") { return $health }
+      # Clean state intentionally reports `degraded` until its first document
+      # is indexed.  HTTP 2xx itself proves that FastAPI finished startup; the
+      # release smoke validates the deeper RAG contract immediately after.
+      if ($health) { return $health }
     } catch { }
     Start-Sleep -Seconds 1
   } while ([DateTime]::UtcNow -lt $deadline)

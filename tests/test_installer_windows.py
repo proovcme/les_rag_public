@@ -101,6 +101,8 @@ def test_windows_bootstrap_reports_ready_only_after_api_health():
 
     assert "function Wait-LesApiReady" in bootstrap
     assert 'Wait-LesApiReady "http://127.0.0.1:$proxyPort/api/health" 180' in bootstrap
+    assert 'if ($health) { return $health }' in bootstrap
+    assert '$health.status -eq "ok"' not in bootstrap
     assert '"services_api_not_ready"' in bootstrap
 
 

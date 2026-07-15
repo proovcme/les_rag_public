@@ -7,16 +7,25 @@
 ## Текущее состояние (2026-07-15)
 
 ```
-версия продукта (SemVer):  0.24.10 (dev: проверяемая готовность Windows runtime, 2026-07-15)
-номер сборки:              421     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.421 (внутренняя совместимость обновления)
+версия продукта (SemVer):  0.24.11 (dev: проверяемая готовность Windows runtime, 2026-07-15)
+номер сборки:              422     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.422 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.8 / build 419 (live on Legion, 2026-07-15)
 Windows-выпуск:            0.24.8 / build 419 (public, live on Legion, 2026-07-15)
-следующий выпуск:          0.24.10 / build 421 (Mac gate green; Legion gate/publish pending)
+следующий выпуск:          0.24.11 / build 422 (Mac gate green; Legion gate/publish pending)
 рантайм /api/version:      проверяется отдельно; dev-правка не считается развёртыванием
 ```
+
+> 0.24.11 / build 422 — readiness принимает живой пустой API без подмены RAG-гейта
+>
+> Дата: 2026-07-15
+> Статус: dev release candidate; Legion gate/publish pending.
+> Изолированный build 421 подтвердил живые HTTP 200, Qdrant и compatible index contract, но чистая
+> коллекция корректно имела `/api/health.status=degraded` до загрузки первого документа. Bootstrap
+> ошибочно ждал буквальный `status=ok`. Readiness теперь принимает любой успешный HTTP-ответ FastAPI;
+> полноценность dense+sparse RRF по-прежнему отдельно и fail-closed доказывает следующий этап smoke.
 
 > 0.24.10 / build 421 — Windows сообщает готовность только после живого API
 >
