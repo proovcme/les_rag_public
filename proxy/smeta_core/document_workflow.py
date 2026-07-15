@@ -226,6 +226,30 @@ def _normalize_mapping_row_transport(item: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(item)
     if normalized.get("selection_kind") == "exact" and "analog_limitations" not in normalized:
         normalized["analog_limitations"] = []
+    limitations = [
+        str(value).strip()
+        for value in (normalized.get("analog_limitations") or [])
+        if str(value).strip()
+    ]
+    if (
+        normalized.get("selection_kind") == "exact"
+        and normalized.get("applicability") in {"close_analog", "weak_analog"}
+        and limitations
+    ):
+        # The model already made an explicit analog decision in two stronger
+        # fields; normalize only the contradictory enum spelling.
+        normalized["selection_kind"] = "analog"
+    row_reason = str(normalized.get("reason") or "").strip()
+    actions = normalized.get("resource_actions")
+    if isinstance(actions, list) and row_reason:
+        normalized["resource_actions"] = [
+            {**action, "reason": row_reason}
+            if isinstance(action, dict)
+            and str(action.get("basis_ref") or "").strip()
+            and not str(action.get("reason") or "").strip()
+            else action
+            for action in actions
+        ]
     check = normalized.get("technology_check")
     if not str(normalized.get("work_id") or "").strip() and isinstance(check, dict):
         nested_work_id = str(check.get("work_id") or "").strip()
@@ -477,6 +501,8 @@ def _run_batch_norm_agent(
         "Для decision=bind передай поля norm_code, selection_kind, applicability, "
         "analog_limitations (пустой массив только для exact; для analog минимум одно конкретное ограничение), "
         "resource_actions только если нужно изменить ресурсы нормы и кратко объясни технологическое решение. "
+        "Не передавай resource_actions без item-level include_resources=true; у каждого действия обязательны "
+        "собственные reason и basis_ref. Если applicability close_analog/weak_analog, selection_kind обязан быть analog. "
         "technology_check можно добавить для операций, условий и пересечений, но это не обязательная анкета."
     )
     if skill_excerpt:

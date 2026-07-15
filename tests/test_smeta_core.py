@@ -430,6 +430,21 @@ def test_exact_mapping_transport_defaults_only_semantically_empty_limitations():
     assert "analog_limitations" not in analog
 
 
+def test_mapping_transport_uses_models_explicit_analog_and_row_reason():
+    from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
+
+    normalized = _normalize_mapping_row_transport({
+        "selection_kind": "exact",
+        "applicability": "close_analog",
+        "analog_limitations": ["материал заменить"],
+        "reason": "состав работ совпадает, материал заменить",
+        "resource_actions": [{"action": "replace", "basis_ref": "card:material"}],
+    })
+
+    assert normalized["selection_kind"] == "analog"
+    assert normalized["resource_actions"][0]["reason"] == normalized["reason"]
+
+
 def test_tool_array_transport_unwraps_qwen_double_serialization():
     from proxy.smeta_core.document_workflow import _tool_arguments, _tool_array_argument, _tool_bool
 
