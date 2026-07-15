@@ -261,6 +261,25 @@ def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
+def _tool_array_argument(args: dict[str, Any], key: str) -> list[dict[str, Any]]:
+    """Unwrap a model's harmless double-serialization of a tool array."""
+    raw = args.get(key)
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            return []
+    return [item for item in (raw or []) if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _tool_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().casefold() in {"1", "true", "yes", "on"}
+
+
 def _run_native_norm_agent(
     work_rows: list[dict[str, Any]],
     exchange: Exchange,
@@ -480,7 +499,7 @@ def _run_batch_norm_agent(
             args = _tool_arguments(call)
             result: dict[str, Any]
             if name == "search_norms_batch":
-                items = [item for item in (args.get("items") or []) if isinstance(item, dict)]
+                items = _tool_array_argument(args, "items")
                 all_queries = list(dict.fromkeys(
                     " ".join(str(query).split())[:240]
                     for item in items for query in (item.get("queries") or []) if str(query).strip()
@@ -524,10 +543,13 @@ def _run_batch_norm_agent(
                 result = {"ok": True, "rows": rows_out}
             elif name == "read_norms_batch":
                 rows_out = []
-                for item in [value for value in (args.get("items") or []) if isinstance(value, dict)]:
+                for item in _tool_array_argument(args, "items"):
                     work_id = str(item.get("work_id") or "")
                     cards = []
-                    include_resources = bool(item.get("include_resources", False))
+                    include_resources = _tool_bool(
+                        item.get("include_resources"),
+                        _tool_bool(args.get("include_resources"), False),
+                    )
                     for code in _normalize_norm_codes_transport(item):
                         candidate = candidates.get(work_id, {}).get(code)
                         card = _opened_norm_card(code, candidate) if candidate else None
@@ -539,8 +561,7 @@ def _run_batch_norm_agent(
             elif name == "submit_lsr_mapping":
                 rows = [
                     _normalize_mapping_row_transport(item)
-                    for item in (args.get("rows") or [])
-                    if isinstance(item, dict)
+                    for item in _tool_array_argument(args, "rows")
                 ]
                 proposed: dict[str, dict[str, Any]] = {}
                 errors: list[dict[str, Any]] = []
