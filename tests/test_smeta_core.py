@@ -311,6 +311,46 @@ def test_batch_agent_repairs_gemma_nested_work_id_without_changing_choice(monkey
     assert "work_id" not in selection["technology_check"]
 
 
+def test_batch_agent_accepts_gemma_scalar_norm_code_for_read(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН67-01-003-01", "title": "Прокладка кабеля",
+            "measure_unit": "100 м", "work_steps": ["Прокладка кабеля"],
+            "resource_preview": [],
+        }]}
+        for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda *_args, **_kwargs: {
+        "name": "Прокладка кабеля", "unit": "100 м",
+        "work_steps": ["Прокладка кабеля"], "resources": [],
+    })
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["прокладка кабеля"],
+        }])],
+        [_native_call("read", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_code": "ГЭСН67-01-003-01",
+        }])],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
+            "selection_kind": "exact", "applicability": "exact",
+            "analog_limitations": [], "reason": "состав работ совпадает",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Прокладка кабеля", "unit": "м", "quantity": 10}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=6,
+        max_turns=3,
+    )
+
+    assert result["selections"]["w1"]["norm_code"] == "ГЭСН67-01-003-01"
+
+
 def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
     from proxy.smeta_core import document_workflow as workflow
 

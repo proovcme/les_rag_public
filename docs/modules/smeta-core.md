@@ -52,7 +52,9 @@
   `LES_SMETA_DOCUMENT_BATCH_SIZE` остаётся только явным аварийным override.
   Если модель без изменения содержания вложила `work_id` внутрь `technology_check`, transport
   переносит только этот идентификатор на верхний уровень. Норма, applicability, ограничения,
-  resource actions и профессиональная аргументация остаются буквально модельными.
+  resource actions и профессиональная аргументация остаются буквально модельными. Аналогично,
+  одиночный `norm_code` в `read_norms_batch` принимается как одноэлементный `norm_codes`; значение
+  кода не исправляется и не подменяется.
 - `proxy.smeta_core.norm_browser.browse_norms_many` — пакетный RRF-поиск.
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.

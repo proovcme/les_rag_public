@@ -218,6 +218,19 @@ def _normalize_mapping_row_transport(item: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
+    """Accept Gemma's scalar spelling of a one-element norm code list."""
+    raw = item.get("norm_codes")
+    if isinstance(raw, list):
+        values = raw
+    elif raw is not None:
+        values = [raw]
+    else:
+        scalar = item.get("norm_code")
+        values = [scalar] if scalar is not None else []
+    return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
+
+
 
 
 def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
@@ -485,7 +498,7 @@ def _run_batch_norm_agent(
                 for item in [value for value in (args.get("items") or []) if isinstance(value, dict)]:
                     work_id = str(item.get("work_id") or "")
                     cards = []
-                    for code in [str(value) for value in (item.get("norm_codes") or [])]:
+                    for code in _normalize_norm_codes_transport(item):
                         candidate = candidates.get(work_id, {}).get(code)
                         card = _opened_norm_card(code, candidate) if candidate else None
                         if card:
