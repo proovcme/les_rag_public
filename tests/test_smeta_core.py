@@ -483,8 +483,12 @@ def test_tool_array_transport_closes_only_missing_trailing_array_delimiter():
     assert _tool_array_argument({"items": '[{"work_id":"w1"}] garbage'}, "items") == []
 
 
-def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
+def test_batch_agent_rejects_unopened_norm_without_selecting_for_model(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "typed_sqlite_fts", "cards": []} for query in queries
+    })
 
     turns = iter([
         [_native_call("bad", "submit_lsr_mapping", rows=[{
@@ -507,6 +511,40 @@ def test_batch_agent_rejects_unopened_norm_without_selecting_for_model():
     first_result = result["model_trace"][0]["tool_results"][0]["result"]
     assert first_result["ok"] is False
     assert "opened by the model" in first_result["errors"][0]["error"]
+
+
+def test_batch_agent_resolves_models_exact_submitted_norm_without_reselecting(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    selected_code = "ГЭСН01-01-001-01"
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "typed_sqlite_fts", "cards": [{
+            "norm_code": selected_code,
+            "title": "Работа",
+            "measure_unit": "шт",
+            "source_ref": "base.sqlite#norm",
+        }]}
+        for query in queries
+    })
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": "Работа", "unit": "шт", "work_steps": ["Работа"], "resources": [],
+    } if code == selected_code else None)
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {"tool_calls": [_native_call(
+            "submit", "submit_lsr_mapping", rows=[{
+                "work_id": "w1", "decision": "bind", "norm_code": selected_code,
+                "selection_kind": "exact", "applicability": "exact",
+                "analog_limitations": [], "reason": "модель выбрала точную норму",
+            }],
+        )]},
+        candidate_limit=5,
+        max_turns=1,
+    )
+
+    assert result["selections"]["w1"]["norm_code"] == selected_code
+    assert result["browse_trace"]["w1"][-1]["mode"] == "model_submitted_exact_lookup"
 
 
 def test_batch_agent_keeps_valid_rows_while_model_repairs_only_rejected_row(monkeypatch):

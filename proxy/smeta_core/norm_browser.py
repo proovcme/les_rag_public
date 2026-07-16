@@ -48,6 +48,21 @@ def _base_path() -> Path:
     return Path(active_base()["base_path"])
 
 
+def _connect_base_readonly(base_path: Path) -> sqlite3.Connection:
+    """Open the immutable normative base without asking SQLite for write access."""
+    resolved = base_path.resolve(strict=True)
+    try:
+        return sqlite3.connect(
+            f"{resolved.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+            timeout=30.0,
+        )
+    except sqlite3.OperationalError as error:
+        raise sqlite3.OperationalError(
+            f"unable to open normative database {resolved}: {error}"
+        ) from error
+
+
 def _norm_key(value: str) -> str:
     match = _FULL_CODE_RE.search(str(value or ""))
     if not match:
@@ -118,7 +133,7 @@ def _cards_by_norm_keys(norm_keys: list[str], *, base_path: Path) -> list[dict[s
     ordered = [str(key) for key in norm_keys if str(key)]
     if not ordered or not base_path.exists():
         return []
-    conn = sqlite3.connect(base_path)
+    conn = _connect_base_readonly(base_path)
     conn.row_factory = sqlite3.Row
     try:
         placeholders = ",".join("?" for _ in ordered)
@@ -445,7 +460,7 @@ def _typed_cards(
 ) -> list[dict[str, Any]] | None:
     if not base_path.exists():
         return None
-    conn = sqlite3.connect(base_path)
+    conn = _connect_base_readonly(base_path)
     conn.row_factory = sqlite3.Row
     try:
         tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table','view')")}
@@ -523,7 +538,7 @@ def browse_norm_catalog(
     family_value = str(family or "").strip()
     collection_value = re.sub(r"\D", "", str(collection or ""))[:2]
     table_value = re.sub(r"[^0-9-]", "", str(table or "")).strip("-")
-    conn = sqlite3.connect(path)
+    conn = _connect_base_readonly(path)
     conn.row_factory = sqlite3.Row
     try:
         if not family_value:

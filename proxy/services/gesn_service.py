@@ -174,6 +174,20 @@ def _structured_base_path() -> Path:
     return Path(active_base()["base_path"])
 
 
+def _connect_structured_base_readonly(path: Path) -> sqlite3.Connection:
+    resolved = path.resolve(strict=True)
+    try:
+        return sqlite3.connect(
+            f"{resolved.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+            timeout=30.0,
+        )
+    except sqlite3.OperationalError as error:
+        raise sqlite3.OperationalError(
+            f"unable to open normative database {resolved}: {error}"
+        ) from error
+
+
 @lru_cache(maxsize=4)
 def load_norms(path: str | None = None) -> dict[str, dict[str, Any]]:
     """Каталог норм из СЕМЕНИ (yaml) → {нормализованный_код: норма}. Кешируется."""
@@ -196,7 +210,7 @@ def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict
     if not p.exists():
         return {}
 
-    conn = sqlite3.connect(p)
+    conn = _connect_structured_base_readonly(p)
     conn.row_factory = sqlite3.Row
     try:
         norm_rows = conn.execute(

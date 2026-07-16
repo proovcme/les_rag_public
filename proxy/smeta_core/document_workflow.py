@@ -708,6 +708,36 @@ def _run_batch_norm_agent(
                     opened_for_work = opened.get(work_id, {})
                     opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
                     opened_card = opened_for_work.get(opened_code) if opened_code else None
+                    if requested_code and opened_card is None:
+                        # The model owns this code.  Resolve only that exact submitted
+                        # identity so a missing read_norms_batch transport step cannot
+                        # discard or replace an otherwise valid model decision.
+                        exact_result = browse_norms_many(
+                            [requested_code], limit=4, rerank=False
+                        ).get(requested_code) or {}
+                        exact_card = next(
+                            (
+                                card
+                                for card in (exact_result.get("cards") or [])
+                                if _resolve_norm_code_transport(
+                                    requested_code,
+                                    {str(card.get("norm_code") or ""): card},
+                                )
+                            ),
+                            None,
+                        )
+                        if exact_card is not None:
+                            exact_code = str(exact_card.get("norm_code") or requested_code)
+                            candidates[work_id][exact_code] = exact_card
+                            opened_card = _opened_norm_card(exact_code, exact_card)
+                            opened[work_id][exact_code] = opened_card
+                            opened[work_id][requested_code] = opened_card
+                            opened_code = exact_code
+                            browse_trace[work_id].append({
+                                "mode": "model_submitted_exact_lookup",
+                                "query": requested_code,
+                                "candidates": [exact_card],
+                            })
                     code = str((opened_card or {}).get("norm_code") or opened_code)
                     if decision != "bind" or not code:
                         errors.append({"work_id": work_id, "error": "bound norm must be returned by RAG and opened by the model"})
