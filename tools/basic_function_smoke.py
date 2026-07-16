@@ -53,7 +53,11 @@ def check_health(c, base):
         ev = {"http": resp.status_code, "status": status, "backend": d.get("backend")}
         if resp.status_code != 200 or not status:
             return _r("health_reachable", "P0", "fail", t0, f"http={resp.status_code} status={status!r}", ev)
-        return _r("health_reachable", "P0", "pass", t0, "", ev)
+        if status == "ok":
+            return _r("health_reachable", "P0", "pass", t0, "", ev)
+        if status == "degraded":
+            return _r("health_reachable", "P0", "warn", t0, "runtime degraded", ev)
+        return _r("health_reachable", "P0", "fail", t0, f"runtime status={status!r}", ev)
     except Exception as e:
         return _r("health_reachable", "P0", "fail", t0, f"{type(e).__name__}: {e}")
 
@@ -70,6 +74,27 @@ def check_simple(c, base, path, name, severity):
         return _r(name, severity, "pass", t0, "", {"http": resp.status_code})
     except Exception as e:
         return _r(name, severity, "fail", t0, f"{type(e).__name__}: {e}")
+
+
+def check_diagnostics(c, base):
+    """Diagnostics may require auth, but an exposed error must never pass as healthy."""
+    t0 = time.monotonic()
+    try:
+        resp = c.get(f"{base}/api/diag")
+        if resp.status_code in (401, 403):
+            return _r("diagnostics_endpoint", "P1", "pass", t0, "честный auth-gate", {"http": resp.status_code})
+        if resp.status_code != 200:
+            return _r("diagnostics_endpoint", "P1", "fail", t0, f"http={resp.status_code}", {"http": resp.status_code})
+        payload = resp.json()
+        overall = str(payload.get("overall") or "")
+        evidence = {"http": resp.status_code, "overall": overall}
+        if overall == "ok":
+            return _r("diagnostics_endpoint", "P1", "pass", t0, "", evidence)
+        if overall == "warn":
+            return _r("diagnostics_endpoint", "P1", "warn", t0, "diagnostics warning", evidence)
+        return _r("diagnostics_endpoint", "P1", "fail", t0, f"diagnostics overall={overall!r}", evidence)
+    except Exception as e:
+        return _r("diagnostics_endpoint", "P1", "fail", t0, f"{type(e).__name__}: {e}")
 
 
 def check_scope(c, base):
@@ -100,18 +125,24 @@ def check_chat_glossary(c, base, *, timeout: float):
         d = resp.json()
         ans = (d.get("answer") or "").strip()
         status = d.get("crag_status") or d.get("status") or ""
-        ev = {"http": resp.status_code, "answer_len": len(ans), "status": status}
+        route = d.get("query_route") if isinstance(d.get("query_route"), dict) else {}
+        channel = str(route.get("channel") or "")
+        has_version = isinstance(d.get("version_info"), dict)
+        ev = {"http": resp.status_code, "answer_len": len(ans), "status": status,
+              "channel": channel, "version_info": has_version}
         if resp.status_code != 200:
             return _r("chat_glossary", "P0", "fail", t0, f"http={resp.status_code}: {str(d)[:80]}", ev)
         if not ans:
             return _r("chat_glossary", "P0", "fail", t0, "пустой ответ на глоссарный вопрос", ev)
+        if channel != "glossary" or not has_version:
+            return _r("chat_glossary", "P0", "fail", t0, "нет glossary route или version_info", ev)
         return _r("chat_glossary", "P0", "pass", t0, "", ev)
     except Exception as e:
         return _r("chat_glossary", "P0", "fail", t0, f"{type(e).__name__}: {e}")
 
 
 def check_chat_project_noscope(c, base, *, timeout: float):
-    """Проектный вопрос без scope → ответ ИЛИ честный clarification/MISSING, не падение."""
+    """Проектный вопрос без scope идёт model-first, но никогда не в glossary."""
     t0 = time.monotonic()
     try:
         resp = _chat(c, base, "расскажи про котельную на лесном 64", timeout=timeout)
@@ -120,10 +151,16 @@ def check_chat_project_noscope(c, base, *, timeout: float):
         d = resp.json()
         ans = (d.get("answer") or "").strip()
         status = d.get("crag_status") or d.get("status") or ""
-        ev = {"http": resp.status_code, "answer_len": len(ans), "status": status}
+        route = d.get("query_route") if isinstance(d.get("query_route"), dict) else {}
+        channel = str(route.get("channel") or "")
+        has_version = isinstance(d.get("version_info"), dict)
+        ev = {"http": resp.status_code, "answer_len": len(ans), "status": status,
+              "channel": channel, "version_info": has_version}
         if resp.status_code != 200:
             return _r("chat_project_noscope", "P1", "fail", t0, f"http={resp.status_code}", ev)
-        # любой структурный ответ (answer/clarification/MISSING/BLOCKED) = pass; пустота = fail
+        if channel == "glossary" or not has_version:
+            return _r("chat_project_noscope", "P1", "fail", t0, "project query ушёл в glossary или потерял version_info", ev)
+        # Ответ модели либо честный MISSING/BLOCKED допустимы; пустота без статуса — нет.
         if not ans and status not in ("MISSING", "BLOCKED", "NO_DATA", "NEEDS_CLARIFICATION"):
             return _r("chat_project_noscope", "P1", "fail", t0, "ни ответа, ни честного MISSING/clarification", ev)
         return _r("chat_project_noscope", "P1", "pass", t0, "", ev)
@@ -164,7 +201,7 @@ def main() -> int:
         results.append(check_health(c, base))
         results.append(check_simple(c, base, "/api/status", "status_endpoint", "P1"))
         results.append(check_simple(c, base, "/api/metrics", "metrics_endpoint", "P1"))
-        results.append(check_simple(c, base, "/api/diag", "diagnostics_endpoint", "P1"))
+        results.append(check_diagnostics(c, base))
         results.append(check_scope(c, base))
         results.append(check_chat_glossary(c, base, timeout=args.chat_timeout))
         results.append(check_chat_project_noscope(c, base, timeout=args.chat_timeout))

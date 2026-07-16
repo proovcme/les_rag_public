@@ -60,26 +60,21 @@ scope model и clarification не ломаются
 Запускается против живого proxy/UI/Qdrant, без браузера:
 
 ```bash
-uv run python tools/runtime_smoke.py \
-  --proxy-url http://127.0.0.1:8050 \
-  --ui-url http://127.0.0.1:8051 \
-  --qdrant-url http://127.0.0.1:6333 \
-  --question "что такое ОЖР" \
-  --question "расскажи про котельную на лесном 64"
+make smoke-basic-release
 ```
 
 Обязательные проверки L1:
 
 ```text
-/api/health отвечает и статус не маскирует FAIL
+/api/health отвечает `ok`; `degraded` виден как WARN, `error/starting` валит P0
 /api/version содержит app/harness/deployed_commit/runtime_alignment
 /api/status отвечает
 /api/metrics отвечает
-/api/diag отвечает или честно требует auth
-/api/scope/options отвечает и содержит проекты/датасеты
-/api/chat возвращает answer, status, trace/version_info
-глоссарный запрос не требует проекта
-проектный вопрос без scope даёт clarification/MISSING, а не мусорный ответ
+/api/diag отвечает `ok/warn` или честно требует auth; `overall=err` не скрывается
+/api/scope/options отвечает; пустой новый контур маркируется WARN
+/api/chat возвращает answer, query_route и version_info
+глоссарный запрос идёт через `query_route.channel=glossary`
+проектный вопрос без scope не уходит в glossary и сохраняет version trace
 ```
 
 ### L2 - browser smoke
@@ -166,6 +161,9 @@ MISSING/BLOCKED видны как отдельное состояние, а не
 [done] make smoke-basic
   запускает basic_function_smoke.py против локального runtime (:8050/:8051)
 
+[done] make smoke-basic-release
+  запускает тот же L1 smoke с --release; P1 fail блокирует ship/ship-full и post-deploy smoke
+
 [done] tests/test_basic_function_smoke.py
   unit-тестирует парсинг результатов и критерии fail/warn (compute_exit/failures)
 ```
@@ -177,10 +175,8 @@ version visible
 health reachable
 chat returns non-empty answer or explicit MISSING/BLOCKED
 scope options reachable
-copy button rendered
-source buttons are not fake
-diagnostics does not normalize FAIL to OK
-auth/trust public boundary is not accidentally open
+health/diagnostics не нормализуют FAIL в OK
+глоссарий и проектный вопрос не смешивают query route
 ```
 
 ### P1
@@ -280,7 +276,7 @@ make smoke-basic
 ```bash
 make verify
 make test
-make smoke-basic
+make smoke-basic-release
 uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json
 ```
 
@@ -306,4 +302,3 @@ security audit
 ```
 
 Он закрывает другой слой: "жив ли базовый продукт глазами пользователя".
-

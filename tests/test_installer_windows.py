@@ -210,6 +210,15 @@ def test_windows_bootstrap_installs_and_requires_uv_ollama_docker():
     text = bootstrap.read_text(encoding="utf-8-sig")
 
     assert "astral-sh.uv" in text
+    assert "function Install-Uv" in text
+    assert "function Resolve-BundledPython" in text
+    assert "bundled_python_unavailable" in text
+    assert "--no-python-downloads" in text
+    assert "python-contract.json" in text
+    assert "trying official installer" in text
+    assert "uv_install_failed_after_fallback" in text
+    assert "tools\\uv.exe" in text
+    assert "Get-FileHash -LiteralPath $bundled -Algorithm SHA256" in text
     assert "https://docs.astral.sh/uv/getting-started/installation/" in text
     assert 'Install-WingetRequirement "Ollama.Ollama"' in text
     assert 'Install-WingetRequirement "Docker.DockerDesktop"' in text

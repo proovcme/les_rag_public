@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import os
 import shutil
 import subprocess
+import urllib.request
+import zipfile
 from pathlib import Path
 
 from tools.build_release_artifacts import ROOT, iter_files
@@ -15,6 +19,8 @@ from tools.build_release_artifacts import ROOT, iter_files
 TAURI_ROOT = ROOT / "desktop" / "tauri"
 SRC_TAURI = TAURI_ROOT / "src-tauri"
 RESOURCES = SRC_TAURI / "resources"
+WINDOWS_UV_CONTRACT_PATH = ROOT / "config" / "windows_uv.json"
+WINDOWS_PYTHON_CONTRACT_PATH = ROOT / "config" / "windows_python.json"
 DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
 
@@ -60,10 +66,131 @@ def npm_executable(platform: str | None = None) -> str:
     raise RuntimeError("npm executable not found; install Node.js before building Tauri")
 
 
+def windows_uv_contract() -> dict[str, str]:
+    payload = json.loads(WINDOWS_UV_CONTRACT_PATH.read_text(encoding="utf-8"))
+    required = ("schema", "version", "archive_url", "archive_sha256", "binary_sha256", "binary_name")
+    missing = [key for key in required if not str(payload.get(key) or "").strip()]
+    if payload.get("schema") != "les.windows-uv.v1" or missing:
+        raise RuntimeError(f"invalid Windows uv contract: missing={missing}")
+    for key in ("archive_sha256", "binary_sha256"):
+        digest = str(payload[key]).lower()
+        if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
+            raise RuntimeError(f"invalid Windows uv {key} SHA-256")
+    return {key: str(payload[key]) for key in required}
+
+
+def stage_windows_uv(runtime: Path, *, archive_path: str | Path | None = None) -> int:
+    """Place a verified uv.exe in the Windows runtime; end users must not install uv."""
+    contract = windows_uv_contract()
+    if archive_path:
+        archive = Path(archive_path)
+        if not archive.is_file():
+            raise RuntimeError(f"Windows uv archive is missing: {archive}")
+        blob = archive.read_bytes()
+    else:
+        local_archive = os.getenv("LES_WINDOWS_UV_ARCHIVE", "").strip()
+        if local_archive:
+            archive = Path(local_archive)
+            if not archive.is_file():
+                raise RuntimeError(f"LES_WINDOWS_UV_ARCHIVE is missing: {archive}")
+            blob = archive.read_bytes()
+        else:
+            try:
+                with urllib.request.urlopen(contract["archive_url"], timeout=60) as response:
+                    blob = response.read()
+            except Exception as error:  # release builder needs a precise, actionable failure
+                raise RuntimeError(
+                    "could not download bundled Windows uv; set LES_WINDOWS_UV_ARCHIVE to a verified archive"
+                ) from error
+    actual = hashlib.sha256(blob).hexdigest()
+    if actual != contract["archive_sha256"].lower():
+        raise RuntimeError(f"Windows uv archive SHA-256 mismatch: expected {contract['archive_sha256']}, got {actual}")
+    try:
+        with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+            member = next(
+                (name for name in zf.namelist() if name.replace("\\", "/").endswith(f"/{contract['binary_name']}")
+                 or name == contract["binary_name"]),
+                None,
+            )
+            if member is None:
+                raise RuntimeError(f"Windows uv archive does not contain {contract['binary_name']}")
+            binary = zf.read(member)
+    except zipfile.BadZipFile as error:
+        raise RuntimeError("Windows uv archive is not a ZIP") from error
+    if not binary:
+        raise RuntimeError("bundled Windows uv.exe is empty")
+    binary_digest = hashlib.sha256(binary).hexdigest()
+    if binary_digest != contract["binary_sha256"].lower():
+        raise RuntimeError(
+            f"Windows uv.exe SHA-256 mismatch: expected {contract['binary_sha256']}, got {binary_digest}"
+        )
+    target_dir = runtime / "installers" / "windows" / "tools"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / contract["binary_name"]).write_bytes(binary)
+    (target_dir / "uv-contract.json").write_text(json.dumps(contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return 1
+
+
+def windows_python_contract() -> dict[str, str]:
+    payload = json.loads(WINDOWS_PYTHON_CONTRACT_PATH.read_text(encoding="utf-8"))
+    required = (
+        "schema", "version", "installer_url", "installer_sha256", "installer_name", "python_relative_path",
+    )
+    missing = [key for key in required if not str(payload.get(key) or "").strip()]
+    digest = str(payload.get("installer_sha256") or "").lower()
+    if (
+        payload.get("schema") != "les.windows-python.v1"
+        or missing
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+    ):
+        raise RuntimeError(f"invalid Windows Python contract: missing={missing}")
+    return {key: str(payload[key]) for key in required}
+
+
+def stage_windows_python(runtime: Path, *, installer_path: str | Path | None = None) -> int:
+    """Place a verified CPython installer in the Windows runtime for offline first launch."""
+    contract = windows_python_contract()
+    if installer_path:
+        installer = Path(installer_path)
+        if not installer.is_file():
+            raise RuntimeError(f"Windows Python installer is missing: {installer}")
+        blob = installer.read_bytes()
+    else:
+        local_installer = os.getenv("LES_WINDOWS_PYTHON_INSTALLER", "").strip()
+        if local_installer:
+            installer = Path(local_installer)
+            if not installer.is_file():
+                raise RuntimeError(f"LES_WINDOWS_PYTHON_INSTALLER is missing: {installer}")
+            blob = installer.read_bytes()
+        else:
+            try:
+                with urllib.request.urlopen(contract["installer_url"], timeout=120) as response:
+                    blob = response.read()
+            except Exception as error:  # release builder needs a precise, actionable failure
+                raise RuntimeError(
+                    "could not download bundled Windows Python; set LES_WINDOWS_PYTHON_INSTALLER "
+                    "to a verified installer"
+                ) from error
+    actual = hashlib.sha256(blob).hexdigest()
+    if actual != contract["installer_sha256"].lower():
+        raise RuntimeError(
+            f"Windows Python installer SHA-256 mismatch: expected {contract['installer_sha256']}, got {actual}"
+        )
+    target_dir = runtime / "installers" / "windows" / "tools"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    (target_dir / contract["installer_name"]).write_bytes(blob)
+    (target_dir / "python-contract.json").write_text(
+        json.dumps(contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return 1
+
+
 def stage_runtime(
     platform: str | None = None,
     *,
     smeta_baseline_archive: str | Path | None = None,
+    windows_uv_archive: str | Path | None = None,
 ) -> int:
     target_platform = platform or os.sys.platform
     runtime = RESOURCES / "runtime"
@@ -94,6 +221,9 @@ def stage_runtime(
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(baseline, target)
         count += 1
+    if target_platform.startswith("win"):
+        count += stage_windows_uv(runtime, archive_path=windows_uv_archive)
+        count += stage_windows_python(runtime)
     bootstrap = RESOURCES / "bootstrap.sh"
     if target_platform == "darwin":
         shutil.copy2(ROOT / "installers/macos/app/bootstrap.sh", bootstrap)

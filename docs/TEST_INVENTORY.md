@@ -2,8 +2,8 @@
 
 Гейт: `make verify` (офлайн, синтаксис+сбор коллекции). Полная сюита: `make test`.
 На исходном срезе 2026-07-14 полный контролируемый прогон дал `2926 passed, 6 warnings`;
-после clean-install smeta baseline и Windows launcher regression текущая коллекция — **2947 тестов**.
-Это регрессионная коллекция, а не 2947 равноценных release-гейтов.
+актуальный контрольный прогон 2026-07-16 — **3024 collected**. Это регрессионная коллекция,
+а не 3024 равноценных release-гейтов.
 
 Архитектурный разбор и список исторического долга:
 [TEST_ARCHITECTURE_AUDIT_2026-07-14.md](TEST_ARCHITECTURE_AUDIT_2026-07-14.md).
@@ -26,7 +26,7 @@ RAG-ядро имеет отдельный обязательный профил
 |---|---:|---|
 | `tests/test_dataset_integrity.py`, integrity cases in `tests/test_datasets_router.py` | focused + live dataset | Полная связность одного датасета: исходные файлы/fingerprint, MetaDB status, exact Qdrant point ids, named dense+sparse, lexical rows/FTS, PDF page coverage и index contract; repair переочередит только повреждённые документы и не трогает здоровые |
 | `tests/test_vps_patch.py` | focused | Общий для всех совместимых Windows-установок канал VPS-патчей: allowlist, запрет traversal/лишних файлов, base/target SHA, точное содержимое архива и доверенный HTTPS-origin `les.ovc.me/updates/` |
-| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`, `tests/test_software_versions.py`, `tests/test_patch_release.py`; live `tools/windows_{release_smoke,production_deploy}.ps1` | focused + Windows live | Windows/Tauri release contract: persistent state, обязательные uv/Ollama/Docker/Qdrant, version/build contract, bootstrap-status и verified BGE. Изолированный gate доказывает provisioned smeta baseline (≥40 000 норм, ≥1 500 ФСЭМ), настоящий старт resumable ФСНБ-job со слоями/статусом, временный датасет и native RRF. Затем production gate устанавливает тот же EXE в Legion state, при несовместимом legacy-контракте переключает active runtime на новую named dense+sparse коллекцию без удаления старой и требует `N/N` всех текущих тяжёлых PDF (минимум 4), ненулевые фрагменты, `dense + qdrant_sparse → RRF` и удаление только smoke-датасета до публикации |
+| `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`, `tests/test_software_versions.py`, `tests/test_patch_release.py`; live `tools/windows_{release_smoke,production_deploy}.ps1` | focused + Windows live | Windows/Tauri release contract: persistent state, обязательные Python/uv/Ollama/Docker/Qdrant, version/build contract, bootstrap-status и verified BGE. Windows-пакет содержит закреплённые SHA-256-проверенные CPython installer и `uv.exe`; bootstrap проверяет оба и запрещает `uv` скачивать интерпретатор. Winget и официальный installer остаются только recovery-fallback для `uv`; Ollama/Docker ставятся через winget. Изолированный gate доказывает provisioned smeta baseline (≥40 000 норм, ≥1 500 ФСЭМ), настоящий старт resumable ФСНБ-job со слоями/статусом, временный датасет и native RRF. Затем production gate устанавливает тот же EXE в Legion state, при несовместимом legacy-контракте переключает active runtime на новую named dense+sparse коллекцию без удаления старой и требует `N/N` всех текущих тяжёлых PDF (минимум 4), ненулевые фрагменты, `dense + qdrant_sparse → RRF` и удаление только smoke-датасета до публикации |
 | `tests/test_local_inference_benchmark.py` | 8 | офлайн-контракт direct OpenAI benchmark и OptiQ probe: p50/p95, usage/cache normalization, MTP summary, tool/prefix profiles, sampler forwarding и чтение per-request telemetry JSONL; live model-series запускаются отдельно через `tools/local_inference_benchmark.py` + `tools/optiq_mtp_probe_server.py` |
 | `tests/test_answer_render_v16.py` | 26 | render-хелперы Совушки: strip markdown из ячеек, source-chips, evidence-секции, citation/conflict-блоки, citation drawer payload, compact trace включая topic-guided retrieval, `answer_copy_text` (Копировать без trace/тела письма) |
 | `tests/test_sidecar_ops_v16.py` | 50 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state (7 кейсов), lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only (shasum), legacy `.xls` |
@@ -117,6 +117,8 @@ RAG-ядро имеет отдельный обязательный профил
 у каждого chat check отдельный конечный `--chat-timeout` (по умолчанию 45s), поэтому timeout
 даёт наблюдаемый P0/P1 result, а не зависший gate.
 L1 HTTP-смоук базовых функций против живого runtime (:8050/:8051), JSON-артефакт, non-zero на P0.
+`make smoke-basic-release` и все пути `ship`/post-deploy добавляют `--release`, поэтому P1 также
+блокирует выкат.
 Браузерный слой L2/L3 (Playwright + `data-testid`) пока **открыт** — см. план.
 
 Проверяется на L1:
@@ -124,11 +126,8 @@ L1 HTTP-смоук базовых функций против живого runti
 ```text
 runtime/version/health
 scope options
-chat answer or explicit MISSING/BLOCKED
-copy answer rendered
-source chip/citation not fake
-auth/trust boundary
-diagnostics does not hide FAIL
+chat route/version trace: glossary отдельно, project query не glossary
+health/diagnostics do not hide FAIL
 ```
 
 ## Чек-лист перед коммитом версии

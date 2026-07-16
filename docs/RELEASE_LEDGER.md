@@ -7,16 +7,39 @@
 ## Текущее состояние (2026-07-16)
 
 ```
-версия продукта (SemVer):  0.24.18 (dev: индекс виден оператору, 2026-07-16)
-номер сборки:              439     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.439 (внутренняя совместимость обновления)
+версия продукта (SemVer):  0.24.20 (dev: bundled CPython, 2026-07-16)
+номер сборки:              441     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.441 (внутренняя совместимость обновления)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.17 / build 438 (live on Legion, 2026-07-15)
 Windows-выпуск:            0.24.16 / build 427 (VPS patch baseline)
-следующий выпуск:          VPS patch 0.24.18 / build 439 опубликован; установка и приёмка на Legion оператором
+следующий выпуск:          0.24.20 / build 441 — release candidate
 рантайм /api/version:      0.24.17 / build 438; patch helper ready, UI 200
 ```
+
+> 0.24.20 / build 441 — self-contained Python first launch
+>
+> Дата: 2026-07-16
+> Статус: release candidate. Windows staging встраивает официальный CPython `3.13.12` installer,
+> проверяя SHA-256 до включения в payload. Bootstrap повторно проверяет installer, тихо ставит его
+> в persistent state и выполняет `uv sync --python <bundled> --no-python-downloads`; скачивание
+> интерпретатора на машине пользователя запрещено. Добавлены unit-кейсы на stage и tamper-refusal.
+> До статуса released обязательны чистый Legion build, изолированный Windows smoke, production
+> heavy-PDF RRF smoke, сверка SHA и публикация этого же EXE.
+
+> 0.24.19 / build 440 — честный L1 release smoke
+>
+> Дата: 2026-07-16
+> Статус: dev, не задеплоен. `make smoke-basic-release`, `ship`, `ship-full` и post-deploy smoke
+> передают `--release`, поэтому P1 теперь блокирует выкат. L1 различает health `ok/degraded/error`,
+> не скрывает diagnostics `overall=err`, требует route/version trace в чате и не принимает glossary
+> hijack проектного вопроса без scope. Windows-payload теперь включает закреплённый `uv 0.11.29`
+> с SHA-256-проверкой и bootstrap использует его без сети; winget и официальный installer остаются
+> fallback только для отсутствующего/повреждённого bundle. После обоих неуспехов возвращается
+> `uv_install_failed_after_fallback` с логом. Регрессии добавлены в
+> `tests/test_basic_function_smoke.py`, `tests/test_installer_windows.py` и
+> `tests/test_tauri_desktop.py`.
 
 > 0.24.18 / build 439 — оператор видит, что действительно попало в RAG
 >

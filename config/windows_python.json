@@ -1,0 +1,8 @@
+{
+  "schema": "les.windows-python.v1",
+  "version": "3.13.12",
+  "installer_url": "https://www.python.org/ftp/python/3.13.12/python-3.13.12-amd64.exe",
+  "installer_sha256": "96159fcb523ae404b707186a75b4104ee23851e476a5e838e14584cf1e03f981",
+  "installer_name": "python-3.13.12-amd64.exe",
+  "python_relative_path": "python.exe"
+}

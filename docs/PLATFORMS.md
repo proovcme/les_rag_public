@@ -8,7 +8,7 @@ LES should ship as a product family, not as one Mac workstation script.
 |---|---|---|---|---|---|
 | macOS Apple Silicon native | Current reference | launchd | MLX/Core ML | local Qdrant binary | Best local private workstation profile |
 | Linux server | Packaging target | systemd or Docker Compose | OpenAI-compatible local host, Ollama, llama.cpp, vLLM, remote provider | Qdrant Docker/native | Secondary server profile |
-| Windows workstation | **Primary production target (Legion)** | PowerShell + Tauri bootstrap / Docker Desktop for Qdrant | Ollama is required local runtime; OpenAI-compatible provider is explicit opt-in | Qdrant in named Docker volume | Canonical production profile; `uv`, Ollama and Docker are first-launch requirements |
+| Windows workstation | **Primary production target (Legion)** | PowerShell + Tauri bootstrap / Docker Desktop for Qdrant | Ollama is required local runtime; OpenAI-compatible provider is explicit opt-in | Qdrant in named Docker volume | Canonical production profile; CPython and `uv` are bundled, Ollama and Docker remain first-launch requirements |
 | Lite mode | Packaging target | any | remote/OpenRouter/OpenAI-compatible | local or remote Qdrant | No local heavy model requirement |
 
 ## Runtime Abstractions
@@ -49,7 +49,8 @@ Use these names consistently in docs, install scripts and future config files:
 - On `windows-lite` with Ollama, keep `OLLAMA_MODEL` and the provider-neutral
   `LLM_MODEL` identical. Model-owned document/smeta turns follow that configured
   local runtime; embeddings use `bge-m3` at 1024 dimensions.
-- The canonical Windows/Tauri bootstrap requires `uv`, Ollama and Docker Desktop,
+- The canonical Windows/Tauri bootstrap carries SHA-256-verified CPython and `uv`; it still requires
+  Ollama and Docker Desktop,
   installs missing components through winget where possible, and must fail with
   an explicit installation URL instead of opening a UI with unavailable RAG.
 - Legion production additionally requires the native multilingual cross-encoder

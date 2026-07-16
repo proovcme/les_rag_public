@@ -175,8 +175,9 @@ make version-sync
 
 ## 4. First launch on the CLEAN target
 
-The target needs **network** on first launch (uv install, `uv sync`, optional
-model-weight download). After that it can run offline (local provider).
+The target needs **network** on first launch for Python packages, Docker/Ollama
+and model weights. CPython and `uv` are already in the Windows installer. After
+that it can run offline (local provider).
 
 ### macOS
 
@@ -216,9 +217,10 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    - on the first updated launch, moves legacy runtime state into a timestamped
      backup, merges only missing files, and records `migration/last_state_init.json`;
      repeated launch is idempotent,
-   - проверяет обязательные компоненты Windows: `uv`, Ollama и Docker Desktop;
-     отсутствующий `uv` ставит через winget или официальный скрипт, Ollama и Docker Desktop —
-     через winget; если автоматическая установка недоступна, окно ЛЕС показывает точную причину,
+   - проверяет встроенные CPython `3.13.12` и `uv`: оба SHA-256-проверяются, Python тихо
+     устанавливается в persistent state и `uv` не имеет права скачивать интерпретатор. Winget или
+     официальный скрипт для `uv` — только recovery-fallback; Ollama и Docker Desktop ставятся через
+     winget. Если автоматическая установка недоступна, окно ЛЕС показывает точную причину,
      официальный адрес установки и путь к журналу,
    - после установки Docker Desktop ждёт запуска движка; незавершённая настройка WSL 2 или
      необходимость перезагрузки считаются явной ошибкой первого запуска, а не «ограниченным RAG»,

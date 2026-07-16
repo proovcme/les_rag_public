@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-release test-release-critical test-architecture test-focused test-rag-core test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
+.PHONY: version-sync verify test test-release test-release-critical test-architecture test-focused test-rag-core test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
 
 PATCH_RELEASE_ARGS ?=
 
@@ -30,6 +30,7 @@ help:
 	@echo "make smeta-base-source — пересобрать raw/cache → unified parquet → smeta-base без скачивания"
 	@echo "make smeta-base-update — скачать/обновить ГЭСН из ФГИС и прогнать полный smeta-base pipeline; args: SMETA_BASE_UPDATE_ARGS='--all --rate 1.0'"
 	@echo "make smoke-basic  — L1 HTTP-smoke базовых функций против живого runtime (:8050/:8051)"
+	@echo "make smoke-basic-release — тот же L1 smoke, но P1 блокирует выкат"
 	@echo "make public-check — guardrail перед публичным git: tracked data/secrets/license/docs"
 	@echo "make ship-check   — быстрый гейт без деплоя: verify → test-focused → smoke-basic"
 	@echo "make ship-full-check — полный гейт без деплоя: verify → test → smoke-basic"
@@ -83,16 +84,20 @@ smeta-base-update:
 smoke-basic:
 	uv run python tools/basic_function_smoke.py $(SMOKE_ARGS)
 
+# Release/ship путь обязан считать P1 блокером; ручной dev-smoke остаётся неблокирующим для P1.
+smoke-basic-release:
+	uv run python tools/basic_function_smoke.py --release $(SMOKE_ARGS)
+
 public-check:
 	uv run python tools/publication_check.py
 
 # Быстрый prod-гейт без деплоя: для малых итераций внутри версии.
-ship-check: verify test-focused test-rag-core smoke-basic
+ship-check: verify test-focused test-rag-core smoke-basic-release
 	@echo ""
 	@echo "== ship-check ЗЕЛЁНЫЙ: verify → test-focused → test-rag-core → smoke-basic."
 
 # Полный prod-гейт без деплоя: запускать на границе версии/релиза и перед большими изменениями.
-ship-full-check: verify test smoke-basic
+ship-full-check: verify test smoke-basic-release
 	@echo ""
 	@echo "== ship-full-check ЗЕЛЁНЫЙ: verify → test → smoke-basic."
 
@@ -102,7 +107,7 @@ deploy-runtime:
 post-deploy-smoke:
 	@set -e; \
 	for i in $$(seq 1 $(POST_DEPLOY_RETRIES)); do \
-		if uv run python tools/basic_function_smoke.py $(SMOKE_ARGS); then \
+		if uv run python tools/basic_function_smoke.py --release $(SMOKE_ARGS); then \
 			echo ""; \
 			echo "== post-deploy smoke ЗЕЛЁНЫЙ."; \
 			exit 0; \

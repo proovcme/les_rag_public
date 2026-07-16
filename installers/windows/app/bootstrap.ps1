@@ -5,7 +5,7 @@
 # full detail goes to %LOCALAPPDATA%\LES\logs\bootstrap.log.
 #
 # Windows has no Apple MLX → the engine is cloud / ollama / lemonade (configured
-# in the Sovushka GUI). On first launch this installs uv if missing, runs
+# in the Sovushka GUI). On first launch this installs bundled Python/uv, runs
 # `uv sync`, initializes .env/dirs, optionally starts Qdrant, then brings up the
 # proxy + UI via start-light.ps1 and opens the browser.
 $ErrorActionPreference = "Stop"
@@ -128,8 +128,71 @@ $env:LES_ENV_PATH = $State.env_path
 $env:UV_PROJECT_ENVIRONMENT = Join-Path $State.state_root ".venv"
 Log "persistent state: $($State.state_root); migrated=$($State.migrated -join ',')"
 
-# --- 1. Ensure uv -----------------------------------------------------------
+# --- 1. Ensure bundled Python + uv ------------------------------------------
+function Resolve-BundledPython {
+  $contractPath = Join-Path $Root "installers\windows\tools\python-contract.json"
+  if (-not (Test-Path -LiteralPath $contractPath)) {
+    throw "bundled Python contract is missing: $contractPath"
+  }
+  $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
+  $installer = Join-Path $Root ("installers\windows\tools\" + $contract.installer_name)
+  if (-not (Test-Path -LiteralPath $installer)) {
+    throw "bundled Python installer is missing: $installer"
+  }
+  $actual = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+  if (-not $contract.installer_sha256 -or $actual -ne $contract.installer_sha256.ToLowerInvariant()) {
+    throw "bundled Python installer SHA-256 mismatch"
+  }
+
+  $pythonRoot = Join-Path $State.state_root ("embedded-python\" + $contract.version)
+  $python = Join-Path $pythonRoot $contract.python_relative_path
+  if (-not (Test-Path -LiteralPath $python)) {
+    $temporaryRoot = "$pythonRoot.installing"
+    Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
+    Toast "Устанавливаю встроенный Python $($contract.version)…"
+    Write-Status -Phase "python" -State "running" -Message "Устанавливаю встроенный Python $($contract.version)"
+    & $installer /quiet InstallAllUsers=0 TargetDir=$temporaryRoot Include_pip=0 Include_test=0 `
+      Include_launcher=0 PrependPath=0 Shortcuts=0
+    if ($LASTEXITCODE -ne 0) { throw "bundled Python installer failed with exit code $LASTEXITCODE" }
+    $temporaryPython = Join-Path $temporaryRoot $contract.python_relative_path
+    if (-not (Test-Path -LiteralPath $temporaryPython)) {
+      throw "bundled Python installer did not create $temporaryPython"
+    }
+    if (Test-Path -LiteralPath $pythonRoot) {
+      Remove-Item -LiteralPath $pythonRoot -Recurse -Force
+    }
+    Move-Item -LiteralPath $temporaryRoot -Destination $pythonRoot
+  }
+  $actualVersion = (& $python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))").Trim()
+  if ($LASTEXITCODE -ne 0 -or $actualVersion -ne [string]$contract.version) {
+    throw "bundled Python version mismatch: expected $($contract.version), got $actualVersion"
+  }
+  return $python
+}
+
+try {
+  $BundledPython = Resolve-BundledPython
+  Log "bundled Python: $BundledPython"
+} catch {
+  Fail "не удалось подготовить встроенный Python: $($_.Exception.Message)" "bundled_python_unavailable"
+}
+
 function Resolve-Uv {
+  $bundled = Join-Path $Root "installers\windows\tools\uv.exe"
+  $contractPath = Join-Path $Root "installers\windows\tools\uv-contract.json"
+  if ((Test-Path -LiteralPath $bundled) -and (Test-Path -LiteralPath $contractPath)) {
+    try {
+      $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
+      $actual = (Get-FileHash -LiteralPath $bundled -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($contract.binary_sha256 -and $actual -eq $contract.binary_sha256.ToLowerInvariant()) {
+        return $bundled
+      }
+      Log "WARN: bundled uv.exe SHA-256 mismatch; refusing embedded binary"
+    } catch {
+      Log "WARN: bundled uv.exe contract unreadable: $($_.Exception.Message)"
+    }
+  }
   $cmd = Get-Command uv -ErrorAction SilentlyContinue
   if ($cmd) { return $cmd.Source }
   foreach ($p in @("$env:USERPROFILE\.local\bin\uv.exe", "$env:USERPROFILE\.cargo\bin\uv.exe")) {
@@ -161,6 +224,39 @@ function Add-ExecutableDirectory([string]$Executable) {
   }
 }
 
+function Install-Uv {
+  $winget = Get-Command winget -ErrorAction SilentlyContinue
+  if ($winget) {
+    Log "installing uv via winget"
+    try {
+      & winget install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements | Out-Null
+      if ($LASTEXITCODE -eq 0) {
+        Refresh-ProcessPath
+      } else {
+        Log "WARN: winget uv install failed with exit code $LASTEXITCODE; trying official installer"
+      }
+    } catch {
+      Log "WARN: winget uv install exception: $($_.Exception.Message); trying official installer"
+    }
+    $installed = Resolve-Uv
+    if ($installed) { return $installed }
+  } else {
+    Log "winget unavailable; trying official uv installer"
+  }
+
+  Log "installing uv via official installer fallback"
+  try {
+    & powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      Log "WARN: official uv installer failed with exit code $LASTEXITCODE"
+    }
+  } catch {
+    Log "WARN: official uv installer exception: $($_.Exception.Message)"
+  }
+  Refresh-ProcessPath
+  return Resolve-Uv
+}
+
 function Install-WingetRequirement(
   [string]$PackageId,
   [string]$DisplayName,
@@ -185,16 +281,10 @@ $Uv = Resolve-Uv
 if (-not $Uv) {
   Toast "Устанавливаю uv (первый запуск)…"
   Log "installing uv"
-  try {
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-      & winget install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements | Out-Null
-    } else {
-      powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Null
-    }
-  } catch { }
-  $Uv = Resolve-Uv
+  $Uv = Install-Uv
   if (-not $Uv) {
-    Fail "не удалось установить uv" "uv_install_failed" "https://docs.astral.sh/uv/getting-started/installation/"
+    Fail "не удалось установить uv через winget и официальный fallback; проверьте bootstrap.log" `
+      "uv_install_failed_after_fallback" "https://docs.astral.sh/uv/getting-started/installation/"
   }
 }
 Log "uv: $Uv"
@@ -241,11 +331,11 @@ Log "docker: $Docker"
 Toast "Готовлю окружение…"
 Write-Status -Phase "python" -State "running" -Message "Синхронизирую Python-окружение через uv"
 if ($env:LES_TAURI_SHELL -eq "1") {
-  Log "uv sync (Tauri owns desktop shell)"
-  & $Uv sync --extra windows-reranker
+  Log "uv sync with bundled Python (Tauri owns desktop shell)"
+  & $Uv sync --python $BundledPython --no-python-downloads --extra windows-reranker
 } else {
-  Log "uv sync --extra desktop (legacy fallback)"
-  & $Uv sync --extra desktop
+  Log "uv sync with bundled Python --extra desktop (legacy fallback)"
+  & $Uv sync --python $BundledPython --no-python-downloads --extra desktop
 }
 if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
 

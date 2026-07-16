@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import zipfile
 from pathlib import Path
+
+import pytest
 
 from tools import build_release_artifacts, build_tauri_app
 from tools import smeta_release_baseline
@@ -61,7 +65,8 @@ def test_tauri_bootstrap_does_not_install_or_launch_pywebview():
     assert "lesctl start --include-ui (Tauri shell)" in mac
     assert 'LES_TAURI_SHELL -eq "1"' in windows
     assert '$BootstrapPath.StartsWith("\\\\?\\")' in windows
-    assert "uv sync (Tauri owns desktop shell)" in windows
+    assert "uv sync with bundled Python (Tauri owns desktop shell)" in windows
+    assert "--no-python-downloads --extra windows-reranker" in windows
     assert "start-light (Tauri shell)" in windows
 
 
@@ -88,6 +93,8 @@ def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
         "iter_files",
         lambda: [mac_bootstrap, windows_bootstrap],
     )
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
 
     assert build_tauri_app.stage_runtime("win32") == 1
     assert not (resources / "bootstrap.sh").exists()
@@ -107,11 +114,92 @@ def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypat
     monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
     monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
     monkeypatch.setattr(smeta_release_baseline, "verify_archive", lambda path: {"ok": True})
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
 
     assert build_tauri_app.stage_runtime("win32", smeta_baseline_archive=archive) == 2
     assert (
         resources / "runtime/installers/windows/baseline/LES-smeta-baseline.zip"
     ).read_bytes() == b"verified-baseline"
+
+
+def test_windows_tauri_stage_bundles_verified_uv(tmp_path, monkeypatch):
+    archive = tmp_path / "uv.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("uv.exe", b"verified-uv")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    contract = tmp_path / "windows_uv.json"
+    contract.write_text(json.dumps({
+        "schema": "les.windows-uv.v1",
+        "version": "test",
+        "archive_url": "https://example.test/uv.zip",
+        "archive_sha256": digest,
+        "binary_sha256": hashlib.sha256(b"verified-uv").hexdigest(),
+        "binary_name": "uv.exe",
+    }), encoding="utf-8")
+    resources = tmp_path / "resources"
+    monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
+    monkeypatch.setattr(build_tauri_app, "WINDOWS_UV_CONTRACT_PATH", contract)
+    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
+    monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
+
+    assert build_tauri_app.stage_runtime("win32", windows_uv_archive=archive) == 2
+    assert (resources / "runtime/installers/windows/tools/uv.exe").read_bytes() == b"verified-uv"
+
+
+def test_windows_tauri_stage_rejects_tampered_uv_binary(tmp_path, monkeypatch):
+    archive = tmp_path / "uv.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("uv.exe", b"tampered-uv")
+    contract = tmp_path / "windows_uv.json"
+    contract.write_text(json.dumps({
+        "schema": "les.windows-uv.v1",
+        "version": "test",
+        "archive_url": "https://example.test/uv.zip",
+        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "binary_sha256": hashlib.sha256(b"expected-uv").hexdigest(),
+        "binary_name": "uv.exe",
+    }), encoding="utf-8")
+    monkeypatch.setattr(build_tauri_app, "WINDOWS_UV_CONTRACT_PATH", contract)
+
+    with pytest.raises(RuntimeError, match="uv.exe SHA-256 mismatch"):
+        build_tauri_app.stage_windows_uv(tmp_path / "runtime", archive_path=archive)
+
+
+def test_windows_tauri_stage_bundles_verified_python(tmp_path, monkeypatch):
+    installer = tmp_path / "python.exe"
+    installer.write_bytes(b"verified-python-installer")
+    contract = tmp_path / "windows_python.json"
+    contract.write_text(json.dumps({
+        "schema": "les.windows-python.v1",
+        "version": "test",
+        "installer_url": "https://example.test/python.exe",
+        "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
+        "installer_name": "python-installer.exe",
+        "python_relative_path": "python.exe",
+    }), encoding="utf-8")
+    monkeypatch.setattr(build_tauri_app, "WINDOWS_PYTHON_CONTRACT_PATH", contract)
+
+    assert build_tauri_app.stage_windows_python(tmp_path / "runtime", installer_path=installer) == 1
+    assert (tmp_path / "runtime/installers/windows/tools/python-installer.exe").read_bytes() == installer.read_bytes()
+
+
+def test_windows_tauri_stage_rejects_tampered_python_installer(tmp_path, monkeypatch):
+    installer = tmp_path / "python.exe"
+    installer.write_bytes(b"tampered-python-installer")
+    contract = tmp_path / "windows_python.json"
+    contract.write_text(json.dumps({
+        "schema": "les.windows-python.v1",
+        "version": "test",
+        "installer_url": "https://example.test/python.exe",
+        "installer_sha256": hashlib.sha256(b"expected-python-installer").hexdigest(),
+        "installer_name": "python-installer.exe",
+        "python_relative_path": "python.exe",
+    }), encoding="utf-8")
+    monkeypatch.setattr(build_tauri_app, "WINDOWS_PYTHON_CONTRACT_PATH", contract)
+
+    with pytest.raises(RuntimeError, match="Python installer SHA-256 mismatch"):
+        build_tauri_app.stage_windows_python(tmp_path / "runtime", installer_path=installer)
 
 
 def test_release_stage_excludes_agent_and_runtime_temporary_files():
