@@ -644,7 +644,9 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 > один только `uv.exe` описывает 0.24.19 и заменена этим дополнением.
 > **Поправка 0.24.22 / build 443:** Windows `uv sync` использует системное хранилище сертификатов,
 > bounded retry/timeout, `--locked`, удаляет только недосозданную `.venv` и сохраняет точный
-> sanitized stderr в bootstrap log/status вместо общего «uv sync не удался».
+> sanitized stderr в bootstrap log/status вместо общего «uv sync не удался». Установка с
+> повышением не оставляет state административному токену: SID интерактивного пользователя получает
+> `Modify` на `%LOCALAPPDATA%\LES` и восстановленный сметный baseline.
 
 ## 6. Прочие модули (отдельные продукты/контуры)
 

@@ -389,6 +389,8 @@ if (-not (Test-Path -LiteralPath $SmetaBaseline)) {
   if ($LASTEXITCODE -ne 0) {
     Warn "сметная база недоступна: $($baselineResult -join ' '); остальные модули запускаются"
   } else {
+    Grant-LesWindowsStateAccess -Path (Join-Path $StateRoot "data\smeta_base") -Recurse
+    Grant-LesWindowsStateAccess -Path (Join-Path $StateRoot "data\gesn_base") -Recurse
     Log "smeta baseline: $($baselineResult -join ' ')"
   }
 }

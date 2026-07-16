@@ -34,6 +34,10 @@ Windows-выпуск:            0.24.21 / build 442 (GitHub release)
 > Первый старт Windows больше не скрывает причину провала зависимостей: `uv sync --locked`
 > использует системные сертификаты Windows, bounded retry/timeout, очищает только сломанную
 > недосозданную `.venv`, а sanitized stderr пишет в bootstrap log и machine-readable status.
+> Устранён второй Windows-провал ЛСР: baseline, созданный административным provisioning, имел
+> protected ACL только для `SYSTEM/Administrators`, а обычный Tauri/uvicorn не мог читать SQLite.
+> Bootstrap теперь явно выдаёт SID интерактивного пользователя `Modify` на persistent state и
+> сметные файлы; SQLite остаётся локальным read-only каталогом без отдельного SQL-сервера.
 
 > 0.24.21 / build 442 — управление текущим диалогом без потери позиции чтения
 >

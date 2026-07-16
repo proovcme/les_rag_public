@@ -14,6 +14,38 @@ function Get-LesWindowsStateRoot {
   return [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "LES"))
 }
 
+function Grant-LesWindowsStateAccess {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [switch]$Recurse
+  )
+
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+  $targets = @((Get-Item -LiteralPath $Path -Force))
+  if ($Recurse) {
+    $targets += @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction Stop)
+  }
+  foreach ($item in $targets) {
+    $acl = Get-Acl -LiteralPath $item.FullName
+    $inheritance = if ($item.PSIsContainer) {
+      [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
+        [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
+    } else {
+      [System.Security.AccessControl.InheritanceFlags]::None
+    }
+    $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+      $sid,
+      [System.Security.AccessControl.FileSystemRights]::Modify,
+      $inheritance,
+      [System.Security.AccessControl.PropagationFlags]::None,
+      [System.Security.AccessControl.AccessControlType]::Allow
+    )
+    $acl.SetAccessRule($rule)
+    Set-Acl -LiteralPath $item.FullName -AclObject $acl
+  }
+}
+
 function New-LesDirectoryJunction([string]$LinkPath, [string]$TargetPath) {
   $quotedLink = '"' + $LinkPath + '"'
   $quotedTarget = '"' + $TargetPath + '"'
@@ -41,6 +73,10 @@ function Initialize-LesWindowsState {
   $runtime = [System.IO.Path]::GetFullPath($RuntimeRoot)
   $state = if ($StateRoot) { [System.IO.Path]::GetFullPath($StateRoot) } else { Get-LesWindowsStateRoot }
   New-Item -ItemType Directory -Force -Path $state | Out-Null
+  # An administrator may provision the package, while Tauri and uvicorn run
+  # under the ordinary interactive token. State must remain writable by that
+  # same user even when inherited installer ACLs are protected.
+  Grant-LesWindowsStateAccess -Path $state
 
   $migrationRoot = Join-Path $state "migration"
   New-Item -ItemType Directory -Force -Path $migrationRoot | Out-Null

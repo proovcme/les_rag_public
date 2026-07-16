@@ -180,7 +180,10 @@ and model weights. CPython and `uv` are already in the Windows installer. Window
 package sync uses the system certificate store for corporate TLS roots, retries
 transient downloads and writes the exact sanitized `uv` failure to
 `%LOCALAPPDATA%\LES\logs\bootstrap.log`. An incomplete `.venv` is removed before
-retry. After a successful first launch it can run offline (local provider).
+retry. The bootstrap also grants the installing interactive user `Modify` on
+the persistent state and repaired smeta baseline, so an administrator-assisted
+install cannot leave ordinary Tauri/uvicorn without access. After a successful
+first launch it can run offline (local provider).
 
 ### macOS
 

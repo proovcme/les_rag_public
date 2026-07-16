@@ -133,6 +133,11 @@ def test_windows_tauri_uses_update_safe_persistent_state():
     assert 'state_root = if ($StateRoot)' in start
     assert '@(".codex_tmp", "tmp")' in state
     assert "Refusing to remove temporary reparse point" in state
+    assert "function Grant-LesWindowsStateAccess" in state
+    assert "WindowsIdentity]::GetCurrent().User" in state
+    assert "FileSystemRights]::Modify" in state
+    assert 'Grant-LesWindowsStateAccess -Path $state' in state
+    assert 'Grant-LesWindowsStateAccess -Path (Join-Path $StateRoot "data\\smeta_base") -Recurse' in bootstrap
 
 
 def test_windows_qdrant_new_install_uses_named_volume():
