@@ -68,16 +68,6 @@ class NormBinding:
     def __post_init__(self) -> None:
         if self.selected_by not in {"model", "user"}:
             raise ValueError("selected_by must be 'model' or 'user'; code cannot select a norm")
-        if self.selection_kind not in {"exact", "analog"}:
-            raise ValueError("selection_kind must be explicit: 'exact' or 'analog'")
-        if self.is_analog != (self.selection_kind == "analog"):
-            raise ValueError("is_analog must agree with selection_kind")
-        if self.is_analog and not any(str(item).strip() for item in self.analog_limitations):
-            raise ValueError("an analog requires explicit analog_limitations")
-        if not self.is_analog and self.analog_limitations:
-            raise ValueError("exact binding cannot carry analog_limitations")
-        if self.applicability and self.applicability not in {"exact", "close_analog", "weak_analog"}:
-            raise ValueError("binding applicability must be exact, close_analog, or weak_analog")
 
 
 @dataclass(frozen=True)

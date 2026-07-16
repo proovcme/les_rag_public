@@ -231,6 +231,30 @@ def _smeta_model_runtime(env_name: str) -> LlmRuntime:
                     runtime.supports_validation,
                 )
         return runtime
+    if provider == "ollama":
+        base_url = os.getenv(
+            "OLLAMA_BASE_URL",
+            os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+        ).strip()
+        document_model = (
+            os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
+            if env_name == "LES_SMETA_DOCUMENT_PROVIDER"
+            else ""
+        )
+        model = (
+            document_model
+            or os.getenv("OLLAMA_MODEL", "").strip()
+            or os.getenv("LLM_MODEL", "").strip()
+            or DEFAULT_LOCAL_SMETA_TOOL_MODEL
+        )
+        return LlmRuntime(
+            "ollama",
+            base_url,
+            _join_openai_path(base_url, "/chat/completions"),
+            model,
+            os.getenv("OLLAMA_API_KEY", "").strip(),
+            False,
+        )
     runtime = _llm_runtime()
     if env_name == "LES_SMETA_DOCUMENT_PROVIDER":
         document_model = os.getenv("LES_SMETA_DOCUMENT_MODEL", "").strip()
@@ -329,6 +353,25 @@ def _smeta_document_timeout(runtime: LlmRuntime) -> float:
     )
 
 
+def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Translate the shared conversation to Ollama's native message contract."""
+    native: list[dict[str, Any]] = []
+    for source in messages:
+        role = str(source.get("role") or "")
+        message: dict[str, Any] = {
+            "role": role,
+            "content": source.get("content") or "",
+        }
+        if role == "assistant" and source.get("tool_calls"):
+            message["tool_calls"] = source["tool_calls"]
+        if role == "tool":
+            tool_name = str(source.get("tool_name") or source.get("name") or "").strip()
+            if tool_name:
+                message["tool_name"] = tool_name
+        native.append(message)
+    return native
+
+
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
@@ -343,7 +386,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
         # Gemma and Qwen, while keeping the same messages/tools schema.
         body = {
             "model": runtime.model,
-            "messages": messages,
+            "messages": _ollama_native_messages(messages),
             "tools": tools,
             "stream": False,
             "think": False,

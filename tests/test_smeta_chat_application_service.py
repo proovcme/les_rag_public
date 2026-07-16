@@ -349,7 +349,21 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     monkeypatch.setattr(adapter.httpx, "Client", Client)
 
     result = adapter._smeta_document_exchange(
-        [{"role": "user", "content": "Собери ЛСР"}],
+        [
+            {"role": "user", "content": "Собери ЛСР"},
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [{"id": "call-1", "function": {"name": "search_norms_batch", "arguments": {}}}],
+                "model": "transport-metadata-is-not-native",
+            },
+            {
+                "role": "tool",
+                "tool_call_id": "call-1",
+                "name": "search_norms_batch",
+                "content": '{"ok":true}',
+            },
+        ],
         [{"type": "function", "function": {"name": "search_norms_batch"}}],
     )
 
@@ -359,6 +373,13 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "_les_fallback_from" not in result
     assert "options" in bodies[0]
     assert bodies[0]["options"]["num_predict"] == 3200
+    assert bodies[0]["messages"][-1] == {
+        "role": "tool",
+        "content": '{"ok":true}',
+        "tool_name": "search_norms_batch",
+    }
+    assert "model" not in bodies[0]["messages"][1]
+    assert bodies[0]["messages"][1]["tool_calls"][0]["id"] == "call-1"
     assert urls == ["http://127.0.0.1:11434/api/chat"]
 
 

@@ -120,43 +120,23 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     submit = tools[-1]["function"]["parameters"]["properties"]["rows"]["items"]
     assert "quantity_multiplier" not in submit["properties"]
     assert submit["properties"]["decision"]["enum"] == ["bind", "covered_by", "unbound"]
-    technology = submit["properties"]["technology_check"]
-    assert set(technology["required"]) == {
-        "matched_operations", "missing_operations", "extra_operations", "foreign_resources",
-        "overlaps_with_work_ids", "overlap_resolution", "conditions_checked",
-        "unresolved_conditions", "conclusion",
-    }
+    assert submit["required"] == ["work_id", "decision", "reason"]
     assert "technology_check" in submit["allOf"][0]["then"]["required"]
+    assert "required" in submit["properties"]["technology_check"]
     assert "unbound_evidence" in submit["properties"]
-    assert "unbound_evidence" in submit["allOf"][2]["then"]["required"]
-    action = submit["properties"]["resource_actions"]["items"]
-    assert "basis_ref" in action["required"]
 
 
-def test_bind_submission_requires_analog_limits_resource_basis_and_technology_evidence():
-    from proxy.smeta_core.document_workflow import _bind_submission_errors
+def test_mapping_transport_does_not_rewrite_model_decision():
+    from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
 
-    incomplete = _bind_submission_errors({
-        "selection_kind": "analog",
-        "applicability": "close_analog",
-        "analog_limitations": [],
-        "technology_check": {"conclusion": "applicable"},
-        "resource_actions": [{"action": "exclude", "reason": "не нужен"}],
-        "reason": "похожая работа",
-    })
-    assert "analog requires explicit analog_limitations" in incomplete
-    assert "resource_actions[0].basis_ref is required" in incomplete
-    assert "technology_check.matched_operations is required" in incomplete
-
-    complete = _bind_submission_errors({
+    decision = {
         "selection_kind": "exact",
-        "applicability": "exact",
-        "analog_limitations": [],
-        "technology_check": _technology_check(),
-        "resource_actions": [],
-        "reason": "состав работ и измеритель совпадают",
-    })
-    assert complete == []
+        "applicability": "close_analog",
+        "analog_limitations": ["материал заменить"],
+        "resource_actions": [{"action": "replace", "basis_ref": "card:material"}],
+    }
+
+    assert _normalize_mapping_row_transport(decision) == decision
 
 
 def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation(monkeypatch):
@@ -208,7 +188,7 @@ def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation(monkeypa
     )
 
     assert [len(item["payload"]["work_items"]) for item in captured] == [50, 50]
-    assert captured[0]["payload"]["all_source_rows_context"] == []
+    assert "all_source_rows_context" not in captured[0]["payload"]
     assert captured[0]["payload"]["user_request"] == "Собери ЛСР по всем строкам"
     assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
     assert len(result["selections"]) == 50
@@ -319,8 +299,44 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
     assert result["query_trace"][0]["phase"] == "batch_search"
     assert result["agent_trace"]["turns"] == 3
     assert tool_sets[0] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
-    assert tool_sets[1] == ["search_norms_batch", "read_norms_batch"]
+    assert tool_sets[1] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
     assert tool_sets[2] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
+
+
+def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [
+            {"norm_code": f"ГЭСН01-01-001-{index:02d}", "title": f"Кандидат {index}"}
+            for index in range(1, 9)
+        ]}
+        for query in queries
+    })
+    turns = iter([
+        [_native_call(
+            "search",
+            "search_norms_batch",
+            items=[{"work_id": "w1", "queries": ["монтаж элемента"], "limit": 2}],
+            page="2",
+        )],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "unbound", "reason": "решение модели",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Монтаж элемента", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=6,
+        max_turns=2,
+    )
+
+    search_result = result["model_trace"][0]["tool_results"][0]["result"]["rows"][0]
+    assert search_result["page"] == 2
+    assert [card["norm_code"] for card in search_result["candidates"]] == [
+        "ГЭСН01-01-001-05", "ГЭСН01-01-001-06",
+    ]
 
 
 def test_batch_agent_repairs_gemma_nested_work_id_without_changing_choice(monkeypatch):
@@ -472,31 +488,6 @@ def test_norm_card_resources_are_model_opt_in_without_losing_internal_card():
     assert card["resources"][1]["name"] == "Кабель"
 
 
-def test_exact_mapping_transport_defaults_only_semantically_empty_limitations():
-    from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
-
-    exact = _normalize_mapping_row_transport({"selection_kind": "exact", "norm_code": "ГЭСН01"})
-    analog = _normalize_mapping_row_transport({"selection_kind": "analog", "norm_code": "ГЭСН02"})
-
-    assert exact["analog_limitations"] == []
-    assert "analog_limitations" not in analog
-
-
-def test_mapping_transport_uses_models_explicit_analog_and_row_reason():
-    from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
-
-    normalized = _normalize_mapping_row_transport({
-        "selection_kind": "exact",
-        "applicability": "close_analog",
-        "analog_limitations": ["материал заменить"],
-        "reason": "состав работ совпадает, материал заменить",
-        "resource_actions": [{"action": "replace", "basis_ref": "card:material"}],
-    })
-
-    assert normalized["selection_kind"] == "analog"
-    assert normalized["resource_actions"][0]["reason"] == normalized["reason"]
-
-
 def test_tool_array_transport_unwraps_qwen_double_serialization():
     from proxy.smeta_core.document_workflow import _tool_arguments, _tool_array_argument, _tool_bool
 
@@ -535,7 +526,7 @@ def test_tool_array_transport_closes_only_missing_trailing_array_delimiter():
     assert _tool_array_argument({"items": '[{"work_id":"w1"}] garbage'}, "items") == []
 
 
-def test_batch_agent_rejects_unopened_norm_without_selecting_for_model(monkeypatch):
+def test_batch_agent_preserves_unopened_model_norm_as_row_level_provenance_blocker(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
@@ -563,13 +554,13 @@ def test_batch_agent_rejects_unopened_norm_without_selecting_for_model(monkeypat
         max_turns=3,
     )
 
-    assert result["selections"]["w1"]["norm_code"] == ""
+    assert result["selections"]["w1"]["norm_code"] == "ГЭСН01-01-999-99"
+    assert result["selections"]["w1"]["precalculation_blockers"][0]["code"] == "norm_card_not_opened"
     first_result = result["model_trace"][0]["tool_results"][0]["result"]
-    assert first_result["ok"] is False
-    assert "opened by the model" in first_result["errors"][0]["error"]
+    assert first_result["ok"] is True
 
 
-def test_batch_agent_rejects_unbound_until_search_evidence_is_real(monkeypatch):
+def test_batch_agent_preserves_models_unbound_evidence_without_professional_gate(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
@@ -600,13 +591,11 @@ def test_batch_agent_rejects_unbound_until_search_evidence_is_real(monkeypatch):
     )
 
     first_submit = result["model_trace"][1]["tool_results"][0]["result"]
-    assert "two distinct searches" in first_submit["errors"][0]["error"]
-    assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == [
-        "буквальный поиск", "нормативная формулировка",
-    ]
+    assert first_submit["ok"] is True
+    assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == ["буквальный поиск"]
 
 
-def test_batch_agent_returns_unit_mismatch_to_model_before_calculation(monkeypatch):
+def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     bad_code = "ГЭСН01-01-001-01"
@@ -655,12 +644,12 @@ def test_batch_agent_returns_unit_mismatch_to_model_before_calculation(monkeypat
         max_turns=5,
     )
 
-    rejected = result["model_trace"][2]["tool_results"][0]["result"]
-    assert "unit mismatch before calculation" in rejected["errors"][0]["error"]
-    assert result["selections"]["w1"]["norm_code"] == good_code
+    submitted = result["model_trace"][2]["tool_results"][0]["result"]
+    assert submitted["ok"] is True
+    assert result["selections"]["w1"]["norm_code"] == bad_code
 
 
-def test_batch_agent_requires_model_to_read_exact_submitted_norm(monkeypatch):
+def test_batch_agent_does_not_force_extra_read_after_model_submits_norm(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     selected_code = "ГЭСН01-01-001-01"
@@ -706,10 +695,11 @@ def test_batch_agent_requires_model_to_read_exact_submitted_norm(monkeypatch):
 
     assert result["selections"]["w1"]["norm_code"] == selected_code
     first = result["model_trace"][0]["tool_results"][0]["result"]
-    assert "opened by the model" in first["errors"][0]["error"]
+    assert first["ok"] is True
+    assert result["selections"]["w1"]["precalculation_blockers"][0]["code"] == "norm_card_not_opened"
 
 
-def test_batch_agent_keeps_valid_rows_while_model_repairs_only_rejected_row(monkeypatch):
+def test_batch_agent_preserves_each_model_row_without_rewriting_it(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
@@ -758,10 +748,50 @@ def test_batch_agent_keeps_valid_rows_while_model_repairs_only_rejected_row(monk
     )
 
     assert result["selections"]["w1"]["norm_code"] == "ГЭСН01-01-001-01"
-    assert result["selections"]["w2"]["norm_code"] == ""
-    retry = result["model_trace"][2]["tool_results"][0]["result"]
-    assert retry["accepted_work_ids"] == ["w1"]
-    assert retry["remaining_work_ids"] == ["w2"]
+    assert result["selections"]["w2"]["norm_code"] == "ГЭСН01-01-999-99"
+    submitted = result["model_trace"][2]["tool_results"][0]["result"]
+    assert submitted == {"ok": True, "rows": 2}
+
+
+def test_batch_agent_accepts_clean_incremental_row_submissions(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[
+            {"work_id": "w1", "queries": ["работа 1", "работа 1 ФСНБ"]},
+            {"work_id": "w2", "queries": ["работа 2", "работа 2 ФСНБ"]},
+        ])],
+        [_native_call("submit1", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "unbound", "reason": "нет точной нормы",
+            "unbound_evidence": _unbound_evidence(queries=["работа 1", "работа 1 ФСНБ"]),
+        }])],
+        [_native_call("submit2", "submit_lsr_mapping", rows=[{
+            "work_id": "w2", "decision": "unbound", "reason": "нет точной нормы",
+            "unbound_evidence": _unbound_evidence(queries=["работа 2", "работа 2 ФСНБ"]),
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [
+            {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+            {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+        ],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=3,
+        max_turns=3,
+    )
+
+    assert list(result["selections"]) == ["w1", "w2"]
+    first_submit = result["model_trace"][1]["tool_results"][0]["result"]
+    assert first_submit == {
+        "ok": True,
+        "complete": False,
+        "accepted_work_ids": ["w1"],
+        "remaining_work_ids": ["w2"],
+    }
 
 
 def test_batch_agent_has_configurable_transport_turn_budget():
@@ -772,7 +802,7 @@ def test_batch_agent_has_configurable_transport_turn_budget():
     def exchange(_messages, _tools):
         nonlocal calls
         calls += 1
-        return {"tool_calls": [_native_call(f"unknown-{calls}", "unknown_tool")]}
+        return {"tool_calls": [_native_call(f"unknown-{calls}", "unknown_tool", sequence=calls)]}
 
     with pytest.raises(RuntimeError, match="within 2 model turns"):
         workflow._run_native_norm_agent(
@@ -782,6 +812,54 @@ def test_batch_agent_has_configurable_transport_turn_budget():
             max_turns=2,
         )
     assert calls == 2
+
+
+def test_batch_agent_stops_on_identical_deterministic_tool_call():
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = 0
+
+    def exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        return {"tool_calls": [_native_call(
+            f"search-{calls}",
+            "search_norms_batch",
+            items=[{"work_id": "w1", "queries": ["тот же запрос"], "page": 1}],
+        )]}
+
+    with pytest.raises(RuntimeError, match="repeated the same deterministic tool call"):
+        workflow._run_native_norm_agent(
+            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+            exchange,
+            candidate_limit=5,
+        )
+
+    assert calls == 2
+
+
+def test_batch_agent_does_not_coerce_model_after_prose(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    calls = 0
+
+    def exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        return {"content": "Поиск завершён, точной нормы нет.", "_les_done_reason": "stop"}
+
+    with pytest.raises(RuntimeError, match="model_text=Поиск завершён, точной нормы нет"):
+        workflow._run_native_norm_agent(
+            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+            exchange,
+            candidate_limit=5,
+            max_turns=2,
+        )
+
+    assert calls == 1
 
 
 def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
@@ -797,6 +875,9 @@ def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
     def exchange(_messages, _tools):
         nonlocal calls
         calls += 1
+        assert {str((tool.get("function") or {}).get("name") or "") for tool in _tools} == {
+            "search_norms_batch", "read_norms_batch", "submit_lsr_mapping",
+        }
         if calls == 1:
             return {"tool_calls": [_native_call(
                 "search", "search_norms_batch", items=[{
@@ -824,7 +905,7 @@ def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
     assert result["selections"]["w1"]["norm_code"] == ""
 
 
-def test_batch_agent_stops_after_four_invalid_mapping_corrections():
+def test_batch_agent_stops_repeated_empty_transport_submission_immediately():
     from proxy.smeta_core import document_workflow as workflow
 
     calls = 0
@@ -835,17 +916,17 @@ def test_batch_agent_stops_after_four_invalid_mapping_corrections():
         return {"tool_calls": [_native_call(
             f"submit-{calls}",
             "submit_lsr_mapping",
-            rows=[{"work_id": "w1", "decision": "unbound", "reason": ""}],
+            rows=[],
         )]}
 
-    with pytest.raises(RuntimeError, match="after 4 correction attempts"):
+    with pytest.raises(RuntimeError, match="repeated the same deterministic tool call"):
         workflow._run_batch_norm_agent(
             [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
             exchange,
             candidate_limit=5,
         )
 
-    assert calls == 4
+    assert calls == 2
 
 
 def test_batch_agent_fails_closed_when_model_returns_no_tools():

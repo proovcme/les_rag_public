@@ -146,6 +146,19 @@ def test_smeta_document_runtime_honors_dedicated_ollama_model(monkeypatch):
     assert runtime.model == "qwen3.5:9b"
 
 
+def test_smeta_document_explicit_ollama_overrides_global_provider(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_PROVIDER", "ollama")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MODEL", "gemma4:12b")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+
+    assert runtime.provider == "ollama"
+    assert runtime.model == "gemma4:12b"
+    assert runtime.base_url == "http://127.0.0.1:11434"
+
+
 def test_smeta_document_runtime_uses_configured_cloud_only_with_consent(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://openai.api.proxyapi.ru/v1")

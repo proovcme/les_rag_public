@@ -174,13 +174,21 @@ def _coverage_binding(row: dict[str, Any], work_id: str, selected_by: str) -> Co
     covered_by = str(row.get("covered_by_work_id") or "").strip()
     if not covered_by:
         return None
-    return CoverageBinding(
-        work_id=work_id,
-        covered_by_work_id=covered_by,
-        selected_by=str(row.get("coverage_selected_by") or selected_by),
-        reason=str(row.get("coverage_reason") or ""),
-        source_refs=tuple(str(ref) for ref in (row.get("source_refs") or ()) if str(ref)),
-    )
+    try:
+        return CoverageBinding(
+            work_id=work_id,
+            covered_by_work_id=covered_by,
+            selected_by=str(row.get("coverage_selected_by") or selected_by),
+            reason=str(row.get("coverage_reason") or ""),
+            source_refs=tuple(str(ref) for ref in (row.get("source_refs") or ()) if str(ref)),
+        )
+    except ValueError as error:
+        row.setdefault("precalculation_blockers", []).append({
+            "code": "coverage_binding_contract_rejected",
+            "work_id": work_id,
+            "reason": str(error),
+        })
+        return None
 
 
 def run_smeta_workflow(question: str, complete, *, max_steps: int = 16) -> dict[str, Any]:
@@ -241,7 +249,7 @@ def calculate_visible_rows(
                     work_id=work_id,
                     norm_code=code,
                     selected_by=selected_by,
-                    selection_kind=str(row.get("selection_kind") or "exact"),
+                    selection_kind=str(row.get("selection_kind") or ""),
                     is_analog=bool(row.get("is_analog", False)),
                     reason=str(row.get("norm_reason") or row.get("reason") or "явный шифр в видимой строке"),
                     source_refs=(source_ref,) if source_ref else (),
@@ -333,7 +341,7 @@ def calculate_visible_rows_revision(
                 work_id=work_id,
                 norm_code=code,
                 selected_by=selected_by,
-                selection_kind=str(row.get("selection_kind") or "exact"),
+                selection_kind=str(row.get("selection_kind") or ""),
                 is_analog=bool(row.get("is_analog", False)),
                 reason=str(row.get("norm_reason") or row.get("reason") or "явный шифр в видимой строке"),
                 source_refs=(source_ref,) if source_ref else (),

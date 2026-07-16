@@ -159,163 +159,9 @@ def _norm_card_for_model(card: dict[str, Any], *, include_resources: bool) -> di
     return payload
 
 
-_TECHNOLOGY_CHECK_FIELDS = {
-    "matched_operations": list,
-    "missing_operations": list,
-    "extra_operations": list,
-    "foreign_resources": list,
-    "overlaps_with_work_ids": list,
-    "overlap_resolution": str,
-    "conditions_checked": list,
-    "unresolved_conditions": list,
-    "conclusion": str,
-}
-
-_UNBOUND_EVIDENCE_FIELDS = {
-    "queries_used": list,
-    "opened_norm_codes": list,
-    "rejection_reasons": list,
-    "coverage_checked": str,
-}
-
-
-def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
-    """Validate completeness of the model's evidence, never its professional choice."""
-    errors: list[str] = []
-    reason = str(item.get("reason") or "").strip()
-    if not reason:
-        errors.append("bind requires a non-empty reason")
-    kind = str(item.get("selection_kind") or "")
-    if not isinstance(item.get("analog_limitations"), list):
-        errors.append("bind requires explicit analog_limitations array")
-    limitations = [str(value).strip() for value in (item.get("analog_limitations") or []) if str(value).strip()]
-    if kind not in {"exact", "analog"}:
-        errors.append("bind requires explicit selection_kind exact|analog")
-    elif kind == "analog" and not limitations:
-        errors.append("analog requires explicit analog_limitations")
-    elif kind == "exact" and limitations:
-        errors.append("exact binding cannot carry analog_limitations")
-    applicability = str(item.get("applicability") or "")
-    if applicability not in {"exact", "close_analog", "weak_analog"}:
-        errors.append("bind requires explicit applicability")
-    elif kind == "exact" and applicability != "exact":
-        errors.append("exact selection requires exact applicability")
-    elif kind == "analog" and applicability not in {"close_analog", "weak_analog"}:
-        errors.append("analog selection requires analog applicability")
-
-    check = item.get("technology_check")
-    if not isinstance(check, dict):
-        errors.append("bind requires technology_check")
-    else:
-        for field, expected_type in _TECHNOLOGY_CHECK_FIELDS.items():
-            if field not in check:
-                errors.append(f"technology_check.{field} is required")
-            elif not isinstance(check.get(field), expected_type):
-                errors.append(f"technology_check.{field} has invalid type")
-        if not [str(value).strip() for value in (check.get("matched_operations") or []) if str(value).strip()]:
-            errors.append("technology_check.matched_operations requires evidence")
-        if not [str(value).strip() for value in (check.get("conditions_checked") or []) if str(value).strip()]:
-            errors.append("technology_check.conditions_checked requires evidence")
-        conclusion = str(check.get("conclusion") or "")
-        if conclusion not in {"applicable", "applicable_with_limitations"}:
-            errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
-        overlap_ids = [str(value) for value in (check.get("overlaps_with_work_ids") or []) if str(value)]
-        if overlap_ids and not str(check.get("overlap_resolution") or "").strip():
-            errors.append("technology_check.overlap_resolution is required for overlaps")
-
-    for index, action in enumerate(item.get("resource_actions") or []):
-        if not isinstance(action, dict):
-            errors.append(f"resource_actions[{index}] must be an object")
-            continue
-        if not str(action.get("reason") or "").strip():
-            errors.append(f"resource_actions[{index}].reason is required")
-        if not str(action.get("basis_ref") or "").strip():
-            errors.append(f"resource_actions[{index}].basis_ref is required")
-    return errors
-
-
-def _unbound_submission_errors(
-    item: dict[str, Any],
-    *,
-    work_id: str,
-    browse_trace: dict[str, list[dict[str, Any]]],
-    opened: dict[str, dict[str, dict[str, Any]]],
-) -> list[str]:
-    """Validate model-provided search evidence without judging the professional conclusion."""
-    evidence = item.get("unbound_evidence")
-    if not isinstance(evidence, dict):
-        return ["unbound requires unbound_evidence"]
-    errors: list[str] = []
-    for field, expected_type in _UNBOUND_EVIDENCE_FIELDS.items():
-        if field not in evidence:
-            errors.append(f"unbound_evidence.{field} is required")
-        elif not isinstance(evidence.get(field), expected_type):
-            errors.append(f"unbound_evidence.{field} has invalid type")
-
-    queries = list(dict.fromkeys(
-        " ".join(str(value).split()).casefold()
-        for value in (evidence.get("queries_used") or [])
-        if str(value).strip()
-    ))
-    actual_queries = {
-        " ".join(str(query).split()).casefold()
-        for payload in browse_trace.get(work_id, [])
-        for query in (payload.get("query") if isinstance(payload.get("query"), list) else [payload.get("query")])
-        if str(query or "").strip()
-    }
-    if len(queries) < 2:
-        errors.append("unbound_evidence.queries_used requires two distinct searches")
-    unknown_queries = [query for query in queries if query not in actual_queries]
-    if unknown_queries:
-        errors.append("unbound_evidence.queries_used contains searches absent from trace")
-
-    reviewed = list(dict.fromkeys(
-        str(value).strip() for value in (evidence.get("opened_norm_codes") or []) if str(value).strip()
-    ))
-    opened_codes = set(opened.get(work_id, {}))
-    candidate_count = sum(
-        len(payload.get("candidates") or []) for payload in browse_trace.get(work_id, [])
-    )
-    if candidate_count and not reviewed:
-        errors.append("unbound_evidence.opened_norm_codes requires an opened candidate")
-    if any(code not in opened_codes for code in reviewed):
-        errors.append("unbound_evidence.opened_norm_codes contains a card not opened by the model")
-    if not [str(value).strip() for value in (evidence.get("rejection_reasons") or []) if str(value).strip()]:
-        errors.append("unbound_evidence.rejection_reasons requires evidence")
-    if not str(evidence.get("coverage_checked") or "").strip():
-        errors.append("unbound_evidence.coverage_checked is required")
-    return errors
-
-
 def _normalize_mapping_row_transport(item: dict[str, Any]) -> dict[str, Any]:
-    """Repair a harmless tool-schema placement error without changing model decisions."""
+    """Repair only a misplaced row identifier; never revise model decisions."""
     normalized = dict(item)
-    if normalized.get("selection_kind") == "exact" and "analog_limitations" not in normalized:
-        normalized["analog_limitations"] = []
-    limitations = [
-        str(value).strip()
-        for value in (normalized.get("analog_limitations") or [])
-        if str(value).strip()
-    ]
-    if (
-        normalized.get("selection_kind") == "exact"
-        and normalized.get("applicability") in {"close_analog", "weak_analog"}
-        and limitations
-    ):
-        # The model already made an explicit analog decision in two stronger
-        # fields; normalize only the contradictory enum spelling.
-        normalized["selection_kind"] = "analog"
-    row_reason = str(normalized.get("reason") or "").strip()
-    actions = normalized.get("resource_actions")
-    if isinstance(actions, list) and row_reason:
-        normalized["resource_actions"] = [
-            {**action, "reason": row_reason}
-            if isinstance(action, dict)
-            and str(action.get("basis_ref") or "").strip()
-            and not str(action.get("reason") or "").strip()
-            else action
-            for action in actions
-        ]
     check = normalized.get("technology_check")
     if not str(normalized.get("work_id") or "").strip() and isinstance(check, dict):
         nested_work_id = str(check.get("work_id") or "").strip()
@@ -468,7 +314,6 @@ def _run_native_norm_agent(
             max_turns=max_turns,
             progress=progress,
             user_request=user_request,
-            context_rows=work_rows,
         )
 
     merged = {
@@ -498,7 +343,6 @@ def _run_native_norm_agent(
             max_turns=max_turns,
             progress=progress,
             user_request=user_request,
-            context_rows=work_rows,
         )
         merged["selections"].update(result["selections"])
         merged["browse_trace"].update(result["browse_trace"])
@@ -549,12 +393,9 @@ def _run_batch_norm_agent(
     max_turns: int = 64,
     progress: Progress | None = None,
     user_request: str = "",
-    context_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
     by_id = {str(row["work_id"]): row for row in work_rows}
-    all_rows = context_rows or work_rows
-    all_work_ids = {str(row["work_id"]) for row in all_rows}
     candidates: dict[str, dict[str, dict[str, Any]]] = {work_id: {} for work_id in by_id}
     opened: dict[str, dict[str, dict[str, Any]]] = {work_id: {} for work_id in by_id}
     browse_trace: dict[str, list[dict[str, Any]]] = {work_id: [] for work_id in by_id}
@@ -565,62 +406,33 @@ def _run_batch_norm_agent(
     skill_prompt = smeta_native_skill_prompt()
     if not skill_prompt:
         raise RuntimeError("canonical smeta skill is unavailable")
-    system_prompt = (
-        "Выполни текущий пакет ЛСР строго по активному smeta skill ниже. "
-        "Это единственный источник профессиональных правил. Доступные function tools являются транспортом: "
-        "заверши пакет через submit_lsr_mapping и не отвечай свободным текстом.\n\n"
-        + skill_prompt
-    )
-    full_source_context = [] if set(by_id) == all_work_ids else [
-        {
-            "work_id": row.get("work_id"),
-            "title": str(row.get("title") or "")[:180],
-            "unit": row.get("unit"),
-            "quantity": row.get("quantity"),
-            "section": str(row.get("section") or "")[:100],
-        }
-        for row in all_rows
-    ]
+    system_prompt = skill_prompt
     conversation: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": json.dumps({
             "user_request": str(user_request or "").strip(),
             "work_items": list(by_id.values()),
-            "all_source_rows_context": full_source_context,
             "batch_contract": (
-                "submit decisions for every work_id in work_items only; all_source_rows_context is navigation "
-                "for overlap/coverage and is not an instruction to submit other batches"
+                "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
+                "navigation for overlap/coverage; do not search or submit those neighboring work_ids here."
             ),
         }, ensure_ascii=False, default=str)},
     ]
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
-    invalid_submission_attempts = 0
+    invalid_submission_attempts: dict[str, int] = {}
     accepted_rows: dict[str, dict[str, Any]] = {}
+    previous_call_signature = ""
     for turn in range(1, max_turns + 1):
         started = perf_counter()
-        last_tool_name = next(
-            (
-                str(message.get("name") or "")
-                for message in reversed(conversation)
-                if str(message.get("role") or "") == "tool"
-            ),
-            "",
-        )
-        search_returned_candidates = any(bool(cards) for cards in candidates.values())
-        turn_tools = (
-            [tool for tool in tools if str((tool.get("function") or {}).get("name") or "") != "submit_lsr_mapping"]
-            if last_tool_name == "search_norms_batch" and search_returned_candidates
-            else tools
-        )
         if progress:
             progress({
                 "phase": "model_wait", "status": "started",
                 "label": f"Смета: модель выполняет ход {turn}",
                 "turn": turn,
             })
-        assistant = exchange(conversation, turn_tools) or {}
+        assistant = exchange(conversation, tools) or {}
         model_wait_ms = round((perf_counter() - started) * 1000, 2)
         calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
         assistant_message = {
@@ -649,10 +461,30 @@ def _run_batch_norm_agent(
         if not calls:
             done_reason = str(assistant.get("_les_done_reason") or "unknown")
             eval_count = assistant.get("_les_eval_count")
+            model_text = " ".join(str(assistant.get("content") or "").split())[:400]
             raise RuntimeError(
-                "smeta model returned no tool call after required-tool retry: "
-                f"done_reason={done_reason}, eval_count={eval_count}"
+                "smeta model ended the document workflow without a tool call: "
+                f"done_reason={done_reason}, eval_count={eval_count}, "
+                f"model_text={model_text or '<empty>'}"
             )
+        call_signature = json.dumps(
+            [
+                {
+                    "name": str(((call.get("function") or {}).get("name") or "")),
+                    "arguments": _tool_arguments(call),
+                }
+                for call in calls
+            ],
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
+        if call_signature == previous_call_signature:
+            raise RuntimeError(
+                "smeta model repeated the same deterministic tool call without progress: "
+                + call_signature[:500]
+            )
+        previous_call_signature = call_signature
 
         submitted: dict[str, dict[str, Any]] | None = None
         for call_index, call in enumerate(calls, 1):
@@ -662,6 +494,8 @@ def _run_batch_norm_agent(
             result: dict[str, Any]
             if name == "search_norms_batch":
                 items = _tool_array_argument(args, "items")
+                batch_limit = args.get("limit")
+                batch_page = args.get("page")
                 all_queries = list(dict.fromkeys(
                     " ".join(str(query).split())[:240]
                     for item in items for query in (item.get("queries") or []) if str(query).strip()
@@ -678,8 +512,8 @@ def _run_batch_norm_agent(
                         rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
                         continue
                     queries = [" ".join(str(query).split())[:240] for query in (item.get("queries") or []) if str(query).strip()]
-                    limit = max(1, int(item.get("limit") or candidate_limit))
-                    page = max(0, int(item.get("page") or 0))
+                    limit = max(1, int(item.get("limit") or batch_limit or candidate_limit))
+                    page = max(0, int(item.get("page") if item.get("page") is not None else batch_page or 0))
                     payload = _candidate_payload(
                         by_id[work_id], queries, limit=limit, page=page,
                         search_results=search_results,
@@ -742,20 +576,10 @@ def _run_batch_norm_agent(
                         continue
                     if decision == "unbound":
                         reason = str(item.get("reason") or "").strip()
-                        if not reason:
-                            errors.append({"work_id": work_id, "error": "unbound requires a non-empty reason"})
-                            continue
-                        unbound_errors = _unbound_submission_errors(
-                            item,
-                            work_id=work_id,
-                            browse_trace=browse_trace,
-                            opened=opened,
-                        )
-                        if unbound_errors:
-                            errors.extend({"work_id": work_id, "error": error} for error in unbound_errors)
-                            continue
                         proposed[work_id] = {
-                            "norm_code": "", "selection_kind": "", "analog_limitations": [],
+                            "norm_code": "",
+                            "selection_kind": str(item.get("selection_kind") or ""),
+                            "analog_limitations": list(item.get("analog_limitations") or []),
                             "reason": reason,
                             "unbound_evidence": dict(item.get("unbound_evidence") or {}),
                             "review_status": "model_batch_unbound", "resource_bindings": [],
@@ -764,66 +588,70 @@ def _run_batch_norm_agent(
                     if decision == "covered_by":
                         covered_by = str(item.get("covered_by_work_id") or "")
                         reason = str(item.get("reason") or "").strip()
-                        if not covered_by or covered_by == work_id or covered_by not in all_work_ids or not reason:
-                            errors.append({"work_id": work_id, "error": "covered_by requires another work_id and a non-empty reason"})
-                            continue
                         proposed[work_id] = {
-                            "norm_code": "", "selection_kind": "", "analog_limitations": [],
+                            "norm_code": "",
+                            "selection_kind": str(item.get("selection_kind") or ""),
+                            "analog_limitations": list(item.get("analog_limitations") or []),
                             "covered_by_work_id": covered_by,
                             "coverage_reason": reason,
                             "reason": reason,
                             "review_status": "model_batch_covered", "resource_bindings": [],
                         }
                         continue
+                    if decision != "bind":
+                        errors.append({"work_id": work_id, "error": "decision must be bind|covered_by|unbound"})
+                        continue
                     requested_code = str(item.get("norm_code") or "")
                     opened_for_work = opened.get(work_id, {})
                     opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
                     opened_card = opened_for_work.get(opened_code) if opened_code else None
-                    code = str((opened_card or {}).get("norm_code") or opened_code)
-                    if decision != "bind" or not code:
-                        errors.append({"work_id": work_id, "error": "bound norm must be returned by RAG and opened by the model"})
-                        continue
-                    source_unit = str(by_id[work_id].get("unit") or "")
-                    norm_unit = str((opened_card or {}).get("measure_unit") or "")
-                    if source_unit and norm_unit and not units_compatible(source_unit, norm_unit):
-                        errors.append({
-                            "work_id": work_id,
-                            "error": f"unit mismatch before calculation: source={source_unit}, norm={norm_unit}",
-                        })
-                        continue
-                    bind_errors = _bind_submission_errors(item)
-                    if bind_errors:
-                        errors.extend({"work_id": work_id, "error": error} for error in bind_errors)
-                        continue
+                    code = str((opened_card or {}).get("norm_code") or requested_code)
                     kind = str(item.get("selection_kind") or "")
+                    precalculation_blockers = []
+                    if code and opened_card is None:
+                        precalculation_blockers.append({
+                            "code": "norm_card_not_opened",
+                            "work_id": work_id,
+                            "reason": "model submitted a norm without opening its typed card",
+                        })
+                    if not code:
+                        precalculation_blockers.append({
+                            "code": "model_mapping_missing_norm_code",
+                            "work_id": work_id,
+                            "reason": "model submitted bind without norm_code",
+                        })
                     proposed[work_id] = {
                         "norm_code": code,
                         "selection_kind": kind,
-                        "applicability": str(item.get("applicability") or ("exact" if kind == "exact" else "close_analog")),
+                        "applicability": str(item.get("applicability") or ""),
                         "technology_check": dict(item.get("technology_check") or {}),
                         "analog_limitations": [str(value) for value in (item.get("analog_limitations") or []) if str(value).strip()],
                         "nr_sp_rule_id": str(item.get("nr_sp_rule_id") or ""),
                         "reason": str(item.get("reason") or ""),
                         "review_status": "model_batch",
                         "resource_bindings": _model_resource_bindings(work_id, item, by_id[work_id]),
+                        "precalculation_blockers": precalculation_blockers,
                     }
-                missing = [
-                    work_id for work_id in by_id
-                    if work_id not in accepted_rows and work_id not in proposed
-                ]
-                if missing:
-                    errors.append({"error": "missing work_ids", "work_ids": missing})
-                for work_id, item in proposed.items():
-                    if item.get("covered_by_work_id") and item["covered_by_work_id"] not in all_work_ids:
-                        errors.append({"work_id": work_id, "error": "covered_by_work_id is absent"})
+                # Local tool-call models are more reliable when they may submit
+                # one or several completed rows at a time. Preserve every valid
+                # model row and keep asking for the remainder; this changes only
+                # transport granularity, never the professional decision.
+                accepted_rows.update(proposed)
+                remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
+                if not proposed and not errors:
+                    errors.append({"error": "submit rows is empty", "work_ids": remaining})
                 if errors:
-                    # Keep the model's already valid decisions intact and ask it
-                    # only for the rejected/missing rows.  Code does not choose
-                    # or rewrite them, and a retry no longer regenerates a whole
-                    # large VOR because one row needed another RAG read.
-                    accepted_rows.update(proposed)
-                    invalid_submission_attempts += 1
-                    remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
+                    failed_keys = {
+                        str(error.get("work_id") or "__transport__")
+                        if str(error.get("work_id") or "") in by_id
+                        else "__transport__"
+                        for error in errors
+                    }
+                    for failed_key in failed_keys:
+                        invalid_submission_attempts[failed_key] = (
+                            invalid_submission_attempts.get(failed_key, 0) + 1
+                        )
+                    attempt = max(invalid_submission_attempts.values(), default=1)
                     result = {
                         "ok": False,
                         "errors": errors,
@@ -836,16 +664,27 @@ def _run_batch_norm_agent(
                             "phase": "mapping_retry",
                             "status": "waiting",
                             "label": f"Смета: модель исправляет решение — {first_error}",
-                            "attempt": invalid_submission_attempts,
+                            "attempt": attempt,
                             "errors": errors[:5],
                         })
-                    if invalid_submission_attempts >= 4:
+                    exhausted = [
+                        key for key, count in invalid_submission_attempts.items() if count >= 4
+                    ]
+                    if exhausted:
                         raise RuntimeError(
-                            "smeta model could not produce a valid mapping after 4 correction attempts: "
+                            "smeta model repeated an invalid mapping 4 times for "
+                            f"{','.join(exhausted)}: "
                             + json.dumps(errors[:5], ensure_ascii=False, default=str)
                         )
+                elif remaining:
+                    result = {
+                        "ok": True,
+                        "complete": False,
+                        "accepted_work_ids": list(accepted_rows),
+                        "remaining_work_ids": remaining,
+                    }
                 else:
-                    submitted = {**accepted_rows, **proposed}
+                    submitted = dict(accepted_rows)
                     result = {"ok": True, "rows": len(submitted)}
             else:
                 result = {"ok": False, "error": f"unknown tool: {name}"}
@@ -881,7 +720,7 @@ def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dic
             "resource_code": str(action.get("resource_code") or ""),
             "unit": str(action.get("unit") or ""),
             "quantity": action.get("quantity"),
-            "quantity_basis": str(action.get("quantity_basis") or "explicit"),
+            "quantity_basis": str(action.get("quantity_basis") or ""),
             "target_resource_code": str(action.get("target_resource_code") or ""),
             "target_resource_name": str(action.get("target_resource_name") or ""),
             "reason": str(action.get("reason") or ""),
@@ -892,9 +731,6 @@ def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dic
         }
         for action in (item.get("resource_actions") or [])
         if isinstance(action, dict)
-        and str(action.get("action") or "") in {"add", "replace", "exclude", "reuse"}
-        and str(action.get("reason") or "").strip()
-        and str(action.get("basis_ref") or "").strip()
     ]
 
 
@@ -913,7 +749,11 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "unresolved_conditions": string_array,
             "conclusion": {"type": "string", "enum": ["applicable", "applicable_with_limitations"]},
         },
-        "required": list(_TECHNOLOGY_CHECK_FIELDS),
+        "required": [
+            "matched_operations", "missing_operations", "extra_operations", "foreign_resources",
+            "overlaps_with_work_ids", "overlap_resolution", "conditions_checked",
+            "unresolved_conditions", "conclusion",
+        ],
     }
     unbound_evidence = {
         "type": "object",
@@ -923,7 +763,7 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "rejection_reasons": {"type": "array", "items": {"type": "string"}, "minItems": 1},
             "coverage_checked": {"type": "string"},
         },
-        "required": list(_UNBOUND_EVIDENCE_FIELDS),
+        "required": ["queries_used", "opened_norm_codes", "rejection_reasons", "coverage_checked"],
     }
     resource_action = {
         "type": "object",
@@ -964,11 +804,8 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             {
                 "if": {"properties": {"decision": {"const": "bind"}}, "required": ["decision"]},
                 "then": {"required": [
-                    "norm_code",
-                    "selection_kind",
-                    "applicability",
-                    "analog_limitations",
-                    "technology_check",
+                    "norm_code", "selection_kind", "applicability",
+                    "analog_limitations", "technology_check",
                 ]},
             },
             {
@@ -1017,7 +854,7 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "submit_lsr_mapping",
-                "description": "Submit the model's complete professional decision for all source rows; LES then calculates and creates XLSX.",
+                "description": "Submit one or more completed professional row decisions. Call repeatedly until every remaining work_id is accepted; LES then calculates and creates XLSX.",
                 "parameters": {"type": "object", "properties": {
                     "rows": {"type": "array", "items": mapping_row},
                 }, "required": ["rows"]},
@@ -1057,7 +894,7 @@ def _finalize_document_workflow(
             **row,
             "norm_code": selection.get("norm_code") or "",
             "norm_reason": selection.get("reason") or "",
-            "selection_kind": selection.get("selection_kind") or "exact",
+            "selection_kind": selection.get("selection_kind") or "",
             "applicability": selection.get("applicability") or "",
             "technology_check": selection.get("technology_check") or {},
             "is_analog": selection.get("selection_kind") == "analog",
@@ -1068,6 +905,7 @@ def _finalize_document_workflow(
             "resource_bindings": list(selection.get("resource_bindings") or []),
             "covered_by_work_id": selection.get("covered_by_work_id") or "",
             "coverage_reason": selection.get("coverage_reason") or "",
+            "precalculation_blockers": list(selection.get("precalculation_blockers") or []),
         })
     # The native model conversation owns both norm selection and any explicit
     # resource edits. Code performs one calculation pass and never asks a

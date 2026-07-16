@@ -96,7 +96,6 @@ def main() -> int:
             candidate_limit=8,
             progress=progress,
             user_request="Собери первую ЛСР по приложенной ВОР",
-            context_rows=all_rows,
         )
         selections = dict(result.get("selections") or {})
         print(json.dumps({
