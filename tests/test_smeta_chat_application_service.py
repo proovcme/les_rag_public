@@ -309,7 +309,7 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
     assert seen["batch_size"] == 0
 
 
-def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(monkeypatch):
+def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monkeypatch):
     from proxy.services import smeta_chat_adapter_service as adapter
 
     bodies = []
@@ -340,9 +340,7 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
         def post(self, _url, **kwargs):
             urls.append(_url)
             bodies.append(kwargs["json"])
-            if len(bodies) <= 2:
-                return Response({"content": "Я отвечу текстом"})
-            return Response({"tool_calls": [{"id": "tool-1", "function": {"name": "search_norms_batch"}}]})
+            return Response({"content": "Я отвечу текстом"})
 
     monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
         "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
@@ -355,16 +353,13 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
         [{"type": "function", "function": {"name": "search_norms_batch"}}],
     )
 
-    assert result["tool_calls"][0]["id"] == "tool-1"
-    assert result["_les_model"] == "qwen3.5:9b"
-    assert result["_les_fallback_from"] == "gemma4:12b"
-    assert bodies[1]["messages"][-1]["content"].startswith("Продолжи только")
-    assert bodies[1]["model"] == "gemma4:12b"
-    assert bodies[2]["messages"][-1]["content"].startswith("Продолжи только")
-    assert bodies[2]["model"] == "qwen3.5:9b"
+    assert result["content"] == "Я отвечу текстом"
+    assert result["_les_model"] == "gemma4:12b"
+    assert "tool_calls" not in result
+    assert "_les_fallback_from" not in result
     assert "options" in bodies[0]
     assert bodies[0]["options"]["num_predict"] == 3200
-    assert urls == ["http://127.0.0.1:11434/api/chat"] * 3
+    assert urls == ["http://127.0.0.1:11434/api/chat"]
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

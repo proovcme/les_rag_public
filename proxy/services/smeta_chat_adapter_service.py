@@ -388,60 +388,6 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             message = message if isinstance(message, dict) else {}
             message["_les_done_reason"] = payload.get("done_reason")
             message["_les_eval_count"] = payload.get("eval_count")
-            if not message.get("tool_calls"):
-                required_body = dict(body)
-                if native_ollama:
-                    required_body["messages"] = [
-                        *messages,
-                        {"role": "user", "content": "Продолжи только вызовом одного из предоставленных инструментов."},
-                    ]
-                else:
-                    required_body["tool_choice"] = "required"
-                response = client.post(chat_url, headers=headers, json=required_body)
-                response.raise_for_status()
-                required_payload = response.json()
-                required_message = (
-                    required_payload.get("message", {})
-                    if native_ollama
-                    else required_payload.get("choices", [{}])[0].get("message", {})
-                )
-                if isinstance(required_message, dict):
-                    message = required_message
-                    message["_les_model"] = str(required_body["model"])
-                    message["_les_done_reason"] = required_payload.get("done_reason")
-                    message["_les_eval_count"] = required_payload.get("eval_count")
-            fallback_model = os.getenv(
-                "LES_SMETA_DOCUMENT_FALLBACK_MODEL", DEFAULT_LOCAL_SMETA_TOOL_MODEL
-            ).strip()
-            if (
-                not message.get("tool_calls")
-                and runtime.provider == "ollama"
-                and fallback_model.casefold() not in {"", "0", "false", "none", "off"}
-                and fallback_model != runtime.model
-            ):
-                fallback_body = dict(body)
-                fallback_body["model"] = fallback_model
-                if native_ollama:
-                    fallback_body["messages"] = [
-                        *messages,
-                        {"role": "user", "content": "Продолжи только вызовом одного из предоставленных инструментов."},
-                    ]
-                else:
-                    fallback_body["tool_choice"] = "required"
-                response = client.post(chat_url, headers=headers, json=fallback_body)
-                response.raise_for_status()
-                fallback_payload = response.json()
-                fallback_message = (
-                    fallback_payload.get("message", {})
-                    if native_ollama
-                    else fallback_payload.get("choices", [{}])[0].get("message", {})
-                )
-                if isinstance(fallback_message, dict):
-                    message = fallback_message
-                    message["_les_model"] = fallback_model
-                    message["_les_fallback_from"] = runtime.model
-                    message["_les_done_reason"] = fallback_payload.get("done_reason")
-                    message["_les_eval_count"] = fallback_payload.get("eval_count")
             message.setdefault("_les_model", runtime.model)
             message.setdefault("_les_provider", runtime.provider)
             return message
