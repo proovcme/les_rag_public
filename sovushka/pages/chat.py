@@ -776,7 +776,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
             scope_files_panel.set_visibility(False)
 
-            chat_scroll = ui.scroll_area().classes("sov-chat-scroll")
+            # Пока пользователь читает историю выше, новые токены не должны утаскивать
+            # его обратно вниз. Возвращаем автопрокрутку только когда он снова у хвоста.
+            _chat_follow_tail = {"v": True}
+
+            def _track_chat_scroll(event) -> None:
+                remaining = event.vertical_size - event.vertical_position - event.vertical_container_size
+                _chat_follow_tail["v"] = remaining <= 48
+
+            def _scroll_chat_to_tail(*, force: bool = False) -> None:
+                if force or _chat_follow_tail["v"]:
+                    chat_scroll.scroll_to(percent=1)
+
+            chat_scroll = ui.scroll_area(on_scroll=_track_chat_scroll).classes("sov-chat-scroll")
             with chat_scroll:
                 chat_column = ui.column().classes("sov-chat-thread")
                 with chat_column:
@@ -853,7 +865,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 })
                 with chat_column:
                     _render_msg(state["chat_history"][-1])
-                chat_scroll.scroll_to(percent=1)
+                _scroll_chat_to_tail(force=True)
                 ui.notify(title, type="positive")
                 if d.get("mode") == "quick":
                     ui.notify("Таблица пойдёт в scope следующего запроса", type="info")
@@ -990,6 +1002,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     value="standard",
                                     label="Длина ответа",
                                 ).props("outlined dense options-dense").classes("sov-response-length-select")
+                        stop_dialog_btn = ui.button(
+                            "Остановить диалог",
+                            icon="o_stop_circle",
+                            on_click=lambda: _stop_active_dialog(),
+                        ).props('no-caps flat aria-label="Остановить текущий ответ"').classes(
+                            "sov-stop-dialog-btn"
+                        ).tooltip("Остановить текущий ответ; история диалога сохранится")
+                        stop_dialog_btn.set_visibility(False)
                         send_btn = ui.button(
                             "Отправить",
                             icon="o_send",
@@ -1732,7 +1752,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             selected_session_card["el"] = el
         _render_chat_history("Сессия загружена из истории.")
         history_drawer.set_visibility(False)
-        chat_scroll.scroll_to(percent=1)
+        _scroll_chat_to_tail(force=True)
 
     def _source_label(source) -> str:
         # v0.16: «N · file · абз.85» вместо сырого пути; нет ref → «без ссылки» (не фейк-линк).
@@ -2783,7 +2803,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         state["session_id"] = state["load_session_id"]
         state["load_session_id"] = None
         _render_chat_history("Сессия загружена из истории.")
-        chat_scroll.scroll_to(percent=1)
+        _scroll_chat_to_tail(force=True)
         return True
 
     # Хук для вкладки ИСТОРИЯ: после выбора сессии чат перерисовывается сразу,
@@ -2798,7 +2818,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if hist:
                 state["chat_history"] = hist
                 _render_chat_history()
-                chat_scroll.scroll_to(percent=1)
+                _scroll_chat_to_tail(force=True)
 
     asyncio.create_task(_load_history())
 
@@ -2940,6 +2960,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         add_log("[ЧАТ] История очищена, новая сессия")
 
     _sending = {"v": False}
+    _active_send_task: dict[str, asyncio.Task | None] = {"task": None}
     _resource_blocked = {"v": False, "reason": ""}
 
     def _indexing_summary(data: dict) -> str:
@@ -2990,6 +3011,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _set_chat_blocked(blocked, _indexing_summary(data) if blocked else "")
         return allowed
 
+    def _stop_active_dialog() -> None:
+        task = _active_send_task["task"]
+        if not _sending["v"] or task is None or task.done():
+            ui.notify("Сейчас нет активного ответа", type="info")
+            return
+        add_log("[ЧАТ] Пользователь остановил текущий ответ")
+        task.cancel()
+        ui.notify("Останавливаю текущий ответ…", type="info")
+
     async def _do_verify(question: str):
         """Верификация объёмов: распознать скан и открыть спец-артефакт сверки.
 
@@ -3001,7 +3031,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with chat_column:
             _render_chat_bubble(question, "chat-msg-user")
             ph, ph_label = _render_ai_placeholder("Распознаю таблицу объёмов…")
-        chat_scroll.scroll_to(percent=1)
+        _scroll_chat_to_tail(force=True)
         try:
             _render_artifact_loading("verify", question)
             res = await api_post("/api/verify/extract", {"path": path, "page": page, "engine": "local"})
@@ -3045,7 +3075,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     "background:var(--bg);color:var(--accent);font-size:.68rem;font-weight:700;padding:4px 10px;"
                 )
             _render_result(ans, "verify", artifact_panel)
-            chat_scroll.scroll_to(percent=1)
+            _scroll_chat_to_tail()
             add_log(f"[ВЕРИФ] {path} стр.{page}: {len(rows)} строк → артефакт")
         except Exception as ex:  # любая ошибка — в чат текстом, не в тишину
             import traceback
@@ -3079,10 +3109,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         else:
             await _refresh_resource_gate()
         _sending["v"] = True
+        _active_send_task["task"] = asyncio.current_task()
         send_btn.props("disabled")
         apply_btn.props("disabled")
         response_settings_btn.props("disabled")
         chat_input.props("disabled")
+        stop_dialog_btn.set_visibility(True)
         sent_attachment = dict(attach_state) if attach_state.get("id") else {}
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
@@ -3127,7 +3159,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         "font-size:.62rem;line-height:1.45;color:var(--dim);margin-top:8px;padding-top:7px;"
                         "border-top:1px dashed var(--border);max-height:190px;overflow:auto;"
                     )
-        chat_scroll.scroll_to(percent=1)
+        _scroll_chat_to_tail(force=True)
         add_log(f'[AI] Запрос: "{payload_question[:60]}"')
 
         # Формат/стиль ответа — ОТДЕЛЬНЫМ полем (не клеим в текст вопроса): иначе бэкенд
@@ -3273,7 +3305,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 stream_state["text"] += payload if isinstance(payload, str) else ""
                 ai_placeholder_label.set_text(stream_state["text"])
                 ai_placeholder_label.update()
-                chat_scroll.scroll_to(percent=1)
+                _scroll_chat_to_tail()
             elif event == "reset":
                 stream_state["text"] = ""
                 ai_placeholder_label.set_text("")
@@ -3288,7 +3320,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 elapsed = int(time.monotonic() - _t0)
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
-                chat_scroll.scroll_to(percent=1)
+                _scroll_chat_to_tail()
             elif event == "smeta_step":
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict):
@@ -3325,7 +3357,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 elapsed = int(time.monotonic() - _t0)
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
-                chat_scroll.scroll_to(percent=1)
+                _scroll_chat_to_tail()
             elif event == "smeta_batch":
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict):
@@ -3355,7 +3387,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 elapsed = int(time.monotonic() - _t0)
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
-                chat_scroll.scroll_to(percent=1)
+                _scroll_chat_to_tail()
             elif event == "sources":
                 if isinstance(payload, dict) and not early_sources["el"]:
                     srcs = payload.get("sources") or []
@@ -3369,7 +3401,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 _render_source_tags(srcs, "", meta)
                         early_sources["el"] = holder
                         ai_placeholder.update()
-                        chat_scroll.scroll_to(percent=1)
+                        _scroll_chat_to_tail()
             elif event == "final":
                 stream_state["final"] = payload if isinstance(payload, dict) else {}
             elif event == "error":
@@ -3423,6 +3455,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             await _refresh_resource_gate()
                         _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                         _render_artifact_error(message)
+        except asyncio.CancelledError:
+            completed = True
+            _finish_ai_placeholder(
+                ai_placeholder,
+                ai_placeholder_label,
+                "Диалог остановлен пользователем.",
+                [],
+                "",
+                meta={"out_mode": out_mode},
+            )
+            add_log("[ЧАТ] Текущий ответ остановлен")
         except Exception as ex:
             completed = True
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, f"Ошибка: {ex}", error=True)
@@ -3433,8 +3476,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _stop_tick["v"] = True
             _tick_task.cancel()
             _sending["v"] = False
+            _active_send_task["task"] = None
+            stop_dialog_btn.set_visibility(False)
             await _refresh_resource_gate()
-            chat_scroll.scroll_to(percent=1)
+            _scroll_chat_to_tail()
 
     async def send_chat():
         q = chat_input.value.strip()

@@ -1,5 +1,6 @@
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from proxy.routers.chat import (
@@ -257,6 +258,19 @@ def test_retry_smeta_transport_reports_last_provider_error():
     assert len(attempts) == 3
 
 
+def test_retry_smeta_transport_does_not_repeat_a_timed_out_model_call():
+    from proxy.routers.chat import _retry_smeta_transport
+
+    attempts = []
+    with pytest.raises(httpx.ReadTimeout):
+        _retry_smeta_transport(
+            lambda: (_ for _ in ()).throw(httpx.ReadTimeout("model timeout")),
+            on_attempt=lambda: attempts.append(True),
+        )
+
+    assert len(attempts) == 1
+
+
 def test_smeta_document_timeout_is_longer_for_local_model(monkeypatch):
     from proxy.routers.chat import LlmRuntime
 
@@ -264,7 +278,7 @@ def test_smeta_document_timeout_is_longer_for_local_model(monkeypatch):
     local = LlmRuntime("mlx", "http://127.0.0.1:8080", "http://127.0.0.1:8080/v1/chat/completions", "qwen", "", True)
     cloud = LlmRuntime("openai", "https://example.test", "https://example.test/v1/chat/completions", "gpt", "key", True)
 
-    assert _smeta_document_timeout(local) == 720.0
+    assert _smeta_document_timeout(local) == 300.0
     assert _smeta_document_timeout(cloud) == 180.0
 
 

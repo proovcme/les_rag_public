@@ -94,7 +94,7 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_document_explorer_service.py` | 11 | no-AI список/поиск/чтение документов и additive migration старой MetaDB без `lexical_chunks[_fts]`, без reindex |
 | `tests/test_mermaid_graph.py` | 2 | live graph payload `/api/rag/graph/full` renders into Mermaid and empty graph is explicit |
 | `tests/test_proxy_security.py`, `tests/test_proxy_routers.py` | 43 focused with Sovushka | trust/auth guardrails: ZeroTier/trusted admin, API-key roles, protected `les-admin-` root-admin keys without device binding, and trusted-only mutation of protected keys |
-| `tests/test_sovushka_chat.py` | 32+ | Sovushka chat/UI regressions: markdown rendering, progressive-disclosure topbar and secondary actions, compact mode guidance/examples, new-chat/model-chip/table wrapping, editable prompt controls, attachment context, no project-summary final hijack, additive MetaDB inventory context, clickable file-register RAG, selected-dataset file panel, Samovar parse/play slot-context guard, scheduler-start endpoint guard, WAITING-vs-PARSING status, and file-layer labels |
+| `tests/test_sovushka_chat.py` | 39+ | Sovushka chat/UI regressions: markdown rendering, progressive-disclosure topbar and secondary actions, floating mode guidance/examples, stop of the active streaming dialog, reader-position-preserving SSE autoscroll, new-chat/model-chip/table wrapping, editable prompt controls, attachment context, no project-summary final hijack, additive MetaDB inventory context, clickable file-register RAG, selected-dataset file panel, Samovar parse/play slot-context guard, scheduler-start endpoint guard, WAITING-vs-PARSING status, and file-layer labels |
 
 ## Ключевые «живые» доказательства (на рантайме :8050)
 

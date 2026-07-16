@@ -550,6 +550,12 @@ def _run_batch_norm_agent(
             if last_tool_name == "search_norms_batch"
             else tools
         )
+        if progress:
+            progress({
+                "phase": "model_wait", "status": "started",
+                "label": f"Смета: модель выполняет ход {turn}",
+                "turn": turn,
+            })
         assistant = exchange(conversation, turn_tools) or {}
         model_wait_ms = round((perf_counter() - started) * 1000, 2)
         calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]

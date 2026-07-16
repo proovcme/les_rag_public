@@ -73,6 +73,32 @@ def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
     assert "serr = stream_state[\"error\"] or {}" in source
 
 
+def test_chat_ui_can_stop_only_the_active_answer_stream():
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert '"Остановить диалог"' in source
+    assert "def _stop_active_dialog()" in source
+    assert 'task.cancel()' in source
+    assert "except asyncio.CancelledError:" in source
+    assert "Диалог остановлен пользователем." in source
+    assert 'stop_dialog_btn.set_visibility(True)' in source
+    assert 'stop_dialog_btn.set_visibility(False)' in source
+    assert ".sov-stop-dialog-btn" in styles
+
+
+def test_chat_stream_keeps_reader_position_until_they_return_to_the_tail():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert 'ui.scroll_area(on_scroll=_track_chat_scroll)' in source
+    assert 'remaining = event.vertical_size - event.vertical_position - event.vertical_container_size' in source
+    assert '_chat_follow_tail["v"] = remaining <= 48' in source
+    assert 'def _scroll_chat_to_tail(*, force: bool = False)' in source
+    sse_handler = source[source.index('def _on_sse(event: str, payload) -> None:'):source.index('completed = False')]
+    assert '_scroll_chat_to_tail()' in sse_handler
+    assert 'chat_scroll.scroll_to(percent=1)' not in sse_handler
+
+
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():
     guidance = chat_page.CHAT_MODE_GUIDANCE
 
@@ -108,11 +134,13 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert 'classes("sov-composer-footer")' in source
     assert 'props("rows=1 autogrow borderless")' in source
     assert ".sov-composer-footer" in styles
-    assert ".sov-mode-guides {\n  display: none;" in styles
+    assert ".sov-mode-guides {\n  position: absolute;" in styles
+    assert "bottom: calc(100% + 10px);" in styles
+    assert "pointer-events: none;" in styles
     assert "padding-right: 420px" in styles
     assert "Shift+Enter — перенос строки" not in source
     assert "position: absolute" in styles
-    assert "padding-right: 386px" in styles
+    assert "pointer-events: auto;" in styles
     assert "background: transparent" in styles
     assert "width: auto" in styles
     assert "min-height: 40px" in styles

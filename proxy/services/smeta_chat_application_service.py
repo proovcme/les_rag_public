@@ -12,10 +12,13 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
+import httpx
 
 from proxy.services.chat_attachment_service import (
     consume_read_attachment,
@@ -35,6 +38,7 @@ from proxy.smeta_core.document_workflow import run_vor_document_workflow
 logger = logging.getLogger(__name__)
 
 SMETA_ARTIFACT_DIR = Path("storage/smeta_artifacts")
+SMETA_DOCUMENT_HEARTBEAT_SEC = 15.0
 
 ModelExchange = Callable[[list[dict], list[dict]], dict[str, Any]]
 TokenSink = Callable[[dict[str, Any]], Awaitable[None]]
@@ -97,7 +101,11 @@ def retry_smeta_transport(
         on_attempt()
         try:
             result = call()
-        except Exception as error:  # provider failure is retried, then reported
+        except (TimeoutError, httpx.TimeoutException):
+            # Один уже истёкший длинный model-call нельзя незаметно повторять ещё
+            # два раза: пользователь должен получить явный результат и retry сам.
+            raise
+        except Exception as error:  # short provider failure is retried, then reported
             last_error = error
             continue
         if result:
@@ -474,16 +482,21 @@ async def run_smeta_document_application(
     loop = asyncio.get_running_loop()
     model_calls = 0
     started = time.monotonic()
+    cancel_requested = threading.Event()
 
     def admit_model_call() -> None:
         nonlocal model_calls
         model_calls += 1
 
     def exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
+        if cancel_requested.is_set():
+            raise RuntimeError("smeta document workflow cancelled by user")
         result = retry_smeta_transport(
             lambda: model_exchange(messages, tools),
             on_attempt=admit_model_call,
         )
+        if cancel_requested.is_set():
+            raise RuntimeError("smeta document workflow cancelled by user")
         if not result:
             raise RuntimeError("smeta model returned no native tool response after transport retry")
         return result
@@ -506,22 +519,42 @@ async def run_smeta_document_application(
 
     try:
         document_batch_size = int(os.getenv("LES_SMETA_DOCUMENT_BATCH_SIZE", "0") or 0)
-        workflow = await asyncio.to_thread(
-            run_vor_document_workflow,
-            source_path,
-            exchange=exchange,
-            candidate_limit=12 if cloud_provider else 8,
-            out_xlsx=xlsx_path,
-            out_report=report_path,
-            progress=progress,
+        workflow_task = asyncio.create_task(asyncio.to_thread(
+            run_vor_document_workflow, source_path,
+            exchange=exchange, candidate_limit=12 if cloud_provider else 8,
+            out_xlsx=xlsx_path, out_report=report_path, progress=progress,
             source_name=str(attachment_meta.get("original_name") or source_path.name),
             user_request=user_request,
             batch_size=document_batch_size,  # zero = one model-owned conversation over the whole VOR
-        )
+        ))
+        while True:
+            try:
+                workflow = await asyncio.wait_for(
+                    asyncio.shield(workflow_task), timeout=SMETA_DOCUMENT_HEARTBEAT_SEC
+                )
+                break
+            except TimeoutError:
+                if token_sink is not None:
+                    elapsed = int(time.monotonic() - started)
+                    await token_sink({
+                        "event": "smeta_step",
+                        "data": {
+                            "phase": "document_workflow",
+                            "status": "running",
+                            "label": f"Смета: модель работает, прошло {elapsed}с",
+                            "elapsed_sec": elapsed,
+                        },
+                    })
         workflow.setdefault("agent_trace", {})["document_model_calls"] = model_calls
         workflow["agent_trace"]["document_elapsed_ms"] = round(
             (time.monotonic() - started) * 1000, 2
         )
+    except asyncio.CancelledError:
+        cancel_requested.set()
+        if "workflow_task" in locals():
+            workflow_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+        logger.info("[SMETA_DOCUMENT] workflow cancellation requested by user")
+        raise
     except Exception as error:  # preserve the source for a retry
         logger.exception("[SMETA_DOCUMENT] workflow failed")
         return SmetaDocumentApplicationResult(

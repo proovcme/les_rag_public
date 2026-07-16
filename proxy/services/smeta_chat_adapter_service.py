@@ -325,7 +325,7 @@ def _mlx_prefill_no_think_messages(messages: list[dict[str, Any]], provider: str
 def _smeta_document_timeout(runtime: LlmRuntime) -> float:
     return _env_float(
         "LES_SMETA_DOCUMENT_TIMEOUT_SEC",
-        180.0 if is_cloud_provider(runtime.provider) else 720.0,
+        180.0 if is_cloud_provider(runtime.provider) else 300.0,
     )
 
 

@@ -569,6 +569,25 @@ def test_batch_agent_has_configurable_transport_turn_budget():
     assert calls == 2
 
 
+def test_batch_agent_reports_model_wait_before_and_after_each_turn():
+    from proxy.smeta_core import document_workflow as workflow
+
+    events = []
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {"tool_calls": [_native_call(
+            "submit", "submit_lsr_mapping",
+            rows=[{"work_id": "w1", "decision": "unbound", "reason": "нет точной нормы"}],
+        )]},
+        candidate_limit=5,
+        progress=events.append,
+    )
+
+    waits = [event for event in events if event.get("phase") == "model_wait"]
+    assert [(event["status"], event["turn"]) for event in waits] == [("started", 1), ("done", 1)]
+    assert result["selections"]["w1"]["norm_code"] == ""
+
+
 def test_batch_agent_stops_after_four_invalid_mapping_corrections():
     from proxy.smeta_core import document_workflow as workflow
 

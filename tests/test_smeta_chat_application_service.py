@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+import time
 
 import pytest
 
@@ -153,6 +154,43 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
     assert result.crag == "ERROR"
     assert "Вложение сохранено" in result.answer
     assert consumed == []
+
+
+@pytest.mark.asyncio
+async def test_document_application_emits_heartbeat_while_model_workflow_is_busy(tmp_path, monkeypatch):
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-test")
+    events = []
+    monkeypatch.setattr(service, "SMETA_DOCUMENT_HEARTBEAT_SEC", 0.01)
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source, {"original_name": "source.pdf", "sha256": "sha"},
+    ))
+
+    def slow_failure(*_args, **_kwargs):
+        time.sleep(0.04)
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", slow_failure)
+
+    async def sink(event):
+        events.append(event)
+
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="ollama",
+        model_name="qwen3.5:9b",
+        cloud_provider=False,
+        token_sink=sink,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result is not None and result.operation == "smeta_document_failed"
+    assert any(
+        event["data"].get("status") == "running" and "модель работает" in event["data"].get("label", "")
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
