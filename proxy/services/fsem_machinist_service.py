@@ -12,7 +12,9 @@ DEFAULT_DB = Path("data/smeta_base/fsem_2022.sqlite")
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
-    resolved = path.resolve(strict=True)
+    from proxy.smeta_core.base_registry import runtime_data_path
+
+    resolved = runtime_data_path(path)
     try:
         return sqlite3.connect(
             f"{resolved.as_uri()}?mode=ro&immutable=1",

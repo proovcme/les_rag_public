@@ -9,6 +9,18 @@ from typing import Any
 
 
 DEFAULT_CONFIG = Path("config/domain/smeta_base_active.json")
+CODE_ROOT = Path(__file__).resolve().parents[2]
+
+
+def runtime_data_path(path: str | Path) -> Path:
+    """Resolve shipped data through writable Windows state, never the install junction."""
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    state_root = os.getenv("LES_WINDOWS_STATE_ROOT", "").strip()
+    if state_root and candidate.parts and candidate.parts[0].casefold() == "data":
+        return Path(state_root).joinpath(*candidate.parts)
+    return CODE_ROOT / candidate
 
 
 def active_base(config_path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:

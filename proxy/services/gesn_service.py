@@ -175,7 +175,9 @@ def _structured_base_path() -> Path:
 
 
 def _connect_structured_base_readonly(path: Path) -> sqlite3.Connection:
-    resolved = path.resolve(strict=True)
+    from proxy.smeta_core.base_registry import runtime_data_path
+
+    resolved = runtime_data_path(path)
     try:
         return sqlite3.connect(
             f"{resolved.as_uri()}?mode=ro&immutable=1",

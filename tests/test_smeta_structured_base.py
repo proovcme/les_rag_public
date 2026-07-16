@@ -11,6 +11,16 @@ from tools.build_smeta_structured_base import build_structured_base
 from tools.gesn_import import RESOURCE_FIELDS
 
 
+def test_windows_smeta_data_path_bypasses_install_junction(tmp_path: Path, monkeypatch):
+    from proxy.smeta_core.base_registry import runtime_data_path
+
+    monkeypatch.setenv("LES_WINDOWS_STATE_ROOT", str(tmp_path))
+
+    assert runtime_data_path("data/smeta_base/les_smeta_base.sqlite") == (
+        tmp_path / "data" / "smeta_base" / "les_smeta_base.sqlite"
+    )
+
+
 def _row(**overrides):
     row = {field: None for field in RESOURCE_FIELDS}
     row.update(source_doc="synthetic-fixture", source_guid="fixture-guid")

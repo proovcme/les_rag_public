@@ -29,7 +29,8 @@ Windows-выпуск:            0.24.21 / build 442 (GitHub release)
 > только этот чанк, все валидные dense+sparse nodes сохраняются. Следующий live-проход выявил
 > Windows SQLite-open и повторный reject одного выбранного моделью точного шифра: нормативная база
 > и отдельный ФСЭМ-каталог теперь открываются read-only/immutable, а submit-точный шифр дочитывается
-> без кодового перевыбора.
+> без кодового перевыбора. Windows-путь берётся прямо из persistent state
+> `%LOCALAPPDATA%\LES\data`, без `Path.resolve(strict=True)` через защищённый install-junction.
 
 > 0.24.21 / build 442 — управление текущим диалогом без потери позиции чтения
 >

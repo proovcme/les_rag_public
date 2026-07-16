@@ -50,7 +50,9 @@ def _base_path() -> Path:
 
 def _connect_base_readonly(base_path: Path) -> sqlite3.Connection:
     """Open the immutable normative base without asking SQLite for write access."""
-    resolved = base_path.resolve(strict=True)
+    from proxy.smeta_core.base_registry import runtime_data_path
+
+    resolved = runtime_data_path(base_path)
     try:
         return sqlite3.connect(
             f"{resolved.as_uri()}?mode=ro&immutable=1",
