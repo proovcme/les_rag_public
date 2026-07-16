@@ -11,7 +11,7 @@ from typing import Any, Callable
 
 from proxy.services import fgis_price_service, gesn_service, nr_sp_service
 from proxy.services.kac_web_service import collect_quotes
-from proxy.services.prompt_registry_service import smeta_native_skill_excerpt
+from proxy.services.prompt_registry_service import smeta_native_skill_prompt
 from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
 from proxy.smeta_core.contracts import NormBinding, ResourceBinding, WorkItem
 from proxy.smeta_core.norm_browser import browse_norms_many
@@ -171,6 +171,13 @@ _TECHNOLOGY_CHECK_FIELDS = {
     "conclusion": str,
 }
 
+_UNBOUND_EVIDENCE_FIELDS = {
+    "queries_used": list,
+    "opened_norm_codes": list,
+    "rejection_reasons": list,
+    "coverage_checked": str,
+}
+
 
 def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
     """Validate completeness of the model's evidence, never its professional choice."""
@@ -197,14 +204,20 @@ def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
         errors.append("analog selection requires analog applicability")
 
     check = item.get("technology_check")
-    if check is not None and not isinstance(check, dict):
-        errors.append("technology_check must be an object when provided")
-    elif isinstance(check, dict):
+    if not isinstance(check, dict):
+        errors.append("bind requires technology_check")
+    else:
         for field, expected_type in _TECHNOLOGY_CHECK_FIELDS.items():
-            if field in check and not isinstance(check.get(field), expected_type):
+            if field not in check:
+                errors.append(f"technology_check.{field} is required")
+            elif not isinstance(check.get(field), expected_type):
                 errors.append(f"technology_check.{field} has invalid type")
+        if not [str(value).strip() for value in (check.get("matched_operations") or []) if str(value).strip()]:
+            errors.append("technology_check.matched_operations requires evidence")
+        if not [str(value).strip() for value in (check.get("conditions_checked") or []) if str(value).strip()]:
+            errors.append("technology_check.conditions_checked requires evidence")
         conclusion = str(check.get("conclusion") or "")
-        if conclusion and conclusion not in {"applicable", "applicable_with_limitations"}:
+        if conclusion not in {"applicable", "applicable_with_limitations"}:
             errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
         overlap_ids = [str(value) for value in (check.get("overlaps_with_work_ids") or []) if str(value)]
         if overlap_ids and not str(check.get("overlap_resolution") or "").strip():
@@ -218,6 +231,59 @@ def _bind_submission_errors(item: dict[str, Any]) -> list[str]:
             errors.append(f"resource_actions[{index}].reason is required")
         if not str(action.get("basis_ref") or "").strip():
             errors.append(f"resource_actions[{index}].basis_ref is required")
+    return errors
+
+
+def _unbound_submission_errors(
+    item: dict[str, Any],
+    *,
+    work_id: str,
+    browse_trace: dict[str, list[dict[str, Any]]],
+    opened: dict[str, dict[str, dict[str, Any]]],
+) -> list[str]:
+    """Validate model-provided search evidence without judging the professional conclusion."""
+    evidence = item.get("unbound_evidence")
+    if not isinstance(evidence, dict):
+        return ["unbound requires unbound_evidence"]
+    errors: list[str] = []
+    for field, expected_type in _UNBOUND_EVIDENCE_FIELDS.items():
+        if field not in evidence:
+            errors.append(f"unbound_evidence.{field} is required")
+        elif not isinstance(evidence.get(field), expected_type):
+            errors.append(f"unbound_evidence.{field} has invalid type")
+
+    queries = list(dict.fromkeys(
+        " ".join(str(value).split()).casefold()
+        for value in (evidence.get("queries_used") or [])
+        if str(value).strip()
+    ))
+    actual_queries = {
+        " ".join(str(query).split()).casefold()
+        for payload in browse_trace.get(work_id, [])
+        for query in (payload.get("query") if isinstance(payload.get("query"), list) else [payload.get("query")])
+        if str(query or "").strip()
+    }
+    if len(queries) < 2:
+        errors.append("unbound_evidence.queries_used requires two distinct searches")
+    unknown_queries = [query for query in queries if query not in actual_queries]
+    if unknown_queries:
+        errors.append("unbound_evidence.queries_used contains searches absent from trace")
+
+    reviewed = list(dict.fromkeys(
+        str(value).strip() for value in (evidence.get("opened_norm_codes") or []) if str(value).strip()
+    ))
+    opened_codes = set(opened.get(work_id, {}))
+    candidate_count = sum(
+        len(payload.get("candidates") or []) for payload in browse_trace.get(work_id, [])
+    )
+    if candidate_count and not reviewed:
+        errors.append("unbound_evidence.opened_norm_codes requires an opened candidate")
+    if any(code not in opened_codes for code in reviewed):
+        errors.append("unbound_evidence.opened_norm_codes contains a card not opened by the model")
+    if not [str(value).strip() for value in (evidence.get("rejection_reasons") or []) if str(value).strip()]:
+        errors.append("unbound_evidence.rejection_reasons requires evidence")
+    if not str(evidence.get("coverage_checked") or "").strip():
+        errors.append("unbound_evidence.coverage_checked is required")
     return errors
 
 
@@ -496,21 +562,15 @@ def _run_batch_norm_agent(
     model_trace: list[dict[str, Any]] = []
     context_metrics: list[dict[str, Any]] = []
     tools = _batch_norm_tools()
-    skill_excerpt = smeta_native_skill_excerpt()
+    skill_prompt = smeta_native_skill_prompt()
+    if not skill_prompt:
+        raise RuntimeError("canonical smeta skill is unavailable")
     system_prompt = (
-        "Ты сметчик. Самостоятельно собери mapping для денежной ЛСР. Используй batch RAG tools в любом "
-        "нужном порядке, прочитай фактические карточки и одним submit_lsr_mapping передай решения по всем "
-        "строкам текущего пакета work_items. Код не выбирает нормы, аналоги, coverage или ресурсы — после submit он только "
-        "проверит ссылки и единицы, рассчитает твоё решение и сформирует XLSX. "
-        "Для decision=bind передай поля norm_code, selection_kind, applicability, "
-        "analog_limitations (пустой массив только для exact; для analog минимум одно конкретное ограничение), "
-        "resource_actions только если нужно изменить ресурсы нормы и кратко объясни технологическое решение. "
-        "Не передавай resource_actions без item-level include_resources=true; у каждого действия обязательны "
-        "собственные reason и basis_ref. Если applicability close_analog/weak_analog, selection_kind обязан быть analog. "
-        "technology_check можно добавить для операций, условий и пересечений, но это не обязательная анкета."
+        "Выполни текущий пакет ЛСР строго по активному smeta skill ниже. "
+        "Это единственный источник профессиональных правил. Доступные function tools являются транспортом: "
+        "заверши пакет через submit_lsr_mapping и не отвечай свободным текстом.\n\n"
+        + skill_prompt
     )
-    if skill_excerpt:
-        system_prompt += "\n\n" + skill_excerpt
     full_source_context = [] if set(by_id) == all_work_ids else [
         {
             "work_id": row.get("work_id"),
@@ -548,9 +608,10 @@ def _run_batch_norm_agent(
             ),
             "",
         )
+        search_returned_candidates = any(bool(cards) for cards in candidates.values())
         turn_tools = (
             [tool for tool in tools if str((tool.get("function") or {}).get("name") or "") != "submit_lsr_mapping"]
-            if last_tool_name == "search_norms_batch"
+            if last_tool_name == "search_norms_batch" and search_returned_candidates
             else tools
         )
         if progress:
@@ -684,9 +745,19 @@ def _run_batch_norm_agent(
                         if not reason:
                             errors.append({"work_id": work_id, "error": "unbound requires a non-empty reason"})
                             continue
+                        unbound_errors = _unbound_submission_errors(
+                            item,
+                            work_id=work_id,
+                            browse_trace=browse_trace,
+                            opened=opened,
+                        )
+                        if unbound_errors:
+                            errors.extend({"work_id": work_id, "error": error} for error in unbound_errors)
+                            continue
                         proposed[work_id] = {
                             "norm_code": "", "selection_kind": "", "analog_limitations": [],
                             "reason": reason,
+                            "unbound_evidence": dict(item.get("unbound_evidence") or {}),
                             "review_status": "model_batch_unbound", "resource_bindings": [],
                         }
                         continue
@@ -708,39 +779,17 @@ def _run_batch_norm_agent(
                     opened_for_work = opened.get(work_id, {})
                     opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
                     opened_card = opened_for_work.get(opened_code) if opened_code else None
-                    if requested_code and opened_card is None:
-                        # The model owns this code.  Resolve only that exact submitted
-                        # identity so a missing read_norms_batch transport step cannot
-                        # discard or replace an otherwise valid model decision.
-                        exact_result = browse_norms_many(
-                            [requested_code], limit=4, rerank=False
-                        ).get(requested_code) or {}
-                        exact_card = next(
-                            (
-                                card
-                                for card in (exact_result.get("cards") or [])
-                                if _resolve_norm_code_transport(
-                                    requested_code,
-                                    {str(card.get("norm_code") or ""): card},
-                                )
-                            ),
-                            None,
-                        )
-                        if exact_card is not None:
-                            exact_code = str(exact_card.get("norm_code") or requested_code)
-                            candidates[work_id][exact_code] = exact_card
-                            opened_card = _opened_norm_card(exact_code, exact_card)
-                            opened[work_id][exact_code] = opened_card
-                            opened[work_id][requested_code] = opened_card
-                            opened_code = exact_code
-                            browse_trace[work_id].append({
-                                "mode": "model_submitted_exact_lookup",
-                                "query": requested_code,
-                                "candidates": [exact_card],
-                            })
                     code = str((opened_card or {}).get("norm_code") or opened_code)
                     if decision != "bind" or not code:
                         errors.append({"work_id": work_id, "error": "bound norm must be returned by RAG and opened by the model"})
+                        continue
+                    source_unit = str(by_id[work_id].get("unit") or "")
+                    norm_unit = str((opened_card or {}).get("measure_unit") or "")
+                    if source_unit and norm_unit and not units_compatible(source_unit, norm_unit):
+                        errors.append({
+                            "work_id": work_id,
+                            "error": f"unit mismatch before calculation: source={source_unit}, norm={norm_unit}",
+                        })
                         continue
                     bind_errors = _bind_submission_errors(item)
                     if bind_errors:
@@ -866,6 +915,16 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
         },
         "required": list(_TECHNOLOGY_CHECK_FIELDS),
     }
+    unbound_evidence = {
+        "type": "object",
+        "properties": {
+            "queries_used": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+            "opened_norm_codes": string_array,
+            "rejection_reasons": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "coverage_checked": {"type": "string"},
+        },
+        "required": list(_UNBOUND_EVIDENCE_FIELDS),
+    }
     resource_action = {
         "type": "object",
         "properties": {
@@ -894,6 +953,7 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "applicability": {"type": "string", "enum": ["exact", "close_analog", "weak_analog"]},
             "analog_limitations": string_array,
             "technology_check": technology_check,
+            "unbound_evidence": unbound_evidence,
             "nr_sp_rule_id": {"type": "string"},
             "covered_by_work_id": {"type": "string"},
             "resource_actions": {"type": "array", "items": resource_action},
@@ -908,11 +968,16 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                     "selection_kind",
                     "applicability",
                     "analog_limitations",
+                    "technology_check",
                 ]},
             },
             {
                 "if": {"properties": {"decision": {"const": "covered_by"}}, "required": ["decision"]},
                 "then": {"required": ["covered_by_work_id"]},
+            },
+            {
+                "if": {"properties": {"decision": {"const": "unbound"}}, "required": ["decision"]},
+                "then": {"required": ["unbound_evidence"]},
             },
         ],
     }

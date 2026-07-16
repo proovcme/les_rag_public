@@ -10,19 +10,19 @@ from proxy.services.prompt_registry_service import (
     rag_search_role_pack,
     reset_prompt_override,
     smeta_estimator_role_pack,
-    smeta_native_skill_excerpt,
+    smeta_native_skill_prompt,
     update_prompt_override,
 )
 
 
-def test_native_smeta_agent_loads_gesn_storage_reference():
-    excerpt = smeta_native_skill_excerpt()
+def test_native_smeta_agent_loads_canonical_skill():
+    skill = smeta_native_skill_prompt()
 
-    assert "norm_key = base_type:bare_code" in excerpt
-    assert "Typed SQLite" in excerpt
-    assert "RRF-навигацию по dense+sparse" in excerpt
-    assert "submit_lsr_mapping" in excerpt
-    assert "Отсутствие модельного решения не считается подтверждением состава" in excerpt
+    assert "# Сметный агент ЛЕС" in skill
+    assert "единственным профессиональным контрактом" in skill
+    assert "technology_check" in skill
+    assert "unbound_evidence" in skill
+    assert "runtime-agent.md" not in skill
 
 
 def test_prompt_registry_exposes_common_tone_modes_and_tools():

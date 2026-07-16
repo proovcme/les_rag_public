@@ -306,7 +306,7 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
     )
 
     assert result is not None
-    assert seen["batch_size"] == 0
+    assert seen["batch_size"] == 5
 
 
 def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monkeypatch):

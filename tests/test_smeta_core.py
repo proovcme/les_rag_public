@@ -37,6 +37,15 @@ def _technology_check(**overrides):
     return value
 
 
+def _unbound_evidence(*, queries=None, opened=None):
+    return {
+        "queries_used": list(queries or ["буквальный поиск", "нормативная формулировка"]),
+        "opened_norm_codes": list(opened or []),
+        "rejection_reasons": ["состав работ не покрывает исходную операцию"],
+        "coverage_checked": "соседние строки не покрывают работу",
+    }
+
+
 def test_norm_binding_cannot_be_selected_by_code():
     with pytest.raises(ValueError, match="code cannot select"):
         NormBinding(
@@ -117,11 +126,14 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
         "overlaps_with_work_ids", "overlap_resolution", "conditions_checked",
         "unresolved_conditions", "conclusion",
     }
+    assert "technology_check" in submit["allOf"][0]["then"]["required"]
+    assert "unbound_evidence" in submit["properties"]
+    assert "unbound_evidence" in submit["allOf"][2]["then"]["required"]
     action = submit["properties"]["resource_actions"]["items"]
     assert "basis_ref" in action["required"]
 
 
-def test_bind_submission_requires_analog_limits_and_resource_basis_without_questionnaire():
+def test_bind_submission_requires_analog_limits_resource_basis_and_technology_evidence():
     from proxy.smeta_core.document_workflow import _bind_submission_errors
 
     incomplete = _bind_submission_errors({
@@ -134,6 +146,7 @@ def test_bind_submission_requires_analog_limits_and_resource_basis_without_quest
     })
     assert "analog requires explicit analog_limitations" in incomplete
     assert "resource_actions[0].basis_ref is required" in incomplete
+    assert "technology_check.matched_operations is required" in incomplete
 
     complete = _bind_submission_errors({
         "selection_kind": "exact",
@@ -146,8 +159,12 @@ def test_bind_submission_requires_analog_limits_and_resource_basis_without_quest
     assert complete == []
 
 
-def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation():
+def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
 
     rows = [
         {"work_id": f"w{index:02d}", "title": f"Работа {index}", "unit": "шт", "quantity": index}
@@ -155,39 +172,56 @@ def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation():
     ]
     captured = []
 
+    calls = 0
+
     def exchange(messages, tools):
+        nonlocal calls
+        calls += 1
         payload = json.loads(messages[1]["content"])
         captured.append({
             "payload": payload,
             "tools": [(item.get("function") or {}).get("name") for item in tools],
         })
+        if calls == 1:
+            return {"tool_calls": [_native_call(
+                "search", "search_norms_batch",
+                items=[{
+                    "work_id": row["work_id"],
+                    "queries": [f"{row['title']} исходно", f"{row['title']} ФСНБ"],
+                } for row in payload["work_items"]],
+            )]}
         return {"tool_calls": [_native_call(
-            "submit", "submit_lsr_mapping",
-            rows=[
-                {"work_id": row["work_id"], "decision": "unbound", "reason": "модель не выбрала норму"}
-                for row in payload["work_items"]
-            ],
+            "submit", "submit_lsr_mapping", rows=[{
+                "work_id": row["work_id"], "decision": "unbound", "reason": "модель не выбрала норму",
+                "unbound_evidence": _unbound_evidence(
+                    queries=[f"{row['title']} исходно", f"{row['title']} ФСНБ"],
+                ),
+            } for row in payload["work_items"]],
         )]}
 
     result = workflow._run_native_norm_agent(
         rows,
         exchange,
         candidate_limit=8,
-        max_turns=1,
+        max_turns=2,
         user_request="Собери ЛСР по всем строкам",
     )
 
-    assert [len(item["payload"]["work_items"]) for item in captured] == [50]
+    assert [len(item["payload"]["work_items"]) for item in captured] == [50, 50]
     assert captured[0]["payload"]["all_source_rows_context"] == []
     assert captured[0]["payload"]["user_request"] == "Собери ЛСР по всем строкам"
     assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
     assert len(result["selections"]) == 50
-    assert result["agent_trace"]["turns"] == 1
+    assert result["agent_trace"]["turns"] == 2
     assert all(item["review_status"] == "model_batch_unbound" for item in result["selections"].values())
 
 
-def test_batch_agent_zero_batch_size_gives_model_the_whole_vor():
+def test_batch_agent_zero_batch_size_gives_model_the_whole_vor(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
 
     rows = [
         {"work_id": f"w{index}", "title": f"Работа {index}", "unit": "шт", "quantity": 1}
@@ -195,13 +229,29 @@ def test_batch_agent_zero_batch_size_gives_model_the_whole_vor():
     ]
     payloads = []
 
+    calls = 0
+
     def exchange(messages, _tools):
+        nonlocal calls
+        calls += 1
         payload = json.loads(messages[1]["content"])
         payloads.append(payload)
+        if calls == 1:
+            return {"tool_calls": [_native_call(
+                "search", "search_norms_batch", items=[{
+                    "work_id": row["work_id"],
+                    "queries": [f"{row['title']} исходно", f"{row['title']} ФСНБ"],
+                } for row in payload["work_items"]],
+            )]}
         return {"tool_calls": [_native_call(
             "submit", "submit_lsr_mapping",
             rows=[
-                {"work_id": row["work_id"], "decision": "unbound", "reason": "нет точной нормы"}
+                {
+                    "work_id": row["work_id"], "decision": "unbound", "reason": "нет точной нормы",
+                    "unbound_evidence": _unbound_evidence(
+                        queries=[f"{row['title']} исходно", f"{row['title']} ФСНБ"],
+                    ),
+                }
                 for row in payload["work_items"]
             ],
         )]}
@@ -213,7 +263,7 @@ def test_batch_agent_zero_batch_size_gives_model_the_whole_vor():
         batch_size=0,
     )
 
-    assert len(payloads) == 1
+    assert len(payloads) == 2
     assert len(payloads[0]["work_items"]) == 19
     assert len(result["selections"]) == 19
 
@@ -345,7 +395,8 @@ def test_batch_agent_accepts_gemma_scalar_norm_code_for_read(monkeypatch):
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
             "selection_kind": "exact", "applicability": "exact",
-            "analog_limitations": [], "reason": "состав работ совпадает",
+            "analog_limitations": [], "technology_check": _technology_check(),
+            "reason": "состав работ совпадает",
         }])],
     ])
 
@@ -384,7 +435,8 @@ def test_batch_agent_resolves_colon_display_alias_without_changing_norm_family(m
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
             "selection_kind": "exact", "applicability": "exact",
-            "analog_limitations": [], "reason": "состав работ совпадает",
+            "analog_limitations": [], "technology_check": _technology_check(),
+            "reason": "состав работ совпадает",
         }])],
     ])
 
@@ -495,8 +547,12 @@ def test_batch_agent_rejects_unopened_norm_without_selecting_for_model(monkeypat
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-999-99",
             "selection_kind": "exact", "reason": "не открыта",
         }])],
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["работа исходно", "работа ФСНБ"],
+        }])],
         [_native_call("safe", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "unbound", "reason": "нет защищаемой нормы",
+            "unbound_evidence": _unbound_evidence(queries=["работа исходно", "работа ФСНБ"]),
         }])],
     ])
 
@@ -504,7 +560,7 @@ def test_batch_agent_rejects_unopened_norm_without_selecting_for_model(monkeypat
         [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
         lambda _messages, _tools: {"tool_calls": next(turns)},
         candidate_limit=5,
-        max_turns=2,
+        max_turns=3,
     )
 
     assert result["selections"]["w1"]["norm_code"] == ""
@@ -513,7 +569,98 @@ def test_batch_agent_rejects_unopened_norm_without_selecting_for_model(monkeypat
     assert "opened by the model" in first_result["errors"][0]["error"]
 
 
-def test_batch_agent_resolves_models_exact_submitted_norm_without_reselecting(monkeypatch):
+def test_batch_agent_rejects_unbound_until_search_evidence_is_real(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    turns = iter([
+        [_native_call("search1", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["буквальный поиск"],
+        }])],
+        [_native_call("submit1", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "unbound", "reason": "ничего не найдено",
+            "unbound_evidence": _unbound_evidence(queries=["буквальный поиск"]),
+        }])],
+        [_native_call("search2", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["нормативная формулировка"],
+        }])],
+        [_native_call("submit2", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "unbound", "reason": "защищаемой нормы нет",
+            "unbound_evidence": _unbound_evidence(),
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=5,
+        max_turns=4,
+    )
+
+    first_submit = result["model_trace"][1]["tool_results"][0]["result"]
+    assert "two distinct searches" in first_submit["errors"][0]["error"]
+    assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == [
+        "буквальный поиск", "нормативная формулировка",
+    ]
+
+
+def test_batch_agent_returns_unit_mismatch_to_model_before_calculation(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    bad_code = "ГЭСН01-01-001-01"
+    good_code = "ГЭСН01-01-001-02"
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [
+            {"norm_code": bad_code, "title": "Прокладка линии", "measure_unit": "100 м"},
+            {"norm_code": good_code, "title": "Установка элемента", "measure_unit": "шт"},
+        ]} for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": "Прокладка линии" if code == bad_code else "Установка элемента",
+        "unit": "100 м" if code == bad_code else "шт",
+        "work_steps": ["Монтаж"],
+        "resources": [],
+    })
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["монтаж элемента"],
+        }])],
+        [_native_call("read-bad", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_codes": [bad_code],
+        }])],
+        [_native_call("submit-bad", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "bind", "norm_code": bad_code,
+            "selection_kind": "analog", "applicability": "close_analog",
+            "analog_limitations": ["измеритель требует проверки"],
+            "technology_check": _technology_check(conclusion="applicable_with_limitations"),
+            "reason": "модель пробует аналог",
+        }])],
+        [_native_call("read-good", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_codes": [good_code],
+        }])],
+        [_native_call("submit-good", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "bind", "norm_code": good_code,
+            "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+            "technology_check": _technology_check(), "reason": "единица и операция совпадают",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Монтаж элемента", "unit": "шт", "quantity": 8}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=5,
+        max_turns=5,
+    )
+
+    rejected = result["model_trace"][2]["tool_results"][0]["result"]
+    assert "unit mismatch before calculation" in rejected["errors"][0]["error"]
+    assert result["selections"]["w1"]["norm_code"] == good_code
+
+
+def test_batch_agent_requires_model_to_read_exact_submitted_norm(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     selected_code = "ГЭСН01-01-001-01"
@@ -530,21 +677,36 @@ def test_batch_agent_resolves_models_exact_submitted_norm_without_reselecting(mo
         "name": "Работа", "unit": "шт", "work_steps": ["Работа"], "resources": [],
     } if code == selected_code else None)
 
-    result = workflow._run_native_norm_agent(
-        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
-        lambda _messages, _tools: {"tool_calls": [_native_call(
-            "submit", "submit_lsr_mapping", rows=[{
+    turns = iter([
+        [_native_call("early", "submit_lsr_mapping", rows=[{
+            "work_id": "w1", "decision": "bind", "norm_code": selected_code,
+            "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+            "technology_check": _technology_check(), "reason": "модель выбрала точную норму",
+        }])],
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "queries": ["работа"],
+        }])],
+        [_native_call("read", "read_norms_batch", items=[{
+            "work_id": "w1", "norm_codes": [selected_code],
+        }])],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
                 "work_id": "w1", "decision": "bind", "norm_code": selected_code,
                 "selection_kind": "exact", "applicability": "exact",
-                "analog_limitations": [], "reason": "модель выбрала точную норму",
-            }],
-        )]},
+                "analog_limitations": [], "technology_check": _technology_check(),
+                "reason": "модель выбрала точную норму",
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
         candidate_limit=5,
-        max_turns=1,
+        max_turns=4,
     )
 
     assert result["selections"]["w1"]["norm_code"] == selected_code
-    assert result["browse_trace"]["w1"][-1]["mode"] == "model_submitted_exact_lookup"
+    first = result["model_trace"][0]["tool_results"][0]["result"]
+    assert "opened by the model" in first["errors"][0]["error"]
 
 
 def test_batch_agent_keeps_valid_rows_while_model_repairs_only_rejected_row(monkeypatch):
@@ -564,19 +726,24 @@ def test_batch_agent_keeps_valid_rows_while_model_repairs_only_rejected_row(monk
     turns = iter([
         [_native_call("search", "search_norms_batch", items=[
             {"work_id": "w1", "queries": ["работа 1"]},
-            {"work_id": "w2", "queries": ["работа 2"]},
+            {"work_id": "w2", "queries": ["работа 2", "работа 2 ФСНБ"]},
         ])],
-        [_native_call("read", "read_norms_batch", items=[{
-            "work_id": "w1", "norm_codes": ["ГЭСН01-01-001-01"],
-        }])],
+        [_native_call("read", "read_norms_batch", items=[
+            {"work_id": "w1", "norm_codes": ["ГЭСН01-01-001-01"]},
+            {"work_id": "w2", "norm_codes": ["ГЭСН01-01-001-01"]},
+        ])],
         [_native_call("submit1", "submit_lsr_mapping", rows=[
             {"work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-001-01",
-             "selection_kind": "exact", "applicability": "exact", "reason": "совпадает"},
+             "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+             "technology_check": _technology_check(), "reason": "совпадает"},
             {"work_id": "w2", "decision": "bind", "norm_code": "ГЭСН01-01-999-99",
              "selection_kind": "exact", "applicability": "exact", "reason": "не открыта"},
         ])],
         [_native_call("submit2", "submit_lsr_mapping", rows=[{
             "work_id": "w2", "decision": "unbound", "reason": "точной нормы нет",
+            "unbound_evidence": _unbound_evidence(
+                queries=["работа 2", "работа 2 ФСНБ"], opened=["ГЭСН01-01-001-01"],
+            ),
         }])],
     ])
 
@@ -617,22 +784,43 @@ def test_batch_agent_has_configurable_transport_turn_budget():
     assert calls == 2
 
 
-def test_batch_agent_reports_model_wait_before_and_after_each_turn():
+def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+
     events = []
+    calls = 0
+
+    def exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"tool_calls": [_native_call(
+                "search", "search_norms_batch", items=[{
+                    "work_id": "w1", "queries": ["работа исходно", "работа ФСНБ"],
+                }],
+            )]}
+        return {"tool_calls": [_native_call(
+            "submit", "submit_lsr_mapping", rows=[{
+                "work_id": "w1", "decision": "unbound", "reason": "нет точной нормы",
+                "unbound_evidence": _unbound_evidence(queries=["работа исходно", "работа ФСНБ"]),
+            }],
+        )]}
+
     result = workflow._run_native_norm_agent(
         [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
-        lambda _messages, _tools: {"tool_calls": [_native_call(
-            "submit", "submit_lsr_mapping",
-            rows=[{"work_id": "w1", "decision": "unbound", "reason": "нет точной нормы"}],
-        )]},
+        exchange,
         candidate_limit=5,
         progress=events.append,
     )
 
     waits = [event for event in events if event.get("phase") == "model_wait"]
-    assert [(event["status"], event["turn"]) for event in waits] == [("started", 1), ("done", 1)]
+    assert [(event["status"], event["turn"]) for event in waits] == [
+        ("started", 1), ("done", 1), ("started", 2), ("done", 2),
+    ]
     assert result["selections"]["w1"]["norm_code"] == ""
 
 
@@ -695,13 +883,29 @@ def test_document_workflow_passes_neighbor_context_and_calculates_once(monkeypat
     monkeypatch.setattr(workflow, "calculate_visible_rows_revision", lambda rows, **_kwargs: (
         calculations.append(rows) or {"summary": {"input_rows": len(rows), "bound_rows": 0}}
     ))
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
     seen = {}
+    calls = 0
 
     def exchange(messages, _tools):
+        nonlocal calls
+        calls += 1
         payload = json.loads(messages[1]["content"])
         seen.update({item["work_id"]: item for item in payload["work_items"]})
+        if calls == 1:
+            return {"tool_calls": [_native_call("search", "search_norms_batch", items=[{
+                "work_id": item["work_id"],
+                "queries": [f"{item['title']} исходно", f"{item['title']} ФСНБ"],
+            } for item in payload["work_items"]])]}
         return {"tool_calls": [_native_call("submit", "submit_lsr_mapping", rows=[
-            {"work_id": item["work_id"], "decision": "unbound", "reason": "нет нормы"}
+            {
+                "work_id": item["work_id"], "decision": "unbound", "reason": "нет нормы",
+                "unbound_evidence": _unbound_evidence(
+                    queries=[f"{item['title']} исходно", f"{item['title']} ФСНБ"],
+                ),
+            }
             for item in payload["work_items"]
         ])]}
 
