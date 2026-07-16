@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,20 @@ from tools import patch_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_release_command_tolerates_non_utf8_windows_diagnostics():
+    completed = patch_release.run(
+        [
+            sys.executable,
+            "-c",
+            "import os; os.write(1, b'{\\\"ok\\\":true}\\n'); os.write(2, b'\\x8f')",
+        ],
+        capture=True,
+    )
+
+    assert json.loads(completed.stdout)["ok"] is True
+    assert "\ufffd" in completed.stderr
 
 
 def test_patch_release_contract_separates_product_and_build(tmp_path):

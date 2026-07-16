@@ -34,7 +34,8 @@ Windows-выпуск:            0.24.16 / build 427 (VPS patch baseline)
 > массив решений под безвредным алиасом `mapping` вместо объявленного `rows`; содержимое строк не
 > меняется и проходит те же model-integrity gates. CPython поставляется официальным portable ZIP:
 > bootstrap проверяет SHA-256, распаковывает private runtime без MSI/реестра и проверяет точную версию.
-> Добавлены регрессии UI, model-workflow и installer bootstrap.
+> Независимый persistence-probe публикации заменяет не-UTF-8 диагностику PowerShell вместо падения
+> декодера, сохраняя проверку JSON fail-closed. Добавлены регрессии UI, model-workflow и installer bootstrap.
 
 > 0.24.20 / build 441 — self-contained Python first launch
 >

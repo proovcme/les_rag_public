@@ -51,6 +51,8 @@ def run(command: Iterable[str], *, cwd: Path = ROOT, capture: bool = False) -> s
         cwd=cwd,
         check=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=capture,
     )
 
