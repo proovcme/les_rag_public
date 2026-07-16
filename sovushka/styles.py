@@ -2429,6 +2429,51 @@ body, .nicegui-content {
   width: 100%;
 }
 .sov-composition-filters > * { min-width: 0; }
+.sov-file-panel-filters {
+  display: grid !important;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px !important;
+  padding: 2px 3px 7px;
+}
+.sov-file-panel-filters > * { min-width: 0; }
+.sov-file-panel-filters .q-field__label,
+.sov-file-panel-filters .q-field__native { font-size: 10.5px !important; }
+.sov-index-quality {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--bg-panel);
+  box-shadow: 0 0 0 1px rgba(138,162,184,.22), 0 8px 24px rgba(3,10,18,.04);
+}
+.sov-index-quality-head { gap: 8px !important; flex-wrap: wrap; }
+.sov-index-quality-head .q-icon { font-size: 18px; color: var(--accent); }
+.sov-index-quality-metrics {
+  gap: 6px !important;
+  margin-top: 9px;
+  flex-wrap: wrap;
+  font-variant-numeric: tabular-nums;
+}
+.sov-index-quality-channels { margin-top: 8px; }
+.sov-index-quality-note {
+  margin-top: 5px;
+  text-wrap: pretty;
+}
+.sov-index-quality-files {
+  margin-top: 9px;
+  border-radius: 9px !important;
+  box-shadow: inset 0 0 0 1px rgba(138,162,184,.20);
+}
+.sov-index-quality-file {
+  margin: 4px 7px;
+  border-radius: 8px !important;
+  background: color-mix(in srgb, var(--bg-panel) 93%, var(--accent) 7%);
+}
+.sov-index-quality-sample {
+  margin-top: 3px;
+  line-height: 1.45;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
 .sov-composition-file-row--selected {
   border-color: color-mix(in srgb, var(--accent) 72%, var(--docs-border-strong));
   background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));

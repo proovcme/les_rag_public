@@ -163,6 +163,156 @@ class DocumentExplorer:
             ).fetchall()
         return {"dataset_id": dataset_id, "total": total, "limit": limit, "offset": offset, "documents": [dict(row) for row in rows]}
 
+    def dataset_index_quality(self, dataset_id: str, *, sample_chunks_per_file: int = 2) -> dict[str, Any]:
+        """Describe what was actually written to the searchable text projection.
+
+        This is a read-only content passport, not a relevance score.  Structural
+        dense/sparse/Qdrant/FTS integrity remains owned by ``audit_dataset_integrity``;
+        here the operator sees file coverage, text volume and representative chunks.
+        """
+        sample_limit = max(1, min(int(sample_chunks_per_file or 2), 4))
+        with self.connect() as conn:
+            _ensure_tables(conn)
+            documents = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT id, dataset_id, file_name, COALESCE(status, '') AS status,
+                           COALESCE(file_size, 0) AS file_size,
+                           COALESCE(chunk_count, 0) AS chunk_count,
+                           COALESCE(doc_type, '') AS doc_type,
+                           COALESCE(content_type, '') AS content_type,
+                           COALESCE(domain, '') AS domain,
+                           COALESCE(source_path, '') AS source_path,
+                           COALESCE(last_error, '') AS last_error
+                    FROM documents
+                    WHERE dataset_id = ?
+                    ORDER BY LOWER(file_name)
+                    """,
+                    (dataset_id,),
+                ).fetchall()
+            ]
+            aggregate_rows = conn.execute(
+                """
+                SELECT doc_name,
+                       COUNT(*) AS indexed_chunks,
+                       COALESCE(SUM(LENGTH(TRIM(COALESCE(text, '')))), 0) AS characters,
+                       SUM(CASE WHEN LENGTH(TRIM(COALESCE(text, ''))) = 0 THEN 1 ELSE 0 END) AS empty_chunks,
+                       SUM(CASE WHEN LENGTH(TRIM(COALESCE(text, ''))) BETWEEN 1 AND 119 THEN 1 ELSE 0 END) AS short_chunks,
+                       SUM(CASE WHEN TRIM(COALESCE(section_heading, '')) <> ''
+                                      OR TRIM(COALESCE(parent_heading, '')) <> '' THEN 1 ELSE 0 END) AS heading_chunks,
+                       SUM(CASE WHEN INSTR(COALESCE(text, ''), '|') > 0
+                                      OR LOWER(COALESCE(context_kind, '')) LIKE '%table%' THEN 1 ELSE 0 END) AS table_like_chunks
+                FROM lexical_chunks
+                WHERE collection = ? AND dataset_id = ?
+                GROUP BY doc_name
+                """,
+                (self.collection_name, dataset_id),
+            ).fetchall()
+            sample_rows = conn.execute(
+                """
+                WITH ranked AS (
+                    SELECT doc_name, chunk_ord, section_heading, parent_heading, context_kind, text,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY doc_name
+                               ORDER BY CASE WHEN LENGTH(TRIM(COALESCE(text, ''))) > 0 THEN 0 ELSE 1 END,
+                                        COALESCE(chunk_ord, 0), id
+                           ) AS sample_rank
+                    FROM lexical_chunks
+                    WHERE collection = ? AND dataset_id = ?
+                )
+                SELECT doc_name, chunk_ord, section_heading, parent_heading, context_kind, text
+                FROM ranked
+                WHERE sample_rank <= ?
+                ORDER BY LOWER(doc_name), sample_rank
+                """,
+                (self.collection_name, dataset_id, sample_limit),
+            ).fetchall()
+
+        aggregates = {str(row["doc_name"]): dict(row) for row in aggregate_rows}
+        samples: dict[str, list[dict[str, Any]]] = {}
+        for row in sample_rows:
+            text = " ".join(str(row["text"] or "").split())
+            samples.setdefault(str(row["doc_name"]), []).append(
+                {
+                    "chunk_ord": int(row["chunk_ord"] or 0),
+                    "heading": str(row["section_heading"] or row["parent_heading"] or ""),
+                    "context_kind": str(row["context_kind"] or ""),
+                    "text": text[:700],
+                }
+            )
+
+        files: list[dict[str, Any]] = []
+        totals = {
+            "files": len(documents),
+            "indexed_files": 0,
+            "files_with_searchable_text": 0,
+            "declared_chunks": 0,
+            "indexed_chunks": 0,
+            "characters": 0,
+            "empty_chunks": 0,
+            "short_chunks": 0,
+            "heading_chunks": 0,
+            "table_like_chunks": 0,
+        }
+        for document in documents:
+            file_name = str(document.get("file_name") or "")
+            aggregate = aggregates.get(file_name, {})
+            declared = int(document.get("chunk_count") or 0)
+            indexed = int(aggregate.get("indexed_chunks") or 0)
+            characters = int(aggregate.get("characters") or 0)
+            extension = Path(file_name).suffix.lstrip(".").upper() or "ФАЙЛ"
+            totals["indexed_files"] += int(str(document.get("status") or "").upper() == "INDEXED")
+            totals["files_with_searchable_text"] += int(characters > 0)
+            totals["declared_chunks"] += declared
+            for key in (
+                "indexed_chunks", "characters", "empty_chunks", "short_chunks",
+                "heading_chunks", "table_like_chunks",
+            ):
+                totals[key] += int(aggregate.get(key) or 0)
+            files.append(
+                {
+                    **document,
+                    "extension": extension,
+                    "declared_chunks": declared,
+                    "indexed_chunks": indexed,
+                    "characters": characters,
+                    "average_chunk_chars": round(characters / indexed) if indexed else 0,
+                    "empty_chunks": int(aggregate.get("empty_chunks") or 0),
+                    "short_chunks": int(aggregate.get("short_chunks") or 0),
+                    "heading_chunks": int(aggregate.get("heading_chunks") or 0),
+                    "table_like_chunks": int(aggregate.get("table_like_chunks") or 0),
+                    "samples": samples.get(file_name, []),
+                }
+            )
+
+        searchable_files = int(totals["files_with_searchable_text"])
+        indexed_files = int(totals["indexed_files"])
+        indexed_chunks = int(totals["indexed_chunks"])
+        empty_chunks = int(totals["empty_chunks"])
+        state = (
+            "empty" if indexed_files == 0 or indexed_chunks == 0
+            else "attention" if searchable_files < indexed_files or empty_chunks > 0
+            else "ready"
+        )
+        return {
+            "schema": "les.dataset_index_quality.v1",
+            "dataset_id": dataset_id,
+            "state": state,
+            "label": {
+                "ready": "Содержимое индекса видно",
+                "attention": "Есть пробелы в содержимом",
+                "empty": "Поискового содержимого нет",
+            }[state],
+            "totals": totals,
+            "files": files,
+            "search_channels": ["Смысловой поиск", "Точный поиск", "Текстовый поиск"],
+            "operator_note": (
+                "Примеры ниже — реальный текст поисковой проекции. "
+                "Графика без текстового слоя требует отдельного просмотра изображения."
+            ),
+        }
+
     def get_document(self, doc_id: str) -> dict[str, Any] | None:
         with self.connect() as conn:
             _ensure_tables(conn)

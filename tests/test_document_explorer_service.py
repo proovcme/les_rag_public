@@ -230,6 +230,22 @@ def test_document_explorer_search_by_doc_id_falls_back_to_file_name(explorer):
     assert "Огнестойкость" in result["hits"][0]["snippet"]
 
 
+def test_document_explorer_reports_what_entered_the_index(explorer):
+    result = explorer.dataset_index_quality("fire", sample_chunks_per_file=1)
+
+    assert result["schema"] == "les.dataset_index_quality.v1"
+    assert result["state"] == "ready"
+    assert result["totals"]["files"] == 3
+    assert result["totals"]["files_with_searchable_text"] == 3
+    assert result["totals"]["indexed_chunks"] == 4
+    first = next(item for item in result["files"] if item["file_name"].endswith("СП 7.13130.docx"))
+    assert first["declared_chunks"] == 2
+    assert first["indexed_chunks"] == 2
+    assert first["characters"] > 0
+    assert len(first["samples"]) == 1
+    assert "противодымная вентиляция" in first["samples"][0]["text"]
+
+
 @pytest.mark.asyncio
 async def test_documents_router_uses_explorer(monkeypatch, explorer):
     monkeypatch.setattr(documents_router, "explorer", lambda: explorer)
@@ -256,8 +272,14 @@ async def test_documents_router_uses_explorer(monkeypatch, explorer):
         max_chars=4000,
         _user=object(),
     )
+    quality = await documents_router.dataset_index_quality(
+        dataset_id="fire",
+        samples=1,
+        _user=object(),
+    )
 
     assert found["count"] >= 1
     assert chunks["total"] == 2
     assert by_id["document"]["id"] == "doc-1"
     assert by_id["total"] == 2
+    assert quality["totals"]["indexed_chunks"] == 4

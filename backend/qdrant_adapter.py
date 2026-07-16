@@ -2451,6 +2451,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         clean_files = 0
         indexed_files = 0
         pending_files = 0
+        file_checks: list[dict[str, Any]] = []
 
         for file_name, row in registry.items():
             status = str(row.get("status") or "")
@@ -2458,6 +2459,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 self.content_dir / dataset_id / file_name
             )
             file_issues: list[str] = []
+            expected = int(row.get("chunk_count") or 0)
+            qdrant_count = dense_count = sparse_count = lexical_count = 0
+            expected_page_count = indexed_page_count = 0
             if status == "ERROR":
                 file_issues.append("Предыдущая индексация завершилась ошибкой")
                 damaged.add(file_name)
@@ -2483,7 +2487,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
             if status == "INDEXED":
                 indexed_files += 1
-                expected = int(row.get("chunk_count") or 0)
                 qrow = qdrant_files.get(file_name) or {"ids": set(), "pages": set()}
                 qids = set(qrow.get("ids") or set())
                 lexical_ids = set(lexical_files.get(file_name) or set())
@@ -2493,6 +2496,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 sparse = self._sync_count_file_vector_points(
                     sync_qdrant, dataset_id, file_name, _sparse_vector_name()
                 )
+                qdrant_count = len(qids)
+                dense_count = dense
+                sparse_count = sparse
+                lexical_count = len(lexical_ids)
                 if len(qids) != expected:
                     file_issues.append(f"Векторный индекс: {len(qids)} из {expected}")
                 if dense != expected:
@@ -2504,6 +2511,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 if source.is_file() and source.suffix.lower() in PDF_PAGE_NODE_SUFFIXES:
                     expected_pages = self._expected_pdf_text_pages(source)
                     indexed_pages = set(qrow.get("pages") or set())
+                    expected_page_count = len(expected_pages)
+                    indexed_page_count = len(indexed_pages)
                     if expected_pages and indexed_pages != expected_pages:
                         file_issues.append(
                             f"Страницы PDF: {len(indexed_pages)} из {len(expected_pages)}"
@@ -2515,6 +2524,20 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 issues.append({"file": file_name, "status": status, "problems": file_issues})
             elif status == "INDEXED":
                 clean_files += 1
+            file_checks.append(
+                {
+                    "file": file_name,
+                    "status": status,
+                    "expected_chunks": expected,
+                    "qdrant_chunks": qdrant_count,
+                    "dense_chunks": dense_count,
+                    "sparse_chunks": sparse_count,
+                    "lexical_chunks": lexical_count,
+                    "expected_text_pages": expected_page_count,
+                    "indexed_text_pages": indexed_page_count,
+                    "problems": list(file_issues),
+                }
+            )
 
         orphan_qdrant = sorted(set(qdrant_files) - set(registry))
         orphan_lexical = sorted(set(lexical_files) - set(registry))
@@ -2584,6 +2607,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             "repaired": repaired,
             "requeued": len(damaged - missing) if repair and contract_ok else 0,
             "issues": issues[:100],
+            "file_checks": file_checks,
         }
 
     def _sync_existing_file_vectors_by_hash(

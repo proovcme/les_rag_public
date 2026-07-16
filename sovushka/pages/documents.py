@@ -70,6 +70,10 @@ def build_documents() -> None:
         "dataset_kind_filter": "",
         "dataset_group_filter": "",
         "document_filter": "",
+        "document_folder_filter": "",
+        "document_extension_filter": "",
+        "document_status_filter": "",
+        "document_role_filter": "",
         "document_tree_open": [],
         "document_map_files": [],
         "document_map_label": "",
@@ -90,6 +94,8 @@ def build_documents() -> None:
         "rag_readiness_loading": False,
         "dataset_integrity": {},
         "dataset_integrity_loading": False,
+        "dataset_index_quality": {},
+        "dataset_index_quality_loading": False,
         "query": "",
         "view_title": "Выберите датасет",
         "view_note": "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу.",
@@ -315,6 +321,12 @@ def build_documents() -> None:
 
     def _set_document_text_filter(value: str) -> None:
         state["document_filter"] = str(value or "")
+        state["document_map_files"] = []
+        state["document_map_label"] = ""
+        _render_documents()
+
+    def _set_document_file_filter(key: str, value: str) -> None:
+        state[key] = str(value or "")
         state["document_map_files"] = []
         state["document_map_label"] = ""
         _render_documents()
@@ -586,6 +598,13 @@ def build_documents() -> None:
         state["dataset_index_brief_loading"] = False
         state["dataset_integrity"] = {}
         state["dataset_integrity_loading"] = False
+        state["dataset_index_quality"] = {}
+        state["dataset_index_quality_loading"] = False
+        for key in (
+            "document_folder_filter", "document_extension_filter",
+            "document_status_filter", "document_role_filter",
+        ):
+            state[key] = ""
         state["dataset_kind"] = str(_selected_dataset_row().get("dataset_kind") or "")
         state["view_mode"] = "map"
         state["view_title"] = _dataset_title(_selected_dataset_row()) if dataset_id else "Выберите датасет"
@@ -600,6 +619,7 @@ def build_documents() -> None:
             _load_dataset_index_brief(),
             _load_rag_readiness(dataset_id),
             _load_dataset_integrity(dataset_id),
+            _load_dataset_index_quality(dataset_id),
         )
 
     async def _load_rag_readiness(dataset_id: str = "", *, force: bool = False) -> None:
@@ -630,6 +650,19 @@ def build_documents() -> None:
         state["dataset_integrity"] = data if isinstance(data, dict) else {}
         _render_view()
 
+    async def _load_dataset_index_quality(dataset_id: str = "") -> None:
+        if not dataset_id:
+            state["dataset_index_quality"] = {}
+            return
+        state["dataset_index_quality_loading"] = True
+        _render_view()
+        data = await api_get(
+            f"/api/documents/datasets/{quote(dataset_id, safe='')}/quality?samples=2"
+        )
+        state["dataset_index_quality_loading"] = False
+        state["dataset_index_quality"] = data if isinstance(data, dict) else {}
+        _render_view()
+
     async def _repair_dataset_integrity() -> None:
         dataset_id = str(state.get("selected_dataset") or "")
         if not dataset_id:
@@ -647,6 +680,7 @@ def build_documents() -> None:
         else:
             _render_status_error()
         await _load_documents()
+        await _load_dataset_index_quality(dataset_id)
         _render_view()
 
     async def _load_dataset_index_brief() -> None:
@@ -909,7 +943,7 @@ def build_documents() -> None:
             state["documents"] = []
             _render_all()
             return
-        params = {"limit": 500}
+        params = {"limit": 1000}
         if state["document_filter"].strip():
             params["q"] = state["document_filter"].strip()
         path = f"/api/documents/datasets/{quote(dataset_id, safe='')}/documents?{urlencode(params)}"
@@ -1644,6 +1678,88 @@ def build_documents() -> None:
                 prefix = f"{first.get('file')}: " if first.get("file") else ""
                 _label(prefix + problem, size="10.8px", color="var(--warn)").style("margin-top:7px;")
 
+    def _render_dataset_index_quality_card() -> None:
+        quality = state.get("dataset_index_quality") if isinstance(state.get("dataset_index_quality"), dict) else {}
+        loading = bool(state.get("dataset_index_quality_loading"))
+        integrity = state.get("dataset_integrity") if isinstance(state.get("dataset_integrity"), dict) else {}
+        checks = {
+            str(item.get("file") or ""): item
+            for item in (integrity.get("file_checks") or [])
+            if isinstance(item, dict) and item.get("file")
+        }
+        with ui.element("section").classes("sov-index-quality"):
+            with ui.row().classes("items-center w-full sov-index-quality-head"):
+                ui.icon("o_fact_check")
+                _label("Что попало в RAG", size="13px", weight=900)
+                if loading:
+                    ui.spinner(size="sm")
+                    _label("Считаю содержимое поискового индекса…", size="11px", color="var(--dim)")
+            if loading:
+                return
+            if not quality:
+                _label("Паспорт содержимого пока недоступен.", size="11px", color="var(--dim)")
+                return
+            totals = quality.get("totals") if isinstance(quality.get("totals"), dict) else {}
+            quality_state = str(quality.get("state") or "empty")
+            with ui.row().classes("items-center w-full sov-index-quality-metrics"):
+                _badge(str(quality.get("label") or "Статус неизвестен"), "tag-ok" if quality_state == "ready" else "tag-warn")
+                _badge(
+                    f"Текст есть: {int(totals.get('files_with_searchable_text') or 0)}/{int(totals.get('files') or 0)} файлов"
+                )
+                _badge(f"Фрагменты: {int(totals.get('indexed_chunks') or 0):,}".replace(",", " "))
+                _badge(f"Символы: {int(totals.get('characters') or 0):,}".replace(",", " "))
+                if int(totals.get("short_chunks") or 0):
+                    _badge(f"Короткие: {int(totals.get('short_chunks') or 0)}", "tag-warn")
+                if int(totals.get("empty_chunks") or 0):
+                    _badge(f"Пустые: {int(totals.get('empty_chunks') or 0)}", "tag-warn")
+            _label(
+                " · ".join(str(value) for value in (quality.get("search_channels") or [])),
+                size="10.5px",
+                color="var(--dim)",
+            ).classes("sov-index-quality-channels")
+            _label(str(quality.get("operator_note") or ""), size="10.8px", color="var(--dim)").classes(
+                "sov-index-quality-note"
+            )
+            files = [item for item in (quality.get("files") or []) if isinstance(item, dict)]
+            with ui.expansion(
+                f"По файлам · {len(files)}",
+                icon="o_plagiarism",
+                value=False,
+            ).classes("w-full sov-index-quality-files").props("dense"):
+                for item in files[:100]:
+                    file_name = str(item.get("file_name") or "")
+                    check = checks.get(file_name, {})
+                    chunks = int(item.get("indexed_chunks") or 0)
+                    declared = int(item.get("declared_chunks") or 0)
+                    page_total = int(check.get("expected_text_pages") or 0)
+                    page_indexed = int(check.get("indexed_text_pages") or 0)
+                    title = f"{file_name.rsplit('/', 1)[-1]} · {chunks}/{declared} фрагм."
+                    with ui.expansion(title, icon=_file_icon(file_name)).classes(
+                        "w-full sov-index-quality-file"
+                    ).props("dense"):
+                        metrics = [
+                            str(item.get("extension") or "ФАЙЛ"),
+                            str(item.get("status") or "статус неизвестен"),
+                            f"{int(item.get('characters') or 0):,} симв.".replace(",", " "),
+                            f"средний фрагмент {int(item.get('average_chunk_chars') or 0)} симв.",
+                        ]
+                        if page_total:
+                            metrics.append(f"текстовые страницы {page_indexed}/{page_total}")
+                        if int(item.get("table_like_chunks") or 0):
+                            metrics.append(f"табличных фрагментов {int(item.get('table_like_chunks') or 0)}")
+                        _label(" · ".join(metrics), size="10.4px", color="var(--dim)")
+                        samples = [sample for sample in (item.get("samples") or []) if isinstance(sample, dict)]
+                        if not samples:
+                            _label("Текстовых примеров нет.", size="10.7px", color="var(--warn)").style("margin-top:6px;")
+                        for sample in samples:
+                            heading = str(sample.get("heading") or f"Фрагмент {int(sample.get('chunk_ord') or 0)}")
+                            _label(heading, size="10.8px", weight=850).style("margin-top:7px;")
+                            _label(str(sample.get("text") or ""), size="10.5px", color="var(--dim)").classes(
+                                "sov-index-quality-sample"
+                            )
+                if len(files) > 100:
+                    _label(f"Показаны первые 100 из {len(files)} файлов.", size="10.7px", color="var(--dim)")
+
     def _render_rag_readiness_card() -> None:
         readiness = state.get("rag_readiness") if isinstance(state.get("rag_readiness"), dict) else {}
         general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
@@ -2044,6 +2160,68 @@ def build_documents() -> None:
                 _label("Документы не найдены", color="var(--dim)")
                 return
             selected_ids = {str(value) for value in (state.get("selected_doc_ids") or [])}
+            all_documents = [row for row in state["documents"] if isinstance(row, dict)]
+            folder_options = sorted(
+                {
+                    str(row.get("file_name") or "").rsplit("/", 1)[0]
+                    for row in all_documents
+                    if "/" in str(row.get("file_name") or "")
+                },
+                key=str.casefold,
+            )
+            extension_options = sorted({_file_kind(str(row.get("file_name") or "")) for row in all_documents})
+            status_options = sorted(
+                {str(row.get("status") or "").upper() for row in all_documents if row.get("status")}
+            )
+            role_options = sorted(
+                {
+                    str(row.get("doc_type") or row.get("content_type") or row.get("domain") or "").strip()
+                    for row in all_documents
+                    if str(row.get("doc_type") or row.get("content_type") or row.get("domain") or "").strip()
+                },
+                key=str.casefold,
+            )
+            folder_filter = str(state.get("document_folder_filter") or "")
+            extension_filter = str(state.get("document_extension_filter") or "")
+            status_filter = str(state.get("document_status_filter") or "")
+            role_filter = str(state.get("document_role_filter") or "")
+            with ui.row().classes("w-full sov-file-panel-filters"):
+                folder_select = ui.select(
+                    {"": "Все папки", **{value: value for value in folder_options}},
+                    value=folder_filter,
+                    label="Папка",
+                ).props("outlined dense options-dense")
+                folder_select.on(
+                    "update:model-value",
+                    lambda e: _set_document_file_filter("document_folder_filter", str(e.args or "")),
+                )
+                extension_select = ui.select(
+                    {"": "Все форматы", **{value: value for value in extension_options}},
+                    value=extension_filter,
+                    label="Формат",
+                ).props("outlined dense options-dense")
+                extension_select.on(
+                    "update:model-value",
+                    lambda e: _set_document_file_filter("document_extension_filter", str(e.args or "")),
+                )
+                status_select = ui.select(
+                    {"": "Все статусы", **{value: value for value in status_options}},
+                    value=status_filter,
+                    label="Статус",
+                ).props("outlined dense options-dense")
+                status_select.on(
+                    "update:model-value",
+                    lambda e: _set_document_file_filter("document_status_filter", str(e.args or "")),
+                )
+                role_select = ui.select(
+                    {"": "Все типы", **{value: value for value in role_options}},
+                    value=role_filter,
+                    label="Тип",
+                ).props("outlined dense options-dense")
+                role_select.on(
+                    "update:model-value",
+                    lambda e: _set_document_file_filter("document_role_filter", str(e.args or "")),
+                )
             with ui.row().classes("items-center w-full").style("gap:6px;padding:2px 4px 6px;"):
                 _label(f"Выбрано: {len(selected_ids)}", size="10.5px", color="var(--dim)", weight=800).style("flex:1;")
                 if selected_ids:
@@ -2066,6 +2244,16 @@ def build_documents() -> None:
                 if (
                     (map_files and str(row.get("file_name") or "") in map_files)
                     or (not map_files and (not needle or needle in str(row.get("file_name") or "").casefold()))
+                )
+                and (
+                    not folder_filter
+                    or str(row.get("file_name") or "").startswith(folder_filter.rstrip("/") + "/")
+                )
+                and (not extension_filter or _file_kind(str(row.get("file_name") or "")) == extension_filter)
+                and (not status_filter or str(row.get("status") or "").upper() == status_filter)
+                and (
+                    not role_filter
+                    or str(row.get("doc_type") or row.get("content_type") or row.get("domain") or "").strip() == role_filter
                 )
             ]
             if state.get("document_map_label"):
@@ -2190,6 +2378,7 @@ def build_documents() -> None:
                 _label("Выберите датасет слева — покажу карту слоёв и маршрутов.", color="var(--dim)")
             return
         _render_dataset_integrity_card()
+        _render_dataset_index_quality_card()
         _render_rag_readiness_card()
         if not memory:
             with ui.element("div").style(

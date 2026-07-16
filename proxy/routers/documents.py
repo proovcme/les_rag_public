@@ -43,6 +43,18 @@ async def dataset_documents(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.get("/datasets/{dataset_id}/quality")
+async def dataset_index_quality(
+    dataset_id: str,
+    samples: int = Query(default=2, ge=1, le=4),
+    _user=Depends(require_user),
+):
+    try:
+        return explorer().dataset_index_quality(dataset_id, sample_chunks_per_file=samples)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @router.get("/by-id/{doc_id}")
 async def document_by_id(
     doc_id: str,

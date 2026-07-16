@@ -113,6 +113,13 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert 'state.__setitem__("dataset_filter", str(e.args or "")), _render_datasets()' in page
     assert "warnings_truncated" in page
     assert "ui.mermaid(" not in page
+    assert "Что попало в RAG" in page
+    assert "sov-index-quality" in page
+    assert ".sov-index-quality" in styles
+    assert "sov-file-panel-filters" in page
+    assert ".sov-file-panel-filters" in styles
+    for filter_label in ("Папка", "Формат", "Статус", "Тип"):
+        assert f'label="{filter_label}"' in page
     assert "Темы датасета" in page
     assert "Разделы внутри файлов" in page
     assert "Спросить по теме" in page
