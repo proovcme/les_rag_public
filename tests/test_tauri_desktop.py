@@ -167,39 +167,39 @@ def test_windows_tauri_stage_rejects_tampered_uv_binary(tmp_path, monkeypatch):
 
 
 def test_windows_tauri_stage_bundles_verified_python(tmp_path, monkeypatch):
-    installer = tmp_path / "python.exe"
-    installer.write_bytes(b"verified-python-installer")
+    archive = tmp_path / "python.zip"
+    archive.write_bytes(b"verified-python-archive")
     contract = tmp_path / "windows_python.json"
     contract.write_text(json.dumps({
-        "schema": "les.windows-python.v1",
+        "schema": "les.windows-python.v2",
         "version": "test",
-        "installer_url": "https://example.test/python.exe",
-        "installer_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
-        "installer_name": "python-installer.exe",
+        "archive_url": "https://example.test/python.zip",
+        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "archive_name": "python-embed.zip",
         "python_relative_path": "python.exe",
     }), encoding="utf-8")
     monkeypatch.setattr(build_tauri_app, "WINDOWS_PYTHON_CONTRACT_PATH", contract)
 
-    assert build_tauri_app.stage_windows_python(tmp_path / "runtime", installer_path=installer) == 1
-    assert (tmp_path / "runtime/installers/windows/tools/python-installer.exe").read_bytes() == installer.read_bytes()
+    assert build_tauri_app.stage_windows_python(tmp_path / "runtime", archive_path=archive) == 1
+    assert (tmp_path / "runtime/installers/windows/tools/python-embed.zip").read_bytes() == archive.read_bytes()
 
 
-def test_windows_tauri_stage_rejects_tampered_python_installer(tmp_path, monkeypatch):
-    installer = tmp_path / "python.exe"
-    installer.write_bytes(b"tampered-python-installer")
+def test_windows_tauri_stage_rejects_tampered_python_archive(tmp_path, monkeypatch):
+    archive = tmp_path / "python.zip"
+    archive.write_bytes(b"tampered-python-archive")
     contract = tmp_path / "windows_python.json"
     contract.write_text(json.dumps({
-        "schema": "les.windows-python.v1",
+        "schema": "les.windows-python.v2",
         "version": "test",
-        "installer_url": "https://example.test/python.exe",
-        "installer_sha256": hashlib.sha256(b"expected-python-installer").hexdigest(),
-        "installer_name": "python-installer.exe",
+        "archive_url": "https://example.test/python.zip",
+        "archive_sha256": hashlib.sha256(b"expected-python-archive").hexdigest(),
+        "archive_name": "python-embed.zip",
         "python_relative_path": "python.exe",
     }), encoding="utf-8")
     monkeypatch.setattr(build_tauri_app, "WINDOWS_PYTHON_CONTRACT_PATH", contract)
 
-    with pytest.raises(RuntimeError, match="Python installer SHA-256 mismatch"):
-        build_tauri_app.stage_windows_python(tmp_path / "runtime", installer_path=installer)
+    with pytest.raises(RuntimeError, match="Python archive SHA-256 mismatch"):
+        build_tauri_app.stage_windows_python(tmp_path / "runtime", archive_path=archive)
 
 
 def test_release_stage_excludes_agent_and_runtime_temporary_files():

@@ -32,17 +32,15 @@ Windows-выпуск:            0.24.16 / build 427 (VPS patch baseline)
 > Остановка диалога ставит cooperative cancel, поэтому после возврата текущего transport-вызова
 > workflow не продолжает выбирать нормы и считать ЛСР. Qwen/Ollama transport принимает сохранённый
 > массив решений под безвредным алиасом `mapping` вместо объявленного `rows`; содержимое строк не
-> меняется и проходит те же model-integrity gates. Если точный CPython уже зарегистрирован в Windows
-> и официальный installer переходит в maintenance mode, bootstrap материализует из него чистую
-> приватную runtime-копию без системных `site-packages`, затем проверяет точную версию. Installer
-> запускается с явным ожиданием MSI chain; прерванная регистрация удаляется только когда её путь
-> принадлежит private state ЛЕС. Добавлены регрессии UI, model-workflow и installer bootstrap.
+> меняется и проходит те же model-integrity gates. CPython поставляется официальным portable ZIP:
+> bootstrap проверяет SHA-256, распаковывает private runtime без MSI/реестра и проверяет точную версию.
+> Добавлены регрессии UI, model-workflow и installer bootstrap.
 
 > 0.24.20 / build 441 — self-contained Python first launch
 >
 > Дата: 2026-07-16
-> Статус: release candidate. Windows staging встраивает официальный CPython `3.13.12` installer,
-> проверяя SHA-256 до включения в payload. Bootstrap повторно проверяет installer, тихо ставит его
+> Статус: superseded by 0.24.21. Windows staging встраивал официальный CPython `3.13.12` installer,
+> проверяя SHA-256 до включения в payload. Bootstrap повторно проверял installer, тихо ставил его
 > в persistent state и выполняет `uv sync --python <bundled> --no-python-downloads`; скачивание
 > интерпретатора на машине пользователя запрещено. Добавлены unit-кейсы на stage и tamper-refusal.
 > До статуса released обязательны чистый Legion build, изолированный Windows smoke, production

@@ -217,8 +217,8 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    - on the first updated launch, moves legacy runtime state into a timestamped
      backup, merges only missing files, and records `migration/last_state_init.json`;
      repeated launch is idempotent,
-   - проверяет встроенные CPython `3.13.12` и `uv`: оба SHA-256-проверяются, Python тихо
-     устанавливается в persistent state и `uv` не имеет права скачивать интерпретатор. Winget или
+   - проверяет встроенные portable CPython `3.13.12` и `uv`: оба SHA-256-проверяются, Python
+     распаковывается в persistent state без MSI/реестра и `uv` не имеет права скачивать интерпретатор. Winget или
      официальный скрипт для `uv` — только recovery-fallback; Ollama и Docker Desktop ставятся через
      winget. Если автоматическая установка недоступна, окно ЛЕС показывает точную причину,
      официальный адрес установки и путь к журналу,

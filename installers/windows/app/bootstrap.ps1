@@ -129,59 +129,19 @@ $env:UV_PROJECT_ENVIRONMENT = Join-Path $State.state_root ".venv"
 Log "persistent state: $($State.state_root); migrated=$($State.migrated -join ',')"
 
 # --- 1. Ensure bundled Python + uv ------------------------------------------
-function Find-ExactInstalledPythonRoot([string]$Version) {
-  $parts = $Version.Split(".")
-  $candidates = @()
-  $launcher = Get-Command py -ErrorAction SilentlyContinue
-  if ($launcher -and $parts.Count -ge 2) {
-    $candidates += ,@($launcher.Source, "-$($parts[0]).$($parts[1])")
-  }
-  foreach ($name in @("python", "python3")) {
-    $command = Get-Command $name -ErrorAction SilentlyContinue
-    if ($command) { $candidates += ,@($command.Source) }
-  }
-
-  foreach ($candidate in $candidates) {
-    try {
-      $executable = $candidate[0]
-      $prefixArgs = @($candidate | Select-Object -Skip 1)
-      $details = @(& $executable @prefixArgs -c "import sys; print('.'.join(map(str, sys.version_info[:3]))); print(sys.base_prefix)" 2>$null)
-      if ($LASTEXITCODE -eq 0 -and $details.Count -ge 2 -and $details[0].Trim() -eq $Version) {
-        $root = $details[1].Trim()
-        if (Test-Path -LiteralPath (Join-Path $root "python.exe")) { return $root }
-      }
-    } catch {
-      Log "WARN: installed Python probe failed: $($_.Exception.Message)"
-    }
-  }
-  return $null
-}
-
-function Get-RegisteredPythonRoot([string]$Version) {
-  $parts = $Version.Split(".")
-  if ($parts.Count -lt 2) { return $null }
-  $keyPath = "HKCU:\Software\Python\PythonCore\$($parts[0]).$($parts[1])\InstallPath"
-  try {
-    $key = Get-Item -LiteralPath $keyPath -ErrorAction Stop
-    return [string]$key.GetValue("")
-  } catch {
-    return $null
-  }
-}
-
 function Resolve-BundledPython {
   $contractPath = Join-Path $Root "installers\windows\tools\python-contract.json"
   if (-not (Test-Path -LiteralPath $contractPath)) {
     throw "bundled Python contract is missing: $contractPath"
   }
   $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
-  $installer = Join-Path $Root ("installers\windows\tools\" + $contract.installer_name)
-  if (-not (Test-Path -LiteralPath $installer)) {
-    throw "bundled Python installer is missing: $installer"
+  $archive = Join-Path $Root ("installers\windows\tools\" + $contract.archive_name)
+  if (-not (Test-Path -LiteralPath $archive)) {
+    throw "bundled Python archive is missing: $archive"
   }
-  $actual = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-  if (-not $contract.installer_sha256 -or $actual -ne $contract.installer_sha256.ToLowerInvariant()) {
-    throw "bundled Python installer SHA-256 mismatch"
+  $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  if (-not $contract.archive_sha256 -or $actual -ne $contract.archive_sha256.ToLowerInvariant()) {
+    throw "bundled Python archive SHA-256 mismatch"
   }
 
   $pythonRoot = Join-Path $State.state_root ("embedded-python\" + $contract.version)
@@ -190,51 +150,12 @@ function Resolve-BundledPython {
     $temporaryRoot = "$pythonRoot.installing"
     Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
-    Toast "Устанавливаю встроенный Python $($contract.version)…"
-    Write-Status -Phase "python" -State "running" -Message "Устанавливаю встроенный Python $($contract.version)"
-    $installedRoot = Find-ExactInstalledPythonRoot ([string]$contract.version)
-    if ($installedRoot) {
-      # The official installer enters maintenance mode when the exact version is already
-      # registered and then ignores TargetDir. Materialize an isolated stdlib/runtime copy
-      # instead; the project environment is created separately by uv below.
-      Log "materializing bundled Python from verified installed version: $installedRoot"
-      $sitePackages = Join-Path $installedRoot "Lib\site-packages"
-      & robocopy.exe $installedRoot $temporaryRoot /E /XD $sitePackages /NFL /NDL /NJH /NJS /NP | Out-Null
-      $copyExitCode = $LASTEXITCODE
-      if ($copyExitCode -ge 8) { throw "bundled Python materialization failed with exit code $copyExitCode" }
-      New-Item -ItemType Directory -Force -Path (Join-Path $temporaryRoot "Lib\site-packages") | Out-Null
-    } else {
-      $registeredRoot = Get-RegisteredPythonRoot ([string]$contract.version)
-      if ($registeredRoot) {
-        $registeredFull = [IO.Path]::GetFullPath($registeredRoot).TrimEnd("\")
-        $temporaryFull = [IO.Path]::GetFullPath($temporaryRoot).TrimEnd("\")
-        $pythonFull = [IO.Path]::GetFullPath($pythonRoot).TrimEnd("\")
-        if ($registeredFull -eq $temporaryFull -or $registeredFull -eq $pythonFull) {
-          # Recover only an interrupted LES-owned install. Never uninstall a Python
-          # registered elsewhere on the machine.
-          Log "removing interrupted bundled Python registration: $registeredRoot"
-          $uninstall = Start-Process -FilePath $installer -ArgumentList @("/uninstall", "/quiet") -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0) {
-            throw "interrupted bundled Python uninstall failed with exit code $($uninstall.ExitCode)"
-          }
-          Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
-        }
-      }
-      # PowerShell does not wait for GUI executables when invoked with '&'. The
-      # explicit Start-Process wait prevents validation from racing the MSI chain.
-      $installArgs = @(
-        "/quiet", "InstallAllUsers=0", "TargetDir=`"$temporaryRoot`"", "Include_pip=0",
-        "Include_test=0", "Include_launcher=0", "PrependPath=0", "Shortcuts=0"
-      )
-      $install = Start-Process -FilePath $installer -ArgumentList $installArgs -Wait -PassThru
-      if ($install.ExitCode -ne 0) {
-        throw "bundled Python installer failed with exit code $($install.ExitCode)"
-      }
-    }
+    Toast "Распаковываю встроенный Python $($contract.version)…"
+    Write-Status -Phase "python" -State "running" -Message "Распаковываю встроенный Python $($contract.version)"
+    Expand-Archive -LiteralPath $archive -DestinationPath $temporaryRoot -Force
     $temporaryPython = Join-Path $temporaryRoot $contract.python_relative_path
     if (-not (Test-Path -LiteralPath $temporaryPython)) {
-      throw "bundled Python installer did not create $temporaryPython"
+      throw "bundled Python archive did not create $temporaryPython"
     }
     if (Test-Path -LiteralPath $pythonRoot) {
       Remove-Item -LiteralPath $pythonRoot -Recurse -Force

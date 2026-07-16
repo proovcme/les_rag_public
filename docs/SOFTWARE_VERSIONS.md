@@ -26,7 +26,7 @@
 | Компонент | Зафиксировано в проекте | Проверено на Legion | Роль |
 |---|---|---|---|
 | Windows | Windows 11 x64 | Windows 11 Pro `10.0.26200` | Целевая рабочая система |
-| Python | bundled CPython `3.13.12`, SHA-256 проверяется при staging и перед silent-install; `uv` запрещено скачивать интерпретатор | `3.13.12` | API, интерфейс, обработка документов |
+| Python | bundled portable CPython `3.13.12`, SHA-256 проверяется при staging и перед распаковкой без MSI/реестра; `uv` запрещено скачивать интерпретатор | `3.13.12` | API, интерфейс, обработка документов |
 | uv | bundled `0.11.29`, SHA-256 проверяется при staging и перед bootstrap; winget/official installer только fallback | `0.10.7` в снимке 2026-07-14; `0.11.29` требует Windows release smoke перед публикацией | Среда и воспроизводимые зависимости |
 | Docker Desktop | обязателен, версия не зашита | Docker `29.3.1` | Запуск Qdrant |
 | Qdrant | `qdrant/qdrant:v1.17.1` | `1.17.1` | Dense и sparse индексы, нативный RRF |

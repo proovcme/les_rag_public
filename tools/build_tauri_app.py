@@ -134,12 +134,12 @@ def stage_windows_uv(runtime: Path, *, archive_path: str | Path | None = None) -
 def windows_python_contract() -> dict[str, str]:
     payload = json.loads(WINDOWS_PYTHON_CONTRACT_PATH.read_text(encoding="utf-8"))
     required = (
-        "schema", "version", "installer_url", "installer_sha256", "installer_name", "python_relative_path",
+        "schema", "version", "archive_url", "archive_sha256", "archive_name", "python_relative_path",
     )
     missing = [key for key in required if not str(payload.get(key) or "").strip()]
-    digest = str(payload.get("installer_sha256") or "").lower()
+    digest = str(payload.get("archive_sha256") or "").lower()
     if (
-        payload.get("schema") != "les.windows-python.v1"
+        payload.get("schema") != "les.windows-python.v2"
         or missing
         or len(digest) != 64
         or any(char not in "0123456789abcdef" for char in digest)
@@ -148,38 +148,38 @@ def windows_python_contract() -> dict[str, str]:
     return {key: str(payload[key]) for key in required}
 
 
-def stage_windows_python(runtime: Path, *, installer_path: str | Path | None = None) -> int:
-    """Place a verified CPython installer in the Windows runtime for offline first launch."""
+def stage_windows_python(runtime: Path, *, archive_path: str | Path | None = None) -> int:
+    """Place a verified portable CPython archive in the Windows runtime."""
     contract = windows_python_contract()
-    if installer_path:
-        installer = Path(installer_path)
-        if not installer.is_file():
-            raise RuntimeError(f"Windows Python installer is missing: {installer}")
-        blob = installer.read_bytes()
+    if archive_path:
+        archive = Path(archive_path)
+        if not archive.is_file():
+            raise RuntimeError(f"Windows Python archive is missing: {archive}")
+        blob = archive.read_bytes()
     else:
-        local_installer = os.getenv("LES_WINDOWS_PYTHON_INSTALLER", "").strip()
-        if local_installer:
-            installer = Path(local_installer)
-            if not installer.is_file():
-                raise RuntimeError(f"LES_WINDOWS_PYTHON_INSTALLER is missing: {installer}")
-            blob = installer.read_bytes()
+        local_archive = os.getenv("LES_WINDOWS_PYTHON_ARCHIVE", "").strip()
+        if local_archive:
+            archive = Path(local_archive)
+            if not archive.is_file():
+                raise RuntimeError(f"LES_WINDOWS_PYTHON_ARCHIVE is missing: {archive}")
+            blob = archive.read_bytes()
         else:
             try:
-                with urllib.request.urlopen(contract["installer_url"], timeout=120) as response:
+                with urllib.request.urlopen(contract["archive_url"], timeout=120) as response:
                     blob = response.read()
             except Exception as error:  # release builder needs a precise, actionable failure
                 raise RuntimeError(
-                    "could not download bundled Windows Python; set LES_WINDOWS_PYTHON_INSTALLER "
-                    "to a verified installer"
+                    "could not download bundled Windows Python; set LES_WINDOWS_PYTHON_ARCHIVE "
+                    "to a verified archive"
                 ) from error
     actual = hashlib.sha256(blob).hexdigest()
-    if actual != contract["installer_sha256"].lower():
+    if actual != contract["archive_sha256"].lower():
         raise RuntimeError(
-            f"Windows Python installer SHA-256 mismatch: expected {contract['installer_sha256']}, got {actual}"
+            f"Windows Python archive SHA-256 mismatch: expected {contract['archive_sha256']}, got {actual}"
         )
     target_dir = runtime / "installers" / "windows" / "tools"
     target_dir.mkdir(parents=True, exist_ok=True)
-    (target_dir / contract["installer_name"]).write_bytes(blob)
+    (target_dir / contract["archive_name"]).write_bytes(blob)
     (target_dir / "python-contract.json").write_text(
         json.dumps(contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
