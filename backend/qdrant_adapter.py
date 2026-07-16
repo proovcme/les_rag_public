@@ -1890,13 +1890,19 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     if _qdrant_schema_mode() == "named":
                         from backend.inference.bm25_sparse import encode_bm25
 
+                        searchable_nodes = []
                         for node in file_nodes:
                             sparse_vec = encode_bm25(str(node["text"]))
                             if not sparse_vec:
-                                raise RuntimeError(
-                                    f"empty sparse vector for {file_key}: {node.get('doc_id', '')}"
+                                logger.warning(
+                                    "Skipping non-searchable node with empty sparse vector: file=%s doc_id=%s",
+                                    file_key,
+                                    node.get("doc_id", ""),
                                 )
+                                continue
                             node["_rrf_sparse_vector"] = sparse_vec
+                            searchable_nodes.append(node)
+                        file_nodes = searchable_nodes
 
                     phase_start = _t.time()
                     existing_vectors = (

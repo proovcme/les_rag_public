@@ -536,7 +536,6 @@ def _run_batch_norm_agent(
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
-    consecutive_non_tool_turns = 0
     invalid_submission_attempts = 0
     accepted_rows: dict[str, dict[str, Any]] = {}
     for turn in range(1, max_turns + 1):
@@ -587,19 +586,12 @@ def _run_batch_norm_agent(
                 "turn": turn, "model_wait_ms": model_wait_ms,
             })
         if not calls:
-            consecutive_non_tool_turns += 1
-            if consecutive_non_tool_turns <= 3 and turn < max_turns:
-                conversation.append({
-                    "role": "user",
-                    "content": (
-                        "Предыдущий ответ не был вызовом инструмента. Исправь последнюю ошибку из "
-                        "результата tool и продолжи только вызовом подходящего предоставленного инструмента; "
-                        "не объясняй ответ текстом."
-                    ),
-                })
-                continue
-            raise RuntimeError("smeta model returned no tool calls after correction attempts")
-        consecutive_non_tool_turns = 0
+            done_reason = str(assistant.get("_les_done_reason") or "unknown")
+            eval_count = assistant.get("_les_eval_count")
+            raise RuntimeError(
+                "smeta model returned no tool call after required-tool retry: "
+                f"done_reason={done_reason}, eval_count={eval_count}"
+            )
 
         submitted: dict[str, dict[str, Any]] | None = None
         for call_index, call in enumerate(calls, 1):

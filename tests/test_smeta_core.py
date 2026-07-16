@@ -625,12 +625,25 @@ def test_batch_agent_stops_after_four_invalid_mapping_corrections():
 def test_batch_agent_fails_closed_when_model_returns_no_tools():
     from proxy.smeta_core import document_workflow as workflow
 
-    with pytest.raises(RuntimeError, match="returned no tool calls"):
+    calls = 0
+
+    def exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        return {
+            "role": "assistant",
+            "content": "",
+            "_les_done_reason": "length",
+            "_les_eval_count": 900,
+        }
+
+    with pytest.raises(RuntimeError, match="done_reason=length, eval_count=900"):
         workflow._run_native_norm_agent(
             [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
-            lambda _messages, _tools: {"role": "assistant", "content": "готово"},
+            exchange,
             candidate_limit=5,
         )
+    assert calls == 1
 
 
 def test_document_workflow_passes_neighbor_context_and_calculates_once(monkeypatch):

@@ -5,17 +5,6 @@ import time
 import pytest
 
 from proxy.services import smeta_chat_application_service as service
-from proxy.services.smeta_chat_adapter_service import _smeta_document_turn_tokens
-
-
-def test_smeta_document_turn_budget_is_large_only_after_norm_cards_are_opened():
-    assert _smeta_document_turn_tokens([{"role": "user", "content": "ВОР"}], 8000) == 1600
-    assert _smeta_document_turn_tokens(
-        [{"role": "tool", "name": "search_norms_batch", "content": "{}"}], 8000
-    ) == 1000
-    assert _smeta_document_turn_tokens(
-        [{"role": "tool", "name": "read_norms_batch", "content": "{}"}], 8000
-    ) == 8000
 
 
 @pytest.mark.asyncio
@@ -374,6 +363,7 @@ def test_document_exchange_requires_tool_and_falls_back_from_non_tool_ollama(mon
     assert bodies[2]["messages"][-1]["content"].startswith("Продолжи только")
     assert bodies[2]["model"] == "qwen3.5:9b"
     assert "options" in bodies[0]
+    assert bodies[0]["options"]["num_predict"] == 3200
     assert urls == ["http://127.0.0.1:11434/api/chat"] * 3
 
 

@@ -62,7 +62,11 @@ tokenizer finds no word of three or more characters, native sparse encoding
 uses a narrow fallback for uppercase technical designations (`BB_63`, `PE`,
 `N`, phase labels). The fallback is not added to ordinary prose. Thus one
 short technical fragment cannot produce an empty sparse vector and reject the
-whole PDF.
+whole PDF. Extraction noise that still has no sparse terms after that narrow
+fallback (separator runs, symbol-only fragments, broken custom-font glyphs) is
+discarded node-by-node before embedding; valid nodes from the same PDF remain
+indexed. The tokenizer is not widened to arbitrary Unicode letters because
+that would turn damaged font output into searchable garbage.
 
 The local Ollama-compatible embedding client retries a rejected/transient
 batch a bounded number of times and then bisects it, preserving successful

@@ -585,6 +585,55 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
     assert upserts[0].payload["embedding_fingerprint"] == _embedding_cache_fingerprint()
 
 
+def test_sync_parse_skips_empty_sparse_noise_without_rejecting_pdf(tmp_path, monkeypatch):
+    monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
+    dataset_dir = tmp_path / "ds-1"
+    dataset_dir.mkdir()
+    (dataset_dir / "doc.pdf").write_bytes(b"%PDF placeholder")
+    db = LegacyNamePendingDB()
+    db.get_pending_files = lambda dataset_id, limit=None: ["doc.pdf"] if not db.updated else []
+    upserts = []
+    embedded = []
+
+    def encode_sync(texts):
+        embedded.extend(texts)
+        return [[0.25] * 1024 for _ in texts]
+
+    adapter = SimpleNamespace(
+        content_dir=tmp_path,
+        db=db,
+        qdrant_url="http://127.0.0.1:6333",
+        collection_name="les_rag",
+        embed=SimpleNamespace(encode_sync=encode_sync),
+        _sync_delete_file_points=lambda *args: None,
+        _sync_count_file_points=lambda *args: 1,
+        _sync_markdown_nodes=lambda *args: [
+            {"text": "Монтаж кабельной линии в защитной трубе", "doc_id": "valid", "payload": {}},
+            {"text": "_" * 470, "doc_id": "underscores", "payload": {}},
+            {"text": "+ - " * 120, "doc_id": "symbols", "payload": {}},
+            {"text": "\u025a" * 240, "doc_id": "broken-font", "payload": {}},
+        ],
+    )
+
+    class FakeQdrant:
+        def __init__(self, url, **kwargs):
+            self.url = url
+
+        def upsert(self, collection_name, points):
+            upserts.extend(points)
+
+    monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
+
+    result = QdrantLlamaIndexAdapter._sync_parse(adapter, "ds-1", limit=1)
+
+    assert result["files_parsed"] == 1
+    assert result["errors"] == 0
+    assert embedded == ["Монтаж кабельной линии в защитной трубе"]
+    assert len(upserts) == 1
+    assert upserts[0].payload["doc_id"].startswith("valid:")
+    assert upserts[0].vector["bm25_sparse"].indices
+
+
 def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(tmp_path, monkeypatch):
     monkeypatch.setenv("RAG_QDRANT_SCHEMA", "named")
     text = "content with enough text for a chunk"

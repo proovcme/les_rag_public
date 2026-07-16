@@ -329,31 +329,13 @@ def _smeta_document_timeout(runtime: LlmRuntime) -> float:
     )
 
 
-def _smeta_document_turn_tokens(messages: list[dict[str, Any]], configured: int) -> int:
-    """Keep lookup calls compact; reserve the large budget for the final mapping."""
-    last_tool = next(
-        (
-            str(message.get("name") or "")
-            for message in reversed(messages)
-            if str(message.get("role") or "") == "tool"
-        ),
-        "",
-    )
-    if last_tool == "read_norms_batch":
-        return configured
-    if last_tool == "search_norms_batch":
-        return min(configured, 1000)
-    return min(configured, 1600)
-
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    local_default_tokens = 3000 if "gemma" in str(runtime.model or "").casefold() else 900
     max_tokens = _env_int(
         "LES_SMETA_DOCUMENT_MAX_TOKENS",
-        3200 if is_cloud_provider(runtime.provider) else local_default_tokens,
+        3200,
     )
-    turn_tokens = _smeta_document_turn_tokens(messages, max_tokens)
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
@@ -365,7 +347,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "tools": tools,
             "stream": False,
             "think": False,
-            "options": {"temperature": 0.0, "num_predict": turn_tokens},
+            "options": {"temperature": 0.0, "num_predict": max_tokens},
         }
         ollama_root = runtime.base_url.rstrip("/")
         if ollama_root.casefold().endswith("/v1"):
@@ -381,7 +363,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "messages": messages,
             "tools": tools,
             "temperature": 0.0,
-            "max_tokens": turn_tokens,
+            "max_tokens": max_tokens,
             "parallel_tool_calls": True,
         }
         body = _cloud_body_for_model(body, runtime.model, runtime.provider)
@@ -404,6 +386,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
                 else payload.get("choices", [{}])[0].get("message", {})
             )
             message = message if isinstance(message, dict) else {}
+            message["_les_done_reason"] = payload.get("done_reason")
+            message["_les_eval_count"] = payload.get("eval_count")
             if not message.get("tool_calls"):
                 required_body = dict(body)
                 if native_ollama:
@@ -424,6 +408,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
                 if isinstance(required_message, dict):
                     message = required_message
                     message["_les_model"] = str(required_body["model"])
+                    message["_les_done_reason"] = required_payload.get("done_reason")
+                    message["_les_eval_count"] = required_payload.get("eval_count")
             fallback_model = os.getenv(
                 "LES_SMETA_DOCUMENT_FALLBACK_MODEL", DEFAULT_LOCAL_SMETA_TOOL_MODEL
             ).strip()
@@ -454,6 +440,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
                     message = fallback_message
                     message["_les_model"] = fallback_model
                     message["_les_fallback_from"] = runtime.model
+                    message["_les_done_reason"] = fallback_payload.get("done_reason")
+                    message["_les_eval_count"] = fallback_payload.get("eval_count")
             message.setdefault("_les_model", runtime.model)
             message.setdefault("_les_provider", runtime.provider)
             return message
