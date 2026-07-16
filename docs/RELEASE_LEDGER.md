@@ -14,14 +14,17 @@
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.17 / build 438 (live on Legion, 2026-07-15)
 Windows-выпуск:            0.24.16 / build 427 (VPS patch baseline)
-следующий выпуск:          0.24.18 / build 439 через VPS; установка и приёмка на Legion оператором
+следующий выпуск:          VPS patch 0.24.18 / build 439 опубликован; установка и приёмка на Legion оператором
 рантайм /api/version:      0.24.17 / build 438; patch helper ready, UI 200
 ```
 
 > 0.24.18 / build 439 — оператор видит, что действительно попало в RAG
 >
 > Дата: 2026-07-16
-> Статус: VPS patch candidate, без reindex; установка и живая приёмка на Legion остаются оператору.
+> Статус: VPS patch опубликован, без reindex; установка и живая приёмка на Legion остаются оператору.
+> Patch: `2028a48827d8-20260716T051907Z`, target `2028a48827d8eba69b292e2f5f7bd094c772cd1e`,
+> 17 runtime-файлов, 344 078 байт, SHA-256
+> `d0c4c17328925eb579024b912120846940d2b9618ca1e7d277a0c7657ebc62bf`.
 > `GET /api/documents/datasets/{id}/quality`
 > агрегирует реальную lexical/FTS-проекцию: покрытие файлов, число и объём фрагментов, короткие/пустые
 > части, headings/table signals и два фактических примера каждого файла. Integrity API дополнен
