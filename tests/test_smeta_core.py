@@ -463,6 +463,16 @@ def test_tool_array_transport_unwraps_qwen_double_serialization():
     assert _tool_arguments(python_call)["items"].startswith("[")
 
 
+def test_tool_array_transport_accepts_qwen_mapping_alias_only_when_declared():
+    from proxy.smeta_core.document_workflow import _tool_array_argument
+
+    args = {"mapping": '[{"work_id":"w1","decision":"unbound","reason":"нет нормы"}]'}
+    assert _tool_array_argument(args, "rows") == []
+    assert _tool_array_argument(args, "rows", aliases=("mapping",)) == [{
+        "work_id": "w1", "decision": "unbound", "reason": "нет нормы",
+    }]
+
+
 def test_tool_array_transport_closes_only_missing_trailing_array_delimiter():
     from proxy.smeta_core.document_workflow import _tool_array_argument
 

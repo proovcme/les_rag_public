@@ -313,9 +313,13 @@ def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _tool_array_argument(args: dict[str, Any], key: str) -> list[dict[str, Any]]:
+def _tool_array_argument(
+    args: dict[str, Any], key: str, *, aliases: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
     """Unwrap a model's harmless double-serialization of a tool array."""
     raw = args.get(key)
+    if raw is None:
+        raw = next((args.get(alias) for alias in aliases if args.get(alias) is not None), None)
     for _ in range(3):
         if not isinstance(raw, str):
             break
@@ -670,7 +674,10 @@ def _run_batch_norm_agent(
             elif name == "submit_lsr_mapping":
                 rows = [
                     _normalize_mapping_row_transport(item)
-                    for item in _tool_array_argument(args, "rows")
+                    # Qwen/Ollama can preserve every model decision but name the
+                    # declared rows array "mapping". This is a transport alias;
+                    # row contents remain untouched and pass the same gates.
+                    for item in _tool_array_argument(args, "rows", aliases=("mapping",))
                 ]
                 proposed: dict[str, dict[str, Any]] = {}
                 errors: list[dict[str, Any]] = []
