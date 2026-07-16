@@ -129,6 +129,34 @@ $env:UV_PROJECT_ENVIRONMENT = Join-Path $State.state_root ".venv"
 Log "persistent state: $($State.state_root); migrated=$($State.migrated -join ',')"
 
 # --- 1. Ensure bundled Python + uv ------------------------------------------
+function Find-ExactInstalledPythonRoot([string]$Version) {
+  $parts = $Version.Split(".")
+  $candidates = @()
+  $launcher = Get-Command py -ErrorAction SilentlyContinue
+  if ($launcher -and $parts.Count -ge 2) {
+    $candidates += ,@($launcher.Source, "-$($parts[0]).$($parts[1])")
+  }
+  foreach ($name in @("python", "python3")) {
+    $command = Get-Command $name -ErrorAction SilentlyContinue
+    if ($command) { $candidates += ,@($command.Source) }
+  }
+
+  foreach ($candidate in $candidates) {
+    try {
+      $executable = $candidate[0]
+      $prefixArgs = @($candidate | Select-Object -Skip 1)
+      $details = @(& $executable @prefixArgs -c "import sys; print('.'.join(map(str, sys.version_info[:3]))); print(sys.base_prefix)" 2>$null)
+      if ($LASTEXITCODE -eq 0 -and $details.Count -ge 2 -and $details[0].Trim() -eq $Version) {
+        $root = $details[1].Trim()
+        if (Test-Path -LiteralPath (Join-Path $root "python.exe")) { return $root }
+      }
+    } catch {
+      Log "WARN: installed Python probe failed: $($_.Exception.Message)"
+    }
+  }
+  return $null
+}
+
 function Resolve-BundledPython {
   $contractPath = Join-Path $Root "installers\windows\tools\python-contract.json"
   if (-not (Test-Path -LiteralPath $contractPath)) {
@@ -152,9 +180,22 @@ function Resolve-BundledPython {
     New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
     Toast "Устанавливаю встроенный Python $($contract.version)…"
     Write-Status -Phase "python" -State "running" -Message "Устанавливаю встроенный Python $($contract.version)"
-    & $installer /quiet InstallAllUsers=0 TargetDir=$temporaryRoot Include_pip=0 Include_test=0 `
-      Include_launcher=0 PrependPath=0 Shortcuts=0
-    if ($LASTEXITCODE -ne 0) { throw "bundled Python installer failed with exit code $LASTEXITCODE" }
+    $installedRoot = Find-ExactInstalledPythonRoot ([string]$contract.version)
+    if ($installedRoot) {
+      # The official installer enters maintenance mode when the exact version is already
+      # registered and then ignores TargetDir. Materialize an isolated stdlib/runtime copy
+      # instead; the project environment is created separately by uv below.
+      Log "materializing bundled Python from verified installed version: $installedRoot"
+      $sitePackages = Join-Path $installedRoot "Lib\site-packages"
+      & robocopy.exe $installedRoot $temporaryRoot /E /XD $sitePackages /NFL /NDL /NJH /NJS /NP | Out-Null
+      $copyExitCode = $LASTEXITCODE
+      if ($copyExitCode -ge 8) { throw "bundled Python materialization failed with exit code $copyExitCode" }
+      New-Item -ItemType Directory -Force -Path (Join-Path $temporaryRoot "Lib\site-packages") | Out-Null
+    } else {
+      & $installer /quiet InstallAllUsers=0 TargetDir=$temporaryRoot Include_pip=0 Include_test=0 `
+        Include_launcher=0 PrependPath=0 Shortcuts=0
+      if ($LASTEXITCODE -ne 0) { throw "bundled Python installer failed with exit code $LASTEXITCODE" }
+    }
     $temporaryPython = Join-Path $temporaryRoot $contract.python_relative_path
     if (-not (Test-Path -LiteralPath $temporaryPython)) {
       throw "bundled Python installer did not create $temporaryPython"

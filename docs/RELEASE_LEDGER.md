@@ -32,7 +32,10 @@ Windows-выпуск:            0.24.16 / build 427 (VPS patch baseline)
 > Остановка диалога ставит cooperative cancel, поэтому после возврата текущего transport-вызова
 > workflow не продолжает выбирать нормы и считать ЛСР. Qwen/Ollama transport принимает сохранённый
 > массив решений под безвредным алиасом `mapping` вместо объявленного `rows`; содержимое строк не
-> меняется и проходит те же model-integrity gates. Добавлены регрессии UI и model-workflow.
+> меняется и проходит те же model-integrity gates. Если точный CPython уже зарегистрирован в Windows
+> и официальный installer переходит в maintenance mode, bootstrap материализует из него чистую
+> приватную runtime-копию без системных `site-packages`, затем проверяет точную версию. Добавлены
+> регрессии UI, model-workflow и installer bootstrap.
 
 > 0.24.20 / build 441 — self-contained Python first launch
 >

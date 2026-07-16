@@ -212,6 +212,10 @@ def test_windows_bootstrap_installs_and_requires_uv_ollama_docker():
     assert "astral-sh.uv" in text
     assert "function Install-Uv" in text
     assert "function Resolve-BundledPython" in text
+    assert "function Find-ExactInstalledPythonRoot" in text
+    assert "materializing bundled Python from verified installed version" in text
+    assert "robocopy.exe" in text
+    assert 'Join-Path $installedRoot "Lib\\site-packages"' in text
     assert "bundled_python_unavailable" in text
     assert "--no-python-downloads" in text
     assert "python-contract.json" in text
