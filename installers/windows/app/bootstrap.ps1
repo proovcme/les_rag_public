@@ -328,14 +328,48 @@ Log "docker: $Docker"
 # --extra desktop pulls the native shell (pywebview + tray). No mac-mlx on Windows.
 Toast "Готовлю окружение…"
 Write-Status -Phase "python" -State "running" -Message "Синхронизирую Python-окружение через uv"
+$env:UV_SYSTEM_CERTS = if ($env:UV_SYSTEM_CERTS) { $env:UV_SYSTEM_CERTS } else { "true" }
+$env:UV_HTTP_CONNECT_TIMEOUT = if ($env:UV_HTTP_CONNECT_TIMEOUT) { $env:UV_HTTP_CONNECT_TIMEOUT } else { "30" }
+$env:UV_HTTP_TIMEOUT = if ($env:UV_HTTP_TIMEOUT) { $env:UV_HTTP_TIMEOUT } else { "120" }
+$env:UV_HTTP_RETRIES = if ($env:UV_HTTP_RETRIES) { $env:UV_HTTP_RETRIES } else { "5" }
+
+$VenvPath = $env:UV_PROJECT_ENVIRONMENT
+$VenvWasUsable = $false
+$VenvPython = Join-Path $VenvPath "Scripts\python.exe"
+if (Test-Path -LiteralPath $VenvPython) {
+  $venvProbe = @(& $VenvPython -c "import sys; print(sys.executable)" 2>&1)
+  $VenvWasUsable = $LASTEXITCODE -eq 0
+}
+if ((Test-Path -LiteralPath $VenvPath) -and -not $VenvWasUsable) {
+  Log "removing incomplete or broken Python environment: $VenvPath"
+  Remove-Item -LiteralPath $VenvPath -Recurse -Force
+}
+
+$UvSyncArgs = @("sync", "--locked", "--python", $BundledPython, "--no-python-downloads")
 if ($env:LES_TAURI_SHELL -eq "1") {
   Log "uv sync with bundled Python (Tauri owns desktop shell)"
-  & $Uv sync --python $BundledPython --no-python-downloads --extra windows-reranker
+  $UvSyncArgs += @("--extra", "windows-reranker")
 } else {
   Log "uv sync with bundled Python --extra desktop (legacy fallback)"
-  & $Uv sync --python $BundledPython --no-python-downloads --extra desktop
+  $UvSyncArgs += @("--extra", "desktop")
 }
-if ($LASTEXITCODE -ne 0) { Fail "uv sync не удался" }
+$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)
+$uvSyncExitCode = $LASTEXITCODE
+foreach ($line in $uvSyncOutput) {
+  $safeLine = [regex]::Replace([string]$line, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
+  if ($safeLine) { Log "uv: $safeLine" }
+}
+if ($uvSyncExitCode -ne 0) {
+  if (-not $VenvWasUsable -and (Test-Path -LiteralPath $VenvPath)) {
+    Remove-Item -LiteralPath $VenvPath -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  $uvDetail = (($uvSyncOutput | Where-Object { $_ } | Select-Object -Last 6) -join " | ").Trim()
+  $uvDetail = [regex]::Replace($uvDetail, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
+  if ($uvDetail.Length -gt 900) { $uvDetail = $uvDetail.Substring(0, 900) }
+  if (-not $uvDetail) { $uvDetail = "uv не вернул диагностический текст" }
+  Fail "uv sync не удался (код $uvSyncExitCode): $uvDetail" "uv_sync_failed" `
+    "https://docs.astral.sh/uv/concepts/authentication/certificates/"
+}
 
 # A clean install must be able to resolve norms and calculate normative resource
 # quantities without borrowing data from another workstation or scraping FGIS

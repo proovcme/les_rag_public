@@ -31,6 +31,9 @@ Windows-выпуск:            0.24.21 / build 442 (GitHub release)
 > и отдельный ФСЭМ-каталог теперь открываются read-only/immutable, а submit-точный шифр дочитывается
 > без кодового перевыбора. Windows-путь берётся прямо из persistent state
 > `%LOCALAPPDATA%\LES\data`, без `Path.resolve(strict=True)` через защищённый install-junction.
+> Первый старт Windows больше не скрывает причину провала зависимостей: `uv sync --locked`
+> использует системные сертификаты Windows, bounded retry/timeout, очищает только сломанную
+> недосозданную `.venv`, а sanitized stderr пишет в bootstrap log и machine-readable status.
 
 > 0.24.21 / build 442 — управление текущим диалогом без потери позиции чтения
 >

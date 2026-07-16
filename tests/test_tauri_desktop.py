@@ -66,7 +66,8 @@ def test_tauri_bootstrap_does_not_install_or_launch_pywebview():
     assert 'LES_TAURI_SHELL -eq "1"' in windows
     assert '$BootstrapPath.StartsWith("\\\\?\\")' in windows
     assert "uv sync with bundled Python (Tauri owns desktop shell)" in windows
-    assert "--no-python-downloads --extra windows-reranker" in windows
+    assert '"--no-python-downloads"' in windows
+    assert '@("--extra", "windows-reranker")' in windows
     assert "start-light (Tauri shell)" in windows
 
 

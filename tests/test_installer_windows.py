@@ -233,6 +233,21 @@ def test_windows_bootstrap_installs_and_requires_uv_ollama_docker():
     assert "RAG features limited" not in text
 
 
+def test_windows_bootstrap_repairs_and_reports_uv_sync():
+    bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    text = bootstrap.read_text(encoding="utf-8-sig")
+
+    assert '$env:UV_SYSTEM_CERTS' in text
+    assert '$env:UV_HTTP_RETRIES' in text
+    assert '$VenvWasUsable' in text
+    assert 'removing incomplete or broken Python environment' in text
+    assert '@("sync", "--locked", "--python", $BundledPython, "--no-python-downloads")' in text
+    assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in text
+    assert 'Log "uv: $safeLine"' in text
+    assert '"uv_sync_failed"' in text
+    assert 'concepts/authentication/certificates' in text
+
+
 def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")

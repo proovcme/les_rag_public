@@ -642,6 +642,9 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 > portable CPython `3.13.12` ZIP. Bootstrap распаковывает его в persistent state без MSI/реестра и запускает
 > `uv sync --python <bundled> --no-python-downloads`; прежняя формулировка строки `install` про
 > один только `uv.exe` описывает 0.24.19 и заменена этим дополнением.
+> **Поправка 0.24.22 / build 443:** Windows `uv sync` использует системное хранилище сертификатов,
+> bounded retry/timeout, `--locked`, удаляет только недосозданную `.venv` и сохраняет точный
+> sanitized stderr в bootstrap log/status вместо общего «uv sync не удался».
 
 ## 6. Прочие модули (отдельные продукты/контуры)
 

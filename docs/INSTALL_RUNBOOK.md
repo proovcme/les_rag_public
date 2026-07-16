@@ -176,8 +176,11 @@ make version-sync
 ## 4. First launch on the CLEAN target
 
 The target needs **network** on first launch for Python packages, Docker/Ollama
-and model weights. CPython and `uv` are already in the Windows installer. After
-that it can run offline (local provider).
+and model weights. CPython and `uv` are already in the Windows installer. Windows
+package sync uses the system certificate store for corporate TLS roots, retries
+transient downloads and writes the exact sanitized `uv` failure to
+`%LOCALAPPDATA%\LES\logs\bootstrap.log`. An incomplete `.venv` is removed before
+retry. After a successful first launch it can run offline (local provider).
 
 ### macOS
 
