@@ -11,6 +11,20 @@ from typing import Any
 DEFAULT_DB = Path("data/smeta_base/fsem_2022.sqlite")
 
 
+def _connect_readonly(path: Path) -> sqlite3.Connection:
+    resolved = path.resolve(strict=True)
+    try:
+        return sqlite3.connect(
+            f"{resolved.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+            timeout=30.0,
+        )
+    except sqlite3.OperationalError as error:
+        raise sqlite3.OperationalError(
+            f"unable to open FSEM database {resolved}: {error}"
+        ) from error
+
+
 def _f(value: Any) -> float:
     try:
         return float(str(value or 0).replace(",", "."))
@@ -23,7 +37,7 @@ def lookup(machine_code: str, db_path: str = str(DEFAULT_DB)) -> dict[str, Any] 
     path = Path(db_path)
     if not path.is_file():
         return None
-    conn = sqlite3.connect(path)
+    conn = _connect_readonly(path)
     conn.row_factory = sqlite3.Row
     try:
         row = conn.execute("SELECT * FROM machines WHERE machine_code=?", (str(machine_code or "").strip(),)).fetchone()
@@ -37,7 +51,7 @@ def machine_to_machinist(path: str | None = None) -> dict[str, tuple[str, str]]:
     target = Path(path) if path else DEFAULT_DB
     if not target.is_file():
         return {}
-    conn = sqlite3.connect(target)
+    conn = _connect_readonly(target)
     try:
         return {
             str(code): (str(driver_code), f"Машинисты, средний разряд {grade:g}")
@@ -54,7 +68,7 @@ def list_entries(path: str | None = None) -> list[dict[str, Any]]:
     target = Path(path) if path else DEFAULT_DB
     if not target.is_file():
         return []
-    conn = sqlite3.connect(target)
+    conn = _connect_readonly(target)
     conn.row_factory = sqlite3.Row
     try:
         return [dict(row) for row in conn.execute("SELECT * FROM machines ORDER BY machine_code")]
