@@ -29,14 +29,19 @@ def active_base(config_path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
     except Exception:
         payload = {}
     base_path = os.getenv("LES_SMETA_STRUCTURED_BASE", "").strip() or str(payload.get("base_path") or "")
-    base = Path(base_path) if base_path else Path("data/smeta_base/les_smeta_base_v2.sqlite")
+    base = runtime_data_path(
+        Path(base_path) if base_path else Path("data/smeta_base/les_smeta_base_v2.sqlite")
+    )
+    manifest_raw = str(payload.get("manifest_path") or "")
+    integrity_raw = str(payload.get("integrity_path") or "")
+    source_raw = str(payload.get("source_path") or "")
     return {
         "schema": "smeta_base_active_v1",
         "edition": str(payload.get("edition") or ""),
         "base_path": str(base),
-        "manifest_path": str(payload.get("manifest_path") or base.with_name(f"{base.stem}_manifest.json")),
-        "integrity_path": str(payload.get("integrity_path") or base.with_name(f"{base.stem}_integrity.json")),
-        "source_path": str(payload.get("source_path") or ""),
+        "manifest_path": str(runtime_data_path(manifest_raw) if manifest_raw else base.with_name(f"{base.stem}_manifest.json")),
+        "integrity_path": str(runtime_data_path(integrity_raw) if integrity_raw else base.with_name(f"{base.stem}_integrity.json")),
+        "source_path": str(runtime_data_path(source_raw)) if source_raw else "",
         "minimum_norms": max(1, int(payload.get("minimum_norms") or 1)),
         "rag_collection": str(payload.get("rag_collection") or "les_smeta_norm_cards_v1"),
         "rag_embedding_model": str(payload.get("rag_embedding_model") or "qwen3-embedding-0.6b"),

@@ -12,13 +12,30 @@ from tools.gesn_import import RESOURCE_FIELDS
 
 
 def test_windows_smeta_data_path_bypasses_install_junction(tmp_path: Path, monkeypatch):
-    from proxy.smeta_core.base_registry import runtime_data_path
+    import json
+
+    from proxy.smeta_core.base_registry import active_base, runtime_data_path
 
     monkeypatch.setenv("LES_WINDOWS_STATE_ROOT", str(tmp_path))
+    config_path = tmp_path / "active.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "base_path": "data/smeta_base/les_smeta_base.sqlite",
+                "manifest_path": "data/smeta_base/les_smeta_base_manifest.json",
+                "integrity_path": "data/smeta_base/les_smeta_base_integrity.json",
+            }
+        ),
+        encoding="utf-8",
+    )
 
     assert runtime_data_path("data/smeta_base/les_smeta_base.sqlite") == (
         tmp_path / "data" / "smeta_base" / "les_smeta_base.sqlite"
     )
+    active = active_base(config_path)
+    assert Path(active["base_path"]) == tmp_path / "data" / "smeta_base" / "les_smeta_base.sqlite"
+    assert Path(active["manifest_path"]) == tmp_path / "data" / "smeta_base" / "les_smeta_base_manifest.json"
+    assert Path(active["integrity_path"]) == tmp_path / "data" / "smeta_base" / "les_smeta_base_integrity.json"
 
 
 def _row(**overrides):
