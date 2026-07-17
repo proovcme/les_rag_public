@@ -27,7 +27,7 @@ from backend.mail_threads import parse_mail_message
 
 
 MAIL_ACCOUNT_KINDS = {"imap", "outlook_classic"}
-SECRET_SERVICE_PREFIX = "me.ovc.les.mail"
+CREDENTIAL_SERVICE_PREFIX = "me.ovc.les.mail"
 DATASET_SAFE_RE = re.compile(r"[^A-Za-z0-9А-Яа-яЁё_.@+-]+")
 
 
@@ -91,7 +91,7 @@ class MemoryMailSecretStore(MailSecretStore):
 
 class MacOSKeychainMailSecretStore(MailSecretStore):
     def _service(self, account_id: str) -> str:
-        return f"{SECRET_SERVICE_PREFIX}.{account_id}"
+        return f"{CREDENTIAL_SERVICE_PREFIX}.{account_id}"
 
     def set(self, account_id: str, secret: str) -> None:
         subprocess.run(
@@ -182,7 +182,7 @@ class WindowsCredentialMailSecretStore(MailSecretStore):
 
     @staticmethod
     def _target(account_id: str) -> str:
-        return f"{SECRET_SERVICE_PREFIX}.{account_id}"
+        return f"{CREDENTIAL_SERVICE_PREFIX}.{account_id}"
 
     def set(self, account_id: str, secret: str) -> None:
         raw = secret.encode("utf-8")
