@@ -7,22 +7,22 @@
 ## Текущее состояние (2026-07-17)
 
 ```
-версия продукта (SemVer):  0.24.26 (development candidate, 2026-07-17)
+версия продукта (SemVer):  0.24.26 (published, 2026-07-17)
 номер сборки:              447     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.447 (контракт следующей Windows-сборки)
+версия Tauri/NSIS:         5.1.447 (published Windows package)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
-dev HEAD:                  HEAD  (см. git log -1)
-задеплоено на рантайм:     0.24.21 / build 442 (live on Legion, 2026-07-16)
-Windows-выпуск:            0.24.21 / build 442 (GitHub release)
-следующий выпуск:          0.24.26 / build 447
-рантайм /api/version:      0.24.21 / build 442 + точечный Python hotfix; UI 200
+dev HEAD:                  e380c12ad6eb05ac0a5425024af2c5057a3d2786
+задеплоено на рантайм:     0.24.26 / build 447 (live on Legion, 2026-07-17)
+Windows-выпуск:            0.24.26 / build 447 (GitHub release v0.24.26)
+следующий выпуск:          не назначен
+рантайм /api/version:      0.24.26 / build 447; UI 200; desktop process 1
 ```
 
 > 0.24.26 / build 447 — Е.Ж.И.К.: отдельный P0-датасет на каждый почтовый ящик
 >
 > Дата: 2026-07-17
-> Статус: development candidate; offline mail gates реализованы, Windows/Legion и Yandex live-smoke
-> ещё обязательны до выпуска. Новый exact registry связывает IMAP/classic-Outlook account с одним
+> Статус: опубликован и установлен на Legion; [GitHub release v0.24.26](https://github.com/proovcme/les_rag_public/releases/tag/v0.24.26).
+> Новый exact registry связывает IMAP/classic-Outlook account с одним
 > неизменяемым `dataset_id`; новые ящики не смешиваются в legacy `MAIL_Index`. IMAP работает
 > read-only через `BODY.PEEK[]`, special-use flags и per-folder UIDVALIDITY/cursor, пароль приложения
 > хранится в OS credential vault. Classic Outlook sidecar сохраняет Unicode `.msg`, рекурсивно
@@ -33,8 +33,17 @@ Windows-выпуск:            0.24.21 / build 442 (GitHub release)
 > loopback intake/open, вкладка «Почта» и Windows interactive three-minute Task Scheduler install.
 > Тестовая программа разделена: `test-mail` даёт 61 offline/static проверку, `test-mail-release`
 > добавляет Tauri и встроен в patch-release; `test-architecture` больше не смешивает LES с ARTEL.
-> Контроль на Mac: mail 61/61 + Tauri green; LES architecture 2684 passed / 3 optional skips;
-> полный архивный suite 3062 passed / 3 optional skips. Windows COM/live всё ещё не доказан.
+> На реальном выпуске закрыты bootstrap-регрессии: stderr-прогресс `uv` больше не становится
+> фатальной PowerShell-ошибкой; обычный пользователь проверяет фактическую запись в persistent
+> state и не меняет ACL; Outlook COM probe и запуск Tauri выполняются в interactive Scheduled Task,
+> а не из SSH session 0.
+> Контроль: `make verify` — 3065 collected; mail 61/61 + Tauri green; полный release suite —
+> 2973 passed / 3 optional skips. Installed Windows smoke подтвердил baseline 49 756 норм,
+> 504 259 ресурсов и 1 576 ФСЭМ, UI 200 и native dense+sparse RRF. Production Legion gate:
+> classic Outlook probe `ok`, 2 mailbox accounts, 7/7 тяжёлых PDF, 2247 фрагментов, 5 RRF hits,
+> временный dataset удалён. Tauri передан в interactive session; независимый SSH-probe после
+> завершения deploy подтвердил `0.24.26 / 447`, UI 200 и один desktop process. Installer:
+> 83 520 221 bytes, SHA-256 `22ee8f67b45986c175ead064b6882a94b5de90c4500f3ebbaff9e442d7bf1709`.
 
 > 0.24.25 / build 446 — сравниваем native, Qwen-Agent и Google ADK без кодового выбора норм
 >
