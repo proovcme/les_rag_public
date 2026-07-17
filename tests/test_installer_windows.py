@@ -152,6 +152,10 @@ def test_windows_tauri_uses_update_safe_persistent_state():
     assert "$item.GetAccessControl(" in state
     assert "$item.SetAccessControl($acl)" in state
     assert "Set-Acl -LiteralPath" not in state
+    assert '".les-write-probe-{0}-{1}.tmp"' in state
+    assert "[System.IO.File]::WriteAllText($probe" in state
+    assert "WindowsBuiltInRole]::Administrator" in state
+    assert "LES state is not writable by the interactive user" in state
     assert 'Grant-LesWindowsStateAccess -Path $state' in state
     assert 'Grant-LesWindowsStateAccess -Path (Join-Path $StateRoot "data\\smeta_base") -Recurse' in bootstrap
 

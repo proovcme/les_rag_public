@@ -21,8 +21,34 @@ function Grant-LesWindowsStateAccess {
   )
 
   if (-not (Test-Path -LiteralPath $Path)) { return }
+  # Normal launches must prove effective write access, not rewrite security
+  # descriptors. A per-user LocalAppData state is normally writable already;
+  # attempting SetAccessControl from that ordinary token fails even when file
+  # creation and SQLite writes are allowed.
+  $rootItem = Get-Item -LiteralPath $Path -Force
+  if ($rootItem.PSIsContainer) {
+    $probe = Join-Path $rootItem.FullName (".les-write-probe-{0}-{1}.tmp" -f $PID, [guid]::NewGuid().ToString("N"))
+    try {
+      [System.IO.File]::WriteAllText($probe, "les-write-probe", (New-Object System.Text.UTF8Encoding($false)))
+      Remove-Item -LiteralPath $probe -Force
+      return
+    } catch {
+      Remove-Item -LiteralPath $probe -Force -ErrorAction SilentlyContinue
+    }
+  }
+
+  $principal = New-Object System.Security.Principal.WindowsPrincipal(
+    [System.Security.Principal.WindowsIdentity]::GetCurrent()
+  )
+  $isElevated = $principal.IsInRole(
+    [System.Security.Principal.WindowsBuiltInRole]::Administrator
+  )
+  if (-not $isElevated) {
+    throw "LES state is not writable by the interactive user: $Path. Run the installer repair once as administrator."
+  }
+
   $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
-  $targets = @((Get-Item -LiteralPath $Path -Force))
+  $targets = @($rootItem)
   if ($Recurse) {
     $targets += @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction Stop)
   }
