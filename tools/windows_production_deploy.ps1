@@ -39,6 +39,7 @@ $result = [ordered]@{
 $smokeDatasetId = $null
 $proxyPort = 0
 $oldHealth = $null
+$mailTask = $null
 
 function Set-LesEnvValue([string]$Path, [string]$Key, [string]$Value) {
   $lines = if (Test-Path -LiteralPath $Path) { @(Get-Content -LiteralPath $Path) } else { @() }
@@ -117,6 +118,52 @@ function Invoke-InteractiveOutlookProbe(
     return [int]$probeInfo.LastTaskResult
   } finally {
     Unregister-ScheduledTask -TaskName $probeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+  }
+}
+
+function Start-InteractiveLesDesktop(
+  [string]$Desktop,
+  [object]$CollectorTask,
+  [int]$TimeoutSeconds = 180
+) {
+  if (-not (Test-Path -LiteralPath $Desktop)) {
+    throw "Installed LES desktop was not found: $Desktop"
+  }
+  $taskName = "LES Release Desktop Start"
+  $userId = [string]$CollectorTask.Principal.UserId
+  if (-not $userId) { throw "LES desktop handoff has no interactive user" }
+  $arguments = '/c start "" "' + $Desktop + '"'
+  $action = New-ScheduledTaskAction -Execute $env:ComSpec -Argument $arguments `
+    -WorkingDirectory (Split-Path -Parent $Desktop)
+  $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive
+  try {
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $taskName
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+      Start-Sleep -Seconds 1
+      $desktopCount = @(Get-Process -Name "les-desktop" -ErrorAction SilentlyContinue | Where-Object {
+        $_.SessionId -ne 0
+      }).Count
+      if ($desktopCount -gt 0) {
+        try {
+          $version = Invoke-RestMethod -Uri "http://127.0.0.1:8050/api/version" -TimeoutSec 10
+          $ui = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8051/healthz" -TimeoutSec 10
+          if ($version.les_version -eq $ExpectedVersion -and [int]$ui.StatusCode -eq 200) {
+            return [ordered]@{
+              product_version = [string]$version.les_version
+              ui_status = [int]$ui.StatusCode
+              desktop_processes = [int]$desktopCount
+              launch_mode = "interactive_scheduled_task"
+            }
+          }
+        } catch { }
+      }
+    } while ((Get-Date) -lt $deadline)
+    throw "installed LES desktop did not establish persistent API/UI within $TimeoutSeconds seconds"
+  } finally {
+    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
   }
 }
 
@@ -305,7 +352,6 @@ try {
   $result.rrf_chunks = @($rrf.chunks).Count
   $result.rrf_channels = $channels
   $result.rrf_fusion = $rrf.retrieval_trace.fusion
-  $result.stage = "done"
   $result.ok = $true
 } catch {
   $result.error = $_.Exception.Message
@@ -319,6 +365,19 @@ try {
       $result.smoke_dataset_removed = $true
     } catch {
       $result.cleanup_error = $_.Exception.Message
+      $result.ok = $false
+    }
+  }
+  if ($result.ok) {
+    try {
+      $result.stage = "desktop_handoff"
+      Stop-LesRuntime
+      $result.desktop_handoff = Start-InteractiveLesDesktop `
+        (Join-Path $InstallRoot "les-desktop.exe") $mailTask
+      $result.stage = "done"
+    } catch {
+      $result.error = $_.Exception.Message
+      $result.error_type = $_.Exception.GetType().FullName
       $result.ok = $false
     }
   }

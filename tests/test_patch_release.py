@@ -149,6 +149,10 @@ def test_patch_release_requires_production_legion_heavy_pdf_gate():
     assert "Production index contract is not compatible after bootstrap" in production
     assert "dense+sparse RRF" in production
     assert "/api/rag/datasets/$smokeDatasetId" in production
+    assert "Start-InteractiveLesDesktop" in production
+    assert 'Join-Path $InstallRoot "les-desktop.exe"' in production
+    assert 'launch_mode = "interactive_scheduled_task"' in production
+    assert '$result.stage = "desktop_handoff"' in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):
