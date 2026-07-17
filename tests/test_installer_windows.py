@@ -148,6 +148,10 @@ def test_windows_tauri_uses_update_safe_persistent_state():
     assert "function Grant-LesWindowsStateAccess" in state
     assert "WindowsIdentity]::GetCurrent().User" in state
     assert "FileSystemRights]::Modify" in state
+    assert "AccessControlSections]::Access" in state
+    assert "$item.GetAccessControl(" in state
+    assert "$item.SetAccessControl($acl)" in state
+    assert "Set-Acl -LiteralPath" not in state
     assert 'Grant-LesWindowsStateAccess -Path $state' in state
     assert 'Grant-LesWindowsStateAccess -Path (Join-Path $StateRoot "data\\smeta_base") -Recurse' in bootstrap
 

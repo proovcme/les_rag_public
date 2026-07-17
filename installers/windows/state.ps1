@@ -27,7 +27,13 @@ function Grant-LesWindowsStateAccess {
     $targets += @(Get-ChildItem -LiteralPath $Path -Force -Recurse -ErrorAction Stop)
   }
   foreach ($item in $targets) {
-    $acl = Get-Acl -LiteralPath $item.FullName
+    # Read and write only the discretionary ACL. Passing the full object from
+    # Get-Acl to Set-Acl can make Windows PowerShell 5.1 attempt to persist the
+    # audit ACL too, which requires SeSecurityPrivilege and breaks ordinary
+    # interactive launches after an administrator provisioned the state.
+    $acl = $item.GetAccessControl(
+      [System.Security.AccessControl.AccessControlSections]::Access
+    )
     $inheritance = if ($item.PSIsContainer) {
       [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor `
         [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
@@ -42,7 +48,7 @@ function Grant-LesWindowsStateAccess {
       [System.Security.AccessControl.AccessControlType]::Allow
     )
     $acl.SetAccessRule($rule)
-    Set-Acl -LiteralPath $item.FullName -AclObject $acl
+    $item.SetAccessControl($acl)
   }
 }
 

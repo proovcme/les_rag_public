@@ -182,7 +182,9 @@ transient downloads and writes the exact sanitized `uv` failure to
 `%LOCALAPPDATA%\LES\logs\bootstrap.log`. An incomplete `.venv` is removed before
 retry. The bootstrap also grants the installing interactive user `Modify` on
 the persistent state and repaired smeta baseline, so an administrator-assisted
-install cannot leave ordinary Tauri/uvicorn without access. After a successful
+install cannot leave ordinary Tauri/uvicorn without access. ACL repair writes
+only the discretionary access list; repeated ordinary-user launches do not
+request the audit privilege `SeSecurityPrivilege`. After a successful
 first launch it can run offline (local provider).
 
 ### macOS
