@@ -90,6 +90,9 @@ message-node каждого письма сохраняет собственну
 interactive task. `installers/windows/app/bootstrap.ps1` устанавливает его вместе с Tauri/NSIS при
 наличии classic Outlook. Live Windows gate обязан проверить повторный запуск без дублей, folder
 probe без мутаций, `INDEXED`, правильный original и отсутствие секрета в API/log/machine report.
+Так как SSH-процесс не видит COM-объект Outlook из desktop session, release probe запускается
+одноразовой interactive Scheduled Task под тем же пользователем; проверяется её `LastTaskResult`,
+после чего задача всегда удаляется.
 
 Mac unit/static checks доказывают кодовый контракт, но не заменяют установленный Windows-выпуск на
 Legion. Release выполняется только штатными Windows gates и `make patch-release` из чистого pushed

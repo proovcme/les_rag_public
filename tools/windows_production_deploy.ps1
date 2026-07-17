@@ -84,6 +84,42 @@ function Stop-LesRuntime {
   }
 }
 
+function Invoke-InteractiveOutlookProbe(
+  [string]$Collector,
+  [object]$CollectorTask,
+  [int]$TimeoutSeconds = 60
+) {
+  # An SSH PowerShell process runs outside the logged-on desktop session and
+  # cannot see Outlook's COM object even while OUTLOOK.EXE is open. Run the
+  # non-mutating probe as a one-shot interactive task under the same principal
+  # as the installed collector, then read its native exit code.
+  $probeTaskName = "LES E.ZH.I.K. Outlook Release Probe"
+  $userId = [string]$CollectorTask.Principal.UserId
+  if (-not $userId) { throw "E.ZH.I.K. Scheduled Task has no interactive user" }
+  $action = New-ScheduledTaskAction -Execute $Collector -Argument "--probe"
+  $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive
+  $startedAt = Get-Date
+  try {
+    Unregister-ScheduledTask -TaskName $probeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Register-ScheduledTask -TaskName $probeTaskName -Action $action -Principal $principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $probeTaskName
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $probeInfo = $null
+    do {
+      Start-Sleep -Milliseconds 250
+      $probeTask = Get-ScheduledTask -TaskName $probeTaskName -ErrorAction Stop
+      $probeInfo = Get-ScheduledTaskInfo -TaskName $probeTaskName -ErrorAction Stop
+      if ($probeTask.State -ne "Running" -and $probeInfo.LastRunTime -ge $startedAt) { break }
+    } while ((Get-Date) -lt $deadline)
+    if (-not $probeInfo -or $probeInfo.LastRunTime -lt $startedAt) {
+      throw "classic Outlook interactive probe did not run within $TimeoutSeconds seconds"
+    }
+    return [int]$probeInfo.LastTaskResult
+  } finally {
+    Unregister-ScheduledTask -TaskName $probeTaskName -Confirm:$false -ErrorAction SilentlyContinue
+  }
+}
+
 try {
   if (-not (Test-Path -LiteralPath $Installer)) { throw "Installer not found: $Installer" }
   $pdfFiles = @(Get-ChildItem -LiteralPath $HeavyPdfRoot -Filter "*.pdf" -File -ErrorAction Stop)
@@ -195,8 +231,8 @@ try {
   if ([string]$mailTask.Principal.LogonType -notin @("Interactive", "InteractiveToken")) {
     throw "E.ZH.I.K. Scheduled Task is not interactive"
   }
-  & $collector --probe
-  if ($LASTEXITCODE -ne 0) {
+  $outlookProbeResult = Invoke-InteractiveOutlookProbe $collector $mailTask
+  if ($outlookProbeResult -ne 0) {
     throw "classic Outlook probe failed; Outlook must be running in the release user session"
   }
   $mailApi = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/mail/accounts" -TimeoutSec 30
@@ -208,6 +244,7 @@ try {
     collector = $collector
     task_state = [string]$mailTask.State
     interactive = $true
+    probe_mode = "interactive_scheduled_task"
     outlook_probe = "ok"
     accounts = @($mailApi.accounts).Count
   }

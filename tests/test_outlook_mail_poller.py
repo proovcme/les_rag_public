@@ -38,6 +38,10 @@ def test_windows_bootstrap_installs_interactive_three_minute_task():
     production = (ROOT / "tools/windows_production_deploy.ps1").read_text(encoding="utf-8-sig")
     assert "LesMailPoller.exe" in production
     assert "--probe" in production
+    assert "Invoke-InteractiveOutlookProbe" in production
+    assert "New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive" in production
+    assert 'probe_mode = "interactive_scheduled_task"' in production
+    assert "Unregister-ScheduledTask -TaskName $probeTaskName" in production
     assert "/api/mail/accounts" in production
     assert "password" in production
 
