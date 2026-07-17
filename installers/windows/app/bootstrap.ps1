@@ -353,8 +353,18 @@ if ($env:LES_TAURI_SHELL -eq "1") {
   Log "uv sync with bundled Python --extra desktop (legacy fallback)"
   $UvSyncArgs += @("--extra", "desktop")
 }
-$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)
-$uvSyncExitCode = $LASTEXITCODE
+# uv writes normal progress (including the selected interpreter) to stderr.
+# Windows PowerShell 5.1 turns native stderr into a terminating error while the
+# bootstrap-wide ErrorActionPreference is Stop, so capture it under Continue
+# and decide solely from the native exit code below.
+$previousErrorActionPreference = $ErrorActionPreference
+try {
+  $ErrorActionPreference = "Continue"
+  $uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)
+  $uvSyncExitCode = $LASTEXITCODE
+} finally {
+  $ErrorActionPreference = $previousErrorActionPreference
+}
 foreach ($line in $uvSyncOutput) {
   $safeLine = [regex]::Replace([string]$line, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
   if ($safeLine) { Log "uv: $safeLine" }

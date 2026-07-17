@@ -106,6 +106,18 @@ def test_windows_bootstrap_reports_ready_only_after_api_health():
     assert '"services_api_not_ready"' in bootstrap
 
 
+def test_windows_bootstrap_captures_uv_progress_without_treating_stderr_as_failure():
+    bootstrap = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert '$previousErrorActionPreference = $ErrorActionPreference' in bootstrap
+    assert '$ErrorActionPreference = "Continue"' in bootstrap
+    assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in bootstrap
+    assert '$uvSyncExitCode = $LASTEXITCODE' in bootstrap
+    assert '$ErrorActionPreference = $previousErrorActionPreference' in bootstrap
+
+
 def test_qdrant_payload_indexes_do_not_block_api_startup():
     adapter = (
         build_windows_installer.ROOT / "backend" / "qdrant_adapter.py"
