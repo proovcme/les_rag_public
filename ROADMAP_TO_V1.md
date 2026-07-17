@@ -333,6 +333,16 @@ async vector/mail adapters with honest unavailable status
 real workbook source
 ```
 
+#### 3.4.1. Е.Ж.И.К. mailbox collector
+
+Реализован read-only контур classic Outlook/IMAP: exact account/folder/message registry,
+UIDVALIDITY/cursors, immutable `.msg/.eml` snapshots, attachment extraction, Outlook original open
+и отдельная вкладка «Почта». Архитектурная граница: **каждый ящик создаёт отдельный P0 dataset**;
+общий `MAIL_Index` не используется для новых аккаунтов и остаётся legacy. Offline unit/static gate
+закрывает cursor/dedup/secret/inline/packaging contracts. До статуса Windows release остаются живые
+Legion gates: COM stores/folders probe, повторный backfill без дублей, `INDEXED`, exact original и
+Яндекс smoke с app-password без утечки секрета.
+
 ### 3.5. Runtime sidecar loop
 
 Доказан operator-safe процесс:

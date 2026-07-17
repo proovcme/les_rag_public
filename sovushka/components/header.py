@@ -23,6 +23,7 @@ def build_header(
     include_chat: bool = True,
     include_documents: bool = False,
     include_datasets: bool = False,
+    include_mail: bool = True,
     admin_link: bool = False,
     chat_link: bool = False,
     visualizer_url: str | None = None,
@@ -133,6 +134,8 @@ def build_header(
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
                 tab_refs["documents"]  = ui.tab("Документы", icon="o_folder_open")
+                if include_mail:
+                    tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
@@ -142,6 +145,8 @@ def build_header(
                     tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
                 if include_documents and "documents" not in tab_refs:
                     tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
+                if include_mail and "mail" not in tab_refs:
+                    tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
 
         # ── Контролы (справа) ─────────────────────────────────────────────────
@@ -292,6 +297,15 @@ def build_header(
                     set_llm.on_value_change(_apply_mlx_model)
                     set_ollama_url = ui.input("Адрес Ollama", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_ollama_model = ui.input("Модель Ollama, например gemma4:12b", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_smeta_engine = ui.select(
+                        {
+                            "native": "Native loop (контрольный)",
+                            "qwen_agent": "Qwen-Agent (локально)",
+                            "google_adk": "Google ADK (облако)",
+                        },
+                        value="native",
+                        label="Движок сметчика",
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_smeta_model = ui.input("Модель для смет", value="qwen3.5:9b").props(
                         'hint="Можно указать gemma4:12b для чистой проверки"'
                     ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
@@ -299,6 +313,15 @@ def build_header(
                         "Резервная модель для смет", value="qwen3.5:9b"
                     ).props('hint="Очисти поле, чтобы проверять выбранную модель без подстраховки"').style(
                         "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
+                    )
+                    set_google_model = ui.input(
+                        "Google model для смет", value="gemini-3.5-flash"
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_google_key = ui.input(
+                        "Google API Key", value="", password=True, password_toggle_button=True
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_google_clear = ui.checkbox("Сбросить Google API key", value=False).style(
+                        "color:var(--text);font-family:var(--font);"
                     )
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Облачные провайдеры").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
@@ -393,6 +416,16 @@ def build_header(
                             set_ollama_model.set_value(ollama.get("model", ""))
                             set_smeta_model.set_value(d.get("smeta_document_model") or "qwen3.5:9b")
                             set_smeta_fallback_model.set_value(d.get("smeta_document_fallback_model", "qwen3.5:9b"))
+                            smeta_engine = d.get("smeta_agent_engine") or "native"
+                            set_smeta_engine.set_value(
+                                smeta_engine if smeta_engine in {"native", "qwen_agent", "google_adk"} else "native"
+                            )
+                            set_google_model.set_value(d.get("smeta_google_model") or "gemini-3.5-flash")
+                            set_google_key.set_value("")
+                            set_google_key.props(
+                                f"placeholder=\"{'key уже задан; оставь пустым, чтобы не менять' if d.get('google_api_key_set') else 'Google API key'}\""
+                            )
+                            set_google_clear.set_value(False)
                             openrouter = providers.get("openrouter") or {}
                             openai = providers.get("openai_compatible") or {}
                             set_openrouter_url.set_value(openrouter.get("base_url", "https://openrouter.ai/api/v1"))
@@ -524,9 +557,15 @@ def build_header(
                                 "llm_provider": set_provider.value or ("ollama" if is_windows else "mlx"),
                                 "ollama_base_url": set_ollama_url.value or "",
                                 "ollama_model": set_ollama_model.value or "",
-                                "smeta_document_provider": "ollama" if is_windows else "",
+                                "smeta_agent_engine": set_smeta_engine.value or "native",
+                                "smeta_document_provider": (
+                                    "ollama" if is_windows and set_smeta_engine.value == "native" else ""
+                                ),
                                 "smeta_document_model": set_smeta_model.value or "",
                                 "smeta_document_fallback_model": set_smeta_fallback_model.value or "",
+                                "smeta_google_model": set_google_model.value or "gemini-3.5-flash",
+                                "google_api_key": set_google_key.value or None,
+                                "google_api_key_clear": bool(set_google_clear.value),
                                 "openrouter_base_url": set_openrouter_url.value or "",
                                 "openrouter_model": set_openrouter_model.value or "",
                                 "openrouter_api_key": set_openrouter_key.value or None,

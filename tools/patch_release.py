@@ -84,6 +84,7 @@ def require_clean_pushed_branch(branch: str) -> str:
 def run_local_gates() -> None:
     for command in (
         ["make", "verify"],
+        ["make", "test-mail-release"],
         ["make", "test-release"],
         ["make", "public-check"],
         ["uv", "lock", "--check"],

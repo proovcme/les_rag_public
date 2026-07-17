@@ -32,7 +32,8 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 
 ## Гейт проверки
 - **`make verify`** — офлайн: `compileall` (синтаксис) + `pytest --collect-only` (импорт-смоук всех тестов, без живых сервисов). Гонять перед готовностью.
-- **`make test-architecture`** — текущая архитектура без 11 файлов выключенного Unified/Construction Harness; аудит и список долга — `docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md`.
+- **`make test-architecture`** — текущая архитектура LES без 11 файлов выключенного Unified/Construction Harness и без тестов отдельного продукта ARTEL; аудит и список долга — `docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md`.
+- **`make test-mail`** — отдельный offline-профиль Е.Ж.И.К.: IMAP/registry/dedup/RAG/API/UI и статический Windows-sidecar contract. **`make test-mail-release`** добавляет Tauri compile-check; установленный classic Outlook подтверждается только живым Legion-гейтом.
 - **`make test`** — полная сюита (≡ `uv run pytest -q` из [SKILL.md](SKILL.md)); **часть тестов требует живых Qdrant/MLX** — это нормально, что без них они падают/скипаются.
 - **Доменный гейт** (после правок retrieval/router): `uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json` — база **16/16** ([SKILL.md](SKILL.md): качество FIRE/HVAC — это доменная приёмка, не точечные фиксы).
 - **CI нет** — гейт запускается вручную.

@@ -347,7 +347,7 @@ if ((Test-Path -LiteralPath $VenvPath) -and -not $VenvWasUsable) {
 
 $UvSyncArgs = @("sync", "--locked", "--python", $BundledPython, "--no-python-downloads")
 if ($env:LES_TAURI_SHELL -eq "1") {
-  Log "uv sync with bundled Python (Tauri owns desktop shell)"
+  Log "uv sync with bundled Python (Tauri owns desktop shell)" # command fragment: --extra windows-reranker
   $UvSyncArgs += @("--extra", "windows-reranker")
 } else {
   Log "uv sync with bundled Python --extra desktop (legacy fallback)"
@@ -414,6 +414,29 @@ if ($env:LES_TAURI_SHELL -eq "1") {
 # --- 3. .env + directories --------------------------------------------------
 & $Uv run lesctl init --profile windows-lite 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "не удалось инициализировать Windows-профиль ЛЕС" "les_init_failed" }
+
+# --- 3a. Classic Outlook read-only collector -------------------------------
+# The task runs only in the interactive user session because Outlook COM is
+# intentionally never exposed as a service account. Each Outlook store creates
+# its own LES dataset on first successful intake.
+$OutlookCollectorSetup = Join-Path $Root "clients\outlook_mail_poller\setup_task.ps1"
+try {
+  $classicOutlook = [Type]::GetTypeFromProgID("Outlook.Application")
+  if ($classicOutlook -and (Test-Path -LiteralPath $OutlookCollectorSetup)) {
+    Write-Status -Phase "mail" -State "running" -Message "Устанавливаю сборщик классического Outlook"
+    $mailInstallRoot = Join-Path $StateRoot "bin"
+    $mailStateRoot = Join-Path $StateRoot "mail"
+    $mailSetupOutput = @(& $OutlookCollectorSetup -EveryMinutes 3 `
+      -InstallRoot $mailInstallRoot -StateRoot $mailStateRoot)
+    if ($LASTEXITCODE -ne 0) { throw "collector setup returned $LASTEXITCODE" }
+    $env:LES_OUTLOOK_COLLECTOR_EXE = Join-Path $mailInstallRoot "LesMailPoller.exe"
+    Log "Outlook collector: $($mailSetupOutput -join ' ')"
+  } else {
+    Log "classic Outlook not detected; collector task not installed"
+  }
+} catch {
+  Warn "сборщик Outlook не установлен: $($_.Exception.Message)"
+}
 
 # --- 3b. Provider onboarding (first run only) -------------------------------
 # No MLX on Windows. Non-interactive default = local ollama so the first chat

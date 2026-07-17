@@ -19,6 +19,7 @@ PROMPT_REGISTRY_SCHEMA = "prompt_registry_v2"
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SMETA_ROLE_PACK_PATH = _REPO_ROOT / "config" / "prompts" / "smeta_estimator_role.json"
 _SMETA_SKILL_PATH = _REPO_ROOT / "skills" / "smeta" / "SKILL.md"
+_SMETA_DOCUMENT_SKILL_PATH = _REPO_ROOT / "skills" / "smeta" / "references" / "document-mapping-agent.md"
 _PROMPT_OVERRIDES_PATH = _REPO_ROOT / "config" / "prompts" / "prompt_overrides.json"
 PROMPT_OVERRIDES_SCHEMA = "prompt_overrides_v1"
 
@@ -407,12 +408,12 @@ def build_smeta_batch_system_prompt(tool_contract: str, *, notebook_context: str
 
 @lru_cache(maxsize=1)
 def smeta_native_skill_prompt() -> str:
-    """Load the canonical smeta skill as the model's professional contract."""
+    """Load the phase-specific contract from the canonical smeta skill package."""
     try:
-        skill = _SMETA_SKILL_PATH.read_text(encoding="utf-8").strip()
+        skill = _SMETA_DOCUMENT_SKILL_PATH.read_text(encoding="utf-8").strip()
     except OSError:
         return ""
-    return "Активный smeta skill (единственный профессиональный контракт; не evidence):\n" + skill
+    return "Активная фаза smeta skill (единственный профессиональный контракт; не evidence):\n" + skill
 
 
 def _prompt_defaults() -> dict[str, str]:

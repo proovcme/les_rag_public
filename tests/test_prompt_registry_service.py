@@ -15,13 +15,14 @@ from proxy.services.prompt_registry_service import (
 )
 
 
-def test_native_smeta_agent_loads_canonical_skill():
+def test_native_smeta_agent_loads_document_mapping_phase_from_canonical_skill():
     skill = smeta_native_skill_prompt()
 
-    assert "# Сметный агент ЛЕС" in skill
-    assert "единственным профессиональным контрактом" in skill
-    assert "technology_check" in skill
-    assert "unbound_evidence" in skill
+    assert "# Document mapping agent" in skill
+    assert "единственный профессиональный контракт" in skill
+    assert "Для `bind` обязательно открой выбранную карточку" in skill
+    assert "Для `unbound` выполни минимум две разные" in skill
+    assert "НР выбирается" not in skill
     assert "runtime-agent.md" not in skill
 
 

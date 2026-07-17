@@ -8,6 +8,7 @@ import pytest
 
 from backend.mail_ingest import AppleMailImportedFile, ImapFetchedFile
 from proxy.routers import datasets, mail
+from proxy.services.mail_registry_service import MailRegistry, MemoryMailSecretStore, set_mail_registry
 
 
 @dataclass
@@ -75,6 +76,48 @@ def mail_state():
     )
     yield backend
     datasets._state = previous
+
+
+@pytest.fixture()
+def mail_registry(tmp_path):
+    registry = MailRegistry(tmp_path / "mail-registry.db", secret_store=MemoryMailSecretStore())
+    set_mail_registry(registry)
+    yield registry
+    set_mail_registry(None)
+
+
+@pytest.mark.asyncio
+async def test_account_creation_creates_one_private_dataset_per_mailbox(mail_state, mail_registry):
+    first = await mail.create_mail_account(
+        mail.MailAccountCreateRequest(
+            kind="imap",
+            label="Первый ящик",
+            provider="yandex",
+            login="first@yandex.ru",
+            password="app-password-one",
+        ),
+        _admin=object(),
+    )
+    second = await mail.create_mail_account(
+        mail.MailAccountCreateRequest(
+            kind="imap",
+            label="Второй ящик",
+            host="imap.example.com",
+            login="second@example.com",
+            password="app-password-two",
+        ),
+        _admin=object(),
+    )
+
+    assert first["account"]["dataset_id"] == "ds-1"
+    assert second["account"]["dataset_id"] == "ds-2"
+    assert first["account"]["dataset_name"] != second["account"]["dataset_name"]
+    assert first["account"]["config"]["host"] == "imap.yandex.ru"
+    assert "password" not in first["account"]["config"]
+    assert [dataset.name for dataset in mail_state.datasets] == [
+        first["account"]["dataset_name"],
+        second["account"]["dataset_name"],
+    ]
 
 
 def _write_eml(path):

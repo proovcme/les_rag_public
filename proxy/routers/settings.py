@@ -70,6 +70,10 @@ class SettingsRequest(BaseModel):
     smeta_document_provider: Optional[str] = None
     smeta_document_model: Optional[str] = None
     smeta_document_fallback_model: Optional[str] = None
+    smeta_agent_engine: Optional[str] = None
+    smeta_google_model: Optional[str] = None
+    google_api_key: Optional[str] = None
+    google_api_key_clear: Optional[bool] = None
     openai_api_key: Optional[str] = None
     openai_api_key_clear: Optional[bool] = None
     llm_provider: Optional[str] = None
@@ -124,6 +128,11 @@ async def get_settings(_user=Depends(require_user)):
             "smeta_document_fallback_model": os.getenv(
                 "LES_SMETA_DOCUMENT_FALLBACK_MODEL", "qwen3.5:9b"
             ).strip(),
+            "smeta_agent_engine": os.getenv("LES_SMETA_AGENT_ENGINE", "native").strip(),
+            "smeta_google_model": os.getenv(
+                "LES_SMETA_GOOGLE_MODEL", "gemini-3.5-flash"
+            ).strip(),
+            "google_api_key_set": bool(os.getenv("GOOGLE_API_KEY", "")),
             "mail": _mail_settings_payload(),
         }
     except Exception as e:
@@ -153,6 +162,10 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
         "", "local", "mlx", "openai", "openrouter", "ollama", "lemonade",
     }:
         raise HTTPException(400, "Недопустимый провайдер документной сметы")
+    if req.smeta_agent_engine is not None and req.smeta_agent_engine.strip().lower() not in {
+        "native", "qwen_agent", "google_adk",
+    }:
+        raise HTTPException(400, "Недопустимый движок сметчика")
     if req.mlx_url and not req.mlx_url.startswith(("http://", "https://")):
         raise HTTPException(400, "MLX_URL должен начинаться с http:// или https://")
     for field, env_key in (
@@ -326,6 +339,8 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         "smeta_document_provider": "LES_SMETA_DOCUMENT_PROVIDER",
         "smeta_document_model": "LES_SMETA_DOCUMENT_MODEL",
         "smeta_document_fallback_model": "LES_SMETA_DOCUMENT_FALLBACK_MODEL",
+        "smeta_agent_engine": "LES_SMETA_AGENT_ENGINE",
+        "smeta_google_model": "LES_SMETA_GOOGLE_MODEL",
         "ollama_base_url": "OLLAMA_BASE_URL",
         "ollama_model": "OLLAMA_MODEL",
         "lemonade_base_url": "LEMONADE_BASE_URL",
@@ -354,6 +369,11 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         updates["LEMONADE_API_KEY"] = req.lemonade_api_key.strip()
     if req.lemonade_api_key_clear:
         updates["LEMONADE_API_KEY"] = ""
+
+    if "google_api_key" in fields and req.google_api_key:
+        updates["GOOGLE_API_KEY"] = req.google_api_key.strip()
+    if req.google_api_key_clear:
+        updates["GOOGLE_API_KEY"] = ""
 
     if "cloud_consent" in fields:
         updates["LES_CLOUD_CONSENT"] = "true" if req.cloud_consent else "false"

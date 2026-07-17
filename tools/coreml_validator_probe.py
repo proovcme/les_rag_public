@@ -43,9 +43,20 @@ VALID_STATUSES = {"VERIFIED", "NO_DATA", "HALLUCINATION"}
 
 logger = logging.getLogger(__name__)
 
+_TORCH_AVAILABLE = bool(getattr(torch, "nn", None) and getattr(torch, "Tensor", None))
+_TorchModuleBase = torch.nn.Module if _TORCH_AVAILABLE else object
 
-class ClassifierNoTokenTypes(torch.nn.Module):
+
+def _require_torch() -> None:
+    if not _TORCH_AVAILABLE:
+        raise RuntimeError(
+            "PyTorch is required for Core ML validator conversion; install the mac-mlx/coreml extra"
+        )
+
+
+class ClassifierNoTokenTypes(_TorchModuleBase):
     def __init__(self, model: torch.nn.Module):
+        _require_torch()
         super().__init__()
         self.model = model
 
@@ -58,8 +69,9 @@ class ClassifierNoTokenTypes(torch.nn.Module):
         return out[0]
 
 
-class ClassifierWithTokenTypes(torch.nn.Module):
+class ClassifierWithTokenTypes(_TorchModuleBase):
     def __init__(self, model: torch.nn.Module):
+        _require_torch()
         super().__init__()
         self.model = model
 
@@ -165,6 +177,7 @@ def _attention_mask_tensor(mask: torch.Tensor, rank: int) -> torch.Tensor:
 
 
 def convert_validator(args: argparse.Namespace) -> dict[str, Any]:
+    _require_torch()
     import coremltools as ct
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 

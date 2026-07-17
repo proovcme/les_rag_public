@@ -190,7 +190,7 @@ def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation(monkeypa
     assert [len(item["payload"]["work_items"]) for item in captured] == [50, 50]
     assert "all_source_rows_context" not in captured[0]["payload"]
     assert captured[0]["payload"]["user_request"] == "Собери ЛСР по всем строкам"
-    assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
+    assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch"]
     assert len(result["selections"]) == 50
     assert result["agent_trace"]["turns"] == 2
     assert all(item["review_status"] == "model_batch_unbound" for item in result["selections"].values())
@@ -298,9 +298,9 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
     assert result["selections"]["w1"]["review_status"] == "model_batch"
     assert result["query_trace"][0]["phase"] == "batch_search"
     assert result["agent_trace"]["turns"] == 3
-    assert tool_sets[0] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
-    assert tool_sets[1] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
-    assert tool_sets[2] == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
+    assert tool_sets[0] == ["search_norms_batch", "read_norms_batch"]
+    assert tool_sets[1] == ["search_norms_batch", "read_norms_batch"]
+    assert tool_sets[2] == ["search_norms_batch", "read_norms_batch"]
 
 
 def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
@@ -862,6 +862,116 @@ def test_batch_agent_does_not_coerce_model_after_prose(monkeypatch):
     assert calls == 1
 
 
+def test_batch_agent_serializes_same_model_decision_after_prose():
+    from proxy.smeta_core import document_workflow as workflow
+
+    seen = {}
+
+    def mapping_exchange(messages, schema):
+        seen["messages"] = messages
+        seen["schema"] = schema
+        return {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "модель не нашла достаточного основания",
+            "unbound_evidence": _unbound_evidence(),
+        }], "_les_model": "qwen3.5:9b"}
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {
+            "content": "Поиск завершён.",
+            "thinking": "Сопоставил свидетельства.",
+            "_les_done_reason": "stop",
+        },
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+    )
+
+    assert result["selections"]["w1"]["reason"] == "модель не нашла достаточного основания"
+    assert seen["schema"]["properties"]["rows"]["items"]["properties"]["work_id"]["enum"] == ["w1"]
+    assert any(
+        message.get("thinking") == "Сопоставил свидетельства."
+        for message in seen["messages"]
+    )
+    assert any(message.get("role") == "user" and "output_schema" in str(message.get("content"))
+               for message in seen["messages"])
+    assert any(item.get("transport") == "structured_mapping" for item in result["model_trace"])
+
+
+def test_batch_agent_serializes_after_repeated_tool_feedback(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    calls = 0
+    mapping_calls = 0
+
+    def exchange(messages, _tools):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            assert "identical deterministic request" in messages[-1]["content"]
+        return {"tool_calls": [_native_call(
+            f"search-{calls}",
+            "search_norms_batch",
+            items=[{"work_id": "w1", "queries": ["тот же запрос"], "page": 1}],
+        )]}
+
+    def mapping_exchange(_messages, _schema):
+        nonlocal mapping_calls
+        mapping_calls += 1
+        return {"rows": [{
+            "work_id": "w1", "decision": "unbound", "reason": "решение модели",
+            "unbound_evidence": _unbound_evidence(),
+        }]}
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+    )
+
+    assert calls == 3
+    assert mapping_calls == 1
+    assert result["selections"]["w1"]["reason"] == "решение модели"
+
+
+def test_batch_agent_structures_model_decision_at_tool_turn_budget(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    tool_turns = 0
+
+    def exchange(_messages, _tools):
+        nonlocal tool_turns
+        tool_turns += 1
+        return {"tool_calls": [_native_call(
+            f"search-{tool_turns}", "search_norms_batch",
+            items=[{"work_id": "w1", "query": f"вариант {tool_turns}"}],
+        )]}
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=lambda _messages, _schema: {"rows": [{
+            "work_id": "w1", "decision": "unbound", "reason": "решение модели по evidence",
+            "unbound_evidence": _unbound_evidence(),
+        }]},
+        candidate_limit=5,
+        max_turns=2,
+    )
+
+    assert tool_turns == 2
+    assert result["selections"]["w1"]["reason"] == "решение модели по evidence"
+    assert result["agent_trace"]["turns"] == 3
+    assert result["agent_trace"]["context_metrics"][-1]["structured_mapping"] is True
+
+
 def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
@@ -876,7 +986,7 @@ def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
         nonlocal calls
         calls += 1
         assert {str((tool.get("function") or {}).get("name") or "") for tool in _tools} == {
-            "search_norms_batch", "read_norms_batch", "submit_lsr_mapping",
+            "search_norms_batch", "read_norms_batch",
         }
         if calls == 1:
             return {"tool_calls": [_native_call(

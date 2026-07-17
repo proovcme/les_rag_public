@@ -1531,7 +1531,14 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             # file_name). БЕЗ индекса query_points с фильтром проверяет фильтр по ВСЕМ точкам
             # (~1.6с на 179k) — с индексом ~30мс. create_payload_index идемпотентен (повторный
             # вызов — no-op/обновление). Best-effort: сбой не должен блокировать старт.
-            for _field in ("dataset_id", "file_name", "embedding_fingerprint"):
+            for _field in (
+                "dataset_id",
+                "file_name",
+                "embedding_fingerprint",
+                "mail_account_id",
+                "mail_thread_key",
+                "mail_registry_message_id",
+            ):
                 try:
                     await self.aclient.create_payload_index(
                         collection_name=self.collection_name,
@@ -2873,6 +2880,39 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         phase_start = _t.time()
         nodes: list[dict] = []
         message_payload = profile.payload()
+        registry_payload: dict[str, Any] = {}
+        registry = None
+        registered = None
+        try:
+            from proxy.services.mail_registry_service import get_mail_registry
+
+            registry = get_mail_registry()
+            registered = registry.find_message_by_relative_path(file_key)
+            if registered:
+                account = registry.get_account(registered["account_id"], include_secret_state=False)
+                if str(account.get("dataset_id") or "") == dataset_id:
+                    registry_payload = {
+                        "mail_account_id": registered["account_id"],
+                        "mail_registry_message_id": registered["id"],
+                        "mail_dataset_id": account["dataset_id"],
+                        "mail_dataset_name": account["dataset_name"],
+                        "mail_source_kind": registered["source_kind"],
+                        "mail_source_locator": {
+                            "outlook_store_id": registered["outlook_store_id"],
+                            "outlook_entry_id": registered["outlook_entry_id"],
+                            "native_id": registered["native_id"],
+                        },
+                        "mail_content_sha256": registered["content_sha256"],
+                        "mail_folders": [
+                            item["folder_path"]
+                            for item in registered["locations"]
+                            if item.get("is_current")
+                        ],
+                    }
+        except Exception:
+            # Legacy MAIL_Index and standalone parser tests have no registry.
+            registry_payload = {}
+        message_payload.update(registry_payload)
         message_payload.update({
             "type": "mail_message",
             "mail_node_kind": "message",
@@ -2889,7 +2929,20 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         )
 
         for attachment in profile.attachments:
+            attachment_provenance: dict[str, Any] = {}
+            if registry is not None and registered is not None and registry_payload:
+                attachment_provenance = registry.register_attachment_provenance(
+                    account_id=registered["account_id"],
+                    message_id=registered["id"],
+                    attachment_id=attachment.attachment_id,
+                    attachment_sha256=attachment.sha256,
+                )
+                if not attachment_provenance.get("canonical", True):
+                    # The per-message node above retains this message's attachment
+                    # checksum/provenance; identical attachment text is embedded once.
+                    continue
             attachment_payload = profile.payload()
+            attachment_payload.update(registry_payload)
             attachment_payload.update({
                 "type": "mail_attachment",
                 "mail_node_kind": "attachment",
@@ -2897,11 +2950,18 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "mail_attachment_filename": attachment.filename,
                 "mail_attachment_content_type": attachment.content_type,
                 "mail_attachment_kind": attachment.kind,
+                "mail_attachment_sha256": attachment.sha256,
                 "mail_attachment_extraction": attachment.extraction,
                 "mail_attachment_needs_ocr": attachment.needs_ocr,
                 "mail_attachment_needs_vlm": attachment.needs_vlm,
                 "mail_attachment_has_text": attachment.has_text,
                 "mail_attachment_error": attachment.error,
+                "mail_attachment_canonical_message_id": attachment_provenance.get(
+                    "canonical_message_id", registered["id"] if registered else ""
+                ),
+                "mail_attachment_provenance_count": attachment_provenance.get(
+                    "provenance_count", 1
+                ),
             })
             nodes.extend(
                 self._split_profile_text_nodes(

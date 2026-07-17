@@ -41,6 +41,7 @@ SMETA_ARTIFACT_DIR = Path("storage/smeta_artifacts")
 SMETA_DOCUMENT_HEARTBEAT_SEC = 15.0
 
 ModelExchange = Callable[[list[dict], list[dict]], dict[str, Any]]
+MappingModelExchange = Callable[[list[dict], dict[str, Any]], dict[str, Any]]
 TokenSink = Callable[[dict[str, Any]], Awaitable[None]]
 
 
@@ -424,6 +425,7 @@ async def run_smeta_document_application(
     attachment_id: str,
     user_request: str,
     model_exchange: ModelExchange | None = None,
+    model_mapping_exchange: MappingModelExchange | None = None,
     model_provider: str | None = None,
     model_name: str | None = None,
     cloud_provider: bool | None = None,
@@ -436,7 +438,16 @@ async def run_smeta_document_application(
     consumed only after the XLSX and trace were produced successfully.
     """
 
-    if model_exchange is None or model_provider is None or model_name is None or cloud_provider is None:
+    from proxy.services.smeta_agent_runner_service import (
+        build_smeta_agent_runner,
+        normalize_smeta_agent_engine,
+    )
+
+    agent_engine = normalize_smeta_agent_engine(os.getenv("LES_SMETA_AGENT_ENGINE", "native"))
+    use_default_exchange = model_exchange is None
+    if agent_engine == "native" and (
+        model_exchange is None or model_provider is None or model_name is None or cloud_provider is None
+    ):
         from backend.inference.routing import is_cloud_provider
         from proxy.services import smeta_chat_adapter_service as adapters
 
@@ -446,6 +457,16 @@ async def run_smeta_document_application(
         model_name = model_name or runtime.model
         if cloud_provider is None:
             cloud_provider = is_cloud_provider(runtime.provider)
+        if use_default_exchange and model_mapping_exchange is None:
+            model_mapping_exchange = adapters._smeta_document_mapping_exchange
+    elif agent_engine == "qwen_agent":
+        model_provider = "ollama"
+        model_name = os.getenv("LES_SMETA_QWEN_MODEL", "qwen3.5:9b").strip() or "qwen3.5:9b"
+        cloud_provider = False
+    elif agent_engine == "google_adk":
+        model_provider = "google"
+        model_name = os.getenv("LES_SMETA_GOOGLE_MODEL", "gemini-3.5-flash").strip() or "gemini-3.5-flash"
+        cloud_provider = True
 
     try:
         source_path, attachment_meta = await asyncio.to_thread(
@@ -489,6 +510,8 @@ async def run_smeta_document_application(
         model_calls += 1
 
     def exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
+        if model_exchange is None:
+            raise RuntimeError(f"native exchange is unavailable for agent engine {agent_engine}")
         if cancel_requested.is_set():
             raise RuntimeError("smeta document workflow cancelled by user")
         result = retry_smeta_transport(
@@ -499,6 +522,21 @@ async def run_smeta_document_application(
             raise RuntimeError("smeta document workflow cancelled by user")
         if not result:
             raise RuntimeError("smeta model returned no native tool response after transport retry")
+        return result
+
+    def mapping_exchange(
+        messages: list[dict], schema: dict[str, Any],
+    ) -> dict[str, Any]:
+        if model_mapping_exchange is None:
+            raise RuntimeError("structured smeta mapping transport is unavailable")
+        if cancel_requested.is_set():
+            raise RuntimeError("smeta document workflow cancelled by user")
+        admit_model_call()
+        result = model_mapping_exchange(messages, schema)
+        if cancel_requested.is_set():
+            raise RuntimeError("smeta document workflow cancelled by user")
+        if not result:
+            raise RuntimeError("smeta model returned no structured mapping response")
         return result
 
     def progress(event: dict[str, Any]) -> None:
@@ -518,19 +556,31 @@ async def run_smeta_document_application(
             logger.warning("[SMETA_DOCUMENT] progress bridge failed: %s", error)
 
     try:
+        agent_runner = build_smeta_agent_runner(
+            agent_engine,
+            cancel_check=cancel_requested.is_set,
+        )
         configured_batch_size = os.getenv("LES_SMETA_DOCUMENT_BATCH_SIZE")
         document_batch_size = int(
             configured_batch_size
             if configured_batch_size is not None
-            else ("0" if cloud_provider else "5")
+            else ("0" if cloud_provider else "10")
         )
+        document_max_turns = int(os.getenv(
+            "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
+            "64" if cloud_provider else "6",
+        ))
         workflow_task = asyncio.create_task(asyncio.to_thread(
             run_vor_document_workflow, source_path,
-            exchange=exchange, candidate_limit=12 if cloud_provider else 8,
+            exchange=exchange,
+            mapping_exchange=mapping_exchange if model_mapping_exchange is not None else None,
+            candidate_limit=12 if cloud_provider else 8,
             out_xlsx=xlsx_path, out_report=report_path, progress=progress,
             source_name=str(attachment_meta.get("original_name") or source_path.name),
             user_request=user_request,
             batch_size=document_batch_size,  # local transport packages stay small; zero keeps one cloud conversation
+            max_agent_turns=document_max_turns,
+            agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
         ))
         while True:
             try:
@@ -550,10 +600,28 @@ async def run_smeta_document_application(
                             "elapsed_sec": elapsed,
                         },
                     })
-        workflow.setdefault("agent_trace", {})["document_model_calls"] = model_calls
+        agent_trace = workflow.setdefault("agent_trace", {})
+        if agent_runner is not None:
+            model_calls = int(agent_trace.get("model_turns") or model_calls)
+        agent_trace["document_model_calls"] = model_calls
+        workflow["agent_trace"].setdefault("engine", agent_engine)
+        workflow["agent_trace"].setdefault("provider", model_provider)
+        workflow["agent_trace"].setdefault("model", model_name)
         workflow["agent_trace"]["document_elapsed_ms"] = round(
             (time.monotonic() - started) * 1000, 2
         )
+        # `_finalize_document_workflow` writes before application-level timing
+        # is known. Persist the enriched engine/provider/model/call trace in the
+        # same report atomically; no professional row is changed here.
+        def persist_enriched_report() -> None:
+            report_temp = report_path.with_suffix(report_path.suffix + ".tmp")
+            report_temp.write_text(
+                json.dumps(workflow, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            report_temp.replace(report_path)
+
+        await asyncio.to_thread(persist_enriched_report)
     except asyncio.CancelledError:
         cancel_requested.set()
         if "workflow_task" in locals():
@@ -627,6 +695,7 @@ async def run_smeta_document_application(
                 "result_status": status,
                 "summary": summary,
                 "model_provider": model_provider,
+                "agent_engine": agent_engine,
                 "model_requested": model_name,
                 "model": effective_models[-1] if effective_models else model_name,
                 "models_used": effective_models or [model_name],

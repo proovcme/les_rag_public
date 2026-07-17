@@ -4,19 +4,73 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-16)
+## Текущее состояние (2026-07-17)
 
 ```
-версия продукта (SemVer):  0.24.24 (dev hotfix, 2026-07-16)
-номер сборки:              445     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.445 (контракт следующей Windows-сборки)
+версия продукта (SemVer):  0.24.26 (development candidate, 2026-07-17)
+номер сборки:              447     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.447 (контракт следующей Windows-сборки)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
 dev HEAD:                  HEAD  (см. git log -1)
 задеплоено на рантайм:     0.24.21 / build 442 (live on Legion, 2026-07-16)
 Windows-выпуск:            0.24.21 / build 442 (GitHub release)
-следующий выпуск:          0.24.24 / build 445
+следующий выпуск:          0.24.26 / build 447
 рантайм /api/version:      0.24.21 / build 442 + точечный Python hotfix; UI 200
 ```
+
+> 0.24.26 / build 447 — Е.Ж.И.К.: отдельный P0-датасет на каждый почтовый ящик
+>
+> Дата: 2026-07-17
+> Статус: development candidate; offline mail gates реализованы, Windows/Legion и Yandex live-smoke
+> ещё обязательны до выпуска. Новый exact registry связывает IMAP/classic-Outlook account с одним
+> неизменяемым `dataset_id`; новые ящики не смешиваются в legacy `MAIL_Index`. IMAP работает
+> read-only через `BODY.PEEK[]`, special-use flags и per-folder UIDVALIDITY/cursor, пароль приложения
+> хранится в OS credential vault. Classic Outlook sidecar сохраняет Unicode `.msg`, рекурсивно
+> обходит stores/folders, исключает Deleted/Drafts/Junk по identifiers, подтверждает cursor после
+> intake и открывает exact original. В Qdrant идут message/attachment nodes с account/thread/source
+> provenance; CID-логотипы исключены, большие вложения честно `skipped_large`, одинаковый attachment
+> SHA-256 не размножает attachment context. Добавлены account API, targeted legacy migration,
+> loopback intake/open, вкладка «Почта» и Windows interactive three-minute Task Scheduler install.
+> Тестовая программа разделена: `test-mail` даёт 61 offline/static проверку, `test-mail-release`
+> добавляет Tauri и встроен в patch-release; `test-architecture` больше не смешивает LES с ARTEL.
+
+> 0.24.25 / build 446 — сравниваем native, Qwen-Agent и Google ADK без кодового выбора норм
+>
+> Дата: 2026-07-17
+> Статус: release candidate; профессиональная live-приёмка ещё не пройдена, default остаётся `native`.
+> Предыдущая запись о принятом результате «10 рассчитано / 9 unbound» была ложной: это был только
+> технически завершившийся расчёт. Аудит исходной ВОР выявил профессионально неверные нормы для БАП,
+> потолков и кабеля, а также отклонённые ресурсные действия; результат не является исправлением качества.
+> В workflow добавлена общая stateful tool-session (`search_norms_batch`, `read_norms_batch`,
+> `submit_lsr_mapping`) и переключаемые runner'ы `native|qwen_agent|google_adk`. Qwen-Agent работает
+> поверх локального Ollama `/v1` с `qwen3.5:9b`, `nous` function-call contract и 32K контекстом.
+> Google ADK работает напрямую с `gemini-3.5-flash`, только с явным cloud consent и сохранённым
+> `GOOGLE_API_KEY`; скрытого fallback нет. Qwen-Agent сохраняет `fncall_prompt_type=nous` в
+> конфигурации, но на Ollama `0.31.2` его текстовая обёртка воспроизводимо даёт `500 EOF`, поэтому
+> live adapter использует `use_raw_api=true`: Qwen-Agent всё ещё ведёт loop, Ollama только
+> сериализует declared tool calls. Оба движка используют тот же skill и те же LES tools,
+> встроенные RAG/search/code interpreter не подключены. Trace сохраняет engine/provider/model,
+> trajectory, время и доступный token usage. Dataset-specific проверки БАП находятся только в
+> `tools/smeta_agent_benchmark.py`, не в production-коде или skill.
+> Quick gate на строках `0007,0010,0011,0013,0015,0016` выполнен с нулевого состояния:
+> Qwen-Agent технически дошёл до terminal mapping за `5` model turns / `4` LES tool calls, но
+> профессионально прошёл только `3/6`. Он снова выбрал сборник 34 для обычной окраски и кабель
+> «с креплением по всей длине», причём кабельную карточку не открыл. Поэтому полный 19-строчный
+> Qwen-прогон по правилу гейта не запускался и default не изменён. Google live-run не запускался:
+> `GOOGLE_API_KEY` в контуре отсутствует; adapter корректно fail-closed без облачного fallback.
+>
+> Сохранены предыдущие транспортные исправления native-loop:
+> Document-agent следует нативным контрактам Ollama: assistant `thinking` сохраняется в истории,
+> tool-result использует `tool_name`, контекст локального агента поднят до 32K, поиск/чтение и
+> финальный mapping разделены. Evidence tools заканчиваются обычным завершением agent loop, после
+> чего та же модель сериализует собственные решения через `format: JSON Schema`; Python не выбирает
+> и не исправляет нормы. Qwen-safe tool schema убрала хрупкие вложенные массивы `queries/norm_codes`,
+> а malformed input теперь виден модели как transport error вместо ложного `rows: []`.
+> Полный 25-KB skill заменён в этой фазе коротким контрактом
+> `skills/smeta/references/document-mapping-agent.md`; предметные правила остаются внутри skill,
+> но РИМ/ФГИС/НР/СП и формат ответа больше не перегружают поиск норм. Локальный Qwen использует
+> no-think для evidence tools, thinking-compatible structured mapping, пакеты до 10 строк и
+> технический бюджет 6 tool-ходов. Сам факт созданного XLSX теперь прямо не считается приёмкой.
 
 > 0.24.24 / build 445 — skill решает, Python не заставляет модель переподбирать
 >

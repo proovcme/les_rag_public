@@ -185,6 +185,33 @@ try {
   $result.git_commit = $version.git_commit
   $result.ui_status = [int]$ui.StatusCode
 
+  $result.stage = "outlook_mail"
+  $collector = Join-Path $StateRoot "bin\LesMailPoller.exe"
+  if (-not (Test-Path -LiteralPath $collector)) {
+    throw "E.ZH.I.K. Outlook collector was not installed: $collector"
+  }
+  $mailTask = Get-ScheduledTask -TaskName "LES E.ZH.I.K. Outlook Collector" -ErrorAction SilentlyContinue
+  if (-not $mailTask) { throw "E.ZH.I.K. interactive Scheduled Task was not installed" }
+  if ([string]$mailTask.Principal.LogonType -notin @("Interactive", "InteractiveToken")) {
+    throw "E.ZH.I.K. Scheduled Task is not interactive"
+  }
+  & $collector --probe
+  if ($LASTEXITCODE -ne 0) {
+    throw "classic Outlook probe failed; Outlook must be running in the release user session"
+  }
+  $mailApi = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/mail/accounts" -TimeoutSec 30
+  $mailApiJson = $mailApi | ConvertTo-Json -Depth 8 -Compress
+  if ($mailApiJson -match '"password"\s*:') {
+    throw "mail account API exposed a password field"
+  }
+  $result.mail = [ordered]@{
+    collector = $collector
+    task_state = [string]$mailTask.State
+    interactive = $true
+    outlook_probe = "ok"
+    accounts = @($mailApi.accounts).Count
+  }
+
   $result.stage = "heavy_pdf_dataset"
   $datasetName = "LES production PDF smoke $([guid]::NewGuid().ToString('N'))"
   $encodedDatasetName = [System.Uri]::EscapeDataString($datasetName)

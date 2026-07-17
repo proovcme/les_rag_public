@@ -215,6 +215,7 @@ async def classic_chat_page(request: Request):
     from sovushka.pages.chat import build_chat
     from sovushka.pages.documents import build_documents
     from sovushka.pages.history import build_history
+    from sovushka.pages.mail import build_mail
     from sovushka.pages.samovar import build_samovar
 
     allowed, role, holder, is_admin = _resolve_auth(request)
@@ -240,6 +241,7 @@ async def classic_chat_page(request: Request):
         tab_chat = tr["chat"]
         tab_samovar = tr.get("samovar")
         tab_documents = tr.get("documents")
+        tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
         def _save_chat_tab(e):
@@ -263,6 +265,9 @@ async def classic_chat_page(request: Request):
             if tab_documents:
                 with ui.tab_panel(tab_documents):
                     build_documents()
+            if tab_mail:
+                with ui.tab_panel(tab_mail):
+                    build_mail()
             with ui.tab_panel(tab_history):
                 build_history(tabs, tab_chat)
 
@@ -270,7 +275,8 @@ async def classic_chat_page(request: Request):
         (request.query_params.get("tab") or "").strip().casefold() == "chat"
     )
     _last_tab = "AI ЧАТ" if _forced_chat_tab else app.storage.user.get("last_chat_tab", "AI ЧАТ")
-    _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents, "ИСТОРИЯ": tab_history}.get(_last_tab)
+    _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents,
+               "Почта": tab_mail, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
         tabs.set_value(_target)
 
@@ -283,6 +289,7 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.diag import build_diag
     from sovushka.pages.documents import build_documents
     from sovushka.pages.instrumenty import build_instrumenty
+    from sovushka.pages.mail import build_mail
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
 
@@ -314,6 +321,7 @@ async def classic_admin_page(request: Request):
         tab_diag       = tr.get("diag")
         tab_samovar    = tr.get("samovar")
         tab_documents  = tr.get("documents")
+        tab_mail       = tr.get("mail")
         tab_instrumenty = tr.get("instrumenty")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_volk       = tr.get("volk")
@@ -339,6 +347,8 @@ async def classic_admin_page(request: Request):
                 build_samovar()
             with ui.tab_panel(tab_documents):
                 build_documents()
+            with ui.tab_panel(tab_mail):
+                build_mail()
             with ui.tab_panel(tab_instrumenty):
                 build_instrumenty()
             with ui.tab_panel(tab_qdrant_viz):
@@ -355,6 +365,7 @@ async def classic_admin_page(request: Request):
         "Состояние": tab_diag,
         "Датасеты":  tab_samovar,
         "Документы": tab_documents,
+        "Почта":     tab_mail,
         "Инструменты": tab_instrumenty,
         "Визуал":    tab_qdrant_viz,
         "Доступ":    tab_volk,

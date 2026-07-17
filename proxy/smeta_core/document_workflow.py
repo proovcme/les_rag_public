@@ -22,7 +22,9 @@ from proxy.smeta_core.application import calculate_visible_rows, calculate_visib
 
 
 Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]]
+MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 Progress = Callable[[dict[str, Any]], None]
+AgentBatchRunner = Callable[..., dict[str, Any]]
 
 
 def _candidate_payload(
@@ -186,6 +188,22 @@ def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
+def _normalize_search_queries_transport(item: dict[str, Any]) -> list[str]:
+    """Accept the flat Ollama-safe query contract and legacy query arrays."""
+    raw = item.get("queries")
+    if isinstance(raw, list):
+        values = raw
+    elif raw is not None:
+        values = [raw]
+    else:
+        scalar = item.get("query")
+        values = [scalar] if scalar is not None else []
+    return list(dict.fromkeys(
+        " ".join(str(value).split())[:240]
+        for value in values if str(value).strip()
+    ))
+
+
 def _resolve_norm_code_transport(code: Any, available: dict[str, Any]) -> str:
     """Resolve harmless display aliases while preserving the norm family.
 
@@ -292,24 +310,298 @@ def _tool_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
+class SmetaNormToolSession:
+    """State shared by every smeta agent implementation.
+
+    The session exposes evidence tools and validates only transport/reference
+    integrity.  It never chooses, replaces or improves a model decision.
+    """
+
+    def __init__(
+        self,
+        work_rows: list[dict[str, Any]],
+        *,
+        candidate_limit: int,
+        progress: Progress | None = None,
+    ) -> None:
+        self.by_id = {str(row["work_id"]): row for row in work_rows}
+        self.candidate_limit = max(1, int(candidate_limit))
+        self.progress = progress
+        self.candidates: dict[str, dict[str, dict[str, Any]]] = {
+            work_id: {} for work_id in self.by_id
+        }
+        self.opened: dict[str, dict[str, dict[str, Any]]] = {
+            work_id: {} for work_id in self.by_id
+        }
+        self.browse_trace: dict[str, list[dict[str, Any]]] = {
+            work_id: [] for work_id in self.by_id
+        }
+        self.query_trace: list[dict[str, Any]] = []
+        self.accepted_rows: dict[str, dict[str, Any]] = {}
+        self.invalid_submission_attempts: dict[str, int] = {}
+        self.tool_trajectory: list[dict[str, Any]] = []
+
+    @property
+    def remaining_work_ids(self) -> list[str]:
+        return [work_id for work_id in self.by_id if work_id not in self.accepted_rows]
+
+    @property
+    def complete(self) -> bool:
+        return bool(self.by_id) and not self.remaining_work_ids
+
+    def execute(self, name: str, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
+        started = perf_counter()
+        if name == "search_norms_batch":
+            result = self._search(args, turn=turn)
+        elif name == "read_norms_batch":
+            result = self._read(args)
+        elif name == "submit_lsr_mapping":
+            result = self._submit(args)
+        else:
+            result = {"ok": False, "error": f"unknown tool: {name}"}
+        self.tool_trajectory.append({
+            "turn": turn,
+            "tool": name,
+            "arguments": args,
+            "result": result,
+            "elapsed_ms": round((perf_counter() - started) * 1000, 2),
+        })
+        return result
+
+    def _search(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
+        items = _tool_array_argument(args, "items")
+        batch_limit = args.get("limit")
+        batch_page = args.get("page")
+        all_queries = list(dict.fromkeys(
+            query
+            for item in items for query in _normalize_search_queries_transport(item)
+        ))
+        search_results = browse_norms_many(
+            all_queries,
+            limit=100,
+            rerank=bool(args.get("rerank", False)),
+        ) if all_queries else {}
+        rows_out = []
+        for item in items:
+            work_id = str(item.get("work_id") or "")
+            if work_id not in self.by_id:
+                rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
+                continue
+            queries = _normalize_search_queries_transport(item)
+            limit = max(1, int(item.get("limit") or batch_limit or self.candidate_limit))
+            page = max(0, int(item.get("page") if item.get("page") is not None else batch_page or 0))
+            payload = _candidate_payload(
+                self.by_id[work_id], queries, limit=limit, page=page,
+                search_results=search_results,
+            )
+            self.browse_trace[work_id].append(payload)
+            compact = []
+            for card in payload.get("candidates") or []:
+                code = str(card.get("norm_code") or "")
+                self.candidates[work_id][code] = card
+                compact.append({
+                    "norm_code": code,
+                    "title": str(card.get("title") or "")[:180],
+                    "measure_unit": card.get("measure_unit"),
+                })
+            rows_out.append({
+                "work_id": work_id, "ok": True, "candidates": compact,
+                "page": page, "has_more": bool(payload.get("has_more")),
+            })
+            self.query_trace.append({
+                "phase": "batch_search", "turn": turn, "work_id": work_id,
+                "queries": queries, "candidate_count": len(compact), "page": page,
+            })
+        result: dict[str, Any] = {"ok": bool(items), "rows": rows_out}
+        if not items:
+            result["error"] = "search items are empty or malformed"
+        return result
+
+    def _read(self, args: dict[str, Any]) -> dict[str, Any]:
+        rows_out = []
+        for item in _tool_array_argument(args, "items"):
+            work_id = str(item.get("work_id") or "")
+            cards = []
+            include_resources = _tool_bool(item.get("include_resources"), False)
+            available = self.candidates.get(work_id, {})
+            for requested_code in _normalize_norm_codes_transport(item):
+                code = _resolve_norm_code_transport(requested_code, available)
+                candidate = available.get(code)
+                card = _opened_norm_card(code, candidate) if candidate else None
+                if card:
+                    self.opened[work_id][code] = card
+                    self.opened[work_id][requested_code] = card
+                    cards.append(_norm_card_for_model(card, include_resources=include_resources))
+            rows_out.append({"work_id": work_id, "ok": bool(cards), "norms": cards})
+        result: dict[str, Any] = {"ok": bool(rows_out), "rows": rows_out}
+        if not rows_out:
+            result["error"] = "read items are empty or malformed"
+        return result
+
+    def _submit(self, args: dict[str, Any]) -> dict[str, Any]:
+        rows = [
+            _normalize_mapping_row_transport(item)
+            for item in _tool_array_argument(args, "rows", aliases=("mapping",))
+        ]
+        proposed: dict[str, dict[str, Any]] = {}
+        errors: list[dict[str, Any]] = []
+        for item in rows:
+            work_id = str(item.get("work_id") or "")
+            decision = str(item.get("decision") or "")
+            if work_id not in self.by_id or work_id in proposed or work_id in self.accepted_rows:
+                errors.append({"work_id": work_id, "error": "unknown or duplicate work_id"})
+                continue
+            if decision == "unbound":
+                reason = str(item.get("reason") or "").strip()
+                proposed[work_id] = {
+                    "norm_code": "",
+                    "selection_kind": str(item.get("selection_kind") or ""),
+                    "analog_limitations": list(item.get("analog_limitations") or []),
+                    "reason": reason,
+                    "unbound_evidence": dict(item.get("unbound_evidence") or {}),
+                    "review_status": "model_batch_unbound", "resource_bindings": [],
+                }
+                continue
+            if decision == "covered_by":
+                covered_by = str(item.get("covered_by_work_id") or "")
+                reason = str(item.get("reason") or "").strip()
+                proposed[work_id] = {
+                    "norm_code": "",
+                    "selection_kind": str(item.get("selection_kind") or ""),
+                    "analog_limitations": list(item.get("analog_limitations") or []),
+                    "covered_by_work_id": covered_by,
+                    "coverage_reason": reason,
+                    "reason": reason,
+                    "review_status": "model_batch_covered", "resource_bindings": [],
+                }
+                continue
+            if decision != "bind":
+                errors.append({"work_id": work_id, "error": "decision must be bind|covered_by|unbound"})
+                continue
+            requested_code = str(item.get("norm_code") or "")
+            opened_for_work = self.opened.get(work_id, {})
+            opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
+            opened_card = opened_for_work.get(opened_code) if opened_code else None
+            code = str((opened_card or {}).get("norm_code") or requested_code)
+            blockers = []
+            if code and opened_card is None:
+                blockers.append({
+                    "code": "norm_card_not_opened", "work_id": work_id,
+                    "reason": "model submitted a norm without opening its typed card",
+                })
+            if not code:
+                blockers.append({
+                    "code": "model_mapping_missing_norm_code", "work_id": work_id,
+                    "reason": "model submitted bind without norm_code",
+                })
+            proposed[work_id] = {
+                "norm_code": code,
+                "selection_kind": str(item.get("selection_kind") or ""),
+                "applicability": str(item.get("applicability") or ""),
+                "technology_check": dict(item.get("technology_check") or {}),
+                "analog_limitations": [
+                    str(value) for value in (item.get("analog_limitations") or []) if str(value).strip()
+                ],
+                "nr_sp_rule_id": str(item.get("nr_sp_rule_id") or ""),
+                "reason": str(item.get("reason") or ""),
+                "review_status": "model_batch",
+                "resource_bindings": _model_resource_bindings(work_id, item, self.by_id[work_id]),
+                "precalculation_blockers": blockers,
+            }
+        self.accepted_rows.update(proposed)
+        remaining = self.remaining_work_ids
+        if not proposed and not errors:
+            errors.append({"error": "submit rows is empty", "work_ids": remaining})
+        if errors:
+            failed_keys = {
+                str(error.get("work_id") or "__transport__")
+                if str(error.get("work_id") or "") in self.by_id else "__transport__"
+                for error in errors
+            }
+            for failed_key in failed_keys:
+                self.invalid_submission_attempts[failed_key] = (
+                    self.invalid_submission_attempts.get(failed_key, 0) + 1
+                )
+            attempt = max(self.invalid_submission_attempts.values(), default=1)
+            if self.progress:
+                first_error = str((errors[0] or {}).get("error") or "некорректный mapping")
+                self.progress({
+                    "phase": "mapping_retry", "status": "waiting",
+                    "label": f"Смета: модель исправляет решение — {first_error}",
+                    "attempt": attempt, "errors": errors[:5],
+                })
+            exhausted = [
+                key for key, count in self.invalid_submission_attempts.items() if count >= 4
+            ]
+            if exhausted:
+                raise RuntimeError(
+                    "smeta model repeated an invalid mapping 4 times for "
+                    f"{','.join(exhausted)}: "
+                    + json.dumps(errors[:5], ensure_ascii=False, default=str)
+                )
+            return {
+                "ok": False, "errors": errors,
+                "accepted_work_ids": list(self.accepted_rows),
+                "remaining_work_ids": remaining,
+            }
+        if remaining:
+            return {
+                "ok": True, "complete": False,
+                "accepted_work_ids": list(self.accepted_rows),
+                "remaining_work_ids": remaining,
+            }
+        return {"ok": True, "rows": len(self.accepted_rows)}
+
+    def result(
+        self,
+        *,
+        model_trace: list[dict[str, Any]],
+        agent_trace: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not self.complete:
+            raise RuntimeError(
+                "smeta agent ended without terminal mapping for: "
+                + ",".join(self.remaining_work_ids)
+            )
+        return {
+            "selections": dict(self.accepted_rows),
+            "browse_trace": self.browse_trace,
+            "query_trace": self.query_trace,
+            "model_trace": model_trace,
+            "valid_model_rows": len(self.accepted_rows),
+            "agent_trace": {**agent_trace, "tool_trajectory": self.tool_trajectory},
+        }
+
+
 def _run_native_norm_agent(
     work_rows: list[dict[str, Any]],
     exchange: Exchange,
     *,
+    mapping_exchange: MappingExchange | None = None,
     candidate_limit: int,
     max_turns: int = 64,
     batch_size: int = 0,
     progress: Progress | None = None,
     user_request: str = "",
+    batch_runner: AgentBatchRunner | None = None,
 ) -> dict[str, Any]:
     """Give the model the source rows and merge its untouched decisions."""
     requested_size = int(batch_size)
     size = len(work_rows) if requested_size <= 0 else max(1, requested_size)
     batches = [work_rows[index:index + size] for index in range(0, len(work_rows), size)]
     if len(batches) <= 1:
+        if batch_runner is not None:
+            return batch_runner(
+                work_rows,
+                candidate_limit=candidate_limit,
+                max_turns=max_turns,
+                progress=progress,
+                user_request=user_request,
+            )
         return _run_batch_norm_agent(
             work_rows,
             exchange,
+            mapping_exchange=mapping_exchange,
             candidate_limit=candidate_limit,
             max_turns=max_turns,
             progress=progress,
@@ -336,14 +628,24 @@ def _run_native_norm_agent(
                 "completed_rows": merged["valid_model_rows"],
                 "total_rows": len(work_rows),
             })
-        result = _run_batch_norm_agent(
-            rows,
-            exchange,
-            candidate_limit=candidate_limit,
-            max_turns=max_turns,
-            progress=progress,
-            user_request=user_request,
-        )
+        if batch_runner is not None:
+            result = batch_runner(
+                rows,
+                candidate_limit=candidate_limit,
+                max_turns=max_turns,
+                progress=progress,
+                user_request=user_request,
+            )
+        else:
+            result = _run_batch_norm_agent(
+                rows,
+                exchange,
+                mapping_exchange=mapping_exchange,
+                candidate_limit=candidate_limit,
+                max_turns=max_turns,
+                progress=progress,
+                user_request=user_request,
+            )
         merged["selections"].update(result["selections"])
         merged["browse_trace"].update(result["browse_trace"])
         merged["query_trace"].extend(result["query_trace"])
@@ -377,10 +679,23 @@ def _run_native_norm_agent(
         raise RuntimeError(f"model batches did not cover source rows: {missing}")
     merged["agent_trace"] = {
         "mode": "model_bounded_batch_rag_tools",
+        "engine": str((batch_traces[0] if batch_traces else {}).get("engine") or "native"),
+        "provider": str((batch_traces[0] if batch_traces else {}).get("provider") or ""),
+        "model": str((batch_traces[0] if batch_traces else {}).get("model") or ""),
         "batch_size": size,
         "batches": len(batches),
         "source_rows": len(work_rows),
         "batch_traces": batch_traces,
+        "model_turns": sum(int(trace.get("model_turns") or trace.get("turns") or 0) for trace in batch_traces),
+        "tool_turns": sum(int(trace.get("tool_turns") or 0) for trace in batch_traces),
+        "elapsed_ms": round(sum(float(trace.get("elapsed_ms") or 0.0) for trace in batch_traces), 2),
+        "token_usage": {
+            key: sum(
+                int((trace.get("token_usage") or {}).get(key) or 0)
+                for trace in batch_traces
+            )
+            for key in {key for trace in batch_traces for key in (trace.get("token_usage") or {})}
+        },
     }
     return merged
 
@@ -389,20 +704,28 @@ def _run_batch_norm_agent(
     work_rows: list[dict[str, Any]],
     exchange: Exchange,
     *,
+    mapping_exchange: MappingExchange | None = None,
     candidate_limit: int,
     max_turns: int = 64,
     progress: Progress | None = None,
     user_request: str = "",
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
-    by_id = {str(row["work_id"]): row for row in work_rows}
-    candidates: dict[str, dict[str, dict[str, Any]]] = {work_id: {} for work_id in by_id}
-    opened: dict[str, dict[str, dict[str, Any]]] = {work_id: {} for work_id in by_id}
-    browse_trace: dict[str, list[dict[str, Any]]] = {work_id: [] for work_id in by_id}
-    query_trace: list[dict[str, Any]] = []
+    session = SmetaNormToolSession(
+        work_rows, candidate_limit=candidate_limit, progress=progress,
+    )
+    by_id = session.by_id
+    browse_trace = session.browse_trace
+    query_trace = session.query_trace
     model_trace: list[dict[str, Any]] = []
     context_metrics: list[dict[str, Any]] = []
-    tools = _batch_norm_tools()
+    # Search/read are agent tools. The model's final professional mapping is
+    # serialized in a separate structured-output request, matching Ollama's
+    # documented "no tool calls => end agent loop" contract.
+    tools = [
+        tool for tool in _batch_norm_tools()
+        if str((tool.get("function") or {}).get("name") or "") != "submit_lsr_mapping"
+    ]
     skill_prompt = smeta_native_skill_prompt()
     if not skill_prompt:
         raise RuntimeError("canonical smeta skill is unavailable")
@@ -421,52 +744,122 @@ def _run_batch_norm_agent(
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
-    invalid_submission_attempts: dict[str, int] = {}
-    accepted_rows: dict[str, dict[str, Any]] = {}
+    accepted_rows = session.accepted_rows
     previous_call_signature = ""
-    for turn in range(1, max_turns + 1):
+    duplicate_feedback_signature = ""
+
+    def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
+        if mapping_exchange is None:
+            raise RuntimeError(reason)
+        remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
+        schema = _mapping_output_schema(remaining)
+        request = {
+            "transport_request": (
+                "Serialize your own current professional decisions for every remaining_work_id. "
+                "Do not delegate, revise or let code choose a decision. If the evidence you inspected "
+                "is insufficient, record your own unbound decision. Return only the required JSON."
+            ),
+            "remaining_work_ids": remaining,
+            # Ollama explicitly recommends grounding a structured-output call
+            # with the same schema in the prompt as well as in `format`.
+            "output_schema": schema,
+        }
+        conversation.append({
+            "role": "user",
+            "content": json.dumps(request, ensure_ascii=False),
+        })
         started = perf_counter()
+        payload = mapping_exchange(conversation, schema) or {}
+        wait_ms = round((perf_counter() - started) * 1000, 2)
+        rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
+        if not rows:
+            raise RuntimeError(
+                "smeta model returned no rows in structured mapping response: "
+                + " ".join(str(payload.get("content") or "").split())[:300]
+            )
+        assistant_message = {
+            "role": "assistant",
+            "content": json.dumps({"rows": rows}, ensure_ascii=False, default=str),
+        }
+        if payload.get("_les_model"):
+            assistant_message["model"] = str(payload["_les_model"])
+        conversation.append(assistant_message)
+        model_trace.append({
+            "turn": turn,
+            "assistant": assistant_message,
+            "model_wait_ms": wait_ms,
+            "transport": "structured_mapping",
+            "trigger": reason,
+        })
+        return {
+            "id": f"structured-mapping-{turn}",
+            "type": "function",
+            "function": {"name": "submit_lsr_mapping", "arguments": {"rows": rows}},
+        }
+
+    finalization_turns = 1 if mapping_exchange is not None else 0
+    for turn in range(1, max_turns + finalization_turns + 1):
+        started = perf_counter()
+        forced_mapping = turn > max_turns
         if progress:
             progress({
                 "phase": "model_wait", "status": "started",
-                "label": f"Смета: модель выполняет ход {turn}",
+                "label": (
+                    "Смета: модель фиксирует mapping"
+                    if forced_mapping else f"Смета: модель выполняет ход {turn}"
+                ),
                 "turn": turn,
             })
-        assistant = exchange(conversation, tools) or {}
-        model_wait_ms = round((perf_counter() - started) * 1000, 2)
-        calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
-        assistant_message = {
-            "role": "assistant",
-            "content": str(assistant.get("content") or "").strip() or None,
-            "tool_calls": calls,
-        }
-        if assistant.get("_les_model"):
-            assistant_message["model"] = str(assistant["_les_model"])
-        if assistant.get("_les_fallback_from"):
-            assistant_message["fallback_from"] = str(assistant["_les_fallback_from"])
-        conversation.append(assistant_message)
-        model_trace.append({"turn": turn, "assistant": assistant_message, "model_wait_ms": model_wait_ms})
+        assistant: dict[str, Any] = {}
+        if forced_mapping:
+            calls = [structured_mapping_call(
+                reason=f"smeta evidence tool budget exhausted after {max_turns} model turns",
+                turn=turn,
+            )]
+            model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
+        else:
+            assistant = exchange(conversation, tools) or {}
+            model_wait_ms = round((perf_counter() - started) * 1000, 2)
+            calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
+            assistant_message = {
+                "role": "assistant",
+                "content": str(assistant.get("content") or "").strip() or None,
+                "tool_calls": calls,
+            }
+            if assistant.get("thinking"):
+                assistant_message["thinking"] = str(assistant["thinking"])
+            if assistant.get("_les_model"):
+                assistant_message["model"] = str(assistant["_les_model"])
+            if assistant.get("_les_fallback_from"):
+                assistant_message["fallback_from"] = str(assistant["_les_fallback_from"])
+            conversation.append(assistant_message)
+            model_trace.append({"turn": turn, "assistant": assistant_message, "model_wait_ms": model_wait_ms})
+            if not calls:
+                done_reason = str(assistant.get("_les_done_reason") or "unknown")
+                eval_count = assistant.get("_les_eval_count")
+                model_text = " ".join(str(assistant.get("content") or "").split())[:400]
+                failure = (
+                    "smeta model ended the document workflow without a tool call: "
+                    f"done_reason={done_reason}, eval_count={eval_count}, "
+                    f"model_text={model_text or '<empty>'}"
+                )
+                calls = [structured_mapping_call(reason=failure, turn=turn)]
         context_metrics.append({
             "turn": turn,
             "prompt_chars": len(json.dumps(conversation, ensure_ascii=False, default=str)),
             "model_wait_ms": model_wait_ms,
             "tool_calls": len(calls),
+            "structured_mapping": forced_mapping or not bool(assistant.get("tool_calls")),
         })
         if progress:
             progress({
                 "phase": "model_wait", "status": "done",
-                "label": f"Смета: модель завершила ход {turn}",
+                "label": (
+                    "Смета: модель зафиксировала mapping"
+                    if forced_mapping else f"Смета: модель завершила ход {turn}"
+                ),
                 "turn": turn, "model_wait_ms": model_wait_ms,
             })
-        if not calls:
-            done_reason = str(assistant.get("_les_done_reason") or "unknown")
-            eval_count = assistant.get("_les_eval_count")
-            model_text = " ".join(str(assistant.get("content") or "").split())[:400]
-            raise RuntimeError(
-                "smeta model ended the document workflow without a tool call: "
-                f"done_reason={done_reason}, eval_count={eval_count}, "
-                f"model_text={model_text or '<empty>'}"
-            )
         call_signature = json.dumps(
             [
                 {
@@ -480,10 +873,35 @@ def _run_batch_norm_agent(
             default=str,
         )
         if call_signature == previous_call_signature:
-            raise RuntimeError(
+            failure = (
                 "smeta model repeated the same deterministic tool call without progress: "
                 + call_signature[:500]
             )
+            if mapping_exchange is None:
+                raise RuntimeError(failure)
+            if duplicate_feedback_signature != call_signature:
+                duplicate_feedback_signature = call_signature
+                for call_index, call in enumerate(calls, 1):
+                    name = str(((call.get("function") or {}).get("name") or ""))
+                    result = {
+                        "ok": False,
+                        "error": "identical deterministic request already executed; no new evidence was produced",
+                    }
+                    conversation.append({
+                        "role": "tool",
+                        "tool_call_id": str(call.get("id") or f"duplicate-{turn}-{call_index}"),
+                        "name": name,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    })
+                    model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+                continue
+            calls = [structured_mapping_call(reason=failure, turn=turn)]
+            call_signature = json.dumps([{
+                "name": "submit_lsr_mapping",
+                "arguments": _tool_arguments(calls[0]),
+            }], ensure_ascii=False, sort_keys=True, default=str)
+        else:
+            duplicate_feedback_signature = ""
         previous_call_signature = call_signature
 
         submitted: dict[str, dict[str, Any]] | None = None
@@ -491,222 +909,22 @@ def _run_batch_norm_agent(
             call_id = str(call.get("id") or f"batch-{turn}-{call_index}")
             name = str(((call.get("function") or {}).get("name") or ""))
             args = _tool_arguments(call)
-            result: dict[str, Any]
-            if name == "search_norms_batch":
-                items = _tool_array_argument(args, "items")
-                batch_limit = args.get("limit")
-                batch_page = args.get("page")
-                all_queries = list(dict.fromkeys(
-                    " ".join(str(query).split())[:240]
-                    for item in items for query in (item.get("queries") or []) if str(query).strip()
-                ))
-                search_results = browse_norms_many(
-                    all_queries,
-                    limit=100,
-                    rerank=bool(args.get("rerank", False)),
-                ) if all_queries else {}
-                rows_out = []
-                for item in items:
-                    work_id = str(item.get("work_id") or "")
-                    if work_id not in by_id:
-                        rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
-                        continue
-                    queries = [" ".join(str(query).split())[:240] for query in (item.get("queries") or []) if str(query).strip()]
-                    limit = max(1, int(item.get("limit") or batch_limit or candidate_limit))
-                    page = max(0, int(item.get("page") if item.get("page") is not None else batch_page or 0))
-                    payload = _candidate_payload(
-                        by_id[work_id], queries, limit=limit, page=page,
-                        search_results=search_results,
-                    )
-                    browse_trace[work_id].append(payload)
-                    compact = []
-                    for card in payload.get("candidates") or []:
-                        code = str(card.get("norm_code") or "")
-                        candidates[work_id][code] = card
-                        compact.append({
-                            "norm_code": code,
-                            "title": str(card.get("title") or "")[:180],
-                            "measure_unit": card.get("measure_unit"),
-                        })
-                    rows_out.append({
-                        "work_id": work_id, "ok": True, "candidates": compact,
-                        "page": page, "has_more": bool(payload.get("has_more")),
-                    })
-                    query_trace.append({
-                        "phase": "batch_search", "turn": turn, "work_id": work_id,
-                        "queries": queries, "candidate_count": len(compact), "page": page,
-                    })
-                result = {"ok": True, "rows": rows_out}
-            elif name == "read_norms_batch":
-                rows_out = []
-                for item in _tool_array_argument(args, "items"):
-                    work_id = str(item.get("work_id") or "")
-                    cards = []
-                    # Full resources are deliberately item-scoped in the declared
-                    # schema.  A model may inspect any chosen card, but an
-                    # undeclared top-level flag must not explode every card in a
-                    # large VOR into one huge tool result.
-                    include_resources = _tool_bool(item.get("include_resources"), False)
-                    available = candidates.get(work_id, {})
-                    for requested_code in _normalize_norm_codes_transport(item):
-                        code = _resolve_norm_code_transport(requested_code, available)
-                        candidate = available.get(code)
-                        card = _opened_norm_card(code, candidate) if candidate else None
-                        if card:
-                            opened[work_id][code] = card
-                            opened[work_id][requested_code] = card
-                            cards.append(_norm_card_for_model(card, include_resources=include_resources))
-                    rows_out.append({"work_id": work_id, "ok": bool(cards), "norms": cards})
-                result = {"ok": True, "rows": rows_out}
-            elif name == "submit_lsr_mapping":
-                rows = [
-                    _normalize_mapping_row_transport(item)
-                    # Qwen/Ollama can preserve every model decision but name the
-                    # declared rows array "mapping". This is a transport alias;
-                    # row contents remain untouched and pass the same gates.
-                    for item in _tool_array_argument(args, "rows", aliases=("mapping",))
-                ]
-                proposed: dict[str, dict[str, Any]] = {}
-                errors: list[dict[str, Any]] = []
-                for item in rows:
-                    work_id = str(item.get("work_id") or "")
-                    decision = str(item.get("decision") or "")
-                    if work_id not in by_id or work_id in proposed or work_id in accepted_rows:
-                        errors.append({"work_id": work_id, "error": "unknown or duplicate work_id"})
-                        continue
-                    if decision == "unbound":
-                        reason = str(item.get("reason") or "").strip()
-                        proposed[work_id] = {
-                            "norm_code": "",
-                            "selection_kind": str(item.get("selection_kind") or ""),
-                            "analog_limitations": list(item.get("analog_limitations") or []),
-                            "reason": reason,
-                            "unbound_evidence": dict(item.get("unbound_evidence") or {}),
-                            "review_status": "model_batch_unbound", "resource_bindings": [],
-                        }
-                        continue
-                    if decision == "covered_by":
-                        covered_by = str(item.get("covered_by_work_id") or "")
-                        reason = str(item.get("reason") or "").strip()
-                        proposed[work_id] = {
-                            "norm_code": "",
-                            "selection_kind": str(item.get("selection_kind") or ""),
-                            "analog_limitations": list(item.get("analog_limitations") or []),
-                            "covered_by_work_id": covered_by,
-                            "coverage_reason": reason,
-                            "reason": reason,
-                            "review_status": "model_batch_covered", "resource_bindings": [],
-                        }
-                        continue
-                    if decision != "bind":
-                        errors.append({"work_id": work_id, "error": "decision must be bind|covered_by|unbound"})
-                        continue
-                    requested_code = str(item.get("norm_code") or "")
-                    opened_for_work = opened.get(work_id, {})
-                    opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
-                    opened_card = opened_for_work.get(opened_code) if opened_code else None
-                    code = str((opened_card or {}).get("norm_code") or requested_code)
-                    kind = str(item.get("selection_kind") or "")
-                    precalculation_blockers = []
-                    if code and opened_card is None:
-                        precalculation_blockers.append({
-                            "code": "norm_card_not_opened",
-                            "work_id": work_id,
-                            "reason": "model submitted a norm without opening its typed card",
-                        })
-                    if not code:
-                        precalculation_blockers.append({
-                            "code": "model_mapping_missing_norm_code",
-                            "work_id": work_id,
-                            "reason": "model submitted bind without norm_code",
-                        })
-                    proposed[work_id] = {
-                        "norm_code": code,
-                        "selection_kind": kind,
-                        "applicability": str(item.get("applicability") or ""),
-                        "technology_check": dict(item.get("technology_check") or {}),
-                        "analog_limitations": [str(value) for value in (item.get("analog_limitations") or []) if str(value).strip()],
-                        "nr_sp_rule_id": str(item.get("nr_sp_rule_id") or ""),
-                        "reason": str(item.get("reason") or ""),
-                        "review_status": "model_batch",
-                        "resource_bindings": _model_resource_bindings(work_id, item, by_id[work_id]),
-                        "precalculation_blockers": precalculation_blockers,
-                    }
-                # Local tool-call models are more reliable when they may submit
-                # one or several completed rows at a time. Preserve every valid
-                # model row and keep asking for the remainder; this changes only
-                # transport granularity, never the professional decision.
-                accepted_rows.update(proposed)
-                remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
-                if not proposed and not errors:
-                    errors.append({"error": "submit rows is empty", "work_ids": remaining})
-                if errors:
-                    failed_keys = {
-                        str(error.get("work_id") or "__transport__")
-                        if str(error.get("work_id") or "") in by_id
-                        else "__transport__"
-                        for error in errors
-                    }
-                    for failed_key in failed_keys:
-                        invalid_submission_attempts[failed_key] = (
-                            invalid_submission_attempts.get(failed_key, 0) + 1
-                        )
-                    attempt = max(invalid_submission_attempts.values(), default=1)
-                    result = {
-                        "ok": False,
-                        "errors": errors,
-                        "accepted_work_ids": list(accepted_rows),
-                        "remaining_work_ids": remaining,
-                    }
-                    if progress:
-                        first_error = str((errors[0] or {}).get("error") or "некорректный mapping")
-                        progress({
-                            "phase": "mapping_retry",
-                            "status": "waiting",
-                            "label": f"Смета: модель исправляет решение — {first_error}",
-                            "attempt": attempt,
-                            "errors": errors[:5],
-                        })
-                    exhausted = [
-                        key for key, count in invalid_submission_attempts.items() if count >= 4
-                    ]
-                    if exhausted:
-                        raise RuntimeError(
-                            "smeta model repeated an invalid mapping 4 times for "
-                            f"{','.join(exhausted)}: "
-                            + json.dumps(errors[:5], ensure_ascii=False, default=str)
-                        )
-                elif remaining:
-                    result = {
-                        "ok": True,
-                        "complete": False,
-                        "accepted_work_ids": list(accepted_rows),
-                        "remaining_work_ids": remaining,
-                    }
-                else:
-                    submitted = dict(accepted_rows)
-                    result = {"ok": True, "rows": len(submitted)}
-            else:
-                result = {"ok": False, "error": f"unknown tool: {name}"}
-            tool_message = {
+            result = session.execute(name, args, turn=turn)
+            conversation.append({
                 "role": "tool", "tool_call_id": call_id, "name": name,
                 "content": json.dumps(result, ensure_ascii=False, default=str),
-            }
-            conversation.append(tool_message)
+            })
             model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+            submitted = dict(session.accepted_rows) if session.complete else None
         if submitted is not None:
-            return {
-                "selections": submitted,
-                "browse_trace": browse_trace,
-                "query_trace": query_trace,
-                "model_trace": model_trace,
-                "valid_model_rows": len(submitted),
-                "agent_trace": {
+            return session.result(
+                model_trace=model_trace,
+                agent_trace={
                     "mode": "model_batch_rag_tools",
                     "turns": turn,
                     "context_metrics": context_metrics,
                 },
-            }
+            )
     raise RuntimeError(f"smeta model did not submit mapping within {max_turns} model turns")
 
 
@@ -828,9 +1046,10 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                     "type": "object",
                     "properties": {
                         "items": {"type": "array", "items": {"type": "object", "properties": {
-                            "work_id": {"type": "string"}, "queries": {"type": "array", "items": {"type": "string"}},
+                            "work_id": {"type": "string"},
+                            "query": {"type": "string", "description": "One search formulation. Repeat the work_id in another item or later call for another formulation."},
                             "limit": {"type": "integer", "minimum": 1}, "page": {"type": "integer", "minimum": 0},
-                        }, "required": ["work_id", "queries"]}},
+                        }, "required": ["work_id", "query"]}},
                         "rerank": {"type": "boolean"},
                     },
                     "required": ["items"],
@@ -844,9 +1063,10 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                 "description": "Read full typed norm cards for any number of source rows in one tool call.",
                 "parameters": {"type": "object", "properties": {
                     "items": {"type": "array", "items": {"type": "object", "properties": {
-                        "work_id": {"type": "string"}, "norm_codes": {"type": "array", "items": {"type": "string"}},
+                        "work_id": {"type": "string"},
+                        "norm_code": {"type": "string", "description": "One candidate code. Repeat the work_id in another item to open another code."},
                         "include_resources": {"type": "boolean", "description": "Return the full resource list when resource composition or edits must be reviewed."},
-                    }, "required": ["work_id", "norm_codes"]}},
+                    }, "required": ["work_id", "norm_code"]}},
                 }, "required": ["items"]},
             },
         },
@@ -861,6 +1081,24 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
+    """Reuse the declared mapping row as a provider-enforced transport schema."""
+    submit_tool = next(
+        tool for tool in _batch_norm_tools()
+        if str((tool.get("function") or {}).get("name") or "") == "submit_lsr_mapping"
+    )
+    parameters = json.loads(json.dumps(submit_tool["function"]["parameters"], ensure_ascii=False))
+    row_schema = parameters["properties"]["rows"]["items"]
+    # Conditional validation remains in the ordinary submit processor. Ollama's
+    # grammar accepts a simpler schema more consistently; this only constrains
+    # serialization and never creates or changes a professional decision.
+    row_schema.pop("allOf", None)
+    row_schema["properties"]["work_id"]["enum"] = list(remaining_work_ids)
+    parameters["properties"]["rows"]["minItems"] = 1
+    parameters["properties"]["rows"]["maxItems"] = max(1, len(remaining_work_ids))
+    return parameters
 
 
 
@@ -989,6 +1227,7 @@ def run_vor_document_workflow(
     path: str | Path,
     *,
     exchange: Exchange,
+    mapping_exchange: MappingExchange | None = None,
     candidate_limit: int = 8,
     book: str | None = None,
     out_xlsx: str | Path | None = None,
@@ -1000,6 +1239,8 @@ def run_vor_document_workflow(
     lsr_meta: dict[str, Any] | None = None,
     user_request: str = "",
     batch_size: int = 0,
+    max_agent_turns: int = 64,
+    agent_batch_runner: AgentBatchRunner | None = None,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     intake = intake_vor_document(path)
@@ -1024,10 +1265,13 @@ def run_vor_document_workflow(
     agent_result = _run_native_norm_agent(
         query_rows,
         exchange,
+        mapping_exchange=mapping_exchange,
         candidate_limit=candidate_limit,
+        max_turns=max_agent_turns,
         progress=progress,
         user_request=user_request,
         batch_size=batch_size,
+        batch_runner=agent_batch_runner,
     )
     if work_rows and int(agent_result.get("valid_model_rows") or 0) == 0:
         if out_report:

@@ -322,8 +322,9 @@ def test_smeta_norm_rag_notebook_is_navigation_map_not_candidate_selector():
     nb.build_smeta_norm_rag_notebook.cache_clear()
     notebook = build_smeta_norm_rag_notebook()
 
-    assert active_base()["base_path"].endswith("les_smeta_base.sqlite")
-    assert "_v2" not in active_base()["base_path"]
+    # Compare the configured file name, not the absolute checkout path: the
+    # canonical repository itself is named LES_v2 on developer machines.
+    assert Path(active_base()["base_path"]).name == "les_smeta_base.sqlite"
     assert notebook["id"] == "smeta_norms"
     assert notebook["context_role"] == "navigation"
     assert notebook["is_evidence"] is False

@@ -1,5 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
+import json
 import time
 
 import pytest
@@ -94,6 +95,7 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
             "total_with_vat": 122,
         },
         "model_provider": "openai",
+        "agent_engine": "native",
         "model_requested": "gpt-5.4",
         "model": "gpt-5.4",
         "models_used": ["gpt-5.4"],
@@ -102,6 +104,10 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
     }
     assert workflow_call["candidate_limit"] == 12
     assert workflow_call["batch_size"] == 0
+    saved_trace = json.loads(Path(result.extra["artifact"]["files"]["trace_path"]).read_text())
+    assert saved_trace["agent_trace"]["engine"] == "native"
+    assert saved_trace["agent_trace"]["provider"] == "openai"
+    assert saved_trace["agent_trace"]["model"] == "gpt-5.4"
     assert workflow_call["source_name"] == "ВОР тест.pdf"
     assert workflow_call["user_request"] == "Сделай ЛСР"
     assert exchange_attempts == 2
@@ -306,7 +312,7 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
     )
 
     assert result is not None
-    assert seen["batch_size"] == 5
+    assert seen["batch_size"] == 10
 
 
 def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monkeypatch):
@@ -372,7 +378,9 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "tool_calls" not in result
     assert "_les_fallback_from" not in result
     assert "options" in bodies[0]
-    assert bodies[0]["options"]["num_predict"] == 3200
+    assert bodies[0]["options"]["num_predict"] == 1800
+    assert bodies[0]["options"]["num_ctx"] == 32768
+    assert bodies[0]["think"] is False
     assert bodies[0]["messages"][-1] == {
         "role": "tool",
         "content": '{"ok":true}',
@@ -381,6 +389,60 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "model" not in bodies[0]["messages"][1]
     assert bodies[0]["messages"][1]["tool_calls"][0]["id"] == "call-1"
     assert urls == ["http://127.0.0.1:11434/api/chat"]
+
+
+def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {"content": '{"rows":[{"work_id":"w1","decision":"unbound","reason":"model"}]}'},
+                "done_reason": "stop",
+                "eval_count": 42,
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["body"] = kwargs["json"]
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+    schema = {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]}
+
+    result = adapter._smeta_document_mapping_exchange(
+        [{"role": "assistant", "content": "", "thinking": "model reasoning"}], schema,
+    )
+
+    assert result["rows"][0]["reason"] == "model"
+    assert result["_les_model"] == "qwen3.5:9b"
+    assert captured["url"] == "http://127.0.0.1:11434/api/chat"
+    assert captured["body"]["format"] == schema
+    assert "tools" not in captured["body"]
+    assert "think" not in captured["body"]
+    assert captured["body"]["messages"][0]["thinking"] == "model reasoning"
+    assert captured["body"]["options"]["num_ctx"] == 32768
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

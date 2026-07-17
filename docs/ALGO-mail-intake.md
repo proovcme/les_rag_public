@@ -1,69 +1,102 @@
-# Алгоритм: приёмка почты (Outlook → /api/mail/push → классификация вложений)
+# Алгоритм: Е.Ж.И.К. — локальный read-only сборщик почты
 
-Письмо из Outlook одним нажатием уходит в **локальный** ЛЕС, который детерминированно
-раскладывает вложения по назначению: КП → КАЦ, смета/ВОР → RAG, скан → приёмка ИД, прочее →
-RAG-документ. Канал недоверенный: плагин шлёт в **локальный** ЛЕС (не в облако) —
-[[cloudflare-blocked-use-openai-direct]], локаль-первый. 0 LLM в маршрутизации (regex/тип файла).
+## Граница продукта
 
-## Конвейер
+Е.Ж.И.К. не является почтовым клиентом и не меняет исходный ящик. Он сохраняет локальный
+evidence-снимок писем, индексирует его штатным RAG-контрактом LES и показывает письма во вкладке
+«Почта». Ответ, пересылка, SMTP и создание черновика не реализованы. Для Outlook доступно только
+«Открыть в Outlook».
 
-```
-Outlook (Mac/Win) + Add-in → POST /api/mail/push (тело + вложения base64) →
-  save_attachments (раскодировать в storage/mail_push/<msg_id>/) →
-  route_push (классификация каждого вложения) →
-    КП        → КАЦ (kac_pdf_service.extract_and_analyze, best-effort)
-    смета/ВОР → RAG · смета/ВОР (upload в датасет)
-    скан      → приёмка ИД (очередь, status=pending)
-    прочее    → RAG · документ
-  тело письма → текстовый файл → RAG (mail-датасет)
-```
+Главный data-contract: **один почтовый ящик = один отдельный P0-датасет**. Новые аккаунты никогда
+не смешиваются в общем `MAIL_Index`. Старый `MAIL_Index` остаётся legacy-датасетом совместимости;
+его файлы можно аддитивно назначить выбранному аккаунту через targeted migration, без глобального
+reindex и без удаления legacy-источника.
 
-## Классификация вложения (`route_push`, детерминированно)
+## Источники
 
-| Класс | Сигнал | Назначение |
-|---|---|---|
-| **КП** | PDF + подсказки (кп, коммерч, предложен, прайс, счёт, offer, price) | КАЦ (≥3 КП → выбор) |
-| **смета/ВОР** | подсказки (смет, вор, лср, кс2, кс3, локальн) ИЛИ `.xlsx/.xls` | RAG · смета/ВОР |
-| **скан** | `.jpg/.png/.tif/.bmp/.heic` + подсказки (скан, акт, исполнит, обмер) | приёмка ИД (pending) |
-| **документ** | всё прочее (дефолт) | RAG · документ |
+### Классический Outlook на Legion
 
-КП и сканы **не идут** в основной RAG (КП → КАЦ-анализ, скан → журнал объёмов через приёмку ИД).
-КАЦ по КП выполняется best-effort (не блокирует ответ). Ответ `/api/mail/push`:
-`{ok, message_id, dataset_id, routed:[{name,kind,destination}], kac:{…}, uploaded:[{doc_id,name}]}`.
+`clients/outlook_mail_poller/LesMailPoller.cs` — Windows-sidecar без Office PIA. Он подключается к
+уже запущенному и авторизованному классическому Outlook через COM, обходит все `Session.Stores` и
+папки, исключая Deleted Items, Drafts и Junk по `OlDefaultFolders` identifiers `3/16/23`.
 
-## Эндпоинт
+Для каждого `MailItem` sidecar:
 
-- `POST /api/mail/push` (auth) — принимает `{subject, from, date, body, attachments:[{name,
-  content_type, content_b64}]}`. Сервис — `proxy/services/mail_push_service.py`, роутер —
-  `proxy/routers/mail.py`. Хранилище вложений — `storage/mail_push/<msg_id>/`.
+1. сохраняет Unicode `.msg` через `SaveAs(..., olMSGUnicode)` вместе с вложениями;
+2. передаёт multipart на loopback `POST /api/mail/collector/import`;
+3. передаёт `StoreID`, `EntryID`, `PR_INTERNET_MESSAGE_ID`, folder id/path и received time;
+4. двигает per-store/per-folder newest+oldest cursor только после HTTP 2xx.
 
-## Плагин Outlook — `clients/outlook_addin/`
+Backfill идёт возобновляемыми порциями до 200 писем за запуск. Task Scheduler запускает sidecar
+каждые три минуты в interactive user session. Плановая задача не стартует Outlook сама. Команда
+`--open <base64-store> <base64-entry>` вызывает `Session.GetItemFromID(...).Display()`.
 
-JS-надстройка (Outlook desktop + web): кнопка в ленте → таскпейн читает текущее письмо
-(`Office.context.mailbox.item`: тема/отправитель/тело/вложения) → собирает JSON →
-`POST /api/mail/push` в локальный ЛЕС → показывает таблицу `routed[]` + блок КАЦ. Файлы:
-`manifest.xml` (метаданные/кнопка), `src/taskpane.{html,js}` (UI + отправка).
+### IMAP
 
-**Mixed content (Office требует HTTPS для таскпейна, ЛЕС по HTTP):** варианты — оба по HTTP
-(desktop, `serve-http`), оба по HTTPS (dev-сертификаты + https-прокси :8443→:8050), или dev-флаг
-Chrome. Подробности — в README плагина.
+Каждый IMAP-аккаунт хранит несекретные настройки в `mail_accounts`, а app-password — в Windows
+Credential Manager (на Mac dev — Keychain). Синхронизация делает `SELECT readonly=True` и
+`FETCH (BODY.PEEK[])`; флаг `Seen` не меняется. Папки Junk/Trash/Drafts исключаются по IMAP
+special-use flags, а не по локализованным именам.
 
-## Legion (Outlook на Windows) + SSH-туннель
+Курсор хранится для `account_id + folder + UIDVALIDITY`. Смена UIDVALIDITY сбрасывает UID-курсор и
+повторно сверяет папку с дедупликацией. UID подтверждается после сохранения `.eml` и регистрации
+письма; ошибка посередине batch не пропускает более старые UID.
 
-Outlook+плагин крутятся на Легионе (Windows), ЛЕС — на Маке. Обратный SSH-туннель
-`tools/legion_mail_tunnel.sh` пробрасывает `localhost:8050` Легиона → `127.0.0.1:8050` Мака
-(`-R`, bind на localhost): плагин шлёт на `http://localhost:8050/api/mail/push` → приходит в
-локальный ЛЕС через SSH. Env: `LES_LEGION_SSH` (alias из `~/.ssh/config`, дефолт `legion`),
-`LES_PORT` (дефолт 8050). Авто-переподключение каждые 5с, keepalive 30с.
+## Exact registry и snapshot-policy
 
-## Где в коде
+`proxy/services/mail_registry_service.py` владеет SQLite-таблицами:
 
-- Сервис: `proxy/services/mail_push_service.py` (`save_attachments`/`route_push`),
-  `proxy/services/kac_pdf_service.py` (КП → КАЦ).
-- Роутер: `proxy/routers/mail.py` (`POST /api/mail/push`; рядом — `import-imap`/`import-archive`).
-- Клиент: `clients/outlook_addin/`. Туннель: `tools/legion_mail_tunnel.sh`.
+- `mail_accounts`: adapter, label, private `dataset_id/dataset_name`, безопасный config, sync state;
+- `mail_folders`: native id/path, special-use, UIDVALIDITY, cursor, backfill state;
+- `mail_messages`: identity, checksum, raw path, thread, Outlook locator, index status;
+- `mail_message_locations`: папки и история видимости;
+- `mail_attachment_provenance`: дедуп одинаковых attachment SHA-256 с сохранением ссылок писем.
 
-## Граница (что осталось)
+Идентичность внутри аккаунта: normalized Internet Message-ID, иначе native id, иначе SHA-256.
+Одинаковое письмо в нескольких папках остаётся одной записью с несколькими locations. Исчезновение
+из источника помечает location неактуальной, но raw `.msg/.eml`, запись и RAG evidence автоматически
+не удаляются.
 
-- `.pst` (Windows-архив) требует `libpff`; `.msg` индексируется как файл.
-- Предложено дальше: почта → задачи → график (письмо-поручение → задачник → план работ).
+## Индексация
+
+Каждый raw message загружается только в датасет своего аккаунта. Общий parser создаёт:
+
+- `mail_message` nodes: заголовки, участники, тело, thread и exact registry provenance;
+- `mail_attachment` nodes: читаемое содержимое каждого обычного вложения до 20 МБ.
+
+Payload включает account/dataset/message/thread identity, folders, source locator и SHA-256. Далее
+работает общий immutable named `dense + bm25_sparse` contract, native RRF, rerank и context expansion.
+CID/hidden inline-логотипы остаются в raw message, но не OCR-ятся. Большое вложение получает
+`skipped_large` и MISSING-причину. Одинаковый attachment SHA-256 создаёт attachment context один раз;
+message-node каждого письма сохраняет собственную provenance-ссылку и checksum.
+
+## API и UI
+
+- `GET/POST /api/mail/accounts`, `PATCH /api/mail/accounts/{id}`;
+- `POST /api/mail/accounts/{id}/test`;
+- `POST /api/mail/accounts/{id}/sync` (`full|incremental`);
+- `POST /api/mail/accounts/{id}/migrate-legacy` — только выбранная папка → выбранный mailbox dataset;
+- `POST /api/mail/collector/import` — loopback multipart intake Outlook-sidecar;
+- `GET /api/mail/messages` с account/folder/participant/date/index-status filters;
+- `GET /api/mail/messages/{id}`, `POST /api/mail/messages/{id}/open`.
+
+Старые `/import-imap`, `/messages`, `/threads`, `/push` остаются совместимыми legacy-путями.
+Вкладка «Почта» показывает ящики/папки, цепочки, тело, вложения, provenance и index status. Кнопка
+«Спросить в LES» открывает чат со scope `ds:<dataset_id>` именно этого ящика.
+
+## Windows install и acceptance
+
+`clients/outlook_mail_poller/setup_task.ps1` компилирует sidecar в persistent state `bin` и создаёт
+interactive task. `installers/windows/app/bootstrap.ps1` устанавливает его вместе с Tauri/NSIS при
+наличии classic Outlook. Live Windows gate обязан проверить повторный запуск без дублей, folder
+probe без мутаций, `INDEXED`, правильный original и отсутствие секрета в API/log/machine report.
+
+Mac unit/static checks доказывают кодовый контракт, но не заменяют установленный Windows-выпуск на
+Legion. Release выполняется только штатными Windows gates и `make patch-release` из чистого pushed
+`main`.
+
+## Legacy push
+
+`POST /api/mail/push` и `mail_push_service` сохранены для старых Outlook add-in/COM-addin: они
+классифицируют переданные вложения (КП → КАЦ, смета/документ → RAG, скан → приёмка). Это не основной
+путь настройки Е.Ж.И.К. и не участвует в фоновом read-only сборе полного ящика.

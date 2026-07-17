@@ -12,7 +12,6 @@ from uuid import NAMESPACE_URL, uuid5
 
 import numpy as np
 from qdrant_client import QdrantClient
-from sentence_transformers import SentenceTransformer
 
 from backend.qdrant_adapter import EmbedClient
 from backend.rag_config import embed_seq_len
@@ -35,6 +34,8 @@ def _sample(rows: list[dict[str, str]], count: int) -> list[dict[str, str]]:
 
 
 def main() -> int:
+    from sentence_transformers import SentenceTransformer
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collection", required=True)
     parser.add_argument("--samples", type=int, default=32)

@@ -1,6 +1,6 @@
 [project]
 name = "les-v2"
-version = "0.24.24"
+version = "0.24.26"
 description = "Л.Е.С. — Локальная Экспертная Система"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -35,6 +35,12 @@ dependencies = [
     "markitdown>=0.0.1",
     "langextract>=1.1.0",
     "ezdxf>=1.3.0",
+    # ── Сметные агенты (RAG/расчёт остаются в LES) ────────────────
+    "qwen-agent==0.0.34",
+    # qwen-agent 0.0.34 imports audio helpers from its core package but does not
+    # declare SoundFile in the minimal extra.
+    "soundfile>=0.12.1",
+    "google-adk==2.5.0",
     # ── UI ───────────────────────────────────────────────────────
     "nicegui>=2.0.0",
     # ── Утилиты ──────────────────────────────────────────────────

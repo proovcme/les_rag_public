@@ -364,6 +364,8 @@ def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
         }
         if role == "assistant" and source.get("tool_calls"):
             message["tool_calls"] = source["tool_calls"]
+        if role == "assistant" and source.get("thinking"):
+            message["thinking"] = source["thinking"]
         if role == "tool":
             tool_name = str(source.get("tool_name") or source.get("name") or "").strip()
             if tool_name:
@@ -375,10 +377,7 @@ def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    max_tokens = _env_int(
-        "LES_SMETA_DOCUMENT_MAX_TOKENS",
-        3200,
-    )
+    max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
@@ -389,8 +388,16 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "messages": _ollama_native_messages(messages),
             "tools": tools,
             "stream": False,
-            "think": False,
-            "options": {"temperature": 0.0, "num_predict": max_tokens},
+            # Ollama's documented agent loop keeps thinking enabled and passes
+            # it back in conversation history with the tool call.
+            "think": _env_bool("LES_SMETA_DOCUMENT_THINK", False),
+            "options": {
+                "temperature": 0.0,
+                "num_predict": max_tokens,
+                # The Ollama default can be only 4K. Agent/tool workflows need
+                # enough room to retain search/read evidence across turns.
+                "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
+            },
         }
         ollama_root = runtime.base_url.rstrip("/")
         if ollama_root.casefold().endswith("/v1"):
@@ -442,6 +449,77 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             raise RuntimeError(
                 f"smeta provider HTTP {response.status_code}: {detail or response.reason_phrase}"
             ) from error
+        raise RuntimeError(f"smeta provider {type(error).__name__}: {error}") from error
+
+
+def _smeta_document_mapping_exchange(
+    messages: list[dict[str, Any]], schema: dict[str, Any],
+) -> dict[str, Any]:
+    """Serialize the same model's decisions with provider-enforced JSON schema."""
+    runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
+    max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 6000)
+    native_ollama = runtime.provider == "ollama"
+    if native_ollama:
+        body = {
+            "model": runtime.model,
+            "messages": _ollama_native_messages(messages),
+            "format": schema,
+            "stream": False,
+            # Do not set think=false: current Qwen/Gemma Ollama templates can
+            # silently ignore `format` when thinking is explicitly disabled.
+            "options": {
+                "temperature": 0.0,
+                "num_predict": max_tokens,
+                "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
+            },
+        }
+        ollama_root = runtime.base_url.rstrip("/")
+        if ollama_root.casefold().endswith("/v1"):
+            ollama_root = ollama_root[:-3]
+        chat_url = f"{ollama_root}/api/chat"
+    else:
+        body = {
+            "model": runtime.model,
+            "messages": messages,
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "lsr_mapping", "strict": True, "schema": schema},
+            },
+        }
+        body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+        chat_url = runtime.chat_url
+    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    try:
+        with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
+            response = client.post(chat_url, headers=headers, json=body)
+            response.raise_for_status()
+            response_payload = response.json()
+            message = (
+                response_payload.get("message", {})
+                if native_ollama
+                else response_payload.get("choices", [{}])[0].get("message", {})
+            )
+            message = message if isinstance(message, dict) else {}
+            parsed = _extract_json_object(str(message.get("content") or ""))
+            if parsed is None:
+                raise RuntimeError("smeta provider returned invalid structured mapping JSON")
+            parsed["_les_done_reason"] = response_payload.get("done_reason")
+            parsed["_les_eval_count"] = response_payload.get("eval_count")
+            parsed["_les_model"] = runtime.model
+            parsed["_les_provider"] = runtime.provider
+            return parsed
+    except Exception as error:
+        logger.warning("[SMETA_DOCUMENT] structured mapping exchange failed: %s", error)
+        if isinstance(error, httpx.HTTPStatusError):
+            detail = " ".join(str(error.response.text or "").split())[:300]
+            raise RuntimeError(
+                f"smeta provider HTTP {error.response.status_code}: "
+                f"{detail or error.response.reason_phrase}"
+            ) from error
+        if isinstance(error, RuntimeError):
+            raise
         raise RuntimeError(f"smeta provider {type(error).__name__}: {error}") from error
 
 def _voice_claims_source_truncated(text: str) -> bool:

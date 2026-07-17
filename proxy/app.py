@@ -182,15 +182,17 @@ mail_autosync = {"last_sync": 0.0, "last_count": 0, "runs": 0, "last_error": "",
 
 
 async def mail_imap_autosync_loop():
-    """Е.Ж.И.К. — ВНУТРЕННИЙ IMAP-сервис. MAIL_IMAP_POLL_SEC>0 + MAIL_IMAP_* (host/login/password) →
-    периодически тянет НОВУЮ почту (инкрементально по чекпойнту) → MAIL_Index → парс. 0/без кредов = выкл.
-    ЛЕС сам забирает почту в RAG, без внешнего Outlook-поллера/аддина."""
+    """Poll every enabled IMAP account into that mailbox's private dataset.
+
+    The env-driven single MAIL_Index importer remains a compatibility fallback
+    only when the account registry is empty.
+    """
     from backend.mail_ingest import fetch_imap_eml_files, imap_settings_from_env
 
     await asyncio.sleep(25)  # дать backend подняться
     while True:
         try:
-            interval = int(os.getenv("MAIL_IMAP_POLL_SEC", "0") or "0")
+            interval = int(os.getenv("MAIL_IMAP_POLL_SEC", "180") or "180")
         except ValueError:
             interval = 0
         mail_autosync["enabled"] = interval > 0
@@ -198,25 +200,62 @@ async def mail_imap_autosync_loop():
             await asyncio.sleep(300)  # выключен — перечитываем флаг раз в 5 мин
             continue
         try:
-            settings = imap_settings_from_env()
-            if getattr(settings, "configured", False):
-                from proxy.routers.datasets import get_dataset_state
-                from proxy.routers.mail import _upload_fetched_mail
-                state = get_dataset_state()
-                fetched = await asyncio.to_thread(fetch_imap_eml_files, settings, max_messages=200)
+            from proxy.routers.datasets import get_dataset_state
+            from proxy.services.mail_registry_service import get_mail_registry
+            from proxy.services.mail_sync_service import settings_for_account, sync_imap_account
+
+            state = get_dataset_state()
+            registry = get_mail_registry()
+            accounts = [
+                account for account in registry.list_accounts()
+                if account.get("enabled") and account.get("kind") == "imap"
+            ]
+            total = 0
+            for account in accounts:
+                settings = settings_for_account(account, registry.account_secret(account["id"]))
+                fetched = await asyncio.to_thread(
+                    sync_imap_account,
+                    settings,
+                    registry,
+                    account_id=account["id"],
+                    mode="incremental",
+                    max_messages=200,
+                )
+                for item in fetched:
+                    doc_id = await state.backend.upload_file(
+                        account["dataset_id"], item.file.path, relative_path=item.file.relative_path
+                    )
+                    registry.mark_indexed(item.message_id, rag_doc_id=doc_id, status="registered")
                 if fetched:
-                    dataset_id, _created, _uploaded = await _upload_fetched_mail(state, fetched)
                     try:
+                        result = None
+                        for _batch in range(40):
+                            result = await state.backend.parse_dataset(account["dataset_id"], limit=25)
+                            if int(result.get("remaining_pending") or 0) <= 0 or int(result.get("errors") or 0) > 0:
+                                break
+                        if int(result.get("remaining_pending") or 0) == 0:
+                            for item in fetched:
+                                registry.mark_indexed(item.message_id, status="indexed")
+                    except Exception as parse_err:  # noqa: BLE001
+                        logger.warning("[ЕЖИК] autosync parse account=%s: %s", account["id"], parse_err)
+                total += len(fetched)
+
+            if not accounts:
+                settings = imap_settings_from_env()
+                if getattr(settings, "configured", False):
+                    from proxy.routers.mail import _upload_fetched_mail
+
+                    fetched = await asyncio.to_thread(fetch_imap_eml_files, settings, max_messages=200)
+                    if fetched:
+                        dataset_id, _created, _uploaded = await _upload_fetched_mail(state, fetched)
                         await state.backend.parse_dataset(dataset_id, limit=25)
-                    except Exception as parse_err:  # noqa: BLE001 — парс не роняет поллер
-                        logger.warning("[ЕЖИК] autosync parse: %s", parse_err)
-                    logger.info("[ЕЖИК] IMAP autosync: +%s писем → RAG", len(fetched))
-                    mail_autosync.update(last_sync=time.time(), last_count=len(fetched),
-                                         runs=mail_autosync["runs"] + 1, last_error="")
-                else:
-                    mail_autosync.update(last_sync=time.time(), last_count=0, last_error="")
-            else:
-                logger.debug("[ЕЖИК] autosync: MAIL_IMAP_* не заданы — пропуск")
+                    total = len(fetched)
+            mail_autosync.update(
+                last_sync=time.time(), last_count=total,
+                runs=mail_autosync["runs"] + 1, last_error="",
+            )
+            if total:
+                logger.info("[ЕЖИК] IMAP autosync: +%s писем across %s accounts", total, len(accounts))
         except Exception as error:  # noqa: BLE001 — поллер не падает
             mail_autosync["last_error"] = str(error)[:200]
             logger.warning("[ЕЖИК] IMAP autosync failed: %s", error)
