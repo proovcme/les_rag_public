@@ -33,6 +33,8 @@ Windows-выпуск:            0.24.21 / build 442 (GitHub release)
 > loopback intake/open, вкладка «Почта» и Windows interactive three-minute Task Scheduler install.
 > Тестовая программа разделена: `test-mail` даёт 61 offline/static проверку, `test-mail-release`
 > добавляет Tauri и встроен в patch-release; `test-architecture` больше не смешивает LES с ARTEL.
+> Контроль на Mac: mail 61/61 + Tauri green; LES architecture 2684 passed / 3 optional skips;
+> полный архивный suite 3062 passed / 3 optional skips. Windows COM/live всё ещё не доказан.
 
 > 0.24.25 / build 446 — сравниваем native, Qwen-Agent и Google ADK без кодового выбора норм
 >
