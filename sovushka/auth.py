@@ -13,6 +13,7 @@ from nicegui import app, ui
 from starlette.responses import RedirectResponse
 
 from backend.auth import login, is_authenticated, get_role, get_holder, logout
+from sovushka.provider_session import clear_provider_config, provider_setup_complete
 from sovushka.trust import trusted_role_for_request
 
 # ── Цитаты В.О.Л.К. ──────────────────────────────────────────────────────────
@@ -166,9 +167,12 @@ def register_login_page():
     async def login_page(request: Request):
         trusted_role = trusted_role_for_request(request)
         
-        if is_authenticated() or trusted_role:
-            role = trusted_role or get_role()
-            return RedirectResponse("/les" if role == "admin" else "/")
+        if trusted_role:
+            return RedirectResponse("/les" if trusted_role == "admin" else "/classic")
+        if is_authenticated():
+            if not provider_setup_complete():
+                return RedirectResponse("/provider-setup")
+            return RedirectResponse("/les" if get_role() == "admin" else "/classic")
 
         ui.add_head_html(_LOGIN_CSS)
         ui.query("body").style("background:#08090b;margin:0;")
@@ -255,7 +259,8 @@ function volkLogin() {{
                 return
             result = await login(key_val, fingerprint=fp_val)
             if result["ok"]:
-                ui.navigate.to("/les" if get_role() == "admin" else "/")
+                clear_provider_config()
+                ui.navigate.to("/provider-setup")
             else:
                 msg = result.get("detail", "Неверный ключ или ключ отключён")
                 await ui.run_javascript(

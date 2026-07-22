@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
 import sqlite3
 import time
 import json
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Callable, Iterable, List, Optional
@@ -29,6 +31,7 @@ from proxy.services.chat_evidence_application_service import (
 )
 from proxy.services.answer_contract_service import decorate_payload, scenario_for_request
 from proxy.services.class_router_service import build_class_suggestions
+from proxy.services.chat_provider_session_service import ChatProviderConfig
 from proxy.services.clarification_service import build_clarification_decision
 from backend.inference.validator import rules_pre_verdict
 from backend.inference.routing import (
@@ -114,6 +117,8 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["chat"])
 DEFAULT_OPENAI_MODEL = "gpt-5.4"
+_REQUEST_LLM_RUNTIME: ContextVar[Any | None] = ContextVar("request_llm_runtime", default=None)
+_REQUEST_CLOUD_CONSENT: ContextVar[bool | None] = ContextVar("request_cloud_consent", default=None)
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -151,6 +156,7 @@ class ChatRequest(BaseModel):
     attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
     target_files: Optional[List[str]] = None  # явный выбор нескольких документов оператором
+    provider_config: Optional[ChatProviderConfig] = None  # per-session BYOK, без изменения общего .env
 
     @field_validator("question")
     @classmethod
@@ -286,6 +292,10 @@ def _env_int(name: str, default: int) -> int:
 
 
 def _env_bool(name: str, default: bool) -> bool:
+    if name == "LES_CLOUD_CONSENT":
+        request_consent = _REQUEST_CLOUD_CONSENT.get()
+        if request_consent is not None:
+            return request_consent
     raw = os.getenv(name)
     if raw is None:
         return default
@@ -353,6 +363,9 @@ def _cloud_body_for_model(body: dict, model: str, provider: str) -> dict:
 
 
 def _llm_runtime() -> LlmRuntime:
+    request_runtime = _REQUEST_LLM_RUNTIME.get()
+    if request_runtime is not None:
+        return request_runtime
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
     if provider == "openrouter":
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
@@ -393,12 +406,59 @@ def _mlx_runtime() -> LlmRuntime:
     return LlmRuntime("mlx", base_url, _join_openai_path(base_url, "/chat/completions"), model, "", True)
 
 
+def _runtime_from_provider_config(config: ChatProviderConfig) -> LlmRuntime:
+    if config.provider == "mlx":
+        return _mlx_runtime()
+    if config.provider == "openrouter":
+        base_url = "https://openrouter.ai/api/v1"
+    else:
+        base_url = "https://api.openai.com/v1"
+    return LlmRuntime(
+        config.provider,
+        base_url,
+        _join_openai_path(base_url, "/chat/completions"),
+        config.model,
+        config.api_key,
+        False,
+    )
+
+
+async def _run_chat_with_provider(req: ChatRequest, token_sink=None):
+    """Bind a provider to this asyncio context only, then reliably remove it."""
+    if req.provider_config is None:
+        if token_sink is None:
+            return await _run_chat(req)
+        return await _run_chat(req, token_sink=token_sink)
+    runtime = _runtime_from_provider_config(req.provider_config)
+    runtime_token = _REQUEST_LLM_RUNTIME.set(runtime)
+    consent_token = _REQUEST_CLOUD_CONSENT.set(is_cloud_provider(runtime.provider))
+    try:
+        if token_sink is None:
+            return await _run_chat(req)
+        return await _run_chat(req, token_sink=token_sink)
+    finally:
+        _REQUEST_CLOUD_CONSENT.reset(consent_token)
+        _REQUEST_LLM_RUNTIME.reset(runtime_token)
+
+
+def _idempotency_payload(req: ChatRequest) -> dict[str, Any]:
+    """Fingerprint provider selection without retaining the plaintext API key."""
+    payload = req.model_dump(mode="json")
+    provider_config = payload.get("provider_config")
+    if isinstance(provider_config, dict):
+        secret = str(provider_config.pop("api_key", ""))
+        provider_config["api_key_sha256"] = hashlib.sha256(secret.encode("utf-8")).hexdigest() if secret else ""
+    return payload
+
+
 
 
 def cloud_fallback_models(runtime: LlmRuntime) -> list[str]:
     """Цепочка моделей облачного фолбэка: primary (`*_MODEL`) первым, затем
     `OPENROUTER_MODELS`/`OPENAI_MODELS` (через запятую). Зависшая/ошибившаяся
     модель → следующая (см. cloud_model_timeout). Не-облако → одна модель."""
+    if _REQUEST_LLM_RUNTIME.get() is not None:
+        return [runtime.model]
     if runtime.provider == "openrouter":
         env = os.getenv("OPENROUTER_MODELS", "")
     elif runtime.provider in ("openai", "openai-compatible"):
@@ -1317,7 +1377,7 @@ async def chat(
     отклоняется.
     """
     if not idempotency_key:
-        return decorate_payload(await _run_chat(req))
+        return decorate_payload(await _run_chat_with_provider(req))
 
     from proxy.services.request_idempotency_service import (
         IdempotencyConflict,
@@ -1329,7 +1389,7 @@ async def chat(
     )
 
     caller = caller_scope(_user)
-    fingerprint = request_fingerprint(req.model_dump(mode="json"))
+    fingerprint = request_fingerprint(_idempotency_payload(req))
     try:
         idem_state, cached = await asyncio.to_thread(
             begin,
@@ -1350,7 +1410,7 @@ async def chat(
         )
 
     try:
-        result = decorate_payload(await _run_chat(req))
+        result = decorate_payload(await _run_chat_with_provider(req))
     except Exception:
         await asyncio.to_thread(
             release,
@@ -1439,7 +1499,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                         "scenario": {"id": scenario.get("id"), "label": scenario.get("label")},
                     },
                 })
-            result = decorate_payload(await _run_chat(req, token_sink=sink))
+            result = decorate_payload(await _run_chat_with_provider(req, token_sink=sink))
             if stream_state["tokens"] == 0 and _should_synthesize_stream(result):
                 answer_text = str(result.get("answer") or result.get("response") or "")
                 for piece in _synthetic_stream_pieces(answer_text):

@@ -20,7 +20,7 @@ les.ovc.me {
 		}
 	}
 
-	@les_ui path /login /classic /classic/* /les /les/classic /les/classic/* /lite-api/* /_nicegui* /static/*
+	@les_ui path /login /provider-setup /classic /classic/* /les /les/classic /les/classic/* /lite-api/* /_nicegui* /static/*
 	handle @les_ui {
 		reverse_proxy 10.195.146.98:8051 {
 			header_up X-LES-Trusted-Network ""
