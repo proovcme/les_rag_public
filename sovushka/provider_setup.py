@@ -15,6 +15,9 @@ _PROVIDER_SETUP_CSS = """
 * { box-sizing: border-box; }
 html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 body { background:#08090b !important; color:#e2e8f0; }
+html, body, #app, .q-layout, .q-page-container, .q-page, .nicegui-content {
+  width:100% !important; min-width:100% !important;
+}
 .provider-shell {
   min-height:100vh; width:100%; padding:32px 18px; display:flex;
   align-items:center; justify-content:center; background:
@@ -44,7 +47,7 @@ body { background:#08090b !important; color:#e2e8f0; }
 .provider-error { min-height:20px; margin-top:8px; color:#f87171; font-size:.72rem; }
 .provider-action { min-height:44px !important; border-radius:10px !important; font-weight:800 !important; letter-spacing:.02em; transition:transform .16s ease,filter .16s ease !important; }
 .provider-action:active { transform:scale(.96); }
-.nicegui-content { padding:0 !important; }
+.nicegui-content { padding:0 !important; max-width:none !important; }
 @media (max-width:640px) {
   .provider-shell { align-items:flex-start; padding:18px 12px; }
   .provider-card { padding:22px 16px; border-radius:16px; }

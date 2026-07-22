@@ -8,6 +8,15 @@ from proxy.routers import chat
 from sovushka import provider_session
 
 
+def test_provider_page_claims_full_nicegui_width() -> None:
+    source = (provider_session.__file__.replace("provider_session.py", "provider_setup.py"))
+    text = open(source, encoding="utf-8").read()
+
+    assert ".nicegui-content {" in text
+    assert "width:100% !important; min-width:100% !important;" in text
+    assert "max-width:none !important;" in text
+
+
 def test_ephemeral_vault_expires_secrets() -> None:
     vault = provider_session.EphemeralProviderVault(ttl_seconds=10)
     reference = vault.put("sk-private", now=100.0)
