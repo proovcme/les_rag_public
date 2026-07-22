@@ -11,7 +11,23 @@ les.ovc.me {
 		file_server
 	}
 
-	@retired_runtime path /api/* /lite-api/* /lite-runtime/* /les /les/* /classic /classic/*
+	# The landing stays public. Only the key login, authenticated UI and
+	# key-protected API are forwarded to the Mac reference runtime.
+	@les_api path /api/*
+	handle @les_api {
+		reverse_proxy 10.195.146.98:8050 {
+			header_up X-LES-Trusted-Network ""
+		}
+	}
+
+	@les_ui path /login /classic /classic/* /les /les/classic /les/classic/* /lite-api/* /_nicegui* /static/*
+	handle @les_ui {
+		reverse_proxy 10.195.146.98:8051 {
+			header_up X-LES-Trusted-Network ""
+		}
+	}
+
+	@retired_runtime path /lite-runtime/*
 	handle @retired_runtime {
 		respond 404
 	}

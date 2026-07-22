@@ -25,11 +25,8 @@
     .capabilities li{padding:18px 20px;border-radius:20px;background:#f7f9f6;box-shadow:inset 0 0 0 1px rgba(36,92,71,.08);text-wrap:pretty}
     .capabilities strong{display:block;margin-bottom:3px;color:var(--green)}
     .honesty{margin:16px 0 0;color:var(--muted);text-wrap:pretty}
-    .learn{display:grid;grid-template-columns:1fr auto;align-items:center;gap:20px;padding:20px 22px;border-radius:22px;background:var(--green2);color:#274a3b}
+    .learn{padding:20px 22px;border-radius:22px;background:var(--green2);color:#274a3b}
     .learn p{margin:4px 0 0;text-wrap:pretty}
-    .text-link{min-height:40px;display:inline-flex;align-items:center;color:var(--green);font-weight:750;text-decoration-thickness:1px;text-underline-offset:3px}
-    .text-link:hover{text-decoration-thickness:2px}
-    .contacts{display:flex;flex-wrap:wrap;gap:8px 20px;margin-top:14px;color:var(--muted)}
     footer{margin-top:38px;padding-top:24px;border-top:1px solid var(--line);color:#7a847f;font-size:13px;font-variant-numeric:tabular-nums}
     @media (max-width:640px){body{padding:12px}main{padding:26px 22px;border-radius:24px}.capabilities{grid-template-columns:1fr}.learn{grid-template-columns:1fr}.actions{display:grid}.button{width:100%}.section{margin-top:34px;padding-top:30px}}
     @media (prefers-reduced-motion:reduce){.button{transition-duration:0s}.button:hover,.button:active{transform:none}}
@@ -40,10 +37,9 @@
     <div class="mark" aria-hidden="true">ЛЕС</div>
     <h1>Инженер работает.<br>Источники остаются.</h1>
     <p class="lead">ЛЕС — локальная система для проектной документации, нормативов, сметных данных и проверяемых инженерных ответов.</p>
-    <p class="note">Рабочий контур не публикуется в интернете. Здесь находится только страница проекта и защищённый канал обновлений настольной версии.</p>
+    <p class="note">Демонстрационный контур доступен только по ключу. Документы, индекс и модели остаются в защищённой среде ЛЕС.</p>
     <div class="actions">
-      <a class="button" href="https://github.com/proovcme/les_rag_public/releases" rel="noreferrer">Скачать последний релиз</a>
-      <a class="button secondary" href="https://github.com/proovcme/les_rag_public" rel="noreferrer">GitHub</a>
+      <a class="button" href="/login">Войти по ключу</a>
     </div>
 
     <section class="section" aria-labelledby="can-do">
@@ -58,21 +54,13 @@
     </section>
 
     <section class="section learn" aria-labelledby="about-rag">
-      <div>
-        <h2 id="about-rag">А что такое RAG?</h2>
-        <p>Если коротко: модель отвечает не по памяти о прекрасном, а сначала ищет нужное в ваших источниках.</p>
-      </div>
-      <a class="button secondary" href="https://rag.ovc.me/" rel="noreferrer">Объяснение без шаманства</a>
+      <h2 id="about-rag">А что такое RAG?</h2>
+      <p>Если коротко: модель отвечает не по памяти о прекрасном, а сначала ищет нужное в ваших источниках.</p>
     </section>
 
     <section class="section" aria-labelledby="author">
       <h2 id="author">Автор и связь</h2>
       <p class="honesty">Олег Чернетченко. Инженер, который решил, что искать правду по папкам вручную — сомнительная традиция.</p>
-      <div class="contacts">
-        <a class="text-link" href="https://ovc.me/" rel="noreferrer">Об авторе</a>
-        <a class="text-link" href="https://t.me/chernetchenko" rel="noreferrer">Telegram</a>
-        <a class="text-link" href="mailto:oleg@chernetchenko.ru">oleg@chernetchenko.ru</a>
-      </div>
     </section>
 
     <footer>Локальные данные и модели остаются на машине пользователя. Именно так и задумано.</footer>
