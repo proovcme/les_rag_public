@@ -20,6 +20,10 @@ Pinned commit: `0ecccf54362870a75ecaf96f99fb6129dfe3a0fa`
 - LES-owned duplicate release builder удалён;
 - URL submodule — публичный HTTPS;
 - весь текущий ARTEL offline-профиль даёт `95 passed`.
+- общий documentation gate видит 335 Markdown-файлов (включая generated
+  knowledge), 27 LES algorithm docs и 8 LES/ARTEL skills без ошибок living links.
+- финальный `make verify` собрал 3091 тест, ARTEL + documentation/publication
+  focused profile дал 99 passed.
 
 Однако pinned commit находится в открытом draft PR Agnostis #2, а живой
 Legion/Revit install не принят. Поэтому статус — **полный reviewable source и
