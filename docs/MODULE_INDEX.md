@@ -653,7 +653,7 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 | Модуль | Назначение | Док |
 |---|---|---|
 | cad-bim | CAD/BIM граф + вьювер (three.js/web-ifc); DWG/DXF путь идёт через `tools/cad_bim_extract_dxf.py` (`dwg2dxf` → DXF repair-pass при битых group-code строках → реконструкция нарисованных таблиц `LINE/LWPOLYLINE`+`TEXT/MTEXT` → `cad_bim_graph.json` → `/api/cad-bim/import`) и затем `sync-smart` projections в `CAD_BIM_Index`; projection выводит `CAD drawn tables`, `first positions`, `logical positions`, data row-lines и compact row-lines перед поэлементным шумом; `retrieval_service` для `target_file` умеет `first_ordinal_guard` по фактическим `position N`; `GET /api/cad-bim/imports` даёт read-only inventory импортов, слабых графов, дублей и статуса индексации projection; Совушка «Документы» → `CAD` показывает эти рычаги человеку | (в [CODE_MAP.md](CODE_MAP.md); `routers/speckle.py` = `/api/cad-bim/*`) |
-| artel | генератор семейств Revit (отдельный Win+Revit пакет) | `products/artel/skills/*/SKILL.md` |
+| artel | standalone Windows/Revit product; LES содержит только pinned public submodule, integration tools и offline contract tests, но не владеет installer/release | [proovcme/Agnostis](https://github.com/proovcme/Agnostis), `products/artel`, `tests/test_artel*.py` · [аудит стабильности](audits/ARTEL_STABILITY_AUDIT.md) |
 | mail (Е.Ж.И.К.) | read-only classic Outlook + IMAP, private dataset per mailbox; Apple Mail/.olm remain legacy imports | [ALGO-mail-intake.md](ALGO-mail-intake.md) · [CODE_MAP.md](CODE_MAP.md) |
 | mcp | ЛЕС как MCP-сервер (18 инструментов наружу, включая пакетный поиск цен ФГИС) | `tools/les_mcp_server.py` (в [CODE_MAP.md](CODE_MAP.md)) |
 

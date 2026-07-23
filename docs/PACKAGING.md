@@ -139,11 +139,10 @@ uv run python tools/check_atlas_bundle_budget.py
 uv run python tools/build_atlas_release.py
 ```
 
-Build АРТЕЛЬ MVP hand-test artifact with:
-
-```bash
-uv run python tools/build_artel_release.py
-```
+АРТЕЛЬ собирается и выпускается из канонического публичного репозитория
+<https://github.com/proovcme/Agnostis>. `products/artel` в LES — pinned
+git-submodule для интеграционных тестов и связи с ARTEL Index; LES не владеет
+сборкой ARTEL installer.
 
 ## Acceptance Gates
 
@@ -164,25 +163,27 @@ Before a boxed release:
   absent prices remain `MISSING`.
 - АТЛАС zip contains `ATLAS_MANIFEST.json` and excludes private `JSON/` and `ifc-sample/` folders.
 - АТЛАС bundle budget passes so dependency drift is explicit.
-- АРТЕЛЬ zip contains `ARTEL_MANIFEST.json`, UI, backend, OpenAPI and runbook; it excludes binary build output and legacy Revit distribution files.
+- ARTEL submodule инициализирован на зафиксированном commit; выпускной gate
+  самого ARTEL выполняется в репозитории Agnostis.
 
 ## Immediate Next Work
 
 1. Smoke `les-v0.1.0-linux-docker.tar.gz` on a real Docker host.
 2. Smoke Windows Docker/lite artifacts on a real Windows workstation.
-3. Keep the public-safe ARTEL seed flow green on every fresh runtime:
-   `uv run python tools/seed_artel_learning_cases.py --verify-search`.
+3. Keep the pinned ARTEL submodule and LES integration tests green; product
+   build/install/release gates run in Agnostis.
 4. Add actual Linux systemd Qdrant/model unit templates.
-5. Extend ARTEL `FamilyLearningCase` import from demo seed to accepted internal cases.
+5. Extend accepted ARTEL Index integration without copying product source into LES.
 6. Add hub repository README for LES / АТЛАС / АРТЕЛЬ.
-7. Add Windows hand-test evidence for ARTEL seeded retrieval.
+7. Link approved Windows/Revit hand-test evidence from the Agnostis release.
 
 Completed on 2026-06-06:
 
 - destructive Mac reinstall stress from fresh clone;
 - private `v0.1.0` boxed release;
 - public `v0.1.2-public-boxed-install` snapshot release.
-- LES umbrella product layout with `products/atlas` and `products/artel`;
+- historical LES umbrella layout with embedded `products/artel` (superseded by
+  the pinned Agnostis submodule);
 - repeatable `atlas-standalone.zip` build and smoke scripts.
-- repeatable `artel-mvp.zip` hand-test build script.
+- the old LES-owned `artel-mvp.zip` builder (removed after the product split).
 - public-safe ARTEL `FamilyLearningCase` schema/example and targeted `ARTEL_Index` seed tool.
