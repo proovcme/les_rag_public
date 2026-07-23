@@ -164,10 +164,13 @@ def _expanded_chunk(chunk: Any, neighbors: list[Any], *, source: str, max_chars:
     base_text = str(getattr(chunk, "content", "") or "")
     base_hash = str(original_meta.get("content_hash") or _fingerprint(base_text))
     base_ord = _chunk_ord(original_meta)
-    parts: list[tuple[str, str]] = []
-    heading = str(original_meta.get("parent_heading") or original_meta.get("section_heading") or "").strip()
+    heading_parts: list[tuple[str, str]] = []
+    main_parts: list[tuple[str, str]] = [("Основной фрагмент", base_text)]
+    before_parts: list[tuple[str, str]] = []
+    after_parts: list[tuple[str, str]] = []
+    heading = str(original_meta.get("section_heading") or original_meta.get("parent_heading") or "").strip()
     if heading:
-        parts.append(("Раздел", heading))
+        heading_parts.append(("Раздел", heading))
 
     if neighbors:
         for neighbor in neighbors:
@@ -178,26 +181,22 @@ def _expanded_chunk(chunk: Any, neighbors: list[Any], *, source: str, max_chars:
             n_hash = str(n_meta.get("content_hash") or _fingerprint(n_text))
             n_ord = _chunk_ord(n_meta)
             if n_hash == base_hash or (base_ord is not None and n_ord == base_ord):
-                label = "Основной фрагмент"
+                main_parts = [("Основной фрагмент", n_text)]
             elif base_ord is not None and n_ord is not None and n_ord < base_ord:
-                label = "Контекст до"
+                before_parts.append(("Контекст до", n_text))
             elif base_ord is not None and n_ord is not None and n_ord > base_ord:
-                label = "Контекст после"
+                after_parts.append(("Контекст после", n_text))
             else:
-                label = "Соседний фрагмент"
-            parts.append((label, n_text))
+                after_parts.append(("Соседний фрагмент", n_text))
     else:
         before = str(original_meta.get("context_before") or "").strip()
         after = str(original_meta.get("context_after") or "").strip()
         if before:
-            parts.append(("Контекст до", before))
-        parts.append(("Основной фрагмент", base_text))
+            before_parts.append(("Контекст до", before))
         if after:
-            parts.append(("Контекст после", after))
+            after_parts.append(("Контекст после", after))
 
-    if not any(label == "Основной фрагмент" for label, _ in parts):
-        parts.insert(1 if heading else 0, ("Основной фрагмент", base_text))
-
+    parts = [*heading_parts, *main_parts, *before_parts, *after_parts]
     content = _dedup_and_format(parts)
     if max_chars and len(content) > max_chars:
         content = content[: max_chars - 1].rstrip() + "…"
@@ -234,6 +233,8 @@ def _dedup_and_format(parts: list[tuple[str, str]]) -> str:
 
 def _meta(chunk: Any) -> dict[str, Any]:
     meta = getattr(chunk, "meta", {}) or {}
+    if not meta:
+        meta = getattr(chunk, "metadata", {}) or {}
     return meta if isinstance(meta, dict) else {}
 
 

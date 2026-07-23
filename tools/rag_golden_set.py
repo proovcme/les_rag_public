@@ -41,11 +41,13 @@ class GoldenCase:
     question: str
     dataset_filter: str = ""
     expected_route_filter: str = ""
+    expected_quality_status: str = ""
     reference_answer: str = ""
     top_k: int = 8
     min_chunks: int = 1
     min_top_score: float = 0.0
     must_find: tuple[str, ...] = ()
+    must_find_same_chunk: bool = True
     source_any: tuple[str, ...] = ()
     source_top_any: tuple[str, ...] = ()
     source_top_k: int = 3
@@ -101,11 +103,13 @@ def _case_from_dict(raw: dict[str, Any]) -> GoldenCase:
         question=str(raw["question"]),
         dataset_filter=str(raw.get("dataset_filter") or ""),
         expected_route_filter=str(raw.get("expected_route_filter") or ""),
+        expected_quality_status=str(raw.get("expected_quality_status") or ""),
         reference_answer=str(raw.get("reference_answer") or ""),
         top_k=int(raw.get("top_k") or 8),
         min_chunks=int(raw.get("min_chunks") or 1),
         min_top_score=float(raw.get("min_top_score") or 0.0),
         must_find=tuple(str(item) for item in raw.get("must_find", [])),
+        must_find_same_chunk=bool(raw.get("must_find_same_chunk", True)),
         source_any=tuple(str(item) for item in raw.get("source_any", [])),
         source_top_any=tuple(str(item) for item in raw.get("source_top_any", [])),
         source_top_k=int(raw.get("source_top_k") or 3),
@@ -153,14 +157,14 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
         return GoldenResult(case.id, False, "response chunks is not a list", elapsed)
 
     sources = tuple(str(chunk.get("doc_name") or "") for chunk in chunks if isinstance(chunk, dict))
-    evidence = _norm(
-        "\n".join(
-            f"{chunk.get('doc_name', '')}\n{chunk.get('preview', '')}"
-            f"\n{chunk.get('expanded_preview', '')}"
-            for chunk in chunks
-            if isinstance(chunk, dict)
-        )
-    )
+    # Expected content terms must come from retrieved content, never from a
+    # convenient file title. Source-name expectations have dedicated fields.
+    evidence_by_chunk = [
+        _norm(f"{chunk.get('preview', '')}\n{chunk.get('expanded_preview', '')}")
+        for chunk in chunks
+        if isinstance(chunk, dict)
+    ]
+    evidence = "\n".join(evidence_by_chunk)
     scores = [
         float(chunk.get("score") or 0.0)
         for chunk in chunks
@@ -177,6 +181,9 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
     missing_terms = [term for term in case.must_find if not _contains(evidence, term)]
     if missing_terms:
         failures.append("missing terms: " + ", ".join(missing_terms))
+    elif case.must_find and case.must_find_same_chunk:
+        if not any(all(_contains(chunk_text, term) for term in case.must_find) for chunk_text in evidence_by_chunk):
+            failures.append("expected terms are split across unrelated chunks")
 
     if case.source_any:
         source_text = _norm("\n".join(sources))
@@ -196,6 +203,14 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
         route_filter = str((response.get("query_route") or {}).get("dataset_filter") or "")
         if route_filter != case.expected_route_filter:
             failures.append(f"route={route_filter or '-'} != {case.expected_route_filter}")
+
+    if case.expected_quality_status:
+        trace = response.get("retrieval_trace") or {}
+        quality_status = str(trace.get("quality_status") or "")
+        if quality_status != case.expected_quality_status:
+            failures.append(
+                f"quality={quality_status or '-'} != {case.expected_quality_status}"
+            )
 
     if failures:
         return GoldenResult(case.id, False, "; ".join(failures), elapsed, len(chunks), top_score, sources)

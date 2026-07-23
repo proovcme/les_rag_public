@@ -42,6 +42,7 @@ class MailAttachmentProfile:
     content_type: str
     size_bytes: int
     sha1: str
+    sha256: str
     kind: str
     extraction: str
     text: str = ""
@@ -388,6 +389,11 @@ def _body_and_attachments_from_eml(msg: Any) -> tuple[str, list[MailAttachmentPr
             filename = part.get_filename()
             disposition = (part.get_content_disposition() or "").lower()
             content_type = part.get_content_type()
+            content_id = str(part.get("Content-ID", "") or "").strip()
+            if content_type.startswith("image/") and disposition != "attachment" and content_id:
+                # CID images are normally signatures/logos rendered inside HTML.
+                # They are retained in the immutable .eml but never OCR-ed as evidence.
+                continue
             if filename or disposition == "attachment" or content_type.startswith("image/"):
                 data = part.get_payload(decode=True) or b""
                 attachments.append(_attachment_profile(filename or "(без имени)", content_type, data))
@@ -414,6 +420,8 @@ def _body_and_attachments_from_eml(msg: Any) -> tuple[str, list[MailAttachmentPr
 def _attachments_from_msg(msg: Any) -> list[MailAttachmentProfile]:
     attachments = []
     for item in getattr(msg, "attachments", []) or []:
+        if bool(getattr(item, "hidden", False)) or bool(getattr(item, "isHidden", False)):
+            continue
         filename = getattr(item, "longFilename", "") or getattr(item, "shortFilename", "") or "(без имени)"
         data = b""
         for attr in ("data", "content", "rawData"):
@@ -429,6 +437,7 @@ def _attachments_from_msg(msg: Any) -> list[MailAttachmentProfile]:
 def _attachment_profile(filename: str, content_type: str, data: bytes) -> MailAttachmentProfile:
     suffix = Path(filename or "").suffix.lower()
     sha1 = hashlib.sha1(data).hexdigest() if data else ""
+    sha256 = hashlib.sha256(data).hexdigest() if data else ""
     kind = _attachment_kind(filename, content_type)
     text = ""
     extraction = "metadata_only"
@@ -470,13 +479,14 @@ def _attachment_profile(filename: str, content_type: str, data: bytes) -> MailAt
         needs_ocr = not bool(text)
         needs_vlm = not bool(text)
 
-    attachment_id = _short_hash(f"{filename}:{sha1}:{content_type}") if sha1 else _short_hash(filename)
+    attachment_id = _short_hash(f"{filename}:{sha256}:{content_type}") if sha256 else _short_hash(filename)
     return MailAttachmentProfile(
         attachment_id=attachment_id,
         filename=filename or "(без имени)",
         content_type=content_type,
         size_bytes=len(data),
         sha1=sha1,
+        sha256=sha256,
         kind=kind,
         extraction=extraction,
         text=_compact(text, _attachment_text_limit()),

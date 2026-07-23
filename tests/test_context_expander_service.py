@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.lexical_index_service import LexicalIndex
@@ -83,6 +84,47 @@ def test_context_expander_uses_lexical_parent_window(monkeypatch, tmp_path):
     assert result.lexical_count == 1
     assert "Контекст до: До таблицы" in result.chunks[0].content
     assert "Основной фрагмент: Строка таблицы" in result.chunks[0].content
+
+
+def test_context_expander_accepts_runtime_metadata_alias(monkeypatch):
+    monkeypatch.setenv("RAG_CONTEXT_WINDOW_ENABLED", "true")
+    chunk = SimpleNamespace(
+        content="Основное требование",
+        doc_name="book.pdf",
+        score=1.0,
+        doc_id="d1",
+        metadata={
+            "context_before": "Предыдущий абзац",
+            "context_after": "Следующий абзац",
+            "section_heading": "Раздел 2",
+        },
+    )
+
+    result = expand_context_windows([chunk], max_chars_per_chunk=500)
+
+    assert result.expanded_count == 1
+    assert result.inline_count == 1
+    assert "Раздел: Раздел 2" in result.chunks[0].content
+    assert "Контекст до: Предыдущий абзац" in result.chunks[0].content
+
+
+def test_context_expander_keeps_main_fragment_before_long_context(monkeypatch):
+    monkeypatch.setenv("RAG_CONTEXT_WINDOW_ENABLED", "true")
+    chunk = Chunk(
+        "TARGET position 1 / позиция 1 | name: first",
+        "cad.md",
+        meta={
+            "context_before": "previous row " * 200,
+            "section_heading": "CAD drawn table drawn_table_1 first positions / первые три позиции",
+        },
+    )
+
+    result = expand_context_windows([chunk], max_chars_per_chunk=180)
+
+    content = result.chunks[0].content
+    assert "Основной фрагмент: TARGET position 1" in content
+    if "Контекст до:" in content:
+        assert content.index("Основной фрагмент: TARGET") < content.index("Контекст до:")
 
 
 def test_context_expander_leaves_legacy_chunks_unchanged(monkeypatch):
