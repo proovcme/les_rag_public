@@ -96,6 +96,22 @@ def test_trace_summary_no_mail_body():
     s = ar.trace_summary({"intent": "mail_entity_search", "adapter_statuses": {"mail": "unavailable"}})
     assert "body" not in s.lower() and "mail=unavailable" in s
 
+
+def test_trace_summary_shows_topic_guided_retrieval():
+    s = ar.trace_summary({
+        "topic_guided_retrieval": {
+            "selected_topics": [{"label": "пожарная сигнализация и автоматика"}],
+            "targeted_chunk_count": 24,
+            "wide_fallback_chunk_count": 24,
+            "wide_fallback_promoted": {"doc_name": "BAI/OUT/ИОС 5.4/СО1Б-17.05-ИОС5.4.pdf"},
+        }
+    })
+
+    assert "topic: пожарная сигнализация" in s
+    assert "targeted 24" in s and "fallback 24" in s
+    assert "promoted СО1Б-17.05-ИОС5.4.pdf" in s
+
+
 def test_trace_summary_empty():
     assert ar.trace_summary(None) == "" and ar.trace_summary({}) == ""
 
@@ -142,6 +158,34 @@ def test_citation_drawer_item_logical_ref_no_operator_warning():
     assert item["open_url"] == ""
     assert item["copy_text"] == "ГЭСН-2022#06-16-005-01"
     assert item["unavailable_reason"] == ""
+
+def test_split_inline_source_notes_keeps_prose_readable():
+    text = (
+        "Адрес подтвержден [Источник 1].\n"
+        "Источники: [Источник 1] BAI/ОЦТ/ИОС_5.2/03_Пояснительная записка.docx — адрес объекта"
+    )
+    body, notes = ar.split_inline_source_notes(text)
+
+    assert "Адрес подтвержден [Источник 1]." in body
+    assert "Источники:" not in body
+    assert notes[0]["markers"] == ["[Источник 1]"]
+    assert "Пояснительная записка.docx" in notes[0]["text"]
+
+def test_source_notes_artifact_lists_notes_and_sources():
+    artifact = ar.source_notes_artifact(
+        "Факт.\nИсточники: [Источник 1] файл — фрагмент",
+        sources=[{
+            "source_ref": "BAI/ОЦТ/ИОС_5.2/03_Пояснительная записка.docx#para12",
+            "source_kind": "extracted_body",
+            "snippet": "Адрес объекта",
+        }],
+    )
+
+    assert artifact["title"] == "Источники ответа"
+    assert artifact["mode"] == "markdown"
+    assert "## Пометки из ответа" in artifact["content"]
+    assert "## Перечень источников" in artifact["content"]
+    assert "Пояснительная записка.docx" in artifact["content"]
 
 def test_group_evidence_sections_order_and_missing_visible():
     from proxy.services.evidence_contract import EvidenceItem, EvidenceType, block_of

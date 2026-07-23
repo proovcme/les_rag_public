@@ -31,3 +31,16 @@ def test_source_lookup_answer_lists_unique_sources():
     assert "СП 60.13330.2020.docx" in answer
     assert "СП 124.13330.2012.docx" in answer
     assert answer.count("СП 60.13330.2020.docx") == 1
+
+
+def test_source_lookup_answer_does_not_stop_after_three_sources():
+    chunks = [
+        SimpleNamespace(doc_name=f"NTD/СП {index}.docx", content=f"Источник {index}")
+        for index in range(1, 9)
+    ]
+
+    answer = _source_lookup_answer("Где смотреть требования?", chunks)
+
+    assert answer is not None
+    for index in range(1, 9):
+        assert f"СП {index}.docx" in answer

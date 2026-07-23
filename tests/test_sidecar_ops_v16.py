@@ -323,7 +323,7 @@ def test_v04_source_scope_regression():
     assert u.route_construction_intent("правила расстановки ОЗК").intent == "norm_qa"
 
 def test_v03_lsr_regression():
-    asm = ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])
+    asm = ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])
     assert asm["asm_positions"][0]["qty"] == 7.2
 
 def test_evidence_invariants_regression():

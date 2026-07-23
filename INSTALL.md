@@ -15,8 +15,8 @@
 ## Быстрый старт
 
 ```bash
-git clone git@github.com:proovcme/les_rag.git
-cd les_rag
+git clone --recurse-submodules git@github.com:proovcme/les_rag_public.git
+cd les_rag_public
 
 uv sync
 uv run lesctl doctor --profile mac-native

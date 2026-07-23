@@ -12,8 +12,11 @@ If Core ML hits a native SIGSEGV, launchd only has to recover this child.
 from __future__ import annotations
 
 import argparse
+import fcntl
+import hashlib
 import json
 import os
+import shutil
 import sys
 import time
 import traceback
@@ -23,6 +26,51 @@ from typing import Any
 
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
+
+def _package_fingerprint(model_path: Path) -> str:
+    """Cheap invalidation key for a local .mlpackage without hashing GB of weights."""
+    digest = hashlib.sha256(str(model_path.resolve()).encode("utf-8"))
+    for item in sorted(path for path in model_path.rglob("*") if path.is_file()):
+        stat = item.stat()
+        digest.update(str(item.relative_to(model_path)).encode("utf-8"))
+        digest.update(str(stat.st_size).encode("ascii"))
+        digest.update(str(stat.st_mtime_ns).encode("ascii"))
+    return digest.hexdigest()[:16]
+
+
+def _stable_compiled_path(model_path: Path) -> Path:
+    cache_root = Path(
+        os.getenv("LES_COREML_COMPILED_CACHE", "~/Library/Caches/LES/coreml")
+    ).expanduser()
+    return cache_root / f"{model_path.stem}-{_package_fingerprint(model_path)}.mlmodelc"
+
+
+def _load_stable_compiled_model(ct: Any, model_path: Path, compute_unit: Any):
+    """Compile once into a stable LES cache and reuse it across worker restarts."""
+    compiled_path = _stable_compiled_path(model_path)
+    compiled_path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = compiled_path.parent / f"{model_path.stem}.compile.lock"
+    with lock_path.open("a+b") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if not compiled_path.is_dir():
+            temporary_path = compiled_path.parent / (
+                f".{compiled_path.stem}.{os.getpid()}.mlmodelc"
+            )
+            if temporary_path.exists():
+                shutil.rmtree(temporary_path)
+            try:
+                ct.models.utils.compile_model(
+                    str(model_path), destination_path=str(temporary_path)
+                )
+                os.replace(temporary_path, compiled_path)
+            finally:
+                if temporary_path.exists():
+                    shutil.rmtree(temporary_path)
+        for stale_path in compiled_path.parent.glob(f"{model_path.stem}-*.mlmodelc"):
+            if stale_path != compiled_path:
+                shutil.rmtree(stale_path)
+    return ct.models.CompiledMLModel(str(compiled_path), compute_units=compute_unit)
 
 
 class CoreMLEmbeddingWorker:
@@ -78,7 +126,9 @@ class CoreMLEmbeddingWorker:
                 self.model_id,
                 local_files_only=self.local_files_only,
             )
-            self._model = ct.models.MLModel(str(model_path), compute_units=self._compute_unit())
+            self._model = _load_stable_compiled_model(
+                ct, model_path, self._compute_unit()
+            )
             print("[coreml-embed-worker] ready", file=sys.stderr, flush=True)
 
     @staticmethod

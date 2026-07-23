@@ -3,7 +3,7 @@
     LES_SMETNOE_TOKEN=... uv run python -m tools.gesn_fetch 11-01-011-01 08-02-001-01
     LES_SMETNOE_VIA_SSH=root@host LES_SMETNOE_TOKEN=... uv run python -m tools.gesn_fetch <код>   # через VPS
 
-Кладёт расход в data/gesn_base/gesn2022.parquet → дальше gesn_service/lsr_assembly считают по этим кодам.
+Кладёт сырой расход в storage/cache/gesn_fgis/. Боевой расчётный слой — data/gesn_base/gesn2022_unified.parquet.
 """
 from __future__ import annotations
 

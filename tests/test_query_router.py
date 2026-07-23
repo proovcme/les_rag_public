@@ -30,7 +30,7 @@ def test_hvac_normative_question_routes_to_hvac_before_generic_normative():
     assert intent.reason == "hvac_keyword"
     assert route.dataset_filter == "NTD_HVAC"
     assert route.reason == "hvac_keyword"
-    assert "СП 60.13330" in route.expanded_query
+    assert route.expanded_query == "Где смотреть требования к микроклимату помещений?"
 
 
 def test_table_document_keywords_route_to_table():

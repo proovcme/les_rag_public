@@ -185,7 +185,15 @@ def _catalog_name(did: str, catalog: list[dict] | None) -> str | None:
 _SYSTEM_HINTS = ("_shard_", "speckle", "revit-api", "cad_bim", "fop20", "system", "_tmp", "scratch")
 
 
-def _is_system_dataset(name: str, did: str) -> str | None:
+def _is_system_dataset(
+    name: str,
+    did: str,
+    dataset_scope: str = "",
+    module_id: str = "",
+) -> str | None:
+    if str(dataset_scope or "").strip().casefold() == "system":
+        owner = str(module_id or "").strip() or "shared"
+        return f"системный датасет модуля {owner}"
     n = (name or "").lower() + " " + (did or "").lower()
     for h in _SYSTEM_HINTS:
         if h in n:
@@ -209,16 +217,30 @@ def scope_options(datasets: list[dict], projects: list[dict],
         did = str(d.get("id"))
         name = str(d.get("name") or did)
         pids = [int(pid) for pid, dids in (project_links or {}).items() if did in [str(x) for x in dids]]
+        dataset_scope = str(d.get("dataset_scope") or "user")
+        module_id = str(d.get("module_id") or "")
+        source_type = (
+            f"module:{module_id or 'shared'}"
+            if dataset_scope.casefold() == "system"
+            else d.get("source_type") or d.get("origin") or "unknown"
+        )
         rec = {
             "id": did, "name": name,
-            "source_type": d.get("source_type") or d.get("origin") or "unknown",
+            "source_type": source_type,
             "file_count": d.get("file_count", d.get("files", d.get("document_count", 0))),
             "sidecar_status": d.get("sidecar_status", "unknown"),
             "lexical_status": d.get("lexical_status", "unknown"),
             "qdrant_status": d.get("qdrant_status", d.get("chunk_count", 0) and "indexed" or "unknown"),
             "project_ids": pids,
+            "dataset_scope": dataset_scope,
+            "module_id": module_id,
         }
-        sysreason = _is_system_dataset(name, did)
+        sysreason = _is_system_dataset(
+            name,
+            did,
+            str(d.get("dataset_scope") or ""),
+            str(d.get("module_id") or ""),
+        )
         ds_by_id[did] = rec
         if sysreason:
             rec["hidden_reason"] = sysreason

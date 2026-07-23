@@ -253,7 +253,7 @@ def fetch_imap_eml_files(
                     uid = int(uid_value)
                 except ValueError:
                     continue
-                status, msg_data = client.uid("FETCH", str(uid), "(RFC822)")
+                status, msg_data = client.uid("FETCH", str(uid), "(BODY.PEEK[])")
                 if status != "OK":
                     continue
                 raw = _extract_fetch_bytes(msg_data)

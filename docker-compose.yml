@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.1
     container_name: les-qdrant
     ports: ["6333:6333", "6334:6334"]
     volumes: ["./data/qdrant:/qdrant/storage"]

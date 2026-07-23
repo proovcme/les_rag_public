@@ -9,14 +9,18 @@
 
 Два источника норм (объединяются прозрачно):
 - **Семя** `config/domain/gesn_seed.yaml` — демо-норма эталона (выверена под gold-тест).
-- **База** `data/gesn_base/gesn2022.parquet` — полная ГЭСН-2022 (десятки тысяч норм),
-  импортируется `tools/gesn_import.py` (как ФГИС ЦС). Если базы нет — работаем на семени.
+- **База** `data/smeta_base/les_smeta_base.sqlite` — runtime-facing structured ГЭСН-2022
+  (`norm_key=<base_type>:<bare_code>`), собирается из source parquet ФГИС ЦС. Если базы нет —
+  работаем на source parquet fallback или семени.
   При совпадении кода **семя побеждает** (эталон остаётся точным).
 """
 
 from __future__ import annotations
 
 import re
+import json
+import os
+import sqlite3
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -24,6 +28,8 @@ from typing import Any, Optional
 DEFAULT_PATH = Path("config/domain/gesn_seed.yaml")
 DEFAULT_BASE_PATH = Path("data/gesn_base/gesn2022.parquet")
 DEFAULT_BASE_V2_PATH = Path("data/gesn_base/gesn2022_v2.parquet")
+DEFAULT_UNIFIED_BASE_PATH = Path("data/gesn_base/gesn2022_unified.parquet")
+DEFAULT_STRUCTURED_BASE_PATH = Path("data/smeta_base/les_smeta_base.sqlite")
 
 # Старые базы могли хранить труд как «Средний разряд работы N,M» без кода.
 # Выводим тарифный код 1-100-NM (эталон: разряд 2,5 → 1-100-25) как fallback; новый FGIS-парсер
@@ -51,6 +57,46 @@ def _f(value: Any) -> float:
         return 0.0
 
 
+def _resource_text_key(value: Any) -> str:
+    return " ".join(str(value or "").replace("\xa0", " ").split()).casefold()
+
+
+def _resource_number_key(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    return format(_f(value), ".12g")
+
+
+def _resource_identity(resource: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    """Identity guard for stale bases which predate canonical source dedupe.
+
+    It only collapses rows with the same coded (or, if no code exists, named)
+    resource, unit, consumption and explicit price. It does not infer or alter
+    a norm's resource composition.
+    """
+    code = _resource_text_key(resource.get("code"))
+    name = _resource_text_key(resource.get("name"))
+    return (
+        _resource_text_key(resource.get("kind")),
+        "code" if code else "name",
+        code or name,
+        _resource_text_key(resource.get("unit")),
+        f"{_resource_number_key(resource.get('per_unit'))}|{_resource_number_key(resource.get('price'))}",
+    )
+
+
+def _dedupe_resources(resources: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    seen: set[tuple[str, str, str, str, str]] = set()
+    unique: list[dict[str, Any]] = []
+    for resource in resources:
+        identity = _resource_identity(resource)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique.append(resource)
+    return unique, len(resources) - len(unique)
+
+
 def _base_type(prefix: Any, *, default: str = "ГЭСН") -> str:
     raw = str(prefix or "").strip().upper().replace(" ", "")
     if not raw:
@@ -70,6 +116,10 @@ def _split_norm_ref(code: Any, *, default_base: str = "ГЭСН") -> tuple[str, 
     base_type = _base_type(prefix.group(1) if prefix else "", default=default_base)
     bare = _BARE_NORM_RE.search(s)
     return base_type, bare.group(0) if bare else ""
+
+
+def _has_explicit_base_prefix(code: Any) -> bool:
+    return bool(_BASE_PREFIX_RE.match(str(code or "").strip().upper().replace(" ", "")))
 
 
 def _norm_code(code: Any) -> str:
@@ -92,11 +142,52 @@ def _display_code(bare_or_code: Any, base_type: Any) -> str:
     return f"{bt}{bare}" if bt.startswith(("ГЭСН", "ФЕР", "ТЕР")) else bare
 
 
+def _work_steps(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if isinstance(value, list):
+        return [str(x).strip() for x in value if str(x).strip()]
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        parsed = None
+    if isinstance(parsed, list):
+        return [str(x).strip() for x in parsed if str(x).strip()]
+    return [line.strip(" -\t") for line in text.splitlines() if line.strip(" -\t")]
+
+
 def _default_base_paths() -> list[Path]:
+    if DEFAULT_UNIFIED_BASE_PATH.exists():
+        return [DEFAULT_UNIFIED_BASE_PATH]
     paths = [DEFAULT_BASE_PATH]
     if DEFAULT_BASE_V2_PATH.exists():
         paths.append(DEFAULT_BASE_V2_PATH)
     return paths
+
+
+def _structured_base_path() -> Path:
+    from proxy.smeta_core.base_registry import active_base
+
+    return Path(active_base()["base_path"])
+
+
+def _connect_structured_base_readonly(path: Path) -> sqlite3.Connection:
+    from proxy.smeta_core.base_registry import runtime_data_path
+
+    resolved = runtime_data_path(path)
+    try:
+        return sqlite3.connect(
+            f"{resolved.as_uri()}?mode=ro&immutable=1",
+            uri=True,
+            timeout=30.0,
+        )
+    except sqlite3.OperationalError as error:
+        raise sqlite3.OperationalError(
+            f"unable to open normative database {resolved}: {error}"
+        ) from error
 
 
 @lru_cache(maxsize=4)
@@ -115,13 +206,84 @@ def load_norms(path: str | None = None) -> dict[str, dict[str, Any]]:
 
 
 @lru_cache(maxsize=4)
-def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]]:
-    """Каталог норм из ПАРКЕТ-БАЗЫ → {код: норма}. {} если базы нет. Кешируется.
+def load_structured_base_norms(sqlite_path: str | None = None) -> dict[str, dict[str, Any]]:
+    """Каталог норм из canonical SQLite → {код: норма}. {} если базы нет."""
+    p = Path(sqlite_path) if sqlite_path else _structured_base_path()
+    if not p.exists():
+        return {}
 
-    Parquet — плоские строки-ресурсы (схема `tools.gesn_import.RESOURCE_FIELDS`),
-    группируются по `norm_code` в норму вида {code, name, unit, resources:[…]} —
-    тот же контракт, что у семени.
+    conn = _connect_structured_base_readonly(p)
+    conn.row_factory = sqlite3.Row
+    try:
+        norm_rows = conn.execute(
+            """
+            SELECT norm_key, display_code, base_type, norm_name, norm_unit, work_steps
+            FROM norms
+            ORDER BY norm_key
+            """
+        ).fetchall()
+        if not norm_rows:
+            return {}
+        resources_by_key: dict[str, list[dict[str, Any]]] = {str(row["norm_key"]): [] for row in norm_rows}
+        for row in conn.execute(
+            """
+            SELECT norm_key, kind, resource_code, resource_name, resource_unit, per_unit, price
+            FROM resources
+            ORDER BY norm_key, id
+            """
+        ):
+            key = str(row["norm_key"])
+            res: dict[str, Any] = {
+                "kind": row["kind"],
+                "name": row["resource_name"] or "",
+                "unit": row["resource_unit"] or "",
+                "per_unit": row["per_unit"],
+            }
+            if row["resource_code"]:
+                res["code"] = row["resource_code"]
+            elif row["kind"] == "labor":
+                tc = _labor_tariff_code(row["resource_name"])
+                if tc:
+                    res["code"] = tc
+            if row["price"] not in (None, ""):
+                res["price"] = row["price"]
+            resources_by_key.setdefault(key, []).append(res)
+    finally:
+        conn.close()
+
+    out: dict[str, dict[str, Any]] = {}
+    for row in norm_rows:
+        key = str(row["norm_key"])
+        resources, duplicates_dropped = _dedupe_resources(resources_by_key.get(key, []))
+        out[key] = {
+            "code": row["display_code"],
+            "base_type": row["base_type"],
+            "key": key,
+            "name": row["norm_name"] or "",
+            "unit": row["norm_unit"] or "",
+            "work_steps": _work_steps(row["work_steps"]),
+            "resources": resources,
+            "_resource_identity_duplicates_dropped": duplicates_dropped,
+            "_source_kind": "structured_sqlite",
+            "_source_path": str(p),
+        }
+    return out
+
+
+@lru_cache(maxsize=4)
+def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]]:
+    """Каталог норм из canonical base/parquet → {код: норма}. {} если базы нет. Кешируется.
+
+    Без явного пути сначала читается `data/smeta_base/les_smeta_base.sqlite`.
+    Parquet остаётся source/debug fallback и обратной совместимостью тестов.
     """
+    if parquet_path is None:
+        structured = _structured_base_path()
+        if structured.exists():
+            return load_structured_base_norms(str(structured))
+    elif Path(parquet_path).suffix.lower() in {".sqlite", ".db"}:
+        return load_structured_base_norms(parquet_path)
+
     paths = [Path(parquet_path)] if parquet_path else _default_base_paths()
     paths = [p for p in paths if p.exists()]
     if not paths:
@@ -131,6 +293,7 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
     out: dict[str, dict[str, Any]] = {}
     for p in paths:
         df = pd.read_parquet(p)
+        legacy_untyped = "base_type" not in df.columns and "norm_key" not in df.columns
         df = df.astype(object).where(pd.notnull(df), None)
         local: dict[str, dict[str, Any]] = {}
         for rec in df.to_dict(orient="records"):
@@ -147,8 +310,13 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
                     "key": key,
                     "name": rec.get("norm_name") or "",
                     "unit": rec.get("norm_unit") or "",
+                    "work_steps": _work_steps(rec.get("work_steps")),
                     "resources": [],
+                    "_source_kind": "legacy_untyped_parquet" if legacy_untyped else "base_parquet",
+                    "_source_path": str(p),
                 }
+            elif not norm.get("work_steps"):
+                norm["work_steps"] = _work_steps(rec.get("work_steps"))
             res: dict[str, Any] = {
                 "kind": rec.get("kind"),
                 "name": rec.get("resource_name") or "",
@@ -164,7 +332,19 @@ def load_base_norms(parquet_path: str | None = None) -> dict[str, dict[str, Any]
             if rec.get("price") not in (None, ""):
                 res["price"] = rec["price"]
             norm["resources"].append(res)
-        out.update(local)
+        for key, norm in local.items():
+            norm["resources"], duplicates_dropped = _dedupe_resources(norm["resources"])
+            norm["_resource_identity_duplicates_dropped"] = duplicates_dropped
+            existing = out.get(key)
+            if existing:
+                for field in ("name", "unit"):
+                    if not norm.get(field) and existing.get(field):
+                        norm[field] = existing[field]
+                if not norm.get("work_steps") and existing.get("work_steps"):
+                    norm["work_steps"] = existing["work_steps"]
+                if not norm.get("resources") and existing.get("resources"):
+                    norm["resources"] = existing["resources"]
+            out[key] = norm
     return out
 
 
@@ -175,8 +355,25 @@ def _merged_norms(*, path: str | None = None, base_path: str | None = None) -> d
     return merged
 
 
-def get_norm(code: str, *, path: str | None = None, base_path: str | None = None) -> Optional[dict[str, Any]]:
-    return _merged_norms(path=path, base_path=base_path).get(_norm_key(code))
+def get_norm(
+    code: str,
+    *,
+    path: str | None = None,
+    base_path: str | None = None,
+    strict_family: bool = False,
+) -> Optional[dict[str, Any]]:
+    norms = _merged_norms(path=path, base_path=base_path)
+    key = _norm_key(code)
+    if _has_explicit_base_prefix(code):
+        return norms.get(key)
+    bare = _norm_code(code)
+    if bare and strict_family:
+        matches = [norm for norm_key, norm in norms.items() if str(norm_key).endswith(f":{bare}")]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            return None
+    return norms.get(key)
 
 
 def list_norms(path: str | None = None, *, base_path: str | None = None) -> list[dict[str, Any]]:

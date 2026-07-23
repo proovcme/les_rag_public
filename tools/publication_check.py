@@ -22,7 +22,7 @@ FORBIDDEN_PREFIXES = (
     "storage/",
 )
 FORBIDDEN_EXACT = {".env"}
-REQUIRED_PUBLIC_FILES = ("README.md", "LICENSE", "SECURITY.md")
+REQUIRED_PUBLIC_FILES = ("README.md", "LICENSE", "SECURITY.md", "docs/PUBLICATION_CHECKLIST.md")
 HIGH_SIGNAL_SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -32,7 +32,7 @@ HIGH_SIGNAL_SECRET_PATTERNS = (
 ASSIGNMENT_SECRET_PATTERNS = (
     re.compile(
         r"\b[A-Z0-9_]*(?:API_KEY|ADMIN_KEY|SECRET|PASSWORD|ACCESS_TOKEN|REFRESH_TOKEN)[A-Z0-9_]*\b\s*=\s*"
-        r"(?!$|[\"']?$|_|change_me|your_|example|placeholder|none|null|false|true|old-|.*-secret)"
+        r"(?!$|[\"']?$|_|change_me|your_|example|placeholder|none|null|false|true|old-|.*-secret|.*_ref[\"']?$)"
         r"[\"']?[^\"'\s#]{12,}"
     ),
 )

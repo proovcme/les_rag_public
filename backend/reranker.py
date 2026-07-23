@@ -27,7 +27,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
+import threading
 from dataclasses import dataclass
 from typing import Optional
 
@@ -96,13 +98,19 @@ class Reranker:
     def __init__(
         self,
         mlx_url: str = "http://127.0.0.1:8080",
-        model: str = "mlx-community/Qwen3-4B-4bit",
+        model: str = "",
         mode: str = "sequential",    # "batch" или "sequential"
         timeout: float = 30.0,
         max_chunk_len: int = 800,    # обрезаем длинные чанки для скорости
     ):
         self.mlx_url = mlx_url.rstrip("/")
-        self.model = model
+        self.model = (
+            model
+            or os.getenv("RERANK_MODEL", "").strip()
+            or os.getenv("OLLAMA_MODEL", "").strip()
+            or os.getenv("LLM_MODEL", "").strip()
+            or "mlx-community/Qwen3-4B-4bit"
+        )
         self.mode = mode
         self.timeout = timeout
         self.max_chunk_len = max_chunk_len
@@ -123,8 +131,7 @@ class Reranker:
         if not chunks:
             return []
 
-        if len(chunks) <= top_k:
-            # Незачем ранжировать если чанков меньше чем нужно
+        if len(chunks) == 1:
             return [
                 RankedChunk(
                     text=c.get("text", ""),
@@ -340,7 +347,7 @@ class CrossEncoderReranker:
 
         if not chunks:
             return []
-        if len(chunks) <= top_k:
+        if len(chunks) == 1:
             return [
                 RankedChunk(
                     text=c.get("text", ""),
@@ -380,12 +387,102 @@ class CrossEncoderReranker:
         return ranked
 
 
+class SentenceTransformerReranker:
+    """Native local cross-encoder for Windows/Linux production.
+
+    Ollama exposes generation and embeddings but not a cross-encoder rerank
+    contract. Loading the model lazily inside LES keeps the answer LLM out of
+    retrieval decisions while preserving the same async reranker interface.
+    """
+
+    _models: dict[tuple[str, str], object] = {}
+    _model_lock = threading.Lock()
+
+    def __init__(
+        self,
+        mlx_url: str = "",
+        model: str = "",
+        mode: str = "batch",
+        timeout: float = 60.0,
+        max_chunk_len: int = 1600,
+    ):
+        del mlx_url, mode, timeout
+        self.model = model or os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3").strip()
+        self.device = os.getenv("RERANK_DEVICE", "").strip()
+        self.max_chunk_len = max_chunk_len
+        self.batch_size = max(1, int(os.getenv("RERANK_BATCH_SIZE", "8")))
+
+    @classmethod
+    def _load_model(cls, model_name: str, device: str):
+        key = (model_name, device)
+        with cls._model_lock:
+            loaded = cls._models.get(key)
+            if loaded is not None:
+                return loaded
+            try:
+                from sentence_transformers import CrossEncoder
+            except ImportError as exc:
+                raise RuntimeError(
+                    "sentence-transformers reranker is not installed; "
+                    "install the windows-reranker extra"
+                ) from exc
+            kwargs = {"device": device} if device else {}
+            loaded = CrossEncoder(model_name, **kwargs)
+            cls._models[key] = loaded
+            return loaded
+
+    def _score(self, query: str, chunks: list[dict]) -> list[float]:
+        model = self._load_model(self.model, self.device)
+        pairs = [
+            (query, str(chunk.get("text") or "")[: self.max_chunk_len])
+            for chunk in chunks
+        ]
+        raw_scores = model.predict(
+            pairs,
+            batch_size=self.batch_size,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+        )
+        return [float(value) for value in raw_scores]
+
+    async def rerank(self, query: str, chunks: list, top_k: int = 5) -> list[RankedChunk]:
+        if not chunks:
+            return []
+        if len(chunks) == 1:
+            chunk = chunks[0]
+            return [
+                RankedChunk(
+                    text=chunk.get("text", ""),
+                    score=float(chunk.get("score", 0.0)),
+                    original_score=float(chunk.get("score", 0.0)),
+                    metadata=chunk.get("metadata", {}),
+                    rank=1,
+                )
+            ]
+        scores = await asyncio.to_thread(self._score, query, chunks)
+        if len(scores) != len(chunks):
+            raise RuntimeError("cross-encoder score count does not match candidate count")
+        ordered = sorted(zip(scores, chunks), key=lambda item: item[0], reverse=True)
+        return [
+            RankedChunk(
+                text=chunk.get("text", ""),
+                score=float(score_value),
+                original_score=float(chunk.get("score", 0.0)),
+                metadata=chunk.get("metadata", {}),
+                rank=rank,
+            )
+            for rank, (score_value, chunk) in enumerate(ordered[:top_k], start=1)
+        ]
+
+
 def select_reranker_cls():
     """ADR-3: cross_encoder — дефолт; llm — устаревший путь на время миграции."""
-    import os
-
     backend = os.getenv("RERANKER_BACKEND", "cross_encoder").strip().lower()
-    return Reranker if backend == "llm" else CrossEncoderReranker
+    if backend == "llm":
+        return Reranker
+    if backend == "sentence_transformers":
+        return SentenceTransformerReranker
+    return CrossEncoderReranker
 
 
 if __name__ == "__main__":

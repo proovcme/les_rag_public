@@ -12,7 +12,7 @@ import tools.les_mcp_server as m
 _CORE = {
     "les_table_sum", "les_reconcile", "les_bor",
     "les_spec_to_bor", "les_project_summary", "les_form_generate",
-    "les_price_lookup", "les_glossary", "les_kac", "les_stesnennost",
+    "les_price_lookup", "les_price_lookup_batch", "les_glossary", "les_kac", "les_stesnennost",
     "les_lsr_assemble", "les_gesn_expand", "les_table_agg", "les_gesn_fetch",
 }
 # Ярус 3 — action-инструменты (меняют состояние).

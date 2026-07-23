@@ -13,6 +13,7 @@ from typing import Any
 
 from backend.rag_config import rag_meta_db_path
 from proxy.config import external_allow_any, external_browse_default, external_source_roots, rag_upload_suffixes
+from proxy.services.cloud_drive_service import cloud_drive_provider_status, discover_cloud_drive_roots
 from proxy.services.file_map_service import FILE_MAP_DB, map_stats, suggest_index_candidates
 
 
@@ -146,9 +147,13 @@ def build_external_radar(*, candidate_limit: int = 15, file_map_db: Path = FILE_
     """Return a compact external-source radar summary for Samovar/UI."""
     allow_any = external_allow_any()
     configured = external_source_roots()
+    cloud_roots = discover_cloud_drive_roots()
     roots: dict[str, dict[str, Any]] = {}
     for root in configured:
         _add_root(roots, root, source="configured")
+    for item in cloud_roots:
+        if item.get("is_dir") and item.get("path"):
+            _add_root(roots, str(item.get("path")), source=str(item.get("provider_title") or "cloud"))
     if allow_any:
         _add_root(roots, external_browse_default(), source="browse_default")
 
@@ -250,6 +255,10 @@ def build_external_radar(*, candidate_limit: int = 15, file_map_db: Path = FILE_
         "status": "ok",
         "generated_at": time.time(),
         "allow_any": allow_any,
+        "cloud_drives": {
+            "providers": cloud_drive_provider_status(),
+            "local_sync_roots": cloud_roots,
+        },
         "configured_roots": [str(root) for root in configured],
         "roots": enriched_roots,
         "external_documents": len(docs),

@@ -1,6 +1,7 @@
-"""v0.22 §1 — Scope Routing Clarification: проектный запрос при scope=all не ищет молча весь корпус.
+"""v0.22 §1 / v0.286 — Scope hints: проектный запрос при scope=all не душит модель.
 
-Нормы/глоссарий/глобальный реестр на всём RAG разрешены. scope_resolution_warning в trace.
+Сервис clarification сохранён для UI/ручного уточнения. В chat path это только warning в trace:
+RAG/LLM должны получить вопрос и источники, особенно для запросов вроде "расскажи про котельную".
 """
 
 import inspect
@@ -55,17 +56,26 @@ def test_clarification_no_suggestion_when_ambiguous():
 
 # ── §1 wiring в chat ──────────────────────────────────────────────────────────────────────
 
-def test_clarification_wired_in_chat():
+def test_scope_warning_wired_in_chat_without_final_hijack():
     from proxy.routers import chat as chat_mod
     src = inspect.getsource(chat_mod)
-    assert "scope_clarification" in src and "needs_project_scope" in src
+    assert "needs_project_scope" in src
     assert "scope_all_for_project_query" in src   # warning в trace
+    assert 'reply = {"answer": _clar["answer"], "operation": "scope_clarification"}' not in src
+    assert 'channel = "scope_clarification"' not in src
 
 def test_scope_resolution_warning_in_trace():
     # warning добавляется в _scope_snap["warnings"] (виден в query_route.scope)
     from proxy.routers import chat as chat_mod
     src = inspect.getsource(chat_mod)
     assert '_scope_snap.setdefault("warnings", []).append("scope_all_for_project_query")' in src
+
+
+def test_empty_retrieval_no_generic_code_no_data_final():
+    from proxy.services import chat_evidence_application_service
+    src = inspect.getsource(chat_evidence_application_service._execute_chat_evidence_application)
+    assert 'if not chunks and target_file_ref and target_file_ref.get("match_status") in {"matched", "ambiguous"}' in src
+    assert "empty_retrieval_model_first_v1" in src
 
 
 # ── регрессия ─────────────────────────────────────────────────────────────────────────────
@@ -102,6 +112,12 @@ def test_scope_selector_no_vague_dashes_label():
     # старый «— весь RAG —» с тире заменён на «Весь RAG»
     src = open("sovushka/pages/chat.py", encoding="utf-8").read()
     assert '"Весь RAG"' in src
+
+
+def test_scope_selector_no_close_and_reopen_instruction():
+    src = open("sovushka/pages/chat.py", encoding="utf-8").read()
+    assert "закройте и откройте" not in src
+    assert "Обновить список" in src
 
 def test_scope_resolve_payload_shapes():
     # backend резолвит все формы payload из селектора

@@ -40,7 +40,7 @@ def test_unknown_work_family_not_computed_safety():
 
 def test_lsr_unit_gate_converts_physical_to_norm_measure():
     # физ.720 м³ при норме «100 м3» → 7.2 нормо-ед (НЕ 720), Gate 1 не ослаблен
-    res = ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])
+    res = ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])
     assert res["asm_positions"] and res["asm_positions"][0]["qty"] == 7.2
 
 
@@ -52,21 +52,21 @@ def test_lsr_unit_mismatch_blocks():
 
 # ── golden end-to-end ───────────────────────────────────────────────────────────────────
 
-def test_construction_harness_e2e_f9_to_lsr():
+def test_legacy_construction_harness_stops_before_code_side_norm_selection():
     r = ch.run_construction_harness("смета по Ф9 паркинга", rows=ch.demo_f9_rows())
     # контур пройден
     tools = [t["tool"] for t in r.tool_trace]
     assert "retrieve_project_doc" in tools and "spec_to_bor" in tools
     assert "gesn_expand" in tools and "lsr_assemble" in tools
     types = {b.type for b in r.evidence_blocks}
-    assert EvidenceType.RETRIEVED in types and EvidenceType.COMPUTED in types
+    assert EvidenceType.RETRIEVED in types and EvidenceType.BLOCKED in types
+    assert EvidenceType.COMPUTED not in types
     # RETRIEVED несёт source refs
     retr = next(b for b in r.evidence_blocks if b.type is EvidenceType.RETRIEVED)
     assert all(it.source_refs for it in retr.items)
     # все числа имеют provenance (не из текста LLM)
     assert numbers_in_answer_have_provenance(r)
-    # unit-gate сработал — итог не миллиардный
-    assert r.partial_total is not None and r.partial_total < 100_000_000
+    assert r.partial_total is None and r.final_total is None
 
 
 def test_final_total_blocked_when_critical_blockers():
@@ -119,20 +119,21 @@ def test_retrieve_project_doc_not_found_yields_missing_evidence(tmp_path):
     assert r.final_total is None
 
 
-def test_retrieval_backed_f9_to_lsr_golden(tmp_path):
-    """ГЛАВНЫЙ v0.2 golden: документ НАЙДЕН через facade (parquet по scope), не подан напрямую."""
+def test_retrieval_backed_f9_reaches_model_selection_boundary(tmp_path):
+    """Legacy facade retrieves rows but cannot choose GESN instead of the model."""
     ds = ch.write_demo_project_doc(tmp_path)
     r = ch.run_construction_harness("собери предварительную ЛСР по Ф9 паркинга",
                                     dataset_ids=[ds], storage_root=tmp_path)
     tools = [t["tool"] for t in r.tool_trace]
     assert tools[0] == "retrieve_project_doc" and r.tool_trace[0]["status"] == "found"
     types = {b.type for b in r.evidence_blocks}
-    assert EvidenceType.RETRIEVED in types and EvidenceType.COMPUTED in types
+    assert EvidenceType.RETRIEVED in types and EvidenceType.BLOCKED in types
+    assert EvidenceType.COMPUTED not in types
     # source_ref сквозной: facade(dataset/file/row) → spec_to_bor(#pos) → evidence
     retr = next(b for b in r.evidence_blocks if b.type is EvidenceType.RETRIEVED)
     assert all(it.source_refs and "f9_vor.parquet" in it.source_refs[0] for it in retr.items)
     assert numbers_in_answer_have_provenance(r)
-    assert r.partial_total is not None and r.partial_total < 100_000_000   # unit-gate
+    assert r.partial_total is None and r.final_total is None
 
 
 # ── v0.2: feature flag (OFF по умолчанию, не меняет chat) ─────────────────────────────────

@@ -15,13 +15,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-ENV_PATH = Path(".env")
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
+ENV_PATH = Path(os.getenv("LES_ENV_PATH", ".env")).expanduser()
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
 # Пресет → согласованный набор env. Ключи: провайдер чата, скан-OCR, движок приёмки ИД.
 PRESETS: dict[str, dict[str, str]] = {
-    "local": {  # всё на машине: приватно, бесплатно, валидируется Т.О.С.К.А.
-        "LES_LLM_PROVIDER": "mlx",
+    "local": {  # всё на машине: приватно, бесплатно; конкретный локальный LLM выбирается по доступному стеку
+        "LES_LLM_PROVIDER": "__LOCAL_PROVIDER__",
         "LES_CLOUD_CONSENT": "false",
         "RAG_OCR_BACKEND": "tesseract",
         "LES_ASBUILT_OCR_ENGINE": "local",
@@ -62,14 +62,33 @@ def current_preset() -> str | None:
         "LES_ASBUILT_OCR_ENGINE": os.getenv("LES_ASBUILT_OCR_ENGINE", "local"),
     }
     for name, preset in PRESETS.items():
+        preset = _materialize_preset(name, preset)
         if all(cur.get(k) == v for k, v in preset.items()):
             return name
     return None
 
 
+def _local_provider() -> str:
+    provider = os.getenv("LES_LLM_PROVIDER", "").strip().lower()
+    if provider in {"ollama", "mlx"}:
+        return provider
+    mlx_url = os.getenv("MLX_URL", "").strip()
+    ollama_url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "")).strip()
+    if ":11434" in mlx_url or ollama_url:
+        return "ollama"
+    return "mlx"
+
+
+def _materialize_preset(name: str, preset: dict[str, str]) -> dict[str, str]:
+    result = dict(preset)
+    if name == "local" and result.get("LES_LLM_PROVIDER") == "__LOCAL_PROVIDER__":
+        result["LES_LLM_PROVIDER"] = _local_provider()
+    return result
+
+
 def _persist_env(updates: dict[str, str]) -> None:
     """Слить ключи в .env (как settings-роутер) + применить в os.environ (живёт сразу)."""
-    lines = ENV_PATH.read_text().splitlines() if ENV_PATH.exists() else []
+    lines = ENV_PATH.read_text(encoding="utf-8").splitlines() if ENV_PATH.exists() else []
     seen = set()
     out = []
     for line in lines:
@@ -82,7 +101,7 @@ def _persist_env(updates: dict[str, str]) -> None:
     for key, val in updates.items():
         if key not in seen:
             out.append(f"{key}={val}")
-    ENV_PATH.write_text("\n".join(out) + "\n")
+    ENV_PATH.write_text("\n".join(out) + "\n", encoding="utf-8")
     for key, val in updates.items():
         os.environ[key] = val
 
@@ -92,7 +111,7 @@ def apply_preset(name: str) -> dict[str, Any]:
     canon = normalize_preset(name)
     if canon is None:
         raise ValueError(f"неизвестный режим «{name}» (есть: {', '.join(PRESETS)})")
-    updates = PRESETS[canon]
+    updates = _materialize_preset(canon, PRESETS[canon])
     _persist_env(updates)
     logger.info("[PRESET] режим «%s»: %s", canon, updates)
     return {"preset": canon, "applied": dict(updates)}
@@ -100,7 +119,7 @@ def apply_preset(name: str) -> dict[str, Any]:
 
 def describe(name: str) -> str:
     d = {
-        "local": "всё локально — Qwen3.5-9B + tesseract; приватно, бесплатно, с валидацией",
+        "local": "всё локально — текущий локальный LLM (MLX или Ollama) + tesseract; приватно, бесплатно",
         "cloud": "облако — выбранная OpenAI-compatible модель; качество, но $ и данные наружу",
         "mix": "микс — локальный чат+OCR, облако только для плотных таблиц ИД",
     }

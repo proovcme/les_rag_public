@@ -175,7 +175,7 @@ class ConstructionHarnessResult:
     total_status: str = "no_data"        # complete | partial | blocked | no_data
     warnings: list[str] = field(default_factory=list)
     blockers: list[dict[str, Any]] = field(default_factory=list)
-    partial_total: float | None = None   # диагностика, НЕ смета
+    partial_total: float | None = None   # внутренний протокол, НЕ видимая стоимость
     final_total: float | None = None     # только при total_status=complete
 
     def payload(self) -> dict[str, Any]:

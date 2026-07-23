@@ -91,6 +91,42 @@ def test_extract_xlsx_rows(tmp_path):
     r = de.extract_xlsx_generic(tmp_path / "f.xlsx", ds="ds", rel="f.xlsx")
     assert r.status == "ok" and any("#ВОР!R" in i.source_ref for i in r.items)
 
+
+def test_extract_xlsx_rows_not_capped_by_default(tmp_path, monkeypatch):
+    monkeypatch.delenv("LES_XLSX_EXTRACT_MAX_ROWS", raising=False)
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ВОР"
+    for idx in range(1, 12):
+        ws.append([f"Строка {idx}", idx])
+    wb.save(tmp_path / "many.xlsx")
+
+    r = de.extract_xlsx_generic(tmp_path / "many.xlsx", ds="ds", rel="many.xlsx")
+
+    assert r.status == "ok"
+    assert len(r.items) == 11
+    assert not r.warnings
+
+
+def test_extract_xlsx_rows_cap_is_explicit(tmp_path, monkeypatch):
+    monkeypatch.setenv("LES_XLSX_EXTRACT_MAX_ROWS", "5")
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "ВОР"
+    for idx in range(1, 12):
+        ws.append([f"Строка {idx}", idx])
+    wb.save(tmp_path / "many.xlsx")
+
+    r = de.extract_xlsx_generic(tmp_path / "many.xlsx", ds="ds", rel="many.xlsx")
+
+    assert r.status == "ok"
+    assert len(r.items) == 5
+    assert "capped at 5" in r.warnings[0]
+
 def test_every_sidecar_item_has_source_ref(tmp_path):
     _docx(tmp_path / "d.docx")
     r = de.extract_docx(tmp_path / "d.docx", ds="ds", rel="d.docx")
@@ -181,7 +217,8 @@ def test_lsr_from_xlsx_bor(tmp_path):
                                ("разработка грунта в котловане", "м3", 7200),
                                ("устройство монолитной фундаментной плиты", "м3", 720)))
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=["ds"], storage_root=tmp_path)
-    assert r.total_status in ("complete", "partial")        # ЛСР пошла из xlsx-строк
+    assert r.total_status == "blocked"
+    assert r.final_total is None  # legacy 0-LLM harness cannot select a norm for the model
 
 
 # ── index health v0.13 ───────────────────────────────────────────────────────────────────
@@ -274,4 +311,4 @@ def test_v04_source_scope_regression():
 def test_v03_lsr_parquet_regression(tmp_path):
     dsid = ch.write_demo_project_doc(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[dsid], storage_root=tmp_path)
-    assert r.total_status == "complete" and r.final_total is not None
+    assert r.total_status == "blocked" and r.final_total is None

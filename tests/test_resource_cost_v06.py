@@ -174,7 +174,7 @@ def test_v04_rules_ozk_still_norm_qa():
 def test_v03_f9_lsr_still_passes(tmp_path):
     ds = ch.write_demo_project_doc(tmp_path)
     r = u.run_unified_construction_harness("собери предварительную ЛСР по Ф9", dataset_ids=[ds], storage_root=tmp_path)
-    assert r.total_status == "complete" and r.final_total is not None
+    assert r.total_status == "blocked" and r.final_total is None
 
 def test_flag_off_preserves(monkeypatch):
     monkeypatch.delenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", raising=False)

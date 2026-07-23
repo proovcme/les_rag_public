@@ -11,6 +11,7 @@ from sovushka.lite_bridge import (
     bridge_proxy_request,
     bridge_request_allowed,
     local_runtime_action_allowed,
+    lite_pick_folder,
     register_lite_bridge_routes,
 )
 
@@ -80,6 +81,89 @@ def test_runtime_actions_allow_loopback_or_trusted_network():
     assert local_runtime_action_allowed(is_loopback=False, is_trusted_network=True)
 
 
+def test_windows_folder_picker_forces_utf8_stdout(monkeypatch):
+    calls = {}
+
+    def fake_run(args, **kwargs):
+        calls["args"] = args
+        calls["kwargs"] = kwargs
+        return SimpleNamespace(returncode=0, stdout="C:\\Users\\Oleg\\Лесной", stderr="")
+
+    monkeypatch.setattr(lite_bridge, "_is_windows_host", lambda: True)
+    monkeypatch.setattr(lite_bridge, "_is_macos_host", lambda: False)
+    monkeypatch.setattr(lite_bridge.subprocess, "run", fake_run)
+
+    result = lite_bridge._native_pick_folder(initial="", title="Выберите папку")
+
+    assert result == {"status": "selected", "path": "C:\\Users\\Oleg\\Лесной"}
+    assert calls["kwargs"]["encoding"] == "utf-8"
+    assert calls["kwargs"]["errors"] == "replace"
+    script = calls["args"][-1]
+    assert "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8" in script
+
+
+def test_native_folder_picker_uses_windows_folder_dialog(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(lite_bridge, "_is_windows_host", lambda: True)
+    monkeypatch.setattr(lite_bridge, "_is_macos_host", lambda: False)
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout="C:\\Data\\Project", stderr="")
+
+    monkeypatch.setattr(lite_bridge.subprocess, "run", fake_run)
+
+    result = lite_bridge._native_pick_folder(initial=str(tmp_path), title="Pick")
+
+    assert result == {"status": "selected", "path": "C:\\Data\\Project"}
+    assert calls[0][0][:4] == ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy"]
+    assert "FolderBrowserDialog" in calls[0][0][-1]
+
+
+def test_native_folder_picker_uses_macos_finder(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(lite_bridge, "_is_windows_host", lambda: False)
+    monkeypatch.setattr(lite_bridge, "_is_macos_host", lambda: True)
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return SimpleNamespace(returncode=0, stdout=f"{tmp_path}\n", stderr="")
+
+    monkeypatch.setattr(lite_bridge.subprocess, "run", fake_run)
+
+    result = lite_bridge._native_pick_folder(initial=str(tmp_path), title="Pick")
+
+    assert result == {"status": "selected", "path": str(tmp_path)}
+    assert calls[0][0][:2] == ["osascript", "-e"]
+    assert "choose folder" in calls[0][0][-1]
+
+
+@pytest.mark.asyncio
+async def test_folder_picker_requires_loopback(monkeypatch):
+    monkeypatch.setattr(lite_bridge, "_client_is_loopback", lambda request: False)
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="10.10.10.20"))
+
+    response = await lite_pick_folder(request)
+
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_folder_picker_returns_selected_path_on_loopback(monkeypatch):
+    monkeypatch.setattr(lite_bridge, "_client_is_loopback", lambda request: True)
+    monkeypatch.setattr(
+        lite_bridge,
+        "_native_pick_folder",
+        lambda **_kwargs: {"status": "selected", "path": "C:\\Data\\Project"},
+    )
+    request = SimpleNamespace(headers={}, client=SimpleNamespace(host="127.0.0.1"))
+
+    response = await lite_pick_folder(request, initial="C:\\Data", title="Pick")
+
+    assert response.status_code == 200
+    assert b"C:\\\\Data\\\\Project" in response.body
+
+
 def test_pid_running_treats_zombie_as_stopped(monkeypatch):
     monkeypatch.setattr(lite_bridge.os, "kill", lambda pid, signal: None)
     monkeypatch.setattr(
@@ -135,6 +219,7 @@ def test_register_wires_bridge_runtime_viewer_and_redirects():
     assert "/lite-api/{path:path}" in paths           # мост
     assert "/lite-runtime/status" in paths            # рантайм-статус
     assert "/lite-runtime/action/{action}" in paths   # рантайм-действия
+    assert "/lite-runtime/pick-folder" in paths       # локальный Explorer/Finder picker
     assert "/les/cad-bim-viewer" in paths             # страница вьювера
     assert "/" in paths and "/les" in paths           # редиректы шеллов
     # статика вьювера смонтирована

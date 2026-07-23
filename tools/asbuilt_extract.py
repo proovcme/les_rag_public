@@ -31,7 +31,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Приёмка смонтированного объёма из исполнительных схем (сканов)")
     ap.add_argument("path", help="PDF-файл или папка со сканами")
     ap.add_argument("--engine", choices=["local", "cloud"], default="local",
-                    help="local=gemma4:12b (дефолт) | cloud=gpt-4.1 через proxyapi")
+                    help="local=gemma4:12b (дефолт) | cloud=gpt-5.4 через proxyapi")
     ap.add_argument("--model", default="", help="переопределить модель OCR (иначе из env по движку)")
     ap.add_argument("--rotate", default="auto", help="auto | 0 | 90 | 180 | 270")
     ap.add_argument("--write", action="store_true", help="записать строки в журнал объёмов (status)")

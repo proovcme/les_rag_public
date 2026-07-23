@@ -16,6 +16,7 @@ from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.auth import register_login_page, get_auth
+from sovushka.provider_setup import register_provider_setup_page
 from sovushka.lite_bridge import register_lite_bridge_routes
 from sovushka.m5_display import register_m5_display_routes
 from sovushka.trust import trusted_role_for_request
@@ -26,8 +27,13 @@ static_dir = Path(__file__).resolve().parent / "static"
 if static_dir.exists():
     app.add_static_files("/static", str(static_dir))
 
+qdrant_visualizer_dir = Path(__file__).resolve().parent / "qdrant_visualizer"
+if qdrant_visualizer_dir.exists():
+    app.add_static_files("/qdrant-visualizer", str(qdrant_visualizer_dir))
+
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
+register_provider_setup_page()
 # W5.4/5.5: HTML-шеллы lite_chat/lite_admin удалены — мост, рантайм-роуты,
 # статика вьювера CAD/BIM и редиректы (`/`→`/classic`, `/les`→`/les/classic`)
 # живут в lite_bridge. M5-экран сохранён.
@@ -59,15 +65,14 @@ def _start_qdrant_visualizer() -> None:
         with socket.create_connection(("127.0.0.1", QDRANT_VISUALIZER_PORT), timeout=0.2):
             return
 
-    visualizer_dir = Path(__file__).resolve().parent / "qdrant_visualizer"
-    if not visualizer_dir.exists():
+    if not qdrant_visualizer_dir.exists():
         return
 
     class QuietHandler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
             return
 
-    handler = partial(QuietHandler, directory=str(visualizer_dir))
+    handler = partial(QuietHandler, directory=str(qdrant_visualizer_dir))
     server = ThreadingHTTPServer(("0.0.0.0", QDRANT_VISUALIZER_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -75,11 +80,15 @@ def _start_qdrant_visualizer() -> None:
 
 @app.get("/graph")
 async def knowledge_graph_page():
-    """W5.7: граф знаний same-origin — данные ходят через /lite-api без CORS."""
-    graph_file = Path(__file__).resolve().parent / "qdrant_visualizer" / "index.html"
+    """Qdrant visualizer same-origin entrypoint.
+
+    Keep the browser at /qdrant-visualizer/index.html so relative ES modules
+    (visualizer.js, pca.js, data.js) resolve under the mounted static folder.
+    """
+    graph_file = qdrant_visualizer_dir / "index.html"
     if not graph_file.exists():
         return RedirectResponse(f"http://127.0.0.1:{QDRANT_VISUALIZER_PORT}/")
-    return HTMLResponse(graph_file.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
+    return RedirectResponse("/qdrant-visualizer/index.html")
 
 
 _COSMOS_HTML = """<!DOCTYPE html><html><head><meta charset="utf-8"><title>Граф ЛЕС</title>
@@ -196,7 +205,7 @@ def _resolve_auth(request: Request):
 
     if not is_auth and trusted_role:
         role = trusted_role
-        holder = "Trusted Network"
+        holder = "Доверенная сеть"
 
     is_admin = (role == "admin")
     return True, role, holder, is_admin
@@ -206,7 +215,10 @@ def _resolve_auth(request: Request):
 async def classic_chat_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.pages.chat import build_chat
+    from sovushka.pages.documents import build_documents
     from sovushka.pages.history import build_history
+    from sovushka.pages.mail import build_mail
+    from sovushka.pages.samovar import build_samovar
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -214,17 +226,24 @@ async def classic_chat_page(request: Request):
 
     _apply_theme()
 
-    # Public shell: only chat/history. It stays lean and avoids mounting admin pages.
+    # Chat shell: chat/history plus the no-AI Documents explorer.
+    # Documents are a reader UI, not an admin-only console; API permissions still
+    # stay on the backend routes.
     with ui.column().classes("w-full h-screen no-wrap gap-0"):
         tabs, tr = build_header(
             is_admin,
             role,
             holder,
             admin_tabs=False,
+            include_datasets=is_admin,
+            include_documents=True,
             admin_link=is_admin,
         )
 
         tab_chat = tr["chat"]
+        tab_samovar = tr.get("samovar")
+        tab_documents = tr.get("documents")
+        tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
         def _save_chat_tab(e):
@@ -241,12 +260,25 @@ async def classic_chat_page(request: Request):
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
             with ui.tab_panel(tab_chat):
-                build_chat(is_admin, tabs, None)
+                build_chat(is_admin, tabs, None, tab_documents)
+            if tab_samovar:
+                with ui.tab_panel(tab_samovar):
+                    build_samovar()
+            if tab_documents:
+                with ui.tab_panel(tab_documents):
+                    build_documents()
+            if tab_mail:
+                with ui.tab_panel(tab_mail):
+                    build_mail()
             with ui.tab_panel(tab_history):
                 build_history(tabs, tab_chat)
 
-    _last_tab = app.storage.user.get("last_chat_tab", "AI ЧАТ")
-    _target = {"AI ЧАТ": tab_chat, "ИСТОРИЯ": tab_history}.get(_last_tab)
+    _forced_chat_tab = bool((request.query_params.get("question") or "").strip()) or (
+        (request.query_params.get("tab") or "").strip().casefold() == "chat"
+    )
+    _last_tab = "AI ЧАТ" if _forced_chat_tab else app.storage.user.get("last_chat_tab", "AI ЧАТ")
+    _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents,
+               "Почта": tab_mail, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
         tabs.set_value(_target)
 
@@ -257,7 +289,9 @@ async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.components.logterm import build_log_terminal
     from sovushka.pages.diag import build_diag
+    from sovushka.pages.documents import build_documents
     from sovushka.pages.instrumenty import build_instrumenty
+    from sovushka.pages.mail import build_mail
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
 
@@ -288,6 +322,8 @@ async def classic_admin_page(request: Request):
 
         tab_diag       = tr.get("diag")
         tab_samovar    = tr.get("samovar")
+        tab_documents  = tr.get("documents")
+        tab_mail       = tr.get("mail")
         tab_instrumenty = tr.get("instrumenty")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_volk       = tr.get("volk")
@@ -311,6 +347,10 @@ async def classic_admin_page(request: Request):
                 build_diag()
             with ui.tab_panel(tab_samovar):
                 build_samovar()
+            with ui.tab_panel(tab_documents):
+                build_documents()
+            with ui.tab_panel(tab_mail):
+                build_mail()
             with ui.tab_panel(tab_instrumenty):
                 build_instrumenty()
             with ui.tab_panel(tab_qdrant_viz):
@@ -326,6 +366,8 @@ async def classic_admin_page(request: Request):
     _tab_map = {
         "Состояние": tab_diag,
         "Датасеты":  tab_samovar,
+        "Документы": tab_documents,
+        "Почта":     tab_mail,
         "Инструменты": tab_instrumenty,
         "Визуал":    tab_qdrant_viz,
         "Доступ":    tab_volk,

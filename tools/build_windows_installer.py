@@ -1,14 +1,12 @@
-"""Build the Windows installer — dist/LES-Setup.exe (or a portable zip).
+"""Build the Tauri Windows installer on Windows, or a source bundle elsewhere.
 
 Mirrors the macOS bundle (tools/build_macos_app.py): stage a clean code export
 (no data/secrets — reuses build_release_artifacts.iter_files) plus the Windows
 bootstrap, then package it.
 
-If NSIS (``makensis``) is available, produces a per-user double-click installer
-``dist/LES-Setup.exe`` whose shortcut runs ``installers/windows/app/launcher.vbs``
-(hidden) → ``bootstrap.ps1`` (install uv → ``uv sync`` → ``lesctl init`` →
-start-light → open browser). If NSIS is absent (e.g. building on macOS/Linux),
-falls back to a portable zip and prints the makensis command to run on Windows.
+The final ``LES-Setup.exe`` is produced by Tauri/NSIS on a Windows host. macOS
+and Linux deliberately do not emit an old Python-shell EXE under the same name;
+they stage a clean Windows/Tauri source bundle for transfer to the build host.
 
     uv run python tools/build_windows_installer.py                  # exe or zip
     uv run python tools/build_windows_installer.py --version 0.3.0
@@ -21,7 +19,6 @@ from __future__ import annotations
 
 import argparse
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -30,7 +27,6 @@ from tools.build_release_artifacts import iter_files
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 STAGE = DIST / "windows" / "LES"
-NSI = ROOT / "installers" / "windows" / "app" / "LES.nsi"
 
 
 def stage_runtime(dest: Path) -> int:
@@ -48,41 +44,40 @@ def stage_runtime(dest: Path) -> int:
     return count
 
 
-def build(version: str) -> Path:
+def build(version: str, build_number: int | None = None) -> Path:
+    if sys.platform.startswith("win"):
+        from tools.build_tauri_app import build as build_tauri
+
+        build_tauri(version, "nsis", build_number=build_number)
+        target = DIST / "LES-Setup.exe"
+        if not target.exists():
+            raise SystemExit("Tauri NSIS build finished without LES-Setup.exe")
+        return target
+
     DIST.mkdir(exist_ok=True)
     count = stage_runtime(STAGE)
     print(f"[win] staged runtime files: {count} -> {STAGE}")
 
-    makensis = shutil.which("makensis")
-    if makensis:
-        out = DIST / "LES-Setup.exe"
-        if out.exists():
-            out.unlink()
-        rc = subprocess.run(
-            [makensis, f"-DVERSION={version}", f"-DSRCDIR={STAGE}", str(NSI)],
-            check=False,
-        ).returncode
-        if rc != 0:
-            raise SystemExit("makensis failed")
-        print(f"[win] built installer: {out}")
-        return out
-
-    # No NSIS here — ship a portable zip and tell the user how to make the .exe.
-    zip_base = DIST / "LES-windows-portable"
+    zip_base = DIST / "LES-windows-tauri-source"
     archive = shutil.make_archive(str(zip_base), "zip", root_dir=STAGE.parent, base_dir=STAGE.name)
     portable = Path(archive)
-    print(f"[win] makensis not found — wrote portable bundle: {portable}")
-    print("[win] to build LES-Setup.exe on Windows (NSIS installed):")
-    print(f'      makensis -DVERSION={version} -DSRCDIR="{STAGE}" "{NSI}"')
+    print(f"[win] staged Tauri source bundle for a Windows build host: {portable}")
+    print("[win] final installer command on Windows:")
+    suffix = f" --build-number {build_number}" if build_number is not None else ""
+    print(f"      uv run python tools/build_windows_installer.py --version {version}{suffix}")
     return portable
 
 
 def main(argv: list[str] | None = None) -> int:
+    from tools.build_tauri_app import release_contract
+
+    contract = release_contract()
     parser = argparse.ArgumentParser(description="Build the Windows LES installer.")
-    parser.add_argument("--version", default="0.1.0")
+    parser.add_argument("--version", default=str(contract["product_version"]))
+    parser.add_argument("--build-number", type=int, default=int(contract["build_number"]))
     args = parser.parse_args(argv)
 
-    artifact = build(args.version)
+    artifact = build(args.version, args.build_number)
     print(artifact)
     return 0
 

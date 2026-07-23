@@ -22,6 +22,7 @@ from proxy.security import require_admin, require_user
 from proxy.services.cad_bim_highlight import get_highlight, set_highlight
 from proxy.services.cad_bim_graph import (
     CAD_BIM_ROOT,
+    cad_bim_import_inventory,
     graph_summary,
     import_payload,
     latest_cad_bim_json_source,
@@ -43,6 +44,14 @@ class CadBimImportRequest(BaseModel):
 @cad_bim_router.get("/graph/summary")
 async def cad_bim_graph_summary(_user=Depends(require_user)):
     return graph_summary()
+
+
+@cad_bim_router.get("/imports")
+async def cad_bim_imports(
+    limit: Annotated[int, Query(ge=1, le=1000)] = 200,
+    _user=Depends(require_user),
+):
+    return await __import__("asyncio").to_thread(cad_bim_import_inventory, limit=limit)
 
 
 @cad_bim_router.get("/source")

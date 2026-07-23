@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from proxy.services.answer_form_service import classify_answer_form
+from proxy.services.answer_form_service import apply_response_length, classify_answer_form
 
 
 def test_value_intent_one_liner():
@@ -23,8 +23,24 @@ def test_enum_intent_bare_list():
 
 
 def test_full_intent_verbose():
-    for q in ["Собери всё про серверные", "Опиши максимально подробно требования", "Дай исчерпывающий обзор"]:
+    for q in [
+        "Собери всё про серверные",
+        "Опиши максимально подробно требования",
+        "Дай исчерпывающий обзор",
+        "Дай инженерный обзор: какие файлы важные, какие технические решения, что не сходится",
+    ]:
         assert classify_answer_form(q).intent == "full", q
+
+
+def test_full_intent_has_broad_but_bounded_budget():
+    f = classify_answer_form("Дай инженерный обзор: технические решения и что требует проверки")
+    assert f.intent == "full"
+    assert f.max_tokens == 3072
+    assert "несостыковки" in f.instruction
+    assert "важные файлы/разделы" in f.instruction
+    assert "Раздел 4 обязателен" in f.instruction
+    assert "не трать весь лимит" in f.instruction
+    assert "markdown-таблицы" in f.instruction
 
 
 def test_brief_intent_compact():
@@ -64,3 +80,11 @@ def test_yo_normalization():
 def test_instruction_present_for_non_default():
     for q in ["Перечисли разделы", "Расскажи кратко", "Собери всё", "Какова ширина"]:
         assert classify_answer_form(q).instruction, q
+
+
+def test_operator_response_length_changes_only_generation_contract():
+    base = classify_answer_form("Расскажи про проект")
+    assert apply_response_length(base, "standard").max_tokens == 8192
+    assert apply_response_length(base, "short").max_tokens == 1024
+    assert apply_response_length(base, "maximum").max_tokens == 16384
+    assert apply_response_length(base, None) == base

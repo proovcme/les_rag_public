@@ -4,6 +4,7 @@ import os
 import pytest
 from fastapi import HTTPException
 
+from proxy.security import RequestUser
 from proxy.routers import auth, settings, speckle
 
 
@@ -81,6 +82,56 @@ async def test_auth_create_key_rejects_unknown_role(tmp_path, monkeypatch):
     assert exc.value.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_protected_les_admin_key_is_root_unbound_and_trusted_mutable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+
+    root_actor = RequestUser(role="admin", holder="trusted-network", source="10.10.10.98")
+    created = await auth.auth_create_key(
+        auth.AuthKeyCreate(
+            key_value="les-admin-test-root",
+            holder_name="Root",
+            role="user",
+            expires_days=1,
+        ),
+        _admin=root_actor,
+    )
+    assert created["role"] == "admin"
+    assert created["expires_at"] is None
+
+    first = await auth.auth_verify(
+        auth.AuthVerifyReq(key="les-admin-test-root", fingerprint="device-a")
+    )
+    second = await auth.auth_verify(
+        auth.AuthVerifyReq(key="les-admin-test-root", fingerprint="device-b")
+    )
+    assert first == second == {"role": "admin", "holder": "Root"}
+
+    rows = await auth.auth_list_keys(_admin=root_actor)
+    assert rows[0]["protected_admin"] == 1
+    assert rows[0]["device_bound"] == 0
+
+    outside_root_key = RequestUser(
+        role="admin",
+        holder="Root",
+        key_value="les-admin-other-root",
+        source="api_key",
+    )
+    with pytest.raises(HTTPException) as outside:
+        await auth.auth_delete_key_body(
+            auth.AuthKeyDelete(key_value="les-admin-test-root"),
+            _admin=outside_root_key,
+        )
+    assert outside.value.status_code == 403
+
+    deleted = await auth.auth_delete_key_body(
+        auth.AuthKeyDelete(key_value="les-admin-test-root"),
+        _admin=root_actor,
+    )
+    assert deleted == {"status": "deleted", "key_value": "les-admin-test-root"}
+
+
 def test_seed_admin_key_is_idempotent(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
@@ -105,7 +156,7 @@ def test_seed_admin_key_is_idempotent(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_save_settings_updates_env_file_and_process_env(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("LLM_MODEL=old\nQDRANT_URL=http://qdrant:6333\n")
+    env_path.write_text("LLM_MODEL=old\nQDRANT_URL=http://qdrant:6333\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ENV_PATH", env_path)
     monkeypatch.setattr(settings, "docker_control_enabled", lambda: False)
     monkeypatch.delenv("LLM_MODEL", raising=False)
@@ -121,15 +172,15 @@ async def test_save_settings_updates_env_file_and_process_env(tmp_path, monkeypa
         "updated": {"LLM_MODEL": "new-model", "MLX_URL": "http://mlx:8080"},
         "restarting": False,
     }
-    assert "LLM_MODEL=new-model" in env_path.read_text()
-    assert "MLX_URL=http://mlx:8080" in env_path.read_text()
+    assert "LLM_MODEL=new-model" in env_path.read_text(encoding="utf-8")
+    assert "MLX_URL=http://mlx:8080" in env_path.read_text(encoding="utf-8")
     assert os.environ["LLM_MODEL"] == "new-model"
 
 
 @pytest.mark.asyncio
 async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("MAIL_IMAP_HOST=old.example.com\nMAIL_IMAP_PASSWORD=old-secret\n")
+    env_path.write_text("MAIL_IMAP_HOST=old.example.com\nMAIL_IMAP_PASSWORD=old-secret\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ENV_PATH", env_path)
     monkeypatch.setenv("MAIL_IMAP_PASSWORD", "old-secret")
 
@@ -149,7 +200,7 @@ async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_pat
 
     assert result["updated"]["MAIL_IMAP_HOST"] == "imap.yandex.ru"
     assert result["updated"]["MAIL_IMAP_PASSWORD"] == "***"
-    text = env_path.read_text()
+    text = env_path.read_text(encoding="utf-8")
     assert "MAIL_IMAP_HOST=imap.yandex.ru" in text
     assert "MAIL_IMAP_PASSWORD=app-secret" in text
     assert os.environ["MAIL_IMAP_LOGIN"] == "mail@yandex.ru"
@@ -162,7 +213,7 @@ async def test_save_settings_updates_mail_imap_without_exposing_password(tmp_pat
 @pytest.mark.asyncio
 async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
-    env_path.write_text("OPENROUTER_API_KEY=old-router\nOPENAI_API_KEY=old-openai\n")
+    env_path.write_text("OPENROUTER_API_KEY=old-router\nOPENAI_API_KEY=old-openai\n", encoding="utf-8")
     monkeypatch.setattr(settings, "ENV_PATH", env_path)
     monkeypatch.setenv("OPENROUTER_API_KEY", "old-router")
     monkeypatch.setenv("OPENAI_API_KEY", "old-openai")
@@ -174,6 +225,8 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
             openrouter_api_key="router-secret",
             openai_base_url="https://openai-compatible.example/v1",
             openai_model="compatible-model",
+            smeta_document_provider="mlx",
+            smeta_document_model="mlx-community/Qwen3.5-9B-MLX-4bit",
             openai_api_key="openai-secret",
         ),
         restart=False,
@@ -183,8 +236,10 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
     assert result["updated"]["OPENROUTER_API_KEY"] == "***"
     assert result["updated"]["OPENAI_API_KEY"] == "***"
     assert result["updated"]["OPENROUTER_MODEL"] == "openrouter/model"
-    text = env_path.read_text()
+    assert result["updated"]["LES_SMETA_DOCUMENT_PROVIDER"] == "mlx"
+    text = env_path.read_text(encoding="utf-8")
     assert "OPENROUTER_API_KEY=router-secret" in text
+    assert "LES_SMETA_DOCUMENT_PROVIDER=mlx" in text
     assert "OPENAI_API_KEY=openai-secret" in text
     assert os.environ["OPENAI_BASE_URL"] == "https://openai-compatible.example/v1"
 
@@ -192,6 +247,8 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
     assert payload["providers"]["openrouter"]["api_key_set"] is True
     assert payload["providers"]["openai_compatible"]["api_key_set"] is True
     assert "api_key" not in payload["providers"]["openrouter"]
+    assert payload["providers"]["effective"]["configured_provider"] == "mlx"
+    assert payload["providers"]["effective"]["provider"] == "mlx"
 
     cleared = await settings.save_settings(
         settings.SettingsRequest(openrouter_api_key_clear=True),
@@ -200,8 +257,123 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
     )
 
     assert cleared["updated"]["OPENROUTER_API_KEY"] == "***"
-    assert "OPENROUTER_API_KEY=\n" in env_path.read_text()
+    assert "OPENROUTER_API_KEY=\n" in env_path.read_text(encoding="utf-8")
     assert os.environ["OPENROUTER_API_KEY"] == ""
+
+
+@pytest.mark.asyncio
+async def test_set_mlx_model_preserves_cloud_provider_settings(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "\n".join([
+            "OPENAI_API_KEY=openai-secret",
+            "OPENAI_MODEL=gpt-5.4",
+            "OPENAI_BASE_URL=https://openai.api.proxyapi.ru/v1",
+            "LES_LLM_PROVIDER=openai",
+            "LES_CLOUD_CONSENT=true",
+        ]) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "ENV_PATH", env_path)
+    monkeypatch.setenv("MLX_URL", "http://mlx.invalid")
+
+    result = await settings.set_mlx_model(
+        settings.MlxModelRequest(model="mlx-community/Qwen3.5-9B-MLX-4bit"),
+        _admin=object(),
+    )
+
+    text = env_path.read_text(encoding="utf-8")
+    assert result["model"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
+    assert "OPENAI_API_KEY=openai-secret" in text
+    assert "OPENAI_MODEL=gpt-5.4" in text
+    assert "OPENAI_BASE_URL=https://openai.api.proxyapi.ru/v1" in text
+    assert "LES_LLM_PROVIDER=openai" in text
+    assert "LES_CLOUD_CONSENT=true" in text
+    assert "MLX_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit" in text
+    assert "LLM_MODEL=mlx-community/Qwen3.5-9B-MLX-4bit" in text
+
+
+def test_mlx_model_registry_exposes_measured_optiq_default():
+    from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+
+    assert DEFAULT_LOCAL_MLX_MODEL == "mlx-community/Qwen3.5-9B-OptiQ-4bit"
+    assert settings.MLX_MODEL_CHOICES[DEFAULT_LOCAL_MLX_MODEL].startswith("9B OptiQ")
+
+
+@pytest.mark.asyncio
+async def test_set_mlx_model_does_not_persist_while_generation_is_busy(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("MLX_MODEL=old-model\nLLM_MODEL=old-model\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "ENV_PATH", env_path)
+
+    class Response:
+        status_code = 409
+        text = "busy"
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(settings.httpx, "AsyncClient", lambda **kwargs: Client())
+
+    with pytest.raises(settings.HTTPException) as exc:
+        await settings.set_mlx_model(
+            settings.MlxModelRequest(model="mlx-community/Qwen3.5-9B-MLX-4bit"),
+            _admin=object(),
+        )
+
+    assert exc.value.status_code == 409
+    assert env_path.read_text(encoding="utf-8") == "MLX_MODEL=old-model\nLLM_MODEL=old-model\n"
+
+
+@pytest.mark.asyncio
+async def test_settings_reports_effective_openai_provider(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai-compatible.example/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+
+    payload = await settings.get_settings(_user=object())
+
+    effective = payload["providers"]["effective"]
+    assert effective["configured_provider"] == "openai"
+    assert effective["provider"] == "openai"
+    assert effective["model"] == "gpt-test"
+    assert effective["chat_url_set"] is True
+    assert effective["fallback"] is False
+    assert effective["reason"] == ""
+
+
+@pytest.mark.asyncio
+async def test_settings_openai_default_model_is_current(monkeypatch):
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
+    monkeypatch.delenv("LES_DEFAULT_OPENAI_MODEL", raising=False)
+
+    payload = await settings.get_settings(_user=object())
+
+    assert payload["providers"]["openai_compatible"]["model"] == "gpt-5.4"
+
+
+@pytest.mark.asyncio
+async def test_settings_reports_cloud_provider_fallback_without_key(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://openai-compatible.example/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "gpt-test")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    payload = await settings.get_settings(_user=object())
+
+    effective = payload["providers"]["effective"]
+    assert effective["configured_provider"] == "openai"
+    assert effective["provider"] == "mlx"
+    assert effective["fallback"] is True
+    assert effective["reason"] == "cloud_provider_without_api_key_fell_back_to_mlx"
 
 
 @pytest.mark.asyncio
@@ -231,6 +403,21 @@ async def test_save_settings_rejects_unsafe_values(tmp_path, monkeypatch):
             _admin=object(),
         )
     assert bad_provider_url.value.status_code == 400
+
+    with pytest.raises(HTTPException) as bad_smeta_provider:
+        await settings.save_settings(
+            settings.SettingsRequest(smeta_document_provider="unknown-cloud"),
+            restart=False,
+            _admin=object(),
+        )
+    assert bad_smeta_provider.value.status_code == 400
+
+
+def test_settings_fields_set_supports_pydantic_v1_style():
+    class V1Request:
+        __fields_set__ = {"llm_provider", "ollama_model"}
+
+    assert settings._request_fields_set(V1Request()) == {"llm_provider", "ollama_model"}
 
 
 @pytest.mark.asyncio

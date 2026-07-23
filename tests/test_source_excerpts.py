@@ -63,15 +63,16 @@ def test_source_map_matches_context_numbering_and_limit():
     assert limited[0]["label"] == "Источник 1"
 
 
-def test_local_context_budget_is_smaller_than_cloud(monkeypatch):
-    monkeypatch.delenv("RAG_LOCAL_CHAT_CONTEXT_CHARS", raising=False)
+def test_context_budget_does_not_drop_sources_for_local_model(monkeypatch):
+    monkeypatch.delenv("RAG_MODEL_CONTEXT_CHARS", raising=False)
     cloud = _local_context_budget(local_big=False, big_context=True)
     local = _local_context_budget(local_big=True, big_context=False)
 
-    assert local["context_chars_limit"] < cloud["context_chars_limit"]
-    assert local["context_max_chunks"] < cloud["context_max_chunks"]
-    assert local["focus_max_chunks"] == 8
-    assert local["context_window_chars"] == 1200
+    assert local == cloud
+    assert local["context_chars_limit"] == 120000
+    assert local["context_max_chunks"] == 0
+    assert local["focus_max_chunks"] == 0
+    assert local["context_window_chars"] == 4000
 
 
 def test_local_generation_budget_does_not_cap_broad_forms(monkeypatch):

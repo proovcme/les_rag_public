@@ -76,6 +76,55 @@ def test_requirement_text_fills_snippet():
     assert "Стадия" in it.requirement["snippet"]
 
 
+def test_requirement_text_uses_explicit_normative_spds_dataset(monkeypatch):
+    calls = []
+
+    def fake_search(terms, **kwargs):
+        calls.append((terms, kwargs))
+        assert kwargs.get("dataset_ids") == ["ntd-spds"]
+        return _fake(sa.FOUND, ["ntd-spds/ГОСТ Р 21.101-2026.pdf#chunk7"])
+
+    monkeypatch.setattr(sa, "search_lexical_chunks", fake_search)
+    req = drr._requirement_text(
+        "project-ds",
+        "4.1",
+        "Стадия документации",
+        normative_dataset_ids=["ntd-spds"],
+    )
+    assert req["source_ref"] == "ntd-spds/ГОСТ Р 21.101-2026.pdf#chunk7"
+    assert req["standard"] == "ГОСТ Р 21.101-2026"
+    assert req["source_dataset_id"] == "ntd-spds"
+    assert req["source_role"] == "normative_spds_rag"
+    assert calls and "21.101-2026" in calls[0][0]
+
+
+def test_requirement_text_does_not_fallback_to_project_when_normative_is_configured(monkeypatch):
+    def fake_search(terms, **kwargs):
+        assert kwargs.get("dataset_ids") == ["ntd-spds"]
+        return _fake(sa.NOT_FOUND)
+
+    monkeypatch.setattr(sa, "search_lexical_chunks", fake_search)
+    assert drr._requirement_text(
+        "project-ds",
+        "4.1",
+        "Стадия документации",
+        normative_dataset_ids=["ntd-spds"],
+    ) is None
+
+
+def test_requirement_text_legacy_project_fallback_without_normative_dataset(monkeypatch):
+    monkeypatch.setattr(sa, "search_lexical_chunks",
+                        lambda terms, **k: _fake(sa.FOUND, ["project/gost.pdf#chunk2"]))
+    req = drr._requirement_text(
+        "project-ds",
+        "4.1",
+        "Стадия документации",
+        normative_dataset_ids=[],
+    )
+    assert req["source_ref"] == "project/gost.pdf#chunk2"
+    assert req["source_role"] == "legacy_project_dataset"
+
+
 # ── build_retrieval_evidence: маппинг лексического адаптера ────────────────────
 
 def _fake(status, refs=()):

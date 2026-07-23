@@ -20,6 +20,8 @@ from proxy.config import (
     USER_ROLE,
 )
 
+ROOT_ADMIN_KEY_PREFIX = "les-admin-"
+
 # Единое ядро trust-логики (общее с sovushka/trust.py) — алгоритм один, конфиг свой.
 from backend.trust_core import (
     ip_in_networks as _core_ip_in_networks,
@@ -39,6 +41,22 @@ class RequestUser:
     @property
     def is_admin(self) -> bool:
         return self.role == ADMIN_ROLE
+
+    @property
+    def is_protected_admin_key(self) -> bool:
+        return self.source == "api_key" and is_protected_admin_key_value(self.key_value)
+
+    @property
+    def is_trusted_network_admin(self) -> bool:
+        return self.role == ADMIN_ROLE and self.source != "api_key"
+
+    @property
+    def is_root_admin(self) -> bool:
+        return self.is_trusted_network_admin or self.is_protected_admin_key
+
+
+def is_protected_admin_key_value(key_value: str) -> bool:
+    return str(key_value or "").strip().startswith(ROOT_ADMIN_KEY_PREFIX)
 
 
 def _client_ip(request: Request) -> str:
@@ -126,6 +144,13 @@ def _is_expired(expires_at: Optional[str]) -> bool:
     return datetime.now() > datetime.fromisoformat(expires_at.replace(" ", "T"))
 
 
+def _effective_key_role(row: sqlite3.Row) -> str:
+    key_value = str(row["key_value"] or "")
+    if is_protected_admin_key_value(key_value):
+        return ADMIN_ROLE
+    return str(row["role"] or USER_ROLE)
+
+
 async def get_request_user(
     request: Request,
     x_api_key: Optional[str] = Header(default=None, alias="X-API-Key"),
@@ -140,13 +165,14 @@ async def get_request_user(
             if trusted_user:
                 return trusted_user
             raise HTTPException(status_code=401, detail="Invalid or disabled API key")
-        if _is_expired(row["expires_at"]):
+        role = _effective_key_role(row)
+        if not is_protected_admin_key_value(row["key_value"]) and _is_expired(row["expires_at"]):
             trusted_user = _trusted_request_user(request, ip_value)
             if trusted_user:
                 return trusted_user
             raise HTTPException(status_code=401, detail="API key expired")
         return RequestUser(
-            role=row["role"],
+            role=role,
             holder=row["holder_name"] or "",
             key_value=row["key_value"],
             source="api_key",
@@ -168,6 +194,15 @@ async def require_user(user: RequestUser = Depends(get_request_user)) -> Request
 async def require_admin(user: RequestUser = Depends(get_request_user)) -> RequestUser:
     if user.role != ADMIN_ROLE:
         raise HTTPException(status_code=403, detail="Admin role required")
+    return user
+
+
+async def require_root_admin(user: RequestUser = Depends(get_request_user)) -> RequestUser:
+    if not user.is_root_admin:
+        raise HTTPException(
+            status_code=403,
+            detail="Trusted network or protected les-admin key required",
+        )
     return user
 
 

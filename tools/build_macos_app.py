@@ -1,11 +1,9 @@
-"""Assemble dist/LES.app — the double-click macOS installer/launcher bundle.
+"""Build the canonical Tauri 2 ``dist/LES.app`` desktop bundle.
 
-Lightweight bootstrap design (per HANDOFF plan): the .app carries a clean code
-export of the runtime (no data/secrets — reuses build_release_artifacts.iter_files)
-plus a shell bootstrap that, on first launch, installs uv, runs
-``uv sync --extra mac-mlx``, downloads model weights, and starts the stack via
-``lesctl``. No Python is bundled; the bootstrap provisions a uv environment on
-the target machine.
+The helper functions for the historical handwritten bundle remain for narrow
+plist tests, but ``build_app`` delegates to ``tools.build_tauri_app``. The
+native window/tray is Rust/Tauri; NiceGUI remains the single product UI and the
+bundled Python tree remains the local runtime sidecar.
 
 Build:
     uv run python tools/build_macos_app.py                 # -> dist/LES.app
@@ -20,8 +18,6 @@ from __future__ import annotations
 import argparse
 import plistlib
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from tools.build_release_artifacts import iter_files
@@ -54,47 +50,10 @@ def _copy_runtime(resources: Path) -> int:
 
 
 def build_app(version: str, sign: bool) -> Path:
-    app = DIST / "LES.app"
-    if app.exists():
-        shutil.rmtree(app)
-    contents = app / "Contents"
-    macos = contents / "MacOS"
-    resources = contents / "Resources"
-    for d in (macos, resources):
-        d.mkdir(parents=True, exist_ok=True)
+    from tools.build_tauri_app import build
 
-    _write_info_plist(contents, version)
-
-    launcher = macos / "LES"
-    shutil.copy2(APP_SRC / "launcher", launcher)
-    launcher.chmod(0o755)
-
-    bootstrap = resources / "bootstrap.sh"
-    shutil.copy2(APP_SRC / "bootstrap.sh", bootstrap)
-    bootstrap.chmod(0o755)
-
-    icon = APP_SRC / "LES.icns"
-    if icon.exists():
-        shutil.copy2(icon, resources / "LES.icns")
-    else:
-        print("[build] note: installers/macos/app/LES.icns missing — bundle ships without an icon")
-
-    count = _copy_runtime(resources)
-    print(f"[build] runtime files copied: {count}")
-
-    if sign:
-        # Ad-hoc signature ("-") so Gatekeeper at least sees a sealed bundle on
-        # the build machine. Developer ID signing + notarization is a later step.
-        rc = subprocess.run(
-            ["codesign", "--force", "--deep", "--sign", "-", str(app)],
-            check=False,
-        ).returncode
-        if rc != 0:
-            print("[build] WARN: ad-hoc codesign failed", file=sys.stderr)
-        else:
-            print("[build] ad-hoc signed")
-
-    return app
+    build(version, "app")
+    return DIST / "LES.app"
 
 
 def main(argv: list[str] | None = None) -> int:
