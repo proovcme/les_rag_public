@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -306,6 +308,188 @@ def render_sdk_shard(source: str, shard_index: int, page_count: int, pages: list
     )
 
 
+_XML_MEMBER_KINDS = {
+    "T": "type",
+    "M": "method",
+    "P": "property",
+    "F": "field",
+    "E": "event",
+}
+
+
+def _normalize_xml_text(value: str) -> str:
+    value = re.sub(r"[ \t\r\f\v]+", " ", value)
+    value = re.sub(r" *\n *", "\n", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    return value.strip()
+
+
+def _xml_content(element: ET.Element) -> str:
+    parts: list[str] = []
+    if element.text:
+        parts.append(element.text)
+    for child in element:
+        tag = child.tag.rsplit("}", 1)[-1]
+        if tag == "see":
+            reference = child.attrib.get("cref") or child.attrib.get("href") or child.attrib.get("langword")
+            if reference:
+                parts.append(f" `{reference}` ")
+        elif tag == "paramref":
+            name = child.attrib.get("name")
+            if name:
+                parts.append(f" `{name}` ")
+        elif tag in {"c", "code"}:
+            code = _xml_content(child)
+            if code:
+                parts.append(f" `{code}` ")
+        elif tag in {"para", "p", "item", "term", "description"}:
+            parts.append("\n" + _xml_content(child) + "\n")
+        else:
+            parts.append(_xml_content(child))
+        if child.tail:
+            parts.append(child.tail)
+    return _normalize_xml_text("".join(parts))
+
+
+def parse_sdk_xml(xml_path: Path) -> tuple[str, list[dict[str, Any]]]:
+    if not xml_path.is_file():
+        raise FileNotFoundError(f"Revit API XML documentation not found: {xml_path}")
+    root = ET.parse(xml_path).getroot()
+    assembly = _normalize_xml_text("".join(root.findtext("assembly", default="").splitlines())).strip('" ') or xml_path.stem
+    members_root = root.find("members")
+    if members_root is None:
+        raise ValueError(f"Revit API XML has no <members> section: {xml_path}")
+
+    members: list[dict[str, Any]] = []
+    for member in members_root.findall("member"):
+        documentation_id = str(member.attrib.get("name") or "").strip()
+        if not documentation_id:
+            continue
+        prefix, _, symbol = documentation_id.partition(":")
+        sections: list[tuple[str, str]] = []
+        for node in member:
+            tag = node.tag.rsplit("}", 1)[-1]
+            body = _xml_content(node)
+            if not body and tag not in {"seealso"}:
+                continue
+            if tag == "param":
+                title = f"Parameter `{node.attrib.get('name', '')}`"
+            elif tag == "typeparam":
+                title = f"Type parameter `{node.attrib.get('name', '')}`"
+            elif tag == "exception":
+                title = f"Exception `{node.attrib.get('cref', '')}`"
+            elif tag == "seealso":
+                title = "See also"
+                body = body or str(node.attrib.get("cref") or node.attrib.get("href") or "")
+            else:
+                title = tag.replace("_", " ").title()
+            if body:
+                sections.append((title, body))
+        members.append(
+            {
+                "documentation_id": documentation_id,
+                "kind": _XML_MEMBER_KINDS.get(prefix, prefix or "member"),
+                "symbol": symbol or documentation_id,
+                "sections": sections,
+            }
+        )
+    if not members:
+        raise ValueError(f"Revit API XML contains no documented members: {xml_path}")
+    return assembly, members
+
+
+def render_sdk_xml_shard(
+    *,
+    source: Path,
+    assembly: str,
+    api_version: str,
+    xml_sha256: str,
+    package_url: str,
+    package_sha256: str,
+    shard_index: int,
+    members: list[dict[str, Any]],
+) -> str:
+    lines = [
+        "# ARTEL Revit API 2024 XML Documentation",
+        "",
+        "Product: ARTEL",
+        "Document type: REVIT_API_SDK_DOC",
+        "Source kind: Revit SDK XML documentation",
+        f"Revit API version: {api_version}",
+        f"Assembly: {assembly}",
+        f"Source file: {source.name}",
+        f"Source XML SHA-256: {xml_sha256}",
+        f"Package URL: {package_url or 'MISSING'}",
+        f"Package SHA-256: {package_sha256 or 'MISSING'}",
+        f"Shard: {shard_index}",
+        f"Member count: {len(members)}",
+        "",
+        "## Retrieval Hints",
+        "",
+        f"Revit API {api_version} exact XML member documentation {assembly} Autodesk.Revit.DB Autodesk.Revit.UI",
+        "class method property field event signature parameter returns remarks exceptions since.",
+        "",
+        "## SDK Members",
+        "",
+    ]
+    for member in members:
+        documentation_id = str(member["documentation_id"])
+        lines.extend(
+            [
+                f"### `{documentation_id}`",
+                "",
+                f"Member kind: {member['kind']}",
+                f"Symbol: `{member['symbol']}`",
+                "",
+            ]
+        )
+        for title, body in member["sections"]:
+            lines.extend([f"#### {title}", "", body, ""])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def write_sdk_xml_shards(
+    xml_path: Path,
+    runtime_root: Path,
+    *,
+    api_version: str,
+    package_url: str = "",
+    package_sha256: str = "",
+    shard_members: int = 500,
+    artel_content_root: Path | None = None,
+) -> list[Path]:
+    if shard_members <= 0:
+        raise ValueError("sdk_xml_shard_members must be greater than 0")
+    assembly, members = parse_sdk_xml(xml_path)
+    xml_sha256 = hashlib.sha256(xml_path.read_bytes()).hexdigest()
+    target_root = (
+        artel_content_root / "revit_api_sdk_docs"
+        if artel_content_root is not None
+        else target_dir(runtime_root, "revit_api_sdk_docs")
+    )
+    target_root.mkdir(parents=True, exist_ok=True)
+    base_name = safe_name(f"revit_api_{api_version}_{assembly}_xml", "revit_api_xml")
+    targets: list[Path] = []
+    for offset in range(0, len(members), shard_members):
+        shard_index = len(targets) + 1
+        target = target_root / f"{base_name}_shard_{shard_index:04d}.md"
+        target.write_text(
+            render_sdk_xml_shard(
+                source=xml_path,
+                assembly=assembly,
+                api_version=api_version,
+                xml_sha256=xml_sha256,
+                package_url=package_url,
+                package_sha256=package_sha256,
+                shard_index=shard_index,
+                members=members[offset : offset + shard_members],
+            ),
+            encoding="utf-8",
+        )
+        targets.append(target)
+    return targets
+
+
 def write_sdk_html_file(path: Path, runtime_root: Path, source_root: Path | None = None) -> Path:
     html = path.read_text(encoding="utf-8", errors="ignore")
     rel = path.relative_to(source_root) if source_root else Path(path.name)
@@ -467,6 +651,12 @@ def main() -> int:
     parser.add_argument("--model-guide", action="append", default=[], help="Markdown URL/path with Revit data model guide.")
     parser.add_argument("--symbol-map", action="append", default=[], help="JSON/CSV URL/path with Revit API symbol map.")
     parser.add_argument("--sdk-html-dir", type=Path, action="append", default=[], help="Directory with extracted Revit API SDK HTML files.")
+    parser.add_argument("--sdk-xml", type=Path, action="append", default=[], help="RevitAPI.xml/RevitAPIUI.xml SDK documentation file.")
+    parser.add_argument("--sdk-version", default="", help="Exact Revit API version recorded on XML-derived shards.")
+    parser.add_argument("--sdk-package-url", default="", help="Download URL recorded as provenance on XML-derived shards.")
+    parser.add_argument("--sdk-package-sha256", default="", help="Package SHA-256 recorded as provenance on XML-derived shards.")
+    parser.add_argument("--sdk-xml-shard-members", type=int, default=500, help="Documented XML members per markdown shard.")
+    parser.add_argument("--artel-content-root", type=Path, help="Write generated sources directly into a Git/bundled ARTEL content root.")
     parser.add_argument("--sdk-url", action="append", default=[], help="Revit API SDK/RevitAPIDocs/RVTDocs HTML URL to index as REVIT_API_SDK_DOC.")
     parser.add_argument("--url-timeout-sec", type=float, default=DEFAULT_URL_TIMEOUT_SEC, help="Per-attempt timeout for URL reads.")
     parser.add_argument("--allow-fetch-errors", action="store_true", help="Continue when an --sdk-url cannot be fetched.")
@@ -484,7 +674,7 @@ def main() -> int:
 
     model_guides = list(args.model_guide)
     symbol_maps = list(args.symbol_map)
-    if args.seed_defaults or not (model_guides or symbol_maps or args.sdk_html_dir or args.sdk_url or args.chm):
+    if args.seed_defaults or not (model_guides or symbol_maps or args.sdk_html_dir or args.sdk_xml or args.sdk_url or args.chm):
         model_guides.append(DEFAULT_RHINO_MODEL_GUIDE_URL)
         symbol_maps.append(DEFAULT_REVIT_API_SYMBOL_MAP_URL)
 
@@ -513,6 +703,23 @@ def main() -> int:
         print(
             f"sdk_html_dir={html_dir} html_page_count={html_page_count} "
             f"sdk_shard_pages={shard_pages} written_count={len(targets)}"
+        )
+    for xml_path in args.sdk_xml:
+        if not args.sdk_version:
+            raise ValueError("--sdk-version is required with --sdk-xml")
+        targets = write_sdk_xml_shards(
+            xml_path,
+            args.runtime_root,
+            api_version=args.sdk_version,
+            package_url=args.sdk_package_url,
+            package_sha256=args.sdk_package_sha256,
+            shard_members=args.sdk_xml_shard_members,
+            artel_content_root=args.artel_content_root,
+        )
+        written.extend(targets)
+        print(
+            f"sdk_xml={xml_path} sdk_version={args.sdk_version} "
+            f"sdk_xml_shard_members={args.sdk_xml_shard_members} written_count={len(targets)}"
         )
     for source in args.sdk_url:
         try:

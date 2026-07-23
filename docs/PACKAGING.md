@@ -139,11 +139,10 @@ uv run python tools/check_atlas_bundle_budget.py
 uv run python tools/build_atlas_release.py
 ```
 
-Build АРТЕЛЬ MVP hand-test artifact with:
-
-```bash
-uv run python tools/build_artel_release.py
-```
+АРТЕЛЬ собирается и выпускается из канонического публичного репозитория
+<https://github.com/proovcme/Agnostis>. `products/artel` в LES — pinned
+git-submodule для интеграционных тестов и связи с ARTEL Index; LES не владеет
+сборкой ARTEL installer.
 
 ## Acceptance Gates
 
@@ -164,7 +163,8 @@ Before a boxed release:
   absent prices remain `MISSING`.
 - АТЛАС zip contains `ATLAS_MANIFEST.json` and excludes private `JSON/` and `ifc-sample/` folders.
 - АТЛАС bundle budget passes so dependency drift is explicit.
-- АРТЕЛЬ zip contains `ARTEL_MANIFEST.json`, UI, backend, OpenAPI and runbook; it excludes binary build output and legacy Revit distribution files.
+- ARTEL submodule инициализирован на зафиксированном commit; выпускной gate
+  самого ARTEL выполняется в репозитории Agnostis.
 
 ## Immediate Next Work
 
