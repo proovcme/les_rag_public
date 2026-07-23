@@ -10,6 +10,7 @@ normative corpora, mail, project documents, generated indexes, or model caches.
 1. Secrets and private data:
 
 ```bash
+make docs-check
 make public-check
 git status --short
 ```
@@ -53,15 +54,12 @@ uv run python tools/runtime_smoke.py \
   keys, private paths, or private dataset names part of required public setup.
 - If GitHub Pages is enabled, use `docs/index.md` as the curated entry point.
 
-## Current 0.24 Public-Ready Status
+## Current 0.24 Public-Team Status
 
-`0.24.0.95` is a public-showcase candidate:
+The public repository is the review and team-build surface, not a curated source
+showcase. It contains the safe tracked application source, tests, current skills,
+algorithm descriptions and operational documentation. Runtime data, customer
+documents, credentials, model caches and licensed corpora remain excluded.
 
-- SPDS doc-review baseline is in code and deployed locally.
-- JSON/HTML/XLSX reports are available.
-- `normalized_remarks` is exposed for future checklist/DOCX/PDF renderers.
-- Engineer decisions for doc-review remarks are persisted and exported.
-- Service sources are visible through `/api/service-sources`, the Admin GUI, and the chat panel.
-- README and `docs/public/*` provide a curated public surface.
-- `docs/public/smeta-expert-review.md` states what the smeta module still needs to calculate confidently without templates.
-- Full publication still requires owner approval and a final secret/data scrub.
+Every publication branch must pass `make docs-check` and `make public-check`.
+Owner approval is still required before merge or release.

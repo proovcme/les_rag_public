@@ -118,9 +118,8 @@ Use only for the actual reinstall stress test:
 From a fresh clone:
 
 ```bash
-git clone git@github.com:proovcme/les_rag.git
-cd les_rag
-git checkout codex/les-closeout-20260527
+git clone --recurse-submodules https://github.com/proovcme/les_rag_public.git
+cd les_rag_public
 uv sync
 uv run lesctl init --profile mac-native
 uv run lesctl install --profile mac-native
@@ -192,7 +191,7 @@ list.
 Fresh install:
 
 ```bash
-git clone --branch codex/les-closeout-20260527 git@github.com:proovcme/les_rag.git \
+git clone --recurse-submodules https://github.com/proovcme/les_rag_public.git \
   /Users/ovc/Projects/LES_v2_reinstall_stress
 cd /Users/ovc/Projects/LES_v2_reinstall_stress
 uv sync

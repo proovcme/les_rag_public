@@ -4,19 +4,30 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-17)
+## Текущее состояние (2026-07-23)
 
 ```
-версия продукта (SemVer):  0.24.26 (published, 2026-07-17)
-номер сборки:              447     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.447 (published Windows package)
-ветка выпуска:             main (сведение веток выполняется перед публикацией)
-dev HEAD:                  e380c12ad6eb05ac0a5425024af2c5057a3d2786
-задеплоено на рантайм:     0.24.26 / build 447 (live on Legion, 2026-07-17)
-Windows-выпуск:            0.24.26 / build 447 (GitHub release v0.24.26)
-следующий выпуск:          не назначен
-рантайм /api/version:      0.24.26 / build 447; UI 200; desktop process 1
+версия продукта (SemVer):  0.24.45 (public audit branch; не опубликована)
+номер сборки:              466     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.466 (manifest only; package не собран)
+ветка выпуска:             audit/smeta-stabilization (stacked public review)
+dev HEAD:                  определяется commit после review
+задеплоено на public demo: 0.24.44 / build 465; commit 9af71346; 2026-07-22
+Windows-выпуск:            последний подтверждённый 0.24.26 / build 447
+следующий выпуск:          только после owner approval и release gates
+public /api/version:       0.24.44 / build 465; landing/login 200; anonymous chat 401
 ```
+
+> 0.24.45 / build 466 — полный public/team source и проверяемая документация
+>
+> Дата: 2026-07-23
+> Статус: dev/review; не задеплоено и не опубликовано.
+> В public возвращён безопасный tracked documentation set из private, включая
+> недостающие ALGO-доки и archive index. Добавлены единые индексы алгоритмов и
+> skills, `make docs-check` включён в `make verify`, синхронизированы package/Tauri
+> version manifests и public clone instructions. Живой read-only smoke
+> `les.ovc.me` подтвердил landing/login, обязательный provider setup и закрытый
+> anonymous chat. Runtime и Windows/Legion не менялись.
 
 > 0.24.26 / build 447 — Е.Ж.И.К.: отдельный P0-датасет на каждый почтовый ящик
 >

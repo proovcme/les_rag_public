@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-release test-release-critical test-architecture test-focused test-rag-core test-mail test-mail-release test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
+.PHONY: version-sync docs-check verify test test-release test-release-critical test-architecture test-focused test-rag-core test-mail test-mail-release test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
 
 PATCH_RELEASE_ARGS ?=
 
@@ -21,6 +21,7 @@ SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
 
 help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
+	@echo "make docs-check   — канон/скиллы/алгоритмы: ссылки, обязательные файлы, public clone и версии"
 	@echo "make test         — полная сюита pytest (часть тестов требует живых Qdrant/MLX)"
 	@echo "make test-release — LES release-suite без отдельного продукта ARTEL"
 	@echo "make test-release-critical — узкие unit/code-проверки ФСНБ, clean-install и датасетов перед Windows smoke"
@@ -47,7 +48,10 @@ help:
 version-sync:
 	uv run python tools/sync_version_contract.py
 
-verify:
+docs-check:
+	uv run python tools/docs_contract_audit.py
+
+verify: docs-check
 	uv run python tools/sync_version_contract.py --check
 	uv run python -m compileall -q $(PKGS)
 	uv run python -m pytest --collect-only -q
