@@ -20,6 +20,8 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 2. **[SKILL.md](SKILL.md)** — рантайм/эксплуатация (порты, деплой = `cp`+`write_deploy_stamp`, доступы, гейты). Источник истины по запуску.
 3. **[docs/MODULE_INDEX.md](docs/MODULE_INDEX.md)** — карта МОДУЛЕЙ: что есть, точки входа, **статус док↔код** (✅/🟡/🗄/📋), ссылка на док модуля. Начинай отсюда: модуль → его док/код.
 4. **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода по файлам: поток чата/индексации, «где искать что».
+   Индексы предметных контрактов: [docs/ALGORITHM_INDEX.md](docs/ALGORITHM_INDEX.md) и
+   [docs/SKILL_INDEX.md](docs/SKILL_INDEX.md).
 5. **[docs/SOFTWARE_VERSIONS.md](docs/SOFTWARE_VERSIONS.md)** — паспорт версий ЛЕС, Qdrant, Ollama, моделей и сборочного контура.
 6. **[ROADMAP_TO_V1.md](ROADMAP_TO_V1.md)** — что считается v1, этапы, блокеры (актуальный план).
 7. **[docs/RELEASE_LEDGER.md](docs/RELEASE_LEDGER.md)** — **где мы сейчас**: версия продукта, номер сборки, dev↔рантайм commit, что задеплоено.

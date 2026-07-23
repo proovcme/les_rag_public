@@ -6,6 +6,11 @@
 Это регрессионная коллекция, а не 3065 равноценных release-гейтов. Текущий LES architecture
 profile отдельно дал **2684 passed / 3 skipped**; `make test-mail` — **61 passed**.
 
+Документационный public/team-срез 2026-07-23 после восстановления полного safe
+tracked source: **3086 tests collected**; `make verify`, `make docs-check` и
+publication guard зелёные. Это collect/import evidence, не полный runtime или
+Windows/Revit release-smoke.
+
 Архитектурный разбор и список исторического долга:
 [TEST_ARCHITECTURE_AUDIT_2026-07-14.md](TEST_ARCHITECTURE_AUDIT_2026-07-14.md).
 
