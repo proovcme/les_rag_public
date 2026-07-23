@@ -18,9 +18,11 @@ import os
 import re
 import shutil
 import sqlite3
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -29,21 +31,85 @@ from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.schema import Document, TextNode
 from qdrant_client import models
 
-from .converter import convert_to_markdown
+from .converter import convert_to_markdown_for_indexing, normalize_pdf_text
 from .document_router import DocumentRoute, route_document
-from .interface import Chunk, DatasetInfo, RAGBackend
+from .interface import Chunk, DatasetInfo, EmbeddingContractError, RAGBackend
 from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
 from .parquet_writer import TableNormalizer
+from proxy.services.dataset_memory_service import chunk_payload_typing, current_dataset_revision_id
 from .rag_config import (
     chunking_config,
+    index_contract_status,
     rag_chunk_overlap,
     rag_chunk_size,
     rag_collection_name,
     rag_meta_db_path,
     rag_vector_size,
+    prepare_query_for_embedding,
+    point_embedding_descriptor,
+    point_embedding_fingerprint,
+    write_index_contract,
 )
 
 logger = logging.getLogger(__name__)
+
+
+RAW_CAD_BIM_SUFFIXES = {".dwg", ".dxf", ".rvt", ".rfa", ".ifc", ".ifczip", ".nwc"}
+PDF_PAGE_NODE_SUFFIXES = {".pdf", ".p7m"}
+
+
+def _pdf_page_nodes_enabled(file_path: Path, route: DocumentRoute | None = None) -> bool:
+    if file_path.suffix.lower() not in PDF_PAGE_NODE_SUFFIXES:
+        return False
+    if os.getenv("RAG_PDF_PAGE_NODES_ENABLED", "true").lower() not in ("1", "true", "yes", "on"):
+        return False
+    if route and route.pipeline == "markdown_needs_ocr":
+        return False
+    return True
+
+
+def _pdf_page_node_max_chars() -> int:
+    try:
+        return max(800, int(os.getenv("RAG_PDF_PAGE_NODE_MAX_CHARS", "1800")))
+    except ValueError:
+        return 1800
+
+
+def _pdf_page_node_overlap_chars() -> int:
+    try:
+        return max(0, int(os.getenv("RAG_PDF_PAGE_NODE_OVERLAP_CHARS", "150")))
+    except ValueError:
+        return 150
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+class UnsupportedIndexingSourceError(RuntimeError):
+    """Raised when intake accepted a source that needs a typed converter first."""
+
+
+def _is_raw_cad_bim_source(file_path: Path, route: DocumentRoute | None) -> bool:
+    suffix = file_path.suffix.lower()
+    return suffix in RAW_CAD_BIM_SUFFIXES and (
+        route is None
+        or route.content_type == "cad_bim"
+        or route.pipeline == "json_graph_projection"
+        or route.doc_type == "CAD_BIM"
+    )
+
+
+def _raw_cad_bim_error(file_path: Path) -> str:
+    suffix = file_path.suffix.lower() or "raw"
+    return (
+        f"raw CAD/BIM source unsupported by text RAG indexing ({suffix}); "
+        "export/import it as canonical CAD/BIM JSON/JSONL projection before indexing"
+    )
 
 
 class StructureAwareSplitter:
@@ -220,9 +286,12 @@ class StructureAwareSplitter:
                 
         return all_nodes
 
-EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "32"))      # чанков за один запрос к MLX embeddings
+EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "16"))      # чанков за один запрос к MLX embeddings
+EMBED_TIMEOUT = float(os.getenv("RAG_EMBED_TIMEOUT_SEC", "300"))
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "100"))  # W2.5: <100 симв — шум («Приложение», «А»), не индексируем
+FINAL_MIN_CHUNK = int(os.getenv("RAG_FINAL_MIN_CHUNK_CHARS", "20"))
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
+TABLE_ROW_INDEX_MAX_CHUNKS = int(os.getenv("RAG_TABLE_ROW_INDEX_MAX_CHUNKS", "600"))
 VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "1")))  # P0: exact-count каждый файл by default
 # W1.4: конвейер — конвертация следующего файла параллельно с эмбеддингом текущего,
 # per-file таймаут конвертации (зависший файл помечается ERROR, индексация продолжается).
@@ -232,6 +301,7 @@ CHUNK_HASH_CACHE = os.getenv("RAG_CHUNK_HASH_CACHE", "true").lower() in {"1", "t
 RAG_CHUNK_SIZE = rag_chunk_size()
 RAG_CHUNK_OVERLAP = rag_chunk_overlap()
 ALLOW_UNBOUNDED_PARSE = "ALLOW_UNBOUNDED_PARSE"
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def _content_hash(text: str) -> str:
@@ -239,33 +309,124 @@ def _content_hash(text: str) -> str:
 
 
 def _embedding_cache_descriptor() -> dict[str, str]:
-    backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
-    descriptor = {
-        "backend": backend,
-        "model_id": os.getenv("EMBEDDING_MODEL") or os.getenv("EMBED_MODEL", ""),
-        "profile": os.getenv("LES_EMBED_PROFILE", ""),
-        "vector_size": str(rag_vector_size()),
-    }
-    if backend == "coreml":
-        descriptor.update(
-            {
-                "coreml_model": os.getenv("COREML_EMBED_MODEL", ""),
-                "coreml_seq_len": os.getenv("COREML_EMBED_SEQ_LEN", ""),
-                "coreml_compute_units": os.getenv("COREML_EMBED_COMPUTE_UNITS", ""),
-                "coreml_fallback": os.getenv("COREML_EMBED_FALLBACK", ""),
-            }
-        )
-    return descriptor
+    return point_embedding_descriptor()
 
 
 def _embedding_cache_fingerprint(descriptor: dict[str, str] | None = None) -> str:
-    data = descriptor or _embedding_cache_descriptor()
-    stable = "\n".join(f"{key}={data.get(key, '')}" for key in sorted(data))
-    return hashlib.sha1(stable.encode("utf-8", errors="ignore")).hexdigest()
+    return point_embedding_fingerprint(descriptor)
+
+
+def _qdrant_schema_mode() -> str:
+    return "named"
+
+
+def _dense_vector_name() -> str:
+    return os.getenv("RAG_DENSE_VECTOR_NAME", "dense").strip() or "dense"
+
+
+def _sparse_vector_name() -> str:
+    from backend.inference.bm25_sparse import SPARSE_VECTOR_NAME
+
+    return os.getenv("RAG_SPARSE_VECTOR_NAME", SPARSE_VECTOR_NAME).strip() or SPARSE_VECTOR_NAME
+
+
+def _field(value: Any, name: str, default: Any = None) -> Any:
+    if isinstance(value, Mapping):
+        return value.get(name, default)
+    return getattr(value, name, default)
+
+
+def _named_collection_layout(info: Any, *, vector_size: int) -> tuple[bool, int]:
+    """Return named dense+sparse compatibility and point count for a collection."""
+    config = _field(info, "config", {})
+    params = _field(config, "params", {})
+    vectors = _field(params, "vectors", {})
+    sparse_vectors = _field(params, "sparse_vectors", {})
+    points_count = int(_field(info, "points_count", 0) or 0)
+    if not isinstance(vectors, Mapping) or not isinstance(sparse_vectors, Mapping):
+        return False, points_count
+    dense = vectors.get(_dense_vector_name())
+    dense_size = int(_field(dense, "size", 0) or 0) if dense is not None else 0
+    compatible = dense_size == vector_size and _sparse_vector_name() in sparse_vectors
+    return compatible, points_count
+
+
+def _can_adopt_missing_contract(*, points_count: int, matching_fingerprint_count: int) -> bool:
+    """A missing sidecar is safe to recreate only from a provably canonical collection."""
+    return points_count == 0 or matching_fingerprint_count == points_count
 
 
 _MD_HEADING_RE = re.compile(r"^(#{1,6})\s+(.{2,160})$")
 _NUM_HEADING_RE = re.compile(r"^(\d+(?:\.\d+){0,4})[.\s]+([А-ЯЁA-Z].{1,150})$")
+_DATA_URI_RE = re.compile(
+    r"data:[^\s;,]{1,120}(?:;[^\s,]{1,80})*;base64,[A-Za-z0-9+/=\s]{128,}",
+    re.IGNORECASE,
+)
+_BASE64_RUN_RE = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{256,}={0,2}(?![A-Za-z0-9+/=])")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_embedding_text(text: str) -> tuple[str, dict[str, Any]]:
+    """Remove transport/binary payloads before they can become evidence.
+
+    The gate is deliberately format-agnostic and runs after every converter, so
+    mixed text+base64 chunks cannot bypass a parser-specific check.
+    """
+    raw = str(text or "")
+    data_uri_count = len(_DATA_URI_RE.findall(raw))
+    clean = _DATA_URI_RE.sub(" [binary attachment removed] ", raw)
+    base64_count = len(_BASE64_RUN_RE.findall(clean))
+    clean = _BASE64_RUN_RE.sub(" [binary payload removed] ", clean)
+    control_count = len(_CONTROL_CHARS_RE.findall(clean))
+    clean = _CONTROL_CHARS_RE.sub(" ", clean)
+    clean = re.sub(r"[ \t]{3,}", "  ", clean)
+    clean = re.sub(r"\n{4,}", "\n\n\n", clean).strip()
+    return clean, {
+        "data_uri_removed": data_uri_count,
+        "base64_runs_removed": base64_count,
+        "control_chars_removed": control_count,
+        "sanitized": bool(data_uri_count or base64_count or control_count),
+    }
+
+
+def _largest_budget_prefix(text: str, *, budget: int, len_fn) -> int:
+    """Largest non-empty character prefix whose real token length fits budget."""
+    low, high = 1, len(text)
+    best = 0
+    while low <= high:
+        mid = (low + high) // 2
+        if len_fn(text[:mid]) <= budget:
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    if best <= 0:
+        return 1
+    # Prefer a semantic boundary without throwing away more than 20% of budget.
+    floor = max(1, int(best * 0.8))
+    candidates = [text.rfind("\n", floor, best), text.rfind(" ", floor, best)]
+    boundary = max(candidates)
+    return boundary if boundary >= floor else best
+
+
+def _split_to_embedding_budget(text: str, *, budget: int, len_fn) -> list[str]:
+    clean = str(text or "").strip()
+    if not clean:
+        return []
+    if len_fn(clean) <= budget:
+        return [clean]
+    parts: list[str] = []
+    remaining = clean
+    while remaining:
+        if len_fn(remaining) <= budget:
+            parts.append(remaining.strip())
+            break
+        cut = _largest_budget_prefix(remaining, budget=budget, len_fn=len_fn)
+        part = remaining[:cut].strip()
+        if part:
+            parts.append(part)
+        remaining = remaining[cut:].strip()
+    return [part for part in parts if part]
 
 
 def _section_heading_info(text: str) -> tuple[str, int]:
@@ -313,8 +474,17 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
         window_size = 4
     last_heading = ""
     last_level = 0
+    dataset_revision = current_dataset_revision_id(dataset_id)
     for chunk_ord, file_node in enumerate(file_nodes):
         payload = file_node.setdefault("payload", {})
+        payload.setdefault("dataset_id", dataset_id)
+        payload.setdefault("file_name", file_key)
+        if dataset_revision:
+            payload.setdefault("dataset_revision", dataset_revision)
+        try:
+            payload.update(chunk_payload_typing(file_key, payload, payload))
+        except Exception:
+            pass
         text = str(file_node.get("text") or "")
         payload.setdefault("chunk_ord", chunk_ord)
         payload.setdefault("child_ord", chunk_ord)
@@ -372,34 +542,148 @@ class EmbedClient:
     Тонкий клиент к /v1/embeddings MLX Host.
     Работает асинхронно и синхронно (для _sync_parse в threadpool).
     """
-    def __init__(self, base_url: str, model: str = "bge-m3"):
+    def __init__(
+        self,
+        base_url: str,
+        model: str = "bge-m3",
+        *,
+        backend: str | None = None,
+    ):
         self.url   = f"{base_url.rstrip('/')}/v1/embeddings"
         self.model = model
-
-    def encode_sync(self, texts: List[str]) -> List[List[float]]:
-        """Синхронный вариант для вызова из threadpool."""
-        import httpx as _httpx
-        r = _httpx.post(
-            self.url,
-            json={"model": self.model, "input": texts},
-            timeout=60.0,
+        self.backend = (
+            str(backend).strip().lower()
+            if backend is not None
+            else os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
         )
-        r.raise_for_status()
-        data = r.json()["data"]
+
+    @staticmethod
+    def _normalise_model_id(value: object) -> str:
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+    def _vectors_from_response(self, payload: dict[str, Any]) -> List[List[float]]:
+        """Validate the model that actually produced a response before using it.
+
+        The OpenAI ``model`` request field is descriptive for the local MLX host:
+        it does not select a model.  A host must therefore report the active
+        ``embedding_model`` explicitly.  Missing or incompatible metadata is a
+        safety failure, not a reason to score Qwen and BGE vectors together.
+        """
+        reported_embedding_model = str(payload.get("embedding_model") or "").strip()
+        reported_openai_model = str(payload.get("model") or "").strip()
+        # Ollama's OpenAI-compatible endpoint selects the requested model and
+        # reports it in the standard ``model`` field.  LES-owned MLX/CoreML
+        # hosts must keep reporting the stronger explicit contract fields.
+        ollama_contract = self.backend == "ollama" and bool(reported_openai_model)
+        actual_model = reported_embedding_model or (reported_openai_model if ollama_contract else "")
+        actual_backend = str(payload.get("embedding_backend") or "").strip().lower()
+        if not actual_backend and ollama_contract:
+            actual_backend = "ollama"
+        expected = self._normalise_model_id(self.model)
+        actual = self._normalise_model_id(actual_model)
+        if not actual_model:
+            raise EmbeddingContractError(
+                f"embedding contract not reported by {self.url}; expected={self.model}"
+            )
+        if not expected or not actual or (expected not in actual and actual not in expected):
+            raise EmbeddingContractError(
+                f"embedding contract mismatch: expected={self.model}, actual={actual_model}"
+            )
+        expected_backend = self.backend
+        if not actual_backend:
+            raise EmbeddingContractError(
+                f"embedding backend not reported by {self.url}; expected={expected_backend}"
+            )
+        if actual_backend != expected_backend:
+            raise EmbeddingContractError(
+                "embedding backend mismatch: "
+                f"expected={expected_backend}, actual={actual_backend}"
+            )
+        data = payload.get("data") or []
         data.sort(key=lambda x: x["index"])
         return [d["embedding"] for d in data]
 
-    async def encode_async(self, texts: List[str]) -> List[List[float]]:
-        """Асинхронный вариант для retrieve."""
+    @staticmethod
+    def _response_detail(response: Any) -> str:
+        try:
+            payload = response.json()
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            detail = payload.get("error") or payload.get("detail") or payload.get("message")
+            if detail:
+                return " ".join(str(detail).split())[:500]
+        return " ".join(str(getattr(response, "text", "") or "").split())[:500]
+
+    def _encode_sync_resilient(self, texts: List[str]) -> List[List[float]]:
+        import httpx as _httpx
+
+        try:
+            attempts = max(1, int(os.getenv("RAG_EMBED_RETRY_ATTEMPTS", "3")))
+        except ValueError:
+            attempts = 3
+        try:
+            delay = max(0.0, float(os.getenv("RAG_EMBED_RETRY_DELAY_SEC", "0.35")))
+        except ValueError:
+            delay = 0.35
+
+        response = None
+        request_error: Exception | None = None
+        retryable = {400, 408, 409, 425, 429, 500, 502, 503, 504}
+        for attempt in range(1, attempts + 1):
+            try:
+                response = _httpx.post(
+                    self.url,
+                    json={"model": self.model, "input": texts},
+                    timeout=EMBED_TIMEOUT,
+                )
+                if response.status_code < 400:
+                    return self._vectors_from_response(response.json())
+                request_error = None
+                if response.status_code not in retryable:
+                    break
+            except _httpx.RequestError as error:
+                request_error = error
+                response = None
+            if attempt < attempts:
+                time.sleep(delay * attempt)
+
+        # Ollama can reject one batch transiently while the same inputs work in
+        # smaller groups.  Split only after bounded retries; a bad item is then
+        # isolated without discarding already valid document chunks.
+        if len(texts) > 1 and (response is None or response.status_code in retryable):
+            middle = max(1, len(texts) // 2)
+            return self._encode_sync_resilient(texts[:middle]) + self._encode_sync_resilient(texts[middle:])
+
+        text_hash = hashlib.sha256((texts[0] if texts else "").encode("utf-8", errors="ignore")).hexdigest()[:12]
+        if response is not None:
+            detail = self._response_detail(response) or "сервер не сообщил причину"
+            raise RuntimeError(
+                "Сервис поискового представления отклонил фрагмент "
+                f"после {attempts} попыток: HTTP {response.status_code}; {detail}; "
+                f"fragment={text_hash}"
+            )
+        raise RuntimeError(
+            "Сервис поискового представления недоступен "
+            f"после {attempts} попыток: {request_error}; fragment={text_hash}"
+        )
+
+    def encode_sync(self, texts: List[str]) -> List[List[float]]:
+        """Синхронный parse-клиент с bounded retry и изоляцией плохого фрагмента."""
+        if not texts:
+            return []
+        return self._encode_sync_resilient(texts)
+
+    async def encode_async(self, texts: List[str], *, query: bool = False) -> List[List[float]]:
+        """Асинхронный вариант для retrieve; query contract never touches documents."""
+        payload_texts = [prepare_query_for_embedding(text) for text in texts] if query else texts
         async with httpx.AsyncClient(timeout=30.0) as c:
             r = await c.post(
                 self.url,
-                json={"model": self.model, "input": texts},
+                json={"model": self.model, "input": payload_texts},
             )
             r.raise_for_status()
-            data = r.json()["data"]
-            data.sort(key=lambda x: x["index"])
-            return [d["embedding"] for d in data]
+            return self._vectors_from_response(r.json())
 
 
 # ── SQLite метабаза ───────────────────────────────────────────────────────────
@@ -503,13 +787,49 @@ class MetaDB:
                 conn.execute("ALTER TABLE datasets ADD COLUMN group_name TEXT DEFAULT ''")
             except Exception:
                 pass
+            # Module-owned knowledge is a separate entity, not a project upload.
+            # The registry is deterministic, so legacy service datasets migrate
+            # on startup without touching documents or vectors.
+            try:
+                conn.execute("ALTER TABLE datasets ADD COLUMN dataset_scope TEXT DEFAULT 'user'")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE datasets ADD COLUMN module_id TEXT DEFAULT ''")
+            except Exception:
+                pass
+            conn.execute(
+                "UPDATE datasets SET dataset_scope='system', module_id='smeta' "
+                "WHERE name='SMETA_SERVICE_Index' OR name='GESN_NORMS_2022_PDF' "
+                "OR name LIKE 'SMETA_RU_NORM_%'"
+            )
+
+    def ensure_system_datasets(self) -> list[str]:
+        """Provision module-owned datasets only from the real runtime bootstrap.
+
+        Constructing an isolated MetaDB must remain free of product-data side
+        effects; tests, tools and import probes legitimately use temporary DBs.
+        """
+        from proxy.services.system_dataset_service import ensure_system_datasets
+
+        with self._get_conn() as conn:
+            return ensure_system_datasets(conn)
 
     def create_dataset(self, name: str) -> str:
-        ds_id = str(uuid.uuid4())
+        from proxy.services.system_dataset_service import dataset_identity, system_dataset_spec
+
+        spec = system_dataset_spec(name)
+        dataset_scope, module_id = dataset_identity(name)
         with self._get_conn() as conn:
+            if spec:
+                existing = conn.execute("SELECT id FROM datasets WHERE name=? LIMIT 1", (name,)).fetchone()
+                if existing:
+                    return str(existing[0])
+            ds_id = str(uuid.uuid4())
             conn.execute(
-                "INSERT INTO datasets (id, name, status) VALUES (?, ?, 'IDLE')",
-                (ds_id, name),
+                "INSERT INTO datasets (id, name, status, dataset_scope, module_id) "
+                "VALUES (?, ?, 'IDLE', ?, ?)",
+                (ds_id, name, dataset_scope, module_id),
             )
         return ds_id
 
@@ -530,7 +850,13 @@ class MetaDB:
                 SELECT d.id, d.name, d.status, d.chunk_count,
                        COALESCE(d.sensitivity, 'P0') AS sensitivity,
                        COALESCE(d.group_name, '') AS group_name,
-                       SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) as indexed_count
+                       COALESCE(d.dataset_scope, 'user') AS dataset_scope,
+                       COALESCE(d.module_id, '') AS module_id,
+                       COUNT(doc.id) AS total_files,
+                       SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) AS indexed_files,
+                       SUM(CASE WHEN doc.status='PENDING' THEN 1 ELSE 0 END) AS pending_files,
+                       SUM(CASE WHEN doc.status='ERROR' THEN 1 ELSE 0 END) AS error_files,
+                       SUM(CASE WHEN doc.status='MISSING' THEN 1 ELSE 0 END) AS missing_files
                 FROM datasets d
                 LEFT JOIN documents doc ON d.id = doc.dataset_id
                 GROUP BY d.id
@@ -538,10 +864,17 @@ class MetaDB:
         return [
             DatasetInfo(
                 id=r["id"], name=r["name"], status=r["status"],
-                doc_count=r["indexed_count"] or 0,
+                doc_count=r["total_files"] or 0,
                 chunk_count=r["chunk_count"] or 0,
                 sensitivity=r["sensitivity"] or "P0",
                 group_name=r["group_name"] or "",
+                files=r["total_files"] or 0,
+                indexed_files=r["indexed_files"] or 0,
+                pending_files=r["pending_files"] or 0,
+                error_files=r["error_files"] or 0,
+                missing_files=r["missing_files"] or 0,
+                dataset_scope=r["dataset_scope"] or "user",
+                module_id=r["module_id"] or "",
             )
             for r in rows
         ]
@@ -648,6 +981,20 @@ class MetaDB:
                     f"for dataset_id={dataset_id}, file_name={file_name}"
                 )
 
+    def mark_document_error(self, dataset_id: str, document_id: str, error: str) -> None:
+        """Mark one uploaded document as failed by its stable public id."""
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE documents SET status='ERROR', chunk_count=0, last_error=?, stage='' "
+                "WHERE dataset_id=? AND id=?",
+                (str(error)[:2000], dataset_id, document_id),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError(
+                    f"document error update affected {cur.rowcount} rows "
+                    f"for dataset_id={dataset_id}, document_id={document_id}"
+                )
+
     def requeue_error_documents(self, dataset_id: str) -> int:
         """«Ремонт» датасета: ERROR-документы → PENDING (очистка last_error/stage/chunk_count),
         чтобы перепарсить их БЕЗ удаления датасета/индекса. Возвращает число сброшенных."""
@@ -659,6 +1006,47 @@ class MetaDB:
             )
             return cur.rowcount
 
+    def requeue_corrupt_pdf_text_documents(self, dataset_id: str) -> list[str]:
+        """Find already indexed PDF text damaged by UTF-8/Latin-1 mojibake and requeue its source.
+
+        Detection is based on the same conservative normalizer used by new PDF
+        ingestion.  A document is touched only when at least two chunks are
+        repairable and at least a quarter of its indexed chunks are affected.
+        """
+        with self._get_conn() as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='lexical_chunks'"
+            ).fetchone()
+            if not table:
+                return []
+            rows = conn.execute(
+                "SELECT doc_name, text FROM lexical_chunks WHERE dataset_id=? ORDER BY doc_name, id",
+                (dataset_id,),
+            ).fetchall()
+            totals: dict[str, int] = {}
+            damaged: dict[str, int] = {}
+            for row in rows:
+                name = str(row["doc_name"] or "")
+                if not name.lower().endswith((".pdf", ".p7m")):
+                    continue
+                text = str(row["text"] or "")
+                totals[name] = totals.get(name, 0) + 1
+                if normalize_pdf_text(text) != text:
+                    damaged[name] = damaged.get(name, 0) + 1
+            names = sorted(
+                name for name, count in damaged.items()
+                if count >= 2 and count * 4 >= totals.get(name, 0)
+            )
+            if not names:
+                return []
+            placeholders = ",".join("?" for _ in names)
+            conn.execute(
+                f"UPDATE documents SET status='PENDING', last_error='', stage='', chunk_count=0 "
+                f"WHERE dataset_id=? AND file_name IN ({placeholders})",
+                (dataset_id, *names),
+            )
+            return names
+
     def update_document_stage(self, dataset_id: str, file_name: str, stage: str) -> None:
         """W1.4: текущая стадия конвейера файла (CONVERT/EMBED/UPSERT) — для прогресса/диагностики."""
         with self._get_conn() as conn:
@@ -666,6 +1054,40 @@ class MetaDB:
                 "UPDATE documents SET stage=? WHERE dataset_id=? AND file_name=?",
                 (stage, dataset_id, file_name),
             )
+
+    def dataset_parse_progress(self, dataset_id: str) -> dict[str, Any]:
+        """Small read-only snapshot for the operator job poller."""
+        with self._get_conn() as conn:
+            conn.row_factory = sqlite3.Row
+            counts = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status='INDEXED' THEN 1 ELSE 0 END) AS indexed,
+                    SUM(CASE WHEN status='PENDING' THEN 1 ELSE 0 END) AS pending,
+                    SUM(CASE WHEN status='ERROR' THEN 1 ELSE 0 END) AS errors
+                FROM documents WHERE dataset_id=?
+                """,
+                (dataset_id,),
+            ).fetchone()
+            active = conn.execute(
+                """
+                SELECT file_name, stage
+                FROM documents
+                WHERE dataset_id=? AND status='PENDING' AND COALESCE(stage, '')<>''
+                ORDER BY file_name
+                LIMIT 1
+                """,
+                (dataset_id,),
+            ).fetchone()
+        return {
+            "total": int(counts["total"] or 0),
+            "indexed": int(counts["indexed"] or 0),
+            "pending": int(counts["pending"] or 0),
+            "errors": int(counts["errors"] or 0),
+            "file_name": str(active["file_name"] or "") if active else "",
+            "stage": str(active["stage"] or "") if active else "",
+        }
 
     def update_document_route(self, dataset_id: str, file_name: str, route: DocumentRoute):
         with self._get_conn() as conn:
@@ -699,7 +1121,9 @@ class MetaDB:
     def get_pending_files(self, dataset_id: str, limit: int | None = None) -> List[str]:
         sql = (
             "SELECT file_name FROM documents WHERE dataset_id=? AND status='PENDING' "
-            "ORDER BY COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
+            "ORDER BY "
+            "CASE WHEN complexity='needs_ocr' OR pipeline='markdown_needs_ocr' THEN 1 ELSE 0 END, "
+            "COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
         )
         params: list[Any] = [dataset_id]
         if limit is not None:
@@ -719,6 +1143,111 @@ class MetaDB:
             ).fetchall()
         return [(r["file_name"], int(r["cc"])) for r in rows]
 
+    def dataset_integrity_rows(self, dataset_id: str) -> list[dict[str, Any]]:
+        """Source and index metadata used by the explicit dataset integrity audit."""
+        with self._get_conn() as conn:
+            rows = conn.execute(
+                "SELECT id, file_name, status, COALESCE(file_hash, '') AS file_hash, "
+                "COALESCE(file_mtime, 0) AS file_mtime, COALESCE(file_size, 0) AS file_size, "
+                "COALESCE(chunk_count, 0) AS chunk_count, COALESCE(source_path, '') AS source_path "
+                "FROM documents WHERE dataset_id=? ORDER BY file_name",
+                (dataset_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_document_source_fingerprint(
+        self,
+        dataset_id: str,
+        file_name: str,
+        *,
+        file_hash: str,
+        file_mtime: float,
+        file_size: int,
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE documents SET file_hash=?, file_mtime=?, file_size=? "
+                "WHERE dataset_id=? AND file_name=?",
+                (file_hash, file_mtime, file_size, dataset_id, file_name),
+            )
+
+    def lexical_integrity_projection(self, dataset_id: str) -> dict[str, Any]:
+        """Return exact lexical/FTS point ids by file without invoking retrieval."""
+        with self._get_conn() as conn:
+            lexical_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lexical_chunks'"
+            ).fetchone()
+            fts_exists = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='lexical_chunks_fts'"
+            ).fetchone()
+            if not lexical_exists:
+                return {"available": False, "fts_available": bool(fts_exists), "files": {}, "fts_ids": set()}
+            rows = conn.execute(
+                "SELECT doc_name, point_id FROM lexical_chunks "
+                "WHERE collection=? AND dataset_id=?",
+                (rag_collection_name(), dataset_id),
+            ).fetchall()
+            files: dict[str, set[str]] = {}
+            for row in rows:
+                files.setdefault(str(row["doc_name"] or ""), set()).add(str(row["point_id"] or ""))
+            fts_ids: set[int] = set()
+            if fts_exists:
+                fts_ids = {
+                    int(row["id"])
+                    for row in conn.execute(
+                        "SELECT c.id FROM lexical_chunks c "
+                        "JOIN lexical_chunks_fts f ON f.rowid=c.id "
+                        "WHERE c.collection=? AND c.dataset_id=?",
+                        (rag_collection_name(), dataset_id),
+                    ).fetchall()
+                }
+            lexical_ids = {
+                int(row["id"])
+                for row in conn.execute(
+                    "SELECT id FROM lexical_chunks WHERE collection=? AND dataset_id=?",
+                    (rag_collection_name(), dataset_id),
+                ).fetchall()
+            }
+        return {
+            "available": True,
+            "fts_available": bool(fts_exists),
+            "files": files,
+            "lexical_ids": lexical_ids,
+            "fts_ids": fts_ids,
+        }
+
+    def rebuild_lexical_fts(self) -> None:
+        from proxy.services.lexical_index_service import LexicalIndex
+
+        with LexicalIndex(self.db_path).connect() as conn:
+            conn.execute("INSERT INTO lexical_chunks_fts(lexical_chunks_fts) VALUES('rebuild')")
+
+    def set_documents_pending(self, dataset_id: str, file_names: set[str]) -> int:
+        if not file_names:
+            return 0
+        names = sorted(file_names)
+        placeholders = ",".join("?" for _ in names)
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                f"UPDATE documents SET status='PENDING', last_error='', stage='', chunk_count=0 "
+                f"WHERE dataset_id=? AND file_name IN ({placeholders})",
+                (dataset_id, *names),
+            )
+            return int(cur.rowcount)
+
+    def set_documents_missing(self, dataset_id: str, file_names: set[str]) -> int:
+        if not file_names:
+            return 0
+        names = sorted(file_names)
+        placeholders = ",".join("?" for _ in names)
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                f"UPDATE documents SET status='MISSING', last_error='Исходный файл не найден', "
+                f"stage='', chunk_count=0 WHERE dataset_id=? AND file_name IN ({placeholders})",
+                (dataset_id, *names),
+            )
+            return int(cur.rowcount)
+
     def get_pending_files_with_paths(
         self, dataset_id: str, limit: int | None = None
     ) -> List[tuple]:
@@ -730,7 +1259,9 @@ class MetaDB:
         sql = (
             "SELECT file_name, COALESCE(source_path, '') AS source_path FROM documents "
             "WHERE dataset_id=? AND status='PENDING' "
-            "ORDER BY COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
+            "ORDER BY "
+            "CASE WHEN complexity='needs_ocr' OR pipeline='markdown_needs_ocr' THEN 1 ELSE 0 END, "
+            "COALESCE(NULLIF(file_size, 0), 9223372036854775807), file_name"
         )
         params: list[Any] = [dataset_id]
         if limit is not None:
@@ -744,10 +1275,13 @@ class MetaDB:
         with self._get_conn() as conn:
             dataset_rows = conn.execute("""
                 SELECT d.id, d.name, d.status, d.chunk_count,
+                       COALESCE(d.dataset_scope, 'user') AS dataset_scope,
+                       COALESCE(d.module_id, '') AS module_id,
                        COUNT(doc.id) AS total_files,
                        SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) AS indexed_files,
                        SUM(CASE WHEN doc.status='PENDING' THEN 1 ELSE 0 END) AS pending_files,
                        SUM(CASE WHEN doc.status='ERROR' THEN 1 ELSE 0 END) AS error_files,
+                       SUM(CASE WHEN doc.status='MISSING' THEN 1 ELSE 0 END) AS missing_files,
                        COALESCE(SUM(CASE WHEN doc.status='INDEXED' THEN doc.chunk_count ELSE 0 END), 0) AS indexed_chunks
                 FROM datasets d
                 LEFT JOIN documents doc ON d.id = doc.dataset_id
@@ -784,7 +1318,10 @@ class MetaDB:
                 "indexed_files": row["indexed_files"] or 0,
                 "pending_files": row["pending_files"] or 0,
                 "error_files": row["error_files"] or 0,
+                "missing_files": row["missing_files"] or 0,
                 "chunks": row["indexed_chunks"] or 0,
+                "dataset_scope": row["dataset_scope"] or "user",
+                "module_id": row["module_id"] or "",
             }
             for row in dataset_rows
         ]
@@ -794,6 +1331,7 @@ class MetaDB:
             "indexed_files": sum(item["indexed_files"] for item in datasets),
             "pending_files": sum(item["pending_files"] for item in datasets),
             "error_files": sum(item["error_files"] for item in datasets),
+            "missing_files": sum(item["missing_files"] for item in datasets),
             "chunks": sum(item["chunks"] for item in datasets),
         }
         return {
@@ -819,7 +1357,7 @@ class MetaDB:
             return "empty"
         if totals["indexed_files"] == 0:
             return "not_indexed"
-        if totals["pending_files"] or totals["error_files"]:
+        if totals["pending_files"] or totals["error_files"] or totals.get("missing_files", 0):
             return "degraded"
         if any(dataset["status"] not in ("COMPLETED", "IDLE") for dataset in datasets):
             return "degraded"
@@ -868,6 +1406,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.content_dir     = Path(content_dir)
         self.content_dir.mkdir(parents=True, exist_ok=True)
         self.db              = MetaDB()
+        self.db.ensure_system_datasets()
         recovered = self.db.recover_interrupted_parsing()
         if recovered:
             logger.info("[INIT] Recovered %s interrupted parsing dataset(s)", recovered)
@@ -899,30 +1438,131 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         async with self._collection_lock:
             if self._collection_ready:
                 return
+            created = False
+            collection_info = None
             try:
-                await self.aclient.get_collection(self.collection_name)
+                collection_info = await self.aclient.get_collection(self.collection_name)
             except Exception:
                 logger.info(f"[INIT] Создаём коллекцию {self.collection_name}")
-                await self.aclient.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=models.VectorParams(
-                        size=self.vector_size, distance=models.Distance.COSINE
-                    ),
+            if collection_info is not None and _qdrant_schema_mode() == "named":
+                compatible, points_count = _named_collection_layout(
+                    collection_info,
+                    vector_size=self.vector_size,
                 )
+                if not compatible:
+                    if points_count:
+                        raise EmbeddingContractError(
+                            f"collection {self.collection_name} has {points_count} points in an "
+                            "incompatible vector schema; explicit migration is required"
+                        )
+                    logger.warning(
+                        "[INIT] Пересоздаём пустую legacy-коллекцию %s как named dense+sparse",
+                        self.collection_name,
+                    )
+                    await self.aclient.delete_collection(self.collection_name)
+                    collection_info = None
+                elif index_contract_status().get("status") == "missing":
+                    # A packaged/clean Windows baseline may already contain the
+                    # canonical named collection while its small sidecar file is
+                    # absent. Adopt it only when the collection is empty or every
+                    # existing point proves the current embedding identity.
+                    matching_count = 0
+                    if points_count:
+                        expected_fingerprint = point_embedding_fingerprint()
+                        matching = await self.aclient.count(
+                            collection_name=self.collection_name,
+                            count_filter=models.Filter(
+                                must=[
+                                    models.FieldCondition(
+                                        key="embedding_fingerprint",
+                                        match=models.MatchValue(value=expected_fingerprint),
+                                    )
+                                ]
+                            ),
+                            exact=True,
+                        )
+                        matching_count = int(matching.count or 0)
+                    adopt = _can_adopt_missing_contract(
+                        points_count=points_count,
+                        matching_fingerprint_count=matching_count,
+                    )
+                    if adopt:
+                        write_index_contract(replace=False)
+                        logger.info(
+                            "[INIT] Adopted compatible named collection %s (%s points) into index contract",
+                            self.collection_name,
+                            points_count,
+                        )
+            if collection_info is None:
+                if _qdrant_schema_mode() == "named":
+                    await self.aclient.create_collection(
+                        collection_name=self.collection_name,
+                        vectors_config={
+                            _dense_vector_name(): models.VectorParams(
+                                size=self.vector_size,
+                                distance=models.Distance.COSINE,
+                            )
+                        },
+                        sparse_vectors_config={
+                            _sparse_vector_name(): models.SparseVectorParams(
+                                modifier=models.Modifier.IDF,
+                            )
+                        },
+                    )
+                else:
+                    await self.aclient.create_collection(
+                        collection_name=self.collection_name,
+                        vectors_config=models.VectorParams(
+                            size=self.vector_size, distance=models.Distance.COSINE
+                        ),
+                    )
+                created = True
+            if created or (
+                collection_info is not None
+                and _named_collection_layout(collection_info, vector_size=self.vector_size)[1] == 0
+            ):
+                try:
+                    write_index_contract(replace=False)
+                except FileExistsError:
+                    # A pre-existing sidecar is validated below; never overwrite it
+                    # implicitly during startup.
+                    pass
             # Payload-индексы под фильтрованный поиск (retrieve фильтрует по dataset_id и
             # file_name). БЕЗ индекса query_points с фильтром проверяет фильтр по ВСЕМ точкам
             # (~1.6с на 179k) — с индексом ~30мс. create_payload_index идемпотентен (повторный
             # вызов — no-op/обновление). Best-effort: сбой не должен блокировать старт.
-            for _field in ("dataset_id", "file_name"):
+            for _field in (
+                "dataset_id",
+                "file_name",
+                "embedding_fingerprint",
+                "mail_account_id",
+                "mail_thread_key",
+                "mail_registry_message_id",
+            ):
                 try:
                     await self.aclient.create_payload_index(
                         collection_name=self.collection_name,
                         field_name=_field,
                         field_schema=models.PayloadSchemaType.KEYWORD,
+                        # Qdrant may serialize collection mutations immediately
+                        # after a clean collection was created.  Waiting for
+                        # every payload index made FastAPI startup look dead for
+                        # minutes even though the operation was safely queued.
+                        wait=False,
                     )
                 except Exception as _idx_err:  # noqa: BLE001
                     logger.warning("[INIT] payload-индекс %s: %s", _field, _idx_err)
             self._collection_ready = True
+
+    @staticmethod
+    def _assert_dense_index_contract() -> None:
+        status = index_contract_status()
+        if not status.get("compatible"):
+            raise EmbeddingContractError(
+                "index contract "
+                f"{status.get('status')}: expected={status.get('expected_fingerprint', '')} "
+                f"actual={status.get('actual_fingerprint', '') or 'none'}"
+            )
 
     async def health(self) -> bool:
         try:
@@ -935,6 +1575,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         ok = await self.health()
         snapshot = self.db.health_snapshot()
         snapshot["qdrant"] = {"ok": ok, "collection": self.collection_name}
+        contract = index_contract_status()
+        snapshot["index_contract"] = contract
+        snapshot["dense_available"] = bool(ok and contract.get("compatible"))
+        if ok and not contract.get("compatible"):
+            snapshot["status"] = "degraded"
         if ok:
             try:
                 collection = await self.aclient.get_collection(self.collection_name)
@@ -997,6 +1642,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             logger.warning("[DOC_ROUTE] upload classification skipped for %s: %s", rel_path.as_posix(), error)
         return doc_id
 
+    async def mark_document_error(self, dataset_id: str, document_id: str, error: str) -> None:
+        await asyncio.to_thread(self.db.mark_document_error, dataset_id, document_id, error)
+
     async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:
         """Регистрирует внешний файл как источник БЕЗ копии в storage.
 
@@ -1038,6 +1686,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 ),
             }
         await self._ensure_collection()
+        self._assert_dense_index_contract()
         self.db.update_dataset_status(dataset_id, "PARSING")
         res = await asyncio.to_thread(self._sync_parse, dataset_id, limit)
         status = "COMPLETED" if res.get("status") == "completed" else "ERROR"
@@ -1177,6 +1826,16 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 except Exception:
                     pass
 
+            def _delete_file_lexical(file_key: str) -> None:
+                delete_lexical = getattr(self, "_sync_delete_file_lexical", None)
+                if delete_lexical is not None:
+                    delete_lexical(dataset_id, file_key)
+
+            def _upsert_file_lexical(points: list[Any]) -> None:
+                upsert_lexical = getattr(self, "_sync_upsert_file_lexical", None)
+                if upsert_lexical is not None:
+                    upsert_lexical(points)
+
             def _submit_convert(index: int):
                 f, fk, _dbk = files_to_parse[index]
                 local_timings: dict = {}
@@ -1220,6 +1879,38 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             md_parser, splitter, timings, True,
                         )
 
+                    # One final invariant for every parser and node type. Parser-
+                    # specific chunkers may improve boundaries, but none may bypass
+                    # the actual embedding tokenizer budget or content sanitation.
+                    phase_start = _t.time()
+                    file_nodes = QdrantLlamaIndexAdapter._finalize_embedding_nodes(
+                        file_nodes or [],
+                        chunking=_chunking,
+                    )
+                    _add_timing("chunk_sec", phase_start)
+
+                    # Native RRF is a corpus-wide invariant: a named-schema
+                    # point is never allowed to enter the collection without
+                    # its sparse companion.  Validate before deleting the old
+                    # file points, so an invalid replacement cannot erase a
+                    # previously usable document.
+                    if _qdrant_schema_mode() == "named":
+                        from backend.inference.bm25_sparse import encode_bm25
+
+                        searchable_nodes = []
+                        for node in file_nodes:
+                            sparse_vec = encode_bm25(str(node["text"]))
+                            if not sparse_vec:
+                                logger.warning(
+                                    "Skipping non-searchable node with empty sparse vector: file=%s doc_id=%s",
+                                    file_key,
+                                    node.get("doc_id", ""),
+                                )
+                                continue
+                            node["_rrf_sparse_vector"] = sparse_vec
+                            searchable_nodes.append(node)
+                        file_nodes = searchable_nodes
+
                     phase_start = _t.time()
                     existing_vectors = (
                         self._sync_existing_file_vectors_by_hash(
@@ -1237,7 +1928,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     # конвертации больше не оставляет файл без старого индекса.
                     phase_start = _t.time()
                     self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
-                    self._sync_delete_file_lexical(dataset_id, file_key)
+                    _delete_file_lexical(file_key)
                     _add_timing("delete_sec", phase_start)
 
                     if not file_nodes:
@@ -1326,9 +2017,21 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                                 "embedding_coreml_compute_units": embedding_descriptor.get("coreml_compute_units", ""),
                                 "embedding_coreml_fallback": embedding_descriptor.get("coreml_fallback", ""),
                             })
+                            point_vector: Any = vec
+                            if _qdrant_schema_mode() == "named":
+                                sparse_vec = node.pop("_rrf_sparse_vector", None)
+                                if not sparse_vec:
+                                    raise RuntimeError("missing prevalidated sparse vector")
+                                point_vector = {
+                                    _dense_vector_name(): vec,
+                                    _sparse_vector_name(): models.SparseVector(
+                                        indices=list(sparse_vec.keys()),
+                                        values=list(sparse_vec.values()),
+                                    ),
+                                }
                             points.append(models.PointStruct(
                                 id=str(uuid.uuid4()),
-                                vector=vec,
+                                vector=point_vector,
                                 payload=payload,
                             ))
 
@@ -1341,7 +2044,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                             points=points[point_start:point_start + UPSERT_BATCH],
                         )
                         _add_timing("upsert_sec", phase_start)
-                    self._sync_upsert_file_lexical(points)
+                    _upsert_file_lexical(points)
 
                     file_chunk_count = len(file_nodes)
                     # W1.2: exact-count в Qdrant — дорогая проверка; выборочно (каждый N-й файл
@@ -1359,13 +2062,38 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     self.db.update_document_status(
                         dataset_id, db_file_key, "INDEXED", file_chunk_count, route=route
                     )
+                    try:
+                        set_fingerprint = getattr(self.db, "set_document_source_fingerprint", None)
+                        if callable(set_fingerprint):
+                            stat = file_path.stat()
+                            set_fingerprint(
+                                dataset_id,
+                                db_file_key,
+                                file_hash=_sha256_file(file_path),
+                                file_mtime=stat.st_mtime,
+                                file_size=stat.st_size,
+                            )
+                    except OSError as fingerprint_error:
+                        logger.warning(
+                            "[INTEGRITY] source fingerprint skipped %s: %s",
+                            db_file_key,
+                            fingerprint_error,
+                        )
+                    _add_timing("db_sec", phase_start)
+
+                except UnsupportedIndexingSourceError as file_err:
+                    logger.info("[PARSE] SKIPPED %s: %s", file_key, file_err)
+                    phase_start = _t.time()
+                    self.db.update_document_status(
+                        dataset_id, db_file_key, "SKIPPED", 0, last_error=str(file_err)
+                    )
                     _add_timing("db_sec", phase_start)
 
                 except Exception as file_err:
                     logger.error(f"[PARSE] ERROR {file_key}: {file_err}", exc_info=True)
                     try:
                         self._sync_delete_file_points(sync_qdrant, dataset_id, file_key)
-                        self._sync_delete_file_lexical(dataset_id, file_key)
+                        _delete_file_lexical(file_key)
                     except Exception as cleanup_err:
                         logger.error("[PARSE] cleanup failed %s: %s", file_key, cleanup_err)
                     phase_start = _t.time()
@@ -1440,6 +2168,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             route.complexity,
             route.pipeline,
         )
+
+        if _is_raw_cad_bim_source(file_path, route):
+            raise UnsupportedIndexingSourceError(_raw_cad_bim_error(file_path))
 
         if route.pipeline == "markdown_needs_ocr" and not allow_ocr:
             return route, None
@@ -1594,6 +2325,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         files = self.db.indexed_files_with_counts(dataset_id)
         checked = 0
         mismatched: list[dict] = []
+        requeued_files: set[str] = set()
         for file_name, sqlite_cc in files:
             checked += 1
             try:
@@ -1601,16 +2333,295 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             except Exception as error:  # noqa: BLE001
                 logger.warning("[RECONCILE] count failed %s: %s", file_name, error)
                 continue
-            if qpoints != sqlite_cc:
+            dense_mismatch = qpoints != sqlite_cc
+            if dense_mismatch:
                 mismatched.append({"file": file_name, "sqlite": sqlite_cc, "qdrant": qpoints})
+            if dense_mismatch:
                 self.db.update_document_status(dataset_id, file_name, "PENDING", 0)
+                requeued_files.add(file_name)
         if mismatched:
             self.db.update_dataset_chunk_count(dataset_id)
         logger.info("[RECONCILE] dataset=%s checked=%s mismatched=%s (→PENDING)",
                     dataset_id, checked, len(mismatched))
         return {"dataset_id": dataset_id, "checked": checked,
-                "mismatched": len(mismatched), "requeued": len(mismatched),
+                "mismatched": len(mismatched), "requeued": len(requeued_files),
                 "details": mismatched[:50]}
+
+    def _sync_dataset_point_projection(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+    ) -> dict[str, dict[str, Any]]:
+        projection: dict[str, dict[str, Any]] = {}
+        offset = None
+        dataset_filter = models.Filter(
+            must=[
+                models.FieldCondition(
+                    key="dataset_id",
+                    match=models.MatchValue(value=dataset_id),
+                )
+            ]
+        )
+        while True:
+            points, offset = sync_qdrant.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=dataset_filter,
+                limit=256,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+            for point in points:
+                payload = getattr(point, "payload", None) or {}
+                file_name = str(payload.get("file_name") or payload.get("doc_name") or "")
+                row = projection.setdefault(file_name, {"ids": set(), "pages": set()})
+                row["ids"].add(str(getattr(point, "id", "") or ""))
+                if payload.get("type") == "pdf_page_text" and payload.get("page") is not None:
+                    try:
+                        row["pages"].add(int(payload["page"]))
+                    except (TypeError, ValueError):
+                        pass
+            if offset is None:
+                break
+        return projection
+
+    @staticmethod
+    def _expected_pdf_text_pages(path: Path) -> set[int]:
+        if path.suffix.lower() not in PDF_PAGE_NODE_SUFFIXES:
+            return set()
+        try:
+            import fitz
+
+            with fitz.open(path) as document:
+                return {
+                    page_no
+                    for page_no, page in enumerate(document, start=1)
+                    if len((page.get_text("text") or "").strip()) >= MIN_CHUNK
+                }
+        except Exception as error:  # noqa: BLE001
+            logger.warning("[INTEGRITY] PDF page inventory failed %s: %s", path, error)
+            return set()
+
+    def _sync_count_file_vector_points(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+        dataset_id: str,
+        file_key: str,
+        vector_name: str,
+    ) -> int:
+        file_filter = self._file_filter(dataset_id, file_key)
+        file_filter.must.append(models.HasVectorCondition(has_vector=vector_name))
+        result = sync_qdrant.count(
+            collection_name=self.collection_name,
+            count_filter=file_filter,
+            exact=True,
+        )
+        return int(result.count)
+
+    def audit_dataset_integrity(self, dataset_id: str, *, repair: bool = False) -> dict[str, Any]:
+        """Verify one dataset across source, MetaDB, Qdrant dense/sparse, lexical and FTS.
+
+        Repair is conservative: only damaged documents are requeued; missing sources are marked
+        MISSING, FTS is rebuilt from its content table, and points with no registered document are
+        removed.  The parse job itself is started by the API layer so the operator sees one job.
+        """
+        sync_qdrant = qdrant_client.QdrantClient(
+            url=self.qdrant_url,
+            timeout=60.0,
+            check_compatibility=False,
+        )
+        rows = self.db.dataset_integrity_rows(dataset_id)
+        registry = {str(row["file_name"]): row for row in rows}
+        try:
+            qdrant_files = self._sync_dataset_point_projection(sync_qdrant, dataset_id)
+        except Exception as error:  # noqa: BLE001
+            return {
+                "schema": "les.dataset_integrity.v1",
+                "dataset_id": dataset_id,
+                "state": "blocked",
+                "label": "Векторная база недоступна",
+                "checked_files": len(rows),
+                "indexed_files": 0,
+                "clean_files": 0,
+                "damaged_files": 0,
+                "missing_files": 0,
+                "contract_ok": False,
+                "fts_ok": False,
+                "orphan_qdrant_files": 0,
+                "orphan_lexical_files": 0,
+                "repaired": 0,
+                "requeued": 0,
+                "issues": [{"file": "", "status": "BLOCKED", "problems": [str(error)[:300]]}],
+            }
+        lexical = self.db.lexical_integrity_projection(dataset_id)
+        lexical_files: dict[str, set[str]] = lexical.get("files") or {}
+        contract = index_contract_status()
+        contract_ok = bool(contract.get("compatible"))
+
+        damaged: set[str] = set()
+        missing: set[str] = set()
+        issues: list[dict[str, Any]] = []
+        clean_files = 0
+        indexed_files = 0
+        pending_files = 0
+        file_checks: list[dict[str, Any]] = []
+
+        for file_name, row in registry.items():
+            status = str(row.get("status") or "")
+            source = Path(str(row.get("source_path") or "")) if row.get("source_path") else (
+                self.content_dir / dataset_id / file_name
+            )
+            file_issues: list[str] = []
+            expected = int(row.get("chunk_count") or 0)
+            qdrant_count = dense_count = sparse_count = lexical_count = 0
+            expected_page_count = indexed_page_count = 0
+            if status == "ERROR":
+                file_issues.append("Предыдущая индексация завершилась ошибкой")
+                damaged.add(file_name)
+            elif status == "PENDING":
+                pending_files += 1
+                file_issues.append("Ожидает индексации")
+            if status != "SKIPPED":
+                if not source.is_file():
+                    file_issues.append("Исходный файл не найден")
+                    missing.add(file_name)
+                else:
+                    stat = source.stat()
+                    expected_size = int(row.get("file_size") or 0)
+                    expected_mtime = float(row.get("file_mtime") or 0)
+                    if expected_size and stat.st_size != expected_size:
+                        file_issues.append("Исходный файл изменился")
+                        damaged.add(file_name)
+                    elif expected_mtime and abs(stat.st_mtime - expected_mtime) > 1.0:
+                        stored_hash = str(row.get("file_hash") or "")
+                        if stored_hash and _sha256_file(source) != stored_hash:
+                            file_issues.append("Содержимое исходного файла изменилось")
+                            damaged.add(file_name)
+
+            if status == "INDEXED":
+                indexed_files += 1
+                qrow = qdrant_files.get(file_name) or {"ids": set(), "pages": set()}
+                qids = set(qrow.get("ids") or set())
+                lexical_ids = set(lexical_files.get(file_name) or set())
+                dense = self._sync_count_file_vector_points(
+                    sync_qdrant, dataset_id, file_name, _dense_vector_name()
+                )
+                sparse = self._sync_count_file_vector_points(
+                    sync_qdrant, dataset_id, file_name, _sparse_vector_name()
+                )
+                qdrant_count = len(qids)
+                dense_count = dense
+                sparse_count = sparse
+                lexical_count = len(lexical_ids)
+                if len(qids) != expected:
+                    file_issues.append(f"Векторный индекс: {len(qids)} из {expected}")
+                if dense != expected:
+                    file_issues.append(f"Смысловой поиск: {dense} из {expected}")
+                if sparse != expected:
+                    file_issues.append(f"Точный поиск: {sparse} из {expected}")
+                if lexical_ids != qids:
+                    file_issues.append(f"Текстовый поиск: {len(lexical_ids)} из {len(qids)}")
+                if source.is_file() and source.suffix.lower() in PDF_PAGE_NODE_SUFFIXES:
+                    expected_pages = self._expected_pdf_text_pages(source)
+                    indexed_pages = set(qrow.get("pages") or set())
+                    expected_page_count = len(expected_pages)
+                    indexed_page_count = len(indexed_pages)
+                    if expected_pages and indexed_pages != expected_pages:
+                        file_issues.append(
+                            f"Страницы PDF: {len(indexed_pages)} из {len(expected_pages)}"
+                        )
+                if file_issues and file_name not in missing:
+                    damaged.add(file_name)
+
+            if file_issues:
+                issues.append({"file": file_name, "status": status, "problems": file_issues})
+            elif status == "INDEXED":
+                clean_files += 1
+            file_checks.append(
+                {
+                    "file": file_name,
+                    "status": status,
+                    "expected_chunks": expected,
+                    "qdrant_chunks": qdrant_count,
+                    "dense_chunks": dense_count,
+                    "sparse_chunks": sparse_count,
+                    "lexical_chunks": lexical_count,
+                    "expected_text_pages": expected_page_count,
+                    "indexed_text_pages": indexed_page_count,
+                    "problems": list(file_issues),
+                }
+            )
+
+        orphan_qdrant = sorted(set(qdrant_files) - set(registry))
+        orphan_lexical = sorted(set(lexical_files) - set(registry))
+        fts_ok = bool(lexical.get("fts_available")) and (
+            set(lexical.get("lexical_ids") or set()) == set(lexical.get("fts_ids") or set())
+        )
+        if not contract_ok:
+            issues.insert(0, {"file": "", "status": "BLOCKED", "problems": ["Контракт индекса не совпадает"]})
+        if orphan_qdrant:
+            issues.append({"file": "", "status": "ORPHAN", "problems": [f"Лишние векторные документы: {len(orphan_qdrant)}"]})
+        if orphan_lexical:
+            issues.append({"file": "", "status": "ORPHAN", "problems": [f"Лишние текстовые документы: {len(orphan_lexical)}"]})
+        if not fts_ok:
+            issues.append({"file": "", "status": "FTS", "problems": ["Текстовый индекс требует пересборки"]})
+
+        repaired = 0
+        if repair and contract_ok:
+            for file_name in sorted(missing):
+                self._sync_delete_file_points(sync_qdrant, dataset_id, file_name)
+                self._sync_delete_file_lexical(dataset_id, file_name)
+            self.db.set_documents_missing(dataset_id, missing)
+            repaired += self.db.set_documents_pending(dataset_id, damaged - missing)
+            for file_name in orphan_qdrant:
+                point_ids = list((qdrant_files.get(file_name) or {}).get("ids") or [])
+                if point_ids:
+                    sync_qdrant.delete(
+                        collection_name=self.collection_name,
+                        points_selector=models.PointIdsList(points=point_ids),
+                        wait=True,
+                    )
+            for file_name in orphan_lexical:
+                self._sync_delete_file_lexical(dataset_id, file_name)
+            if not fts_ok and lexical.get("fts_available"):
+                self.db.rebuild_lexical_fts()
+            self.db.update_dataset_chunk_count(dataset_id)
+            repaired += len(missing) + len(orphan_qdrant) + len(orphan_lexical) + (0 if fts_ok else 1)
+
+        state = (
+            "blocked"
+            if not contract_ok or missing
+            else "repairable"
+            if damaged or orphan_qdrant or orphan_lexical or not fts_ok
+            else "building"
+            if pending_files
+            else "healthy"
+        )
+        return {
+            "schema": "les.dataset_integrity.v1",
+            "dataset_id": dataset_id,
+            "state": state,
+            "label": {
+                "healthy": "Датасет цел",
+                "repairable": "Найдены исправимые повреждения",
+                "building": "Индексация не завершена",
+                "blocked": "Нужно внимание оператора",
+            }[state],
+            "checked_files": len(rows),
+            "indexed_files": indexed_files,
+            "pending_files": pending_files,
+            "clean_files": clean_files,
+            "damaged_files": len(damaged),
+            "missing_files": len(missing),
+            "contract_ok": contract_ok,
+            "fts_ok": fts_ok,
+            "orphan_qdrant_files": len(orphan_qdrant),
+            "orphan_lexical_files": len(orphan_lexical),
+            "repaired": repaired,
+            "requeued": len(damaged - missing) if repair and contract_ok else 0,
+            "issues": issues[:100],
+            "file_checks": file_checks,
+        }
 
     def _sync_existing_file_vectors_by_hash(
         self,
@@ -1650,13 +2661,69 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     def _extract_point_vector(point: Any) -> list[float] | None:
         vector = getattr(point, "vector", None)
         if isinstance(vector, dict):
-            vector = vector.get("") or vector.get("default") or next(iter(vector.values()), None)
+            vector = (
+                vector.get("")
+                or vector.get("default")
+                or vector.get(_dense_vector_name())
+                or next((v for v in vector.values() if isinstance(v, list)), None)
+            )
         if isinstance(vector, list) and vector and all(isinstance(item, (int, float)) for item in vector):
             return [float(item) for item in vector]
         return None
 
     def _apply_context_metadata(self, file_nodes: list[dict], dataset_id: str, file_key: str) -> None:
         _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)
+
+    @staticmethod
+    def _finalize_embedding_nodes(
+        file_nodes: list[dict],
+        *,
+        chunking: dict[str, Any],
+    ) -> list[dict]:
+        """Sanitize and enforce the final embedding budget for all node types."""
+        len_fn = chunking.get("len_fn") or len
+        budget = max(1, int(chunking.get("chunk_size") or 1))
+        unit = str(chunking.get("unit") or "chars")
+        finalized: list[dict] = []
+        for node_index, node in enumerate(file_nodes):
+            clean, quality = _sanitize_embedding_text(str(node.get("text") or ""))
+            if len(clean) < FINAL_MIN_CHUNK:
+                continue
+            parts = _split_to_embedding_budget(clean, budget=budget, len_fn=len_fn)
+            parent_id = str(node.get("doc_id") or f"node-{node_index}")
+            for child_index, part in enumerate(parts):
+                if len(part) < FINAL_MIN_CHUNK:
+                    continue
+                measured = int(len_fn(part))
+                if measured > budget:
+                    raise RuntimeError(
+                        f"embedding budget invariant failed: {measured}>{budget} {unit}"
+                    )
+                payload = dict(node.get("payload") or {})
+                payload.update(
+                    {
+                        "embedding_chunk_unit": unit,
+                        "embedding_chunk_length": measured,
+                        "embedding_chunk_budget": budget,
+                        "embedding_budget_enforced": True,
+                        "content_sanitized": quality["sanitized"],
+                        "content_quality": quality,
+                        "parent_node_id": payload.get("parent_node_id") or parent_id,
+                        "child_ord": child_index,
+                    }
+                )
+                suffix = hashlib.sha1(
+                    f"{parent_id}\n{child_index}\n{part}".encode("utf-8", errors="ignore")
+                ).hexdigest()[:16]
+                finalized.append(
+                    {
+                        **node,
+                        "text": part,
+                        "doc_id": f"{parent_id}:budget:{suffix}",
+                        "payload": payload,
+                    }
+                )
+        return finalized
 
     def _sync_markdown_nodes(
         self,
@@ -1670,13 +2737,20 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     ) -> list[dict]:
         import time as _t
         phase_start = _t.time()
-        md_content = convert_to_markdown(file_path, route=route)
+        md_content = convert_to_markdown_for_indexing(file_path, route=route)
         if timings is not None:
             timings["convert_sec"] = timings.get("convert_sec", 0.0) + (_t.time() - phase_start)
         if not md_content:
             return []
 
         phase_start = _t.time()
+        if _pdf_page_nodes_enabled(file_path, route):
+            file_nodes = self._sync_pdf_page_text_nodes(file_key, dataset_id, md_content, route)
+            if timings is not None:
+                timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
+            if file_nodes:
+                return file_nodes
+
         doc = Document(
             text=md_content,
             metadata={"file_name": file_key, "dataset_id": dataset_id},
@@ -1684,6 +2758,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         nodes = md_parser.get_nodes_from_documents([doc])
 
         file_nodes = []
+        payload_type = "spreadsheet_projection" if file_path.suffix.lower() in {".xlsx", ".xlsm", ".xls", ".csv"} else "markdown"
         for node in nodes:
             node.metadata.update(doc.metadata)
             if len(node.text) > 2000:
@@ -1692,7 +2767,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     {
                         "text": split_node.text,
                         "doc_id": split_node.node_id,
-                        "payload": self._route_payload(route, {"type": "markdown"}),
+                        "payload": self._route_payload(route, {"type": payload_type}),
                     }
                     for split_node in split_nodes
                     if len(split_node.text) >= MIN_CHUNK
@@ -1701,11 +2776,89 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 file_nodes.append({
                     "text": node.text,
                     "doc_id": node.node_id,
-                    "payload": self._route_payload(route, {"type": "markdown"}),
+                    "payload": self._route_payload(route, {"type": payload_type}),
                 })
         if timings is not None:
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return file_nodes
+
+    def _sync_pdf_page_text_nodes(
+        self,
+        file_key: str,
+        dataset_id: str,
+        md_content: str,
+        route: DocumentRoute | None = None,
+    ) -> list[dict]:
+        page_blocks = self._split_pdf_page_markdown(md_content)
+        if not page_blocks:
+            return []
+        max_chars = _pdf_page_node_max_chars()
+        overlap = min(_pdf_page_node_overlap_chars(), max_chars // 3)
+        nodes: list[dict] = []
+        for page_no, page_text in page_blocks:
+            text = page_text.strip()
+            if not text or text == "[no text extracted]":
+                continue
+            chunks = self._split_pdf_page_text(text, max_chars=max_chars, overlap=overlap)
+            part_count = len(chunks)
+            for part_no, chunk_text in enumerate(chunks, start=1):
+                if len(chunk_text.strip()) < MIN_CHUNK:
+                    continue
+                title = f"## Page {page_no}"
+                if part_count > 1:
+                    title += f" part {part_no}/{part_count}"
+                text_for_index = f"{title}\n\n{chunk_text.strip()}"
+                payload = {
+                    "type": "pdf_page_text",
+                    "source_layer": "pdf_fast_text",
+                    "page": page_no,
+                    "page_part": part_no,
+                    "page_parts": part_count,
+                }
+                nodes.append({
+                    "text": text_for_index,
+                    "doc_id": str(uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"{dataset_id}:{file_key}:pdf-page:{page_no}:{part_no}",
+                    )),
+                    "payload": self._route_payload(route, payload),
+                })
+        return nodes
+
+    @staticmethod
+    def _split_pdf_page_markdown(md_content: str) -> list[tuple[int, str]]:
+        matches = list(re.finditer(r"(?m)^## Page (\d+)\s*$", md_content or ""))
+        pages: list[tuple[int, str]] = []
+        for index, match in enumerate(matches):
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(md_content)
+            try:
+                page_no = int(match.group(1))
+            except ValueError:
+                continue
+            pages.append((page_no, md_content[start:end].strip()))
+        return pages
+
+    @staticmethod
+    def _split_pdf_page_text(text: str, *, max_chars: int, overlap: int) -> list[str]:
+        value = (text or "").strip()
+        if len(value) <= max_chars:
+            return [value] if value else []
+        chunks: list[str] = []
+        start = 0
+        while start < len(value):
+            end = min(len(value), start + max_chars)
+            if end < len(value):
+                boundary = max(value.rfind("\n", start, end), value.rfind(". ", start, end))
+                if boundary > start + max_chars // 2:
+                    end = boundary + (1 if value[boundary] == "\n" else 2)
+            chunk = value[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= len(value):
+                break
+            start = max(end - overlap, start + 1)
+        return chunks
 
     def _sync_mail_nodes(
         self,
@@ -1727,6 +2880,39 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         phase_start = _t.time()
         nodes: list[dict] = []
         message_payload = profile.payload()
+        registry_payload: dict[str, Any] = {}
+        registry = None
+        registered = None
+        try:
+            from proxy.services.mail_registry_service import get_mail_registry
+
+            registry = get_mail_registry()
+            registered = registry.find_message_by_relative_path(file_key)
+            if registered:
+                account = registry.get_account(registered["account_id"], include_secret_state=False)
+                if str(account.get("dataset_id") or "") == dataset_id:
+                    registry_payload = {
+                        "mail_account_id": registered["account_id"],
+                        "mail_registry_message_id": registered["id"],
+                        "mail_dataset_id": account["dataset_id"],
+                        "mail_dataset_name": account["dataset_name"],
+                        "mail_source_kind": registered["source_kind"],
+                        "mail_source_locator": {
+                            "outlook_store_id": registered["outlook_store_id"],
+                            "outlook_entry_id": registered["outlook_entry_id"],
+                            "native_id": registered["native_id"],
+                        },
+                        "mail_content_sha256": registered["content_sha256"],
+                        "mail_folders": [
+                            item["folder_path"]
+                            for item in registered["locations"]
+                            if item.get("is_current")
+                        ],
+                    }
+        except Exception:
+            # Legacy MAIL_Index and standalone parser tests have no registry.
+            registry_payload = {}
+        message_payload.update(registry_payload)
         message_payload.update({
             "type": "mail_message",
             "mail_node_kind": "message",
@@ -1743,7 +2929,20 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         )
 
         for attachment in profile.attachments:
+            attachment_provenance: dict[str, Any] = {}
+            if registry is not None and registered is not None and registry_payload:
+                attachment_provenance = registry.register_attachment_provenance(
+                    account_id=registered["account_id"],
+                    message_id=registered["id"],
+                    attachment_id=attachment.attachment_id,
+                    attachment_sha256=attachment.sha256,
+                )
+                if not attachment_provenance.get("canonical", True):
+                    # The per-message node above retains this message's attachment
+                    # checksum/provenance; identical attachment text is embedded once.
+                    continue
             attachment_payload = profile.payload()
+            attachment_payload.update(registry_payload)
             attachment_payload.update({
                 "type": "mail_attachment",
                 "mail_node_kind": "attachment",
@@ -1751,11 +2950,18 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 "mail_attachment_filename": attachment.filename,
                 "mail_attachment_content_type": attachment.content_type,
                 "mail_attachment_kind": attachment.kind,
+                "mail_attachment_sha256": attachment.sha256,
                 "mail_attachment_extraction": attachment.extraction,
                 "mail_attachment_needs_ocr": attachment.needs_ocr,
                 "mail_attachment_needs_vlm": attachment.needs_vlm,
                 "mail_attachment_has_text": attachment.has_text,
                 "mail_attachment_error": attachment.error,
+                "mail_attachment_canonical_message_id": attachment_provenance.get(
+                    "canonical_message_id", registered["id"] if registered else ""
+                ),
+                "mail_attachment_provenance_count": attachment_provenance.get(
+                    "provenance_count", 1
+                ),
             })
             nodes.extend(
                 self._split_profile_text_nodes(
@@ -1833,8 +3039,22 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 parquet_rel = parquet_path
 
         phase_start = _t.time()
+        chunks = list(result.get("chunks") or [])
+        if len(chunks) > TABLE_ROW_INDEX_MAX_CHUNKS:
+            return self._table_navigation_projection_nodes(
+                file_path=file_path,
+                file_key=file_key,
+                dataset_id=dataset_id,
+                route=route,
+                parquet_rel=parquet_rel,
+                result=result,
+                chunks=chunks,
+                timings=timings,
+                phase_start=phase_start,
+            )
+
         nodes = []
-        for i, chunk in enumerate(result.get("chunks") or []):
+        for i, chunk in enumerate(chunks):
             text = str(chunk.get("text") or "")
             if len(text) < MIN_CHUNK:
                 continue
@@ -1872,6 +3092,67 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
         return nodes
 
+    def _table_navigation_projection_nodes(
+        self,
+        *,
+        file_path: Path,
+        file_key: str,
+        dataset_id: str,
+        route: DocumentRoute | None,
+        parquet_rel: str,
+        result: dict[str, Any],
+        chunks: list[dict[str, Any]],
+        timings: dict[str, float] | None,
+        phase_start: float,
+    ) -> list[dict]:
+        import time as _t
+
+        rows = int(result.get("rows") or len(chunks))
+        names: list[str] = []
+        codes: list[str] = []
+        units: list[str] = []
+        sections: list[str] = []
+        for chunk in chunks:
+            meta = dict(chunk.get("metadata") or {})
+            for target, key in ((names, "name"), (codes, "code"), (units, "unit"), (sections, "section")):
+                value = str(meta.get(key) or "").strip()
+                if value and value not in target:
+                    target.append(value[:160])
+                if len(target) >= 20:
+                    break
+
+        text = "\n".join(
+            part
+            for part in [
+                f"Табличный файл: {file_key}",
+                "Тип: table_navigation_projection",
+                f"Строк нормализовано: {rows}",
+                f"Листов/таблиц: {result.get('sheets') or ''}",
+                f"Parquet: {parquet_rel or '[не создан]'}",
+                "Назначение: навигация по таблице и выбор источника; точные строки, фильтры, суммы и группировки читать из parquet/source table reader.",
+                "Разделы: " + "; ".join(sections[:20]) if sections else "",
+                "Коды/обозначения: " + "; ".join(codes[:20]) if codes else "",
+                "Наименования: " + "; ".join(names[:20]) if names else "",
+                "Единицы: " + "; ".join(units[:20]) if units else "",
+            ]
+            if part
+        )
+        payload = {
+            "type": "table_navigation_projection",
+            "parquet_path": parquet_rel,
+            "table_kind": self._table_kind(route),
+            "table_rows": rows,
+            "table_sheets": result.get("sheets") or 0,
+            "source_file": file_path.name,
+        }
+        if timings is not None:
+            timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
+        return [{
+            "text": text,
+            "doc_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"{dataset_id}:{file_path}:table_projection")),
+            "payload": self._route_payload(route, payload),
+        }]
+
     @staticmethod
     def _docx_table_extraction_enabled(file_path: Path, route: DocumentRoute | None) -> bool:
         if file_path.suffix.lower() != ".docx":
@@ -1907,9 +3188,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         doc_filter:  Optional[List[str]] = None,
     ) -> List[Chunk]:
         await self._ensure_collection()
+        self._assert_dense_index_contract()
 
         # Async эмбеддинг запроса
-        vecs = await self.embed.encode_async([query])
+        vecs = await self.embed.encode_async([query], query=True)
         query_vec = vecs[0]
 
         # ADR-12 стадия-2: doc_filter сужает поиск до выбранных документов-узлов
@@ -1924,6 +3206,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         results = await self.aclient.query_points(
             collection_name=self.collection_name,
             query=query_vec,
+            using=_dense_vector_name() if _qdrant_schema_mode() == "named" else None,
             query_filter=query_filter,
             limit=top_k,
             with_payload=True,
@@ -1961,26 +3244,32 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if not _is_binary_garbage(p.payload.get("text", ""))
         ]
 
-    async def retrieve_sparse(
+    async def retrieve_native_hybrid(
         self,
-        query:       str,
+        query: str,
         dataset_ids: Optional[List[str]] = None,
-        top_k:       int = 5,
-        doc_filter:  Optional[List[str]] = None,
+        top_k: int = 8,
+        doc_filter: Optional[List[str]] = None,
     ) -> List[Chunk]:
-        """W2.4: поиск по BGE-M3 learned-sparse вектору (Qdrant-native), параллельно dense.
+        """Qdrant-native dense+sparse hybrid over a named-vector collection.
 
-        Возвращает Chunk-и той же формы, что `retrieve`. Пустой sparse-запрос или
-        отсутствие sparse-вектора в коллекции → [] (гибрид молча падает на dense+FTS).
+        Requires `RAG_QDRANT_SCHEMA=named` and points containing both dense and
+        sparse named vectors. Caller should keep a fallback to the legacy hybrid.
         """
-        from backend.inference.bm25_sparse import SPARSE_VECTOR_NAME, encode_bm25
+        if _qdrant_schema_mode() != "named":
+            raise RuntimeError("qdrant native hybrid requires RAG_QDRANT_SCHEMA=named")
+        from backend.inference.bm25_sparse import encode_bm25
 
-        # Sparse-сайдкар: отдельная коллекция {main}_sparse (те же id), dense не дублируем.
-        # BM25/IDF (W2.4): TF термов, IDF считает Qdrant (modifier=Idf). Токенизация — CPU.
-        sparse_collection = os.getenv("RAG_SPARSE_COLLECTION", "").strip() or f"{self.collection_name}_sparse"
-        sv = encode_bm25(query)
-        if not sv:
-            return []
+        await self._ensure_collection()
+        self._assert_dense_index_contract()
+        vecs = await self.embed.encode_async([query], query=True)
+        dense_vec = vecs[0]
+        sparse = encode_bm25(query)
+        if not sparse:
+            # Do not let the caller label a dense-only query as native RRF.
+            # The retrieval service will use its explicit dense+FTS fallback
+            # and expose the actual channels in trace.
+            raise RuntimeError("native RRF requires a non-empty sparse query")
 
         must = []
         if dataset_ids:
@@ -1988,12 +3277,24 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         if doc_filter:
             must.append(models.FieldCondition(key="file_name", match=models.MatchAny(any=doc_filter)))
         query_filter = models.Filter(must=must) if must else None
-
+        prefetch_limit = max(top_k * 2, 24)
         results = await self.aclient.query_points(
-            collection_name=sparse_collection,
-            query=models.SparseVector(indices=list(sv.keys()), values=list(sv.values())),
-            using=SPARSE_VECTOR_NAME,
-            query_filter=query_filter,
+            collection_name=self.collection_name,
+            prefetch=[
+                models.Prefetch(
+                    query=dense_vec,
+                    using=_dense_vector_name(),
+                    filter=query_filter,
+                    limit=prefetch_limit,
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(indices=list(sparse.keys()), values=list(sparse.values())),
+                    using=_sparse_vector_name(),
+                    filter=query_filter,
+                    limit=prefetch_limit,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
             limit=top_k,
             with_payload=True,
         )

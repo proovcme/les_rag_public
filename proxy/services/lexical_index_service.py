@@ -40,6 +40,13 @@ class RetrievalTrace:
     quality_status: str = "unchecked"
     quality_detail: str = ""
     exact_refs: list[str] = field(default_factory=list)
+    embedding_contract: str = ""
+    query_embedding: str = ""
+    score_kind: str = "unknown"
+    retrieval_channels: list[str] = field(default_factory=list)
+    fusion: str = "none"
+    rerank: dict[str, Any] = field(default_factory=dict)
+    retry: dict[str, Any] = field(default_factory=dict)
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -52,6 +59,13 @@ class RetrievalTrace:
             "quality_status": self.quality_status,
             "quality_detail": self.quality_detail,
             "exact_refs": self.exact_refs,
+            "embedding_contract": self.embedding_contract,
+            "query_embedding": self.query_embedding,
+            "score_kind": self.score_kind,
+            "retrieval_channels": self.retrieval_channels,
+            "fusion": self.fusion,
+            "rerank": self.rerank,
+            "retry": self.retry,
         }
 
 
@@ -271,6 +285,59 @@ class LexicalIndex:
             conn.execute("DELETE FROM lexical_chunks WHERE collection=?", (collection,))
             conn.execute("DELETE FROM lexical_index_meta WHERE collection=?", (collection,))
 
+    def promote_collection(
+        self, source: str, target: str, *, expected_count: int
+    ) -> dict[str, Any]:
+        """Atomically publish a verified physical FTS projection under an alias key."""
+        if not source or not target or source == target:
+            raise ValueError("source and target lexical collections must be distinct")
+        with self.connect() as conn:
+            observed = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM lexical_chunks WHERE collection=?",
+                    (source,),
+                ).fetchone()["n"]
+            )
+            if observed != expected_count:
+                raise ValueError(
+                    f"lexical source coverage mismatch: expected={expected_count}, observed={observed}"
+                )
+            conn.execute("DELETE FROM lexical_chunks WHERE collection=?", (target,))
+            conn.execute("DELETE FROM lexical_index_meta WHERE collection=?", (target,))
+            conn.execute(
+                """
+                INSERT INTO lexical_chunks (
+                    collection, point_id, dataset_id, doc_id, doc_name, text, content_hash,
+                    chunk_ord, section_heading, parent_id, parent_ord, child_ord,
+                    parent_heading, context_before, context_after, context_kind, updated_at
+                )
+                SELECT ?, point_id, dataset_id, doc_id, doc_name, text, content_hash,
+                       chunk_ord, section_heading, parent_id, parent_ord, child_ord,
+                       parent_heading, context_before, context_after, context_kind, ?
+                FROM lexical_chunks WHERE collection=?
+                """,
+                (target, time.time(), source),
+            )
+            copied = int(
+                conn.execute(
+                    "SELECT COUNT(*) AS n FROM lexical_chunks WHERE collection=?",
+                    (target,),
+                ).fetchone()["n"]
+            )
+            if copied != expected_count:
+                raise RuntimeError(
+                    f"lexical promotion copy mismatch: expected={expected_count}, copied={copied}"
+                )
+            conn.execute(
+                """
+                INSERT INTO lexical_index_meta
+                    (collection, point_count, indexed_count, cursor_json, updated_at)
+                VALUES (?, ?, ?, '', ?)
+                """,
+                (target, expected_count, copied, time.time()),
+            )
+        return self.status(target)
+
     def delete_file(self, collection: str, *, dataset_id: str, doc_name: str) -> int:
         """Remove lexical rows for one indexed source file.
 
@@ -283,6 +350,17 @@ class LexicalIndex:
             cur = conn.execute(
                 "DELETE FROM lexical_chunks WHERE collection=? AND dataset_id=? AND doc_name=?",
                 (collection, dataset_id, doc_name),
+            )
+            return int(cur.rowcount or 0)
+
+    def delete_dataset(self, collection: str, *, dataset_id: str) -> int:
+        """Remove every lexical row for a deleted dataset."""
+        if not collection or not dataset_id:
+            return 0
+        with self.connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM lexical_chunks WHERE collection=? AND dataset_id=?",
+                (collection, dataset_id),
             )
             return int(cur.rowcount or 0)
 
@@ -384,6 +462,7 @@ class LexicalIndex:
         *,
         collection: str,
         dataset_ids: list[str] | None = None,
+        doc_filter: list[str] | None = None,
         limit: int = 12,
     ) -> list[Chunk]:
         fts_query = build_fts_query(question)
@@ -395,6 +474,11 @@ class LexicalIndex:
             placeholders = ",".join("?" for _ in dataset_ids)
             dataset_clause = f" AND c.dataset_id IN ({placeholders})"
             params.extend(dataset_ids)
+        doc_clause = ""
+        if doc_filter:
+            placeholders = ",".join("?" for _ in doc_filter)
+            doc_clause = f" AND c.doc_name IN ({placeholders})"
+            params.extend(doc_filter)
         params.append(limit)
         try:
             with self.connect() as conn:
@@ -407,7 +491,7 @@ class LexicalIndex:
                         bm25(lexical_chunks_fts) AS bm25_score
                     FROM lexical_chunks_fts
                     JOIN lexical_chunks c ON c.id = lexical_chunks_fts.rowid
-                    WHERE lexical_chunks_fts MATCH ? AND c.collection=? {dataset_clause}
+                    WHERE lexical_chunks_fts MATCH ? AND c.collection=? {dataset_clause} {doc_clause}
                     ORDER BY bm25_score ASC
                     LIMIT ?
                     """,
@@ -483,6 +567,13 @@ def merge_rrf(
     limit: int,
     k: int = 60,
 ) -> tuple[list[Any], RetrievalTrace]:
+    """Merge independent dense and lexical rankings when both are present.
+
+    A single ranking is returned unchanged (apart from deduplication and exact
+    reference promotion) and must not be reported as hybrid/RRF.  This keeps
+    degraded lexical-only retrieval observable instead of making a one-channel
+    fallback look like successful fusion.
+    """
     refs = list(extract_norm_refs(question))
     scores: dict[str, float] = {}
     chosen: dict[str, Any] = {}
@@ -505,6 +596,9 @@ def merge_rrf(
                 meta = getattr(chosen[key], "meta", None)
                 if isinstance(meta, dict):
                     meta.setdefault("retrieval_sources", set()).add(source)
+                    meta.setdefault(f"{source}_rank", rank)
+                    if source == "vector":
+                        meta.setdefault("dense_score", float(getattr(chunk, "score", 0.0) or 0.0))
             except Exception:
                 pass
 
@@ -520,12 +614,32 @@ def merge_rrf(
                 meta["retrieval_sources"] = sorted(sources)
             meta["rrf_rank"] = rank
             meta["rrf_score"] = round(scores[key_for(chunk)], 6)
+    has_vector = bool(vector_chunks)
+    has_lexical = bool(lexical_chunks)
+    if has_vector and has_lexical:
+        mode = "hybrid"
+        score_kind = "rrf"
+        channels = ["dense", "lexical"]
+        fusion = "rrf"
+    elif has_lexical:
+        mode = "lexical_only"
+        score_kind = "lexical_rank"
+        channels = ["lexical"]
+        fusion = "none"
+    else:
+        mode = "vector"
+        score_kind = "dense_similarity"
+        channels = ["dense"] if has_vector else []
+        fusion = "none"
     trace = RetrievalTrace(
-        mode="hybrid" if lexical_chunks else "vector",
+        mode=mode,
         vector_count=len(vector_chunks),
         lexical_count=len(lexical_chunks),
         merged_count=len(merged),
         exact_refs=refs,
+        score_kind=score_kind,
+        retrieval_channels=channels,
+        fusion=fusion,
     )
     if not lexical_chunks:
         trace.fallback_reason = "lexical_index_empty_or_unavailable"

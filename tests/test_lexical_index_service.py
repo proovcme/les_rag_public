@@ -51,6 +51,24 @@ def test_lexical_index_search_returns_matching_chunks(tmp_path):
     assert chunks[0].meta["dataset_id"] == "ds-fire"
 
 
+def test_lexical_generation_promotion_is_complete_and_keeps_source(tmp_path):
+    index = LexicalIndex(str(tmp_path / "lex.db"))
+    index.upsert_chunks(
+        "physical-v2",
+        [
+            {"point_id": "p1", "dataset_id": "a", "doc_name": "a.pdf", "text": "насос"},
+            {"point_id": "p2", "dataset_id": "b", "doc_name": "b.pdf", "text": "кабель"},
+        ],
+    )
+    index.mark_collection("physical-v2", point_count=2, indexed_count=2)
+
+    promoted = index.promote_collection("physical-v2", "les_rag", expected_count=2)
+
+    assert promoted["ready"] is True
+    assert promoted["chunks"] == promoted["point_count"] == 2
+    assert index.status("physical-v2")["chunks"] == 2
+
+
 def test_lexical_index_delete_file_removes_only_matching_doc(tmp_path):
     index = LexicalIndex(str(tmp_path / "lex.db"))
     index.upsert_chunks(
@@ -70,6 +88,21 @@ def test_lexical_index_delete_file_removes_only_matching_doc(tmp_path):
         ("ds", "b.pdf"),
         ("other", "a.pdf"),
     }
+
+
+def test_lexical_index_delete_dataset_removes_only_matching_dataset(tmp_path):
+    index = LexicalIndex(str(tmp_path / "lex.db"))
+    index.upsert_chunks(
+        "collection",
+        [
+            {"point_id": "p1", "dataset_id": "test", "doc_id": "d1", "doc_name": "a.xls", "text": "ведомость"},
+            {"point_id": "p2", "dataset_id": "test", "doc_id": "d2", "doc_name": "b.xls", "text": "ведомость"},
+            {"point_id": "p3", "dataset_id": "keep", "doc_id": "d3", "doc_name": "c.xls", "text": "ведомость"},
+        ],
+    )
+    assert index.delete_dataset("collection", dataset_id="test") == 2
+    chunks = index.search("ведомость", collection="collection", limit=10)
+    assert [(chunk.meta["dataset_id"], chunk.doc_name) for chunk in chunks] == [("keep", "c.xls")]
 
 
 def test_qdrant_adapter_maps_points_to_lexical_rows():
@@ -120,8 +153,32 @@ def test_rrf_merge_adds_lexical_exact_hit_and_deduplicates():
     merged, trace = merge_rrf(vector, lexical, question="ширина по СП 1.13130", limit=3)
 
     assert trace.mode == "hybrid"
+    assert trace.retrieval_channels == ["dense", "lexical"]
+    assert trace.fusion == "rrf"
     assert trace.lexical_count == 1
     assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx", "doc-a"]
+
+
+def test_single_lexical_ranking_is_not_reported_as_hybrid_rrf():
+    lexical = [Chunk("ширина эвакуации", "СП 1.13130.docx", 0.5, meta={})]
+
+    merged, trace = merge_rrf([], lexical, question="ширина эвакуации", limit=3)
+
+    assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx"]
+    assert trace.mode == "lexical_only"
+    assert trace.score_kind == "lexical_rank"
+    assert trace.vector_count == 0
+    assert trace.lexical_count == 1
+
+
+def test_single_dense_ranking_is_not_reported_as_rrf():
+    dense = [Chunk("эвакуационный выход", "СП 1.13130.docx", 0.8, meta={})]
+
+    merged, trace = merge_rrf(dense, [], question="эвакуационный выход", limit=3)
+
+    assert [chunk.doc_name for chunk in merged] == ["СП 1.13130.docx"]
+    assert trace.mode == "vector"
+    assert trace.score_kind == "dense_similarity"
 
 
 def test_lexical_index_returns_context_window_by_parent(tmp_path):
