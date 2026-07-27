@@ -10,8 +10,8 @@
 версия продукта (SemVer):  0.24.46 (dev, 2026-07-27)
 номер сборки:              467     (отдельно от версии продукта)
 версия Tauri/NSIS:         5.1.467 (Windows smoke не выполнен)
-ветка интеграции:          codex/integrate-dev-0.24.46 (main не изменён)
-dev implementation:       e57a573f (integration checkpoint 0.24.46)
+ветка выпуска:             main
+dev implementation:       current main (release candidate 0.24.46)
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.26 / build 447
 Windows-выпуск:            0.24.46 / build 467 не собран; последний GitHub release v0.24.26
 следующий выпуск:          не назначен
@@ -30,6 +30,8 @@ Windows-выпуск:            0.24.46 / build 467 не собран; посл
 > SSE-ответ записывается в history, а закрытие вкладки не отменяет серверное завершение workflow.
 > Предметный self-check PR не перенесён: существующий model-owned `global_review` создаёт immutable
 > R2, а смена нормы не наследует resource bindings/НР/СП R1.
+> Public-check различает имя storage-поля непрозрачной ссылки на in-memory credential и само
+> значение секрета; high-signal ключи и токены по-прежнему блокируют выпуск.
 > Проверки: focused `141 passed`; `make verify` — version contract/compileall green,
 > `2720 collected`; `make test` — `2711 passed, 9 skipped`; `git diff --check` и
 > `uv lock --check` зелёные.
