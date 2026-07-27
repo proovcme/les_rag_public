@@ -182,3 +182,31 @@ def test_patch_release_requires_independent_legion_persistence(monkeypatch):
 
     assert result["ui_status"] == 200
     assert result["desktop_processes"] == 1
+
+
+def test_patch_release_retries_transient_independent_persistence_failure(monkeypatch):
+    sleeps = []
+    responses = iter(
+        (
+            patch_release.subprocess.CalledProcessError(1, ["ssh", "legion"]),
+            '{"product_version":"0.24.17","build_number":428,'
+            '"ui_status":200,"desktop_processes":1}',
+        )
+    )
+
+    def transient_output(_command, **_kwargs):
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    monkeypatch.setattr(patch_release.time, "sleep", sleeps.append)
+    monkeypatch.setattr(patch_release, "output", transient_output)
+
+    result = patch_release.verify_remote_production_persistence(
+        host="legion",
+        expected_version="0.24.17",
+    )
+
+    assert result["product_version"] == "0.24.17"
+    assert sleeps == [5, 5]

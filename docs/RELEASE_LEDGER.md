@@ -37,6 +37,9 @@ Windows-выпуск:            0.24.46 / build 467 не собран; посл
 > после успешно принятых файлов.
 > Перед новым production smoke удаляются только оставшиеся датасеты с точным release-prefix
 > `LES production PDF smoke `; пользовательские датасеты и старые Qdrant-коллекции не затрагиваются.
+> Независимый production persistence-probe после Windows desktop handoff допускает до шести
+> ограниченных повторов: краткий разрыв SSH/API сразу после выхода build-сессии не отменяет уже
+> прошедший production gate, но выпуск остаётся fail-closed, если версия/UI/desktop не восстановились.
 > Проверки: focused `141 passed`; `make verify` — version contract/compileall green,
 > `2720 collected`; `make test` — `2711 passed, 9 skipped`; `git diff --check` и
 > `uv lock --check` зелёные.

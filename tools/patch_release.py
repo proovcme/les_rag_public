@@ -177,18 +177,26 @@ def verify_remote_production_persistence(*, host: str, expected_version: str) ->
         "desktop_processes=[int]$desktop}|ConvertTo-Json -Compress"
     )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    raw = output(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded])
-    try:
-        payload = _last_json_object(raw)
-    except ValueError as error:
-        raise RuntimeError(f"independent Legion persistence probe returned invalid JSON: {raw[-500:]}") from error
-    if (
-        payload.get("product_version") != expected_version
-        or int(payload.get("ui_status") or 0) != 200
-        or int(payload.get("desktop_processes") or 0) < 1
-    ):
-        raise RuntimeError(f"production Legion did not survive release session: {payload}")
-    return payload
+    last_failure = "probe did not run"
+    for attempt in range(1, 7):
+        try:
+            raw = output(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded])
+            payload = _last_json_object(raw)
+            if (
+                payload.get("product_version") == expected_version
+                and int(payload.get("ui_status") or 0) == 200
+                and int(payload.get("desktop_processes") or 0) >= 1
+            ):
+                return payload
+            last_failure = f"unexpected production state: {payload}"
+        except (subprocess.CalledProcessError, ValueError) as error:
+            last_failure = str(error)
+        if attempt < 6:
+            time.sleep(5)
+    raise RuntimeError(
+        "production Legion did not survive release session after 6 attempts: "
+        f"{last_failure}"
+    )
 
 
 def sha256(path: Path) -> str:
