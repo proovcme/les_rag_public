@@ -32,6 +32,9 @@ Windows-выпуск:            0.24.46 / build 467 не собран; посл
 > R2, а смена нормы не наследует resource bindings/НР/СП R1.
 > Public-check различает имя storage-поля непрозрачной ссылки на in-memory credential и само
 > значение секрета; high-signal ключи и токены по-прежнему блокируют выпуск.
+> Windows heavy-PDF gate сохраняет общий 30-минутный deadline при единичном status-poll timeout и
+> повторяет удаление только собственного временного датасета; timeout больше не завершает gate
+> после успешно принятых файлов.
 > Проверки: focused `141 passed`; `make verify` — version contract/compileall green,
 > `2720 collected`; `make test` — `2711 passed, 9 skipped`; `git diff --check` и
 > `uv lock --check` зелёные.

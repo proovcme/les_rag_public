@@ -153,6 +153,10 @@ def test_patch_release_requires_production_legion_heavy_pdf_gate():
     assert 'Join-Path $InstallRoot "les-desktop.exe"' in production
     assert 'launch_mode = "interactive_scheduled_task"' in production
     assert '$result.stage = "desktop_handoff"' in production
+    assert "$documentPollTransientErrors += 1" in production
+    assert "One transient status timeout must not" in production
+    assert "foreach ($cleanupAttempt in 1..5)" in production
+    assert "$smokeDatasetRemoved = $true" in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):

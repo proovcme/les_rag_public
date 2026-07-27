@@ -314,11 +314,22 @@ try {
 
   $indexDeadline = (Get-Date).AddSeconds($IndexTimeoutSeconds)
   $indexed = @()
+  $documentPollTransientErrors = 0
+  $lastDocumentPollError = ""
   do {
     Start-Sleep -Seconds 2
-    $documents = Invoke-RestMethod `
-      -Uri "http://127.0.0.1:$proxyPort/api/rag/documents?dataset_id=$smokeDatasetId&limit=20" `
-      -TimeoutSec 30
+    try {
+      $documents = Invoke-RestMethod `
+        -Uri "http://127.0.0.1:$proxyPort/api/rag/documents?dataset_id=$smokeDatasetId&limit=20" `
+        -TimeoutSec 30
+    } catch {
+      # Heavy parsers can briefly occupy the local API while the overall
+      # indexing job remains healthy. One transient status timeout must not
+      # consume the whole 30-minute release budget.
+      $documentPollTransientErrors += 1
+      $lastDocumentPollError = $_.Exception.Message
+      continue
+    }
     $rows = @($documents.documents)
     $failed = @($rows | Where-Object { $_.status -eq "ERROR" })
     if ($failed.Count -gt 0) {
@@ -328,10 +339,11 @@ try {
     if ($indexed.Count -eq $expectedPdfCount) { break }
   } while ((Get-Date) -lt $indexDeadline)
   if ($indexed.Count -ne $expectedPdfCount) {
-    throw "Production heavy PDF polygon did not finish: indexed $($indexed.Count)/$expectedPdfCount"
+    throw "Production heavy PDF polygon did not finish: indexed $($indexed.Count)/$expectedPdfCount; last poll error: $lastDocumentPollError"
   }
   $result.indexed_files = $indexed.Count
   $result.indexed_chunks = [int](($indexed | Measure-Object -Property chunk_count -Sum).Sum)
+  $result.document_poll_transient_errors = $documentPollTransientErrors
 
   $result.stage = "heavy_pdf_rrf"
   $body = @{
@@ -358,13 +370,24 @@ try {
   $result.error_type = $_.Exception.GetType().FullName
 } finally {
   if ($smokeDatasetId -and $proxyPort -gt 0) {
-    try {
-      Invoke-RestMethod -Method Delete `
-        -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets/$smokeDatasetId" `
-        -TimeoutSec 60 | Out-Null
+    $cleanupErrors = New-Object System.Collections.Generic.List[string]
+    $smokeDatasetRemoved = $false
+    foreach ($cleanupAttempt in 1..5) {
+      try {
+        Invoke-RestMethod -Method Delete `
+          -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets/$smokeDatasetId" `
+          -TimeoutSec 60 | Out-Null
+        $smokeDatasetRemoved = $true
+        break
+      } catch {
+        $cleanupErrors.Add("attempt ${cleanupAttempt}: $($_.Exception.Message)")
+        if ($cleanupAttempt -lt 5) { Start-Sleep -Seconds 3 }
+      }
+    }
+    if ($smokeDatasetRemoved) {
       $result.smoke_dataset_removed = $true
-    } catch {
-      $result.cleanup_error = $_.Exception.Message
+    } else {
+      $result.cleanup_error = $cleanupErrors -join "; "
       $result.ok = $false
     }
   }
