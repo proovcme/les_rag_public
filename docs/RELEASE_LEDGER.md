@@ -7,21 +7,24 @@
 ## Текущее состояние (2026-07-27)
 
 ```
-версия продукта (SemVer):  0.24.46 (dev, 2026-07-27)
+версия продукта (SemVer):  0.24.46 (published, 2026-07-27)
 номер сборки:              467     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.467 (Windows smoke не выполнен)
+версия Tauri/NSIS:         5.1.467 (Windows isolated + production smoke ✅)
 ветка выпуска:             main
-dev implementation:       current main (release candidate 0.24.46)
-задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.26 / build 447
-Windows-выпуск:            0.24.46 / build 467 не собран; последний GitHub release v0.24.26
+dev implementation:       main; release build 56f7f7eb, release orchestration fix 137ba762
+задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.24.46
 следующий выпуск:          не назначен
-рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.26 / build 447
+рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
 ```
 
 > 0.24.46 / build 467 — repeatable local Qwen transport и durable chat session
 >
 > Дата: 2026-07-27
-> Статус: dev; runtime и Legion не менялись. Публичный PR
+> Статус: опубликован и установлен на Legion. Release build:
+> `56f7f7eb220b8530592ffaeae74a5dba177b2554`; GitHub release:
+> [v0.24.46](https://github.com/proovcme/les_rag_public/releases/tag/v0.24.46).
+> Публичный PR
 > `proovcme/les_rag_public#7` принят 2026-07-27 в `audit/smeta-stabilization`
 > (`e885b825`); он не сливался в private `main`.
 > Из публичного PR перенесён operational-контур: `qwen3.5:9b`, `temperature=0`,
@@ -40,9 +43,16 @@ Windows-выпуск:            0.24.46 / build 467 не собран; посл
 > Независимый production persistence-probe после Windows desktop handoff допускает до шести
 > ограниченных повторов: краткий разрыв SSH/API сразу после выхода build-сессии не отменяет уже
 > прошедший production gate, но выпуск остаётся fail-closed, если версия/UI/desktop не восстановились.
-> Проверки: focused `141 passed`; `make verify` — version contract/compileall green,
-> `2720 collected`; `make test` — `2711 passed, 9 skipped`; `git diff --check` и
-> `uv lock --check` зелёные.
+> Проверки: `make verify` — version contract/compileall green, `2721 collected`;
+> `make test-mail-release` — `61 passed` + Tauri `cargo check`; `make test-release` —
+> `2712 passed, 9 skipped`; `make public-check`, `git diff --check` и `uv lock --check` зелёные.
+> Isolated Windows smoke: UI 200, 49 756 норм, 504 259 ресурсов, 1 576 ФСЭМ,
+> native hybrid RRF `dense + qdrant_sparse + lexical`. Production gate: UI 200, Outlook probe
+> `ok` (3 аккаунта), 7/7 тяжёлых PDF, 2 249 chunks, 5 RRF-результатов; три временных
+> status-poll timeout пережиты в общем deadline, временный dataset удалён. Независимый новый
+> SSH-сеанс подтвердил 0.24.46 / build 467 / UI 200 / один desktop-процесс.
+> GitHub assets опубликованы и проверены: `LES-Setup.exe` — 83 626 911 байт,
+> SHA-256 `da4c8a53b7311069ecd96d4d382df2d4820133434513405a917f857c90abe020`.
 
 > 0.24.45 / build 466 — один сметный workflow и model-authored ScopePlan
 >
