@@ -16,6 +16,11 @@ def test_windows_smeta_data_path_bypasses_install_junction(tmp_path: Path, monke
 
     from proxy.smeta_core.base_registry import active_base, runtime_data_path
 
+    monkeypatch.delenv("LES_SMETA_STRUCTURED_BASE", raising=False)
+    monkeypatch.delenv("LES_SMETA_BASE_MANIFEST", raising=False)
+    monkeypatch.delenv("LES_SMETA_BASE_INTEGRITY", raising=False)
+    monkeypatch.delenv("LES_SMETA_BASE_SOURCE", raising=False)
+    monkeypatch.delenv("LES_SMETA_PUBLIC_FIXTURE", raising=False)
     monkeypatch.setenv("LES_WINDOWS_STATE_ROOT", str(tmp_path))
     config_path = tmp_path / "active.json"
     config_path.write_text(

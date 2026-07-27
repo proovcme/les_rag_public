@@ -32,9 +32,18 @@ def active_base(config_path: str | Path = DEFAULT_CONFIG) -> dict[str, Any]:
     base = runtime_data_path(
         Path(base_path) if base_path else Path("data/smeta_base/les_smeta_base_v2.sqlite")
     )
-    manifest_raw = str(payload.get("manifest_path") or "")
-    integrity_raw = str(payload.get("integrity_path") or "")
-    source_raw = str(payload.get("source_path") or "")
+    manifest_raw = (
+        os.getenv("LES_SMETA_BASE_MANIFEST", "").strip()
+        or str(payload.get("manifest_path") or "")
+    )
+    integrity_raw = (
+        os.getenv("LES_SMETA_BASE_INTEGRITY", "").strip()
+        or str(payload.get("integrity_path") or "")
+    )
+    source_raw = (
+        os.getenv("LES_SMETA_BASE_SOURCE", "").strip()
+        or str(payload.get("source_path") or "")
+    )
     return {
         "schema": "smeta_base_active_v1",
         "edition": str(payload.get("edition") or ""),

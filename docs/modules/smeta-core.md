@@ -33,6 +33,14 @@ Ollama; Qwen-Agent управляет loop, но на актуальном Ollam
 после `LES_CLOUD_CONSENT=true`; отсутствие ключа или
 согласия является явной ошибкой без fallback.
 
+Свежие прогоны одного и того же файла остаются независимыми (без replay прошлого mapping). Для
+снижения разброса на локальной 9b-модели transport фиксирует `temperature=0` и
+`LES_SMETA_DOCUMENT_SEED` (default `0`), а кандидаты отдаются в стабильном порядке запросов/кодов.
+Правила `bind`/`unbound` ужесточены в skill и в provenance-blockers, но код по-прежнему не выбирает
+норму за модель. После первичного mapping выполняется same-run `self-check` (`keep`/`change`,
+`LES_SMETA_DOCUMENT_SELF_CHECK`, default on): соседний шифр меняется только с `sibling_criterion`,
+новый код только из evidence текущего прогона. Локальный batch default — 5 строк.
+
 Отдельных обязательных resource-review, impact-review, dominant-review и
 `finish_norm_selection` нет. После полного structured mapping выполняется один расчёт без нового
 обращения к модели.

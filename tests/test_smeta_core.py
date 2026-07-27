@@ -82,6 +82,233 @@ def test_candidate_payload_marks_unit_mismatch_without_hiding_candidate(monkeypa
     assert payload["candidates"][0]["unit_compatible"] is False
 
 
+def test_candidate_payload_sorts_queries_for_stable_fresh_runs(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    seen = {}
+
+    def fake_browse(queries, limit=8, **_kwargs):
+        seen["queries"] = list(queries)
+        return {
+            query: {
+                "backend": "rrf",
+                "cards": [{
+                    "norm_code": f"ГЭСН01-01-00{index}-01",
+                    "title": query,
+                    "measure_unit": "шт",
+                }],
+            }
+            for index, query in enumerate(queries, 1)
+        }
+
+    monkeypatch.setattr(workflow, "browse_norms_many", fake_browse)
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+
+    payload = workflow._candidate_payload(
+        {"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1},
+        ["яблоко", "абрикос"],
+        limit=5,
+    )
+
+    assert seen["queries"] == ["абрикос", "яблоко"]
+    assert payload["query"] == ["абрикос", "яблоко"]
+
+
+def test_unbound_keeps_model_decision_but_records_evidence_blockers(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {
+            "backend": "rrf",
+            "cards": [{
+                "norm_code": "ГЭСН15-04-006-02",
+                "title": "Окраска",
+                "measure_unit": "м2",
+            }],
+        }
+        for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1", "query": "окраска потолка",
+        }])],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "не подходит",
+            "unbound_evidence": {
+                "queries_used": ["одна формулировка"],
+                "opened_norm_codes": [],
+                "rejection_reasons": [],
+                "coverage_checked": "",
+            },
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Окраска потолка", "unit": "м2", "quantity": 3}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=5,
+        max_turns=2,
+    )
+
+    selection = result["selections"]["w1"]
+    assert selection["review_status"] == "model_batch_unbound"
+    blocker_codes = {item["code"] for item in selection["precalculation_blockers"]}
+    assert "unbound_evidence_queries_incomplete" in blocker_codes
+    assert "unbound_evidence_rejection_missing" in blocker_codes
+    assert "unbound_evidence_coverage_missing" in blocker_codes
+    assert "unbound_without_opened_candidates" in blocker_codes
+
+
+def test_self_check_keep_leaves_selections():
+    from proxy.smeta_core import document_workflow as workflow
+
+    selections = {
+        "w1": {
+            "norm_code": "ГЭСНр62-01-017-05",
+            "selection_kind": "analog",
+            "review_status": "model_batch",
+            "reason": "ок",
+            "resource_bindings": [],
+            "precalculation_blockers": [],
+        }
+    }
+    updated, trace = workflow._apply_mapping_self_check(
+        selections,
+        work_rows=[{"work_id": "w1", "title": "Окраска", "unit": "м2", "quantity": 1}],
+        browse_trace={"w1": [{"candidates": [{"norm_code": "ГЭСНр62-01-017-05"}, {"norm_code": "ГЭСНр62-01-017-01"}]}]},
+        rows=[{"work_id": "w1", "action": "keep", "reason": "подтверждаю"}],
+    )
+    assert updated["w1"]["norm_code"] == "ГЭСНр62-01-017-05"
+    assert trace["status"] == "applied"
+    assert trace["changed_rows"] == 0
+
+
+def test_self_check_sibling_change_requires_criterion():
+    from proxy.smeta_core import document_workflow as workflow
+
+    selections = {
+        "w1": {
+            "norm_code": "ГЭСНр62-01-017-05",
+            "selection_kind": "analog",
+            "review_status": "model_batch",
+            "reason": "ок",
+            "resource_bindings": [],
+            "precalculation_blockers": [],
+        }
+    }
+    browse = {"w1": [{"candidates": [
+        {"norm_code": "ГЭСНр62-01-017-05"},
+        {"norm_code": "ГЭСНр62-01-017-01"},
+    ]}]}
+    rejected, trace = workflow._apply_mapping_self_check(
+        selections,
+        work_rows=[{"work_id": "w1", "title": "Окраска", "unit": "м2", "quantity": 1}],
+        browse_trace=browse,
+        rows=[{
+            "work_id": "w1",
+            "action": "change",
+            "decision": "bind",
+            "norm_code": "ГЭСНр62-01-017-01",
+            "selection_kind": "analog",
+            "applicability": "close_analog",
+            "reason": "лучше соседний",
+        }],
+    )
+    assert rejected["w1"]["norm_code"] == "ГЭСНр62-01-017-05"
+    assert trace["rejected_rows"] == 1
+    assert trace["rejected"][0]["reason"] == "sibling_flip_without_criterion"
+
+    updated, ok_trace = workflow._apply_mapping_self_check(
+        selections,
+        work_rows=[{"work_id": "w1", "title": "Окраска", "unit": "м2", "quantity": 1}],
+        browse_trace=browse,
+        rows=[{
+            "work_id": "w1",
+            "action": "change",
+            "decision": "bind",
+            "norm_code": "ГЭСНр62-01-017-01",
+            "selection_kind": "analog",
+            "applicability": "close_analog",
+            "sibling_criterion": "без расчистки старой краски",
+            "reason": "017-01 ближе по составу",
+        }],
+    )
+    assert updated["w1"]["norm_code"] == "ГЭСНр62-01-017-01"
+    assert updated["w1"]["review_status"] == "model_self_check"
+    assert ok_trace["changed_rows"] == 1
+
+
+def test_self_check_rejects_code_outside_current_evidence():
+    from proxy.smeta_core import document_workflow as workflow
+
+    selections = {
+        "w1": {
+            "norm_code": "ГЭСНм12-08-009-17",
+            "selection_kind": "analog",
+            "review_status": "model_batch",
+            "reason": "ок",
+            "resource_bindings": [],
+            "precalculation_blockers": [],
+        }
+    }
+    updated, trace = workflow._apply_mapping_self_check(
+        selections,
+        work_rows=[{"work_id": "w1", "title": "Коробка", "unit": "шт", "quantity": 1}],
+        browse_trace={"w1": [{"candidates": [{"norm_code": "ГЭСНм12-08-009-17"}]}]},
+        rows=[{
+            "work_id": "w1",
+            "action": "change",
+            "decision": "bind",
+            "norm_code": "ГЭСНм12-08-009-99",
+            "selection_kind": "analog",
+            "applicability": "close_analog",
+            "reason": "выдуманный код",
+        }],
+    )
+    assert updated["w1"]["norm_code"] == "ГЭСНм12-08-009-17"
+    assert trace["rejected"][0]["reason"] == "norm_code_outside_current_run_evidence"
+
+
+def test_run_mapping_self_check_invokes_mapping_exchange(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_SELF_CHECK", "1")
+    calls = []
+
+    def mapping_exchange(messages, schema):
+        calls.append({"messages": messages, "schema": schema})
+        return {
+            "rows": [{"work_id": "w1", "action": "keep", "reason": "ok"}],
+            "_les_model": "qwen3.5:9b",
+        }
+
+    selections = {
+        "w1": {
+            "norm_code": "ГЭСН15-04-006-02",
+            "selection_kind": "exact",
+            "review_status": "model_batch",
+            "reason": "ok",
+            "resource_bindings": [],
+            "precalculation_blockers": [],
+        }
+    }
+    updated, trace, model_trace = workflow._run_mapping_self_check(
+        work_rows=[{"work_id": "w1", "title": "Работа", "unit": "м2", "quantity": 1}],
+        selections=selections,
+        browse_trace={"w1": [{"candidates": [{"norm_code": "ГЭСН15-04-006-02"}]}]},
+        mapping_exchange=mapping_exchange,
+        user_request="Собери ЛСР",
+    )
+    assert len(calls) == 1
+    assert updated["w1"]["norm_code"] == "ГЭСН15-04-006-02"
+    assert trace["status"] == "applied"
+    assert model_trace[0]["transport"] == "structured_self_check"
+
+
 def test_candidate_payload_is_paginated_without_code_side_selection(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 

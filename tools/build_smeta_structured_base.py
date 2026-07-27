@@ -89,7 +89,7 @@ def _create_schema(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         PRAGMA foreign_keys = ON;
-        PRAGMA journal_mode = WAL;
+        PRAGMA journal_mode = DELETE;
         PRAGMA synchronous = NORMAL;
 
         CREATE TABLE meta (
@@ -156,9 +156,12 @@ def build_structured_base(
     integrity_out: Path | None = None,
     edition: str = DEFAULT_EDITION,
     minimum_norms: int = 0,
+    atomic_replace: bool | None = None,
 ) -> dict[str, Any]:
     if not source.exists():
         raise FileNotFoundError(source)
+    if atomic_replace is None:
+        atomic_replace = True
 
     df = pd.read_parquet(source)
     df = df.astype(object).where(pd.notnull(df), None)
@@ -256,10 +259,12 @@ def build_structured_base(
     }
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    tmp_out = out.with_suffix(out.suffix + ".tmp")
-    if tmp_out.exists():
-        tmp_out.unlink()
-    conn = sqlite3.connect(tmp_out)
+    write_target = out.with_suffix(out.suffix + ".tmp") if atomic_replace else out
+    if write_target.exists():
+        write_target.unlink()
+    for sidecar in (Path(str(write_target) + "-wal"), Path(str(write_target) + "-shm")):
+        sidecar.unlink(missing_ok=True)
+    conn = sqlite3.connect(write_target)
     try:
         _create_schema(conn)
         now = datetime.now(timezone.utc).isoformat()
@@ -329,16 +334,62 @@ def build_structured_base(
                 ],
             )
         conn.commit()
+        try:
+            # WAL leaves sidecar locks on Windows that block tmp→final replace.
+            conn.execute("PRAGMA journal_mode=DELETE")
+            conn.commit()
+        except sqlite3.Error:
+            pass
     finally:
         conn.close()
-    with sqlite3.connect(tmp_out) as preflight_conn:
+    with sqlite3.connect(write_target) as preflight_conn:
         preflight_norm_count = int(preflight_conn.execute("SELECT count(*) FROM norms").fetchone()[0])
+        preflight_conn.execute("PRAGMA journal_mode=DELETE")
     if preflight_norm_count < int(minimum_norms):
-        tmp_out.unlink(missing_ok=True)
+        for path in (
+            write_target,
+            Path(str(write_target) + "-wal"),
+            Path(str(write_target) + "-shm"),
+        ):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
         raise RuntimeError(
             f"refusing to replace structured base: {preflight_norm_count} < {minimum_norms} norms"
         )
-    tmp_out.replace(out)
+    for sidecar in (Path(str(write_target) + "-wal"), Path(str(write_target) + "-shm")):
+        sidecar.unlink(missing_ok=True)
+    if atomic_replace and write_target != out:
+        import gc
+        import shutil
+        import time
+
+        gc.collect()
+        # Windows often keeps a brief handle on the just-closed SQLite file.
+        # Prefer copy+unlink over os.replace, with a short retry.
+        last_error: OSError | None = None
+        copied = False
+        for _ in range(10):
+            try:
+                if out.exists():
+                    out.unlink()
+                shutil.copy2(write_target, out)
+                copied = True
+                break
+            except OSError as exc:
+                last_error = exc
+                time.sleep(0.05)
+                gc.collect()
+        if not copied and last_error is not None:
+            raise last_error
+        for _ in range(10):
+            try:
+                write_target.unlink(missing_ok=True)
+                break
+            except OSError:
+                time.sleep(0.05)
+                gc.collect()
 
     source_sha256 = _sha256(source)
     base_sha256 = _sha256(out)

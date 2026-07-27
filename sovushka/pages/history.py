@@ -68,6 +68,8 @@ def build_history(tabs=None, tab_chat=None):
 
         async def _open_session(session_id: str):
             """Загружает сессию в state и переключает на вкладку чата."""
+            from sovushka.state import persist_session_id
+
             add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}…")
             msgs = await api_get(f"/api/chat/history?session_id={session_id}")
             if msgs is None:
@@ -76,6 +78,7 @@ def build_history(tabs=None, tab_chat=None):
             # Сохраняем в state — вкладка чата подхватит при следующем рендере
             state["chat_history"] = msgs
             state["load_session_id"] = session_id
+            state["session_id"] = persist_session_id(session_id)
             add_log(f"[ИСТОРИЯ] Загружено {len(msgs)//2} сообщений")
             # Переключаем на вкладку чата и просим её перерисоваться СЕЙЧАС
             if tabs and tab_chat:

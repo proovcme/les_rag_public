@@ -4,19 +4,47 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-23)
+## Текущее состояние (2026-07-27)
 
 ```
-версия продукта (SemVer):  0.24.45 (public audit branch; не опубликована)
-номер сборки:              466     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.466 (manifest only; package не собран)
-ветка выпуска:             audit/smeta-stabilization (stacked public review)
+версия продукта (SemVer):  0.24.48 (chat persist + history restore)
+номер сборки:              469
+версия Tauri/NSIS:         5.1.469 (manifest only; package не собран)
+ветка выпуска:             feature/smeta-fresh-determinism
+backup rollback branches:  backup/smeta-before-fresh-determinism ; backup/smeta-before-self-check ; backup/smeta-before-chat-persist
 dev HEAD:                  определяется commit после review
 задеплоено на public demo: 0.24.44 / build 465; commit 9af71346; 2026-07-22
 Windows-выпуск:            последний подтверждённый 0.24.26 / build 447
 следующий выпуск:          только после owner approval и release gates
 public /api/version:       0.24.44 / build 465; landing/login 200; anonymous chat 401
 ```
+
+> 0.24.48 / build 469 — чат: возврат в ту же сессию после закрытия web/app + история
+>
+> Дата: 2026-07-27
+> Статус: dev/review; не задеплоено.
+> Совушка хранит `session_id` в `app.storage.user` и подтягивает `/api/chat/history`
+> при открытии; вкладка «История» тоже закрепляет session. SSE при закрытии вкладки
+> больше не cancel'ит runner — ответ/smeta дописываются и сохраняются в `chat_history`.
+> Lite chat восстанавливает transcript по `localStorage` session. Откат:
+> `backup/smeta-before-chat-persist`.
+
+> 0.24.47 / build 468 — smeta: same-run self-check + local batch=5
+>
+> Дата: 2026-07-27
+> Статус: dev/review; не задеплоено.
+> После model mapping добавлен self-check в том же прогоне (без памяти прошлого файла):
+> keep/change, sibling flip только с criterion, новый код только из evidence текущего run.
+> Локальный document batch default 5. Откат: `backup/smeta-before-self-check`.
+
+> 0.24.46 / build 467 — smeta: стабильность свежих прогонов без памяти прошлого mapping
+>
+> Дата: 2026-07-27
+> Статус: dev/review; не задеплоено.
+> Document workflow: Ollama/OpenAI-compatible `seed` (`LES_SMETA_DOCUMENT_SEED`, default 0),
+> стабильный порядок search queries/кандидатов, усиленные skill-правила bind/unbound и
+> provenance-blockers при слабом unbound evidence. Код по-прежнему не выбирает нормы.
+> Откат: ветка `backup/smeta-before-fresh-determinism`.
 
 > 0.24.45 / build 466 — полный public/team source и проверяемая документация
 >

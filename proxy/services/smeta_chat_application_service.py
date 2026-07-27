@@ -564,7 +564,7 @@ async def run_smeta_document_application(
         document_batch_size = int(
             configured_batch_size
             if configured_batch_size is not None
-            else ("0" if cloud_provider else "10")
+            else ("0" if cloud_provider else "5")
         )
         document_max_turns = int(os.getenv(
             "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",

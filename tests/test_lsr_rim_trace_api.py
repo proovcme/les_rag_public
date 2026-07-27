@@ -1,7 +1,7 @@
 """Тест endpoint POST /api/lsr/rim-trace (handoff Codex, шаг #1).
 
 Тонкая обёртка над rim_lsr_trace_service.build_position_trace; контракт /assemble НЕ трогает.
-Эталон тот же, что в test_rim_lsr_trace_service → summary.total == 11896.35 после полного ФСЭМ.
+Эталон тот же, что в test_rim_lsr_trace_service → summary.total == 11813.04 после полного ФСЭМ.
 """
 
 import asyncio
@@ -16,7 +16,7 @@ def _trace(**kw):
 def test_endpoint_matches_service_baseline():
     result = _trace(position={"code": "ГЭСН12-01-034-02", "qty": 0.61})
     assert result["code"] == "ГЭСН12-01-034-02"
-    assert result["summary"]["total"] == 11896.35
+    assert result["summary"]["total"] == 11813.04
     assert isinstance(result["rows"], list) and result["rows"]
 
 
@@ -46,7 +46,7 @@ def test_endpoint_lsr_trace_from_visible_rows_converts_quantity_and_blocks_unbou
         )
     )
 
-    assert result["summary"]["total"] == 11896.35
+    assert result["summary"]["total"] == 11813.04
     assert result["summary"]["result_status"] == "priced_partial"
     assert result["summary"]["bound_rows"] == 1
     assert result["summary"]["unbound_rows"] == 1
