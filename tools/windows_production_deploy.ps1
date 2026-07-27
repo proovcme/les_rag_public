@@ -296,6 +296,35 @@ try {
     accounts = @($mailApi.accounts).Count
   }
 
+  $result.stage = "stale_smoke_cleanup"
+  $datasetInventory = Invoke-RestMethod `
+    -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets" -TimeoutSec 60
+  $staleSmokeDatasets = @($datasetInventory.datasets | Where-Object {
+    [string]$_.name -like "LES production PDF smoke *"
+  })
+  $staleSmokeDatasetsRemoved = 0
+  foreach ($staleDataset in $staleSmokeDatasets) {
+    $staleRemoved = $false
+    $staleCleanupErrors = New-Object System.Collections.Generic.List[string]
+    foreach ($staleAttempt in 1..5) {
+      try {
+        Invoke-RestMethod -Method Delete `
+          -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets/$($staleDataset.id)" `
+          -TimeoutSec 60 | Out-Null
+        $staleRemoved = $true
+        break
+      } catch {
+        $staleCleanupErrors.Add("attempt ${staleAttempt}: $($_.Exception.Message)")
+        if ($staleAttempt -lt 5) { Start-Sleep -Seconds 3 }
+      }
+    }
+    if (-not $staleRemoved) {
+      throw "Could not remove stale release smoke dataset $($staleDataset.id): $($staleCleanupErrors -join '; ')"
+    }
+    $staleSmokeDatasetsRemoved += 1
+  }
+  $result.stale_smoke_datasets_removed = $staleSmokeDatasetsRemoved
+
   $result.stage = "heavy_pdf_dataset"
   $datasetName = "LES production PDF smoke $([guid]::NewGuid().ToString('N'))"
   $encodedDatasetName = [System.Uri]::EscapeDataString($datasetName)

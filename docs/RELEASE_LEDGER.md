@@ -35,6 +35,8 @@ Windows-выпуск:            0.24.46 / build 467 не собран; посл
 > Windows heavy-PDF gate сохраняет общий 30-минутный deadline при единичном status-poll timeout и
 > повторяет удаление только собственного временного датасета; timeout больше не завершает gate
 > после успешно принятых файлов.
+> Перед новым production smoke удаляются только оставшиеся датасеты с точным release-prefix
+> `LES production PDF smoke `; пользовательские датасеты и старые Qdrant-коллекции не затрагиваются.
 > Проверки: focused `141 passed`; `make verify` — version contract/compileall green,
 > `2720 collected`; `make test` — `2711 passed, 9 skipped`; `git diff --check` и
 > `uv lock --check` зелёные.

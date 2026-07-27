@@ -157,6 +157,9 @@ def test_patch_release_requires_production_legion_heavy_pdf_gate():
     assert "One transient status timeout must not" in production
     assert "foreach ($cleanupAttempt in 1..5)" in production
     assert "$smokeDatasetRemoved = $true" in production
+    assert '$result.stage = "stale_smoke_cleanup"' in production
+    assert '[string]$_.name -like "LES production PDF smoke *"' in production
+    assert "$staleSmokeDatasetsRemoved += 1" in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):
