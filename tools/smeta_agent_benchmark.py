@@ -16,7 +16,11 @@ from proxy.services.smeta_agent_runner_service import (
     GoogleAdkSmetaRunner,
     QwenAgentSmetaRunner,
 )
-from proxy.smeta_core.document_workflow import _run_native_norm_agent, run_vor_document_workflow
+from proxy.smeta_core.document_workflow import (
+    _run_global_norm_review,
+    _run_native_norm_agent,
+    run_vor_document_workflow,
+)
 from proxy.smeta_core.source_intake import intake_vor_document
 
 
@@ -146,19 +150,41 @@ def run(args: argparse.Namespace, engine: str) -> dict[str, Any]:
         "phase": event.get("phase"),
         "label": event.get("label"),
     }, ensure_ascii=False), flush=True)
+    configured_batch_size = getattr(args, "batch_size", None)
+    if configured_batch_size is not None:
+        batch_size = configured_batch_size
+    elif engine == "qwen_agent":
+        batch_size = 1
+    elif engine == "google_adk" or args.phase == "quick":
+        batch_size = 0
+    else:
+        batch_size = 10
+    sequential_rows = engine == "qwen_agent" and batch_size == 1
     if args.phase == "quick":
         source = list(intake_vor_document(args.source).get("work_items") or [])
         rows = [row for row in _query_rows(source) if row.get("work_id") in QUICK_WORK_IDS]
-        result = _run_native_norm_agent(
+        initial_result = _run_native_norm_agent(
             rows,
             adapters._smeta_document_exchange,
             mapping_exchange=adapters._smeta_document_mapping_exchange,
             candidate_limit=8,
             max_turns=args.max_turns,
-            batch_size=0,
+            batch_size=batch_size,
+            accumulate_task_state=sequential_rows,
             user_request="Собери ЛСР по исходной ВОР",
             batch_runner=runner.run_batch if runner else None,
             progress=progress,
+        )
+        result = _run_global_norm_review(
+            rows,
+            initial_result,
+            adapters._smeta_document_exchange,
+            mapping_exchange=adapters._smeta_document_mapping_exchange,
+            candidate_limit=8,
+            max_turns=args.max_turns,
+            progress=progress,
+            user_request="Собери ЛСР по исходной ВОР",
+            batch_runner=runner.run_batch if runner else None,
         )
     else:
         slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", f"{engine}_{getattr(runner, 'model', 'native')}")
@@ -167,7 +193,9 @@ def run(args: argparse.Namespace, engine: str) -> dict[str, Any]:
             exchange=adapters._smeta_document_exchange,
             mapping_exchange=adapters._smeta_document_mapping_exchange,
             candidate_limit=12 if engine == "google_adk" else 8,
-            batch_size=0 if engine == "google_adk" else 10,
+            batch_size=batch_size,
+            accumulate_task_state=sequential_rows,
+            require_global_review=True,
             max_agent_turns=args.max_turns,
             user_request="Собери ЛСР по исходной ВОР",
             out_xlsx=args.out_dir / f"{slug}.xlsx",
@@ -179,6 +207,8 @@ def run(args: argparse.Namespace, engine: str) -> dict[str, Any]:
         "provider": getattr(runner, "provider", "native"),
         "model": getattr(runner, "model", os.getenv("LES_SMETA_DOCUMENT_MODEL", "")),
         "phase": args.phase,
+        "batch_size": batch_size,
+        "task_mode": "sequential_rows" if sequential_rows else "batch",
         "elapsed_sec": round(perf_counter() - started, 2),
     }
     result["acceptance"] = evaluate_bap(result, full=args.phase == "full")
@@ -192,6 +222,10 @@ def main() -> int:
     parser.add_argument("--phase", choices=("quick", "full"), default="quick")
     parser.add_argument("--allow-cloud", action="store_true")
     parser.add_argument("--max-turns", type=int, default=20)
+    parser.add_argument(
+        "--batch-size", type=int, default=None,
+        help="Rows per model task; Qwen-Agent defaults to one sequential row",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("outputs/smeta-agent-benchmark"))
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)

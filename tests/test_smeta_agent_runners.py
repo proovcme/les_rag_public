@@ -8,6 +8,8 @@ from proxy.services.smeta_agent_runner_service import (
     GoogleAdkSmetaRunner,
     QwenAgentSmetaRunner,
     _google_function_schema,
+    _qwen_terminal_schema,
+    _requires_evidence_continuation,
     normalize_smeta_agent_engine,
 )
 from proxy.smeta_core import document_workflow as workflow
@@ -26,6 +28,16 @@ def _mapping_args() -> dict:
             "selection_kind": "exact",
             "applicability": "exact",
             "analog_limitations": [],
+            "candidate_evaluations": [{
+                "candidate_code": CODE,
+                "operation_match": "exact",
+                "object_match": "exact",
+                "unit_match": "compatible",
+                "scope_match": "exact",
+                "foreign_resources": [],
+                "decision": "selected",
+                "reason": "открытая карточка соответствует работе",
+            }],
             "technology_check": {
                 "matched_operations": ["монтаж"],
                 "missing_operations": [],
@@ -33,7 +45,7 @@ def _mapping_args() -> dict:
                 "foreign_resources": [],
                 "overlaps_with_work_ids": [],
                 "overlap_resolution": "нет",
-                "conditions_checked": [],
+                "conditions_checked": ["измеритель и состав работ"],
                 "unresolved_conditions": [],
                 "conclusion": "applicable",
             },
@@ -107,6 +119,161 @@ def test_qwen_agent_adapter_uses_common_session(monkeypatch, norm_backend):
     assert result["valid_model_rows"] == 1
     assert result["agent_trace"]["engine"] == "qwen_agent"
     assert result["agent_trace"]["tool_turns"] == 3
+    assert result["agent_trace"]["terminal_recovery_attempted"] is False
+
+
+def test_qwen_agent_recovers_terminal_mapping_with_same_model_context(monkeypatch, norm_backend):
+    import qwen_agent.agents
+
+    calls = []
+
+    class FakeAgent:
+        def __init__(self, *, function_list, **_kwargs):
+            self.tools = {tool.name: tool for tool in function_list}
+
+        def run(self, *, messages, **_kwargs):
+            calls.append(messages)
+            self.tools["search_norms_batch"].call({
+                "items": [{
+                    "work_id": "w1",
+                    "query": "монтаж блока",
+                    "search_intent": "source_literal",
+                }],
+            })
+            self.tools["read_norms_batch"].call({
+                "items": [{"work_id": "w1", "norm_code": CODE}],
+            })
+            yield [{"role": "assistant", "content": "Карточка подходит."}]
+
+    monkeypatch.setattr(qwen_agent.agents, "FnCallAgent", FakeAgent)
+    runner = QwenAgentSmetaRunner()
+    recovered = []
+
+    def structured_terminal_mapping(**kwargs):
+        recovered.append(kwargs)
+        return _mapping_args()
+
+    monkeypatch.setattr(runner, "_structured_terminal_mapping", structured_terminal_mapping)
+    result = runner.run_batch(
+        [WORK], candidate_limit=4, max_turns=4, progress=None, user_request="сделай смету",
+    )
+
+    assert result["valid_model_rows"] == 1
+    assert len(calls) == 1
+    assert recovered[0]["final_messages"][-1]["content"] == "Карточка подходит."
+    assert result["agent_trace"]["terminal_recovery_attempted"] is True
+    assert result["model_trace"][-1]["transport"] == "same_model_json_schema_recovery"
+
+
+def test_qwen_returns_to_tools_when_structured_bind_needs_opened_comparison(monkeypatch, norm_backend):
+    import qwen_agent.agents
+
+    alternative = "ГЭСН01-01-001-02"
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [
+            {"norm_code": CODE, "title": "Монтаж блока", "measure_unit": "шт"},
+            {"norm_code": alternative, "title": "Установка блока", "measure_unit": "шт"},
+        ]} for query in queries
+    })
+    runs = []
+
+    class FakeAgent:
+        def __init__(self, *, function_list, **_kwargs):
+            self.tools = {tool.name: tool for tool in function_list}
+
+        def run(self, *, messages, **_kwargs):
+            runs.append(messages)
+            if len(runs) == 1:
+                self.tools["search_norms_batch"].call({
+                    "items": [{
+                        "work_id": "w1", "query": "монтаж блока", "search_intent": "source_literal",
+                    }],
+                })
+                yield [{"role": "assistant", "content": "Выбираю первую норму."}]
+                return
+            self.tools["read_norms_batch"].call({
+                "items": [
+                    {"work_id": "w1", "norm_code": CODE},
+                    {"work_id": "w1", "norm_code": alternative},
+                ],
+            })
+            mapping = _mapping_args()
+            mapping["rows"][0]["candidate_evaluations"].append({
+                "candidate_code": alternative,
+                "operation_match": "partial",
+                "object_match": "exact",
+                "unit_match": "compatible",
+                "scope_match": "partial",
+                "foreign_resources": [],
+                "decision": "rejected",
+                "reason": "вторая карточка покрывает только часть операции",
+            })
+            self.tools["submit_lsr_mapping"].call(mapping)
+            yield [{"role": "assistant", "content": ""}]
+
+    monkeypatch.setattr(qwen_agent.agents, "FnCallAgent", FakeAgent)
+    runner = QwenAgentSmetaRunner()
+    monkeypatch.setattr(runner, "_structured_terminal_mapping", lambda **_kwargs: _mapping_args())
+
+    result = runner.run_batch(
+        [WORK], candidate_limit=4, max_turns=6, progress=None, user_request="сделай смету",
+    )
+
+    assert len(runs) == 2
+    assert result["valid_model_rows"] == 1
+    assert result["agent_trace"]["evidence_continuation_used"] is True
+    assert len(result["selections"]["w1"]["candidate_evaluations"]) == 2
+
+
+def test_qwen_recovery_retry_requires_evidence_for_models_existing_unbound_decision():
+    session = workflow.SmetaNormToolSession([WORK], candidate_limit=4)
+    session.query_trace.append({
+        "work_id": "w1",
+        "queries": ["монтаж блока", "установка блока ФСНБ"],
+    })
+
+    schema, allowed = _qwen_terminal_schema(session, {
+        "ok": False,
+        "errors": [{"work_id": "w1", "error": "invalid unbound_evidence"}],
+    })
+
+    row = schema["properties"]["rows"]["items"]
+    assert row["properties"]["decision"]["enum"] == ["unbound"]
+    assert "unbound_evidence" in row["required"]
+    assert row["properties"]["unbound_evidence"]["properties"]["queries_used"]["items"]["enum"] == [
+        "монтаж блока", "установка блока ФСНБ",
+    ]
+    assert allowed["w1"]["opened_norm_codes"] == []
+
+
+def test_qwen_recovery_retry_requires_complete_existing_bind_decision():
+    session = workflow.SmetaNormToolSession([WORK], candidate_limit=4)
+
+    schema, _allowed = _qwen_terminal_schema(session, {
+        "ok": False,
+        "errors": [{"work_id": "w1", "error": "incomplete bind evidence"}],
+    })
+
+    row = schema["properties"]["rows"]["items"]
+    assert row["properties"]["decision"]["enum"] == ["bind"]
+    assert {
+        "norm_code", "selection_kind", "applicability",
+        "analog_limitations", "candidate_evaluations", "technology_check",
+    }.issubset(row["required"])
+    assert "required" in row["properties"]["technology_check"]
+
+
+def test_qwen_resumes_tools_only_when_terminal_repair_needs_new_evidence():
+    assert _requires_evidence_continuation({
+        "errors": [{
+            "details": [
+                "candidate_evaluations requires opening at least one shown alternative before bind",
+            ],
+        }],
+    }) is True
+    assert _requires_evidence_continuation({
+        "errors": [{"details": ["technology_check.conditions_checked must describe checked conditions"]}],
+    }) is False
 
 
 def test_google_adk_adapter_uses_common_session(monkeypatch, norm_backend):

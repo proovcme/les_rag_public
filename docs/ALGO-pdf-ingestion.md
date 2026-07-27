@@ -1,6 +1,6 @@
 # ALGO: PDF ingestion for RAG
 
-Status: current canon from `0.24.0.237`.
+Status: current canon from `0.24.30`.
 
 ## Rule
 
@@ -38,13 +38,38 @@ falls back to the fast page-text layer instead of marking the document `ERROR`.
 `backend/qdrant_adapter.py` then indexes real PDF/P7M files as bounded page
 nodes instead of sending the whole markdown projection into generic markdown
 heading splitters. Page nodes carry `payload.type=pdf_page_text`,
-`source_layer=pdf_fast_text`, `page`, `page_part` and route metadata. Defaults:
+`source_layer=pdf_text_layer|pdf_ocr_text`, `page`, `page_part`, `source_ref`
+and route metadata. Both `## Page N` and OCR output `## Стр. N` are recognized,
+so a scan that has been successfully OCRed does not lose page identity. Defaults:
 
 ```text
 RAG_PDF_PAGE_NODES_ENABLED=true
+RAG_PDF_PAGE_PASSPORT_ENABLED=true
 RAG_PDF_PAGE_NODE_MAX_CHARS=1800
 RAG_PDF_PAGE_NODE_OVERLAP_CHARS=150
 ```
+
+### Unified page passport
+
+`proxy/services/pdf_contour_service.py` enriches those nodes and the GUI from
+the same `list.pdf_page_passport.v1` contract. It classifies every inspected page as:
+
+```text
+digital_text | table | drawing | scan | mixed | damaged_text_layer
+```
+
+The passport records routing confidence, text-layer quality, `requires_ocr`,
+page size/orientation, text/image/vector/table signals, title-block status,
+best-effort sheet number, page `source_ref` and bounded text-block bbox locators.
+RAG stores this as `pdf_page_type`, `pdf_recognition_quality`,
+`pdf_page_signals`, `pdf_stamp_status` and `pdf_fragment_bboxes`. It remains
+machine routing/evidence metadata; it does not select an engineering answer.
+
+Passport enrichment is fail-soft. If one malformed PDF defeats geometry/table
+inspection, existing page text still enters RAG and the failure is logged as an
+enrichment warning. The original PDF is opened read-only. The GUI audit hashes
+the source for visible identity; the RAG pass reads only pages that produced
+page nodes and does not hash the file a second time.
 
 This prevents hundreds of tiny structural chunks per ordinary project PDF and
 keeps page anchors stable for source-map/read tools. The bound is deliberately
@@ -111,6 +136,8 @@ raw PDF remains the source file; page-text chunks carry file/page anchors
 tables/layout can be rebuilt later without deleting the baseline
 ordinary project PDF with weak estimate words -> DOCUMENT/NTD_* not TABLE_SMETA
 text-layer PDF -> page-level nodes, not markdown chunk flood
+OCR PDF -> page-level nodes with source_layer=pdf_ocr_text and stable page refs
+page node -> shared type/quality/OCR/stamp/bbox passport visible in GUI and payload
 ```
 
 ## Project PDF source-map layers

@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-release test-release-critical test-architecture test-focused test-rag-core test-mail test-mail-release test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
+.PHONY: version-sync verify test test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-tauri smeta-base smeta-base-source smeta-base-update smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
 
 PATCH_RELEASE_ARGS ?=
 
@@ -13,7 +13,7 @@ LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resou
 ARTEL_TESTS := $(wildcard tests/test_artel*.py)
 ARCHITECTURE_EXCLUDED_TESTS := $(LEGACY_ARCHITECTURE_TESTS) $(ARTEL_TESTS)
 ARCHITECTURE_IGNORE_ARGS := $(foreach test,$(ARCHITECTURE_EXCLUDED_TESTS),--ignore=$(test))
-LES_RELEASE_IGNORE_ARGS := $(foreach test,$(ARTEL_TESTS),--ignore=$(test))
+LES_RELEASE_IGNORE_ARGS := $(ARCHITECTURE_IGNORE_ARGS)
 MAIL_TESTS ?= tests/test_chat_mail_query.py tests/test_converter_email.py tests/test_ezhik_imap_smoke.py tests/test_mail_ingest.py tests/test_mail_profile.py tests/test_mail_push_service.py tests/test_mail_query_service.py tests/test_mail_registry_service.py tests/test_mail_router.py tests/test_mail_threads.py tests/test_outlook_mail_poller.py
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
@@ -21,10 +21,11 @@ SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
 
 help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
-	@echo "make test         — полная сюита pytest (часть тестов требует живых Qdrant/MLX)"
-	@echo "make test-release — LES release-suite без отдельного продукта ARTEL"
+	@echo "make test         — каноническая LES-сюита без legacy Unified Harness и отдельного ARTEL"
+	@echo "make test-release — release-псевдоним канонической LES-сюиты"
 	@echo "make test-release-critical — узкие unit/code-проверки ФСНБ, clean-install и датасетов перед Windows smoke"
-	@echo "make test-architecture — текущая архитектура LES без feature-off Unified Harness и отдельного ARTEL"
+	@echo "make test-architecture — совместимый псевдоним канонической LES-сюиты"
+	@echo "make test-legacy — отдельный opt-in прогон исторического Unified/Construction Harness"
 	@echo "make test-focused — быстрые профильные pytest; переопредели FOCUS_TESTS='tests/test_x.py ...'"
 	@echo "make test-rag-core — обязательный offline integrity-гейт RAG-ядра"
 	@echo "make test-mail      — обязательный offline профиль Е.Ж.И.К. (IMAP/registry/RAG/API/UI/Windows static)"
@@ -50,11 +51,11 @@ version-sync:
 verify:
 	uv run python tools/sync_version_contract.py --check
 	uv run python -m compileall -q $(PKGS)
-	uv run python -m pytest --collect-only -q
+	uv run python -m pytest --collect-only -q $(ARCHITECTURE_IGNORE_ARGS)
 	@echo "OK — verify зелёный (синтаксис + импорт-смоук). Полные тесты: make test."
 
 test:
-	uv run python -m pytest --durations=20
+	uv run python -m pytest --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
 
 test-release:
 	uv run python -m pytest --durations=20 $(LES_RELEASE_IGNORE_ARGS)
@@ -64,6 +65,9 @@ test-release-critical:
 
 test-architecture:
 	uv run python -m pytest --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
+
+test-legacy:
+	uv run python -m pytest -o addopts= --durations=20 $(LEGACY_ARCHITECTURE_TESTS)
 
 test-focused:
 	uv run python -m pytest $(FOCUS_TESTS)

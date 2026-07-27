@@ -23,6 +23,9 @@ import time
 import httpx
 
 
+DEFAULT_CHAT_TIMEOUT = 90.0
+
+
 def _r(name, severity, status, t0, reason="", evidence=None):
     return {"name": name, "status": status, "severity": severity,
             "elapsed_ms": round((time.monotonic() - t0) * 1000, 1),
@@ -115,6 +118,14 @@ def _chat(c, base, question, *, timeout: float):
     return resp
 
 
+def _has_version_trace(payload: dict) -> bool:
+    """Accept the legacy top-level trace and the current response contract."""
+    if isinstance(payload.get("version_info"), dict):
+        return True
+    versions = payload.get("versions")
+    return isinstance(versions, dict) and isinstance(versions.get("version_info"), dict)
+
+
 def check_chat_glossary(c, base, *, timeout: float):
     t0 = time.monotonic()
     try:
@@ -127,7 +138,7 @@ def check_chat_glossary(c, base, *, timeout: float):
         status = d.get("crag_status") or d.get("status") or ""
         route = d.get("query_route") if isinstance(d.get("query_route"), dict) else {}
         channel = str(route.get("channel") or "")
-        has_version = isinstance(d.get("version_info"), dict)
+        has_version = _has_version_trace(d)
         ev = {"http": resp.status_code, "answer_len": len(ans), "status": status,
               "channel": channel, "version_info": has_version}
         if resp.status_code != 200:
@@ -153,7 +164,7 @@ def check_chat_project_noscope(c, base, *, timeout: float):
         status = d.get("crag_status") or d.get("status") or ""
         route = d.get("query_route") if isinstance(d.get("query_route"), dict) else {}
         channel = str(route.get("channel") or "")
-        has_version = isinstance(d.get("version_info"), dict)
+        has_version = _has_version_trace(d)
         ev = {"http": resp.status_code, "answer_len": len(ans), "status": status,
               "channel": channel, "version_info": has_version}
         if resp.status_code != 200:
@@ -189,7 +200,12 @@ def main() -> int:
     ap.add_argument("--json", default="artifacts/basic_function_smoke.json")
     ap.add_argument("--release", action="store_true", help="P1 fail → exit 1 (перед релизом)")
     ap.add_argument("--http-timeout", type=float, default=20.0, help="таймаут обычного HTTP check")
-    ap.add_argument("--chat-timeout", type=float, default=45.0, help="отдельный конечный budget одного chat check")
+    ap.add_argument(
+        "--chat-timeout",
+        type=float,
+        default=DEFAULT_CHAT_TIMEOUT,
+        help="отдельный конечный budget одного chat check (калиброван для локального 9B на Mac Mini)",
+    )
     args = ap.parse_args()
     if args.http_timeout <= 0 or args.chat_timeout <= 0:
         ap.error("--http-timeout и --chat-timeout должны быть положительными")

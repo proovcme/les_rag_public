@@ -459,3 +459,17 @@ HARNESS_ENABLED=1 python scripts/smoke_unified_v11.py --dataset-id <ID> --storag
 storage/datasets --append-ledger`.
 
 - smoke v16 `e19cc409-ac45-42b9-8029-d74cd9659a12`: corpus=norm sidecar=True states=['sidecar_exists_and_searched', 'term_absent_after_extracted_search'] complete=6/15
+## Operational incident 2026-07-17: missing recommended Ollama model killed first launch
+
+**Symptom:** clean Windows install opened a fatal `bootstrap_unhandled` screen with
+`Error: model 'qwen3.5:9b' not found`.
+
+**Cause:** Windows bootstrap silently selected the recommended tag, attempted model provisioning in
+the critical startup path and promoted any Ollama exception to a process-wide failure. External
+programs, Docker/WSL readiness and user-managed models had no normal first-run state.
+
+**Rule:** bundled Python/uv may prepare automatically, but missing external components and models are
+`setup_required`, not fatal. Tauri owns a persistent setup/help wizard; winget installation requires
+an explicit user action, the answer model is selected only from installed tags, and bootstrap never
+calls `ollama pull`. `qwen3.5:9b` is a recommendation; `bge-m3` remains the explicit embedding
+contract. Internal preparation failures stay visible in the same wizard with code and log path.

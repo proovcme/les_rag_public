@@ -6,6 +6,7 @@ does not ask the model anything; it makes the indexed corpus visible.
 from __future__ import annotations
 
 import asyncio
+import base64
 import inspect
 import json
 import re
@@ -13,7 +14,7 @@ from urllib.parse import quote, urlencode
 
 from nicegui import context, ui
 
-from sovushka.state import api_get, api_patch, api_post, api_post_file, add_log, last_api_error_text
+from sovushka.state import api_get, api_get_bytes, api_patch, api_post, api_post_file, add_log, last_api_error_text
 
 DATASET_KIND_OPTIONS = {
     "": "Все типы",
@@ -59,6 +60,11 @@ def build_documents() -> None:
         "tool_running": False,
         "pdf_extract": {},
         "pdf_extract_loading": False,
+        "pdf_contour": {},
+        "pdf_contour_loading": False,
+        "pdf_contour_preview": "",
+        "pdf_contour_preview_loading": False,
+        "pdf_contour_page": 0,
         "cad_inventory": {},
         "cad_loading": False,
         "view_mode": "map",
@@ -96,6 +102,22 @@ def build_documents() -> None:
         "dataset_integrity_loading": False,
         "dataset_index_quality": {},
         "dataset_index_quality_loading": False,
+        "office_forms": [],
+        "office_projects": [],
+        "office_artifacts": [],
+        "office_form_id": "",
+        "office_project_id": "",
+        "office_format": "docx",
+        "office_fields": [],
+        "office_manual": {},
+        "office_preview": "",
+        "office_instruction": "",
+        "office_agent_ir": {},
+        "office_agent_running": False,
+        "office_agent_applied": False,
+        "office_review_confirmed": False,
+        "office_loading": False,
+        "office_creating": False,
         "query": "",
         "view_title": "Выберите датасет",
         "view_note": "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу.",
@@ -348,14 +370,26 @@ def build_documents() -> None:
         state["view_title"] = _dataset_title(_selected_dataset_row())
         state["view_note"] = "Краткая справка, содержание и переход к оригиналу файла."
         state["composition_file_loading"] = True
+        state["pdf_contour"] = {}
+        state["pdf_contour_loading"] = file_name.lower().endswith(".pdf")
+        state["pdf_contour_preview"] = ""
+        state["pdf_contour_preview_loading"] = False
+        state["pdf_contour_page"] = 0
         state["composition_file"] = {"doc_id": doc_id, "file_name": file_name}
         _render_documents()
         _render_view()
-        data = await api_get(
+        chunks_request = api_get(
             f"/api/documents/by-id/{quote(doc_id, safe='')}/chunks?"
             + urlencode({"limit": 12, "max_chars": 1800})
         )
+        contour_request = (
+            api_get(f"/api/documents/by-id/{quote(doc_id, safe='')}/pdf-contour?max_pages=80")
+            if file_name.lower().endswith(".pdf")
+            else asyncio.sleep(0, result={})
+        )
+        data, contour = await asyncio.gather(chunks_request, contour_request)
         state["composition_file_loading"] = False
+        state["pdf_contour_loading"] = False
         if not isinstance(data, dict):
             _render_status_error()
             _render_view()
@@ -367,7 +401,34 @@ def build_documents() -> None:
             "chunks": list(data.get("chunks") or []),
             "total": int(data.get("total") or 0),
         }
+        state["pdf_contour"] = contour if isinstance(contour, dict) else {}
         _render_documents()
+        _render_view()
+        pages = list((state.get("pdf_contour") or {}).get("pages") or [])
+        if pages:
+            await _load_pdf_contour_preview(int(pages[0].get("page") or 1))
+
+    async def _load_pdf_contour_preview(page_number: int) -> None:
+        file_data = state.get("composition_file") or {}
+        doc_id = str(file_data.get("doc_id") or "")
+        if not doc_id or page_number < 1:
+            return
+        state["pdf_contour_page"] = page_number
+        state["pdf_contour_preview_loading"] = True
+        state["pdf_contour_preview"] = ""
+        _render_view()
+        result = await api_get_bytes(
+            f"/api/documents/by-id/{quote(doc_id, safe='')}/pdf-contour/pages/{page_number}/preview?width=1100"
+        )
+        if doc_id != str((state.get("composition_file") or {}).get("doc_id") or ""):
+            return
+        state["pdf_contour_preview_loading"] = False
+        if result is None:
+            _render_status_error()
+            _render_view()
+            return
+        content, _name = result
+        state["pdf_contour_preview"] = "data:image/png;base64," + base64.b64encode(content).decode("ascii")
         _render_view()
 
     def _show_dataset_data() -> None:
@@ -375,6 +436,11 @@ def build_documents() -> None:
         state["map_target"] = "dataset"
         state["composition_file"] = {}
         state["composition_file_loading"] = False
+        state["pdf_contour"] = {}
+        state["pdf_contour_loading"] = False
+        state["pdf_contour_preview"] = ""
+        state["pdf_contour_preview_loading"] = False
+        state["pdf_contour_page"] = 0
         state["view_title"] = _dataset_title(_selected_dataset_row()) if state["selected_dataset"] else "Выберите датасет"
         state["view_note"] = "Паспорт, состав и извлечённые данные датасета."
         _render_documents()
@@ -586,6 +652,11 @@ def build_documents() -> None:
         state["memory_loading"] = False
         state["pdf_extract"] = {}
         state["pdf_extract_loading"] = False
+        state["pdf_contour"] = {}
+        state["pdf_contour_loading"] = False
+        state["pdf_contour_preview"] = ""
+        state["pdf_contour_preview_loading"] = False
+        state["pdf_contour_page"] = 0
         state["operator_guidance"] = ""
         state["selected_folder"] = ""
         state["composition_file"] = {}
@@ -1033,6 +1104,268 @@ def build_documents() -> None:
         else:
             _render_view()
 
+    def _office_source_refs() -> list[dict[str, str]]:
+        dataset_id = str(state.get("selected_dataset") or "")
+        selected = [str(value) for value in (state.get("selected_doc_ids") or []) if str(value)]
+        current = str(state.get("selected_doc_id") or "")
+        if current and current not in selected:
+            selected.append(current)
+        inspected = str((state.get("composition_file") or {}).get("doc_id") or "")
+        if inspected and inspected not in selected:
+            selected.append(inspected)
+        refs_out: list[dict[str, str]] = []
+        for doc_id in selected:
+            row = _document_by_id(doc_id)
+            file_name = str(row.get("file_name") or "")
+            if not file_name:
+                continue
+            refs_out.append({
+                "dataset_id": dataset_id,
+                "doc_id": doc_id,
+                "file_name": file_name,
+                "source_ref": file_name,
+            })
+        return refs_out
+
+    def _office_notify(message: str, *, notification_type: str) -> None:
+        """Асинхронные handlers входят в явный UI-slot перед NiceGUI side effect."""
+        panel = refs.get("view")
+        if panel is None:
+            return
+        with panel:
+            ui.notify(message, type=notification_type)
+
+    async def _load_office_fields(self_render: bool = True) -> None:
+        form_id = str(state.get("office_form_id") or "")
+        if not form_id:
+            state["office_fields"] = []
+            if self_render:
+                _render_view()
+            return
+        params = {}
+        project_id = str(state.get("office_project_id") or "").strip()
+        if project_id:
+            params["project_id"] = project_id
+        suffix = "?" + urlencode(params) if params else ""
+        data = await api_get(f"/api/forms/{quote(form_id, safe='')}/fields{suffix}")
+        if isinstance(data, dict):
+            fields = list(data.get("fields") or [])
+            manual = dict(state.get("office_manual") or {})
+            for field in fields:
+                if str(field.get("source") or "") == "manual" and field.get("key") in manual:
+                    field["value"] = str(manual.get(field.get("key")) or "")
+                    field["needs_input"] = not bool(str(field["value"]).strip())
+            state["office_fields"] = fields
+        if self_render:
+            _render_view()
+
+    async def _load_office_studio(force: bool = False) -> None:
+        if state.get("office_loading"):
+            return
+        state["view_mode"] = "studio"
+        state["view_title"] = "Студия документов"
+        state["view_note"] = "Черновики DOCX/XLSX с источниками, пропусками и неизменяемыми ревизиями."
+        if state.get("office_forms") and not force:
+            _render_view()
+            return
+        state["office_loading"] = True
+        _render_view()
+        forms_data, projects_data, artifacts_data = await asyncio.gather(
+            api_get("/api/forms"),
+            api_get("/api/projects"),
+            api_get("/api/forms/artifacts?limit=60"),
+        )
+        state["office_loading"] = False
+        state["office_forms"] = list((forms_data or {}).get("forms") or []) if isinstance(forms_data, dict) else []
+        state["office_projects"] = list((projects_data or {}).get("projects") or []) if isinstance(projects_data, dict) else []
+        state["office_artifacts"] = list((artifacts_data or {}).get("artifacts") or []) if isinstance(artifacts_data, dict) else []
+        available_ids = [str(item.get("id") or "") for item in state["office_forms"] if item.get("id")]
+        if str(state.get("office_form_id") or "") not in available_ids:
+            state["office_form_id"] = available_ids[0] if available_ids else ""
+            state["office_manual"] = {}
+            state["office_preview"] = ""
+        await _load_office_fields(self_render=False)
+        _render_view()
+
+    def _show_office_studio() -> None:
+        state["view_mode"] = "studio"
+        state["view_title"] = "Студия документов"
+        state["view_note"] = "Черновики DOCX/XLSX с источниками, пропусками и неизменяемыми ревизиями."
+        _render_view()
+        _schedule(_load_office_studio())
+
+    async def _select_office_form(form_id: str) -> None:
+        state["office_form_id"] = str(form_id or "")
+        state["office_manual"] = {}
+        state["office_preview"] = ""
+        state["office_agent_ir"] = {}
+        state["office_agent_applied"] = False
+        state["office_review_confirmed"] = False
+        await _load_office_fields()
+
+    async def _select_office_project(project_id: str) -> None:
+        state["office_project_id"] = str(project_id or "")
+        state["office_preview"] = ""
+        state["office_agent_ir"] = {}
+        state["office_agent_applied"] = False
+        state["office_review_confirmed"] = False
+        await _load_office_fields()
+
+    def _set_office_manual(key: str, value: object) -> None:
+        manual = dict(state.get("office_manual") or {})
+        manual[str(key)] = str(value or "")
+        state["office_manual"] = manual
+        for field in state.get("office_fields") or []:
+            if str(field.get("key") or "") == str(key):
+                field["value"] = str(value or "")
+                field["needs_input"] = not bool(str(value or "").strip())
+        state["office_preview"] = ""
+        if state.get("office_agent_ir"):
+            state["office_review_confirmed"] = False
+
+    def _set_office_review_confirmed(value: object) -> None:
+        state["office_review_confirmed"] = bool(value)
+        _render_view()
+
+    async def _prepare_office_with_les() -> None:
+        form_id = str(state.get("office_form_id") or "")
+        if not form_id or state.get("office_agent_running"):
+            return
+        source_refs = _office_source_refs()
+        if not source_refs:
+            _office_notify("Выберите хотя бы один файл-основание", notification_type="warning")
+            return
+        state["office_agent_running"] = True
+        state["office_agent_ir"] = {}
+        state["office_agent_applied"] = False
+        state["office_review_confirmed"] = False
+        _render_view()
+        project_value = str(state.get("office_project_id") or "").strip()
+        payload = {
+            "form_id": form_id,
+            "project_id": int(project_value) if project_value else None,
+            "manual": dict(state.get("office_manual") or {}),
+            "dataset_id": str(state.get("selected_dataset") or ""),
+            "source_refs": source_refs,
+            "instruction": str(state.get("office_instruction") or ""),
+        }
+        data = await api_post("/api/forms/agent-draft", payload)
+        state["office_agent_running"] = False
+        if not isinstance(data, dict) or data.get("schema") != "office_document_ir_v1":
+            _office_notify(
+                last_api_error_text("Л.Е.С. не подготовил поля"),
+                notification_type="negative",
+            )
+            _render_view()
+            return
+        state["office_agent_ir"] = data
+        _office_notify("Предложения Л.Е.С. готовы к проверке", notification_type="positive")
+        _render_view()
+
+    def _apply_office_agent_ir() -> None:
+        office_ir = state.get("office_agent_ir") if isinstance(state.get("office_agent_ir"), dict) else {}
+        proposals = [item for item in (office_ir.get("fields") or []) if isinstance(item, dict)]
+        manual = dict(state.get("office_manual") or {})
+        applied = 0
+        for item in proposals:
+            key = str(item.get("key") or "")
+            value = str(item.get("value") or "")
+            if key and value:
+                manual[key] = value
+                applied += 1
+        state["office_manual"] = manual
+        for field in state.get("office_fields") or []:
+            key = str(field.get("key") or "")
+            if key in manual:
+                field["value"] = str(manual.get(key) or "")
+                field["needs_input"] = not bool(str(field["value"]).strip())
+        state["office_agent_applied"] = True
+        state["office_review_confirmed"] = False
+        state["office_preview"] = ""
+        _office_notify(f"Применено предложений: {applied}", notification_type="positive" if applied else "warning")
+        _render_view()
+
+    async def _preview_office_document() -> None:
+        form_id = str(state.get("office_form_id") or "")
+        if not form_id:
+            _office_notify("Выберите шаблон", notification_type="warning")
+            return
+        project_value = str(state.get("office_project_id") or "").strip()
+        payload = {
+            "fmt": "html",
+            "project_id": int(project_value) if project_value else None,
+            "manual": dict(state.get("office_manual") or {}),
+        }
+        data = await api_post(f"/api/forms/{quote(form_id, safe='')}/generate", payload)
+        if not isinstance(data, dict):
+            _office_notify(
+                last_api_error_text("Не удалось собрать предпросмотр"),
+                notification_type="negative",
+            )
+            return
+        resolved = dict(data.get("resolved") or {})
+        state["office_fields"] = list(resolved.get("fields") or state.get("office_fields") or [])
+        state["office_preview"] = str(data.get("html") or "")
+        _render_view()
+
+    async def _create_office_draft() -> None:
+        form_id = str(state.get("office_form_id") or "")
+        if not form_id or state.get("office_creating"):
+            return
+        office_ir = state.get("office_agent_ir") if isinstance(state.get("office_agent_ir"), dict) else {}
+        if office_ir and not state.get("office_review_confirmed"):
+            _office_notify("Подтвердите ручную проверку предложений и источников", notification_type="warning")
+            return
+        state["office_creating"] = True
+        _render_view()
+        project_value = str(state.get("office_project_id") or "").strip()
+        payload = {
+            "form_id": form_id,
+            "fmt": str(state.get("office_format") or "docx"),
+            "project_id": int(project_value) if project_value else None,
+            "manual": dict(state.get("office_manual") or {}),
+            "dataset_id": str(state.get("selected_dataset") or ""),
+            "source_refs": list(office_ir.get("source_refs") or []) if office_ir else _office_source_refs(),
+            "office_ir": office_ir or None,
+            "review_confirmed": bool(state.get("office_review_confirmed")),
+        }
+        data = await api_post("/api/forms/artifacts", payload)
+        state["office_creating"] = False
+        if not isinstance(data, dict) or not data.get("revision_id"):
+            _office_notify(
+                last_api_error_text("Не удалось создать черновик"),
+                notification_type="negative",
+            )
+            _render_view()
+            return
+        state["office_artifacts"] = [data] + [
+            item for item in (state.get("office_artifacts") or [])
+            if str(item.get("revision_id") or "") != str(data.get("revision_id") or "")
+        ]
+        missing = len(data.get("missing_fields") or [])
+        suffix = f" · незаполненных полей: {missing}" if missing else ""
+        _office_notify(
+            f"Черновик создан{suffix}",
+            notification_type="warning" if missing else "positive",
+        )
+        _render_view()
+
+    async def _download_office_artifact(revision_id: str) -> None:
+        result = await api_get_bytes(
+            f"/api/forms/artifacts/{quote(str(revision_id or ''), safe='')}/download"
+        )
+        if result is None:
+            _office_notify(
+                last_api_error_text("Не удалось скачать ревизию"),
+                notification_type="negative",
+            )
+            return
+        content, filename = result
+        panel = refs.get("view")
+        if panel is not None:
+            with panel:
+                ui.download(content, filename)
+
     def _ask_about_topic(topic: dict) -> None:
         dataset_id = str(state.get("selected_dataset") or "").strip()
         label = str(topic.get("label") or topic.get("id") or "").strip()
@@ -1278,6 +1611,110 @@ def build_documents() -> None:
         current_direct_files = list(direct_files.get(selected_folder) or [])
         file_data = state.get("composition_file") or {}
 
+        def _render_pdf_contour_card(doc_id: str) -> None:
+            contour = state.get("pdf_contour") if isinstance(state.get("pdf_contour"), dict) else {}
+            pages = [page for page in (contour.get("pages") or []) if isinstance(page, dict)]
+            with ui.element("section").classes("sov-pdf-contour"):
+                with ui.row().classes("items-center w-full sov-pdf-contour-head"):
+                    with ui.element("div").classes("sov-pdf-contour-icon"):
+                        ui.icon("o_document_scanner")
+                    with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                        _label("Паспорт PDF", size="13px", weight=900)
+                        _label(
+                            "Постраничная маршрутизация и проверяемое evidence без изменения оригинала.",
+                            size="10.5px",
+                            color="var(--dim)",
+                        )
+                    if contour:
+                        _badge(
+                            "полный" if contour.get("status") == "ready" else "частичный",
+                            "tag-ok" if contour.get("status") == "ready" else "tag-warn",
+                        )
+                if state.get("pdf_contour_loading"):
+                    with ui.row().classes("items-center sov-pdf-contour-loading"):
+                        ui.spinner(size="sm")
+                        _label("Проверяю страницы, текстовый слой, таблицы и штампы…", size="11px", color="var(--dim)")
+                    return
+                if not contour:
+                    _label("Паспорт PDF недоступен: проверьте путь к исходному файлу.", size="10.8px", color="var(--warn)")
+                    return
+                type_counts = contour.get("page_type_counts") if isinstance(contour.get("page_type_counts"), dict) else {}
+                with ui.row().classes("items-center w-full sov-pdf-contour-metrics"):
+                    _badge(f"Страниц: {int(contour.get('pages_inspected') or 0)}/{int(contour.get('page_total') or 0)}")
+                    ocr_count = int(contour.get("ocr_required_pages") or 0)
+                    _badge(f"OCR: {ocr_count}", "tag-warn" if ocr_count else "tag-ok")
+                    _badge(f"Таблиц: {int(contour.get('tables_detected') or 0)}")
+                    _badge(f"Штампов: {int(contour.get('stamps_detected') or 0)}")
+                    if int(type_counts.get("drawing") or 0):
+                        _badge(f"Чертежей: {int(type_counts.get('drawing') or 0)}")
+                for warning in list(contour.get("warnings") or [])[:2]:
+                    _label(str(warning), size="10.5px", color="var(--warn)").classes("sov-pdf-contour-warning")
+                selected_page = int(state.get("pdf_contour_page") or (pages[0].get("page") if pages else 0) or 0)
+                selected = next((page for page in pages if int(page.get("page") or 0) == selected_page), {})
+                if selected:
+                    signals = selected.get("signals") if isinstance(selected.get("signals"), dict) else {}
+                    geometry = selected.get("geometry") if isinstance(selected.get("geometry"), dict) else {}
+                    quality = selected.get("recognition_quality") if isinstance(selected.get("recognition_quality"), dict) else {}
+                    stamp = selected.get("stamp") if isinstance(selected.get("stamp"), dict) else {}
+                    with ui.element("div").classes("sov-pdf-contour-selected"):
+                        with ui.row().classes("items-center w-full sov-pdf-contour-selected-head"):
+                            _label(f"Страница {selected_page}", size="12px", weight=900)
+                            _badge(str(selected.get("page_type_label") or "Страница"), "tag-warn" if selected.get("requires_ocr") else "tag-ok")
+                            _badge(f"уверенность {float(selected.get('routing_confidence') or 0):.0%}")
+                            _badge(f"текст {float(quality.get('score') or 0):.0%}")
+                        _label(
+                            " · ".join(
+                                value for value in (
+                                    f"{geometry.get('format') or 'лист'} · {geometry.get('orientation') or ''}",
+                                    f"{int(signals.get('text_chars') or 0)} знаков",
+                                    f"{int(signals.get('drawings') or 0)} графических объектов",
+                                    f"{int(signals.get('tables') or 0)} таблиц",
+                                    (
+                                        f"штамп: {stamp.get('status')}"
+                                        if stamp.get("status") and stamp.get("status") != "not_found"
+                                        else ""
+                                    ),
+                                )
+                                if value
+                            ),
+                            size="10.5px",
+                            color="var(--dim)",
+                        ).classes("sov-pdf-contour-selected-meta")
+                        if state.get("pdf_contour_preview_loading"):
+                            with ui.element("div").classes("sov-pdf-contour-preview-placeholder"):
+                                ui.spinner(size="md")
+                        elif state.get("pdf_contour_preview"):
+                            ui.image(str(state.get("pdf_contour_preview"))).classes("sov-pdf-contour-preview")
+                        fragments = [
+                            item for item in (selected.get("evidence_fragments") or []) if isinstance(item, dict)
+                        ]
+                        if fragments:
+                            with ui.expansion(
+                                f"Координатные фрагменты · {len(fragments)}",
+                                icon="o_my_location",
+                                value=False,
+                            ).classes("w-full sov-pdf-contour-fragments").props("dense"):
+                                for fragment in fragments:
+                                    _label(str(fragment.get("source_ref") or ""), size="9.8px", color="var(--dim)")
+                                    _label(str(fragment.get("text") or ""), size="10.5px").classes("sov-pdf-contour-fragment-text")
+                with ui.element("div").classes("sov-pdf-page-grid"):
+                    for page in pages:
+                        page_number = int(page.get("page") or 0)
+                        is_selected = page_number == selected_page
+                        classes = "sov-pdf-page-card sov-pdf-page-card--selected" if is_selected else "sov-pdf-page-card"
+                        with ui.element("button").classes(classes).props('type="button"').on(
+                            "click", lambda _e, value=page_number: _schedule(_load_pdf_contour_preview(value))
+                        ):
+                            with ui.row().classes("items-center w-full sov-pdf-page-card-head"):
+                                _label(str(page_number), size="13px", weight=900)
+                                if page.get("requires_ocr"):
+                                    ui.icon("o_document_scanner").props('aria-label="Нужен OCR"')
+                            _label(str(page.get("page_type_label") or "Страница"), size="10px", weight=800).classes(
+                                "sov-pdf-page-card-type"
+                            )
+                            geometry = page.get("geometry") if isinstance(page.get("geometry"), dict) else {}
+                            _label(str(geometry.get("format") or ""), size="9.5px", color="var(--dim)")
+
         def _render_file_brief_card() -> None:
             file_name = str(file_data.get("file_name") or "")
             doc_id = str(file_data.get("doc_id") or "")
@@ -1358,6 +1795,8 @@ def build_documents() -> None:
                                             _label(anchor, size="10px", color="var(--dim)").classes("sov-file-content-anchor")
                                     preview = excerpt[:420].rstrip() + ("…" if len(excerpt) > 420 else "")
                                     _label(preview, size="10.8px", color="var(--dim)").classes("sov-file-content-text")
+                    if file_name.lower().endswith(".pdf") and doc_id:
+                        _render_pdf_contour_card(doc_id)
                     if doc_id and file_name:
                         ui.button(
                             "Открыть оригинал",
@@ -2710,6 +3149,307 @@ def build_documents() -> None:
                         'flat dense round aria-label="Спросить по CAD"'
                     ).tooltip("Спросить модель по этому CAD projection")
 
+    def _render_office_studio() -> None:
+        if state.get("office_loading"):
+            with ui.row().classes("items-center").style("gap:8px;padding:20px 4px;"):
+                ui.spinner(size="sm")
+                _label("Загружаю шаблоны и журнал документов…", color="var(--dim)")
+            return
+
+        forms = [item for item in (state.get("office_forms") or []) if isinstance(item, dict)]
+        if not forms:
+            with ui.element("section").style(
+                "border:1px dashed var(--border);border-radius:10px;padding:18px;margin-top:12px;"
+            ):
+                _label("Шаблоны документов не найдены.", size="13px", weight=800)
+                ui.button(
+                    "Обновить",
+                    icon="o_refresh",
+                    on_click=lambda: _schedule(_load_office_studio(force=True)),
+                ).props("flat dense no-caps").style("margin-top:8px;")
+            return
+
+        form_options = {
+            str(item.get("id") or ""): str(item.get("title") or item.get("id") or "")
+            for item in forms if item.get("id")
+        }
+        project_options = {"": "Без привязки к объекту"}
+        for project in state.get("office_projects") or []:
+            if not isinstance(project, dict) or project.get("id") is None:
+                continue
+            title = str(project.get("name") or project.get("code") or project.get("id"))
+            project_options[str(project.get("id"))] = title
+
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:14px 16px;"
+            "background:var(--bg-panel);"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
+                ui.icon("o_edit_document").style("font-size:22px;color:var(--accent);")
+                with ui.column().classes("gap-0").style("flex:1;min-width:230px;"):
+                    _label("Л.И.С.Т. · Студия документов", size="14px", weight=900)
+                    _label(
+                        "Оригиналы остаются неизменными. Каждый выпуск — отдельная draft-ревизия с SHA-256.",
+                        size="11px",
+                        color="var(--dim)",
+                    )
+                ui.button(
+                    "Обновить",
+                    icon="o_refresh",
+                    on_click=lambda: _schedule(_load_office_studio(force=True)),
+                ).props("flat dense no-caps")
+
+            with ui.row().classes("w-full").style("gap:8px;flex-wrap:wrap;margin-top:14px;"):
+                form_select = ui.select(
+                    form_options,
+                    value=str(state.get("office_form_id") or ""),
+                    label="Шаблон",
+                ).props("outlined dense options-dense").style("min-width:280px;flex:2;")
+                form_select.on_value_change(
+                    lambda e: _schedule(_select_office_form(str(e.value or ""))),
+                )
+                project_select = ui.select(
+                    project_options,
+                    value=str(state.get("office_project_id") or ""),
+                    label="Объект",
+                ).props("outlined dense options-dense").style("min-width:220px;flex:1;")
+                project_select.on_value_change(
+                    lambda e: _schedule(_select_office_project(str(e.value or ""))),
+                )
+                format_select = ui.select(
+                    {"docx": "Word · DOCX", "xlsx": "Excel · XLSX"},
+                    value=str(state.get("office_format") or "docx"),
+                    label="Формат",
+                ).props("outlined dense options-dense").style("min-width:150px;")
+                format_select.on_value_change(
+                    lambda e: state.__setitem__("office_format", str(e.value or "docx")),
+                )
+
+        source_refs = _office_source_refs()
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:12px 14px;margin-top:10px;"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;"):
+                ui.icon("o_link").style("font-size:18px;color:var(--accent);")
+                _label("Основания", size="12.5px", weight=900)
+                _badge(str(state.get("selected_dataset") or "датасет не выбран"), "tag-acc" if state.get("selected_dataset") else "tag-dim")
+                _badge(f"{len(source_refs)} файлов", "tag-acc" if source_refs else "tag-warn")
+            if source_refs:
+                for item in source_refs[:8]:
+                    _label(f"• {item.get('file_name')}", size="11px", color="var(--dim)").style(
+                        "margin-top:4px;overflow-wrap:anywhere;"
+                    )
+            else:
+                _label(
+                    "Выберите файлы в средней панели — они будут записаны в manifest как основания черновика.",
+                    size="11px",
+                    color="var(--dim)",
+                ).style("margin-top:6px;")
+
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:10px;"
+            "background:var(--bg-panel);"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;"):
+                ui.icon("o_auto_awesome").style("font-size:20px;color:var(--accent);")
+                with ui.column().classes("gap-0").style("flex:1;min-width:240px;"):
+                    _label("Подготовить с Л.Е.С.", size="13px", weight=900)
+                    _label(
+                        "Модель читает только выбранные фрагменты и возвращает предложения с evidence. Файл не создаётся.",
+                        size="10.8px",
+                        color="var(--dim)",
+                    )
+            instruction_control = ui.textarea(
+                value=str(state.get("office_instruction") or ""),
+                placeholder="Что подготовить: цель письма, контекст протокола, нужный тон…",
+            ).props("outlined dense autogrow").classes("w-full").style("margin-top:10px;")
+            instruction_control.on(
+                "update:model-value",
+                lambda e: state.__setitem__("office_instruction", str(e.args or "")),
+            )
+            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;margin-top:10px;"):
+                prepare_button = ui.button(
+                    "Подготовить с Л.Е.С.",
+                    icon="o_auto_awesome",
+                    on_click=lambda: _schedule(_prepare_office_with_les()),
+                ).props("no-caps").classes("sov-docs-search-btn")
+                if not source_refs or state.get("office_agent_running"):
+                    prepare_button.props("disable")
+                if state.get("office_agent_running"):
+                    ui.spinner(size="sm")
+                    _label("Читаю выбранные документы и собираю IR…", size="11px", color="var(--dim)")
+
+            office_ir = state.get("office_agent_ir") if isinstance(state.get("office_agent_ir"), dict) else {}
+            proposals = [item for item in (office_ir.get("fields") or []) if isinstance(item, dict)]
+            if office_ir:
+                with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;margin-top:12px;"):
+                    _badge("office_document_ir_v1", "tag-acc")
+                    _badge(f"evidence {int(office_ir.get('evidence_count') or 0)}")
+                    _badge(f"попыток модели {int(office_ir.get('model_attempts') or 0)}")
+                    _badge("файл не создан", "tag-warn")
+                for warning in office_ir.get("warnings") or []:
+                    _label(f"• {warning}", size="10.8px", color="var(--warn)").style("margin-top:5px;")
+                for item in proposals:
+                    status = str(item.get("status") or "missing")
+                    status_label = {
+                        "grounded": "есть основание",
+                        "assumption": "предположение",
+                        "missing": "не найдено",
+                    }.get(status, status)
+                    status_cls = "tag-acc" if status == "grounded" else "tag-warn"
+                    evidence_rows = [row for row in (item.get("evidence") or []) if isinstance(row, dict)]
+                    with ui.element("div").style(
+                        "border-top:1px solid var(--border);padding-top:10px;margin-top:10px;"
+                    ):
+                        with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
+                            _label(str(item.get("label") or item.get("key") or "Поле"), size="11.5px", weight=850).style(
+                                "flex:1;min-width:200px;"
+                            )
+                            _badge(status_label, status_cls)
+                            _badge(f"{round(float(item.get('confidence') or 0) * 100)}%")
+                        _label(str(item.get("value") or "—"), size="11.8px", color="var(--text)" if item.get("value") else "var(--warn)").style(
+                            "white-space:pre-wrap;margin-top:6px;"
+                        )
+                        if item.get("note"):
+                            _label(str(item.get("note")), size="10.5px", color="var(--dim)").style("margin-top:4px;")
+                        if evidence_rows:
+                            with ui.expansion(f"Основания · {len(evidence_rows)}", icon="o_fact_check", value=False).classes(
+                                "w-full"
+                            ).props("dense").style("margin-top:5px;"):
+                                for evidence in evidence_rows:
+                                    _label(
+                                        f"{evidence.get('file_name') or 'Файл'} · chunk {evidence.get('chunk_ord')}"
+                                        + (f" · {evidence.get('section')}" if evidence.get("section") else ""),
+                                        size="10.5px",
+                                        weight=800,
+                                    )
+                                    _label(str(evidence.get("excerpt") or ""), size="10.5px", color="var(--dim)").style(
+                                        "white-space:pre-wrap;margin:3px 0 8px;"
+                                    )
+                with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;margin-top:12px;"):
+                    ui.button(
+                        "Применить к полям",
+                        icon="o_playlist_add_check",
+                        on_click=_apply_office_agent_ir,
+                    ).props("flat no-caps")
+                    if state.get("office_agent_applied"):
+                        _badge("предложения применены", "tag-acc")
+                if state.get("office_agent_applied"):
+                    review_checkbox = ui.checkbox(
+                        "Я проверил содержание, предположения и источники",
+                        value=bool(state.get("office_review_confirmed")),
+                    ).props("dense").style("margin-top:8px;")
+                    review_checkbox.on(
+                        "update:model-value",
+                        lambda e: _set_office_review_confirmed(e.args),
+                    )
+
+        fields = [item for item in (state.get("office_fields") or []) if isinstance(item, dict)]
+        missing_count = sum(1 for item in fields if not str(item.get("value") or "").strip())
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:10px;"
+            "background:var(--bg-panel);"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;"):
+                _label("Поля документа", size="13px", weight=900).style("flex:1;")
+                _badge(
+                    "все заполнено" if not missing_count else f"не заполнено: {missing_count}",
+                    "tag-acc" if not missing_count else "tag-warn",
+                )
+            for field in fields:
+                key = str(field.get("key") or "")
+                label = str(field.get("label") or key)
+                source = str(field.get("source") or "manual")
+                value = str((state.get("office_manual") or {}).get(key, field.get("value") or ""))
+                with ui.element("div").style(
+                    "border-top:1px solid var(--border);padding-top:10px;margin-top:10px;"
+                ):
+                    with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
+                        _label(label, size="11.5px", weight=800).style("flex:1;min-width:220px;")
+                        _badge(source, "tag-dim" if source == "manual" else "tag-acc")
+                    if source == "manual":
+                        control = (
+                            ui.textarea(value=value, placeholder="Введите содержание…")
+                            if key in {"body", "content", "decision", "decisions", "agenda", "assignments", "notes"}
+                            else ui.input(value=value, placeholder="Заполните поле…")
+                        )
+                        control.props("outlined dense autogrow").classes("w-full").style("margin-top:6px;")
+                        control.on(
+                            "update:model-value",
+                            lambda e, field_key=key: _set_office_manual(field_key, e.args),
+                        )
+                    else:
+                        _label(value or "Не найдено в данных объекта", size="12px", color="var(--text)" if value else "var(--warn)").style(
+                            "margin-top:6px;white-space:pre-wrap;"
+                        )
+
+            with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;margin-top:14px;"):
+                ui.button(
+                    "Предпросмотр",
+                    icon="o_preview",
+                    on_click=lambda: _schedule(_preview_office_document()),
+                ).props("flat no-caps")
+                create_button = ui.button(
+                    "Создать черновик",
+                    icon="o_note_add",
+                    on_click=lambda: _schedule(_create_office_draft()),
+                ).props("no-caps").classes("sov-docs-search-btn")
+                if office_ir and not state.get("office_review_confirmed"):
+                    create_button.props("disable")
+                if state.get("office_creating"):
+                    ui.spinner(size="sm")
+                    _label("Собираю файл и manifest…", size="11px", color="var(--dim)")
+
+        if state.get("office_preview"):
+            selected_form = next(
+                (item for item in forms if str(item.get("id") or "") == str(state.get("office_form_id") or "")),
+                {},
+            )
+            with ui.element("section").style(
+                "border:1px solid var(--border);border-radius:10px;padding:22px 24px;margin-top:10px;"
+                "background:#fff;color:#202124;box-shadow:0 6px 24px rgba(0,0,0,.08);"
+            ):
+                _label(str(selected_form.get("title") or "Предпросмотр"), size="16px", color="#202124", weight=900)
+                for field in state.get("office_fields") or []:
+                    _label(str(field.get("label") or field.get("key") or ""), size="10px", color="#687078", weight=700).style("margin-top:12px;")
+                    _label(str(field.get("value") or "—"), size="12px", color="#202124").style("white-space:pre-wrap;")
+
+        artifacts = [item for item in (state.get("office_artifacts") or []) if isinstance(item, dict)]
+        with ui.element("section").style(
+            "border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:10px;"
+        ):
+            with ui.row().classes("items-center w-full").style("gap:7px;"):
+                ui.icon("o_history").style("font-size:18px;color:var(--accent);")
+                _label("Ревизии Студии", size="13px", weight=900).style("flex:1;")
+                _badge(str(len(artifacts)))
+            if not artifacts:
+                _label("Черновиков пока нет.", size="11px", color="var(--dim)").style("margin-top:8px;")
+            for item in artifacts[:30]:
+                artifact = dict(item.get("artifact") or {})
+                missing = len(item.get("missing_fields") or [])
+                with ui.element("div").style("border-top:1px solid var(--border);padding:10px 0;margin-top:8px;"):
+                    with ui.row().classes("items-center w-full").style("gap:7px;flex-wrap:wrap;"):
+                        _badge(str(item.get("format") or "").upper(), "tag-acc")
+                        _badge(f"r{int(item.get('revision_no') or 0)}")
+                        if missing:
+                            _badge(f"пропуски {missing}", "tag-warn")
+                        _label(str(item.get("title") or artifact.get("filename") or "Документ"), size="11.5px", weight=800).style(
+                            "flex:1;min-width:220px;"
+                        )
+                        ui.button(
+                            "Скачать",
+                            icon="o_download",
+                            on_click=lambda _e, revision_id=str(item.get("revision_id") or ""): _schedule(
+                                _download_office_artifact(revision_id)
+                            ),
+                        ).props("flat dense no-caps")
+                    _label(
+                        f"{item.get('created_at') or ''} · SHA-256 {str(artifact.get('sha256') or '')[:12]}… · "
+                        f"оснований {len(item.get('source_refs') or [])}",
+                        size="10.5px",
+                        color="var(--dim)",
+                    ).style("margin-top:4px;")
+
     def _render_fragments() -> None:
         rows = state["hits"] or state["chunks"]
         if not rows:
@@ -2765,6 +3505,9 @@ def build_documents() -> None:
                     ui.button("CAD/BIM", icon="o_view_in_ar", on_click=_show_cad_inventory).props(
                         "flat no-caps"
                     ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "cad" else "sov-docs-view-tab")
+                    ui.button("Студия", icon="o_edit_document", on_click=_show_office_studio).props(
+                        "flat no-caps"
+                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "studio" else "sov-docs-view-tab")
                 with ui.button(icon="o_more_horiz").props(
                     'flat round aria-label="Дополнительные действия"'
                 ).classes("sov-docs-more"):
@@ -2776,6 +3519,8 @@ def build_documents() -> None:
                 _render_map()
             elif state["view_mode"] == "cad":
                 _render_cad_inventory()
+            elif state["view_mode"] == "studio":
+                _render_office_studio()
             else:
                 _render_fragments()
 
@@ -2788,7 +3533,7 @@ def build_documents() -> None:
         with ui.row().classes("items-center w-full sov-docs-topbar"):
             with ui.column().classes("sov-docs-heading"):
                 _label("Документы", size="16px", weight=900).classes("sov-docs-title")
-                _label("Датасеты, файлы и карта проекта", size="11.5px", color="var(--dim)").classes(
+                _label("Датасеты, файлы, карта проекта и Студия", size="11.5px", color="var(--dim)").classes(
                     "sov-docs-subtitle"
                 )
             q_input = ui.input(placeholder="Найти файл, шифр, раздел или текст…").props("outlined clearable").classes(

@@ -31,10 +31,10 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 **Историческое (контекст, НЕ текущая правда):** датированные саммари/хендоффы/репорты и заменённые планы сведены в **[`docs/archive/`](docs/archive/)** (`SESSION_SUMMARY_*`, `ROADMAP_LES_v2.0`, `DOCS_*AUDIT*`, хендоффы — см. `docs/archive/README.md`). На месте, но тоже историческое: `README_v2.0.md`, `LES_MASTER_DOC_v2_1.md`, `INFRASTRUCTURE_v2.0.md`, `RAG_MODERNIZATION_PLAN.md`, `ARTICLE_*.md`. Полезны для «почему так», но версии/решения могут устареть — сверяй с каноном и кодом (`/api/version`).
 
 ## Гейт проверки
-- **`make verify`** — офлайн: `compileall` (синтаксис) + `pytest --collect-only` (импорт-смоук всех тестов, без живых сервисов). Гонять перед готовностью.
-- **`make test-architecture`** — текущая архитектура LES без 11 файлов выключенного Unified/Construction Harness и без тестов отдельного продукта ARTEL; аудит и список долга — `docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md`.
+- **`make verify`** — офлайн: `compileall` (синтаксис) + `pytest --collect-only` канонической LES-сюиты, без живых сервисов. Гонять перед готовностью.
+- **`make test-architecture`** — совместимый псевдоним канонической LES-сюиты. Исторический Unified/Construction Harness запускается только явно через `make test-legacy`; ARTEL принадлежит отдельному продукту.
 - **`make test-mail`** — отдельный offline-профиль Е.Ж.И.К.: IMAP/registry/dedup/RAG/API/UI и статический Windows-sidecar contract. **`make test-mail-release`** добавляет Tauri compile-check; установленный classic Outlook подтверждается только живым Legion-гейтом.
-- **`make test`** — полная сюита (≡ `uv run pytest -q` из [SKILL.md](SKILL.md)); **часть тестов требует живых Qdrant/MLX** — это нормально, что без них они падают/скипаются.
+- **`make test`** — основная полная LES-сюита без 11 файлов выключенного Unified/Construction Harness и без `test_artel*`. Архивный профиль не является release-доказательством.
 - **Доменный гейт** (после правок retrieval/router): `uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json` — база **16/16** ([SKILL.md](SKILL.md): качество FIRE/HVAC — это доменная приёмка, не точечные фиксы).
 - **CI нет** — гейт запускается вручную.
 

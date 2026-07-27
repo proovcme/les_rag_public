@@ -4,18 +4,27 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
+from uuid import uuid4
 
 from proxy.services import fgis_price_service, gesn_service, nr_sp_service
 from proxy.services.kac_web_service import collect_quotes
 from proxy.services.prompt_registry_service import smeta_native_skill_prompt
 from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
 from proxy.smeta_core.contracts import NormBinding, ResourceBinding, WorkItem
-from proxy.smeta_core.norm_browser import browse_norms_many
+from proxy.smeta_core.norm_browser import browse_norm_catalog, browse_norms_many
 from proxy.smeta_core.norm_validator import units_compatible, validate_binding
+from proxy.smeta_core.professional_review import (
+    EvidenceBudget,
+    MappingRevision,
+    ModelScopePlan,
+    detect_professional_conflicts,
+    save_mapping_revision,
+)
 from proxy.smeta_core.resource_normalizer import normalize_norm_resources
 from proxy.smeta_core.source_intake import intake_vor_document
 from proxy.smeta_core.application import calculate_visible_rows, calculate_visible_rows_revision
@@ -25,6 +34,24 @@ Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 Progress = Callable[[dict[str, Any]], None]
 AgentBatchRunner = Callable[..., dict[str, Any]]
+
+
+def _decision_name(selection: dict[str, Any]) -> str:
+    if selection.get("norm_code"):
+        return "bind"
+    if selection.get("covered_by_work_id"):
+        return "covered_by"
+    return "unbound"
+
+
+def _stable_unique_text(values: list[Any]) -> list[str]:
+    """Normalize and sort transport text without adding professional content."""
+    normalized = {
+        " ".join(str(value).split())[:240]
+        for value in values
+        if str(value).strip()
+    }
+    return sorted(normalized, key=lambda value: (value.casefold(), value))
 
 
 def _candidate_payload(
@@ -39,7 +66,7 @@ def _candidate_payload(
     page_number = max(0, int(page))
     page_start = page_number * page_size
     page_end = page_start + page_size
-    queries = [str(item).strip() for item in (query if isinstance(query, list) else [query]) if str(item).strip()]
+    queries = _stable_unique_text(query if isinstance(query, list) else [query])
     cards: list[dict[str, Any]] = []
     seen: set[str] = set()
     backends: list[str] = []
@@ -77,12 +104,26 @@ def _candidate_payload(
             seen.add(code)
             cards.append({
                 "norm_code": code,
+                "norm_key": str(card.get("norm_key") or ""),
+                "edition": str(card.get("edition") or ""),
+                "base_type": str(card.get("base_type") or ""),
+                "collection": str(card.get("bare_code") or "")[:2] or _norm_collection(code),
                 "title": str(card.get("title") or "")[:320],
                 "measure_unit": card.get("measure_unit"),
                 "unit_compatible": bool(card.get("unit_compatible", True)),
                 "work_steps": [str(step)[:180] for step in list(card.get("work_steps") or [])[:4]],
+                "resource_count": int(card.get("resource_count") or 0),
                 "resource_kinds": card.get("resource_kinds") or {},
-                "resource_preview": [str(value)[:120] for value in (card.get("resource_preview") or [])[:6]],
+                "resource_preview": [
+                    {
+                        "kind": str(value.get("kind") or ""),
+                        "code": str(value.get("code") or ""),
+                        "name": str(value.get("name") or "")[:160],
+                        "unit": str(value.get("unit") or ""),
+                    }
+                    for value in (card.get("resource_preview") or [])[:6]
+                    if isinstance(value, dict)
+                ],
                 "source_ref": str(card.get("source_ref") or "")[:320],
                 "matched_query": search_query,
                 "nr_sp_candidates": [
@@ -121,12 +162,18 @@ def _candidate_payload(
     }
 
 
+def _norm_collection(code: object) -> str:
+    """Expose the collection encoded by a typed norm ref without choosing scope."""
+    bare = gesn_service._split_norm_ref(code)[1]
+    return bare[:2] if bare else ""
+
+
 def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | None:
     norm = gesn_service.get_norm(code, strict_family=True)
     if not norm:
         return None
     resources = []
-    for resource in list(norm.get("resources") or [])[:30]:
+    for resource in list(norm.get("resources") or []):
         resources.append({
             "code": resource.get("code"),
             "name": resource.get("name"),
@@ -136,10 +183,15 @@ def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | 
         })
     return {
         "norm_code": code,
+        "norm_key": str(candidate.get("norm_key") or norm.get("key") or ""),
+        "edition": str(candidate.get("edition") or ""),
+        "base_type": str(candidate.get("base_type") or norm.get("base_type") or ""),
+        "collection": str(candidate.get("collection") or _norm_collection(code)),
         "title": norm.get("name"),
         "measure_unit": norm.get("unit"),
         "work_steps": list(norm.get("work_steps") or [])[:24],
         "resources": resources,
+        "resource_count": len(resources),
         "nr_sp_candidates": candidate.get("nr_sp_candidates") or [],
         "source_ref": candidate.get("source_ref") or "",
     }
@@ -159,6 +211,40 @@ def _norm_card_for_model(card: dict[str, Any], *, include_resources: bool) -> di
     if include_resources:
         payload["resources"] = resources
     return payload
+
+
+def _compact_norm_card_for_global_review(card: dict[str, Any]) -> dict[str, Any]:
+    """Build a bounded cross-row evidence map; disputed cards remain re-readable."""
+    resources = [item for item in (card.get("resources") or []) if isinstance(item, dict)]
+    kinds: dict[str, int] = {}
+    for resource in resources:
+        kind = str(resource.get("kind") or "other")
+        kinds[kind] = kinds.get(kind, 0) + 1
+    preview = [
+        {
+            "kind": str(resource.get("kind") or ""),
+            "code": str(resource.get("code") or ""),
+            "name": str(resource.get("name") or "")[:140],
+            "unit": str(resource.get("unit") or ""),
+        }
+        for resource in resources
+        if str(resource.get("name") or resource.get("code") or "").strip()
+    ][:8]
+    return {
+        "norm_code": str(card.get("norm_code") or ""),
+        "norm_key": str(card.get("norm_key") or ""),
+        "edition": str(card.get("edition") or ""),
+        "base_type": str(card.get("base_type") or ""),
+        "collection": str(card.get("collection") or ""),
+        "title": str(card.get("title") or "")[:320],
+        "measure_unit": str(card.get("measure_unit") or ""),
+        "work_steps": [str(step)[:220] for step in (card.get("work_steps") or [])[:12]],
+        "resource_count": int(card.get("resource_count") or len(resources)),
+        "resource_kinds": dict(card.get("resource_kinds") or kinds),
+        "resource_preview": preview,
+        "source_ref": str(card.get("source_ref") or "")[:360],
+        "full_card_available_via": "read_norms_batch",
+    }
 
 
 def _normalize_mapping_row_transport(item: dict[str, Any]) -> dict[str, Any]:
@@ -188,6 +274,135 @@ def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
+def _technology_check_errors(item: dict[str, Any]) -> list[str]:
+    """Validate bind evidence shape without judging the model's applicability conclusion."""
+    errors: list[str] = []
+    if str(item.get("selection_kind") or "") not in {"exact", "analog"}:
+        errors.append("selection_kind must be exact|analog")
+    if str(item.get("applicability") or "") not in {"exact", "close_analog", "weak_analog"}:
+        errors.append("applicability must be exact|close_analog|weak_analog")
+    check = item.get("technology_check")
+    if not isinstance(check, dict):
+        return [*errors, "technology_check must be an object"]
+    list_fields = (
+        "matched_operations", "missing_operations", "extra_operations", "foreign_resources",
+        "overlaps_with_work_ids", "conditions_checked", "unresolved_conditions",
+    )
+    for field in list_fields:
+        if not isinstance(check.get(field), list):
+            errors.append(f"technology_check.{field} must be an array")
+    if not [value for value in (check.get("matched_operations") or []) if str(value).strip()]:
+        errors.append("technology_check.matched_operations must describe matched work")
+    if not str(check.get("overlap_resolution") or "").strip():
+        errors.append("technology_check.overlap_resolution is required")
+    if not [value for value in (check.get("conditions_checked") or []) if str(value).strip()]:
+        errors.append("technology_check.conditions_checked must describe checked conditions")
+    if str(check.get("conclusion") or "") not in {"applicable", "applicable_with_limitations"}:
+        errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
+    return errors
+
+
+def _candidate_evaluation_errors(
+    item: dict[str, Any],
+    *,
+    candidates_for_work: dict[str, dict[str, Any]],
+    opened_for_work: dict[str, dict[str, Any]],
+) -> list[str]:
+    """Validate model-owned comparison trace without judging which norm should win."""
+    evaluations = item.get("candidate_evaluations")
+    if not isinstance(evaluations, list) or not evaluations:
+        return ["candidate_evaluations must contain the selected candidate"]
+
+    errors: list[str] = []
+    def canonical_opened_code(value: object) -> str:
+        resolved = _resolve_norm_code_transport(value, opened_for_work)
+        card = opened_for_work.get(resolved) if resolved else None
+        return str((card or {}).get("norm_code") or resolved or value or "").strip()
+
+    selected_code = canonical_opened_code(item.get("norm_code"))
+    opened_codes = {
+        str((card or {}).get("norm_code") or code).strip()
+        for code, card in opened_for_work.items()
+        if str((card or {}).get("norm_code") or code).strip()
+    }
+    candidate_codes = {
+        str((card or {}).get("norm_code") or code).strip()
+        for code, card in candidates_for_work.items()
+        if str((card or {}).get("norm_code") or code).strip()
+    }
+    evaluated_codes: set[str] = set()
+    evaluation_signatures: dict[str, tuple[Any, ...]] = {}
+    selected_evaluations = 0
+    compared_alternatives = 0
+    allowed = {
+        "operation_match": {"exact", "partial", "none", "unknown"},
+        "object_match": {"exact", "partial", "none", "unknown"},
+        "unit_match": {"compatible", "convertible", "conflict", "unknown"},
+        "scope_match": {"exact", "partial", "foreign", "unknown"},
+        "decision": {"selected", "rejected", "uncertain"},
+    }
+    for index, evaluation in enumerate(evaluations):
+        prefix = f"candidate_evaluations[{index}]"
+        if not isinstance(evaluation, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        raw_code = str(evaluation.get("candidate_code") or "").strip()
+        code = canonical_opened_code(raw_code)
+        if not code:
+            errors.append(f"{prefix}.candidate_code is required")
+            continue
+        if code in evaluated_codes:
+            signature = (
+                str(evaluation.get("operation_match") or ""),
+                str(evaluation.get("object_match") or ""),
+                str(evaluation.get("unit_match") or ""),
+                str(evaluation.get("scope_match") or ""),
+                tuple(str(value) for value in (evaluation.get("foreign_resources") or [])),
+                str(evaluation.get("decision") or ""),
+            )
+            if signature != evaluation_signatures.get(code):
+                errors.append(f"{prefix}.candidate_code conflicts with an earlier evaluation")
+            # Literal/semantically identical duplicates are a serialization
+            # artifact. Keep the model payload intact in trace, but count the
+            # candidate once for structural evidence validation.
+            continue
+        evaluated_codes.add(code)
+        evaluation_signatures[code] = (
+            str(evaluation.get("operation_match") or ""),
+            str(evaluation.get("object_match") or ""),
+            str(evaluation.get("unit_match") or ""),
+            str(evaluation.get("scope_match") or ""),
+            tuple(str(value) for value in (evaluation.get("foreign_resources") or [])),
+            str(evaluation.get("decision") or ""),
+        )
+        if code not in opened_codes and code != selected_code:
+            errors.append(f"{prefix}.candidate_code was not opened through read_norms_batch")
+        for field, values in allowed.items():
+            if str(evaluation.get(field) or "") not in values:
+                errors.append(f"{prefix}.{field} has an unsupported value")
+        if not isinstance(evaluation.get("foreign_resources"), list):
+            errors.append(f"{prefix}.foreign_resources must be an array")
+        if not str(evaluation.get("reason") or "").strip():
+            errors.append(f"{prefix}.reason is required")
+        decision = str(evaluation.get("decision") or "")
+        if code == selected_code and decision == "selected":
+            selected_evaluations += 1
+        elif decision in {"rejected", "uncertain"}:
+            compared_alternatives += 1
+
+    if selected_evaluations != 1:
+        errors.append("candidate_evaluations must mark the submitted norm exactly once as selected")
+    if len(candidate_codes) >= 2 and len(opened_codes) < 2:
+        errors.append(
+            "candidate_evaluations requires opening at least one shown alternative before bind"
+        )
+    elif len(candidate_codes) >= 2 and (len(evaluated_codes) < 2 or compared_alternatives < 1):
+        errors.append(
+            "candidate_evaluations must compare at least one rejected or uncertain opened alternative"
+        )
+    return errors
+
+
 def _normalize_search_queries_transport(item: dict[str, Any]) -> list[str]:
     """Accept the flat Ollama-safe query contract and legacy query arrays."""
     raw = item.get("queries")
@@ -198,10 +413,7 @@ def _normalize_search_queries_transport(item: dict[str, Any]) -> list[str]:
     else:
         scalar = item.get("query")
         values = [scalar] if scalar is not None else []
-    return list(dict.fromkeys(
-        " ".join(str(value).split())[:240]
-        for value in values if str(value).strip()
-    ))
+    return _stable_unique_text(values)
 
 
 def _resolve_norm_code_transport(code: Any, available: dict[str, Any]) -> str:
@@ -310,6 +522,14 @@ def _tool_bool(value: Any, default: bool = False) -> bool:
     return str(value).strip().casefold() in {"1", "true", "yes", "on"}
 
 
+def _tool_string_list(value: Any) -> list[str]:
+    """Accept a schema array and harmless one-value local-model transport."""
+    if value is None:
+        return []
+    values = value if isinstance(value, list) else [value]
+    return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
+
+
 class SmetaNormToolSession:
     """State shared by every smeta agent implementation.
 
@@ -323,16 +543,32 @@ class SmetaNormToolSession:
         *,
         candidate_limit: int,
         progress: Progress | None = None,
+        evidence_budget: EvidenceBudget | None = None,
     ) -> None:
         self.by_id = {str(row["work_id"]): row for row in work_rows}
         self.candidate_limit = max(1, int(candidate_limit))
         self.progress = progress
+        self.evidence_budget = evidence_budget or EvidenceBudget.from_environment()
+        self.started_at = perf_counter()
+        self.evidence_usage = {"search_calls": 0, "read_calls": 0, "opened_cards": 0}
+        self.catalog_trace: list[dict[str, Any]] = []
+        self.catalog_seen: set[tuple[str, str, str]] = set()
         self.candidates: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
         self.opened: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
+        for work_id, row in self.by_id.items():
+            for card in row.get("opened_norm_cards") or []:
+                if not isinstance(card, dict):
+                    continue
+                code = str(card.get("norm_code") or "").strip()
+                if not code:
+                    continue
+                seeded = dict(card)
+                self.candidates[work_id][code] = seeded
+                self.opened[work_id][code] = seeded
         self.browse_trace: dict[str, list[dict[str, Any]]] = {
             work_id: [] for work_id in self.by_id
         }
@@ -351,7 +587,12 @@ class SmetaNormToolSession:
 
     def execute(self, name: str, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
         started = perf_counter()
-        if name == "search_norms_batch":
+        budget_error = self._budget_error(name, args)
+        if budget_error:
+            result = {"ok": False, "error": budget_error, "evidence_usage": dict(self.evidence_usage)}
+        elif name == "browse_norm_catalog":
+            result = self._catalog(args, turn=turn)
+        elif name == "search_norms_batch":
             result = self._search(args, turn=turn)
         elif name == "read_norms_batch":
             result = self._read(args)
@@ -368,32 +609,221 @@ class SmetaNormToolSession:
         })
         return result
 
-    def _search(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
-        items = _tool_array_argument(args, "items")
-        batch_limit = args.get("limit")
-        batch_page = args.get("page")
-        all_queries = list(dict.fromkeys(
-            query
-            for item in items for query in _normalize_search_queries_transport(item)
-        ))
-        search_results = browse_norms_many(
-            all_queries,
-            limit=100,
-            rerank=bool(args.get("rerank", False)),
-        ) if all_queries else {}
+    def _budget_error(self, name: str, args: dict[str, Any]) -> str:
+        # Evidence limits must force convergence, never reject the model's
+        # terminal decision after it has spent the available search/read time.
+        if name == "submit_lsr_mapping":
+            return ""
+        elapsed = perf_counter() - self.started_at
+        if elapsed > self.evidence_budget.elapsed_seconds:
+            return f"task time budget exhausted after {elapsed:.1f}s; submit the model-owned decision"
+        if name == "search_norms_batch":
+            if self.evidence_usage["search_calls"] >= self.evidence_budget.search_calls:
+                return "search budget exhausted; use collected evidence and submit the model-owned decision"
+            self.evidence_usage["search_calls"] += 1
+        elif name == "read_norms_batch":
+            requested = sum(
+                len(_normalize_norm_codes_transport(item))
+                for item in _tool_array_argument(args, "items")
+            )
+            if self.evidence_usage["read_calls"] >= self.evidence_budget.read_calls:
+                return "read budget exhausted; use opened cards and submit the model-owned decision"
+            if self.evidence_usage["opened_cards"] + requested > self.evidence_budget.opened_cards:
+                return "opened-card budget exhausted; use opened cards and submit the model-owned decision"
+            self.evidence_usage["read_calls"] += 1
+            self.evidence_usage["opened_cards"] += requested
+        return ""
+
+    def _catalog(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
         rows_out = []
-        for item in items:
+        for item in _tool_array_argument(args, "items"):
             work_id = str(item.get("work_id") or "")
             if work_id not in self.by_id:
                 rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
                 continue
+            family = str(item.get("family") or "").strip()
+            collection = str(item.get("collection") or "").strip()
+            catalog_key = (work_id, family.casefold(), re.sub(r"\D", "", collection)[:2])
+            if catalog_key in self.catalog_seen:
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "already_seen",
+                    "filters": {"family": family, "collection": collection},
+                    "items": [],
+                    "repeated": True,
+                    "next_action": "call search_norms_batch with the chosen family and collection",
+                }
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse", "turn": turn, "work_id": work_id,
+                    "level": "already_seen", "filters": row["filters"],
+                    "item_count": 0, "repeated": True,
+                })
+                continue
+            self.catalog_seen.add(catalog_key)
+            if family and collection:
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "scope_selected",
+                    "filters": {"family": family, "collection": re.sub(r"\D", "", collection)[:2]},
+                    "items": [],
+                    "next_action": "call search_norms_batch; use read_norms_batch for full norm cards",
+                }
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse", "turn": turn, "work_id": work_id,
+                    "level": "scope_selected", "filters": row["filters"],
+                    "item_count": 0, "repeated": False,
+                })
+                continue
+            payload = browse_norm_catalog(
+                family=family,
+                collection="",
+                table="",
+                # Families and collections are finite menus. The model does not
+                # need table/norm catalog dumps: ranked search and typed reads own
+                # those stages and keep the context bounded.
+                limit=100,
+            )
+            compact_items = []
+            for entry in payload.get("items") or []:
+                if not isinstance(entry, dict):
+                    continue
+                compact = {
+                    "key": entry.get("key") or entry.get("norm_code"),
+                    "norm_count": entry.get("norm_count"),
+                    "resource_count": entry.get("resource_count"),
+                }
+                source_example = str(entry.get("source_example") or entry.get("source_ref") or "").strip()
+                if source_example:
+                    compact["source_example"] = source_example[:160]
+                if entry.get("title"):
+                    compact["title"] = str(entry.get("title"))[:240]
+                if entry.get("measure_unit"):
+                    compact["measure_unit"] = entry.get("measure_unit")
+                compact_items.append(compact)
+            row = {
+                "work_id": work_id,
+                "ok": True,
+                "level": payload.get("level"),
+                "filters": payload.get("filters") or {},
+                "items": compact_items,
+                "next_action": (
+                    "choose a family and collection, then call search_norms_batch; "
+                    "do not browse individual norms through the catalog"
+                ),
+            }
+            rows_out.append(row)
+            self.catalog_trace.append({
+                "phase": "catalog_browse",
+                "turn": turn,
+                "work_id": work_id,
+                "level": payload.get("level"),
+                "filters": payload.get("filters") or {},
+                "item_count": len(compact_items),
+                "repeated": False,
+            })
+        result: dict[str, Any] = {"ok": bool(rows_out), "rows": rows_out}
+        if not rows_out:
+            result["error"] = "catalog items are empty or malformed"
+        return result
+
+    def _search(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
+        items = sorted(
+            (
+                item
+                for item in _tool_array_argument(args, "items")
+                if isinstance(item, dict)
+            ),
+            key=lambda item: (
+                str(item.get("work_id") or ""),
+                json.dumps(
+                    _normalize_search_queries_transport(item),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ),
+        )
+        batch_limit = args.get("limit")
+        batch_page = args.get("page")
+        default_base_types = _tool_string_list(args.get("base_types"))
+        default_collections = _tool_string_list(args.get("collections"))
+        grouped_queries: dict[tuple[tuple[str, ...], tuple[str, ...]], list[str]] = {}
+        item_filters: dict[int, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+        scope_plans: dict[int, ModelScopePlan] = {}
+        scope_errors: dict[int, str] = {}
+        for index, item in enumerate(items):
+            base_types = tuple(dict.fromkeys(
+                _tool_string_list(item.get("base_types")) or default_base_types
+            ))
+            collections = tuple(dict.fromkeys(
+                _tool_string_list(item.get("collections")) or default_collections
+            ))
+            queries = tuple(_normalize_search_queries_transport(item))
+            raw_scope_mode = str(item.get("scope_mode") or "").strip()
+            scope_mode = raw_scope_mode or ("scoped" if base_types or collections else "global")
+            try:
+                scope_plans[index] = ModelScopePlan(
+                    work_id=str(item.get("work_id") or ""),
+                    scope_mode=scope_mode,
+                    queries=queries,
+                    search_intents=(
+                        str(item.get("search_intent") or item.get("intent") or "unspecified"),
+                    ),
+                    base_types=base_types,
+                    collections=collections,
+                    explicit_scope_mode=bool(raw_scope_mode),
+                )
+            except ValueError as error:
+                scope_errors[index] = str(error)
+                continue
+            filter_key = (base_types, collections)
+            item_filters[index] = filter_key
+            grouped_queries.setdefault(filter_key, [])
+            grouped_queries[filter_key].extend(queries)
+        search_results_by_filter = {
+            filter_key: browse_norms_many(
+                _stable_unique_text(queries),
+                limit=100,
+                base_types=list(filter_key[0]),
+                collections=list(filter_key[1]),
+                rerank=bool(args.get("rerank", False)),
+            )
+            for filter_key, queries in grouped_queries.items()
+            if queries
+        }
+        rows_out = []
+        for index, item in enumerate(items):
+            work_id = str(item.get("work_id") or "")
+            if work_id not in self.by_id:
+                rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
+                continue
+            if index in scope_errors:
+                rows_out.append({
+                    "work_id": work_id,
+                    "ok": False,
+                    "error": "invalid model scope plan",
+                    "details": [scope_errors[index]],
+                })
+                continue
             queries = _normalize_search_queries_transport(item)
-            limit = max(1, int(item.get("limit") or batch_limit or self.candidate_limit))
+            requested_limit = max(1, int(item.get("limit") or batch_limit or self.candidate_limit))
+            # A model may copy the catalog's finite-menu limit=100 into ranked
+            # evidence search. Keep one page bounded; the model still owns
+            # navigation and can request the next page explicitly.
+            limit = min(requested_limit, self.candidate_limit)
             page = max(0, int(item.get("page") if item.get("page") is not None else batch_page or 0))
             payload = _candidate_payload(
                 self.by_id[work_id], queries, limit=limit, page=page,
-                search_results=search_results,
+                search_results=search_results_by_filter.get(item_filters[index]) or {},
             )
+            base_types, collections = item_filters[index]
+            payload["filters"] = {
+                "base_types": list(base_types),
+                "collections": list(collections),
+            }
             self.browse_trace[work_id].append(payload)
             compact = []
             for card in payload.get("candidates") or []:
@@ -401,16 +831,51 @@ class SmetaNormToolSession:
                 self.candidates[work_id][code] = card
                 compact.append({
                     "norm_code": code,
+                    "norm_key": str(card.get("norm_key") or ""),
+                    "edition": str(card.get("edition") or ""),
+                    "base_type": str(card.get("base_type") or ""),
+                    "collection": str(card.get("collection") or _norm_collection(code)),
                     "title": str(card.get("title") or "")[:180],
                     "measure_unit": card.get("measure_unit"),
+                    "unit_compatible": bool(card.get("unit_compatible", True)),
+                    "source_ref": str(card.get("source_ref") or "")[:280],
+                    "work_steps": [str(step)[:160] for step in (card.get("work_steps") or [])[:3]],
+                    "resource_count": int(card.get("resource_count") or 0),
+                    "resource_kinds": dict(card.get("resource_kinds") or {}),
+                    "resource_preview": [
+                        {
+                            "kind": str(value.get("kind") or ""),
+                            "code": str(value.get("code") or ""),
+                            "name": str(value.get("name") or "")[:120],
+                            "unit": str(value.get("unit") or ""),
+                        }
+                        for value in (card.get("resource_preview") or [])[:6]
+                        if isinstance(value, dict)
+                    ],
+                    "matched_query": str(card.get("matched_query") or "")[:240],
                 })
+            search_intent = str(item.get("search_intent") or item.get("intent") or "unspecified")
+            scope_plan = scope_plans[index].as_dict()
             rows_out.append({
                 "work_id": work_id, "ok": True, "candidates": compact,
                 "page": page, "has_more": bool(payload.get("has_more")),
+                "requested_limit": requested_limit,
+                "page_size": limit,
+                "queries": queries,
+                "search_intent": search_intent,
+                "scope_plan": scope_plan,
+                "filters": payload["filters"],
+                "retrieval_backend": str(payload.get("backend") or ""),
             })
             self.query_trace.append({
                 "phase": "batch_search", "turn": turn, "work_id": work_id,
-                "queries": queries, "candidate_count": len(compact), "page": page,
+                "queries": queries,
+                "search_intents": [search_intent],
+                "candidate_count": len(compact), "page": page,
+                "requested_limit": requested_limit, "page_size": limit,
+                "candidate_codes": [str(card.get("norm_code") or "") for card in compact],
+                "scope_plan": scope_plan,
+                "filters": payload["filters"],
             })
         result: dict[str, Any] = {"ok": bool(items), "rows": rows_out}
         if not items:
@@ -453,12 +918,31 @@ class SmetaNormToolSession:
                 continue
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
+                evidence = dict(item.get("unbound_evidence") or {})
+                evidence_errors = self._unbound_evidence_errors(
+                    work_id,
+                    reason=reason,
+                    evidence=evidence,
+                )
+                if evidence_errors:
+                    errors.append({
+                        "work_id": work_id,
+                        "error": "invalid unbound_evidence",
+                        "details": evidence_errors,
+                        "allowed_evidence": self._allowed_unbound_evidence(work_id),
+                        "candidate_codes_available": list(dict.fromkeys(
+                            str((card or {}).get("norm_code") or code)
+                            for code, card in self.candidates.get(work_id, {}).items()
+                            if str((card or {}).get("norm_code") or code).strip()
+                        ))[:12],
+                    })
+                    continue
                 proposed[work_id] = {
                     "norm_code": "",
                     "selection_kind": str(item.get("selection_kind") or ""),
                     "analog_limitations": list(item.get("analog_limitations") or []),
                     "reason": reason,
-                    "unbound_evidence": dict(item.get("unbound_evidence") or {}),
+                    "unbound_evidence": evidence,
                     "review_status": "model_batch_unbound", "resource_bindings": [],
                 }
                 continue
@@ -480,6 +964,26 @@ class SmetaNormToolSession:
                 continue
             requested_code = str(item.get("norm_code") or "")
             opened_for_work = self.opened.get(work_id, {})
+            bind_errors = _technology_check_errors(item)
+            bind_errors.extend(_candidate_evaluation_errors(
+                item,
+                candidates_for_work=self.candidates.get(work_id, {}),
+                opened_for_work=opened_for_work,
+            ))
+            if not str(item.get("reason") or "").strip():
+                bind_errors.append("reason is required")
+            if bind_errors:
+                errors.append({
+                    "work_id": work_id,
+                    "error": "incomplete bind evidence",
+                    "details": bind_errors,
+                    "comparison_candidate_codes": list(dict.fromkeys(
+                        str((card or {}).get("norm_code") or code)
+                        for code, card in self.candidates.get(work_id, {}).items()
+                        if str((card or {}).get("norm_code") or code).strip()
+                    ))[:12],
+                })
+                continue
             opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
             opened_card = opened_for_work.get(opened_code) if opened_code else None
             code = str((opened_card or {}).get("norm_code") or requested_code)
@@ -499,6 +1003,11 @@ class SmetaNormToolSession:
                 "selection_kind": str(item.get("selection_kind") or ""),
                 "applicability": str(item.get("applicability") or ""),
                 "technology_check": dict(item.get("technology_check") or {}),
+                "candidate_evaluations": [
+                    dict(evaluation)
+                    for evaluation in (item.get("candidate_evaluations") or [])
+                    if isinstance(evaluation, dict)
+                ],
                 "analog_limitations": [
                     str(value) for value in (item.get("analog_limitations") or []) if str(value).strip()
                 ],
@@ -509,6 +1018,35 @@ class SmetaNormToolSession:
                 "precalculation_blockers": blockers,
             }
         self.accepted_rows.update(proposed)
+        if self.progress:
+            for work_id, selection in proposed.items():
+                source = self.by_id[work_id]
+                norm_code = str(selection.get("norm_code") or "")
+                covered_by = str(selection.get("covered_by_work_id") or "")
+                decision = "bind" if norm_code else "covered_by" if covered_by else "unbound"
+                if norm_code:
+                    decision_label = "Норма выбрана"
+                elif covered_by:
+                    decision_label = f"Покрыто строкой {covered_by}"
+                else:
+                    decision_label = "Оставлено без нормы"
+                self.progress({
+                    "phase": "row_ready",
+                    "status": "done",
+                    "label": f"Смета: строка {work_id} готова — {decision_label.lower()}",
+                    "row": {
+                        "work_id": work_id,
+                        "title": str(source.get("title") or "")[:320],
+                        "unit": str(source.get("unit") or "")[:80],
+                        "quantity": source.get("quantity"),
+                        "section": str(source.get("section") or "")[:160],
+                        "decision": decision,
+                        "decision_label": decision_label,
+                        "norm_code": norm_code,
+                        "covered_by_work_id": covered_by,
+                        "reason": str(selection.get("reason") or "")[:500],
+                    },
+                })
         remaining = self.remaining_work_ids
         if not proposed and not errors:
             errors.append({"error": "submit rows is empty", "work_ids": remaining})
@@ -530,15 +1068,6 @@ class SmetaNormToolSession:
                     "label": f"Смета: модель исправляет решение — {first_error}",
                     "attempt": attempt, "errors": errors[:5],
                 })
-            exhausted = [
-                key for key, count in self.invalid_submission_attempts.items() if count >= 4
-            ]
-            if exhausted:
-                raise RuntimeError(
-                    "smeta model repeated an invalid mapping 4 times for "
-                    f"{','.join(exhausted)}: "
-                    + json.dumps(errors[:5], ensure_ascii=False, default=str)
-                )
             return {
                 "ok": False, "errors": errors,
                 "accepted_work_ids": list(self.accepted_rows),
@@ -551,6 +1080,88 @@ class SmetaNormToolSession:
                 "remaining_work_ids": remaining,
             }
         return {"ok": True, "rows": len(self.accepted_rows)}
+
+    def _allowed_unbound_evidence(self, work_id: str) -> dict[str, Any]:
+        queries = list(dict.fromkeys(
+            str(query).strip()
+            for trace in self.query_trace
+            if str(trace.get("work_id") or "") == work_id
+            for query in (trace.get("queries") or [])
+            if str(query).strip()
+        ))
+        opened_codes = list(dict.fromkeys(
+            str((card or {}).get("norm_code") or code).strip()
+            for code, card in self.opened.get(work_id, {}).items()
+            if str((card or {}).get("norm_code") or code).strip()
+        ))
+        return {
+            "queries_used": queries,
+            "opened_norm_codes": opened_codes,
+        }
+
+    def _unbound_evidence_errors(
+        self,
+        work_id: str,
+        *,
+        reason: str,
+        evidence: dict[str, Any],
+    ) -> list[str]:
+        """Validate evidence provenance without judging the model's conclusion."""
+        errors: list[str] = []
+        queries = [
+            str(value).strip()
+            for value in (evidence.get("queries_used") or [])
+            if str(value).strip()
+        ]
+        unique_queries = {value.casefold() for value in queries}
+        executed_queries = {
+            str(query).strip().casefold()
+            for trace in self.query_trace
+            if str(trace.get("work_id") or "") == work_id
+            for query in (trace.get("queries") or [])
+            if str(query).strip()
+        }
+        opened_codes = [
+            str(value).strip()
+            for value in (evidence.get("opened_norm_codes") or [])
+            if str(value).strip()
+        ]
+        actually_opened = {
+            str((card or {}).get("norm_code") or code).strip()
+            for code, card in self.opened.get(work_id, {}).items()
+            if str((card or {}).get("norm_code") or code).strip()
+        }
+        rejection_reasons = [
+            str(value).strip()
+            for value in (evidence.get("rejection_reasons") or [])
+            if str(value).strip()
+        ]
+        coverage_checked = str(evidence.get("coverage_checked") or "").strip()
+
+        if not reason:
+            errors.append("reason is required")
+        if len(unique_queries) < 2:
+            errors.append("queries_used must contain at least two distinct searches")
+        missing_queries = sorted(value for value in unique_queries if value not in executed_queries)
+        if missing_queries:
+            errors.append("queries_used contains searches absent from the tool trace: " + ", ".join(missing_queries))
+        unopened_codes = sorted(code for code in opened_codes if code not in actually_opened)
+        if unopened_codes:
+            errors.append("opened_norm_codes contains cards not opened through tools: " + ", ".join(unopened_codes))
+        available_candidates = {
+            str((card or {}).get("norm_code") or code).strip()
+            for code, card in self.candidates.get(work_id, {}).items()
+            if str((card or {}).get("norm_code") or code).strip()
+        }
+        if available_candidates and not opened_codes:
+            errors.append(
+                "opened_norm_codes must include a read_norms_batch card when search returned candidates"
+            )
+        if not rejection_reasons:
+            errors.append("rejection_reasons must contain at least one model reason")
+        if not coverage_checked:
+            errors.append("coverage_checked is required")
+        return errors
 
     def result(
         self,
@@ -567,9 +1178,19 @@ class SmetaNormToolSession:
             "selections": dict(self.accepted_rows),
             "browse_trace": self.browse_trace,
             "query_trace": self.query_trace,
+            "catalog_trace": self.catalog_trace,
             "model_trace": model_trace,
             "valid_model_rows": len(self.accepted_rows),
-            "agent_trace": {**agent_trace, "tool_trajectory": self.tool_trajectory},
+            "opened_cards": {
+                work_id: list({str(card.get("norm_code") or key): card for key, card in cards.items()}.values())
+                for work_id, cards in self.opened.items()
+            },
+            "agent_trace": {
+                **agent_trace,
+                "tool_trajectory": self.tool_trajectory,
+                "evidence_budget": asdict(self.evidence_budget),
+                "evidence_usage": dict(self.evidence_usage),
+            },
         }
 
 
@@ -584,22 +1205,38 @@ def _run_native_norm_agent(
     progress: Progress | None = None,
     user_request: str = "",
     batch_runner: AgentBatchRunner | None = None,
+    accumulate_task_state: bool = False,
 ) -> dict[str, Any]:
     """Give the model the source rows and merge its untouched decisions."""
     requested_size = int(batch_size)
     size = len(work_rows) if requested_size <= 0 else max(1, requested_size)
     batches = [work_rows[index:index + size] for index in range(0, len(work_rows), size)]
     if len(batches) <= 1:
+        task_rows = work_rows
+        if accumulate_task_state:
+            task_rows = [
+                {
+                    **row,
+                    "task_state": {
+                        "mode": "sequential_rows",
+                        "source_rows_total": len(work_rows),
+                        "completed_rows": 0,
+                        "remaining_rows": len(work_rows),
+                        "completed_decisions": [],
+                    },
+                }
+                for row in work_rows
+            ]
         if batch_runner is not None:
             return batch_runner(
-                work_rows,
+                task_rows,
                 candidate_limit=candidate_limit,
                 max_turns=max_turns,
                 progress=progress,
                 user_request=user_request,
             )
         return _run_batch_norm_agent(
-            work_rows,
+            task_rows,
             exchange,
             mapping_exchange=mapping_exchange,
             candidate_limit=candidate_limit,
@@ -610,13 +1247,16 @@ def _run_native_norm_agent(
 
     merged = {
         "selections": {},
+        "opened_cards": {},
         "browse_trace": {},
         "query_trace": [],
+        "catalog_trace": [],
         "model_trace": [],
         "valid_model_rows": 0,
     }
     batch_traces: list[dict[str, Any]] = []
     batches_started = perf_counter()
+    source_by_id = {str(row["work_id"]): row for row in work_rows}
     for batch_index, rows in enumerate(batches, 1):
         if progress:
             progress({
@@ -628,9 +1268,38 @@ def _run_native_norm_agent(
                 "completed_rows": merged["valid_model_rows"],
                 "total_rows": len(work_rows),
             })
+        task_rows = rows
+        if accumulate_task_state:
+            completed_decisions = []
+            for completed_work_id, selection in merged["selections"].items():
+                source = source_by_id.get(str(completed_work_id)) or {}
+                completed_decisions.append({
+                    "work_id": completed_work_id,
+                    "title": str(source.get("title") or "")[:240],
+                    "norm_code": str(selection.get("norm_code") or ""),
+                    "covered_by_work_id": str(selection.get("covered_by_work_id") or ""),
+                    "decision": (
+                        "bind" if selection.get("norm_code") else
+                        "covered_by" if selection.get("covered_by_work_id") else
+                        "unbound"
+                    ),
+                    "reason": str(selection.get("reason") or "")[:320],
+                })
+            task_state = {
+                "mode": "sequential_rows",
+                "source_rows_total": len(work_rows),
+                "completed_rows": len(completed_decisions),
+                "remaining_rows": len(work_rows) - len(completed_decisions),
+                "completed_decisions": completed_decisions,
+                "instruction": (
+                    "Use completed decisions only as task memory for coverage and duplicate checks. "
+                    "Do not revise them or call tools for their work_id in this row loop."
+                ),
+            }
+            task_rows = [{**row, "task_state": task_state} for row in rows]
         if batch_runner is not None:
             result = batch_runner(
-                rows,
+                task_rows,
                 candidate_limit=candidate_limit,
                 max_turns=max_turns,
                 progress=progress,
@@ -638,7 +1307,7 @@ def _run_native_norm_agent(
             )
         else:
             result = _run_batch_norm_agent(
-                rows,
+                task_rows,
                 exchange,
                 mapping_exchange=mapping_exchange,
                 candidate_limit=candidate_limit,
@@ -647,8 +1316,10 @@ def _run_native_norm_agent(
                 user_request=user_request,
             )
         merged["selections"].update(result["selections"])
+        merged["opened_cards"].update(result.get("opened_cards") or {})
         merged["browse_trace"].update(result["browse_trace"])
         merged["query_trace"].extend(result["query_trace"])
+        merged["catalog_trace"].extend(result.get("catalog_trace") or [])
         merged["model_trace"].extend(
             {**item, "source_batch": batch_index} for item in result["model_trace"]
         )
@@ -683,6 +1354,7 @@ def _run_native_norm_agent(
         "provider": str((batch_traces[0] if batch_traces else {}).get("provider") or ""),
         "model": str((batch_traces[0] if batch_traces else {}).get("model") or ""),
         "batch_size": size,
+        "task_mode": "sequential_rows" if accumulate_task_state else "independent_batches",
         "batches": len(batches),
         "source_rows": len(work_rows),
         "batch_traces": batch_traces,
@@ -698,6 +1370,136 @@ def _run_native_norm_agent(
         },
     }
     return merged
+
+
+def _run_global_norm_review(
+    work_rows: list[dict[str, Any]],
+    initial_result: dict[str, Any],
+    exchange: Exchange,
+    *,
+    mapping_exchange: MappingExchange | None,
+    candidate_limit: int,
+    max_turns: int,
+    progress: Progress | None,
+    user_request: str,
+    batch_runner: AgentBatchRunner | None,
+) -> dict[str, Any]:
+    """Run one model-owned cross-row revision; code only supplies conflicts."""
+
+    initial_selections = initial_result.get("selections") or {}
+    opened_cards = initial_result.get("opened_cards") or {}
+    before_conflicts = detect_professional_conflicts(
+        work_rows,
+        initial_selections,
+        opened_cards=opened_cards,
+        query_trace=initial_result.get("query_trace") or [],
+    )
+    review_rows = []
+    conflicts_by_work: dict[str, list[dict[str, Any]]] = {}
+    for conflict in before_conflicts:
+        for work_id in conflict.get("work_ids") or []:
+            conflicts_by_work.setdefault(str(work_id), []).append(conflict)
+    for row in work_rows:
+        work_id = str(row["work_id"])
+        selection = dict(initial_selections.get(work_id) or {})
+        compact_cards = [
+            _compact_norm_card_for_global_review(card)
+            for card in (opened_cards.get(work_id) or [])
+            if isinstance(card, dict)
+        ]
+        review_rows.append({
+            **row,
+            "review_phase": "global_cross_row_review",
+            "current_decision": {"decision": _decision_name(selection), **selection},
+            "opened_norm_cards": compact_cards,
+            "professional_conflicts": conflicts_by_work.get(work_id, []),
+        })
+    if progress:
+        progress({
+            "phase": "global_review", "status": "started",
+            "label": f"Смета: модель проверяет связи между {len(review_rows)} строками",
+            "rows": len(review_rows), "conflicts": len(before_conflicts),
+        })
+    review_request = (
+        f"{user_request}\n\n"
+        "GLOBAL CROSS-ROW REVIEW. Treat current_decision as the initial model draft. Review the whole "
+        "mapping for forward and backward coverage, duplicate work/resources, operation direction, "
+        "analog/exact consistency and supplied professional_conflicts. Preserve a decision when it is "
+        "defensible. Revise it only as your own professional decision. Previously opened_norm_cards are "
+        "compact typed evidence summaries; call read_norms_batch to reopen the full card only for disputed "
+        "rows that need more evidence. Submit one "
+        "terminal decision for every work_id. This produces a new immutable model revision."
+    )
+    if batch_runner is not None:
+        reviewed = batch_runner(
+            review_rows,
+            candidate_limit=candidate_limit,
+            max_turns=max_turns,
+            progress=progress,
+            user_request=review_request,
+        )
+    else:
+        reviewed = _run_batch_norm_agent(
+            review_rows,
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=candidate_limit,
+            max_turns=max_turns,
+            progress=progress,
+            user_request=review_request,
+        )
+    after_opened = dict(opened_cards)
+    for work_id, cards in (reviewed.get("opened_cards") or {}).items():
+        after_opened[work_id] = [*(after_opened.get(work_id) or []), *(cards or [])]
+    combined_browse = {
+        str(work_id): [
+            *((initial_result.get("browse_trace") or {}).get(work_id) or []),
+            *((reviewed.get("browse_trace") or {}).get(work_id) or []),
+        ]
+        for work_id in {
+            *(initial_result.get("browse_trace") or {}).keys(),
+            *(reviewed.get("browse_trace") or {}).keys(),
+        }
+    }
+    after_conflicts = detect_professional_conflicts(
+        work_rows,
+        reviewed.get("selections") or {},
+        opened_cards=after_opened,
+        query_trace=[*(initial_result.get("query_trace") or []), *(reviewed.get("query_trace") or [])],
+    )
+    if progress:
+        progress({
+            "phase": "global_review", "status": "done",
+            "label": (
+                f"Смета: межстрочная ревизия готова, осталось конфликтов {len(after_conflicts)}"
+            ),
+            "rows": len(review_rows), "conflicts_before": len(before_conflicts),
+            "conflicts_after": len(after_conflicts),
+        })
+    return {
+        **reviewed,
+        "opened_cards": after_opened,
+        "browse_trace": combined_browse,
+        "query_trace": [
+            *(initial_result.get("query_trace") or []),
+            *({**item, "review_phase": "global_review"} for item in (reviewed.get("query_trace") or [])),
+        ],
+        "catalog_trace": [
+            *(initial_result.get("catalog_trace") or []),
+            *({**item, "review_phase": "global_review"} for item in (reviewed.get("catalog_trace") or [])),
+        ],
+        "model_trace": [
+            *(initial_result.get("model_trace") or []),
+            *({**item, "review_phase": "global_review"} for item in (reviewed.get("model_trace") or [])),
+        ],
+        "professional_conflicts_before_review": before_conflicts,
+        "professional_conflicts": after_conflicts,
+        "agent_trace": {
+            "mode": "row_mapping_then_global_model_review",
+            "initial": initial_result.get("agent_trace") or {},
+            "global_review": reviewed.get("agent_trace") or {},
+        },
+    }
 
 
 def _run_batch_norm_agent(
@@ -783,6 +1585,10 @@ def _run_batch_norm_agent(
         }
         if payload.get("_les_model"):
             assistant_message["model"] = str(payload["_les_model"])
+        if payload.get("_les_provider"):
+            assistant_message["provider"] = str(payload["_les_provider"])
+        if payload.get("_les_seed") is not None:
+            assistant_message["seed"] = int(payload["_les_seed"])
         conversation.append(assistant_message)
         model_trace.append({
             "turn": turn,
@@ -790,6 +1596,7 @@ def _run_batch_norm_agent(
             "model_wait_ms": wait_ms,
             "transport": "structured_mapping",
             "trigger": reason,
+            "seed": payload.get("_les_seed"),
         })
         return {
             "id": f"structured-mapping-{turn}",
@@ -830,10 +1637,19 @@ def _run_batch_norm_agent(
                 assistant_message["thinking"] = str(assistant["thinking"])
             if assistant.get("_les_model"):
                 assistant_message["model"] = str(assistant["_les_model"])
+            if assistant.get("_les_provider"):
+                assistant_message["provider"] = str(assistant["_les_provider"])
+            if assistant.get("_les_seed") is not None:
+                assistant_message["seed"] = int(assistant["_les_seed"])
             if assistant.get("_les_fallback_from"):
                 assistant_message["fallback_from"] = str(assistant["_les_fallback_from"])
             conversation.append(assistant_message)
-            model_trace.append({"turn": turn, "assistant": assistant_message, "model_wait_ms": model_wait_ms})
+            model_trace.append({
+                "turn": turn,
+                "assistant": assistant_message,
+                "model_wait_ms": model_wait_ms,
+                "seed": assistant.get("_les_seed"),
+            })
             if not calls:
                 done_reason = str(assistant.get("_les_done_reason") or "unknown")
                 eval_count = assistant.get("_les_eval_count")
@@ -923,6 +1739,14 @@ def _run_batch_norm_agent(
                     "mode": "model_batch_rag_tools",
                     "turns": turn,
                     "context_metrics": context_metrics,
+                    "seed": next(
+                        (
+                            item.get("seed")
+                            for item in model_trace
+                            if item.get("seed") is not None
+                        ),
+                        None,
+                    ),
                 },
             )
     raise RuntimeError(f"smeta model did not submit mapping within {max_turns} model turns")
@@ -954,6 +1778,31 @@ def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dic
 
 def _batch_norm_tools() -> list[dict[str, Any]]:
     string_array = {"type": "array", "items": {"type": "string"}}
+    candidate_evaluation = {
+        "type": "object",
+        "properties": {
+            "candidate_code": {"type": "string"},
+            "operation_match": {
+                "type": "string", "enum": ["exact", "partial", "none", "unknown"],
+            },
+            "object_match": {
+                "type": "string", "enum": ["exact", "partial", "none", "unknown"],
+            },
+            "unit_match": {
+                "type": "string", "enum": ["compatible", "convertible", "conflict", "unknown"],
+            },
+            "scope_match": {
+                "type": "string", "enum": ["exact", "partial", "foreign", "unknown"],
+            },
+            "foreign_resources": string_array,
+            "decision": {"type": "string", "enum": ["selected", "rejected", "uncertain"]},
+            "reason": {"type": "string"},
+        },
+        "required": [
+            "candidate_code", "operation_match", "object_match", "unit_match", "scope_match",
+            "foreign_resources", "decision", "reason",
+        ],
+    }
     technology_check = {
         "type": "object",
         "properties": {
@@ -1010,6 +1859,9 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "selection_kind": {"type": "string", "enum": ["exact", "analog"]},
             "applicability": {"type": "string", "enum": ["exact", "close_analog", "weak_analog"]},
             "analog_limitations": string_array,
+            "candidate_evaluations": {
+                "type": "array", "items": candidate_evaluation, "minItems": 1,
+            },
             "technology_check": technology_check,
             "unbound_evidence": unbound_evidence,
             "nr_sp_rule_id": {"type": "string"},
@@ -1023,7 +1875,7 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                 "if": {"properties": {"decision": {"const": "bind"}}, "required": ["decision"]},
                 "then": {"required": [
                     "norm_code", "selection_kind", "applicability",
-                    "analog_limitations", "technology_check",
+                    "analog_limitations", "candidate_evaluations", "technology_check",
                 ]},
             },
             {
@@ -1040,6 +1892,28 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
         {
             "type": "function",
             "function": {
+                "name": "browse_norm_catalog",
+                "description": (
+                    "Browse the compact typed normative menu before searching: first families, then "
+                    "collections for one family. After choosing a collection call search_norms_batch. "
+                    "Catalog navigation is not norm evidence and never returns individual norm cards."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "items": {"type": "array", "items": {"type": "object", "properties": {
+                            "work_id": {"type": "string"},
+                            "family": {"type": "string", "description": "Norm family such as ГЭСН, ГЭСНм, ГЭСНр. Empty returns families."},
+                            "collection": {"type": "string", "description": "Two-digit collection selected by the model. Empty returns the compact collection menu; a value confirms scope and points to search."},
+                        }, "required": ["work_id"]}},
+                    },
+                    "required": ["items"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "search_norms_batch",
                 "description": "Search RRF norm candidates for any number of independent source rows in one tool call.",
                 "parameters": {
@@ -1048,8 +1922,26 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                         "items": {"type": "array", "items": {"type": "object", "properties": {
                             "work_id": {"type": "string"},
                             "query": {"type": "string", "description": "One search formulation. Repeat the work_id in another item or later call for another formulation."},
+                            "search_intent": {
+                                "type": "string",
+                                "enum": [
+                                    "source_literal", "fsnb_technology", "key_operation",
+                                    "equipment_or_measure", "composite_coverage",
+                                ],
+                                "description": "Meaningfully distinct search strategy, not a wording permutation.",
+                            },
+                            "scope_mode": {
+                                "type": "string",
+                                "enum": ["scoped", "global"],
+                                "description": (
+                                    "Model-owned retrieval plan. scoped requires both base_types and "
+                                    "collections selected from the catalog; global requires both empty."
+                                ),
+                            },
+                            "base_types": {"type": "array", "items": {"type": "string"}, "description": "Families chosen by the model after catalog browse."},
+                            "collections": {"type": "array", "items": {"type": "string"}, "description": "Collection numbers chosen by the model after catalog browse."},
                             "limit": {"type": "integer", "minimum": 1}, "page": {"type": "integer", "minimum": 0},
-                        }, "required": ["work_id", "query"]}},
+                        }, "required": ["work_id", "query", "search_intent", "scope_mode"]}},
                         "rerank": {"type": "boolean"},
                     },
                     "required": ["items"],
@@ -1122,6 +2014,11 @@ def _finalize_document_workflow(
     agent_trace: dict[str, Any] | None = None,
     source_name: str | None = None,
     lsr_meta: dict[str, Any] | None = None,
+    mapping_run: dict[str, Any] | None = None,
+    parent_mapping_revision_id: str = "",
+    mapping_locked: bool = False,
+    professional_conflicts: list[dict[str, Any]] | None = None,
+    calculation_created_by: str = "model",
 ) -> dict[str, Any]:
     display_source_name = Path(str(source_name or Path(path).name)).name
     display_stem = Path(display_source_name).stem
@@ -1158,12 +2055,29 @@ def _finalize_document_workflow(
     trace = calculate_visible_rows_revision(
         visible_rows,
         selected_by="model",
-        created_by="model",
+        created_by=calculation_created_by,
         change_note=f"Model-owned VOR workflow: {display_source_name}",
+        parent_revision_id=parent_mapping_revision_id,
         revision_root=revision_root,
         book=book,
         title=f"Локальный сметный расчет — {display_stem}",
     )
+    summary = trace.setdefault("summary", {})
+    calculated_status = str(summary.get("result_status") or "")
+    conflicts = list(professional_conflicts or [])
+    summary["calculation_result_status"] = calculated_status
+    summary["mapping_status"] = (
+        "mapping_locked" if mapping_locked
+        else str((mapping_run or {}).get("mapping_status") or "mapping_selected")
+    )
+    summary["approval_status"] = "user_locked" if mapping_locked else "auto_draft"
+    summary["professional_conflict_count"] = len(conflicts)
+    if not mapping_locked:
+        summary["result_status"] = "priced_draft" if int(summary.get("bound_rows") or 0) else calculated_status
+    elif conflicts:
+        summary["result_status"] = "priced_partial" if int(summary.get("bound_rows") or 0) else calculated_status
+    trace["professional_conflicts"] = conflicts
+    trace["mapping_run"] = dict(mapping_run or {})
     if progress:
         summary = trace.get("summary") or {}
         progress({
@@ -1209,6 +2123,8 @@ def _finalize_document_workflow(
         "model_trace": model_trace,
         "agent_trace": agent_trace or {},
         "selections": selections,
+        "mapping_run": dict(mapping_run or {}),
+        "professional_conflicts": conflicts,
         "lsr": trace,
         "xlsx_path": xlsx_path,
         "cloud_required": False,
@@ -1241,6 +2157,8 @@ def run_vor_document_workflow(
     batch_size: int = 0,
     max_agent_turns: int = 64,
     agent_batch_runner: AgentBatchRunner | None = None,
+    accumulate_task_state: bool = False,
+    require_global_review: bool = True,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     intake = intake_vor_document(path)
@@ -1262,7 +2180,7 @@ def run_vor_document_workflow(
                         "note": neighbor.get("note"),
                     })
         query_rows.append({**row, "neighbor_context": neighbors})
-    agent_result = _run_native_norm_agent(
+    initial_agent_result = _run_native_norm_agent(
         query_rows,
         exchange,
         mapping_exchange=mapping_exchange,
@@ -1272,7 +2190,74 @@ def run_vor_document_workflow(
         user_request=user_request,
         batch_size=batch_size,
         batch_runner=agent_batch_runner,
+        accumulate_task_state=accumulate_task_state,
     )
+    mapping_run_id = uuid4().hex
+    from proxy.smeta_core.revision_store import DEFAULT_ROOT
+
+    revision_dir = Path(revision_root or DEFAULT_ROOT)
+    initial_conflicts = detect_professional_conflicts(
+        work_rows,
+        initial_agent_result.get("selections") or {},
+        opened_cards=initial_agent_result.get("opened_cards") or {},
+        query_trace=initial_agent_result.get("query_trace") or [],
+    )
+    initial_revision = MappingRevision(
+        mapping_run_id=mapping_run_id,
+        revision_kind="row_mapping",
+        decisions=dict(initial_agent_result.get("selections") or {}),
+        source_rows=tuple(work_rows),
+        professional_conflicts=tuple(initial_conflicts),
+        mapping_status="mapping_selected",
+        change_note="Initial row decisions",
+        calculation_context={
+            "book": book or "",
+            "vat_pct": vat_pct,
+            "source_name": source_name or Path(path).name,
+            "lsr_meta": dict(lsr_meta or {}),
+        },
+    )
+    initial_revision_path = save_mapping_revision(initial_revision, root=revision_dir)
+    agent_result = initial_agent_result
+    current_revision = initial_revision
+    current_revision_path = initial_revision_path
+    if require_global_review and len(work_rows) > 1:
+        agent_result = _run_global_norm_review(
+            query_rows,
+            initial_agent_result,
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=candidate_limit,
+            max_turns=max_agent_turns,
+            progress=progress,
+            user_request=user_request,
+            batch_runner=agent_batch_runner,
+        )
+        current_revision = MappingRevision(
+            mapping_run_id=mapping_run_id,
+            revision_kind="global_review",
+            decisions=dict(agent_result.get("selections") or {}),
+            source_rows=tuple(work_rows),
+            professional_conflicts=tuple(agent_result.get("professional_conflicts") or ()),
+            parent_revision_id=initial_revision.revision_id,
+            mapping_status="mapping_globally_reviewed",
+            change_note="Mandatory model-owned cross-row review",
+            calculation_context=dict(initial_revision.calculation_context),
+        )
+        current_revision_path = save_mapping_revision(current_revision, root=revision_dir)
+    mapping_run = {
+        "schema": "smeta_mapping_run_v1",
+        "mapping_run_id": mapping_run_id,
+        "row_mapping_revision_id": initial_revision.revision_id,
+        "row_mapping_revision_path": str(initial_revision_path),
+        "current_mapping_revision_id": current_revision.revision_id,
+        "current_mapping_revision_path": str(current_revision_path),
+        "global_review_revision_id": (
+            current_revision.revision_id if current_revision.revision_kind == "global_review" else ""
+        ),
+        "mapping_status": current_revision.mapping_status,
+        "approval_status": "auto_draft",
+    }
     if work_rows and int(agent_result.get("valid_model_rows") or 0) == 0:
         if out_report:
             report_path = Path(out_report)
@@ -1305,6 +2290,55 @@ def run_vor_document_workflow(
         progress=progress,
         source_name=source_name,
         lsr_meta=lsr_meta,
+        mapping_run=mapping_run,
+        parent_mapping_revision_id=current_revision.revision_id,
+        mapping_locked=False,
+        professional_conflicts=list(agent_result.get("professional_conflicts") or initial_conflicts),
+    )
+
+
+def finalize_locked_mapping_revision(
+    revision: MappingRevision,
+    *,
+    out_xlsx: str | Path,
+    out_report: str | Path,
+    revision_root: str | Path,
+) -> dict[str, Any]:
+    """Calculate only an explicit user-owned mapping lock."""
+
+    if revision.revision_kind != "user_lock" or revision.mapping_status != "mapping_locked":
+        raise ValueError("calculation requires a user-owned locked mapping revision")
+    context = dict(revision.calculation_context or {})
+    source_name = str(context.get("source_name") or "ВОР")
+    mapping_run = {
+        "schema": "smeta_mapping_run_v1",
+        "mapping_run_id": revision.mapping_run_id,
+        "current_mapping_revision_id": revision.revision_id,
+        "mapping_status": "mapping_locked",
+        "approval_status": "user_locked",
+    }
+    return _finalize_document_workflow(
+        path=source_name,
+        intake={"source_name": source_name, "work_items": list(revision.source_rows)},
+        work_rows=list(revision.source_rows),
+        selections=dict(revision.decisions),
+        browse_trace={},
+        query_trace=[],
+        model_trace=[],
+        agent_trace={"engine": "locked_mapping_recalculation"},
+        book=str(context.get("book") or "") or None,
+        out_xlsx=out_xlsx,
+        out_report=out_report,
+        revision_root=str(revision_root),
+        vat_pct=float(context.get("vat_pct") or 22.0),
+        progress=None,
+        source_name=source_name,
+        lsr_meta=dict(context.get("lsr_meta") or {}),
+        mapping_run=mapping_run,
+        parent_mapping_revision_id=revision.revision_id,
+        mapping_locked=True,
+        professional_conflicts=[],
+        calculation_created_by="user",
     )
 
 

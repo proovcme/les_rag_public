@@ -1737,6 +1737,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         card.on("click", _open)
 
     async def _open_session(session_id: str, el=None):
+        from sovushka.state import persist_session_id
+
         add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}...")
         msgs = await api_get(f"/api/chat/history?session_id={session_id}")
         if msgs is None:
@@ -1744,7 +1746,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         state["chat_history"] = msgs
         state["load_session_id"] = session_id
-        state["session_id"] = session_id
+        state["session_id"] = persist_session_id(session_id)
         if selected_session_card["el"]:
             selected_session_card["el"].classes(remove="sov-session-card-active")
         if el:
@@ -1786,6 +1788,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 ui.label(title).style(
                     "font-size:.78rem;font-weight:800;word-break:break-word;margin-top:4px;"
                 )
+                if item.get("viewer_url"):
+                    viewer_url = esc(str(item["viewer_url"]))
+                    _html(
+                        '<div class="sov-embedded-file-viewer">'
+                        f'<iframe src="{viewer_url}" title="Просмотр источника" loading="eager" '
+                        'sandbox="allow-scripts allow-same-origin allow-popups"></iframe>'
+                        '</div>'
+                    )
                 if item.get("source_ref"):
                     ui.label(str(item["source_ref"])).style(
                         "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
@@ -1795,8 +1805,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         _copy_button("source_ref", str(item["source_ref"]), classes="sov-answer-act")
                         citation_text = f"{title}\n{item.get('snippet') or item.get('source_ref') or ''}".strip()
                         _copy_button("Цитату", citation_text, icon="o_format_quote", classes="sov-answer-act")
+                        if item.get("viewer_url"):
+                            ui.link("Открыть отдельно", str(item["viewer_url"])).props(
+                                "target=_blank"
+                            ).classes("sov-answer-act")
                         if item.get("open_url"):
-                            ui.link("Открыть", str(item["open_url"])).props("target=_blank").classes("sov-answer-act")
+                            ui.link("Оригинал", str(item["open_url"])).props("target=_blank").classes("sov-answer-act")
                         else:
                             ui.label(str(item.get("unavailable_reason") or "Открытие недоступно")).classes(
                                 "src-tag src-tag-warn"
@@ -1807,22 +1821,55 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.markdown(f"> {item['snippet']}").classes("sov-artifact-markdown").style("margin-top:8px;")
 
     def _render_source_tags(srcs: list, crag: str = "", meta: dict | None = None):
-        from sovushka.answer_render import source_chip
+        from sovushka.answer_render import citation_drawer_item, source_chip
         if not srcs and not crag and not meta:
             return
-        with ui.row().classes("msg-srcs"):
-            for i, source in enumerate(srcs, 1):
-                c = source_chip(source, i)
-                cls = "src-tag src-tag-warn" if (c["weak"] or not c["has_ref"]) else "src-tag"
-                lbl = f"{i} · {_source_label(source)}"
-                if c["has_ref"]:
-                    el = ui.button(lbl, on_click=lambda s=source, n=i: _show_source_drawer(s, n)).props(
-                        "flat dense no-caps"
-                    ).classes(cls)
-                else:
-                    el = ui.label(lbl).classes(cls)
-                if c["kind"]:
-                    el.tooltip(c["kind"] + ("" if c["has_ref"] else " · без ссылки"))
+
+        if srcs:
+            with ui.expansion(
+                f"Источники · {len(srcs)}",
+                icon="o_library_books",
+                value=False,
+            ).props("dense").classes("sov-source-expansion"):
+                with ui.column().classes("sov-source-list"):
+                    for i, source in enumerate(srcs, 1):
+                        c = source_chip(source, i)
+                        item = citation_drawer_item(source, i)
+                        lbl = f"{i} · {_source_label(source)}"
+                        with ui.row().classes("sov-source-row"):
+                            if item.get("viewer_url"):
+                                primary = ui.button(
+                                    lbl,
+                                    on_click=lambda s=source, n=i: _show_source_drawer(s, n),
+                                ).props("flat dense no-caps").classes("sov-source-primary")
+                                primary.tooltip("Открыть внутри Л.И.С.Т." + (f" · {c['locator']}" if c["locator"] else ""))
+                            elif item.get("open_url"):
+                                primary = ui.link(lbl, str(item["open_url"])).props(
+                                    "target=_blank"
+                                ).classes("sov-source-primary")
+                                primary.tooltip("Открыть документ" + (f" · {c['locator']}" if c["locator"] else ""))
+                            elif c["has_ref"]:
+                                primary = ui.button(
+                                    lbl,
+                                    on_click=lambda s=source, n=i: _show_source_drawer(s, n),
+                                ).props("flat dense no-caps").classes("sov-source-primary")
+                                primary.tooltip("Показать ссылку и найденный фрагмент")
+                            else:
+                                primary = ui.label(lbl).classes("sov-source-primary sov-source-unavailable")
+                                primary.tooltip("У источника нет точной ссылки")
+                            if c["kind"]:
+                                ui.label(c["kind"]).classes(
+                                    "sov-source-kind sov-source-kind-warn" if c["weak"] else "sov-source-kind"
+                                )
+                            if c["has_ref"]:
+                                ui.button(
+                                    icon="o_info",
+                                    on_click=lambda s=source, n=i: _show_source_drawer(s, n),
+                                ).props(
+                                    'flat round dense aria-label="Показать карточку источника"'
+                                ).classes("sov-source-detail").tooltip("Карточка источника и цитата")
+
+        with ui.row().classes("msg-srcs sov-source-tools"):
             if crag:
                 for chip in _operator_status_chips(crag, meta, srcs):
                     cls = {
@@ -2496,6 +2543,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
     _file_artifacts: dict[str, dict] = {}  # url → {name, kind}
+    _smeta_approval_cards: set[str] = set()
+    _smeta_locked_revisions: set[str] = set()
 
     async def _download_file_artifact(url: str, name: str) -> None:
         res = await api_get_bytes(url)
@@ -2597,6 +2646,70 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                               on_click=lambda u=url, n=name: _download_file_artifact(u, n)
                               ).props("flat round dense").tooltip("Скачать")
 
+    async def _perform_smeta_lock(approval: dict, accepted_conflict_ids: list[str]) -> None:
+        revision_id = str(approval.get("mapping_revision_id") or "").strip()
+        if revision_id in _smeta_locked_revisions:
+            ui.notify("Эта mapping-ревизия уже зафиксирована", type="info")
+            return
+        lock_url = str(approval.get("lock_url") or "").strip()
+        if not lock_url:
+            ui.notify("Mapping-ревизия для фиксации не найдена", type="negative")
+            return
+        result = await api_post(lock_url, {
+            "review_note": (
+                "Проверено пользователем в интерфейсе Совушка; конфликты приняты явно"
+                if accepted_conflict_ids else "Проверено пользователем в интерфейсе Совушка"
+            ),
+            "accepted_conflict_ids": accepted_conflict_ids,
+        })
+        if not isinstance(result, dict) or result.get("status") != "mapping_locked":
+            ui.notify(last_api_error_text("Не удалось зафиксировать mapping"), type="negative")
+            return
+        _register_artifact_downloads({"artifact": result.get("artifact") or {}})
+        if revision_id:
+            _smeta_locked_revisions.add(revision_id)
+        ui.notify("Mapping зафиксирован. Проверенная ЛСР пересчитана отдельной ревизией.", type="positive")
+
+    async def _lock_smeta_mapping(approval: dict) -> None:
+        conflicts = list(approval.get("professional_conflicts") or [])
+        if not conflicts:
+            await _perform_smeta_lock(approval, [])
+            return
+        accepted_ids = [
+            str(item.get("conflict_id") or "")
+            for item in conflicts if str(item.get("conflict_id") or "")
+        ]
+        with ui.dialog() as dialog, ui.card().classes("sov-advanced-dialog"):
+            ui.label("Профессиональные конфликты").classes("sov-panel-title")
+            ui.label(
+                "Проверьте перечисленные противоречия и лист «Проверка». Фиксация не меняет "
+                "решение модели, а записывает ваше явное принятие в новой ревизии."
+            ).classes("sov-muted")
+            with ui.scroll_area().style("max-height:45vh;width:100%;"):
+                for item in conflicts:
+                    with ui.card().classes("sov-control-card"):
+                        ui.label(str(item.get("code") or "conflict")).classes("sov-smeta-approval-badge")
+                        ui.label(str(item.get("claim") or "Требуется профессиональная проверка"))
+            confirmation = ui.checkbox(
+                f"Я проверил и принимаю все конфликты ({len(conflicts)})"
+            )
+
+            async def confirm_lock() -> None:
+                if not confirmation.value:
+                    ui.notify("Подтвердите профессиональную проверку", type="warning")
+                    return
+                dialog.close()
+                await _perform_smeta_lock(approval, accepted_ids)
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Отмена", on_click=dialog.close).props("flat no-caps")
+                ui.button(
+                    "Принять и зафиксировать",
+                    icon="o_task_alt",
+                    on_click=lambda: asyncio.create_task(confirm_lock()),
+                ).props("no-caps")
+        dialog.open()
+
     def _register_artifact_downloads(meta: dict | None) -> None:
         artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
         if not isinstance(artifact, dict):
@@ -2605,6 +2718,29 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not isinstance(downloads, dict):
             return
         title = str(artifact.get("title") or "Сметный артефакт").strip() or "Сметный артефакт"
+        approval = artifact.get("approval") if isinstance(artifact.get("approval"), dict) else {}
+        approval_id = str(approval.get("mapping_revision_id") or approval.get("lock_url") or "")
+        if (
+            approval.get("status") == "auto_draft"
+            and approval.get("lock_url")
+            and approval_id not in _smeta_approval_cards
+        ):
+            _smeta_approval_cards.add(approval_id)
+            conflicts = list(approval.get("professional_conflicts") or [])
+            with files_artifacts_panel:
+                with ui.card().classes("sov-smeta-approval"):
+                    ui.label("Авточерновик").classes("sov-smeta-approval-badge")
+                    ui.label(
+                        f"Профессиональные конфликты: {len(conflicts)}" if conflicts
+                        else "Межстрочная проверка завершена. Нужна фиксация пользователем."
+                    ).classes("sov-muted")
+                    button = ui.button(
+                        "Разобрать и зафиксировать" if conflicts else "Проверил — зафиксировать",
+                        icon="o_task_alt",
+                        on_click=lambda a=dict(approval): asyncio.create_task(_lock_smeta_mapping(a)),
+                    ).props("no-caps")
+                    if conflicts:
+                        button.tooltip("Открыть список конфликтов и подтвердить каждый одной ревизией")
         for ext, label in (("xlsx", "Excel"), ("csv", "CSV")):
             url = str(downloads.get(ext) or "").strip()
             if url:
@@ -2612,6 +2748,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     def _clear_file_artifacts() -> None:
         _file_artifacts.clear()
+        _smeta_approval_cards.clear()
+        _smeta_locked_revisions.clear()
         files_artifacts_panel.clear()
         files_artifacts_panel.set_visibility(False)
 
@@ -2800,8 +2938,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         и хуком из вкладки истории (фикс «чат из истории не открывается»)."""
         if not state.get("load_session_id"):
             return False
+        from sovushka.state import persist_session_id
+
         state["session_id"] = state["load_session_id"]
         state["load_session_id"] = None
+        persist_session_id(state["session_id"])
         _render_chat_history("Сессия загружена из истории.")
         _scroll_chat_to_tail(force=True)
         return True
@@ -2811,14 +2952,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     state["chat_reload_hook"] = _apply_loaded_session
 
     async def _load_history():
+        from sovushka.state import ensure_session_id, persist_session_id
+
         if _apply_loaded_session():
             return
-        if not state.get("chat_history"):
-            hist = await api_get("/api/chat/history?limit=40")
-            if hist:
-                state["chat_history"] = hist
-                _render_chat_history()
-                _scroll_chat_to_tail(force=True)
+        sid = ensure_session_id()
+        hist = await api_get(f"/api/chat/history?session_id={sid}")
+        if hist is None:
+            return
+        state["chat_history"] = list(hist or [])
+        persist_session_id(sid)
+        if state["chat_history"]:
+            _render_chat_history("Сессия восстановлена.")
+            _scroll_chat_to_tail(force=True)
 
     asyncio.create_task(_load_history())
 
@@ -2938,7 +3084,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     chat_input.on("input", lambda: _update_prompt_preview())
 
     def _clear_chat():
-        from sovushka.state import _new_session_id
+        from sovushka.state import _new_session_id, persist_session_id
 
         chat_column.clear()
         with chat_column:
@@ -2953,7 +3099,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _render_empty_artifacts()
         _clear_file_artifacts()
         state["chat_history"].clear()
-        state["session_id"] = _new_session_id()
+        state["session_id"] = persist_session_id(_new_session_id())
         state["load_session_id"] = None
         state["chat_pending"] = None
         asyncio.create_task(_refresh_active_model_chip())
@@ -3152,8 +3298,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
             smeta_operator_lines: list[str] = []
             smeta_operator_log = None
+            smeta_live_rows: dict[str, dict] = {}
+            smeta_live_table = None
             if is_smeta_mode:
                 with ai_placeholder:
+                    smeta_live_table = ui.markdown("").classes(
+                        "sov-smeta-live-table"
+                    ).style("display:none;")
                     smeta_operator_log = ui.label("").classes("sov-smeta-operator-log").style(
                         "display:none;white-space:pre-wrap;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
                         "font-size:.62rem;line-height:1.45;color:var(--dim);margin-top:8px;padding-top:7px;"
@@ -3321,6 +3472,43 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
                 _scroll_chat_to_tail()
+            elif event == "smeta_row":
+                stream_state["got_progress"] = True
+                if isinstance(payload, dict) and isinstance(payload.get("row"), dict):
+                    row = dict(payload["row"])
+                    work_id = str(row.get("work_id") or "").strip()
+                    if work_id:
+                        smeta_live_rows[work_id] = row
+                    ready = len(smeta_live_rows)
+                    _status_text["v"] = f"Смета: готово {ready} строк"
+                    if smeta_live_table is not None:
+                        def cell(value) -> str:
+                            return str(value if value not in (None, "") else "—").replace("|", "\\|").replace("\n", " ")
+
+                        lines = [
+                            "| № | Работа | Объём | Решение |",
+                            "|---:|:-------|------:|:--------|",
+                        ]
+                        for index, item in enumerate(smeta_live_rows.values(), 1):
+                            quantity = cell(item.get("quantity"))
+                            unit = cell(item.get("unit"))
+                            volume = f"{quantity} {unit}" if unit != "—" else quantity
+                            decision = cell(
+                                item.get("norm_code")
+                                or item.get("decision_label")
+                                or item.get("covered_by_work_id")
+                            )
+                            lines.append(
+                                f"| {index} | {cell(item.get('title'))} | {volume} | {decision} |"
+                            )
+                        smeta_live_table.set_content("\n".join(lines))
+                        smeta_live_table.style(remove="display:none;")
+                        smeta_live_table.update()
+                    elapsed = int(time.monotonic() - _t0)
+                    ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
+                    ai_placeholder_label.update()
+                    add_log(f"[СМЕТА] готова строка {work_id or '?'}")
+                    _scroll_chat_to_tail()
             elif event == "smeta_step":
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict):

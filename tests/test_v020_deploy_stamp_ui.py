@@ -161,7 +161,3 @@ def test_deterministic_policy_regression():
 def test_v06_resource_real_workbook_regression():
     from proxy.services import resource_cost_service as rc
     assert rc.validate_real_workbook()["matches"] is True
-
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True

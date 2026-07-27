@@ -181,14 +181,22 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     await _check("Интернет", _chk_net())
 
     async def _chk_crag():
-        total = max(1, sum(state.crag_stats.values()))
         verified = state.crag_stats.get("verified", 0)
         no_data = state.crag_stats.get("no_data", 0)
         hallucination = state.crag_stats.get("hallucination", 0)
         unvalidated = state.crag_stats.get("unvalidated", 0)
-        pct = verified / total * 100
-        status = "ok" if pct >= 70 else ("warn" if pct >= 40 else "err")
-        return status, f"V:{verified} N:{no_data} H:{hallucination} U:{unvalidated} ({pct:.0f}% verified)", ">=70%", ""
+        verifiable = verified + hallucination + unvalidated
+        pct = verified / verifiable * 100 if verifiable else 0.0
+        if verifiable == 0:
+            status = "warn"
+            message = "нет проверяемых ответов; NO_DATA не является ошибкой валидации"
+        elif verifiable < 5:
+            status = "warn"
+            message = "мало проверяемых ответов для оценки качества; требуется минимум 5"
+        else:
+            status = "ok" if pct >= 70 else ("warn" if pct >= 40 else "err")
+            message = ""
+        return status, f"V:{verified} N:{no_data} H:{hallucination} U:{unvalidated} ({pct:.0f}% verified)", ">=70%", message
 
     await _check("Т.О.С.К.А. статистика", _chk_crag())
 

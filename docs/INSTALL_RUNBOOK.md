@@ -175,8 +175,8 @@ make version-sync
 
 ## 4. First launch on the CLEAN target
 
-The target needs **network** on first launch for Python packages, Docker/Ollama
-and model weights. CPython and `uv` are already in the Windows installer. Windows
+The target needs **network** on first launch for Python packages and any external programs/models
+the user chooses. CPython and `uv` are already in the Windows installer. Windows
 package sync uses the system certificate store for corporate TLS roots, retries
 transient downloads and writes the exact sanitized `uv` failure to
 `%LOCALAPPDATA%\LES\logs\bootstrap.log`. An incomplete `.venv` is removed before
@@ -229,11 +229,13 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
      repeated launch is idempotent,
    - проверяет встроенные portable CPython `3.13.12` и `uv`: оба SHA-256-проверяются, Python
      распаковывается в persistent state без MSI/реестра и `uv` не имеет права скачивать интерпретатор. Winget или
-     официальный скрипт для `uv` — только recovery-fallback; Ollama и Docker Desktop ставятся через
-     winget. Если автоматическая установка недоступна, окно ЛЕС показывает точную причину,
-     официальный адрес установки и путь к журналу,
-   - после установки Docker Desktop ждёт запуска движка; незавершённая настройка WSL 2 или
-     необходимость перезагрузки считаются явной ошибкой первого запуска, а не «ограниченным RAG»,
+     официальный скрипт для `uv` — только recovery-fallback,
+   - открывает нативный setup wizard. Он проверяет Ollama, Docker Desktop/WSL, Qdrant и модели;
+     внешние программы ставятся через winget только по явной кнопке. Если winget недоступен,
+     мастер оставляет официальный адрес ручной установки и путь к журналу,
+   - отсутствие компонента, незапущенный Docker engine, необходимость перезагрузки и отсутствие
+     модели дают машинное состояние `setup_required`, но не закрывают Tauri и не показывают
+     аварийный экран «ЛЕС не запустился»,
    - `uv sync` (no MLX and no pywebview on Windows),
    - `lesctl init --profile windows-lite`,
    - `onboard_provider.py --provider ollama --ensure-platform windows` → local
@@ -246,8 +248,11 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
      name,
    - embeddings use Ollama `bge-m3` (`1024` dimensions) for the shared
      dense+sparse/RRF index contract,
-   - bootstrap verifies/pulls the local answer model `qwen3.5:9b`, embedding
-     model `bge-m3:latest` and installs/prefetches the native multilingual
+   - пользователь сам загружает и выбирает любую установленную Ollama answer-модель;
+     `qwen3.5:9b` — рекомендация для смет и tool use, а не зашитое требование. Bootstrap не вызывает
+     `ollama pull`. Отдельная `bge-m3:latest` остаётся обязательной для embedding-контракта `1024`;
+     мастер показывает обе команды и каталог моделей,
+   - bootstrap installs/prefetches the native multilingual
      cross-encoder `BAAI/bge-reranker-v2-m3`; its weights are checksum-verified,
      corrupt cache entries are quarantined, an interrupted `.incomplete` download
      resumes, and a semantic load-probe runs before the cache is marked ready,
@@ -256,8 +261,8 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    - запускает обязательный Qdrant в Docker с постоянным именованным томом
      `les-qdrant-data` и ждёт ответа `/collections`,
    - brings the stack up via `start-light.ps1`; Tauri opens the live UI.
-   Ход запуска виден через уведомления. При ошибке Tauri показывает её код, официальный адрес
-   установки недостающего компонента и путь к журналу. Подробный журнал:
+   Ход запуска и незакрытые шаги видны в wizard. Реальные ошибки внутренней подготовки остаются
+   внутри этого же экрана с кодом и путём к журналу; приложение не заменяет их общим fatal-screen. Подробный журнал:
    `%LOCALAPPDATA%\LES\logs\bootstrap.log`; машинный статус:
    `%LOCALAPPDATA%\LES\logs\bootstrap-status.json`.
    Оба файла создаются до подключения state helper, поэтому даже самая ранняя ошибка запуска
@@ -267,6 +272,10 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
 На чистой Windows Docker Desktop может запросить повышение прав и завершение настройки WSL 2.
 Это штатное системное требование Docker. После установки или перезагрузки достаточно снова открыть
 ЛЕС: bootstrap идемпотентен и продолжит с незавершённого предусловия.
+
+После запуска мастер остаётся доступным через tray → **«Настройка и справка»**. Он показывает
+текущие Ollama/Docker/Qdrant, выбранный тег, рекомендуемые команды и базовые советы. Открытие справки
+не останавливает службы и не меняет документы, индексы или чаты.
 
 After first launch, **Инструменты → Источники данных → СКАЧАТЬ ФГИС ЦС** starts
 the bounded public update: catalogue, latest Split Form for every official price

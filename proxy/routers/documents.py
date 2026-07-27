@@ -5,13 +5,16 @@ They do not call LLMs; they read LES metadata and the lexical SQLite index.
 """
 from __future__ import annotations
 
+import asyncio
 import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 
 from proxy.security import require_admin, require_user
 from proxy.services.document_explorer_service import explorer
+from proxy.services.pdf_contour_service import audit_pdf, render_page_preview
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
 
@@ -69,6 +72,105 @@ async def document_by_id(
     return {"document": document}
 
 
+def _pdf_document_source(doc_id: str) -> tuple[dict, str]:
+    try:
+        document = explorer().get_document(doc_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    source_path = _resolved_document_source(document)
+    if source_path is None:
+        raise HTTPException(status_code=404, detail="document has no source_path")
+    return document, source_path.as_posix()
+
+
+def _resolved_document_source(document: dict) -> Path | None:
+    """Resolve an original without letting metadata escape dataset storage.
+
+    External sources keep their recorded absolute path. Uploaded files do not
+    store one, so fall back to the canonical read-only storage location.
+    """
+    recorded = str(document.get("source_path") or "").strip()
+    if recorded:
+        candidate = Path(recorded).expanduser()
+        if candidate.exists() and candidate.is_file():
+            return candidate.resolve()
+
+    dataset_id = str(document.get("dataset_id") or "").strip()
+    file_name = str(document.get("file_name") or "").strip()
+    if not dataset_id or Path(dataset_id).name != dataset_id or dataset_id in {".", ".."}:
+        return None
+    relative = Path(file_name)
+    if not file_name or relative.is_absolute() or ".." in relative.parts:
+        return None
+    dataset_root = (Path("storage/datasets") / dataset_id).resolve()
+    candidate = (dataset_root / relative).resolve()
+    if not candidate.is_relative_to(dataset_root):
+        return None
+    return candidate if candidate.exists() and candidate.is_file() else None
+
+
+@router.get("/by-id/{doc_id}/pdf-contour")
+async def document_pdf_contour(
+    doc_id: str,
+    max_pages: int = Query(default=80, ge=1, le=200),
+    _user=Depends(require_user),
+):
+    """Read-only per-page PDF routing passport with coordinates and quality."""
+    document, source_path = _pdf_document_source(doc_id)
+    try:
+        return await asyncio.to_thread(
+            audit_pdf,
+            source_path,
+            doc_id=doc_id,
+            file_name=str(document.get("file_name") or ""),
+            max_pages=max_pages,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/by-id/{doc_id}/pdf-contour/pages/{page_number}/preview")
+async def document_pdf_contour_preview(
+    doc_id: str,
+    page_number: int,
+    width: int = Query(default=1200, ge=320, le=1800),
+    bbox: str = Query(default="", max_length=160),
+    _user=Depends(require_user),
+):
+    """Render the page or an exact evidence bbox as PNG; source stays untouched."""
+    _document, source_path = _pdf_document_source(doc_id)
+    parsed_bbox = None
+    if bbox.strip():
+        try:
+            values = tuple(float(value.strip()) for value in bbox.split(","))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="bbox must contain four numbers") from exc
+        if len(values) != 4:
+            raise HTTPException(status_code=400, detail="bbox must contain four numbers")
+        parsed_bbox = values
+    try:
+        content = await asyncio.to_thread(
+            render_page_preview,
+            source_path,
+            page_number=page_number,
+            max_width=width,
+            bbox=parsed_bbox,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={"Content-Disposition": f'inline; filename="page-{page_number}.png"'},
+    )
+
+
 @router.post("/by-id/{doc_id}/open-native")
 async def open_document_native(
     doc_id: str,
@@ -80,12 +182,9 @@ async def open_document_native(
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
-    source_path_raw = str(document.get("source_path") or "").strip()
-    if not source_path_raw:
+    source_path = _resolved_document_source(document)
+    if source_path is None:
         raise HTTPException(status_code=404, detail="document has no source_path")
-    source_path = Path(source_path_raw).expanduser()
-    if not source_path.exists() or not source_path.is_file():
-        raise HTTPException(status_code=404, detail="source file not found")
     try:
         completed = subprocess.run(["open", str(source_path)], check=False, timeout=5)
     except Exception as exc:  # noqa: BLE001

@@ -214,23 +214,24 @@ def test_windows_production_defaults_to_ollama_and_reads_persisted_choice():
     assert 'if (-not $Model -and $Provider -eq "ollama") { $Model = "qwen3.5:9b" }' in text
 
 
-def test_windows_bootstrap_preloads_complete_local_rag_model_set():
+def test_windows_bootstrap_requires_user_selected_models_without_pulling_them():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
     assert "--provider ollama --ensure-platform windows" in text
-    assert '"qwen3.5:9b"' in text
-    assert '"bge-m3:latest"' in text
+    assert "Рекомендуем qwen3.5:9b" in text
+    assert '$Ollama show "bge-m3:latest"' in text
     assert "--extra windows-reranker" in text
     assert "tools\\onboard_reranker.py" in text
     assert '"BAAI/bge-reranker-v2-m3"' in (
         build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
     ).read_text(encoding="utf-8")
-    assert "$Ollama show" in text
-    assert "$Ollama pull" in text
+    assert "$Ollama show $configuredModel" in text
+    assert "$Ollama pull" not in text
+    assert 'Require-Setup "Модель $configuredModel не установлена.' in text
 
 
-def test_windows_bootstrap_installs_and_requires_uv_ollama_docker():
+def test_windows_bootstrap_bundles_core_and_defers_external_components_to_wizard():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
@@ -249,13 +250,14 @@ def test_windows_bootstrap_installs_and_requires_uv_ollama_docker():
     assert "tools\\uv.exe" in text
     assert "Get-FileHash -LiteralPath $bundled -Algorithm SHA256" in text
     assert "https://docs.astral.sh/uv/getting-started/installation/" in text
-    assert 'Install-WingetRequirement "Ollama.Ollama"' in text
-    assert 'Install-WingetRequirement "Docker.DockerDesktop"' in text
+    assert "function Require-Setup" in text
+    assert '"ollama_missing"' in text
+    assert '"docker_missing"' in text
     assert "https://ollama.com/download/windows" in text
     assert "https://www.docker.com/products/docker-desktop/" in text
     assert '"docker_engine_unavailable"' in text
     assert '"qdrant_health_failed"' in text
-    assert "RAG features limited" not in text
+    assert 'Write-Status -Phase "setup" -State "setup_required"' in text
 
 
 def test_windows_bootstrap_repairs_and_reports_uv_sync():

@@ -4,7 +4,6 @@
 scoped вопросы. Glossary final только если термин ЛИТЕРАЛЬНО в запросе. Registry только точный глобальный.
 """
 
-import os
 from pathlib import Path
 
 import pytest
@@ -146,9 +145,6 @@ def test_legacy_xls_returns_actionable_missing(tmp_path):
 
 
 # ── регрессии ─────────────────────────────────────────────────────────────────────────────
-
-def test_flag_off_preserves_chat_behavior():
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True
 
 def test_v16_sidecar_operations_regression():
     from proxy.services import sidecar_ops_service as ops

@@ -63,9 +63,14 @@ def _pdf_page_nodes_enabled(file_path: Path, route: DocumentRoute | None = None)
         return False
     if os.getenv("RAG_PDF_PAGE_NODES_ENABLED", "true").lower() not in ("1", "true", "yes", "on"):
         return False
-    if route and route.pipeline == "markdown_needs_ocr":
-        return False
     return True
+
+
+def _pdf_page_passport_enabled(file_path: Path) -> bool:
+    return (
+        file_path.suffix.lower() == ".pdf"
+        and os.getenv("RAG_PDF_PAGE_PASSPORT_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+    )
 
 
 def _pdf_page_node_max_chars() -> int:
@@ -2745,7 +2750,13 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
         phase_start = _t.time()
         if _pdf_page_nodes_enabled(file_path, route):
-            file_nodes = self._sync_pdf_page_text_nodes(file_key, dataset_id, md_content, route)
+            file_nodes = self._sync_pdf_page_text_nodes(
+                file_key,
+                dataset_id,
+                md_content,
+                route,
+                file_path=file_path,
+            )
             if timings is not None:
                 timings["chunk_sec"] = timings.get("chunk_sec", 0.0) + (_t.time() - phase_start)
             if file_nodes:
@@ -2788,10 +2799,24 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         dataset_id: str,
         md_content: str,
         route: DocumentRoute | None = None,
+        *,
+        file_path: Path | None = None,
     ) -> list[dict]:
         page_blocks = self._split_pdf_page_markdown(md_content)
         if not page_blocks:
             return []
+        page_passports: dict[int, dict[str, Any]] = {}
+        if file_path is not None and _pdf_page_passport_enabled(file_path):
+            try:
+                from proxy.services.pdf_contour_service import rag_page_metadata
+
+                page_passports = rag_page_metadata(
+                    file_path,
+                    [page_no for page_no, _text in page_blocks],
+                    file_name=file_key,
+                )
+            except Exception as error:  # noqa: BLE001 - passport enrichment must not lose searchable text
+                logger.warning("[PDF-CONTOUR] page passport failed for %s: %s", file_key, error)
         max_chars = _pdf_page_node_max_chars()
         overlap = min(_pdf_page_node_overlap_chars(), max_chars // 3)
         nodes: list[dict] = []
@@ -2801,8 +2826,27 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 continue
             chunks = self._split_pdf_page_text(text, max_chars=max_chars, overlap=overlap)
             part_count = len(chunks)
+            passport = page_passports.get(page_no) or {}
+            quality = passport.get("recognition_quality") if isinstance(passport.get("recognition_quality"), dict) else {}
+            signals = passport.get("signals") if isinstance(passport.get("signals"), dict) else {}
+            stamp = passport.get("stamp") if isinstance(passport.get("stamp"), dict) else {}
+            fragment_bboxes = [
+                {
+                    "fragment_id": item.get("fragment_id"),
+                    "bbox": item.get("bbox"),
+                    "source_ref": item.get("source_ref"),
+                }
+                for item in (passport.get("evidence_fragments") or [])
+                if isinstance(item, dict)
+            ][:5]
+            route_uses_ocr = str(getattr(route, "pipeline", "") or "") == "markdown_needs_ocr"
+            source_layer = "pdf_ocr_text" if route_uses_ocr or passport.get("requires_ocr") else "pdf_text_layer"
             for part_no, chunk_text in enumerate(chunks, start=1):
-                if len(chunk_text.strip()) < MIN_CHUNK:
+                # A short PDF page can still be decisive evidence: a cover mark,
+                # sheet number, room code or equipment designation.  The generic
+                # markdown noise threshold must not discard an entire non-empty
+                # page after the page router has already identified it.
+                if not chunk_text.strip():
                     continue
                 title = f"## Page {page_no}"
                 if part_count > 1:
@@ -2810,11 +2854,25 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 text_for_index = f"{title}\n\n{chunk_text.strip()}"
                 payload = {
                     "type": "pdf_page_text",
-                    "source_layer": "pdf_fast_text",
+                    "source_layer": source_layer,
                     "page": page_no,
                     "page_part": part_no,
                     "page_parts": part_count,
+                    "source_ref": str(passport.get("source_ref") or f"{file_key}#page={page_no}"),
                 }
+                if passport:
+                    payload.update({
+                        "pdf_page_passport_schema": passport.get("schema"),
+                        "pdf_page_type": passport.get("page_type"),
+                        "pdf_page_type_label": passport.get("page_type_label"),
+                        "pdf_routing_confidence": passport.get("routing_confidence"),
+                        "pdf_requires_ocr": bool(passport.get("requires_ocr")),
+                        "pdf_recognition_quality": quality,
+                        "pdf_page_signals": signals,
+                        "pdf_stamp_status": stamp.get("status"),
+                        "pdf_sheet_number": stamp.get("sheet_number") or "",
+                        "pdf_fragment_bboxes": fragment_bboxes,
+                    })
                 nodes.append({
                     "text": text_for_index,
                     "doc_id": str(uuid.uuid5(
@@ -2827,7 +2885,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     @staticmethod
     def _split_pdf_page_markdown(md_content: str) -> list[tuple[int, str]]:
-        matches = list(re.finditer(r"(?m)^## Page (\d+)\s*$", md_content or ""))
+        matches = list(re.finditer(r"(?m)^## (?:Page|Стр\.)\s+(\d+)\s*$", md_content or ""))
         pages: list[tuple[int, str]] = []
         for index, match in enumerate(matches):
             start = match.end()

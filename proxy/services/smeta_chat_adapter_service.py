@@ -353,6 +353,11 @@ def _smeta_document_timeout(runtime: LlmRuntime) -> float:
     )
 
 
+def _smeta_document_seed() -> int:
+    """Sampling seed recorded for repeatable fresh document runs."""
+    return _env_int("LES_SMETA_DOCUMENT_SEED", 0)
+
+
 def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Translate the shared conversation to Ollama's native message contract."""
     native: list[dict[str, Any]] = []
@@ -378,6 +383,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
+    seed = _smeta_document_seed()
+    applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
@@ -393,6 +400,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "think": _env_bool("LES_SMETA_DOCUMENT_THINK", False),
             "options": {
                 "temperature": 0.0,
+                "seed": seed,
                 "num_predict": max_tokens,
                 # The Ollama default can be only 4K. Agent/tool workflows need
                 # enough room to retain search/read evidence across turns.
@@ -416,6 +424,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "max_tokens": max_tokens,
             "parallel_tool_calls": True,
         }
+        if applied_seed is not None:
+            body["seed"] = applied_seed
         body = _cloud_body_for_model(body, runtime.model, runtime.provider)
         chat_url = runtime.chat_url
     if is_cloud_provider(runtime.provider) and "glm" in str(runtime.model or "").casefold():
@@ -440,6 +450,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             message["_les_eval_count"] = payload.get("eval_count")
             message.setdefault("_les_model", runtime.model)
             message.setdefault("_les_provider", runtime.provider)
+            if applied_seed is not None:
+                message.setdefault("_les_seed", applied_seed)
             return message
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] native agent exchange failed: %s", error)
@@ -458,6 +470,8 @@ def _smeta_document_mapping_exchange(
     """Serialize the same model's decisions with provider-enforced JSON schema."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 6000)
+    seed = _smeta_document_seed()
+    applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         body = {
@@ -469,6 +483,7 @@ def _smeta_document_mapping_exchange(
             # silently ignore `format` when thinking is explicitly disabled.
             "options": {
                 "temperature": 0.0,
+                "seed": seed,
                 "num_predict": max_tokens,
                 "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
             },
@@ -488,6 +503,8 @@ def _smeta_document_mapping_exchange(
                 "json_schema": {"name": "lsr_mapping", "strict": True, "schema": schema},
             },
         }
+        if applied_seed is not None:
+            body["seed"] = applied_seed
         body = _cloud_body_for_model(body, runtime.model, runtime.provider)
         chat_url = runtime.chat_url
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
@@ -509,6 +526,8 @@ def _smeta_document_mapping_exchange(
             parsed["_les_eval_count"] = response_payload.get("eval_count")
             parsed["_les_model"] = runtime.model
             parsed["_les_provider"] = runtime.provider
+            if applied_seed is not None:
+                parsed["_les_seed"] = applied_seed
             return parsed
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] structured mapping exchange failed: %s", error)

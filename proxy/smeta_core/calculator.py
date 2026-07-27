@@ -223,6 +223,13 @@ def calculate_scenario(
         {"code": "duplicate_coverage_binding", "work_id": work_id}
         for work_id in sorted(set(duplicate_coverage))
     )
+    if (k_ozp != 1.0 or k_em != 1.0) and not str(coefficient_basis or "").strip():
+        blockers.append({
+            "code": "coefficient_source_missing",
+            "work_id": "",
+            "k_ozp": k_ozp,
+            "k_em": k_em,
+        })
     work_ids = {work.work_id for work in work_items}
     unsafe_source = False
     for index, work in enumerate(work_items, 1):

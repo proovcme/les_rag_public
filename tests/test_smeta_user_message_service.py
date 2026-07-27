@@ -47,6 +47,26 @@ def test_complete_lsr_message_calls_total_the_estimate():
     assert "Стоимость рассчитанной части" not in message
 
 
+def test_draft_lsr_message_never_calls_result_final_estimate():
+    message = format_document_lsr_message(
+        "ВОР.xlsx",
+        {
+            "input_rows": 3,
+            "bound_rows": 3,
+            "open_rows": 0,
+            "total_without_vat": 1000,
+            "total_with_vat": 1220,
+            "result_status": "priced_draft",
+            "approval_status": "auto_draft",
+        },
+    )
+
+    assert message.startswith("Проверяемый черновик сметы собрал")
+    assert "Стоимость рассчитанного черновика составляет 1 000,00 руб." in message
+    assert "не является финальным" in message
+    assert "Стоимость сметы" not in message
+
+
 def test_partial_lsr_message_mentions_covered_rows_without_hiding_open_rows():
     message = format_document_lsr_message(
         "ВОР.pdf",

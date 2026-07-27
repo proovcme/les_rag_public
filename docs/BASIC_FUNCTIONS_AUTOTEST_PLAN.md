@@ -72,10 +72,14 @@ make smoke-basic-release
 /api/metrics отвечает
 /api/diag отвечает `ok/warn` или честно требует auth; `overall=err` не скрывается
 /api/scope/options отвечает; пустой новый контур маркируется WARN
-/api/chat возвращает answer, query_route и version_info
+/api/chat возвращает answer, query_route и `versions.version_info` (legacy top-level `version_info` тоже принимается)
 глоссарный запрос идёт через `query_route.channel=glossary`
 проектный вопрос без scope не уходит в glossary и сохраняет version trace
 ```
+
+Один model-first chat probe имеет конечный budget 90 секунд, калиброванный для локального
+9B на Mac Mini; фактическое время остаётся в JSON и консольном отчёте. Это timeout только
+smoke-инструмента, а не изменение продуктового timeout или разрешение бесконечного ожидания.
 
 ### L2 - browser smoke
 

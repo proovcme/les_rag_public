@@ -14,6 +14,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Callable, Iterable, List, Optional
+from uuid import uuid4
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Query
@@ -91,6 +92,9 @@ from proxy.services.smeta_chat_application_service import (
     run_smeta_direct_application,
     run_smeta_document_application,
 )
+from proxy.smeta_core.document_workflow import finalize_locked_mapping_revision
+from proxy.smeta_core.professional_review import create_user_lock_revision
+from proxy.smeta_core.revision_store import DEFAULT_ROOT as SMETA_REVISION_ROOT
 from proxy.services.smeta_chat_adapter_service import (
     _smeta_model_runtime,
     _smeta_request_needs_lsr_output,
@@ -137,6 +141,67 @@ async def smeta_artifact_download(path: str = Query(...), _user=Depends(require_
         raise HTTPException(404, "Файл не найден")
     media = _XLSX_MEDIA if target.suffix.lower() == ".xlsx" else "text/csv; charset=utf-8"
     return FileResponse(target, media_type=media, filename=target.name)
+
+
+class SmetaMappingLockRequest(BaseModel):
+    review_note: str
+    accepted_conflict_ids: List[str] = []
+
+    @field_validator("review_note")
+    @classmethod
+    def review_note_required(cls, value: str) -> str:
+        cleaned = str(value or "").strip()
+        if not cleaned:
+            raise ValueError("Нужно указать результат пользовательской проверки")
+        if len(cleaned) > 1000:
+            raise ValueError("Комментарий проверки слишком длинный")
+        return cleaned
+
+
+@router.post("/smeta-mappings/{revision_id}/lock")
+async def lock_smeta_mapping(
+    revision_id: str,
+    req: SmetaMappingLockRequest,
+    user=Depends(require_user),
+):
+    """Lock a reviewed mapping and calculate a separate user-owned revision."""
+
+    try:
+        locked = create_user_lock_revision(
+            revision_id,
+            root=SMETA_REVISION_ROOT,
+            reviewed_by=str(user.holder or user.role),
+            review_note=req.review_note,
+            accepted_conflict_ids=tuple(req.accepted_conflict_ids),
+        )
+        token = uuid4().hex
+        _SMETA_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+        xlsx_path = _SMETA_ARTIFACT_DIR / f"lsr_locked_{token}.xlsx"
+        report_path = _SMETA_ARTIFACT_DIR / f"lsr_locked_{token}.json"
+        workflow = await asyncio.to_thread(
+            finalize_locked_mapping_revision,
+            locked,
+            out_xlsx=xlsx_path,
+            out_report=report_path,
+            revision_root=SMETA_REVISION_ROOT,
+        )
+    except FileNotFoundError as error:
+        raise HTTPException(404, "Mapping-ревизия не найдена") from error
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
+    summary = (workflow.get("lsr") or {}).get("summary") or {}
+    return {
+        "status": "mapping_locked",
+        "mapping_revision_id": locked.revision_id,
+        "calculation_status": summary.get("result_status"),
+        "summary": summary,
+        "artifact": {
+            "title": "Проверенная ЛСР",
+            "downloads": {
+                "xlsx": f"/api/smeta-artifacts/download?path={xlsx_path.name}",
+            },
+        },
+    }
 
 
 class ChatRequest(BaseModel):
@@ -1363,6 +1428,57 @@ def _recoverable_stream_payload(req: ChatRequest, stream_state: dict[str, Any], 
     }
 
 
+def _persist_recovered_stream_history(
+    req: ChatRequest,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist an already useful recovered SSE answer for session reopen."""
+    if payload.get("history_id"):
+        return payload
+    try:
+        sources = [
+            str(source.get("source_ref") or source.get("ref") or source.get("path") or source)
+            if isinstance(source, dict)
+            else str(source)
+            for source in (payload.get("sources") or [])
+        ]
+        history_id = save_chat_history(
+            question=req.question,
+            answer=str(payload.get("answer") or ""),
+            sources=sources,
+            crag_status=str(payload.get("crag_status") or "UNVALIDATED"),
+            latency_sec=0.0,
+            tokens=int(
+                ((payload.get("retrieval_trace") or {}).get("stream_recovery") or {}).get(
+                    "tokens"
+                )
+                or 0
+            ),
+            session_id=req.session_id,
+            query_route={
+                "channel": "stream_recovery",
+                "operation": "recovered_partial_answer",
+            },
+            retrieval_trace=(
+                payload.get("retrieval_trace")
+                if isinstance(payload.get("retrieval_trace"), dict)
+                else {}
+            ),
+            artifact=(
+                payload.get("artifact")
+                if isinstance(payload.get("artifact"), dict)
+                else None
+            ),
+            cache_type=str(payload.get("cache") or "stream_recovered"),
+            validation_enabled=False,
+        )
+        if history_id:
+            payload = {**payload, "history_id": history_id}
+    except Exception as error:  # persistence must not hide the recovered answer
+        logger.warning("[CHAT/STREAM] recovered history save failed: %s", error)
+    return payload
+
+
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
@@ -1441,6 +1557,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
       • `progress` — видимый шаг workflow для tool/детерминированных веток;
       • `smeta_step` — крупный этап сметного маршрута до/после model calls;
       • `smeta_batch` — прогресс батчей выбора норм для режима «Смета»;
+      • `smeta_row` — завершённое модельное решение по одной строке ВОР;
       • `reset` — очистить накопленный текст (ретрай/деградация на MLX);
       • `final` — полный payload (sources + вердикт валидации в `crag_status`);
       • `error` — {status, detail}.
@@ -1509,6 +1626,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
         except HTTPException as he:
             recovered = _recoverable_stream_payload(req, stream_state, he)
             if recovered is not None:
+                recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
                 await queue.put({"event": "error", "data": {"status": he.status_code, "detail": he.detail}})
@@ -1516,6 +1634,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
             logger.error("[CHAT/STREAM] %s", e)
             recovered = _recoverable_stream_payload(req, stream_state, e)
             if recovered is not None:
+                recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
                 await queue.put({"event": "error", "data": {"status": 500, "detail": f"{type(e).__name__}: {e}"}})
@@ -1532,9 +1651,9 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 yield _sse_event(item["event"], item.get("data", ""))
         finally:
             if not task.done():
-                task.cancel()
-                # Дождаться раскрутки отмены (освобождение семафора генерации,
-                # закрытие httpx-стрима) до возврата из генератора.
+                # Closing the tab must not discard a completed estimate/history
+                # record. Explicit user cancellation remains a separate UI action.
+                logger.info("[CHAT/STREAM] client disconnected; waiting for runner to finish")
                 await asyncio.gather(task, return_exceptions=True)
 
     return StreamingResponse(
@@ -3523,6 +3642,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "query_route": det_route,
             "retrieval_trace": det_trace,
             "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
+            "versions": _version_stamp(),
         }
         for key in ("provenance", "defense", "evidence_summary", "total_status"):
             if key in reply:

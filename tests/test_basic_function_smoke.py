@@ -4,6 +4,7 @@ import time
 from pathlib import Path
 
 from tools.basic_function_smoke import (
+    DEFAULT_CHAT_TIMEOUT,
     _chat,
     _r,
     check_chat_glossary,
@@ -13,6 +14,10 @@ from tools.basic_function_smoke import (
     compute_exit,
     failures,
 )
+
+
+def test_default_chat_timeout_covers_local_9b_release_probe():
+    assert DEFAULT_CHAT_TIMEOUT == 90.0
 
 
 def _mk(name, severity, status):
@@ -117,6 +122,17 @@ def test_glossary_smoke_requires_route_and_version_trace():
         "answer": "ОЖР — общий журнал работ.",
         "query_route": {"channel": "glossary"},
         "version_info": {},
+    }
+    result = check_chat_glossary(_Client(_Response(200, payload)), "http://example.test", timeout=1)
+
+    assert result["status"] == "pass"
+
+
+def test_glossary_smoke_accepts_current_nested_version_trace():
+    payload = {
+        "answer": "ОЖР — общий журнал работ.",
+        "query_route": {"channel": "glossary"},
+        "versions": {"version_info": {}},
     }
     result = check_chat_glossary(_Client(_Response(200, payload)), "http://example.test", timeout=1)
 

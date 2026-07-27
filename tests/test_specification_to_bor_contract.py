@@ -28,10 +28,11 @@ def test_model_owns_specification_decomposition_and_code_does_not_select_norms()
     assert "Скрытого selector норм, операций или режима нет" in SKILL_TEXT
 
 
-def test_model_submits_mapping_and_resource_actions_before_one_calculation_pass():
+def test_model_submits_mapping_before_global_review_and_user_locked_calculation():
     assert "mapping и явные ресурсные действия сохраняются вместе" in SKILL_TEXT
-    assert "после завершения моделью mapping он один раз считает и формирует XLSX" in SKILL_TEXT
-    assert "Отдельного обязательного resource-review, impact-review или повторного допуска нет" in SKILL_TEXT
+    assert "обязательно видит всю ВОР" in SKILL_TEXT
+    assert "создаёт новую immutable `global_review`-ревизию" in SKILL_TEXT
+    assert "`priced_final` создаётся отдельным расчётом только из пользовательской" in SKILL_TEXT
 
 
 def test_specification_parent_child_quantity_is_code_calculated():

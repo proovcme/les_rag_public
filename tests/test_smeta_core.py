@@ -37,6 +37,19 @@ def _technology_check(**overrides):
     return value
 
 
+def _candidate_evaluations(code, *, decision="selected"):
+    return [{
+        "candidate_code": code,
+        "operation_match": "exact",
+        "object_match": "exact",
+        "unit_match": "compatible",
+        "scope_match": "exact",
+        "foreign_resources": [],
+        "decision": decision,
+        "reason": "модель сравнила открытую карточку с исходной работой",
+    }]
+
+
 def _unbound_evidence(*, queries=None, opened=None):
     return {
         "queries_used": list(queries or ["буквальный поиск", "нормативная формулировка"]),
@@ -55,6 +68,103 @@ def test_norm_binding_cannot_be_selected_by_code():
             selection_kind="exact",
             is_analog=False,
         )
+
+
+def test_sequential_row_tasks_receive_completed_model_decisions():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Первая работа", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Вторая работа", "unit": "м", "quantity": 2},
+        {"work_id": "w3", "title": "Третья работа", "unit": "м2", "quantity": 3},
+    ]
+    received = []
+
+    def runner(work_rows, **_kwargs):
+        received.append(work_rows)
+        row = work_rows[0]
+        work_id = row["work_id"]
+        return {
+            "selections": {
+                work_id: {
+                    "norm_code": "",
+                    "reason": f"решение {work_id}",
+                    "review_status": "model_batch_unbound",
+                },
+            },
+            "browse_trace": {},
+            "query_trace": [],
+            "model_trace": [],
+            "valid_model_rows": 1,
+            "agent_trace": {"engine": "qwen_agent", "model_turns": 1},
+        }
+
+    result = workflow._run_native_norm_agent(
+        rows,
+        lambda _messages, _tools: {},
+        candidate_limit=8,
+        max_turns=6,
+        batch_size=1,
+        batch_runner=runner,
+        accumulate_task_state=True,
+    )
+
+    assert [len(batch) for batch in received] == [1, 1, 1]
+    assert received[0][0]["task_state"]["completed_decisions"] == []
+    assert received[1][0]["task_state"]["completed_decisions"] == [{
+        "work_id": "w1",
+        "title": "Первая работа",
+        "norm_code": "",
+        "covered_by_work_id": "",
+        "decision": "unbound",
+        "reason": "решение w1",
+    }]
+    assert received[2][0]["task_state"]["completed_rows"] == 2
+    assert result["agent_trace"]["batch_size"] == 1
+    assert result["agent_trace"]["task_mode"] == "sequential_rows"
+
+
+def test_terminal_mapping_emits_only_completed_row_payload():
+    from proxy.smeta_core import document_workflow as workflow
+
+    events = []
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 4}],
+        candidate_limit=8,
+        progress=events.append,
+    )
+    session.query_trace.append({
+        "work_id": "w1",
+        "queries": ["буквальный поиск", "нормативная формулировка"],
+    })
+
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "подходящая норма не найдена",
+            "unbound_evidence": _unbound_evidence(),
+        }]},
+        turn=1,
+    )
+
+    assert result == {"ok": True, "rows": 1}
+    ready = [event for event in events if event.get("phase") == "row_ready"]
+    assert len(ready) == 1
+    assert ready[0]["status"] == "done"
+    assert ready[0]["row"] == {
+        "work_id": "w1",
+        "title": "Работа",
+        "unit": "шт",
+        "quantity": 4,
+        "section": "",
+        "decision": "unbound",
+        "decision_label": "Оставлено без нормы",
+        "norm_code": "",
+        "covered_by_work_id": "",
+        "reason": "подходящая норма не найдена",
+    }
 
 
 def test_candidate_payload_marks_unit_mismatch_without_hiding_candidate(monkeypatch):
@@ -80,6 +190,38 @@ def test_candidate_payload_marks_unit_mismatch_without_hiding_candidate(monkeypa
 
     assert [item["norm_code"] for item in payload["candidates"]] == ["ГЭСН01-01-001-01"]
     assert payload["candidates"][0]["unit_compatible"] is False
+
+
+def test_candidate_payload_sorts_queries_for_repeatable_fresh_runs(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    seen = {}
+
+    def fake_browse(queries, limit=8, **_kwargs):
+        seen["queries"] = list(queries)
+        return {
+            query: {
+                "backend": "rrf",
+                "cards": [{
+                    "norm_code": f"ГЭСН01-01-00{index}-01",
+                    "title": query,
+                    "measure_unit": "шт",
+                }],
+            }
+            for index, query in enumerate(queries, 1)
+        }
+
+    monkeypatch.setattr(workflow, "browse_norms_many", fake_browse)
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+
+    payload = workflow._candidate_payload(
+        {"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1},
+        ["яблоко", " абрикос ", "яблоко"],
+        limit=5,
+    )
+
+    assert seen["queries"] == ["абрикос", "яблоко"]
+    assert payload["query"] == ["абрикос", "яблоко"]
 
 
 def test_candidate_payload_is_paginated_without_code_side_selection(monkeypatch):
@@ -109,21 +251,265 @@ def test_candidate_payload_is_paginated_without_code_side_selection(monkeypatch)
     assert second["page"] == 1
 
 
+def test_search_page_caps_catalog_style_limit_without_hiding_next_page(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "typed_sqlite_fts", "cards": [
+            {"norm_code": f"ГЭСН15-01-001-{index:02d}", "title": f"Кандидат {index}", "measure_unit": "м2"}
+            for index in range(1, 13)
+        ]} for query in queries
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Работа", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+    )
+
+    result = session.execute(
+        "search_norms_batch",
+        {"items": [{
+            "work_id": "w1", "query": "работа", "search_intent": "source_literal", "limit": 100,
+        }]},
+        turn=1,
+    )
+
+    row = result["rows"][0]
+    assert row["requested_limit"] == 100
+    assert row["page_size"] == 4
+    assert len(row["candidates"]) == 4
+    assert row["has_more"] is True
+
+
 def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     from proxy.smeta_core.document_workflow import _batch_norm_tools
 
     tools = _batch_norm_tools()
     names = [(item.get("function") or {}).get("name") for item in tools]
 
-    assert names == ["search_norms_batch", "read_norms_batch", "submit_lsr_mapping"]
+    assert names == [
+        "browse_norm_catalog", "search_norms_batch", "read_norms_batch", "submit_lsr_mapping",
+    ]
+    catalog_item = tools[0]["function"]["parameters"]["properties"]["items"]["items"]
+    assert "table" not in catalog_item["properties"]
+    assert "limit" not in catalog_item["properties"]
     assert not {"search_norms", "read_norm", "bind_norm", "finish_norm_selection"}.intersection(names)
     submit = tools[-1]["function"]["parameters"]["properties"]["rows"]["items"]
     assert "quantity_multiplier" not in submit["properties"]
     assert submit["properties"]["decision"]["enum"] == ["bind", "covered_by", "unbound"]
     assert submit["required"] == ["work_id", "decision", "reason"]
     assert "technology_check" in submit["allOf"][0]["then"]["required"]
+    assert "candidate_evaluations" in submit["allOf"][0]["then"]["required"]
+    comparison = submit["properties"]["candidate_evaluations"]["items"]
+    assert comparison["properties"]["decision"]["enum"] == ["selected", "rejected", "uncertain"]
     assert "required" in submit["properties"]["technology_check"]
     assert "unbound_evidence" in submit["properties"]
+
+
+def test_catalog_tool_exposes_current_typed_collection_scope(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    seen = {}
+
+    def catalog(**kwargs):
+        seen.update(kwargs)
+        return {
+            "level": "collection",
+            "filters": {"family": kwargs["family"], "collection": "", "table": ""},
+            "items": [{
+                "key": "15",
+                "norm_count": 120,
+                "resource_count": 900,
+                "source_example": "Сборник 15. Отделочные работы / Раздел 4",
+            }],
+        }
+
+    monkeypatch.setattr(workflow, "browse_norm_catalog", catalog)
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Окраска потолков", "unit": "м2", "quantity": 3.2}],
+        candidate_limit=8,
+    )
+
+    result = session.execute(
+        "browse_norm_catalog",
+        {"items": [{"work_id": "w1", "family": "ГЭСН", "limit": 5}]},
+        turn=1,
+    )
+
+    assert result["ok"] is True
+    assert result["rows"][0]["level"] == "collection"
+    assert result["rows"][0]["items"] == [{
+        "key": "15",
+        "norm_count": 120,
+        "resource_count": 900,
+        "source_example": "Сборник 15. Отделочные работы / Раздел 4",
+    }]
+    assert session.catalog_trace[0]["work_id"] == "w1"
+    assert seen["limit"] == 100
+
+
+def test_catalog_stops_at_collection_scope_and_suppresses_repeated_page(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = 0
+
+    def catalog(**_kwargs):
+        nonlocal calls
+        calls += 1
+        return {
+            "level": "family", "filters": {},
+            "items": [{"key": "ГЭСН", "norm_count": 100, "resource_count": 200}],
+        }
+
+    monkeypatch.setattr(workflow, "browse_norm_catalog", catalog)
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Окраска потолков", "unit": "м2", "quantity": 3.2}],
+        candidate_limit=8,
+    )
+
+    first = session.execute(
+        "browse_norm_catalog", {"items": [{"work_id": "w1"}]}, turn=1,
+    )
+    repeated = session.execute(
+        "browse_norm_catalog", {"items": [{"work_id": "w1"}]}, turn=2,
+    )
+    selected = session.execute(
+        "browse_norm_catalog",
+        {"items": [{"work_id": "w1", "family": "ГЭСН", "collection": "15"}]},
+        turn=3,
+    )
+
+    assert calls == 1
+    assert first["rows"][0]["level"] == "family"
+    assert repeated["rows"][0]["level"] == "already_seen"
+    assert repeated["rows"][0]["items"] == []
+    assert selected["rows"][0] == {
+        "work_id": "w1",
+        "ok": True,
+        "level": "scope_selected",
+        "filters": {"family": "ГЭСН", "collection": "15"},
+        "items": [],
+        "next_action": "call search_norms_batch; use read_norms_batch for full norm cards",
+    }
+
+
+def test_search_uses_model_selected_collection_and_shows_scope(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = []
+
+    def browse(queries, **kwargs):
+        calls.append({"queries": queries, **kwargs})
+        collection = (kwargs.get("collections") or [""])[0]
+        return {
+            query: {
+                "backend": "typed_sqlite_fts",
+                "cards": [{
+                    "norm_code": f"ГЭСН{collection}-04-001-01",
+                    "norm_key": f"ГЭСН:{collection}-04-001-01",
+                    "edition": "ФСНБ-2022",
+                    "base_type": "ГЭСН",
+                    "title": "Окраска потолков",
+                    "measure_unit": "100 м2",
+                    "work_steps": ["Окраска подготовленной поверхности"],
+                    "resource_count": 2,
+                    "resource_kinds": {"labor": 1, "material": 1},
+                    "resource_preview": [{
+                        "kind": "material", "code": "01.7", "name": "Краска", "unit": "кг",
+                    }],
+                    "source_ref": f"Сборник {collection}. Область модели / Раздел 1",
+                }],
+            }
+            for query in queries
+        }
+
+    monkeypatch.setattr(workflow, "browse_norms_many", browse)
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Окраска потолков", "unit": "м2", "quantity": 3.2}],
+        candidate_limit=8,
+    )
+
+    result = session.execute(
+        "search_norms_batch",
+        {"items": [{
+            "work_id": "w1",
+            "query": "окраска потолков водоэмульсионной краской",
+            "search_intent": "fsnb_technology",
+            "scope_mode": "scoped",
+            "base_types": ["ГЭСН"],
+            "collections": ["15"],
+        }]},
+        turn=2,
+    )
+
+    assert calls[0]["base_types"] == ["ГЭСН"]
+    assert calls[0]["collections"] == ["15"]
+    candidate = result["rows"][0]["candidates"][0]
+    assert candidate["norm_code"].startswith("ГЭСН15-")
+    assert candidate["base_type"] == "ГЭСН"
+    assert candidate["collection"] == "15"
+    assert candidate["edition"] == "ФСНБ-2022"
+    assert candidate["unit_compatible"] is True
+    assert candidate["source_ref"].startswith("Сборник 15.")
+    assert candidate["work_steps"] == ["Окраска подготовленной поверхности"]
+    assert candidate["resource_kinds"] == {"labor": 1, "material": 1}
+    assert candidate["resource_preview"][0]["name"] == "Краска"
+    assert candidate["matched_query"] == "окраска потолков водоэмульсионной краской"
+    assert result["rows"][0]["search_intent"] == "fsnb_technology"
+    assert result["rows"][0]["scope_plan"]["schema"] == "smeta_scope_plan_v1"
+    assert result["rows"][0]["scope_plan"]["scope_mode"] == "scoped"
+    assert result["rows"][0]["scope_plan"]["explicit_scope_mode"] is True
+    assert result["rows"][0]["filters"]["collections"] == ["15"]
+    assert result["rows"][0]["retrieval_backend"] == "typed_sqlite_fts"
+    assert session.query_trace[0]["filters"] == {
+        "base_types": ["ГЭСН"], "collections": ["15"],
+    }
+    assert session.query_trace[0]["candidate_codes"] == ["ГЭСН15-04-001-01"]
+
+
+def test_explicit_scope_plan_rejects_contradictory_transport_without_search(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = []
+    monkeypatch.setattr(
+        workflow,
+        "browse_norms_many",
+        lambda queries, **kwargs: calls.append((queries, kwargs)) or {},
+    )
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж блока", "unit": "шт", "quantity": 1}],
+        candidate_limit=8,
+    )
+
+    missing_scope = session.execute(
+        "search_norms_batch",
+        {"items": [{
+            "work_id": "w1",
+            "query": "монтаж блока",
+            "search_intent": "fsnb_technology",
+            "scope_mode": "scoped",
+        }]},
+        turn=1,
+    )
+    filtered_global = session.execute(
+        "search_norms_batch",
+        {"items": [{
+            "work_id": "w1",
+            "query": "монтаж блока",
+            "search_intent": "fsnb_technology",
+            "scope_mode": "global",
+            "base_types": ["ГЭСНм"],
+            "collections": ["10"],
+        }]},
+        turn=2,
+    )
+
+    assert calls == []
+    assert missing_scope["rows"][0]["error"] == "invalid model scope plan"
+    assert "requires model-selected" in missing_scope["rows"][0]["details"][0]
+    assert filtered_global["rows"][0]["error"] == "invalid model scope plan"
+    assert "cannot contain" in filtered_global["rows"][0]["details"][0]
 
 
 def test_mapping_transport_does_not_rewrite_model_decision():
@@ -137,6 +523,158 @@ def test_mapping_transport_does_not_rewrite_model_decision():
     }
 
     assert _normalize_mapping_row_transport(decision) == decision
+
+
+def test_terminal_rejects_bind_without_complete_technology_evidence():
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Окраска потолков", "unit": "м2", "quantity": 3.2}],
+        candidate_limit=8,
+    )
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": "ГЭСН15-04-026-09",
+            "selection_kind": "exact",
+            "applicability": "exact",
+            "technology_check": {},
+            "reason": "совпало название",
+        }]},
+        turn=1,
+    )
+
+    assert result["ok"] is False
+    assert result["errors"][0]["error"] == "incomplete bind evidence"
+    assert "technology_check.matched_operations must be an array" in result["errors"][0]["details"]
+
+
+def test_terminal_requires_model_owned_comparison_for_opened_alternatives(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    codes = ["ГЭСН15-01-001-01", "ГЭСН15-01-001-02"]
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "typed_sqlite_fts", "cards": [
+            {"norm_code": code, "title": f"Кандидат {index}", "measure_unit": "м2"}
+            for index, code in enumerate(codes, 1)
+        ]} for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": code, "unit": "м2", "work_steps": ["Окраска"], "resources": [],
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Окраска", "unit": "м2", "quantity": 10}],
+        candidate_limit=4,
+    )
+    session.execute(
+        "search_norms_batch",
+        {"items": [{"work_id": "w1", "query": "окраска", "search_intent": "source_literal"}]},
+        turn=1,
+    )
+    session.execute(
+        "read_norms_batch",
+        {"items": [{"work_id": "w1", "norm_code": code} for code in codes]},
+        turn=2,
+    )
+    base = {
+        "work_id": "w1", "decision": "bind", "norm_code": codes[0],
+        "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+        "technology_check": _technology_check(), "reason": "первый кандидат подходит",
+    }
+
+    incomplete = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{**base, "candidate_evaluations": _candidate_evaluations(codes[0])}]},
+        turn=3,
+    )
+
+    assert incomplete["ok"] is False
+    assert "compare at least one" in " ".join(incomplete["errors"][0]["details"])
+
+    comparisons = [
+        *_candidate_evaluations(codes[0]),
+        {
+            **_candidate_evaluations(codes[1], decision="rejected")[0],
+            "operation_match": "partial",
+            "scope_match": "partial",
+            "reason": "вторая карточка покрывает только часть операции",
+        },
+    ]
+    accepted = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{**base, "candidate_evaluations": comparisons}]},
+        turn=4,
+    )
+
+    assert accepted == {"ok": True, "rows": 1}
+    assert session.accepted_rows["w1"]["candidate_evaluations"] == comparisons
+
+
+def test_candidate_comparison_tolerates_only_semantically_identical_duplicates():
+    from proxy.smeta_core import document_workflow as workflow
+
+    codes = ["ГЭСН15-01-001-01", "ГЭСН15-01-001-02"]
+    cards = {code: {"norm_code": code} for code in codes}
+    selected = _candidate_evaluations(codes[0])[0]
+    rejected = _candidate_evaluations(codes[1], decision="rejected")[0]
+    item = {
+        "norm_code": codes[0],
+        "candidate_evaluations": [
+            selected,
+            rejected,
+            {**selected, "reason": "то же сравнение повторно сериализовано моделью"},
+        ],
+    }
+
+    assert workflow._candidate_evaluation_errors(
+        item, candidates_for_work=cards, opened_for_work=cards,
+    ) == []
+
+    conflicting = {
+        **item,
+        "candidate_evaluations": [
+            *item["candidate_evaluations"],
+            {**selected, "decision": "rejected"},
+        ],
+    }
+    errors = workflow._candidate_evaluation_errors(
+        conflicting, candidates_for_work=cards, opened_for_work=cards,
+    )
+    assert any("conflicts with an earlier evaluation" in error for error in errors)
+
+
+def test_read_norm_resources_are_not_truncated_at_thirty(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "ГЭСН15-01-001-01"
+    resources = [
+        {"code": f"R-{index:02d}", "name": f"Ресурс {index}", "unit": "кг", "kind": "material", "per_unit": 1}
+        for index in range(35)
+    ]
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda *_args, **_kwargs: {
+        "key": "ГЭСН:15-01-001-01", "base_type": "ГЭСН", "name": "Работа", "unit": "м2",
+        "work_steps": ["Работа"], "resources": resources,
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Работа", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+    )
+    session.candidates["w1"][code] = {
+        "norm_code": code, "norm_key": "ГЭСН:15-01-001-01", "base_type": "ГЭСН",
+    }
+
+    result = session.execute(
+        "read_norms_batch",
+        {"items": [{"work_id": "w1", "norm_code": code, "include_resources": True}]},
+        turn=1,
+    )
+
+    card = result["rows"][0]["norms"][0]
+    assert card["resource_count"] == 35
+    assert len(card["resources"]) == 35
 
 
 def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation(monkeypatch):
@@ -190,7 +728,9 @@ def test_batch_agent_default_keeps_fifty_rows_in_one_model_conversation(monkeypa
     assert [len(item["payload"]["work_items"]) for item in captured] == [50, 50]
     assert "all_source_rows_context" not in captured[0]["payload"]
     assert captured[0]["payload"]["user_request"] == "Собери ЛСР по всем строкам"
-    assert captured[0]["tools"] == ["search_norms_batch", "read_norms_batch"]
+    assert captured[0]["tools"] == [
+        "browse_norm_catalog", "search_norms_batch", "read_norms_batch",
+    ]
     assert len(result["selections"]) == 50
     assert result["agent_trace"]["turns"] == 2
     assert all(item["review_status"] == "model_batch_unbound" for item in result["selections"].values())
@@ -277,6 +817,7 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-001-01",
             "selection_kind": "exact", "applicability": "exact",
             "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations("ГЭСН01-01-001-01"),
             "technology_check": _technology_check(),
             "resource_actions": [], "reason": "модель выбрала после чтения карточки",
         }])],
@@ -298,9 +839,15 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
     assert result["selections"]["w1"]["review_status"] == "model_batch"
     assert result["query_trace"][0]["phase"] == "batch_search"
     assert result["agent_trace"]["turns"] == 3
-    assert tool_sets[0] == ["search_norms_batch", "read_norms_batch"]
-    assert tool_sets[1] == ["search_norms_batch", "read_norms_batch"]
-    assert tool_sets[2] == ["search_norms_batch", "read_norms_batch"]
+    assert tool_sets[0] == [
+        "browse_norm_catalog", "search_norms_batch", "read_norms_batch",
+    ]
+    assert tool_sets[1] == [
+        "browse_norm_catalog", "search_norms_batch", "read_norms_batch",
+    ]
+    assert tool_sets[2] == [
+        "browse_norm_catalog", "search_norms_batch", "read_norms_batch",
+    ]
 
 
 def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
@@ -313,15 +860,31 @@ def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
         ]}
         for query in queries
     })
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda *_args, **_kwargs: {
+        "name": "Кандидат 5", "unit": "шт",
+        "work_steps": ["Монтаж элемента"], "resources": [],
+    })
     turns = iter([
         [_native_call(
             "search",
             "search_norms_batch",
-            items=[{"work_id": "w1", "queries": ["монтаж элемента"], "limit": 2}],
+            items=[{
+                "work_id": "w1",
+                "queries": ["монтаж элемента", "установка элемента ФСНБ"],
+                "limit": 2,
+            }],
             page="2",
+        )],
+        [_native_call(
+            "read", "read_norms_batch",
+            items=[{"work_id": "w1", "norm_codes": ["ГЭСН01-01-001-05"]}],
         )],
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "unbound", "reason": "решение модели",
+            "unbound_evidence": _unbound_evidence(
+                queries=["монтаж элемента", "установка элемента ФСНБ"],
+                opened=["ГЭСН01-01-001-05"],
+            ),
         }])],
     ])
 
@@ -329,7 +892,7 @@ def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
         [{"work_id": "w1", "title": "Монтаж элемента", "unit": "шт", "quantity": 1}],
         lambda _messages, _tools: {"tool_calls": next(turns)},
         candidate_limit=6,
-        max_turns=2,
+        max_turns=3,
     )
 
     search_result = result["model_trace"][0]["tool_results"][0]["result"]["rows"][0]
@@ -368,7 +931,9 @@ def test_batch_agent_repairs_gemma_nested_work_id_without_changing_choice(monkey
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
             "selection_kind": "exact", "applicability": "exact",
-            "analog_limitations": [], "technology_check": check,
+            "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations("ГЭСН67-01-003-01"),
+            "technology_check": check,
             "resource_actions": [], "reason": "состав работ совпадает",
         }])],
     ])
@@ -411,7 +976,9 @@ def test_batch_agent_accepts_gemma_scalar_norm_code_for_read(monkeypatch):
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
             "selection_kind": "exact", "applicability": "exact",
-            "analog_limitations": [], "technology_check": _technology_check(),
+            "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations("ГЭСН67-01-003-01"),
+            "technology_check": _technology_check(),
             "reason": "состав работ совпадает",
         }])],
     ])
@@ -451,7 +1018,9 @@ def test_batch_agent_resolves_colon_display_alias_without_changing_norm_family(m
         [_native_call("submit", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН67-01-003-01",
             "selection_kind": "exact", "applicability": "exact",
-            "analog_limitations": [], "technology_check": _technology_check(),
+            "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations("ГЭСН67-01-003-01"),
+            "technology_check": _technology_check(),
             "reason": "состав работ совпадает",
         }])],
     ])
@@ -534,10 +1103,14 @@ def test_batch_agent_preserves_unopened_model_norm_as_row_level_provenance_block
     })
 
     turns = iter([
-        [_native_call("bad", "submit_lsr_mapping", rows=[{
-            "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-999-99",
-            "selection_kind": "exact", "reason": "не открыта",
-        }])],
+            [_native_call("bad", "submit_lsr_mapping", rows=[{
+                "work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-999-99",
+                "selection_kind": "exact", "applicability": "exact",
+                "analog_limitations": [],
+                "candidate_evaluations": _candidate_evaluations("ГЭСН01-01-999-99"),
+                "technology_check": _technology_check(),
+                "reason": "не открыта",
+            }])],
         [_native_call("search", "search_norms_batch", items=[{
             "work_id": "w1", "queries": ["работа исходно", "работа ФСНБ"],
         }])],
@@ -560,7 +1133,7 @@ def test_batch_agent_preserves_unopened_model_norm_as_row_level_provenance_block
     assert first_result["ok"] is True
 
 
-def test_batch_agent_preserves_models_unbound_evidence_without_professional_gate(monkeypatch):
+def test_batch_agent_rejects_unbound_without_two_traced_searches(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
@@ -591,8 +1164,12 @@ def test_batch_agent_preserves_models_unbound_evidence_without_professional_gate
     )
 
     first_submit = result["model_trace"][1]["tool_results"][0]["result"]
-    assert first_submit["ok"] is True
-    assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == ["буквальный поиск"]
+    assert first_submit["ok"] is False
+    assert first_submit["errors"][0]["error"] == "invalid unbound_evidence"
+    assert first_submit["errors"][0]["allowed_evidence"]["queries_used"] == ["буквальный поиск"]
+    assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == [
+        "буквальный поиск", "нормативная формулировка",
+    ]
 
 
 def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(monkeypatch):
@@ -618,12 +1195,20 @@ def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(m
             "work_id": "w1", "queries": ["монтаж элемента"],
         }])],
         [_native_call("read-bad", "read_norms_batch", items=[{
-            "work_id": "w1", "norm_codes": [bad_code],
+            "work_id": "w1", "norm_codes": [bad_code, good_code],
         }])],
         [_native_call("submit-bad", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": bad_code,
             "selection_kind": "analog", "applicability": "close_analog",
             "analog_limitations": ["измеритель требует проверки"],
+            "candidate_evaluations": [
+                *_candidate_evaluations(bad_code),
+                {
+                    **_candidate_evaluations(good_code, decision="rejected")[0],
+                    "operation_match": "partial",
+                    "reason": "модель предпочла другой открытый измеритель",
+                },
+            ],
             "technology_check": _technology_check(conclusion="applicable_with_limitations"),
             "reason": "модель пробует аналог",
         }])],
@@ -633,6 +1218,7 @@ def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(m
         [_native_call("submit-good", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": good_code,
             "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations(good_code),
             "technology_check": _technology_check(), "reason": "единица и операция совпадают",
         }])],
     ])
@@ -670,6 +1256,7 @@ def test_batch_agent_does_not_force_extra_read_after_model_submits_norm(monkeypa
         [_native_call("early", "submit_lsr_mapping", rows=[{
             "work_id": "w1", "decision": "bind", "norm_code": selected_code,
             "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations(selected_code),
             "technology_check": _technology_check(), "reason": "модель выбрала точную норму",
         }])],
         [_native_call("search", "search_norms_batch", items=[{
@@ -681,7 +1268,9 @@ def test_batch_agent_does_not_force_extra_read_after_model_submits_norm(monkeypa
         [_native_call("submit", "submit_lsr_mapping", rows=[{
                 "work_id": "w1", "decision": "bind", "norm_code": selected_code,
                 "selection_kind": "exact", "applicability": "exact",
-                "analog_limitations": [], "technology_check": _technology_check(),
+                "analog_limitations": [],
+                "candidate_evaluations": _candidate_evaluations(selected_code),
+                "technology_check": _technology_check(),
                 "reason": "модель выбрала точную норму",
         }])],
     ])
@@ -725,9 +1314,12 @@ def test_batch_agent_preserves_each_model_row_without_rewriting_it(monkeypatch):
         [_native_call("submit1", "submit_lsr_mapping", rows=[
             {"work_id": "w1", "decision": "bind", "norm_code": "ГЭСН01-01-001-01",
              "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+             "candidate_evaluations": _candidate_evaluations("ГЭСН01-01-001-01"),
              "technology_check": _technology_check(), "reason": "совпадает"},
             {"work_id": "w2", "decision": "bind", "norm_code": "ГЭСН01-01-999-99",
-             "selection_kind": "exact", "applicability": "exact", "reason": "не открыта"},
+             "selection_kind": "exact", "applicability": "exact", "analog_limitations": [],
+             "candidate_evaluations": _candidate_evaluations("ГЭСН01-01-999-99"),
+             "technology_check": _technology_check(), "reason": "не открыта"},
         ])],
         [_native_call("submit2", "submit_lsr_mapping", rows=[{
             "work_id": "w2", "decision": "unbound", "reason": "точной нормы нет",
@@ -862,8 +1454,12 @@ def test_batch_agent_does_not_coerce_model_after_prose(monkeypatch):
     assert calls == 1
 
 
-def test_batch_agent_serializes_same_model_decision_after_prose():
+def test_batch_agent_serializes_same_model_decision_after_prose(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
 
     seen = {}
 
@@ -877,13 +1473,27 @@ def test_batch_agent_serializes_same_model_decision_after_prose():
             "unbound_evidence": _unbound_evidence(),
         }], "_les_model": "qwen3.5:9b"}
 
-    result = workflow._run_native_norm_agent(
-        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
-        lambda _messages, _tools: {
+    calls = 0
+
+    def exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"tool_calls": [_native_call(
+                "search", "search_norms_batch", items=[{
+                    "work_id": "w1",
+                    "queries": ["буквальный поиск", "нормативная формулировка"],
+                }],
+            )]}
+        return {
             "content": "Поиск завершён.",
             "thinking": "Сопоставил свидетельства.",
             "_les_done_reason": "stop",
-        },
+        }
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
         mapping_exchange=mapping_exchange,
         candidate_limit=5,
     )
@@ -916,7 +1526,11 @@ def test_batch_agent_serializes_after_repeated_tool_feedback(monkeypatch):
         return {"tool_calls": [_native_call(
             f"search-{calls}",
             "search_norms_batch",
-            items=[{"work_id": "w1", "queries": ["тот же запрос"], "page": 1}],
+            items=[{
+                "work_id": "w1",
+                "queries": ["буквальный поиск", "нормативная формулировка"],
+                "page": 1,
+            }],
         )]}
 
     def mapping_exchange(_messages, _schema):
@@ -960,7 +1574,7 @@ def test_batch_agent_structures_model_decision_at_tool_turn_budget(monkeypatch):
         exchange,
         mapping_exchange=lambda _messages, _schema: {"rows": [{
             "work_id": "w1", "decision": "unbound", "reason": "решение модели по evidence",
-            "unbound_evidence": _unbound_evidence(),
+            "unbound_evidence": _unbound_evidence(queries=["вариант 1", "вариант 2"]),
         }]},
         candidate_limit=5,
         max_turns=2,
@@ -986,7 +1600,7 @@ def test_batch_agent_reports_model_wait_before_and_after_each_turn(monkeypatch):
         nonlocal calls
         calls += 1
         assert {str((tool.get("function") or {}).get("name") or "") for tool in _tools} == {
-            "search_norms_batch", "read_norms_batch",
+            "browse_norm_catalog", "search_norms_batch", "read_norms_batch",
         }
         if calls == 1:
             return {"tool_calls": [_native_call(
@@ -1101,7 +1715,7 @@ def test_document_workflow_passes_neighbor_context_and_calculates_once(monkeypat
         ])]}
 
     result = workflow.run_vor_pdf_workflow(
-        "source.pdf", exchange=exchange,
+        "source.pdf", exchange=exchange, require_global_review=False,
     )
 
     assert seen["w1"]["neighbor_context"][0]["work_id"] == "w2"

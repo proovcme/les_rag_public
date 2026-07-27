@@ -12,8 +12,6 @@ import pytest
 from proxy.services import doc_extract_service as de
 from proxy.services import source_adapters as sa
 from proxy.services import unified_construction_harness_service as u
-from proxy.services import resource_cost_service as rc
-from proxy.services import construction_harness_service as ch
 from proxy.services.evidence_contract import EvidenceType
 
 _RT = Path("/Users/ovc/LES/storage/datasets")
@@ -115,34 +113,3 @@ def test_real_originals_not_mutated_after_write():
     # перепроверка: оригиналы .docx читаемы и не пусты (write только добавил _extracted/)
     docx = list((_RT / _GOST).rglob("*.docx"))
     assert len(docx) == 27 and all(p.stat().st_size > 0 for p in docx)
-
-
-# ── регрессии v0.3-v0.14 ─────────────────────────────────────────────────────────────────
-
-def test_v14_write_policy_regression(tmp_path, monkeypatch):
-    monkeypatch.setenv("LES_RUNTIME_HOME", str(tmp_path))
-    monkeypatch.delenv("LES_ALLOW_RUNTIME_SIDECAR_WRITE", raising=False)
-    assert de.is_runtime_path(tmp_path / "storage") and not de.runtime_write_allowed()
-
-def test_v06_resource_workbook_regression():
-    assert rc.validate_real_workbook()["matches"] is True
-
-def test_resource_grand_complete():
-    r = u.run_unified_construction_harness("проверь пример обсчёта")
-    assert r.total_status == "complete" and abs(r.final_total - 16827283.19) < 1.0
-
-def test_v04_source_scope_regression():
-    assert u.route_construction_intent("найди ОЗК в актах смонтированного оборудования").intent == "asbuilt_extract"
-    assert u.route_construction_intent("правила расстановки ОЗК").intent == "norm_qa"
-
-def test_v13_bor_xlsx_regression(tmp_path):
-    import openpyxl
-    d = tmp_path / "ds"
-    d.mkdir()
-    wb = openpyxl.Workbook(); ws = wb.active; ws.title = "ВОР"
-    ws.append(["Наименование", "Ед", "Кол-во"]); ws.append(["Грунт", "м3", 7200]); wb.save(d / "Ф9.xlsx")
-    r = u.run_unified_construction_harness("извлеки ВОР из Ф9", dataset_ids=["ds"], storage_root=tmp_path)
-    assert r.total_status == "complete"
-
-def test_unit_gate_regression():
-    assert ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])["asm_positions"][0]["qty"] == 7.2

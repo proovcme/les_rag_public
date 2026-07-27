@@ -10,11 +10,14 @@ from dataclasses import dataclass
 from time import perf_counter
 from typing import Any, Callable, Protocol
 
+import httpx
+
 from proxy.services.prompt_registry_service import smeta_native_skill_prompt
 from proxy.smeta_core.document_workflow import (
     Progress,
     SmetaNormToolSession,
     _batch_norm_tools,
+    _mapping_output_schema,
 )
 
 
@@ -56,6 +59,110 @@ def _agent_input(work_rows: list[dict[str, Any]], user_request: str) -> str:
     }, ensure_ascii=False, default=str)
 
 
+def _terminal_recovery_input(remaining_work_ids: list[str]) -> str:
+    return (
+        "You ended the estimating turn without a terminal tool call. Keep your own professional "
+        "decision; LES code will not choose or improve it. Do not restart research. Now call "
+        "submit_lsr_mapping exactly once for every remaining work_id: "
+        + ", ".join(remaining_work_ids)
+        + ". If your decision is unbound, include reason and complete unbound_evidence with at "
+        "least two distinct queries_used copied verbatim from allowed_evidence returned by the tool, "
+        "opened_norm_codes containing only cards you actually opened, at least one "
+        "rejection_reasons item, and non-empty coverage_checked. Return no ordinary prose."
+        " If your decision is bind, include norm_code, selection_kind, applicability, "
+        "analog_limitations, candidate_evaluations for the selected norm and at least one opened "
+        "alternative when search showed two or more candidates, and the complete technology_check "
+        "required by the schema."
+    )
+
+
+def _requires_evidence_continuation(feedback: dict[str, Any] | None) -> bool:
+    """Return true only when terminal repair cannot succeed without another tool read/search."""
+    evidence_markers = (
+        "was not opened through read_norms_batch",
+        "requires opening at least one shown alternative",
+        "cards not opened through tools",
+        "opened_norm_codes must include a read_norms_batch card",
+        "at least two distinct searches",
+        "searches absent from the tool trace",
+    )
+    return any(
+        marker in str(detail)
+        for error in ((feedback or {}).get("errors") or [])
+        for detail in (error.get("details") or [])
+        for marker in evidence_markers
+    )
+
+
+def _qwen_terminal_schema(
+    session: SmetaNormToolSession,
+    validation_feedback: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Constrain recovery to executed facts and, on retry, the model's prior decision type."""
+    remaining = session.remaining_work_ids
+    schema = _mapping_output_schema(remaining)
+    row_schema = schema["properties"]["rows"]["items"]
+    evidence_schema = row_schema["properties"]["unbound_evidence"]
+    allowed_by_work = {
+        work_id: session._allowed_unbound_evidence(work_id)
+        for work_id in remaining
+    }
+    allowed_queries = list(dict.fromkeys(
+        str(query)
+        for evidence in allowed_by_work.values()
+        for query in (evidence.get("queries_used") or [])
+        if str(query)
+    ))
+    allowed_codes = list(dict.fromkeys(
+        str(code)
+        for evidence in allowed_by_work.values()
+        for code in (evidence.get("opened_norm_codes") or [])
+        if str(code)
+    ))
+    if allowed_queries:
+        evidence_schema["properties"]["queries_used"]["items"]["enum"] = allowed_queries
+    if allowed_codes:
+        evidence_schema["properties"]["opened_norm_codes"]["items"]["enum"] = allowed_codes
+        row_schema["properties"]["candidate_evaluations"]["items"]["properties"][
+            "candidate_code"
+        ]["enum"] = allowed_codes
+    else:
+        evidence_schema["properties"]["opened_norm_codes"]["maxItems"] = 0
+
+    feedback_errors = list((validation_feedback or {}).get("errors") or [])
+    invalid_unbound_ids = {
+        str(error.get("work_id") or "")
+        for error in feedback_errors
+        if str(error.get("error") or "") == "invalid unbound_evidence"
+    }
+    incomplete_bind_ids = {
+        str(error.get("work_id") or "")
+        for error in feedback_errors
+        if str(error.get("error") or "") == "incomplete bind evidence"
+    }
+    if len(remaining) == 1 and remaining[0] in invalid_unbound_ids:
+        # The first structured response already made the professional unbound
+        # decision.  The retry only makes its missing transport fields mandatory.
+        row_schema["properties"]["decision"]["enum"] = ["unbound"]
+        required = list(row_schema.get("required") or [])
+        if "unbound_evidence" not in required:
+            required.append("unbound_evidence")
+        row_schema["required"] = required
+    elif len(remaining) == 1 and remaining[0] in incomplete_bind_ids:
+        # The professional bind already exists. This retry only requires the
+        # fields that the ordinary function call or first JSON response omitted.
+        row_schema["properties"]["decision"]["enum"] = ["bind"]
+        required = list(row_schema.get("required") or [])
+        for field in (
+            "norm_code", "selection_kind", "applicability",
+            "analog_limitations", "candidate_evaluations", "technology_check",
+        ):
+            if field not in required:
+                required.append(field)
+        row_schema["required"] = required
+    return schema, allowed_by_work
+
+
 def _cancelled(cancel_check: CancelCheck) -> None:
     if cancel_check():
         raise RuntimeError("smeta document workflow cancelled by user")
@@ -91,6 +198,74 @@ class QwenAgentSmetaRunner:
     engine: str = "qwen_agent"
     provider: str = "ollama"
 
+    def _structured_terminal_mapping(
+        self,
+        *,
+        work_rows: list[dict[str, Any]],
+        user_request: str,
+        session: SmetaNormToolSession,
+        final_messages: list[Any],
+        validation_feedback: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        """Ask the same Qwen model to serialize its decision under a factual schema."""
+        remaining = session.remaining_work_ids
+        schema, allowed_by_work = _qwen_terminal_schema(session, validation_feedback)
+
+        history = []
+        for message in final_messages:
+            if hasattr(message, "model_dump"):
+                history.append(message.model_dump(mode="json", exclude_none=True))
+            elif isinstance(message, dict):
+                history.append(message)
+            else:
+                history.append({"content": str(message)})
+        recovery_request = {
+            "instruction": _terminal_recovery_input(remaining),
+            "allowed_evidence_by_work_id": allowed_by_work,
+            "validation_feedback": validation_feedback or {},
+            "assistant_and_tool_history": history,
+            "constraint": (
+                "Return your own current decisions only. JSON Schema constrains factual provenance; "
+                "it does not choose the professional decision."
+            ),
+        }
+        ollama_root = self.ollama_base_url.rstrip("/")
+        if ollama_root.casefold().endswith("/v1"):
+            ollama_root = ollama_root[:-3]
+        body = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": smeta_native_skill_prompt()},
+                {"role": "user", "content": _agent_input(work_rows, user_request)},
+                {"role": "user", "content": json.dumps(recovery_request, ensure_ascii=False, default=str)},
+            ],
+            "format": schema,
+            "stream": False,
+            "options": {
+                "temperature": 0.0,
+                "num_predict": 4096,
+                "num_ctx": 32768,
+            },
+        }
+        try:
+            with httpx.Client(timeout=300.0) as client:
+                response = client.post(f"{ollama_root}/api/chat", json=body)
+                response.raise_for_status()
+                payload = response.json()
+        except Exception as error:
+            raise RuntimeError(
+                f"qwen structured terminal recovery failed: {type(error).__name__}: {error}"
+            ) from error
+        content = str(((payload.get("message") or {}).get("content") or ""))
+        try:
+            mapping = json.loads(content)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("qwen structured terminal recovery returned invalid JSON") from error
+        if not isinstance(mapping, dict) or not isinstance(mapping.get("rows"), list):
+            raise RuntimeError("qwen structured terminal recovery returned no mapping rows")
+        mapping["_les_model"] = str(payload.get("model") or self.model)
+        return mapping
+
     def run_batch(
         self,
         work_rows: list[dict[str, Any]],
@@ -111,6 +286,8 @@ class QwenAgentSmetaRunner:
             work_rows, candidate_limit=candidate_limit, progress=progress,
         )
         turn_counter = {"tool": 0, "model": 0}
+        recovery_state = {"attempted": False, "model_turns": 0}
+        evidence_continuation_used = False
         dispatch_trace: list[dict[str, Any]] = []
         cancel_check = self.cancel_check
 
@@ -158,6 +335,11 @@ class QwenAgentSmetaRunner:
                 if session.complete:
                     raise RuntimeError("qwen agent terminal mapping accepted")
                 _cancelled(cancel_check)
+                if max(session.invalid_submission_attempts.values(), default=0) >= 3:
+                    raise RuntimeError(
+                        "qwen agent repeated invalid terminal mapping; switch the same model "
+                        "to provider-enforced JSON Schema recovery"
+                    )
                 if turn_counter["model"] >= max_turns:
                     raise RuntimeError(
                         f"qwen agent exceeded {max_turns} model turns without terminal mapping; "
@@ -202,20 +384,106 @@ class QwenAgentSmetaRunner:
             description="LES document estimating agent",
         )
         started = perf_counter()
+        initial_message = {"role": "user", "content": _agent_input(work_rows, user_request)}
         final_messages: list[Any] = []
+        first_run_error = ""
+        recovery_trace: list[dict[str, Any]] = []
         try:
             for response in agent.run(
-                messages=[{"role": "user", "content": _agent_input(work_rows, user_request)}],
+                messages=[initial_message],
             ):
                 _cancelled(cancel_check)
                 final_messages = list(response or [])
-        except RuntimeError:
+        except RuntimeError as exc:
             if not session.complete:
-                raise
+                first_run_error = str(exc)
+        if not session.complete:
+            _cancelled(cancel_check)
+            recovery_state["attempted"] = True
+            validation_feedback: dict[str, Any] | None = None
+            for recovery_attempt in range(1, 3):
+                _cancelled(cancel_check)
+                recovery_state["model_turns"] += 1
+                turn_counter["model"] += 1
+                if progress:
+                    progress({
+                        "phase": "model_wait", "status": "started",
+                        "label": f"Смета: Qwen фиксирует terminal mapping, попытка {recovery_attempt}",
+                        "turn": turn_counter["model"],
+                    })
+                mapping = self._structured_terminal_mapping(
+                    work_rows=work_rows,
+                    user_request=user_request,
+                    session=session,
+                    final_messages=final_messages,
+                    validation_feedback=validation_feedback,
+                )
+                rows = list(mapping.get("rows") or [])
+                turn_counter["tool"] += 1
+                arguments = {"rows": rows}
+                dispatch_trace.append({
+                    "tool": "submit_lsr_mapping",
+                    "arguments": arguments,
+                    "transport": "same_model_json_schema_recovery",
+                })
+                result = session.execute(
+                    "submit_lsr_mapping",
+                    arguments,
+                    turn=turn_counter["tool"],
+                )
+                recovery_trace.append({
+                    "turn": turn_counter["model"],
+                    "assistant": {"role": "assistant", "content": json.dumps({"rows": rows}, ensure_ascii=False)},
+                    "engine": self.engine,
+                    "transport": "same_model_json_schema_recovery",
+                    "tool_result": result,
+                })
+                if session.complete:
+                    break
+                validation_feedback = result
+                if (
+                    recovery_attempt == 1
+                    and not evidence_continuation_used
+                    and _requires_evidence_continuation(validation_feedback)
+                ):
+                    evidence_continuation_used = True
+                    continuation = {
+                        "role": "user",
+                        "content": json.dumps({
+                            "instruction": (
+                                "Your own terminal mapping needs additional factual evidence. Resume the "
+                                "same LES tool loop once: choose which shown alternatives matter, call "
+                                "search_norms_batch/read_norms_batch only as needed, then call "
+                                "submit_lsr_mapping. Do not let code choose a norm and do not answer in prose."
+                            ),
+                            "validation_feedback": validation_feedback,
+                        }, ensure_ascii=False, default=str),
+                    }
+                    continuation_messages = [*final_messages, continuation]
+                    try:
+                        for response in agent.run(messages=continuation_messages):
+                            _cancelled(self.cancel_check)
+                            final_messages = list(response or [])
+                    except RuntimeError as exc:
+                        if not session.complete:
+                            first_run_error = f"{first_run_error}; evidence_continuation={exc}".strip("; ")
+                    if session.complete:
+                        break
+        if not session.complete:
+            raise RuntimeError(
+                "qwen agent ended without terminal mapping after same-model recovery for: "
+                + ",".join(session.remaining_work_ids)
+                + (f"; first_run_error={first_run_error}" if first_run_error else "")
+                + "; validation_feedback="
+                + json.dumps(validation_feedback or {}, ensure_ascii=False, default=str)[:1200]
+                + "; dispatch="
+                + json.dumps(dispatch_trace[-5:], ensure_ascii=False, default=str)[:1000]
+            )
         model_trace = []
         for index, message in enumerate(final_messages, 1):
             payload = message.model_dump(mode="json", exclude_none=True) if hasattr(message, "model_dump") else dict(message)
             model_trace.append({"turn": index, "assistant": payload, "engine": self.engine})
+        model_trace.extend(recovery_trace)
         return session.result(
             model_trace=model_trace,
             agent_trace={
@@ -224,6 +492,9 @@ class QwenAgentSmetaRunner:
                 "provider": self.provider,
                 "model": self.model,
                 "model_turns": turn_counter["model"],
+                "terminal_recovery_attempted": recovery_state["attempted"],
+                "terminal_recovery_model_turns": recovery_state["model_turns"],
+                "evidence_continuation_used": evidence_continuation_used,
                 "tool_turns": turn_counter["tool"],
                 "dispatch_trace": dispatch_trace,
                 "elapsed_ms": round((perf_counter() - started) * 1000, 2),

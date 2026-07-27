@@ -103,6 +103,12 @@ function Fail([string]$m, [string]$Code = "bootstrap_failed", [string]$InstallUr
   exit 1
 }
 
+function Require-Setup([string]$m, [string]$Code = "setup_required", [string]$InstallUrl = "") {
+  Log "SETUP: $m"
+  Write-Status -Phase "setup" -State "setup_required" -Message $m -Code $Code -InstallUrl $InstallUrl
+  exit 0
+}
+
 trap {
   Fail "необработанная ошибка: $($_.Exception.Message)" "bootstrap_unhandled"
 }
@@ -255,26 +261,6 @@ function Install-Uv {
   return Resolve-Uv
 }
 
-function Install-WingetRequirement(
-  [string]$PackageId,
-  [string]$DisplayName,
-  [string]$InstallUrl
-) {
-  if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Fail "$DisplayName не установлен, а winget недоступен. Установите компонент и повторите запуск" `
-      "winget_missing" $InstallUrl
-  }
-  Toast "Устанавливаю $DisplayName…"
-  Write-Status -Phase "prerequisites" -State "running" -Message "Устанавливаю $DisplayName через winget"
-  Log "winget install $PackageId"
-  & winget install --id=$PackageId -e --source winget --accept-source-agreements --accept-package-agreements
-  if ($LASTEXITCODE -ne 0) {
-    Fail "winget не смог установить $DisplayName (код $LASTEXITCODE)" `
-      "winget_install_failed" $InstallUrl
-  }
-  Refresh-ProcessPath
-}
-
 $Uv = Resolve-Uv
 if (-not $Uv) {
   Toast "Устанавливаю uv (первый запуск)…"
@@ -287,42 +273,29 @@ if (-not $Uv) {
 }
 Log "uv: $Uv"
 
-# --- 1b. Required Windows runtimes -----------------------------------------
-# Production RAG on Windows is defined by Ollama + Docker/Qdrant.  Do not boot
-# a misleading half-working UI when either runtime is absent.
+# --- 1b. Detect Windows runtimes --------------------------------------------
+# The Tauri setup wizard owns installation choices. Missing external programs
+# are a normal first-run state, not a bootstrap failure.
 $Ollama = Resolve-Executable "ollama" @(
   (Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"),
   (Join-Path $env:ProgramFiles "Ollama\ollama.exe")
 )
-if (-not $Ollama) {
-  Install-WingetRequirement "Ollama.Ollama" "Ollama" "https://ollama.com/download/windows"
-  $Ollama = Resolve-Executable "ollama" @(
-    (Join-Path $env:LOCALAPPDATA "Programs\Ollama\ollama.exe"),
-    (Join-Path $env:ProgramFiles "Ollama\ollama.exe")
-  )
+if ($Ollama) {
+  Add-ExecutableDirectory $Ollama
+  Log "ollama: $Ollama"
+} else {
+  Log "setup: Ollama not installed"
 }
-if (-not $Ollama) {
-  Fail "Ollama установлена, но ollama.exe не найден. Завершите установку и повторите запуск" `
-    "ollama_not_ready" "https://ollama.com/download/windows"
-}
-Add-ExecutableDirectory $Ollama
-Log "ollama: $Ollama"
 
 $Docker = Resolve-Executable "docker" @(
   (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe")
 )
-if (-not $Docker) {
-  Install-WingetRequirement "Docker.DockerDesktop" "Docker Desktop" "https://www.docker.com/products/docker-desktop/"
-  $Docker = Resolve-Executable "docker" @(
-    (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe")
-  )
+if ($Docker) {
+  Add-ExecutableDirectory $Docker
+  Log "docker: $Docker"
+} else {
+  Log "setup: Docker Desktop not installed"
 }
-if (-not $Docker) {
-  Fail "Docker Desktop установлен, но docker.exe не найден. Завершите установку или перезагрузите Windows" `
-    "docker_not_ready" "https://www.docker.com/products/docker-desktop/"
-}
-Add-ExecutableDirectory $Docker
-Log "docker: $Docker"
 
 # --- 2. Environment ---------------------------------------------------------
 # --extra desktop pulls the native shell (pywebview + tray). No mac-mlx on Windows.
@@ -457,6 +430,19 @@ try {
 & $Uv run python tools\onboard_provider.py --provider ollama --ensure-platform windows 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "не удалось настроить локальный провайдер Ollama" "provider_init_failed" }
 
+$providerLine = Get-Content $env:LES_ENV_PATH -ErrorAction SilentlyContinue |
+  Where-Object { $_ -match '^LES_LLM_PROVIDER=' } | Select-Object -Last 1
+$configuredProvider = if ($providerLine) { ($providerLine -split '=', 2)[1].Trim() } else { "" }
+
+if (($configuredProvider -eq "ollama") -and (-not $Ollama)) {
+  Require-Setup "Установите Ollama. Модель вы выберете и загрузите самостоятельно" `
+    "ollama_missing" "https://ollama.com/download/windows"
+}
+if (-not $Docker) {
+  Require-Setup "Установите Docker Desktop для локального хранилища документов" `
+    "docker_missing" "https://www.docker.com/products/docker-desktop/"
+}
+
 # --- 4. Model weights (only if a local HF model is configured) --------------
 # Cloud/ollama setups skip this; for a local provider it pre-pulls weights.
 Toast "Проверяю модели…"
@@ -464,35 +450,33 @@ Write-Status -Phase "models" -State "running" -Message "Проверяю лок�
 & $Uv run python tools\onboard_models.py --skip-if-cloud
 if ($LASTEXITCODE -ne 0) { Fail "загрузка моделей не удалась" }
 
-# Ollama manages its own model store, so Hugging Face onboarding intentionally
-# skips it. For the default Windows production profile ensure the answer,
-# and embedding models are present before the first RAG turn.
-$providerLine = Get-Content $env:LES_ENV_PATH -ErrorAction SilentlyContinue |
-  Where-Object { $_ -match '^LES_LLM_PROVIDER=' } | Select-Object -Last 1
-$configuredProvider = if ($providerLine) { ($providerLine -split '=', 2)[1].Trim() } else { "" }
+# Ollama manages its own model store. The user may choose any installed answer
+# model; LES recommends qwen3.5:9b but never pulls it behind the user's back.
+# bge-m3 is the separate, fixed embedding contract for document search.
 if ($configuredProvider -eq "ollama") {
-  $ollamaModels = @(
-    "qwen3.5:9b",
-    "bge-m3:latest"
-  )
-  foreach ($ollamaModel in $ollamaModels) {
-    & $Ollama show $ollamaModel *> $null
-    if ($LASTEXITCODE -ne 0) {
-      Toast "Загружаю модель $ollamaModel…"
-      Write-Status -Phase "models" -State "running" -Message "Загружаю Ollama-модель $ollamaModel"
-      & $Ollama pull $ollamaModel
-      if ($LASTEXITCODE -ne 0) {
-        Fail "не удалось загрузить Ollama-модель $ollamaModel" "ollama_model_pull_failed" `
-          "https://ollama.com/library"
-      }
-    }
+  $modelLine = Get-Content $env:LES_ENV_PATH -ErrorAction SilentlyContinue |
+    Where-Object { $_ -match '^OLLAMA_MODEL=' } | Select-Object -Last 1
+  $configuredModel = if ($modelLine) { ($modelLine -split '=', 2)[1].Trim() } else { "" }
+  if (-not $configuredModel) {
+    Require-Setup "Выберите установленную модель Ollama. Рекомендуем qwen3.5:9b" `
+      "answer_model_not_selected" "https://ollama.com/library"
+  }
+  & $Ollama show $configuredModel *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Require-Setup "Модель $configuredModel не установлена. Загрузите любую подходящую модель и выберите её в мастере" `
+      "answer_model_missing" "https://ollama.com/library"
+  }
+  & $Ollama show "bge-m3:latest" *> $null
+  if ($LASTEXITCODE -ne 0) {
+    Require-Setup "Для поиска по документам нужна embedding-модель bge-m3:latest. Загрузите её через Ollama" `
+      "embedding_model_missing" "https://ollama.com/library/bge-m3"
   }
 }
 
 # The cross-encoder is a Hugging Face model, not an Ollama generation model.
 Toast "Проверяю модель ранжирования…"
 & $Uv run python tools\onboard_reranker.py
-if ($LASTEXITCODE -ne 0) { Fail "загрузка модели ранжирования не удалась" }
+if ($LASTEXITCODE -ne 0) { Warn "модель ранжирования пока недоступна; ЛЕС запустится без rerank до повторной настройки" }
 
 # --- 5. Docker + Qdrant (required) -----------------------------------------
 function Test-DockerEngine {
@@ -514,7 +498,7 @@ if (-not (Test-DockerEngine)) {
   }
 }
 if (-not (Test-DockerEngine)) {
-  Fail "Docker Desktop установлен, но движок не запущен. Запустите Docker Desktop, завершите настройку WSL 2 и повторите запуск" `
+  Require-Setup "Запустите Docker Desktop и завершите первоначальную настройку WSL 2" `
     "docker_engine_unavailable" "https://docs.docker.com/desktop/setup/install/windows-install/"
 }
 
@@ -544,7 +528,7 @@ if (-not $qdrantUp) {
   } while ([DateTime]::UtcNow -lt $qdrantDeadline)
 }
 if (-not $qdrantUp) {
-  Fail "Qdrant не ответил после запуска контейнера" "qdrant_health_failed" `
+  Require-Setup "Qdrant не запустился. Проверьте Docker Desktop и повторите проверку" "qdrant_health_failed" `
     "https://docs.docker.com/desktop/setup/install/windows-install/"
 }
 

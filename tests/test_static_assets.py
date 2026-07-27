@@ -34,7 +34,7 @@ def test_admin_documents_tab_is_mounted():
     assert "build_documents()" in app_shell
     assert "include_documents=True" in app_shell
     assert "tab_documents" in app_shell
-    assert "Датасеты, файлы и карта проекта" in page
+    assert "Датасеты, файлы, карта проекта и Студия" in page
 
 
 def test_documents_ui_is_a_visual_read_only_dataset_browser():
@@ -138,6 +138,26 @@ def test_documents_ui_is_a_visual_read_only_dataset_browser():
     assert 'f"ds:{dataset_id}"' in page
     assert "topic_map" in page and "section_map" in page
     assert 'ui.button("Л.И.С.Т."' in page
+    assert 'ui.button("Студия"' in page
+    assert "Л.И.С.Т. · Студия документов" in page
+    assert "Подготовить с Л.Е.С." in page
+    assert "/api/forms/agent-draft" in page
+    assert "Я проверил содержание, предположения и источники" in page
+    assert "form_select.on_value_change" in page
+    assert "project_select.on_value_change" in page
+    assert "format_select.on_value_change" in page
+    assert "/api/forms/artifacts" in page
+    assert "Создать черновик" in page
+    assert "неизменяемыми ревизиями" in page
+    assert "def _office_notify" in page
+    assert 'with panel:' in page
+    assert "Паспорт PDF" in page
+    assert "/pdf-contour?max_pages=80" in page
+    assert "_load_pdf_contour_preview" in page
+    assert "Координатные фрагменты" in page
+    assert "sov-pdf-contour" in page
+    assert ".sov-pdf-contour" in styles
+    assert ".sov-pdf-page-grid" in styles
     assert "do not call LLMs" in router
     assert "request.query_params.get(\"question\")" in app_shell
     assert "request.query_params.get(\"tab\")" in app_shell
@@ -159,10 +179,23 @@ def test_samovar_exposes_cloud_drive_intake():
 
 def test_chat_exposes_documents_navigation():
     chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
 
     assert "tab_documents=None" in chat
     assert 'aria-label="Документы"' in chat
     assert "Открыть документы датасетов" in chat
+    assert 'f"Источники · {len(srcs)}"' in chat
+    assert 'value=False' in chat
+    assert 'ui.link(lbl, str(item["open_url"]))' in chat
+    assert 'if item.get("viewer_url")' in chat
+    assert "sov-embedded-file-viewer" in chat
+    assert "/rag/file/viewer" in Path("sovushka/answer_render.py").read_text(encoding="utf-8")
+    assert '"target=_blank"' in chat
+    assert "sov-source-detail" in chat
+    assert ".sov-source-expansion" in styles
+    assert ".sov-embedded-file-viewer iframe" in styles
+    assert "max-height: min(42vh, 360px)" in styles
+    assert "transition: all" not in styles
 
 
 def test_deploy_allows_sovushka_shell():

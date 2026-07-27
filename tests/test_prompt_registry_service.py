@@ -181,8 +181,10 @@ def test_smeta_role_pack_file_is_valid_json_and_has_no_case_anchors():
 
     assert "Декартово произведение кандидатов запрещено" in skill
     assert "source_row → technological_operation → estimate_position → resolution_status → pricing_basis → pricing_evidence" in skill
-    assert "после завершения моделью mapping он один раз считает и формирует XLSX" in skill
-    assert "Отдельного обязательного resource-review, impact-review или повторного допуска нет" in skill
+    assert "обязательно видит всю ВОР" in skill
+    assert "создаёт новую immutable `global_review`-ревизию" in skill
+    assert "`priced_final` создаётся отдельным расчётом только из пользовательской" in skill
+    assert "Conflict-validator не выбирает замену" in skill
     assert "machinist_labor_per_machine_hour" in skill
     assert "коэффициенты `0.9` к нр и `0.85` к сп" in skill.casefold()
     assert "исключения пункта 26 №812/пр" in skill

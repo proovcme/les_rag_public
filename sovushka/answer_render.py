@@ -8,7 +8,7 @@ source-chips, trace-summary. Чистые (без NiceGUI) → юнит-тест
 from __future__ import annotations
 
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from typing import Any
 
 # ── strip markdown из ячеек таблицы (фикс `**Тип котельной**` в ячейке) ───────────────────
@@ -102,6 +102,13 @@ def header_summary(query_route: dict | None, evidence_summary: dict | None,
 _KIND_HUMAN = {"parquet_row": "таблица", "file_body": "текст", "eml_message": "письмо",
                "extracted_body": "извлечено", "workbook_cell": "ячейка", "lexical_chunk": "индекс",
                "vector_chunk": "vector", "filename_metadata": "имя файла"}
+
+_EMBEDDED_VIEW_EXTENSIONS = {
+    ".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".eml",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+    ".txt", ".md", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".log",
+    ".ini", ".cfg", ".sql", ".py", ".html", ".svg", ".csv", ".tsv",
+}
 
 
 def source_chip(source: Any, index: int | None = None) -> dict:
@@ -277,20 +284,46 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     item["n"] = index or item["n"]
     source_ref = str(item.get("source_ref") or "")
     file_part, _, location = source_ref.partition("#")
+    suffix_match = re.search(r"(\.[a-z0-9]+)$", file_part, re.I)
+    suffix = suffix_match.group(1).lower() if suffix_match else ""
     open_url = ""
+    viewer_url = ""
     unavailable_reason = ""
     if not item.get("has_ref"):
         unavailable_reason = "У источника нет source_ref: открыть нельзя, можно только проверить текст ответа."
     elif item.get("weak"):
         unavailable_reason = "Источник слабый/vector: точное место не гарантировано, доступно копирование source_ref."
-    elif "/" in file_part or re.search(r"\.(pdf|docx?|xlsx?|csv|md|txt|eml|jsonl?)$", file_part, re.I):
+    elif "/" in file_part or suffix in _EMBEDDED_VIEW_EXTENSIONS or suffix in {".doc", ".xls"}:
         open_url = f"/lite-api/rag/file/raw?path={quote(file_part)}"
+        page_match = re.search(r"(?:^|[#;&])(?:p|page=?)\s*(\d+)(?:$|[#;&])", location, re.I)
+        page_number = int(page_match.group(1)) if page_match else 1
+        if suffix == ".pdf" and page_match:
+            open_url += f"#page={page_number}"
+        if suffix in _EMBEDDED_VIEW_EXTENSIONS:
+            params: dict[str, str | int] = {"path": file_part, "locator": location}
+            if suffix == ".pdf":
+                params["page"] = page_number
+                bbox_value: Any = None
+                if isinstance(source, dict):
+                    bbox_value = source.get("bbox") or source.get("bbox_pt")
+                if not bbox_value and isinstance(source, dict):
+                    fragments = source.get("pdf_fragment_bboxes") or []
+                    if fragments and isinstance(fragments[0], dict):
+                        bbox_value = fragments[0].get("bbox") or fragments[0].get("bbox_pt")
+                if isinstance(bbox_value, (list, tuple)) and len(bbox_value) == 4:
+                    try:
+                        params["bbox"] = ",".join(str(float(value)) for value in bbox_value)
+                    except (TypeError, ValueError):
+                        pass
+            viewer_url = f"/lite-api/rag/file/viewer?{urlencode(params)}"
     # Нормативные/расчётные refs вида "ГЭСН-2022#06-..." или "ГОСТ...#clause=..."
     # не являются локальными файлами. Не пугаем оператора техническим предупреждением: ref остаётся
     # в copy_text, а drawer просто показывает название источника и цитату/сниппет.
     item.update({
         "location": location,
         "open_url": open_url,
+        "viewer_url": viewer_url,
+        "is_pdf": file_part.lower().endswith(".pdf"),
         "unavailable_reason": unavailable_reason,
         "copy_text": source_ref if source_ref else item.get("file", ""),
     })

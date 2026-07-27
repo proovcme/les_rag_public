@@ -175,6 +175,7 @@ async def test_query_route_carries_honest_profile_for_glossary():
     assert prof["profile_id"] == "auto"
     assert prof["route_source"] == "regex"
     assert prof["channel"] == "glossary"
+    assert resp["versions"]["version_info"]["app_version"]
 
 
 @pytest.mark.asyncio

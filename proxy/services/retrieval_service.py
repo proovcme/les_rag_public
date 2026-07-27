@@ -33,6 +33,10 @@ _SOURCE_EXACT_RE = re.compile(
     r"|[a-f0-9]{8}-[a-f0-9-]{8,}"
     r")"
 )
+_EXACT_IDENTIFIER_RE = re.compile(
+    r"(?iu)(?<![\w-])(?=[\w-]{4,}(?![\w-]))(?=[\w-]*\d)(?=[\w-]*[a-zа-яё])"
+    r"[\w]+(?:-[\w]+)+(?![\w-])"
+)
 _SOURCE_NAME_TOKEN_RE = re.compile(r"(?iu)[\wа-яё]{3,}")
 _SOURCE_NAME_STOPWORDS = {
     "cad",
@@ -134,6 +138,45 @@ def _promote_exact_source_matches(chunks: list[Any], question: str) -> tuple[lis
         return chunks, []
     ordered = [chunk for _score, _index, chunk in sorted(scored, key=lambda item: (-item[0], item[1]))]
     return ordered, matched
+
+
+def _exact_identifier_terms(question: str) -> list[str]:
+    terms: list[str] = []
+    for match in _EXACT_IDENTIFIER_RE.findall(question or ""):
+        folded = match.casefold()
+        if folded not in terms:
+            terms.append(folded)
+    return terms[:12]
+
+
+def _promote_exact_identifier_matches(chunks: list[Any], question: str) -> tuple[list[Any], list[str]]:
+    """Keep exact hyphenated designations above semantic neighbours.
+
+    This is format-neutral: the identifier may live in PDF page text, an office
+    table or a plain document.  It only reorders candidates already retrieved.
+    """
+    terms = _exact_identifier_terms(question)
+    if not terms or len(chunks) < 2:
+        return chunks, []
+    scored: list[tuple[int, int, Any]] = []
+    matched: set[str] = set()
+    for index, chunk in enumerate(chunks):
+        meta = getattr(chunk, "meta", {}) or {}
+        doc_name = str(getattr(chunk, "doc_name", "") or meta.get("file_name") or "").casefold()
+        content = str(getattr(chunk, "content", "") or "").casefold()
+        score = 0
+        for term in terms:
+            if term in doc_name:
+                score += 4
+                matched.add(term)
+            elif term in content:
+                score += 3
+                matched.add(term)
+        scored.append((score, index, chunk))
+    if not matched:
+        return chunks, []
+    ordered = [chunk for _score, _index, chunk in sorted(scored, key=lambda item: (-item[0], item[1]))]
+    return ordered, [term for term in terms if term in matched]
 
 
 def _normalise_norm_reference(value: str) -> str:
@@ -688,6 +731,14 @@ async def retrieve_chat_chunks(
             ref = f"source:{term}"
             if ref not in trace.exact_refs:
                 trace.exact_refs.append(ref)
+    chunks, exact_identifiers = _promote_exact_identifier_matches(chunks, question)
+    if exact_identifiers:
+        if "identifier_exact" not in trace.mode:
+            trace.mode = f"{trace.mode}+identifier_exact"
+        for term in exact_identifiers:
+            ref = f"identifier:{term}"
+            if ref not in trace.exact_refs:
+                trace.exact_refs.append(ref)
     chunks, exact_norm_refs = _promote_explicit_norm_reference_matches(chunks, question)
     _record_exact_norm_refs(trace, exact_norm_refs)
     if not exact_terms and not exact_norm_refs and any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):
@@ -845,6 +896,14 @@ async def retrieve_chat_chunks(
             chunks, exact_terms = _promote_exact_source_matches(chunks, question)
             if exact_terms and "source_exact_guard" not in trace.mode:
                 trace.mode = f"{trace.mode}+source_exact_guard"
+            chunks, exact_identifiers = _promote_exact_identifier_matches(chunks, question)
+            if exact_identifiers:
+                if "identifier_exact_guard" not in trace.mode:
+                    trace.mode = f"{trace.mode}+identifier_exact_guard"
+                for term in exact_identifiers:
+                    ref = f"identifier:{term}"
+                    if ref not in trace.exact_refs:
+                        trace.exact_refs.append(ref)
             chunks, exact_norm_refs = _promote_explicit_norm_reference_matches(chunks, question)
             _record_exact_norm_refs(trace, exact_norm_refs)
             if not exact_terms and not exact_norm_refs and any(token in question.casefold() for token in ("cad", "bim", "dwg", "dxf", "rvt", "ifc", "атм", "гсв")):

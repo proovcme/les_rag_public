@@ -1,0 +1,12 @@
+# Техническое/служебное письмо — первый универсальный офисный шаблон Л.И.С.Т.
+id: technical_letter
+title: Техническое или служебное письмо
+legal_basis: Внутренний шаблон организации; содержание проверяется ответственным специалистом
+fields:
+  - { key: object_name, label: Объект, type: str, source: "project.name" }
+  - { key: recipient, label: Кому, type: str, source: "manual" }
+  - { key: sender, label: От кого, type: str, source: "manual" }
+  - { key: subject, label: Тема письма, type: str, source: "manual" }
+  - { key: body, label: Текст письма, type: str, source: "manual" }
+  - { key: attachments, label: Приложения, type: str, source: "manual" }
+  - { key: date, label: Дата, type: str, source: "date.today" }

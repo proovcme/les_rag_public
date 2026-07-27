@@ -554,7 +554,8 @@ def browse_norm_catalog(
             level = "collection"
             rows = conn.execute(
                 "SELECT substr(bare_code,1,2) key, count(*) norm_count, "
-                "sum(resource_count) resource_count FROM norms WHERE base_type=? "
+                "sum(resource_count) resource_count, min(source_doc) source_example "
+                "FROM norms WHERE base_type=? "
                 "GROUP BY substr(bare_code,1,2) ORDER BY key LIMIT ?",
                 (family_value, bounded_limit),
             ).fetchall()
@@ -562,7 +563,7 @@ def browse_norm_catalog(
             level = "table"
             rows = conn.execute(
                 "SELECT substr(bare_code,1,9) key, count(*) norm_count, "
-                "sum(resource_count) resource_count FROM norms "
+                "sum(resource_count) resource_count, min(source_doc) source_example FROM norms "
                 "WHERE base_type=? AND substr(bare_code,1,2)=? "
                 "GROUP BY substr(bare_code,1,9) ORDER BY key LIMIT ?",
                 (family_value, collection_value, bounded_limit),

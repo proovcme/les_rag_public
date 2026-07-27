@@ -846,6 +846,28 @@ body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
   box-shadow: none !important;
   gap: 12px;
 }
+.sov-embedded-file-viewer {
+  width: 100%;
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid rgba(138,162,184,.32);
+  border-radius: 7px;
+  background: #eef3f7;
+  box-shadow: 0 10px 28px rgba(3,10,18,.09);
+}
+.sov-embedded-file-viewer iframe {
+  display: block;
+  width: 100%;
+  height: min(68vh, 760px);
+  min-height: 520px;
+  border: 0;
+  background: #eef3f7;
+}
+@media (max-width: 700px) {
+  .sov-embedded-file-viewer,
+  .sov-embedded-file-viewer iframe { min-height: 440px; }
+  .sov-embedded-file-viewer iframe { height: 62vh; }
+}
 .sov-artifact-markdown {
   color: var(--text);
   font-size: .82rem;
@@ -1103,6 +1125,17 @@ body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
   padding: 8px 10px !important;
 }
 .sov-file-icon { color: var(--accent); font-size: 1.1rem; }
+.sov-smeta-approval {
+  width: 100%; padding: .65rem .75rem; gap: .45rem;
+  border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn) 7%, var(--bg-panel));
+  box-shadow: none;
+}
+.sov-smeta-approval-badge {
+  width: max-content; padding: .12rem .45rem; border-radius: 999px;
+  color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent);
+  font-size: .66rem; font-weight: 700; letter-spacing: .02em;
+}
 .sov-file-name { color: var(--text); font-weight: 700; }
 .sov-history-drawer {
   position: absolute;
@@ -1568,6 +1601,100 @@ body, .nicegui-content {
   transition: background-color .14s ease, border-color .14s ease;
 }
 .src-tag:hover { background: rgba(34,224,111,.14); border-color: rgba(34,224,111,.7); }
+
+/* Источники ответа: закрыты по умолчанию; даже раскрытый длинный список не растягивает ленту. */
+.sov-source-expansion {
+  width: 100%;
+  margin-top: 8px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-mod) 72%, transparent);
+  box-shadow: inset 0 0 0 1px rgba(28, 44, 64, .10);
+  overflow: hidden;
+}
+.sov-source-expansion > .q-expansion-item__container > .q-item {
+  min-height: 40px;
+  padding: 5px 10px;
+  color: var(--dim);
+}
+.sov-source-expansion .q-expansion-item__label {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.sov-source-expansion .q-expansion-item__toggle-icon {
+  transition-property: transform;
+  transition-duration: .18s;
+  transition-timing-function: cubic-bezier(.2, 0, 0, 1);
+}
+.sov-source-list {
+  width: 100%;
+  max-height: min(42vh, 360px);
+  gap: 2px !important;
+  padding: 4px 7px 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.sov-source-row {
+  width: 100%;
+  min-height: 40px;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 4px 5px 4px 9px;
+  border-radius: 9px;
+  transition-property: background-color, box-shadow;
+  transition-duration: .14s;
+  transition-timing-function: ease;
+}
+.sov-source-row:hover {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 16%, transparent);
+}
+.sov-source-primary {
+  min-width: 0;
+  min-height: 40px !important;
+  flex: 1 1 220px;
+  justify-content: flex-start;
+  color: var(--text) !important;
+  font-family: var(--font-ui);
+  font-size: 12px !important;
+  font-weight: 750;
+  line-height: 1.35;
+  text-align: left;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+  transition-property: color, scale;
+  transition-duration: .14s;
+  transition-timing-function: ease;
+}
+.sov-source-primary:hover { color: var(--accent) !important; }
+.sov-source-primary:active { scale: .96; }
+.sov-source-unavailable { color: var(--dim) !important; }
+.sov-source-kind {
+  flex: 0 0 auto;
+  color: var(--ok);
+  font-family: var(--font-ui);
+  font-size: 11px !important;
+  font-weight: 750;
+}
+.sov-source-kind-warn { color: var(--warn); }
+.sov-source-detail {
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px !important;
+  min-height: 40px !important;
+  color: var(--dim) !important;
+  transition-property: color, background-color, scale;
+  transition-duration: .14s;
+  transition-timing-function: ease;
+}
+.sov-source-detail:hover {
+  color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 9%, transparent) !important;
+}
+.sov-source-detail:active { scale: .96; }
+.sov-source-tools:empty { display: none; }
 
 /* Inline-таблица в чате: читаемее, не «терминал». */
 .sov-chat-inline-table { font-family: var(--font); font-size: .74rem; }
@@ -2573,6 +2700,94 @@ body, .nicegui-content {
   line-height: 1.5;
   text-wrap: pretty;
 }
+.sov-pdf-contour {
+  margin-top: 14px;
+  padding: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--docs-border-strong));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--accent) 4%, var(--bg-panel));
+}
+.sov-pdf-contour-head { gap: 9px; }
+.sov-pdf-contour-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--bg-panel));
+}
+.sov-pdf-contour-loading { gap: 7px; margin-top: 12px; }
+.sov-pdf-contour-metrics { gap: 6px; margin-top: 11px; flex-wrap: wrap; }
+.sov-pdf-contour-warning { margin-top: 7px; }
+.sov-pdf-contour-selected {
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid var(--docs-border-strong);
+  border-radius: 11px;
+  background: var(--bg-panel);
+}
+.sov-pdf-contour-selected-head { gap: 6px; flex-wrap: wrap; }
+.sov-pdf-contour-selected-meta { margin-top: 6px; line-height: 1.45; }
+.sov-pdf-contour-preview {
+  width: 100%;
+  max-height: 620px;
+  margin-top: 10px;
+  border: 1px solid var(--docs-border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  object-fit: contain;
+  background: #fff;
+}
+.sov-pdf-contour-preview-placeholder {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  margin-top: 10px;
+  border: 1px dashed var(--docs-border-strong);
+  border-radius: 8px;
+}
+.sov-pdf-contour-fragments { margin-top: 9px; }
+.sov-pdf-contour-fragment-text {
+  margin: 2px 0 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--docs-border-soft);
+  line-height: 1.45;
+}
+.sov-pdf-page-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+.sov-pdf-page-card {
+  min-width: 0;
+  padding: 9px;
+  color: var(--text);
+  text-align: left;
+  border: 1px solid var(--docs-border-strong);
+  border-radius: 9px;
+  background: var(--bg-panel);
+  cursor: pointer;
+  transition: border-color 120ms ease, background-color 120ms ease, transform 120ms ease;
+}
+.sov-pdf-page-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 60%, var(--docs-border-strong));
+  transform: translateY(-1px);
+}
+.sov-pdf-page-card--selected {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
+}
+.sov-pdf-page-card-head { justify-content: space-between; gap: 5px; }
+.sov-pdf-page-card-head > .q-icon { font-size: 16px; color: var(--warn); }
+.sov-pdf-page-card-type {
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sov-project-map {
   position: relative;
   margin-top: 12px;
@@ -2833,5 +3048,22 @@ body, .nicegui-content {
   .sov-docs-view-tabs { order: 3; width: 100%; }
   .sov-docs-view-tab { flex: 1; }
 }
+.sov-smeta-live-table {
+  max-height: 260px;
+  overflow: auto;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 86%, var(--accent) 14%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 78%, transparent),
+              0 5px 16px rgba(15, 23, 42, .06);
+}
+.sov-smeta-live-table table { width: 100%; margin: 0; font-size: .72rem; }
+.sov-smeta-live-table th,
+.sov-smeta-live-table td { padding: 5px 7px; vertical-align: top; }
+.sov-smeta-live-table th:first-child,
+.sov-smeta-live-table td:first-child,
+.sov-smeta-live-table th:nth-child(3),
+.sov-smeta-live-table td:nth-child(3) { font-variant-numeric: tabular-nums; white-space: nowrap; }
 </style>
 """

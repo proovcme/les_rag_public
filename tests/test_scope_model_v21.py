@@ -197,10 +197,6 @@ def test_version_endpoint_still_has_deployed_commit():
     d = TestClient(app).get("/api/version").json()
     assert "deployed_commit" in d and d["harness_version"] == vs.HARNESS_VERSION and "les_version" in d
 
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True
-
 def test_v06_resource_real_workbook_regression():
     from proxy.services import resource_cost_service as rc
     assert rc.validate_real_workbook()["matches"] is True

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import sys
 
 from tools import les_shell
 
@@ -75,8 +76,11 @@ def test_start_stack_uses_runtime_control(monkeypatch):
     assert les_shell.start_stack() is False
 
 
-def test_gui_unavailable_in_test_env():
-    # pywebview is in the optional `desktop` extra and not installed for tests.
+def test_gui_unavailable_when_optional_dependency_is_missing(monkeypatch):
+    # The full production environment may legitimately install the desktop
+    # extra. Exercise the missing optional dependency explicitly instead of
+    # assuming facts about whichever interpreter runs the suite.
+    monkeypatch.setitem(sys.modules, "webview", None)
     assert les_shell.gui_available() is False
 
 

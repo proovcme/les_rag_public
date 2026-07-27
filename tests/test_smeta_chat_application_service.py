@@ -38,6 +38,11 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
         workflow_call.update({"path": path, **kwargs})
         assert kwargs["exchange"]([], []) == {"tool_calls": [{"id": "model-owned"}]}
         kwargs["progress"]({"phase": "batch_search", "queries_count": 19})
+        kwargs["progress"]({
+            "phase": "row_ready",
+            "status": "done",
+            "row": {"work_id": "w1", "title": "Работа", "norm_code": "ГЭСН01"},
+        })
         Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
         Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
         return {
@@ -112,9 +117,10 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
     assert workflow_call["user_request"] == "Сделай ЛСР"
     assert exchange_attempts == 2
     assert consumed == ["read_0123456789ab"]
-    assert [event["data"]["phase"] for event in events] == [
-        "document_workflow",
-        "batch_search",
+    assert [(event["event"], event["data"]["phase"]) for event in events] == [
+        ("smeta_step", "document_workflow"),
+        ("smeta_step", "batch_search"),
+        ("smeta_row", "row_ready"),
     ]
 
 
@@ -312,7 +318,53 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
     )
 
     assert result is not None
-    assert seen["batch_size"] == 10
+    assert seen["batch_size"] == 5
+
+
+@pytest.mark.asyncio
+async def test_qwen_document_application_defaults_to_accumulated_single_rows(tmp_path, monkeypatch):
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"xlsx")
+    seen = {}
+    monkeypatch.setenv("LES_SMETA_AGENT_ENGINE", "qwen_agent")
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_BATCH_SIZE", raising=False)
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source, {"original_name": "source.xlsx", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+    fake_runner = SimpleNamespace(run_batch=lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        "proxy.services.smeta_agent_runner_service.build_smeta_agent_runner",
+        lambda *_args, **_kwargs: fake_runner,
+    )
+
+    def run_workflow(_path, **kwargs):
+        seen.update(kwargs)
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {"summary": {
+                "result_status": "priced_complete",
+                "input_rows": 1,
+                "bound_rows": 1,
+                "open_rows": 0,
+            }, "positions": []},
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result is not None and result.operation == "smeta_document_lsr"
+    assert seen["batch_size"] == 1
+    assert seen["accumulate_task_state"] is True
+    assert seen["agent_batch_runner"] == fake_runner.run_batch
 
 
 def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monkeypatch):
@@ -380,6 +432,9 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "options" in bodies[0]
     assert bodies[0]["options"]["num_predict"] == 1800
     assert bodies[0]["options"]["num_ctx"] == 32768
+    assert bodies[0]["options"]["temperature"] == 0.0
+    assert bodies[0]["options"]["seed"] == 0
+    assert result["_les_seed"] == 0
     assert bodies[0]["think"] is False
     assert bodies[0]["messages"][-1] == {
         "role": "tool",
@@ -443,6 +498,9 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     assert "think" not in captured["body"]
     assert captured["body"]["messages"][0]["thinking"] == "model reasoning"
     assert captured["body"]["options"]["num_ctx"] == 32768
+    assert captured["body"]["options"]["temperature"] == 0.0
+    assert captured["body"]["options"]["seed"] == 0
+    assert result["_les_seed"] == 0
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

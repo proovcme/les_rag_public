@@ -59,6 +59,7 @@ model/user query
   -> RRF fusion
   -> SQLite FTS exact-reference/file safety merge
   -> reranker over a wider candidate pool
+  -> exact identifier guard over retrieved candidates
   -> parent/neighbor context expansion
   -> compact evidence packet
   -> model reads, may call search/read again, then answers
@@ -67,6 +68,9 @@ model/user query
 Typed SQLite, PDF/table/CAD readers и exact lookup являются инструментами того же evidence-контура.
 Они могут вернуть точную карточку, строку или координату, но не выбирают норму, аналог, состав работ
 или профессиональный вывод. Отдельной альтернативной RAG-архитектуры для модуля или датасета нет.
+Exact identifier guard после rerank только поднимает уже найденный фрагмент, содержащий целиком
+запрошенное буквенно-цифровое обозначение с дефисами (`ОВ-2`, `LES-...-731`), независимо от формата
+файла. Он не добавляет кандидатов, доменные слова или dataset-specific веса и не принимает решение.
 
 Запрещено:
 

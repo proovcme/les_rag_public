@@ -1,5 +1,6 @@
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +24,21 @@ from sovushka.pages.chat import (
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
 
 
+def test_chat_session_id_survives_ui_reopen(monkeypatch):
+    from sovushka import state as sov_state
+
+    storage = SimpleNamespace(user={})
+    monkeypatch.setattr(sov_state, "app", SimpleNamespace(storage=storage))
+    previous = sov_state.state.get("session_id")
+    try:
+        assert sov_state.persist_session_id("session-stable") == "session-stable"
+        sov_state.state["session_id"] = "temporary"
+        assert sov_state.ensure_session_id() == "session-stable"
+        assert sov_state.state["session_id"] == "session-stable"
+    finally:
+        sov_state.state["session_id"] = previous
+
+
 def test_chat_request_accepts_explicit_multi_document_scope_and_response_length():
     req = ChatRequest(
         question="сравни документы",
@@ -42,12 +58,23 @@ def test_ai_plain_markdown_is_rendered_as_markdown_widget():
 
 def test_smeta_operator_sees_live_tool_and_rrf_telemetry():
     source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
 
     assert "sov-smeta-operator-log" in source
     assert 'phase == "retrieval"' in source
     assert "model_wait_ms" in source
     assert "unique_queries_count" in source
     assert "RRF" in source
+    assert 'event == "smeta_row"' in source
+    assert "sov-smeta-live-table" in source
+    assert "smeta_live_rows[work_id] = row" in source
+    assert ".sov-smeta-live-table" in styles
+    assert "font-variant-numeric: tabular-nums" in styles
+    assert "Авточерновик" in source
+    assert "Проверил — зафиксировать" in source
+    assert "Разобрать и зафиксировать" in source
+    assert "accepted_conflict_ids" in source
+    assert ".sov-smeta-approval" in styles
 
 
 def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
@@ -71,6 +98,9 @@ def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
     assert "overflow-x: auto" in styles
     assert "Do not start a second long /api/chat" in source
     assert "serr = stream_state[\"error\"] or {}" in source
+    assert "ensure_session_id()" in source
+    assert "Сессия восстановлена." in source
+    assert "persist_session_id(_new_session_id())" in source
 
 
 def test_chat_ui_can_stop_only_the_active_answer_stream():

@@ -141,6 +141,50 @@ def test_citation_drawer_item_opens_file_like_refs():
     assert item["open_url"].startswith("/lite-api/rag/file/raw?path=RAG_Content")
     assert item["location"] == "para85"
     assert item["snippet"] == "фрагмент"
+    assert item["viewer_url"].startswith("/lite-api/rag/file/viewer?")
+    assert "locator=para85" in item["viewer_url"]
+
+
+def test_citation_drawer_item_opens_pdf_on_exact_page():
+    item = ar.citation_drawer_item({
+        "source_ref": "RAG_Content/PROJECT/План этажа.pdf#p12",
+        "source_kind": "pdf_text_layer",
+    })
+
+    assert item["open_url"].startswith("/lite-api/rag/file/raw?path=RAG_Content")
+    assert "%D0%9F%D0%BB%D0%B0%D0%BD%20%D1%8D%D1%82%D0%B0%D0%B6%D0%B0.pdf" in item["open_url"]
+    assert item["open_url"].endswith("#page=12")
+    assert "page=12" in item["viewer_url"]
+    assert item["is_pdf"] is True
+
+
+def test_citation_drawer_item_accepts_pdf_page_equals_and_bbox():
+    item = ar.citation_drawer_item({
+        "source_ref": "RAG_Content/PROJECT/section.pdf#page=7",
+        "bbox_pt": [10, 20, 110, 55],
+    })
+
+    assert item["open_url"].endswith("#page=7")
+    assert "page=7" in item["viewer_url"]
+    assert "bbox=10.0%2C20.0%2C110.0%2C55.0" in item["viewer_url"]
+
+
+def test_citation_drawer_item_ignores_malformed_bbox_without_hiding_source():
+    item = ar.citation_drawer_item({
+        "source_ref": "RAG_Content/PROJECT/section.pdf#p2",
+        "bbox": ["bad", 20, 110, 55],
+    })
+
+    assert "page=2" in item["viewer_url"]
+    assert "bbox=" not in item["viewer_url"]
+
+
+def test_citation_drawer_item_routes_excel_locator_to_embedded_viewer():
+    item = ar.citation_drawer_item({"source_ref": "RAG_Content/ВОР.xlsx#Лист 1!R42"})
+
+    assert item["viewer_url"].startswith("/lite-api/rag/file/viewer?")
+    assert "%D0%9B%D0%B8%D1%81%D1%82+1%21R42" in item["viewer_url"]
+    assert item["open_url"].endswith("%D0%92%D0%9E%D0%A0.xlsx")
 
 def test_citation_drawer_item_disabled_without_ref():
     item = ar.citation_drawer_item({"file": "doc.pdf"})

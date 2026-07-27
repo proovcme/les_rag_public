@@ -166,10 +166,6 @@ def test_releases_doc_exists():
 
 # ── регрессии ─────────────────────────────────────────────────────────────────────────────
 
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True
-
 def test_deterministic_policy_regression():
     from proxy.services.deterministic_policy_service import can_return_deterministic_final as P
     assert P("glossary", "Расскажи про котельную на лесном 64?", candidate={"concept": "ozr"})[0] is False

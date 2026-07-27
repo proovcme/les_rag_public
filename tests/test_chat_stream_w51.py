@@ -3,6 +3,7 @@
 Живой end-to-end (первый токен < 2с на MLX) — [live]; здесь проверяем плумбинг
 без сервисов: серверный кадр/события и клиентский парсер SSE.
 """
+import asyncio
 import json
 
 import httpx
@@ -26,6 +27,31 @@ def test_sse_event_framing():
     progress = _sse_event("progress", {"step": 1, "total": 2, "label": "Ищу"})
     assert progress.startswith("event: progress\ndata: ")
     assert json.loads(progress.split("data: ", 1)[1])["label"] == "Ищу"
+
+
+def test_recovered_stream_answer_is_persisted_for_session_reopen(monkeypatch):
+    captured = {}
+
+    def save_chat_history(**kwargs):
+        captured.update(kwargs)
+        return 73
+
+    monkeypatch.setattr(chat_router, "save_chat_history", save_chat_history)
+    payload = chat_router._persist_recovered_stream_history(
+        ChatRequest(question="Собери смету", session_id="session-1"),
+        {
+            "answer": "Восстановленный ответ",
+            "crag_status": "UNVALIDATED",
+            "sources": [{"source_ref": "source.pdf#page=1"}],
+            "retrieval_trace": {"stream_recovery": {"tokens": 12}},
+            "cache": "stream_recovered",
+        },
+    )
+
+    assert payload["history_id"] == 73
+    assert captured["session_id"] == "session-1"
+    assert captured["sources"] == ["source.pdf#page=1"]
+    assert captured["tokens"] == 12
 
 
 async def _drain(resp) -> str:
@@ -136,6 +162,39 @@ async def test_chat_stream_synthesizes_tokens_when_path_returns_final_only(monke
     assert "event: token" in body
     assert body.index("event: token") < body.index("event: final")
     assert "Готовый ответ" in body
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_finishes_runner_after_client_iterator_closes(monkeypatch):
+    started = asyncio.Event()
+    release = asyncio.Event()
+    state = {"completed": False, "cancelled": False}
+
+    async def slow_final(req, token_sink=None):
+        started.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            state["cancelled"] = True
+            raise
+        state["completed"] = True
+        return {"answer": "Смета готова", "crag_status": "VERIFIED", "sources": []}
+
+    monkeypatch.setattr(chat_router, "_run_chat", slow_final)
+    response = await chat_stream(ChatRequest(question="Собери смету"), _user=None)
+    iterator = response.body_iterator
+    await anext(iterator)
+    await started.wait()
+
+    close_task = asyncio.create_task(iterator.aclose())
+    await asyncio.sleep(0)
+    assert close_task.done() is False
+    assert state["cancelled"] is False
+
+    release.set()
+    await close_task
+    assert state["completed"] is True
+    assert state["cancelled"] is False
 
 
 # ── клиентская сторона (sovushka/state.api_post_stream) ──────────────

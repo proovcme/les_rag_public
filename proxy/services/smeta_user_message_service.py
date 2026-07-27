@@ -44,8 +44,13 @@ def format_document_lsr_message(source_name: str, summary: dict[str, Any]) -> st
     )
     total_without_vat = summary.get("total_without_vat", summary.get("total"))
     total_with_vat = summary.get("total_with_vat")
+    is_draft = (
+        str(summary.get("result_status") or "") == "priced_draft"
+        or str(summary.get("approval_status") or "") == "auto_draft"
+    )
 
-    parts = [f"Смету собрал с нуля по ведомости «{source_name}». "]
+    opening = "Проверяемый черновик сметы собрал" if is_draft else "Смету собрал"
+    parts = [f"{opening} с нуля по ведомости «{source_name}». "]
     if open_rows:
         coverage = f"Из {_positions(total_rows)} рассчитаны {priced_rows}"
         if covered_rows:
@@ -61,17 +66,27 @@ def format_document_lsr_message(source_name: str, summary: dict[str, Any]) -> st
         parts.append(f"Все {_positions(total_rows)} рассчитаны. ")
 
     if total_without_vat is not None and total_with_vat is not None:
-        label = "Стоимость рассчитанной части" if amount_is_partial else "Стоимость сметы"
+        label = (
+            "Стоимость рассчитанного черновика" if is_draft and not amount_is_partial
+            else "Стоимость рассчитанной части" if amount_is_partial
+            else "Стоимость сметы"
+        )
         parts.append(
             f"{label} составляет {format_rub(total_without_vat)} без НДС "
             f"и {format_rub(total_with_vat)} с НДС. "
         )
     elif total_without_vat is not None:
-        label = "Стоимость рассчитанной части" if amount_is_partial else "Стоимость сметы"
+        label = (
+            "Стоимость рассчитанного черновика" if is_draft and not amount_is_partial
+            else "Стоимость рассчитанной части" if amount_is_partial
+            else "Стоимость сметы"
+        )
         parts.append(f"{label} без НДС составляет {format_rub(total_without_vat)}. ")
 
     parts.append(
         "Формульная ЛСР приложена в Excel, замечания и позиции, требующие уточнения, "
         "вынесены на лист «Проверка»."
     )
+    if is_draft:
+        parts.append(" До пользовательской проверки и фиксации mapping-ревизии документ не является финальным.")
     return "".join(parts)

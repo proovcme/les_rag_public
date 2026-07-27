@@ -548,9 +548,10 @@ async def run_smeta_document_application(
             "label": "Смета: модель обрабатывает строки ВОР",
             **event,
         }
+        stream_event = "smeta_row" if payload["phase"] == "row_ready" else "smeta_step"
         try:
             asyncio.run_coroutine_threadsafe(
-                token_sink({"event": "smeta_step", "data": payload}), loop
+                token_sink({"event": stream_event, "data": payload}), loop
             ).result(timeout=1.0)
         except Exception as error:  # progress telemetry must not abort the estimate
             logger.warning("[SMETA_DOCUMENT] progress bridge failed: %s", error)
@@ -561,14 +562,15 @@ async def run_smeta_document_application(
             cancel_check=cancel_requested.is_set,
         )
         configured_batch_size = os.getenv("LES_SMETA_DOCUMENT_BATCH_SIZE")
-        document_batch_size = int(
-            configured_batch_size
-            if configured_batch_size is not None
-            else ("0" if cloud_provider else "10")
-        )
+        if configured_batch_size is not None:
+            document_batch_size = int(configured_batch_size)
+        elif agent_engine == "qwen_agent":
+            document_batch_size = 1
+        else:
+            document_batch_size = 0 if cloud_provider else 5
         document_max_turns = int(os.getenv(
             "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
-            "64" if cloud_provider else "6",
+            "64" if cloud_provider else "10",
         ))
         workflow_task = asyncio.create_task(asyncio.to_thread(
             run_vor_document_workflow, source_path,
@@ -581,6 +583,8 @@ async def run_smeta_document_application(
             batch_size=document_batch_size,  # local transport packages stay small; zero keeps one cloud conversation
             max_agent_turns=document_max_turns,
             agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
+            accumulate_task_state=(agent_engine == "qwen_agent" and document_batch_size == 1),
+            require_global_review=True,
         ))
         while True:
             try:
@@ -607,6 +611,10 @@ async def run_smeta_document_application(
         workflow["agent_trace"].setdefault("engine", agent_engine)
         workflow["agent_trace"].setdefault("provider", model_provider)
         workflow["agent_trace"].setdefault("model", model_name)
+        if not cloud_provider:
+            workflow["agent_trace"].setdefault(
+                "seed", int(os.getenv("LES_SMETA_DOCUMENT_SEED", "0"))
+            )
         workflow["agent_trace"]["document_elapsed_ms"] = round(
             (time.monotonic() - started) * 1000, 2
         )
@@ -669,7 +677,7 @@ async def run_smeta_document_application(
         answer += f"\n\nСметная модель переключилась на резерв: {switches}. Это записано в журнале ЛСР."
     artifact = {
         "mode": "xlsx",
-        "stage": "priced_lsr",
+        "stage": "priced_draft" if status == "priced_draft" else "priced_lsr",
         "title": f"ЛСР — {source_name}",
         "downloads": {
             "xlsx": f"/api/smeta-artifacts/download?path={xlsx_path.name}",
@@ -678,6 +686,18 @@ async def run_smeta_document_application(
         "rim_trace": json.loads(
             json.dumps(workflow.get("lsr") or {}, ensure_ascii=False, default=str)
         ),
+        "approval": {
+            "status": summary.get("approval_status") or "auto_draft",
+            "mapping_revision_id": (workflow.get("mapping_run") or {}).get(
+                "current_mapping_revision_id"
+            ),
+            "professional_conflicts": list(workflow.get("professional_conflicts") or []),
+            "lock_url": (
+                f"/api/smeta-mappings/{(workflow.get('mapping_run') or {}).get('current_mapping_revision_id')}/lock"
+                if (workflow.get("mapping_run") or {}).get("current_mapping_revision_id")
+                else ""
+            ),
+        },
     }
     return SmetaDocumentApplicationResult(
         answer=answer,

@@ -4,19 +4,308 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-17)
+## Текущее состояние (2026-07-27)
 
 ```
-версия продукта (SemVer):  0.24.26 (published, 2026-07-17)
-номер сборки:              447     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.447 (published Windows package)
+версия продукта (SemVer):  0.24.46 (dev, 2026-07-27)
+номер сборки:              467     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.467 (Windows smoke не выполнен)
 ветка выпуска:             main (сведение веток выполняется перед публикацией)
-dev HEAD:                  e380c12ad6eb05ac0a5425024af2c5057a3d2786
-задеплоено на рантайм:     0.24.26 / build 447 (live on Legion, 2026-07-17)
-Windows-выпуск:            0.24.26 / build 447 (GitHub release v0.24.26)
+dev HEAD:                  working tree поверх 9af71346
+задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.26 / build 447
+Windows-выпуск:            0.24.46 / build 467 не собран; последний GitHub release v0.24.26
 следующий выпуск:          не назначен
-рантайм /api/version:      0.24.26 / build 447; UI 200; desktop process 1
+рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.26 / build 447
 ```
+
+> 0.24.46 / build 467 — repeatable local Qwen transport и durable chat session
+>
+> Дата: 2026-07-27
+> Статус: dev; runtime, Legion и GitHub PR не менялись.
+> Из публичного PR перенесён operational-контур: `qwen3.5:9b`, `temperature=0`,
+> `LES_SMETA_DOCUMENT_SEED=0`, локальный batch=5, стабильный порядок запросов/tool-items и seed в
+> trace. NiceGUI сохраняет активный `session_id`, загружает историю только этой сессии, recovered
+> SSE-ответ записывается в history, а закрытие вкладки не отменяет серверное завершение workflow.
+> Предметный self-check PR не перенесён: существующий model-owned `global_review` создаёт immutable
+> R2, а смена нормы не наследует resource bindings/НР/СП R1.
+> Проверки: focused `141 passed`; `make verify` — version contract/compileall green,
+> `2720 collected`; `make test` — `2711 passed, 9 skipped`; `git diff --check` и
+> `uv lock --check` зелёные.
+
+> 0.24.45 / build 466 — один сметный workflow и model-authored ScopePlan
+>
+> Дата: 2026-07-27
+> Статус: dev; runtime, Legion и внешние PR не менялись.
+> ADR-13 закрепил native/cloud/local как transport profiles одного `SmetaSession`, а не отдельные
+> сметные движки. `search_norms_batch` теперь принимает и трассирует `smeta_scope_plan_v1`:
+> явный `scoped` с выбранными моделью `base_types/collections` либо явный `global` без фильтров.
+> Код отклоняет противоречивую форму плана, но не выводит предметный scope из текста. Регрессия
+> подтверждает, что при смене нормы в R2 ресурсные действия и НР/СП от R1 не копируются.
+> Публичный PR и локальный WIP целиком не сливаются; переносимы только operational/retrieval части,
+> перечисленные в ADR.
+> Проверки: focused smeta `117 passed`; `make test` — `2707 passed, 9 skipped`;
+> `make verify` — version contract/compileall green, `2716 collected`; `git diff --check` и
+> `uv lock --check` зелёные.
+
+> 0.24.44 / build 465 — публичный first-run выбор модели без общего секрета
+>
+> Дата: 2026-07-22
+> Статус: Mac public demo. После ключа В.О.Л.К. открывается `/provider-setup`: local MLX
+> (медленнее, без ключа) или OpenRouter/OpenAI BYOK. Облачный ключ хранится только в process-memory
+> UI до 12 часов, не попадает в `.env`/общие настройки и применяется request-scoped через ContextVar;
+> P0 policy сохраняет локальный fallback. Caddy пропускает новый auth-gated UI route.
+> Проверки: first-run provider `6 passed`; `make verify` — `2714 collected`; `make test` —
+> `2704 passed, 9 skipped` до CSS-only visual fix, затем focused и verify зелёные.
+
+> 0.24.43 / build 464 — объяснимое сравнение кандидатов и компактная global review
+>
+> Дата: 2026-07-18
+> Статус: dev; runtime и Legion не менялись, экспертный golden ещё не размечен.
+> Model-visible search card теперь показывает typed identity, редакцию/сборник, совместимость
+> измерителя, краткий состав, ресурсный профиль, `matched_query`, фильтры и retrieval backend.
+> `read_norms_batch(include_resources=true)` больше не обрезает ресурсный состав после 30 позиций.
+> Каждый bind содержит model-owned `candidate_evaluations`; если открыто несколько карточек, модель
+> сравнивает выбранную минимум с одной реально открытой отклонённой/спорной альтернативой. Python
+> проверяет только форму/provenance и не выбирает победителя. Обязательная cross-row ревизия получает
+> bounded card-map без полного списка ресурсов и лениво перечитывает спорную typed-карточку tool-вызовом.
+> `tools/smeta_mapping_quality.py --prepare-from ... --out ...` создаёт очередь человеческой разметки,
+> отделяет предложение модели от эталона и не считает строки `needs_expert_review`.
+> Живой Qwen probe выявил и закрыл context blow-up: модель четыре раза углублялась в каталог и
+> превысила 32K ещё до поиска. Model-visible каталог теперь заканчивается на семействах/сборниках,
+> повтор страницы даёт короткий `already_seen`, а table/norm dumps доступны только через search/read.
+> Повторный probe завершил строку `vor-0013`: 11 model/tool turns, две реально открытые и сравнённые
+> карточки, same-model terminal recovery, `row_ready`. Время 793 с; модель выбрала спорный ремонтный
+> `ГЭСНр62-01-017-04` и одновременно указала `exact`/`close_analog`, что штатно образует
+> `analog_declared_exact` для global review. Поэтому Qwen остаётся optional runner, default не менялся.
+> Литеральный повтор одной и той же candidate evaluation считается один раз при structural validation,
+> но исходный model payload остаётся в trace; противоречащий дубль блокируется.
+> Проверки: focused `82 passed`; весь smeta-контур `226 passed`; `make test` —
+> `2699 passed, 9 skipped`; `make verify` — version contract/compileall green, `2708 collected`.
+
+> 0.24.42 / build 463 — поэтапный модельный поиск семейство → сборник → норма
+>
+> Дата: 2026-07-18
+> Статус: dev; runtime и Legion не менялись, полный professional golden-гейт не запускался.
+> `browse_norm_catalog` открыт всем сметным runner'ам как typed-навигация. Модель сначала получает
+> полный список семейств, затем полный список сборников выбранного семейства и сама передаёт
+> `base_types`/`collections` в `search_norms_batch`; статического перечня в skill и скрытого selector
+> нет. Малый модельный `limit=5/10` больше не скрывает поздние номера. Search-кандидаты показывают
+> `source_ref` и краткий состав работ. Terminal bind без полной технологической анкеты возвращается
+> той же модели; retry-schema фиксирует её существующий decision type и требует пропущенные поля.
+> Изолированный live Qwen 9B probe строки `vor-0013` прошёл путь `5 семейств → 47 сборников ГЭСН
+> → сборник 15 → scoped search → read → submit`. Вместо прежней уверенной нормы сборника 34 модель
+> выбрала `ГЭСН15-04-007-02` как `close_analog`, сохранив ограничения по неизвестному основанию и
+> типу краски. Это подтверждает гипотезу одной строки, но не делает Qwen production default.
+> Проверки: focused smeta `74 passed`; `make test` — `2691 passed, 9 skipped`;
+> `make verify` — `2700 collected` и compileall green.
+
+> 0.24.41 / build 462 — terminal recovery и честный межстрочный конфликт Qwen
+>
+> Дата: 2026-07-18
+> Статус: dev; runtime не менялся, ФГИС продолжает отдельную фоновую загрузку.
+> Если Qwen-Agent завершает исследование обычным текстом, transport один раз возвращает той же
+> модели ту же conversation history и требует только terminal serialization; код не создаёт и не
+> меняет решение. `unbound` теперь принимается лишь с двумя реально выполненными запросами,
+> открытыми через tools карточками, причинами отказа и coverage-check; при ошибке tool возвращает
+> модели точные допустимые значения provenance. Жёсткий обрыв после четырёх неудачных submit удалён:
+> цикл ограничивается общим model-turn budget и сохраняет возможность исправить terminal JSON.
+> Conflict-validator получил `possible_duplicate_norm_binding` для похожих строк одного раздела с
+> одинаковой нормой; это предупреждение для модели/сметчика, а не скрытая замена нормы.
+> Live БАП probe: `vor-0007` закрыта Qwen самостоятельно за 7 model/7 tool turns; `vor-0010`
+> получила реальный накопленный `task_state` и закрылась за 4 model turns. Global review завершился
+> через same-model recovery, но оставил duplicate-warning, поэтому результат честно остаётся draft
+> и требует пользовательского gate. Six-row/full professional gate ещё не запускался.
+> Проверки: focused smeta `69 passed`; `make verify` — `2695 collected`;
+> полный `make test` — `2686 passed, 9 skipped`.
+
+> 0.24.40 / build 461 — первая живая проверка построчного Qwen
+>
+> Дата: 2026-07-18
+> Статус: dev; runtime не менялся, ФГИС продолжает отдельную фоновую загрузку.
+> Живой `qwen3.5:9b` zero-state probe на БАП подтвердил самостоятельный search→read→submit для
+> одной строки: 7 модельных и 7 tool-ходов, 272 секунды, содержательное `unbound`. Первый запуск
+> выявил transport bug: общий wall-time budget отклонял даже terminal submit после 180 секунд.
+> Теперь лимит блокирует только дальнейшие evidence tools, но всегда разрешает сдачу собственного
+> решения модели; регрессия закреплена тестом. Вторая связанная строка получила `task_state`,
+> выполнила search/read, но завершила разговор без terminal tool. Поэтому гипотеза технически
+> жизнеспособна, но Qwen 9B пока не проходит критерий надёжного построчного завершения; полный
+> six-row/full ВОР gate осознанно не выдаётся за пройденный.
+> Проверки: focused professional-review/agent-runner `14 passed`; `make verify` — `2693 collected`;
+> полный `make test` — `2684 passed, 9 skipped`.
+
+> 0.24.39 / build 460 — второй профессиональный контур сметного mapping
+>
+> Дата: 2026-07-18
+> Статус: dev; runtime не менялся, ФГИС продолжает отдельную фоновую загрузку.
+> После построчного mapping та же модель обязательно проверяет всю ВОР и создаёт новую immutable
+> global-review revision. Детерминированный validator только предъявляет противоречия по технологии,
+> coverage, ресурсам и коэффициентам и не выбирает замену. Evidence budget разделён на search/read,
+> открытые карточки и wall-time; search tool требует содержательный `search_intent`.
+> Автоматический XLSX теперь всегда `priced_draft`; Совушка показывает «Авточерновик» и создаёт
+> отдельную пользовательскую `mapping_locked`-ревизию и финальный расчёт только после явного
+> «Проверил — зафиксировать». Mapping/run/global-review/calculation больше не маскируются одной
+> ревизией. Добавлены expert quality metrics и CLI, но сам экспертный golden-набор 100–300 строк
+> остаётся профессиональной работой, а не генерируется кодом.
+> Проверки: focused smeta/application/UI `126 passed`; `make verify` — `2692 collected`;
+> полный `make test` — `2683 passed, 9 skipped`.
+
+> 0.24.38 / build 459 — последовательный Qwen-сметчик с живыми строками
+>
+> Дата: 2026-07-18
+> Статус: dev; runtime не менялся, профессиональный live-гейт ожидается после готовности ФГИС.
+> Qwen-Agent теперь по умолчанию получает одну активную строку ВОР, а каждая следующая строка —
+> компактный `task_state` уже принятых модельных решений общей задачи. Код не выбирает и не
+> пересматривает нормы. После terminal `submit_lsr_mapping` готовая строка публикуется отдельным
+> SSE `smeta_row` и сразу добавляется в живую таблицу текущего сообщения Совушки; черновые
+> кандидаты не показываются. Benchmark получил явный `--batch-size`, Qwen default равен `1`.
+> `docs/SMETA_MODULE_EXPLAINED.md` пересобран как единый паспорт модуля: архитектура, полный active
+> prompt, skill-contract, row-loop, ФСНБ/ФГИС, расчёт, UI, конфигурация, отказы и тестовые команды.
+> Проверки: focused smeta/runner/application/UI `113 passed`; `make verify` — `2683 collected`;
+> полный `make test` — `2674 passed, 9 skipped`.
+
+> 0.24.37 / build 458 — каноническая LES-сюита без архивного шума
+>
+> Дата: 2026-07-17
+> Статус: dev; runtime не менялся.
+> `make test`, `test-release`, `test-architecture` и collect-only `verify` теперь используют один
+> текущий LES-профиль: 11 файлов feature-off Unified/Construction Harness и `test_artel*`
+> исключены. Исторические 288 тестов доступны только через `make test-legacy`. Из пяти смешанных
+> файлов удалены 49 агрегатных повторов, также удалены семь always-green assertions; 96 полезных
+> extraction/sidecar/API проверок сохранены. Профильные границы закреплены отдельной регрессией.
+> `pytest.ini` применяет тот же default и к прямому `uv run pytest`. Канонический полный прогон:
+> 2680 collected, 2671 passed, 9 skipped.
+
+> 0.24.36 / build 457 — PDF-паспорт работает для ручной загрузки
+>
+> Дата: 2026-07-17
+> Статус: clean Mac production; Windows runtime smoke и публикация не выполнены.
+> Browser smoke обнаружил 404 паспорта у загруженного PDF: MetaDB намеренно не хранила
+> абсолютный `source_path`. Router теперь разрешает такой оригинал по безопасным
+> `dataset_id + file_name` только внутри canonical storage; traversal/absolute fallback
+> запрещены. Тот же resolver используется для read-only native open.
+
+> 0.24.35 / build 456 — точное обозначение выше семантического соседа
+>
+> Дата: 2026-07-17
+> Статус: clean Mac production; Windows runtime smoke и публикация не выполнены.
+> Живой PDF/DOCX/XLSX smoke выявил, что полный PDF exact-hit после общего rerank мог
+> остаться вторым, хотя lexical score уже был максимальным. Общий format-neutral guard
+> теперь после rerank поднимает кандидата с целым буквенно-цифровым обозначением с дефисами;
+> он не добавляет источники, доменные слова или dataset-specific веса. Regression покрывает
+> ошибочный reranker-order, а live gate требует exact top-1 для всех трёх офисных форматов.
+> Release-smoke budget для одного model-first chat probe откалиброван с 45 до 90 секунд:
+> локальный 9B на Mac Mini стабильно отвечал за 43–70 секунд, делая прежний порог флаки.
+
+> 0.24.34 / build 455 — короткие PDF-страницы остаются доказательством в RAG
+>
+> Дата: 2026-07-17
+> Статус: clean Mac production; Windows runtime smoke и публикация не выполнены.
+> Живой clean-corpus smoke выявил, что общий порог `RAG_MIN_CHUNK_CHARS=100` выбрасывал
+> уже выделенные короткие PDF page nodes: файл считался `INDEXED`, но в выдаче оставался
+> только служебный паспорт. Теперь любая непустая выделенная PDF-страница индексируется
+> с `type=pdf_page_text`, точными `page` и `source_ref`; пустые страницы по-прежнему
+> пропускаются. Добавлен end-to-end regression на реальном трёхстраничном PyMuPDF-файле.
+> Диагностика Т.О.С.К.А. на чистом контуре не объявляет один первый `UNVALIDATED`
+> системной аварией: выборка меньше пяти проверяемых ответов показывается как WARN.
+
+> 0.24.33 / build 454 — честный clean-runtime health и единый version trace
+>
+> Дата: 2026-07-17
+> Статус: clean Mac production; Windows runtime smoke и публикация не выполнены.
+> Старый `/Users/ovc/LES` (122 ГБ) остановлен, полностью скопирован на внешний APFS-том и
+> проверен dry-run `rsync` плюс SHA-256 метабазы/config/deploy stamp, после чего удалён.
+> Новый runtime развёрнут из clean release artifact без `.env`, корпусов, индексов и логов;
+> секреты сгенерированы заново, CoreML-модели перенесены как неизменяемая runtime-зависимость.
+> Живой release-smoke выявил и закрыл два contract gap: детерминированные chat-final теперь
+> содержат `versions.version_info`, а smoke понимает актуальную вложенную форму; диагностика
+> Т.О.С.К.А. при отсутствии проверяемых ответов показывает WARN вместо ложного ERR и не считает
+> NO_DATA провалом валидации. Focused regression gate: 16 passed.
+
+> 0.24.32 / build 453 — встроенный просмотр PDF и офисных источников
+>
+> Дата: 2026-07-17
+> Статус: dev; Windows runtime smoke и публикация не выполнены.
+> Клик по поддерживаемому файловому источнику теперь открывает его внутри artifact drawer:
+> PDF — на точной странице с bbox highlight, DOCX — на абзаце, XLSX/XLSM — на строке и
+> листе; также доступны PPTX text slides, EML, CSV/TSV, text и images. Viewer локальный,
+> без CDN/LibreOffice/browser PDF plugin; API использует прежний path guard и no-store,
+> originals открываются только read-only. Legacy DOC/XLS не маскируются под OOXML и остаются
+> raw-only. Focused gate: 74 passed; browser smoke подтвердил PDF page 2→3, DOCX `para3`,
+> XLSX `ВОР!R10`→`Итоги` и 0 console errors. `make verify` — 3102 collected;
+> полная suite — 3099 passed / 3 optional skips.
+
+> 0.24.31 / build 452 — компактные и действенные источники ответа
+>
+> Дата: 2026-07-17
+> Статус: dev; Windows runtime smoke и публикация не выполнены.
+> Перечень источников в чате закрыт по умолчанию; после раскрытия длинный список
+> прокручивается внутри панели и не растягивает ответ на страницу. Основной клик
+> открывает файловый источник напрямую, PDF deep-link сохраняет точную страницу
+> через `#page=N`; info-кнопка открывает прежнюю проверяемую карточку со сниппетом,
+> `source_ref`, копированием цитаты и ссылкой. Изменение presentation-only: retrieval,
+> model answer и evidence payload не менялись. Focused tests: 78 passed; browser smoke
+> на 36 источниках подтвердил closed-by-default, bounded `302/1522 px` scroll,
+> PDF `#page=7`, citation drawer и 0 console errors. `make verify` — 3084 collected;
+> полная suite — 3081 passed / 3 optional skips.
+
+> 0.24.30 / build 451 — единый PDF-контур для RAG и Л.И.С.Т.
+>
+> Дата: 2026-07-17
+> Статус: dev; Windows runtime smoke и публикация не выполнены.
+> Добавлен общий `list.pdf_page_passport.v1`: цифровой текст, таблица, чертёж, скан,
+> смешанная страница и повреждённый text layer; quality/OCR-needed, формат, сигналы,
+> штамп, sheet number best-effort, `source_ref` и bbox-фрагменты. RAG page nodes получают
+> этот metadata contract; OCR headings `## Стр. N` больше не выпадают, а scan/OCR получает
+> `source_layer=pdf_ocr_text`. В карточке выбранного PDF Л.И.С.Т. видны сводка, страницы,
+> confidence, OCR, координаты и PNG-превью без записи в оригинал. Focused gate: 26/26;
+> synthetic 5-page PDF проверен Poppler; browser smoke прошёл `PDF → паспорт → scan page`,
+> console 0 errors. Расширенный PDF/RAG gate — 174/174; `make verify` — 3083 collected;
+> полная suite — 3080 passed / 3 optional skips.
+
+> 0.24.29 / build 450 — Л.Е.С. готовит офисные документы внутри Л.И.С.Т.
+>
+> Дата: 2026-07-17
+> Статус: dev; Windows runtime smoke и публикация не выполнены.
+> В «Документы → Студия» добавлен полный агентный GUI-путь: выбранные файлы читаются
+> через `DocumentExplorer`, штатный schema-constrained provider возвращает
+> `office_document_ir_v1` по ручным полям с `grounded|assumption|missing`, confidence и
+> серверно проверенными evidence ids. Пользователь видит предложения и фрагменты,
+> отдельно применяет их и подтверждает ручную проверку; до этого выпуск disabled, а API
+> fail-closed отклоняет IR. Manifest хранит предложения, итоговые поля, основания и факт
+> подтверждения. Модель не редактирует OOXML, не трогает originals и не создаёт файл.
+> Browser smoke дополнительно выявил и закрыл смену шаблона через корректный NiceGUI
+> `on_value_change`: прогон выбрал техническое письмо, получил evidence, применил поля,
+> подтвердил review и создал `technical_letter_r1.docx`; ошибок консоли нет.
+> Контроль: focused 49/49; `make verify` — 3077 collected; полная suite —
+> 3074 passed / 3 optional skips; browser smoke — полный агентный DOCX-путь, console 0 errors.
+
+> 0.24.28 / build 449 — Л.И.С.Т. Студия документов: первый GUI-срез
+>
+> Дата: 2026-07-17
+> Статус: dev; Windows runtime smoke и публикация не выполнены.
+> В «Документах» появился режим «Студия»: выбор шаблона/объекта/формата, видимые источники
+> каждого поля, незаполненные значения, привязка выбранных файлов-оснований, предпросмотр,
+> выпуск DOCX/XLSX и журнал ревизий со скачиванием. `list_office_service` хранит каждый draft
+> append-only в отдельном каталоге, пишет manifest `list.office_artifact.v1`, SHA-256,
+> provenance и fail-closed блокирует скачивание изменённого файла; originals не открываются
+> на запись. Добавлены шаблоны технического письма и протокола совещания. Model tool и
+> `office_document_ir_v1` остаются следующим срезом: текущий выпуск не выдаёт ручное заполнение
+> за агентное. Контроль: focused pytest 28/28; `make verify` — 3072 collected; полная сюита —
+> 3069 passed / 3 optional skips. Изолированный browser smoke создал ревизию из GUI и показал
+> её в журнале с кнопкой скачивания.
+
+> 0.24.27 / build 448 — Windows setup wizard для чистой машины
+>
+> Дата: 2026-07-17
+> Статус: dev; Windows runtime smoke и публикация не выполнены.
+> Встроенные Python/uv готовятся автоматически. Отсутствующие Ollama/Docker, незапущенный
+> Docker/WSL, Qdrant и модели больше не закрывают Tauri: bootstrap пишет `setup_required`, а
+> нативный wizard показывает отдельные шаги и предлагает установку внешних программ через winget
+> либо официальные ссылки. Пользователь сам загружает и выбирает любой установленный answer-тег;
+> `qwen3.5:9b` только рекомендуется, `bge-m3` отдельно требуется для embedding-контракта.
+> Скрытые `ollama pull` удалены. Реальная внутренняя ошибка также остаётся внутри wizard с кодом и
+> журналом вместо экрана «ЛЕС не запустился». После старта мастер и рекомендации доступны из трея
+> через «Настройка и справка» без остановки служб.
 
 > 0.24.26 / build 447 — Е.Ж.И.К.: отдельный P0-датасет на каждый почтовый ящик
 >

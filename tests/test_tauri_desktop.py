@@ -21,6 +21,7 @@ def test_tauri_config_is_the_canonical_les_desktop_shell():
     assert config["identifier"] == "me.ovc.les"
     assert config["productName"] == "ЛЕС"
     assert config["build"]["frontendDist"] == "../web"
+    assert config["app"]["withGlobalTauri"] is True
     assert config["app"]["windows"][0]["url"] == "index.html"
     assert config["bundle"]["windows"]["nsis"]["installMode"] == "currentUser"
     assert config["bundle"]["windows"]["nsis"]["installerHooks"] == "windows-installer-hooks.nsh"
@@ -52,8 +53,22 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert 'creation_flags(0x0800_0000)' in source
     assert '"restart" => run_action' in source
     assert '"stop" => run_action' in source
+    assert '"setup" => show_setup' in source
+    assert "setup_snapshot" in source
+    assert "install_setup_component" in source
+    assert "start_from_setup" in source
+    assert "retry_setup" in source
     assert "search_norm" not in source
     assert "submit_lsr_mapping" not in source
+
+    wizard = (TAURI / "web" / "index.html").read_text(encoding="utf-8")
+    script = (TAURI / "web" / "wizard.js").read_text(encoding="utf-8")
+    assert "Настройка Л.Е.С." in wizard
+    assert "Рекомендации после запуска" in wizard
+    assert "ollama pull qwen3.5:9b" in wizard
+    assert "ollama pull bge-m3" in wizard
+    assert 'invoke("install_setup_component"' in script
+    assert 'invoke("start_from_setup"' in script
 
 
 def test_tauri_bootstrap_does_not_install_or_launch_pywebview():

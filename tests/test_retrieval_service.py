@@ -116,6 +116,19 @@ class ExactSourceBackend(FakeBackend):
         return chunks[:top_k]
 
 
+class ExactIdentifierBackend(FakeBackend):
+    async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
+        self.doc_filters.append(doc_filter)
+        chunks = [
+            Chunk("Related equipment B454 and valve schedule", "schedule.xlsx", 0.99),
+            Chunk("LES-SMOKE-B454-VALVE-731 AIRFLOW 7310 M3/H", "drawing.pdf", 0.10),
+            Chunk("General project notes", "notes.docx", 0.50),
+        ]
+        chunks.extend(Chunk(f"tail-{idx}", f"tail-{idx}.md", 0.05) for idx in range(max(top_k - 3, 0)))
+        return chunks[:top_k]
+
+
 class ExactNormBackend(FakeBackend):
     async def retrieve(self, question, dataset_ids=None, top_k=5, doc_filter=None):
         self.calls.append({"question": question, "dataset_ids": dataset_ids, "top_k": top_k})
@@ -623,6 +636,28 @@ async def test_retrieve_chat_chunks_promotes_exact_source_after_rerank(monkeypat
     assert result.chunks[0].doc_name == "cad_bim_json_db1941fd7ee6.md"
     assert "source_exact" in result.trace.mode
     assert "source:cad_bim_json_db1941fd7ee6.md" in result.trace.exact_refs
+
+
+@pytest.mark.asyncio
+async def test_retrieve_chat_chunks_promotes_exact_identifier_after_rerank(monkeypatch):
+    monkeypatch.setenv("RAG_HYBRID_RETRIEVAL_ENABLED", "false")
+    backend = ExactIdentifierBackend()
+
+    result = await retrieve_chat_chunks(
+        question="LES-SMOKE-B454-VALVE-731",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert result.chunks[0].doc_name == "drawing.pdf"
+    assert "identifier_exact_guard" in result.trace.mode
+    assert "identifier:les-smoke-b454-valve-731" in result.trace.exact_refs
 
 
 @pytest.mark.asyncio

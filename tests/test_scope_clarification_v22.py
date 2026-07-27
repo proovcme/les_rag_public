@@ -90,11 +90,6 @@ def test_explicit_ozhr_still_glossary():
     from proxy.services.glossary_chat_service import maybe_handle_glossary_query
     assert maybe_handle_glossary_query("что такое ОЖР")["concept"] == "ozr"
 
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True
-
-
 # ── §2/§3 ScopeSelector UI wiring (source-level) ──────────────────────────────────────────
 
 def test_scope_selector_wired_in_gui():
