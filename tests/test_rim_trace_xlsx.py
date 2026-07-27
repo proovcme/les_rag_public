@@ -1,8 +1,14 @@
 """Тест рендерера РИМ-трассы в XLSX по форме Приложения 3 к 421/пр.
 
 Рендерер из ГОТОВОЙ трассы, не калькулятор → числа те же, что в build_position_trace.
-Эталон ГЭСН12-01-034-02 @ 0.61 → summary.total == 11896.35 после полной
-детализации ОТм через ФСЭМ (тот же trace, что сервис/endpoint-тесты).
+
+Эталон ГЭСН12-01-034-02 @ 0.61 → summary.total == 11813.04 по семени
+`config/domain/gesn_seed.yaml` с явной детализацией ОТм по трём машинам.
+Независимый разбор 2026-07-23: без runtime ФСЭМ (`fsem_trace.status =
+not_applied_without_pricebook`) арифметика даёт ozp 3750.23 + em 992.4 +
+mat 83.62 + nr 4587.71 + sp 2399.08 = 11813.04; amount_status=complete.
+Старое ожидание 11896.35 относилось к другому контуру и расходилось с
+`test_rim_lsr_trace_service` / `test_smeta_core`, уже зафиксировавшими 11813.04.
 """
 
 import asyncio
@@ -14,7 +20,7 @@ from proxy.services import rim_trace_xlsx_service as rim_xlsx
 
 
 CODE = "ГЭСН12-01-034-02"
-EXPECTED_TOTAL = 11896.35
+EXPECTED_TOTAL = 11813.04
 
 
 def _trace():

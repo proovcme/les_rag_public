@@ -374,10 +374,16 @@ def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
     return native
 
 
+def _smeta_document_seed() -> int:
+    """Fixed sampling seed for fresh document runs (no previous-mapping memory)."""
+    return _env_int("LES_SMETA_DOCUMENT_SEED", 0)
+
+
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
+    seed = _smeta_document_seed()
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
@@ -393,6 +399,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "think": _env_bool("LES_SMETA_DOCUMENT_THINK", False),
             "options": {
                 "temperature": 0.0,
+                "seed": seed,
                 "num_predict": max_tokens,
                 # The Ollama default can be only 4K. Agent/tool workflows need
                 # enough room to retain search/read evidence across turns.
@@ -413,6 +420,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             "messages": messages,
             "tools": tools,
             "temperature": 0.0,
+            "seed": seed,
             "max_tokens": max_tokens,
             "parallel_tool_calls": True,
         }
@@ -458,6 +466,7 @@ def _smeta_document_mapping_exchange(
     """Serialize the same model's decisions with provider-enforced JSON schema."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 6000)
+    seed = _smeta_document_seed()
     native_ollama = runtime.provider == "ollama"
     if native_ollama:
         body = {
@@ -469,6 +478,7 @@ def _smeta_document_mapping_exchange(
             # silently ignore `format` when thinking is explicitly disabled.
             "options": {
                 "temperature": 0.0,
+                "seed": seed,
                 "num_predict": max_tokens,
                 "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
             },
@@ -482,6 +492,7 @@ def _smeta_document_mapping_exchange(
             "model": runtime.model,
             "messages": messages,
             "temperature": 0.0,
+            "seed": seed,
             "max_tokens": max_tokens,
             "response_format": {
                 "type": "json_schema",

@@ -35,13 +35,13 @@ def test_code_extraction():
 def test_assemble_from_code_reproduces_etalon():
     r = h("собери ГЭСН12-01-034-02 объём 61 м2")
     assert r is not None and r["operation"] == "assemble"
-    assert "11 896.35" in r["answer"]
+    assert "11 813.04" in r["answer"]
 
 
 def test_assemble_does_not_guess_stesnennost_from_phrase():
     r = h("собери ГЭСН12-01-034-02 объём 61 м2 стеснённость город")
     assert r["operation"] == "assemble"
-    assert "11 896.35" in r["answer"]
+    assert "11 813.04" in r["answer"]
     assert "13 572.45" not in r["answer"]
 
 

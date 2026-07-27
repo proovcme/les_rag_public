@@ -182,6 +182,9 @@ switch ($Provider) {
     $env:RERANKER_ENABLED = "true"
     $env:RERANKER_BACKEND = "sentence_transformers"
     $env:RERANK_MODEL = if ($env:RERANK_MODEL) { $env:RERANK_MODEL } else { "BAAI/bge-reranker-v2-m3" }
+    # Smeta instability: empty/auto device could land on NPU. Prefer CUDA on Windows
+    # when the operator did not pin RERANK_DEVICE explicitly.
+    if (-not $env:RERANK_DEVICE) { $env:RERANK_DEVICE = "cuda" }
   }
   "lemonade" {
     $env:LEMONADE_BASE_URL = if ($env:LEMONADE_BASE_URL) { $env:LEMONADE_BASE_URL } else { "http://127.0.0.1:13305/api/v1" }

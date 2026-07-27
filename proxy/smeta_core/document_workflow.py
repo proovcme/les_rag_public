@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import json
+import os
+import re
 from dataclasses import asdict
 from pathlib import Path
 from time import perf_counter
@@ -39,7 +41,13 @@ def _candidate_payload(
     page_number = max(0, int(page))
     page_start = page_number * page_size
     page_end = page_start + page_size
-    queries = [str(item).strip() for item in (query if isinstance(query, list) else [query]) if str(item).strip()]
+    queries = sorted(
+        dict.fromkeys(
+            str(item).strip()
+            for item in (query if isinstance(query, list) else [query])
+            if str(item).strip()
+        )
+    )
     cards: list[dict[str, Any]] = []
     seen: set[str] = set()
     backends: list[str] = []
@@ -100,6 +108,11 @@ def _candidate_payload(
                 break
         if len(cards) >= page_end:
             break
+    # Keep fused order; break residual ties by norm_code so the model always
+    # sees the same menu for the same query set (fresh run, no past mapping).
+    ordered = list(enumerate(cards))
+    ordered.sort(key=lambda pair: (pair[0], str(pair[1].get("norm_code") or "")))
+    cards = [card for _, card in ordered]
     page_cards = cards[page_start:page_end]
     return {
         "work_id": work["work_id"],
@@ -198,7 +211,7 @@ def _normalize_search_queries_transport(item: dict[str, Any]) -> list[str]:
     else:
         scalar = item.get("query")
         values = [scalar] if scalar is not None else []
-    return list(dict.fromkeys(
+    return sorted(dict.fromkeys(
         " ".join(str(value).split())[:240]
         for value in values if str(value).strip()
     ))
@@ -369,10 +382,20 @@ class SmetaNormToolSession:
         return result
 
     def _search(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
-        items = _tool_array_argument(args, "items")
+        items = sorted(
+            [
+                item for item in _tool_array_argument(args, "items")
+                if isinstance(item, dict)
+            ],
+            key=lambda item: (
+                str(item.get("work_id") or ""),
+                str(item.get("query") or ""),
+                json.dumps(item.get("queries") or [], ensure_ascii=False, sort_keys=True),
+            ),
+        )
         batch_limit = args.get("limit")
         batch_page = args.get("page")
-        all_queries = list(dict.fromkeys(
+        all_queries = sorted(dict.fromkeys(
             query
             for item in items for query in _normalize_search_queries_transport(item)
         ))
@@ -453,13 +476,86 @@ class SmetaNormToolSession:
                 continue
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
+                evidence = dict(item.get("unbound_evidence") or {})
+                queries_used = [
+                    str(value).strip()
+                    for value in (evidence.get("queries_used") or [])
+                    if str(value).strip()
+                ]
+                rejection_reasons = [
+                    str(value).strip()
+                    for value in (evidence.get("rejection_reasons") or [])
+                    if str(value).strip()
+                ]
+                opened_norm_codes = [
+                    str(value).strip()
+                    for value in (evidence.get("opened_norm_codes") or [])
+                    if str(value).strip()
+                ]
+                coverage_checked = str(evidence.get("coverage_checked") or "").strip()
+                available_codes = {
+                    str(code)
+                    for code in (self.candidates.get(work_id) or {})
+                    if str(code).strip()
+                }
+                opened_codes = {
+                    str(code)
+                    for code in (self.opened.get(work_id) or {})
+                    if str(code).strip()
+                }
+                blockers: list[dict[str, Any]] = []
+                if len(queries_used) < 2:
+                    blockers.append({
+                        "code": "unbound_evidence_queries_incomplete",
+                        "work_id": work_id,
+                        "reason": "unbound requires at least two distinct search formulations",
+                    })
+                if not rejection_reasons:
+                    blockers.append({
+                        "code": "unbound_evidence_rejection_missing",
+                        "work_id": work_id,
+                        "reason": "unbound requires explicit rejection reasons",
+                    })
+                if not coverage_checked:
+                    blockers.append({
+                        "code": "unbound_evidence_coverage_missing",
+                        "work_id": work_id,
+                        "reason": "unbound requires coverage_checked note",
+                    })
+                if available_codes and not opened_norm_codes and not opened_codes:
+                    blockers.append({
+                        "code": "unbound_without_opened_candidates",
+                        "work_id": work_id,
+                        "reason": (
+                            "search returned candidates; unbound should open and reject "
+                            "close cards instead of skipping them"
+                        ),
+                    })
+                unknown_opened = [
+                    code for code in opened_norm_codes
+                    if code not in available_codes and code not in opened_codes
+                ]
+                if unknown_opened:
+                    blockers.append({
+                        "code": "unbound_opened_codes_not_in_session",
+                        "work_id": work_id,
+                        "reason": "opened_norm_codes must come from search/read evidence",
+                        "unknown_codes": unknown_opened[:8],
+                    })
                 proposed[work_id] = {
                     "norm_code": "",
                     "selection_kind": str(item.get("selection_kind") or ""),
                     "analog_limitations": list(item.get("analog_limitations") or []),
                     "reason": reason,
-                    "unbound_evidence": dict(item.get("unbound_evidence") or {}),
-                    "review_status": "model_batch_unbound", "resource_bindings": [],
+                    "unbound_evidence": {
+                        "queries_used": queries_used,
+                        "opened_norm_codes": opened_norm_codes,
+                        "rejection_reasons": rejection_reasons,
+                        "coverage_checked": coverage_checked,
+                    },
+                    "review_status": "model_batch_unbound",
+                    "resource_bindings": [],
+                    "precalculation_blockers": blockers,
                 }
                 continue
             if decision == "covered_by":
@@ -1101,7 +1197,334 @@ def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
     return parameters
 
 
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().casefold() in {"1", "true", "yes", "on"}
 
+
+def _norm_table_stem(code: str) -> str:
+    """Strip the final numeric position suffix: ГЭСНр62-01-017-05 -> ГЭСНр62-01-017."""
+    text = str(code or "").strip()
+    match = re.match(r"^(.*)-(\d+)$", text)
+    return match.group(1) if match else text
+
+
+def _browse_candidate_codes(
+    browse_trace: dict[str, list[dict[str, Any]]],
+    work_id: str,
+) -> list[str]:
+    codes: list[str] = []
+    for payload in browse_trace.get(work_id) or []:
+        if not isinstance(payload, dict):
+            continue
+        for card in payload.get("candidates") or []:
+            if not isinstance(card, dict):
+                continue
+            code = str(card.get("norm_code") or "").strip()
+            if code:
+                codes.append(code)
+    return list(dict.fromkeys(codes))
+
+
+def _self_check_output_schema(work_ids: list[str]) -> dict[str, Any]:
+    string_array = {"type": "array", "items": {"type": "string"}}
+    unbound_evidence = {
+        "type": "object",
+        "properties": {
+            "queries_used": {"type": "array", "items": {"type": "string"}, "minItems": 2},
+            "opened_norm_codes": string_array,
+            "rejection_reasons": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+            "coverage_checked": {"type": "string"},
+        },
+        "required": ["queries_used", "opened_norm_codes", "rejection_reasons", "coverage_checked"],
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "rows": {
+                "type": "array",
+                "minItems": len(work_ids),
+                "maxItems": len(work_ids),
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "work_id": {"type": "string", "enum": list(work_ids)},
+                        "action": {"type": "string", "enum": ["keep", "change"]},
+                        "decision": {"type": "string", "enum": ["bind", "covered_by", "unbound"]},
+                        "norm_code": {"type": "string"},
+                        "selection_kind": {"type": "string", "enum": ["exact", "analog"]},
+                        "applicability": {
+                            "type": "string",
+                            "enum": ["exact", "close_analog", "weak_analog"],
+                        },
+                        "sibling_criterion": {"type": "string"},
+                        "covered_by_work_id": {"type": "string"},
+                        "unbound_evidence": unbound_evidence,
+                        "reason": {"type": "string"},
+                    },
+                    "required": ["work_id", "action", "reason"],
+                },
+            }
+        },
+        "required": ["rows"],
+    }
+
+
+def _selection_from_self_check_change(
+    item: dict[str, Any],
+    *,
+    previous: dict[str, Any],
+) -> dict[str, Any] | None:
+    decision = str(item.get("decision") or "").strip()
+    reason = str(item.get("reason") or "").strip()
+    if decision == "bind":
+        code = str(item.get("norm_code") or "").strip()
+        if not code:
+            return None
+        return {
+            "norm_code": code,
+            "selection_kind": str(item.get("selection_kind") or previous.get("selection_kind") or "analog"),
+            "applicability": str(item.get("applicability") or previous.get("applicability") or "close_analog"),
+            "technology_check": dict(previous.get("technology_check") or {}),
+            "analog_limitations": list(previous.get("analog_limitations") or []),
+            "nr_sp_rule_id": str(previous.get("nr_sp_rule_id") or ""),
+            "reason": reason,
+            "review_status": "model_self_check",
+            "resource_bindings": list(previous.get("resource_bindings") or []),
+            "precalculation_blockers": [],
+            "sibling_criterion": str(item.get("sibling_criterion") or "").strip(),
+        }
+    if decision == "covered_by":
+        covered_by = str(item.get("covered_by_work_id") or "").strip()
+        if not covered_by:
+            return None
+        return {
+            "norm_code": "",
+            "selection_kind": str(item.get("selection_kind") or ""),
+            "analog_limitations": list(previous.get("analog_limitations") or []),
+            "covered_by_work_id": covered_by,
+            "coverage_reason": reason,
+            "reason": reason,
+            "review_status": "model_self_check_covered",
+            "resource_bindings": [],
+            "precalculation_blockers": [],
+        }
+    if decision == "unbound":
+        evidence = dict(item.get("unbound_evidence") or previous.get("unbound_evidence") or {})
+        return {
+            "norm_code": "",
+            "selection_kind": str(item.get("selection_kind") or previous.get("selection_kind") or ""),
+            "analog_limitations": list(previous.get("analog_limitations") or []),
+            "reason": reason,
+            "unbound_evidence": evidence,
+            "review_status": "model_self_check_unbound",
+            "resource_bindings": [],
+            "precalculation_blockers": list(previous.get("precalculation_blockers") or []),
+        }
+    return None
+
+
+def _apply_mapping_self_check(
+    selections: dict[str, dict[str, Any]],
+    *,
+    work_rows: list[dict[str, Any]],
+    browse_trace: dict[str, list[dict[str, Any]]],
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any]]:
+    work_ids = [str(row.get("work_id") or "") for row in work_rows if str(row.get("work_id") or "")]
+    by_reply = {
+        str(item.get("work_id") or ""): item
+        for item in rows
+        if isinstance(item, dict) and str(item.get("work_id") or "") in work_ids
+    }
+    if set(by_reply.keys()) != set(work_ids):
+        return selections, {
+            "status": "skipped_incomplete",
+            "expected_rows": len(work_ids),
+            "returned_rows": len(by_reply),
+        }
+
+    updated = {key: dict(value) for key, value in selections.items()}
+    applied: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for work_id in work_ids:
+        item = by_reply[work_id]
+        action = str(item.get("action") or "").strip()
+        if action != "change":
+            continue
+        previous = dict(updated.get(work_id) or {})
+        candidate = _selection_from_self_check_change(item, previous=previous)
+        if candidate is None:
+            rejected.append({"work_id": work_id, "reason": "incomplete_change_payload"})
+            continue
+        decision = str(item.get("decision") or "")
+        if decision == "bind":
+            new_code = str(candidate.get("norm_code") or "")
+            allowed = set(_browse_candidate_codes(browse_trace, work_id))
+            old_code = str(previous.get("norm_code") or "").strip()
+            if old_code:
+                allowed.add(old_code)
+            if new_code not in allowed:
+                rejected.append({
+                    "work_id": work_id,
+                    "reason": "norm_code_outside_current_run_evidence",
+                    "norm_code": new_code,
+                })
+                continue
+            if (
+                old_code
+                and new_code
+                and old_code != new_code
+                and _norm_table_stem(old_code) == _norm_table_stem(new_code)
+                and not str(item.get("sibling_criterion") or "").strip()
+            ):
+                rejected.append({
+                    "work_id": work_id,
+                    "reason": "sibling_flip_without_criterion",
+                    "from": old_code,
+                    "to": new_code,
+                })
+                continue
+        updated[work_id] = candidate
+        applied.append({
+            "work_id": work_id,
+            "from": previous.get("norm_code") or previous.get("review_status"),
+            "to": candidate.get("norm_code") or candidate.get("review_status"),
+            "decision": decision,
+        })
+    return updated, {
+        "status": "applied",
+        "changed_rows": len(applied),
+        "rejected_rows": len(rejected),
+        "changes": applied,
+        "rejected": rejected,
+    }
+
+
+def _run_mapping_self_check(
+    *,
+    work_rows: list[dict[str, Any]],
+    selections: dict[str, dict[str, Any]],
+    browse_trace: dict[str, list[dict[str, Any]]],
+    mapping_exchange: MappingExchange | None,
+    user_request: str = "",
+    progress: Progress | None = None,
+) -> tuple[dict[str, dict[str, Any]], dict[str, Any], list[dict[str, Any]]]:
+    """Same-run model confirmation before calculation; no past-file memory."""
+    if mapping_exchange is None:
+        return selections, {"status": "skipped_no_mapping_exchange"}, []
+    if not _env_flag("LES_SMETA_DOCUMENT_SELF_CHECK", True):
+        return selections, {"status": "skipped_disabled"}, []
+    work_ids = [str(row.get("work_id") or "") for row in work_rows if str(row.get("work_id") or "")]
+    if not work_ids or len(selections) < len(work_ids):
+        return selections, {"status": "skipped_incomplete_selections"}, []
+
+    review_rows = []
+    for row in work_rows:
+        work_id = str(row.get("work_id") or "")
+        selection = selections.get(work_id) or {}
+        review_rows.append({
+            "work_id": work_id,
+            "title": row.get("title"),
+            "unit": row.get("unit"),
+            "quantity": row.get("quantity"),
+            "current": {
+                "norm_code": selection.get("norm_code") or "",
+                "review_status": selection.get("review_status"),
+                "selection_kind": selection.get("selection_kind"),
+                "reason": selection.get("reason"),
+                "precalculation_blockers": selection.get("precalculation_blockers") or [],
+            },
+            "candidate_norm_codes": _browse_candidate_codes(browse_trace, work_id)[:12],
+        })
+    schema = _self_check_output_schema(work_ids)
+    messages = [
+        {
+            "role": "system",
+            "content": (
+                "Ты тот же сметчик внутри текущего прогона. Это self-check, не память прошлого файла. "
+                "Для каждой строки верни action=keep или change. "
+                "Меняй только при явной ошибке соседнего шифра одной таблицы или слабом unbound. "
+                "При смене на соседний шифр обязателен sibling_criterion (крепление/размер/тип/измеритель). "
+                "Новый norm_code только из candidate_norm_codes или текущего кода. "
+                "Код не выбирает норму за тебя."
+            ),
+        },
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "task": "confirm_or_correct_mapping",
+                    "user_request": str(user_request or "").strip(),
+                    "rows": review_rows,
+                    "output_schema": schema,
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        },
+    ]
+    if progress:
+        progress({
+            "phase": "self_check",
+            "status": "started",
+            "label": "Смета: модель проверяет свои решения в этом же прогоне",
+            "rows": len(work_ids),
+        })
+    started = perf_counter()
+    try:
+        payload = mapping_exchange(messages, schema) or {}
+    except Exception as error:  # keep first mapping if transport fails
+        trace = {
+            "status": "skipped_transport_error",
+            "error": f"{type(error).__name__}: {error}",
+            "elapsed_ms": round((perf_counter() - started) * 1000, 2),
+        }
+        if progress:
+            progress({
+                "phase": "self_check",
+                "status": "error",
+                "label": "Смета: self-check пропущен из‑за ошибки транспорта",
+            })
+        return selections, trace, []
+    wait_ms = round((perf_counter() - started) * 1000, 2)
+    rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
+    updated, apply_trace = _apply_mapping_self_check(
+        selections,
+        work_rows=work_rows,
+        browse_trace=browse_trace,
+        rows=rows,
+    )
+    apply_trace = {
+        **apply_trace,
+        "elapsed_ms": wait_ms,
+        "model": payload.get("_les_model"),
+        "provider": payload.get("_les_provider"),
+    }
+    model_trace_item = {
+        "turn": "self_check",
+        "assistant": {
+            "role": "assistant",
+            "content": json.dumps({"rows": rows}, ensure_ascii=False, default=str),
+            "model": payload.get("_les_model"),
+        },
+        "model_wait_ms": wait_ms,
+        "transport": "structured_self_check",
+        "apply": apply_trace,
+    }
+    if progress:
+        progress({
+            "phase": "self_check",
+            "status": "done",
+            "label": (
+                f"Смета: self-check готов, изменено {apply_trace.get('changed_rows', 0)} строк"
+            ),
+            "changed_rows": apply_trace.get("changed_rows"),
+            "rejected_rows": apply_trace.get("rejected_rows"),
+        })
+    return updated, apply_trace, [model_trace_item]
 
 
 def _finalize_document_workflow(
@@ -1288,15 +1711,28 @@ def run_vor_document_workflow(
             temp.write_text(json.dumps(failure, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
             temp.replace(report_path)
         raise RuntimeError("model returned no valid norm-agent actions; no estimate was calculated")
+    selections = dict(agent_result["selections"] or {})
+    model_trace = list(agent_result.get("model_trace") or [])
+    agent_trace = dict(agent_result.get("agent_trace") or {})
+    selections, self_check_trace, self_check_model_trace = _run_mapping_self_check(
+        work_rows=work_rows,
+        selections=selections,
+        browse_trace=agent_result.get("browse_trace") or {},
+        mapping_exchange=mapping_exchange,
+        user_request=user_request,
+        progress=progress,
+    )
+    model_trace.extend(self_check_model_trace)
+    agent_trace["self_check"] = self_check_trace
     return _finalize_document_workflow(
         path=path,
         intake=intake,
         work_rows=work_rows,
-        selections=agent_result["selections"],
+        selections=selections,
         browse_trace=agent_result["browse_trace"],
         query_trace=agent_result["query_trace"],
-        model_trace=agent_result["model_trace"],
-        agent_trace=agent_result["agent_trace"],
+        model_trace=model_trace,
+        agent_trace=agent_trace,
         book=book,
         out_xlsx=out_xlsx,
         out_report=out_report,

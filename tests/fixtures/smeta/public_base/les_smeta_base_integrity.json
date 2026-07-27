@@ -1,0 +1,41 @@
+{
+  "schema": "les_smeta_base_integrity_v1",
+  "created_at": "2026-07-23T12:33:21.560574+00:00",
+  "verdict": "failed",
+  "edition": "PUBLIC-FIXTURE-2026",
+  "source_sha256": "3c4d289dc9edd46ed4a4e75ffc5425dfb2ae5f92f32b3948397e05459bc61b28",
+  "base_sha256": "5cfc31fffe33fd28395987861d8686fcdd213b61240d8d2fbb816178914a7513",
+  "checks": {
+    "cross_family_contamination": {
+      "failures": 0
+    },
+    "orphan_resources": {
+      "failures": 0
+    },
+    "duplicate_norm_keys": {
+      "failures": 0
+    },
+    "resource_parent_mismatch": {
+      "failures": 0
+    },
+    "empty_machine_base": {
+      "failures": 0
+    },
+    "missing_provenance": {
+      "failures": 18
+    },
+    "fts_coverage": {
+      "failures": 0
+    },
+    "minimum_norms": {
+      "failures": 0,
+      "actual": 9,
+      "minimum": 0
+    }
+  },
+  "quarantine": {
+    "untrusted_identity_rows": 0,
+    "family_mismatch_rows": 0,
+    "metadata_conflict_norms": 0
+  }
+}

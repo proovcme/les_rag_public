@@ -1737,6 +1737,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         card.on("click", _open)
 
     async def _open_session(session_id: str, el=None):
+        from sovushka.state import persist_session_id
+
         add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}...")
         msgs = await api_get(f"/api/chat/history?session_id={session_id}")
         if msgs is None:
@@ -1744,7 +1746,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         state["chat_history"] = msgs
         state["load_session_id"] = session_id
-        state["session_id"] = session_id
+        state["session_id"] = persist_session_id(session_id)
         if selected_session_card["el"]:
             selected_session_card["el"].classes(remove="sov-session-card-active")
         if el:
@@ -2800,8 +2802,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         и хуком из вкладки истории (фикс «чат из истории не открывается»)."""
         if not state.get("load_session_id"):
             return False
+        from sovushka.state import persist_session_id
+
         state["session_id"] = state["load_session_id"]
         state["load_session_id"] = None
+        persist_session_id(state["session_id"])
         _render_chat_history("Сессия загружена из истории.")
         _scroll_chat_to_tail(force=True)
         return True
@@ -2811,14 +2816,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     state["chat_reload_hook"] = _apply_loaded_session
 
     async def _load_history():
+        from sovushka.state import ensure_session_id, persist_session_id
+
         if _apply_loaded_session():
             return
-        if not state.get("chat_history"):
-            hist = await api_get("/api/chat/history?limit=40")
-            if hist:
-                state["chat_history"] = hist
-                _render_chat_history()
-                _scroll_chat_to_tail(force=True)
+        sid = ensure_session_id()
+        hist = await api_get(f"/api/chat/history?session_id={sid}")
+        if hist is None:
+            return
+        state["chat_history"] = list(hist or [])
+        persist_session_id(sid)
+        if state["chat_history"]:
+            _render_chat_history("Сессия восстановлена.")
+            _scroll_chat_to_tail(force=True)
 
     asyncio.create_task(_load_history())
 
@@ -2938,7 +2948,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     chat_input.on("input", lambda: _update_prompt_preview())
 
     def _clear_chat():
-        from sovushka.state import _new_session_id
+        from sovushka.state import _new_session_id, persist_session_id
 
         chat_column.clear()
         with chat_column:
@@ -2953,7 +2963,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _render_empty_artifacts()
         _clear_file_artifacts()
         state["chat_history"].clear()
-        state["session_id"] = _new_session_id()
+        state["session_id"] = persist_session_id(_new_session_id())
         state["load_session_id"] = None
         state["chat_pending"] = None
         asyncio.create_task(_refresh_active_model_chip())

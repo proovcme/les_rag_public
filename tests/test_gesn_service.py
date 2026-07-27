@@ -26,16 +26,19 @@ def test_expand_multiplies_by_volume():
 
 
 def test_assemble_from_code_reproduces_etalon():
-    # позиция БЕЗ ресурсов — только код+объём; движок разворачивает по норме ГЭСН
+    # позиция БЕЗ ресурсов — только код+объём; движок разворачивает по норме ГЭСН.
+    # На clean public clone без runtime ФСЭМ/pricebook остаётся семя с явными ОТм:
+    # ozp 3750.23 + em 992.4 + mat 83.62 + nr/sp → 11813.04.
     pos = {"code": CODE, "name": "Обрешётка", "qty": 0.61, "nr_pct": 109, "sp_pct": 57}
     r = compute_position(pos)
-    assert r["flags"] == []
     b = r["base"]
     assert b["ozp"] == 3750.23
-    assert b["em"] == 1023.72
+    assert b["em"] == 992.4
     assert b["mat"] == 83.62
-    assert b["fot"] == 4240.23
-    assert r["total"] == 11896.35
+    assert b["fot"] == 4208.91
+    assert r["total"] == 11813.04
+    assert not any("норма ГЭСН не найдена" in flag for flag in r["flags"])
+    assert all("ФСЭМ" in flag or "ЗПМ" in flag for flag in r["flags"]) or r["flags"] == []
 
 
 def test_unknown_code_flagged():

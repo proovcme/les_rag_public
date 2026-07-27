@@ -599,6 +599,39 @@ def lite_chat_html() -> str:
       }
     }
 
+    function clearMessages() {
+      el("messages").innerHTML = "";
+    }
+
+    async function restoreSessionHistory() {
+      try {
+        const rows = await request(
+          "/api/chat/history?session_id=" + encodeURIComponent(state.sessionId),
+          { method: "GET" }
+        );
+        if (!Array.isArray(rows) || !rows.length) return false;
+        clearMessages();
+        addMessage("Сессия восстановлена.", "msg-sys");
+        for (const row of rows) {
+          if (row.role === "user") {
+            addMessage(row.text || "", "msg-user");
+          } else if (row.role === "ai") {
+            const meta = row.meta || {};
+            addMessage(row.text || "", "msg-ai", {
+              crag: row.crag || "",
+              sources: row.srcs || [],
+              history_id: meta.history_id || null,
+            });
+          }
+        }
+        return true;
+      } catch (error) {
+        if (error.status === 401 || error.status === 403) return false;
+        addMessage("Историю сессии не удалось подтянуть: " + error.message, "msg-sys");
+        return false;
+      }
+    }
+
     function addMessage(text, type, meta = {}) {
       const wrap = document.createElement("div");
       wrap.className = "msg " + type;
@@ -803,6 +836,7 @@ def lite_chat_html() -> str:
       state.sessionId = crypto.randomUUID();
       localStorage.setItem(SESSION_STORAGE, state.sessionId);
       updateSessionText();
+      clearMessages();
       addMessage("Новая сессия создана.", "msg-sys");
     });
 
@@ -819,6 +853,7 @@ def lite_chat_html() -> str:
       try {
         await bootstrapTrustedAccess();
         await refreshRuntime();
+        await restoreSessionHistory();
       } finally {
         clearTimeout(runtimeWatchdog);
         setInterval(refreshRuntime, 15000);

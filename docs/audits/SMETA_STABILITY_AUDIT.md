@@ -31,6 +31,16 @@ document workflow, FGIS/ГЭСН update pipeline, UI/API entrypoints и fixtures
 Статус — **полный публикуемый исходный код, но ещё не воспроизводимый stable
 smeta runtime**.
 
+### Прогресс 2026-07-23 (clean Windows clone)
+
+- Добавлен `tests/fixtures/smeta/public_base/` + `tools/build_smeta_public_fixture.py`.
+- `tests/conftest.py` подключает fixture, если нет runtime `data/smeta_base/les_smeta_base.sqlite`.
+- Env-overrides: `LES_SMETA_STRUCTURED_BASE` / `_MANIFEST` / `_INTEGRITY` / `_SOURCE`.
+- Эталон семени без runtime ФСЭМ/pricebook зафиксирован как **11813.04**
+  (старое 11896.35 — путь с полным ФСЭМ+тарифной книгой).
+- Узкий offline suite: **115 passed, 2 skipped**.
+- Полный ФСНБ/ФСЭМ runtime и live BAP на моделях <12B ещё впереди.
+
 ## Что было в public/main
 
 Сильные стороны:

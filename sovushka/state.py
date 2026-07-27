@@ -22,6 +22,38 @@ def _new_session_id() -> str:
     return str(uuid.uuid4())
 
 
+_SESSION_STORAGE_KEY = "les_chat_session_id"
+
+
+def get_persisted_session_id() -> str | None:
+    """Browser-durable session id (survives tab close / app reopen)."""
+    try:
+        value = str(app.storage.user.get(_SESSION_STORAGE_KEY) or "").strip()
+    except Exception:
+        return None
+    return value or None
+
+
+def persist_session_id(session_id: str) -> str:
+    sid = str(session_id or "").strip() or _new_session_id()
+    state["session_id"] = sid
+    try:
+        app.storage.user[_SESSION_STORAGE_KEY] = sid
+    except Exception:
+        pass
+    return sid
+
+
+def ensure_session_id() -> str:
+    """Restore session from browser storage, or keep/create one and persist it."""
+    persisted = get_persisted_session_id()
+    if persisted:
+        state["session_id"] = persisted
+        return persisted
+    current = str(state.get("session_id") or "").strip() or _new_session_id()
+    return persist_session_id(current)
+
+
 state = {
     "mode": "rag",
     "mode_model": "mlx-community/Qwen3-14B-4bit",

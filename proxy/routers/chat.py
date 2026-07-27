@@ -1363,6 +1363,38 @@ def _recoverable_stream_payload(req: ChatRequest, stream_state: dict[str, Any], 
     }
 
 
+def _persist_recovered_stream_history(req: ChatRequest, payload: dict[str, Any]) -> dict[str, Any]:
+    """Ensure a recovered SSE final also lands in chat_history for reopen/history."""
+    if payload.get("history_id"):
+        return payload
+    try:
+        sources = [
+            str(s.get("source_ref") or s.get("ref") or s.get("path") or s)
+            if isinstance(s, dict) else str(s)
+            for s in (payload.get("sources") or [])
+        ]
+        history_id = save_chat_history(
+            question=req.question,
+            answer=str(payload.get("answer") or ""),
+            sources=sources,
+            crag_status=str(payload.get("crag_status") or "UNVALIDATED"),
+            latency_sec=0.0,
+            tokens=int(((payload.get("retrieval_trace") or {}).get("stream_recovery") or {}).get("tokens") or 0),
+            session_id=req.session_id,
+            query_route={"channel": "stream_recovery", "operation": "recovered_partial_answer"},
+            retrieval_trace=payload.get("retrieval_trace") if isinstance(payload.get("retrieval_trace"), dict) else {},
+            artifact=payload.get("artifact") if isinstance(payload.get("artifact"), dict) else None,
+            cache_type=str(payload.get("cache") or "stream_recovered"),
+            validation_enabled=False,
+        )
+        if history_id:
+            payload = dict(payload)
+            payload["history_id"] = history_id
+    except Exception as error:  # noqa: BLE001
+        logger.warning("[CHAT/STREAM] recovered history save failed: %s", error)
+    return payload
+
+
 @router.post("/chat")
 async def chat(
     req: ChatRequest,
@@ -1509,6 +1541,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
         except HTTPException as he:
             recovered = _recoverable_stream_payload(req, stream_state, he)
             if recovered is not None:
+                recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
                 await queue.put({"event": "error", "data": {"status": he.status_code, "detail": he.detail}})
@@ -1516,6 +1549,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
             logger.error("[CHAT/STREAM] %s", e)
             recovered = _recoverable_stream_payload(req, stream_state, e)
             if recovered is not None:
+                recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
                 await queue.put({"event": "error", "data": {"status": 500, "detail": f"{type(e).__name__}: {e}"}})
@@ -1531,10 +1565,10 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                     break
                 yield _sse_event(item["event"], item.get("data", ""))
         finally:
+            # Client tab/app close must not cancel the runner: history save and
+            # smeta artifact finalization still have to finish server-side.
             if not task.done():
-                task.cancel()
-                # Дождаться раскрутки отмены (освобождение семафора генерации,
-                # закрытие httpx-стрима) до возврата из генератора.
+                logger.info("[CHAT/STREAM] client disconnected; waiting for runner to finish")
                 await asyncio.gather(task, return_exceptions=True)
 
     return StreamingResponse(

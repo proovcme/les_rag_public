@@ -480,13 +480,22 @@ def build_parquet(records: list[dict[str, Any]], out_path: str | Path = DEFAULT_
 
     out_path = Path(out_path)
     if append and out_path.exists():
-        old = pd.read_parquet(out_path)
+        try:
+            old = pd.read_parquet(out_path)
+        except Exception as exc:  # noqa: BLE001 - corrupt cache must not block a fresh rebuild
+            raise RuntimeError(
+                f"corrupt GESN parquet (refuse append): {out_path}: {exc}"
+            ) from exc
         df = pd.concat([old, df], ignore_index=True)
         if "norm_key" not in df.columns or df["norm_key"].isna().all():
             dedupe_cols = ["norm_code", "kind", "resource_code", "resource_name"]
         df = df.drop_duplicates(subset=dedupe_cols, keep="last")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_path, compression="snappy", index=False)
+    # Atomic replace: an interrupted mid-write previously left an unreadable
+    # snappy page ("Unexpected end of stream") and blocked resume forever.
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    df.to_parquet(tmp_path, compression="snappy", index=False)
+    tmp_path.replace(out_path)
     norm_keys = sorted({r.get("norm_key") or r.get("norm_code") for r in records if r.get("norm_code")})
     return {"parquet": str(out_path), "norms": len(norm_keys), "resources": len(df)}
 

@@ -33,6 +33,7 @@ from proxy.services.smeta_chat_adapter_service import (
     _smeta_direct_rag_context,
     _smeta_direct_structured_norm_choice,
     _smeta_direct_user_prompt,
+    _smeta_document_exchange,
     _smeta_document_timeout,
     _smeta_model_runtime,
     _smeta_norm_lookup_max_calls,
@@ -293,6 +294,54 @@ def test_smeta_document_timeout_is_longer_for_local_model(monkeypatch):
 
     assert _smeta_document_timeout(local) == 300.0
     assert _smeta_document_timeout(cloud) == 180.0
+
+
+def test_smeta_document_exchange_sends_fixed_seed(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "", "tool_calls": []}}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def post(self, url, headers=None, json=None):
+            captured["url"] = url
+            captured["body"] = json
+            return FakeResponse()
+
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_SEED", "42")
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_PROVIDER", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_MODEL", raising=False)
+    monkeypatch.setattr(
+        "proxy.services.smeta_chat_adapter_service.httpx.Client",
+        FakeClient,
+    )
+
+    message = _smeta_document_exchange(
+        [{"role": "user", "content": "test"}],
+        [{"type": "function", "function": {"name": "search_norms_batch"}}],
+    )
+
+    assert message.get("tool_calls") == []
+    assert captured["body"]["options"]["seed"] == 42
+    assert captured["body"]["options"]["temperature"] == 0.0
 
 
 def test_chat_model_final_answer_preserves_text_on_validator_block():

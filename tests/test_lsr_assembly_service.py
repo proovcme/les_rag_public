@@ -131,7 +131,46 @@ def test_assemble_code_only_applies_explicit_nr_sp_rule_from_typed_collection():
     assert res["summary"]["total"] == 1573.24
 
 
-def test_machinist_aggregate_split_by_mapped_machines():
+def test_machinist_aggregate_split_by_mapped_machines(tmp_path, monkeypatch):
+    import sqlite3
+
+    from proxy.services import fsem_machinist_service as fsem
+
+    db = tmp_path / "fsem.sqlite"
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        CREATE TABLE machines(
+            machine_code TEXT PRIMARY KEY,
+            machine_name TEXT NOT NULL,
+            machine_price_base REAL,
+            driver_wage_base REAL,
+            driver_grade REAL,
+            driver_code TEXT NOT NULL,
+            crew_hours REAL NOT NULL,
+            source_page INTEGER NOT NULL
+        )
+        """
+    )
+    conn.executemany(
+        "INSERT INTO machines VALUES(?,?,?,?,?,?,?,?)",
+        [
+            ("91.05.05-015", "Кран 16 т", None, None, 6.0, "4-100-060", 1.0, 1),
+            ("91.14.02-002", "Авто до 8 т", None, None, 4.0, "4-100-040", 1.0, 1),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    fsem.lookup.cache_clear()
+    real_enrich = fsem.enrich_machinists
+    monkeypatch.setattr(
+        fsem,
+        "enrich_machinists",
+        lambda resources, quantity_field="qty", db_path=None: real_enrich(
+            resources, quantity_field=quantity_field, db_path=db
+        ),
+    )
+
     class FakePriceBook:
         def lookup(self, code: str):
             prices = {
