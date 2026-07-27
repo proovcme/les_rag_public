@@ -10,8 +10,8 @@
 версия продукта (SemVer):  0.24.46 (dev, 2026-07-27)
 номер сборки:              467     (отдельно от версии продукта)
 версия Tauri/NSIS:         5.1.467 (Windows smoke не выполнен)
-ветка выпуска:             main (сведение веток выполняется перед публикацией)
-dev HEAD:                  working tree поверх 9af71346
+ветка интеграции:          codex/integrate-dev-0.24.46 (main не изменён)
+dev implementation:       e57a573f (integration checkpoint 0.24.46)
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.26 / build 447
 Windows-выпуск:            0.24.46 / build 467 не собран; последний GitHub release v0.24.26
 следующий выпуск:          не назначен
@@ -21,7 +21,9 @@ Windows-выпуск:            0.24.46 / build 467 не собран; посл
 > 0.24.46 / build 467 — repeatable local Qwen transport и durable chat session
 >
 > Дата: 2026-07-27
-> Статус: dev; runtime, Legion и GitHub PR не менялись.
+> Статус: dev; runtime и Legion не менялись. Публичный PR
+> `proovcme/les_rag_public#7` принят 2026-07-27 в `audit/smeta-stabilization`
+> (`e885b825`); он не сливался в private `main`.
 > Из публичного PR перенесён operational-контур: `qwen3.5:9b`, `temperature=0`,
 > `LES_SMETA_DOCUMENT_SEED=0`, локальный batch=5, стабильный порядок запросов/tool-items и seed в
 > trace. NiceGUI сохраняет активный `session_id`, загружает историю только этой сессии, recovered
