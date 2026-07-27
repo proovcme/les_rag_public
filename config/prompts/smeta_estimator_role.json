@@ -1,0 +1,81 @@
+{
+  "schema": "les.prompt.role_pack.v1",
+  "id": "smeta_agent_v2",
+  "version": "0.24.0.358-orthogonal-contracts",
+  "title": "Сметный агент ЛЕС",
+  "mode": "smeta_harness",
+  "role": "Получи ЛСР из исходника. Модель выбирает операции, нормы, аналоги, покрытия, коэффициенты и цены через инструменты; код валидирует контракт, считает и экспортирует без скрытого selector.",
+  "user_modes": ["estimate", "candidate_review", "continue_reviewed"],
+  "mapping_statuses": ["candidates_ready", "mapping_selected", "mapping_user_reviewed", "mapping_locked"],
+  "pricing_statuses": ["unpriced", "priced_partial", "priced_draft", "priced_final"],
+  "candidate_relationship_types": ["alternative", "complementary", "partial_coverage", "covered_by"],
+  "applicability_statuses": ["exact", "close_analog", "weak_analog", "not_applicable"],
+  "candidate_decisions": ["triaged", "opened", "selected", "rejected", "conflict"],
+  "pricing_basis": ["norm", "analog_norm", "commercial_offer", "calculation"],
+  "resolution_statuses": ["priced", "covered_by", "partially_resolved", "unresolved", "excluded"],
+  "quantity_origins": ["source_explicit", "source_calculated", "user_provided", "inferred", "missing"],
+  "quantity_contract": {
+    "required": ["quantity_origin", "quantity_formula", "quantity_evidence_refs", "blocks_priced_final"],
+    "inferred_blocks_priced_final": true
+  },
+  "coefficient_statuses": ["confirmed", "user_provided_draft", "missing_evidence", "not_applicable", "conflict"],
+  "coefficient_application_policy": {
+    "confirmed": "main",
+    "user_provided_draft": "draft_main",
+    "missing_evidence": "variant_only",
+    "not_applicable": "not_applied",
+    "conflict": "not_applied"
+  },
+  "price_statuses": ["confirmed", "draft", "missing", "actual_zero", "not_applicable"],
+  "price_application_policy": {
+    "confirmed": "main",
+    "draft": "draft_main",
+    "missing": "not_applied_null",
+    "actual_zero": "main_with_zero_evidence",
+    "not_applicable": "not_applied"
+  },
+  "context_policy": {
+    "object_context": "metadata_first_separate_shared_context",
+    "working_context": "one_operation_or_small_related_group",
+    "documents": "load_on_demand_and_release_after_operation",
+    "candidate_cards": "release_full_cards_after_decision",
+    "cross_operation_memory": "compact_object_context_coverage_decisions_and_source_refs_only"
+  },
+  "review_policy": {
+    "all_candidates": "triage",
+    "full_review_triggers": [
+      "selected",
+      "significant_complementary",
+      "analog",
+      "top_cost_contributor",
+      "cumulative_cost_majority",
+      "alternative_cost_sensitivity",
+      "anomalous_labor_machines_or_cost",
+      "rejection_changes_coverage_or_cost"
+    ],
+    "cost_trigger_policy": "code_ranks_candidates_and_positions_model_re_reviews"
+  },
+  "invariants": [
+    "mapping_status_and_pricing_status_are_independent",
+    "relationship_applicability_decision_basis_and_resolution_are_separate",
+    "continue_reviewed_requires_mapping_locked",
+    "uploaded_mapping_without_status_requires_model_validation_before_lock",
+    "code_never_silently_assigns_mapping_locked",
+    "candidate_combinations_are_model_reasoned_not_cartesian_products",
+    "source_row_operation_position_pricing_basis_provenance_required",
+    "inferred_quantity_blocks_priced_final",
+    "missing_price_is_null_not_zero",
+    "case_specific_steering_is_forbidden"
+  ],
+  "tool_contract_schema": "schema/smeta_agent_trace.schema.json",
+  "planning_output_contract": {
+    "schema": "smeta_mapping_plan_v1",
+    "required": ["object_context", "work_contexts", "source_rows", "operations", "estimate_positions", "mapping_status"]
+  },
+  "execution_result_contract": {
+    "schema": "smeta_execution_result_v1",
+    "required_for_modes": ["estimate", "continue_reviewed"],
+    "optional_for_modes": ["candidate_review"],
+    "required": ["pricing_status", "lsr_xlsx", "trace", "open_register"]
+  }
+}

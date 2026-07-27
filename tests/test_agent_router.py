@@ -63,7 +63,7 @@ def test_router_runtime_config_falls_back_to_local_mlx(monkeypatch):
     assert cfg["base"] == "http://127.0.0.1:8080/v1"
     assert cfg["key"] == "local"
     assert cfg["timeout"] == 2.0
-    assert cfg["model"] == "mlx-community/Qwen3.5-9B-MLX-4bit"
+    assert cfg["model"] == "mlx-community/Qwen3.5-9B-OptiQ-4bit"
 
 
 def test_router_runtime_config_uses_cloud_only_with_key(monkeypatch):

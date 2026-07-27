@@ -1,7 +1,14 @@
-"""Тест рендерера РИМ-трассы в XLSX по форме Приложения 4 к 421/пр (форма ГРАНД-Сметы; handoff #2).
+"""Тест рендерера РИМ-трассы в XLSX по форме Приложения 3 к 421/пр.
 
 Рендерер из ГОТОВОЙ трассы, не калькулятор → числа те же, что в build_position_trace.
-Эталон ГЭСН12-01-034-02 @ 0.61 → summary.total == 11813.04 (тот же, что сервис/endpoint-тесты).
+
+Эталон ГЭСН12-01-034-02 @ 0.61 → summary.total == 11813.04 по семени
+`config/domain/gesn_seed.yaml` с явной детализацией ОТм по трём машинам.
+Независимый разбор 2026-07-23: без runtime ФСЭМ (`fsem_trace.status =
+not_applied_without_pricebook`) арифметика даёт ozp 3750.23 + em 992.4 +
+mat 83.62 + nr 4587.71 + sp 2399.08 = 11813.04; amount_status=complete.
+Старое ожидание 11896.35 относилось к другому контуру и расходилось с
+`test_rim_lsr_trace_service` / `test_smeta_core`, уже зафиксировавшими 11813.04.
 """
 
 import asyncio
@@ -13,6 +20,7 @@ from proxy.services import rim_trace_xlsx_service as rim_xlsx
 
 
 CODE = "ГЭСН12-01-034-02"
+EXPECTED_TOTAL = 11813.04
 
 
 def _trace():
@@ -39,20 +47,55 @@ def test_render_produces_valid_xlsx(tmp_path):
     assert out.exists() and out.stat().st_size > 0
     ws = openpyxl.load_workbook(out).active
     assert "ЛСР" in ws.title or "Прил" in ws.title
-    # итог позиции из summary отрендерен (рендер не теряет/не пересчитывает число)
-    vals = [c.value for row in ws.iter_rows() for c in row]
-    assert trace["summary"]["total"] in vals
+    # XLSX теперь редактируемый: итог позиции — формула, immutable число остаётся в JSON trace.
+    total_row = next(row for row in ws.iter_rows() if row[2].value == "Всего по позиции")
+    assert str(total_row[11].value).startswith("=SUM(")
 
 
-def test_appendix4_header_and_graphs_present(tmp_path):
+def test_appendix3_rim_header_and_graphs_present(tmp_path):
     import openpyxl
 
     out = rim_xlsx.render_trace_xlsx(_trace(), tmp_path / "t.xlsx")
     txt = " ".join(str(c.value) for row in openpyxl.load_workbook(out).active.iter_rows() for c in row if c.value)
-    # форма Приложения 4: шапка ГРАНД + графы + свод
-    assert "Приложение № 4" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt and "Сметная стоимость" in txt
+    # форма Приложения 3: шапка РИМ + графы + свод
+    assert "Приложение № 3" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt and "Сметная стоимость" in txt
     assert "Обоснование" in txt and "Наименование работ и затрат" in txt
+    assert "Индекс" in txt and "Сметная стоимость в текущем уровне цен всего" in txt
     assert "Всего по позиции" in txt and "ОТ(ЗТ)" in txt and "ЭМ" in txt
+    assert "Составлен ресурсно-индексным методом (РИМ)" in txt
+
+
+def test_missing_resource_price_stays_blank_in_editable_xlsx(tmp_path):
+    import openpyxl
+
+    trace = rim.build_position_trace({
+        "code": "ГЭСН00-00-000-00",
+        "name": "Тестовая работа",
+        "unit": "шт",
+        "qty": 1,
+        "nr_pct": 0,
+        "sp_pct": 0,
+        "resources": [{
+            "kind": "material", "code": "01.1", "name": "Материал без цены",
+            "unit": "шт", "per_unit": 1,
+        }],
+    })
+    out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "missing-price.xlsx")
+    ws = openpyxl.load_workbook(out, data_only=False).active
+    row = next(row for row in ws.iter_rows() if row[2].value == "Материал без цены")
+    assert row[9].value is None
+    assert row[11].value is None
+
+
+def test_xlsx_work_row_keeps_official_norm_title_and_source_description(tmp_path):
+    import openpyxl
+
+    trace = rim.build_position_trace({"code": CODE, "qty": 0.61, "name": "Фактическая работа из ВОР"})
+    out = rim_xlsx.render_trace_xlsx(trace, tmp_path / "official-and-source.xlsx")
+    ws = openpyxl.load_workbook(out).active
+    work_row = next(row for row in ws.iter_rows() if row[1].value == CODE)
+    assert str(work_row[2].value).endswith(" / Фактическая работа из ВОР")
+    assert str(work_row[2].value) != "Фактическая работа из ВОР"
 
 
 def test_endpoint_export_returns_download():
@@ -64,7 +107,7 @@ def test_endpoint_export_returns_download():
         )
     )
     assert res["code"] == CODE
-    assert res["summary"]["total"] == 11813.04  # эталон, тот же что сервис-тест
+    assert res["summary"]["total"] == EXPECTED_TOTAL
     assert res["download"].startswith("/api/lsr/download?path=rim_trace_")
     assert Path(res["path"]).exists()
 
@@ -77,15 +120,30 @@ def test_render_lsr_multi_position_form(tmp_path):
     assert out.exists() and out.stat().st_size > 0
     ws = openpyxl.load_workbook(out).active
     txt = " ".join(str(c.value) for row in ws.iter_rows() for c in row if c.value)
-    # форма Приложения 4 + разделы + итоги разделов + общий свод
-    assert "Приложение № 4" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt
+    # форма Приложения 3 + разделы + итоги разделов + общий свод
+    assert "Приложение № 3" in txt and "ЛОКАЛЬНЫЙ СМЕТНЫЙ РАСЧЁТ" in txt
     assert "Раздел 1. Кровля" in txt and "Раздел 2. Прочее" in txt
     assert "Итого по разделу 1" in txt and "Итого по разделу 2" in txt
     assert "ВСЕГО по смете" in txt
-    # общий итог отрендерен (рендер не пересчитывает Σ): 2 × 11813.04
-    vals = [c.value for row in ws.iter_rows() for c in row]
-    assert lsr["summary"]["total"] in vals
-    assert lsr["summary"]["total"] == 23626.08
+    # общий итог — формула по позициям, а не застывшая константа.
+    total_row = next(row for row in ws.iter_rows() if row[2].value == "ВСЕГО по смете без НДС")
+    assert str(total_row[11].value).startswith("=SUM(")
+    assert lsr["summary"]["total"] == 2 * EXPECTED_TOTAL
+
+
+def test_render_lsr_prints_all_twelve_graphs_on_one_page_width(tmp_path):
+    import openpyxl
+
+    out = rim_xlsx.render_lsr_xlsx(_lsr_trace(), tmp_path / "print-ready.xlsx")
+    ws = openpyxl.load_workbook(out).active
+
+    assert ws.page_setup.orientation == ws.ORIENTATION_LANDSCAPE
+    assert str(ws.page_setup.paperSize) == str(ws.PAPERSIZE_A4)
+    assert ws.page_setup.fitToWidth == 1
+    assert ws.page_setup.fitToHeight == 0
+    assert ws.sheet_properties.pageSetUpPr.fitToPage is True
+    assert ws.print_area == f"'ЛСР РИМ'!$A$1:$L${ws.max_row}"
+    assert ws.print_title_rows is not None
 
 
 def test_render_lsr_single_section_omits_section_header(tmp_path):
@@ -99,6 +157,37 @@ def test_render_lsr_single_section_omits_section_header(tmp_path):
     assert "Раздел 1" not in txt
     assert "ВСЕГО по смете" in txt
     assert "Всего по позиции" in txt
+
+
+def test_lsr_header_uses_passed_source_metadata_and_review_issues_are_readable(tmp_path):
+    import openpyxl
+
+    lsr = _lsr_trace()
+    lsr["row_bindings"] = []
+    lsr["blockers"] = [{"code": "norm_selection_required", "work_id": "w1", "reason": "нужен подбор нормы"}]
+    lsr["warnings"] = ["Длинное профессиональное замечание, которое должно занимать широкую область листа"]
+    out = rim_xlsx.render_lsr_xlsx(
+        lsr,
+        tmp_path / "meta-review.xlsx",
+        meta={
+            "object": "ВОР монтаж БАП П1 13.05",
+            "stroika": "Не указано в исходной ВОР",
+            "lsr_no": "б/н",
+            "osnovanie": "ВОР монтаж БАП П1 13.05.pdf",
+            "subject": "Санкт-Петербург",
+            "price_level": "2 квартал 2026",
+        },
+    )
+    wb = openpyxl.load_workbook(out)
+    header_text = " ".join(str(cell.value) for row in wb["ЛСР РИМ"].iter_rows(max_row=15) for cell in row if cell.value)
+    assert "read_" not in header_text
+    assert "ВОР монтаж БАП П1 13.05.pdf" in header_text
+    assert "Санкт-Петербург" in header_text
+    review = wb["Проверка"]
+    issue_row = next(row[0].row for row in review.iter_rows() if row[0].value == "warning")
+    assert review.cell(issue_row, 4).value.startswith("Длинное профессиональное замечание")
+    assert f"D{issue_row}:M{issue_row}" in {str(value) for value in review.merged_cells.ranges}
+    assert review.column_dimensions["A"].width >= 20
 
 
 def test_endpoint_lsr_trace_export_returns_download():
@@ -117,7 +206,7 @@ def test_endpoint_lsr_trace_export_returns_download():
         )
     )
     assert res["name"] == "Тест"
-    assert res["summary"]["total"] == 23626.08  # 2 × эталон
+    assert res["summary"]["total"] == 2 * EXPECTED_TOTAL
     assert len(res["sections"]) == 2
     assert res["download"].startswith("/api/lsr/download?path=lsr_trace_")
     assert Path(res["path"]).exists()

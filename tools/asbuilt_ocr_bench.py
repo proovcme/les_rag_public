@@ -9,9 +9,9 @@ ground-truth и считает точность (recall по числовым я
 Эталон — ручной разбор 4 листов АУПС/СОУЭ L5 (МФК «Лахта центр», комплект 13.06.2023).
 
 Примеры:
-  uv run python tools/asbuilt_ocr_bench.py --dir "/path/АУПС-СОУЭ" --engine cloud --model gpt-4.1
+  uv run python tools/asbuilt_ocr_bench.py --dir "/path/АУПС-СОУЭ" --engine cloud --model gpt-5.4
   uv run python tools/asbuilt_ocr_bench.py --dir "..." --engine local --model qwen3-vl:8b
-  uv run python tools/asbuilt_ocr_bench.py --dir "..." --models cloud:gpt-4.1 local:gemma4:12b local:qwen3-vl:8b
+  uv run python tools/asbuilt_ocr_bench.py --dir "..." --models cloud:gpt-5.4 local:gemma4:12b local:qwen3-vl:8b
 """
 from __future__ import annotations
 

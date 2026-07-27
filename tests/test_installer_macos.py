@@ -12,8 +12,8 @@ def test_resolve_models_reads_env_and_skips_non_hf(tmp_path, monkeypatch):
     env.write_text(
         "\n".join(
             [
-                "MLX_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit",
-                "LLM_MODEL=mlx-community/Qwen3.5-4B-OptiQ-4bit  # same as MLX",
+                "MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit",
+                "LLM_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit  # same as MLX",
                 "EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B",
                 "RAG_OCR_MODEL=gemma4:12b",  # ollama tag — not an HF repo
                 "COREML_EMBED_MODEL=artifacts/coreml/x.mlpackage",  # local path
@@ -27,7 +27,7 @@ def test_resolve_models_reads_env_and_skips_non_hf(tmp_path, monkeypatch):
 
     # Dedup of MLX/LLM, ollama tag and local path dropped.
     assert models == [
-        "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+        "mlx-community/Qwen3.5-9B-OptiQ-4bit",
         "Qwen/Qwen3-Embedding-0.6B",
     ]
 
@@ -35,7 +35,7 @@ def test_resolve_models_reads_env_and_skips_non_hf(tmp_path, monkeypatch):
 def test_resolve_models_falls_back_to_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(onboard_models, "ROOT", tmp_path)  # no .env, no env.example
     models = onboard_models.resolve_models()
-    assert "mlx-community/Qwen3.5-4B-OptiQ-4bit" in models
+    assert "mlx-community/Qwen3.5-9B-OptiQ-4bit" in models
     assert "Qwen/Qwen3-Embedding-0.6B" in models
 
 
@@ -45,6 +45,41 @@ def test_is_cloud_only(tmp_path, monkeypatch):
     assert onboard_models.is_cloud_only() is True
     (tmp_path / ".env").write_text("LES_PROVIDER=local\n", encoding="utf-8")
     assert onboard_models.is_cloud_only() is False
+
+
+def test_onboard_models_skips_ollama_provider_on_windows_bootstrap(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(onboard_models, "ROOT", tmp_path)
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "LES_LLM_PROVIDER=ollama",
+                "MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit",
+                "OLLAMA_MODEL=qwen3.5:9b",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert onboard_models.main(["--skip-if-cloud"]) == 0
+    assert "does not need local HF weights" in capsys.readouterr().out
+
+
+def test_onboard_models_reads_persistent_installer_env(tmp_path, monkeypatch, capsys):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "state"
+    runtime.mkdir()
+    state.mkdir()
+    (runtime / "env.example").write_text(
+        "MLX_MODEL=mlx-community/Qwen3.5-9B-OptiQ-4bit\n",
+        encoding="utf-8",
+    )
+    persistent_env = state / ".env"
+    persistent_env.write_text("LES_LLM_PROVIDER=ollama\n", encoding="utf-8")
+    monkeypatch.setattr(onboard_models, "ROOT", runtime)
+    monkeypatch.setenv("LES_ENV_PATH", str(persistent_env))
+
+    assert onboard_models.main(["--skip-if-cloud"]) == 0
+    assert "provider ollama" in capsys.readouterr().out
 
 
 def test_info_plist_is_valid_and_versioned(tmp_path):

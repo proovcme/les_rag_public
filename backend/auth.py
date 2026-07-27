@@ -61,6 +61,12 @@ async def login(key: str, fingerprint: str = "") -> dict:
         return {"ok": False, "detail": "Ошибка соединения с сервером"}
 
 def logout():
+    try:
+        from sovushka.provider_session import clear_provider_config
+
+        clear_provider_config()
+    except Exception:  # noqa: BLE001 - logout must still clear the auth session
+        pass
     app.storage.user.clear()
     logger.info("[В.О.Л.К.] Выход из системы")
 

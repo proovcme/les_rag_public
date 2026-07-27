@@ -66,6 +66,43 @@ def test_image_attachment_without_ocr_is_marked_as_visual_evidence(tmp_path, mon
     assert "требует OCR/VLM" in attachment.embedding_text(profile)
 
 
+def test_inline_cid_logo_is_kept_in_raw_message_but_not_ocr_indexed(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAIL_ATTACHMENT_OCR_ENABLED", "false")
+    msg = EmailMessage()
+    msg["Subject"] = "Подпись с логотипом"
+    msg["From"] = "author@example.com"
+    msg["To"] = "les@example.com"
+    msg.set_content("Основной текст")
+    msg.add_alternative('<p>Основной текст</p><img src="cid:logo">', subtype="html")
+    html_part = msg.get_payload()[1]
+    html_part.add_related(b"fake-image", maintype="image", subtype="png", cid="<logo>")
+    path = tmp_path / "inline.eml"
+    path.write_bytes(msg.as_bytes())
+
+    profile = build_mail_vector_profile(path)
+
+    assert profile.attachments == []
+    assert b"Content-ID: <logo>" in path.read_bytes()
+
+
+def test_attachment_payload_exposes_sha256_and_large_missing_status(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAIL_ATTACHMENT_MAX_BYTES", "4")
+    msg = EmailMessage()
+    msg["Subject"] = "Большое вложение"
+    msg["From"] = "author@example.com"
+    msg["To"] = "les@example.com"
+    msg.set_content("Файл сохранён внутри письма.")
+    msg.add_attachment(b"larger-than-limit", maintype="application", subtype="pdf", filename="large.pdf")
+    path = tmp_path / "large.eml"
+    path.write_bytes(msg.as_bytes())
+
+    attachment = build_mail_vector_profile(path).attachments[0]
+
+    assert len(attachment.sha256) == 64
+    assert attachment.extraction == "skipped_large"
+    assert "larger than 4 bytes" in attachment.error
+
+
 def test_pdf_attachment_native_crash_is_contained(tmp_path, monkeypatch):
     monkeypatch.setenv("MAIL_ATTACHMENT_PDF_SUBPROCESS_ENABLED", "true")
 

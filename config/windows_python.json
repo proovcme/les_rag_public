@@ -1,0 +1,8 @@
+{
+  "schema": "les.windows-python.v2",
+  "version": "3.13.12",
+  "archive_url": "https://www.python.org/ftp/python/3.13.12/python-3.13.12-embed-amd64.zip",
+  "archive_sha256": "76f238f606250c87c6beac75dccd35ee99070a13490555936abb6cb64ecce3d0",
+  "archive_name": "python-3.13.12-embed-amd64.zip",
+  "python_relative_path": "python.exe"
+}

@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from html import escape
 from datetime import datetime
 from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
+from sovushka.config import UI_PORT
 from sovushka.state import (
     state,
     api_get,
@@ -21,12 +23,319 @@ from sovushka.state import (
     last_api_error_text,
 )
 
+_LAYER_LABELS = {
+    "text": "текст",
+    "graphics": "графика",
+    "tables": "таблицы",
+    "calculations": "расчёты",
+    "technical_docs": "техничка",
+    "drawings": "чертежи",
+    "cad_bim": "BIM",
+    "normative": "нормы",
+    "estimate": "сметы",
+}
+
+_DEFAULT_INDEX_SETTINGS = {
+    "batch_limit": 1,
+    "max_batches": 25,
+    "cooldown_sec": 20,
+    "min_free_gb": 8.0,
+    "max_swap_pct": 45.0,
+    "unload_between_batches": True,
+    "unload_before_start": True,
+    "row_batch_limit": 25,
+}
+
+_LOCAL_UI_BASE = f"http://127.0.0.1:{UI_PORT}"
+
+
+def _doc_layer_labels(item: dict) -> list[str]:
+    labels: list[str] = []
+    for layer in item.get("content_layers") or []:
+        label = _LAYER_LABELS.get(str(layer), str(layer))
+        if label and label not in labels:
+            labels.append(label)
+    role = str(item.get("document_role") or "").strip()
+    if role and role not in labels:
+        labels.insert(0, role)
+    kind = str(item.get("file_kind") or "").strip()
+    if not labels and kind:
+        labels.append(kind.replace("_", " "))
+    content = str(item.get("content_type") or item.get("content") or "").strip()
+    if not labels and content:
+        labels.append(content)
+    doc_type = str(item.get("doc_type") or "").strip()
+    if not labels and doc_type:
+        labels.append(doc_type)
+    return labels[:5]
+
+
+def _layer_counts(documents: list[dict]) -> list[tuple[str, int]]:
+    counts: dict[str, int] = {}
+    for item in documents:
+        seen = set(_doc_layer_labels(item)[:4])
+        if not seen:
+            seen = {"без карточки"}
+        for label in seen:
+            counts[label] = counts.get(label, 0) + 1
+    return sorted(counts.items(), key=lambda pair: (-pair[1], pair[0]))[:12]
+
+
+def _computed_index_status(
+    *,
+    raw_status: str = "",
+    total: int = 0,
+    indexed: int = 0,
+    pending: int = 0,
+    errors: int = 0,
+    missing: int = 0,
+    active: bool = False,
+) -> str:
+    if active:
+        return "PARSING"
+    if errors:
+        return "ERROR"
+    if missing:
+        return "MISSING"
+    if pending:
+        return "WAITING"
+    if indexed or total:
+        return "INDEXED"
+    raw = str(raw_status or "").upper()
+    if raw in {"PARSING", "SCANNING", "RUNNING"}:
+        return "IDLE"
+    return raw or "EMPTY"
+
+
+def _operator_queue_notice(
+    *, pending: int, last_status: str, last_message: str, contract_compatible: bool
+) -> tuple[str, str] | None:
+    """Return one current, actionable operator state instead of a stale job verdict."""
+    if pending <= 0 or str(last_status).upper() not in {"FAILED", "ERROR", "CANCELLED"}:
+        return None
+    message = str(last_message or "").strip()
+    if "index contract missing" in message.lower():
+        if contract_compatible:
+            return (f"ГОТОВ К ПРОДОЛЖЕНИЮ · {pending} файлов ждут · нажмите «Пуск»", "ready")
+        message = "локальный индекс не подготовлен; перезапустите ЛЕС"
+    return (f"ОСТАНОВЛЕНО · {pending} файлов ждут · {message}", "error")
+
 
 def build_samovar():
     """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
     ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
-    _S = {"mode": "table", "rows": [], "q": "", "filter": "all"}
-    _refs = {"disp": None, "kpi": None, "status": None, "tbtn": None, "cbtn": None}
+    _S = {
+        "mode": "table",
+        "rows": [],
+        "q": "",
+        "filter": "all",
+        "jobs": [],
+        "memory": {},
+        "readiness": {},
+        "index_settings": dict(_DEFAULT_INDEX_SETTINGS),
+    }
+    _refs = {"disp": None, "kpi": None, "status": None, "ops": None, "tbtn": None, "cbtn": None}
+
+    def _notify(message: str, type: str = "info", **kwargs):
+        try:
+            ui.notify(message, type=type, **kwargs)
+        except RuntimeError as err:
+            add_log(f"[UI] уведомление не показано: {err}")
+        except Exception:
+            pass
+
+    async def _pick_local_folder(*, initial: str = "", title: str = "Выберите папку") -> str:
+        query = urlencode({"initial": initial or "", "title": title})
+        data = await api_get(f"/lite-runtime/pick-folder?{query}", base=_LOCAL_UI_BASE)
+        if isinstance(data, dict) and data.get("status") == "selected" and data.get("path"):
+            return str(data["path"])
+        if isinstance(data, dict) and data.get("status") == "cancelled":
+            return ""
+        detail = last_api_error_text("Локальный выбор папки недоступен")
+        _notify(f"{detail}. Используй Обзор…", type="warning")
+        return ""
+
+    def _settings_changed() -> bool:
+        cur = _S.get("index_settings") or {}
+        return any(cur.get(k) != v for k, v in _DEFAULT_INDEX_SETTINGS.items())
+
+    def _setting(key: str):
+        return (_S.get("index_settings") or {}).get(key, _DEFAULT_INDEX_SETTINGS[key])
+
+    def _set_setting(key: str, value):
+        settings = _S.setdefault("index_settings", dict(_DEFAULT_INDEX_SETTINGS))
+        if isinstance(_DEFAULT_INDEX_SETTINGS[key], bool):
+            settings[key] = bool(value)
+        elif isinstance(_DEFAULT_INDEX_SETTINGS[key], int):
+            settings[key] = int(value or _DEFAULT_INDEX_SETTINGS[key])
+        else:
+            settings[key] = float(value or _DEFAULT_INDEX_SETTINGS[key])
+        _render_ops()
+
+    def _reset_index_settings():
+        _S["index_settings"] = dict(_DEFAULT_INDEX_SETTINGS)
+        for key, ref in (_refs.get("settings") or {}).items():
+            if key in _DEFAULT_INDEX_SETTINGS:
+                ref.value = _DEFAULT_INDEX_SETTINGS[key]
+                ref.update()
+        _render_ops()
+        _notify("Настройки индексации сброшены к умолчанию", type="info")
+
+    def _scheduler_payload() -> dict:
+        return {
+            "batch_limit": int(_setting("batch_limit")),
+            "max_batches": int(_setting("max_batches")),
+            "cooldown_sec": float(_setting("cooldown_sec")),
+            "min_free_gb": float(_setting("min_free_gb")),
+            "max_swap_pct": float(_setting("max_swap_pct")),
+            "unload_between_batches": bool(_setting("unload_between_batches")),
+            "unload_before_start": bool(_setting("unload_before_start")),
+            "background": True,
+        }
+
+    def _queue_counts() -> dict[str, int]:
+        rows = _S.get("rows") or []
+        return {
+            "pending": sum(int(r.get("pending") or 0) for r in rows),
+            "light": sum(int(r.get("pending_light") or 0) for r in rows),
+            "ocr": sum(int(r.get("pending_ocr") or 0) for r in rows),
+            "unknown": sum(int(r.get("pending_unknown") or 0) for r in rows),
+            "errors": sum(int(r.get("error") or 0) for r in rows),
+        }
+
+    def _job_status_color(status: str) -> str:
+        s = str(status or "").upper()
+        if s in {"QUEUED", "RUNNING", "PARSING", "STARTED"}:
+            return "var(--warn)"
+        if s in {"COMPLETED", "PARTIAL"}:
+            return "var(--ok)"
+        if s in {"FAILED", "ERROR", "CANCELLED"}:
+            return "var(--err)"
+        return "var(--dim)"
+
+    def _job_status_label(status: str) -> str:
+        return {
+            "QUEUED": "В ОЧЕРЕДИ",
+            "RUNNING": "ВЫПОЛНЯЕТСЯ",
+            "PARSING": "РАЗБОР",
+            "STARTED": "ЗАПУЩЕНО",
+            "COMPLETED": "ГОТОВО",
+            "PARTIAL": "ЧАСТИЧНО",
+            "FAILED": "ОШИБКА",
+            "ERROR": "ОШИБКА",
+            "CANCELLED": "ОТМЕНЕНО",
+        }.get(str(status or "").upper(), str(status or "—").upper())
+
+    def _render_ops():
+        panel = _refs.get("ops")
+        if panel is None:
+            return
+        panel.clear()
+        counts = _queue_counts()
+        memory_state = _S.get("memory") or {}
+        mem = memory_state.get("memory") if isinstance(memory_state.get("memory"), dict) else {}
+        reason = str(memory_state.get("reason") or "")
+        state_name = str(memory_state.get("state") or "UNKNOWN")
+        jobs = _S.get("jobs") or []
+        active = [
+            j for j in jobs
+            if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
+            and "parse" in str(j.get("type", "")).lower()
+        ]
+        recent = [j for j in jobs if "parse" in str(j.get("type", "")).lower()][:5]
+        with panel:
+            with ui.element("div").classes("card-les w-full").style("padding:12px 14px;"):
+                with ui.row().classes("items-center w-full").style("gap:10px;flex-wrap:wrap;"):
+                    ui.icon("o_radar").style("color:var(--accent);font-size:18px;")
+                    ui.label("Оператор индекса").style("font-size:14px;font-weight:700;")
+                    ui.label(f"очередь {counts['pending']}").style(
+                        "font-size:12px;color:var(--text);font-variant-numeric:tabular-nums;"
+                    )
+                    ui.label(f"лёгкие {counts['light']}").style("font-size:12px;color:var(--ok);")
+                    ui.label(f"сканы {counts['ocr']}").style("font-size:12px;color:var(--warn);")
+                    if counts["unknown"]:
+                        ui.label(f"не распознано {counts['unknown']}").style("font-size:12px;color:var(--dim);")
+                    if counts["errors"]:
+                        ui.label(f"ошибки {counts['errors']}").style("font-size:12px;color:var(--err);")
+                    ui.element("div").style("flex:1;")
+                    mem_color = "var(--ok)" if state_name in {"GREEN", "OK"} else "var(--warn)" if state_name in {"YELLOW", "RED"} else "var(--err)"
+                    memory_label = {"GREEN": "НОРМА", "OK": "НОРМА", "YELLOW": "МАЛО", "RED": "КРИТИЧНО"}.get(
+                        state_name, "НЕТ ДАННЫХ"
+                    )
+                    ui.label(
+                        f"ОЗУ свободно {float(mem.get('ram_free_gb') or 0):.1f} ГБ · {memory_label}"
+                    ).style(f"font-size:12px;color:{mem_color};font-variant-numeric:tabular-nums;")
+                if reason:
+                    swap_pct = float(mem.get("swap_pct") or 0)
+                    ui.label(
+                        "Памяти достаточно для разбора файлов."
+                        if state_name in {"GREEN", "OK"}
+                        else f"Разбор ограничен по памяти; файл подкачки занят на {swap_pct:.0f}%."
+                    ).style("font-size:11.5px;color:var(--dim);margin-top:4px;")
+                if counts["ocr"] and state_name in {"RED", "CRITICAL"}:
+                    ui.label(
+                        "Сканы лучше отложить: можно разбирать текст, документы и таблицы, а тяжёлые сканы оставить до нормальной памяти."
+                    ).style("font-size:12px;color:var(--warn);margin-top:6px;")
+                if _settings_changed():
+                    ui.label("Настройки отличаются от умолчания. Лучше трогать только если понимаем, зачем.").style(
+                        "font-size:12px;color:var(--warn);margin-top:6px;"
+                    )
+                if active:
+                    for job in active[:3]:
+                        total = int(job.get("total") or 0)
+                        processed = int(job.get("processed") or 0)
+                        pct = float(job.get("percent") or 0)
+                        eta = str(job.get("eta_text") or "")
+                        msg = str(job.get("message") or "")
+                        with ui.column().classes("w-full").style("gap:4px;margin-top:10px;"):
+                            with ui.row().classes("items-center w-full").style("gap:8px;"):
+                                ui.label(str(job.get("dataset_name") or job.get("source") or "очередь")).style(
+                                    "font-size:12.5px;font-weight:700;flex:1;"
+                                )
+                                ui.label(str(job.get("id") or "")[:12]).style("font-size:11px;color:var(--dim);")
+                                ui.label(_job_status_label(str(job.get("status") or ""))).style(
+                                    f"font-size:11px;color:{_job_status_color(str(job.get('status') or ''))};"
+                                )
+                                if eta:
+                                    ui.label(f"Осталось {eta}").style("font-size:11px;color:var(--dim);")
+                            ui.linear_progress(value=max(0.0, min(1.0, pct / 100.0))).props(
+                                "instant-feedback color=orange"
+                            ).style("height:7px;border-radius:4px;")
+                            ui.label(f"{processed}/{total} · {msg}").style("font-size:11.5px;color:var(--dim);")
+                elif recent:
+                    last = recent[0]
+                    last_status = str(last.get("status") or "").upper()
+                    last_message = str(last.get("message") or last.get("id") or "")
+                    readiness = _S.get("readiness") or {}
+                    general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
+                    notice = _operator_queue_notice(
+                        pending=counts["pending"],
+                        last_status=last_status,
+                        last_message=last_message,
+                        contract_compatible=bool(general.get("contract_compatible")),
+                    )
+                    if notice:
+                        message, tone = notice
+                        color = "var(--ok)" if tone == "ready" else "var(--err)"
+                        ui.label(message).style(
+                            f"font-size:12px;color:{color};font-weight:700;margin-top:8px;"
+                        )
+                    else:
+                        ui.label(
+                            f"Последняя задача: {_job_status_label(last_status)} · {last_message}"
+                        ).style("font-size:11.5px;color:var(--dim);margin-top:8px;")
+
+    def _ui_handler(coro_func, *args, **kwargs):
+        async def _handler(*_event_args):
+            await coro_func(*args, **kwargs)
+
+        return _handler
+
+    def _grid_handler(coro_func):
+        async def _handler(event):
+            await coro_func(event.args)
+
+        return _handler
 
     def _error_hint(err: str) -> str:
         e = (err or "").lower()
@@ -45,11 +354,29 @@ def build_samovar():
     def _agg(docs):
         by = {}
         for d in (docs or {}).get("documents", []):
-            s = by.setdefault(d.get("dataset_id"), {"INDEXED": 0, "PENDING": 0, "ERROR": 0, "chunks": 0})
+            s = by.setdefault(d.get("dataset_id"), {
+                "INDEXED": 0,
+                "PENDING": 0,
+                "ERROR": 0,
+                "MISSING": 0,
+                "chunks": 0,
+                "pending_ocr": 0,
+                "pending_light": 0,
+                "pending_unknown": 0,
+            })
             st = d.get("status", "")
             if st in s and st != "chunks":
                 s[st] += 1
             s["chunks"] += int(d.get("chunk_count") or 0)
+            if st == "PENDING":
+                complexity = str(d.get("complexity") or "").lower()
+                pipeline = str(d.get("pipeline") or "").lower()
+                if complexity == "needs_ocr" or pipeline == "markdown_needs_ocr":
+                    s["pending_ocr"] += 1
+                elif complexity or pipeline:
+                    s["pending_light"] += 1
+                else:
+                    s["pending_unknown"] += 1
         return by
 
     async def _load():
@@ -69,19 +396,32 @@ def build_samovar():
         rows = []
         for d in (ds if isinstance(ds, list) else ds.get("datasets", []) or []):
             did = d.get("id") or d.get("dataset_id")
-            a = agg.get(did, {"INDEXED": 0, "PENDING": 0, "ERROR": 0, "chunks": 0})
-            tot = a["INDEXED"] + a["PENDING"] + a["ERROR"]
+            a = agg.get(did, {
+                "INDEXED": 0,
+                "PENDING": 0,
+                "ERROR": 0,
+                "MISSING": 0,
+                "chunks": 0,
+                "pending_ocr": 0,
+                "pending_light": 0,
+                "pending_unknown": 0,
+            })
+            tot = a["INDEXED"] + a["PENDING"] + a["ERROR"] + a["MISSING"]
             rows.append({"id": did, "name": d.get("name", "?"), "sensitivity": d.get("sensitivity", "P0"),
                          "group": d.get("group_name", ""), "indexed": a["INDEXED"], "pending": a["PENDING"],
-                         "error": a["ERROR"], "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
+                         "pending_ocr": a["pending_ocr"], "pending_light": a["pending_light"],
+                         "pending_unknown": a["pending_unknown"], "error": a["ERROR"], "missing": a["MISSING"],
+                         "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
         rows.sort(key=lambda r: (0 if r["error"] else 1, 0 if r["pending"] else 1, r["name"].lower()))
         _S["rows"] = rows
 
     def _light(r):
         if r["error"]:
             return ("var(--err)", f"{r['error']} ошибок", "o_error")
+        if r.get("missing"):
+            return ("var(--err)", f"{r['missing']} источников пропало", "o_link_off")
         if r["pending"]:
-            return ("var(--warn)", f"Парсинг {r['indexed']}/{r['total']}", "o_sync")
+            return ("var(--warn)", f"Ждёт {r['pending']} · готово {r['indexed']}/{r['total']}", "o_schedule")
         if r["indexed"]:
             return ("var(--ok)", "Готов", "o_check_circle")
         return ("var(--dim)", "Пусто", "o_remove")
@@ -94,35 +434,34 @@ def build_samovar():
                     ui.element("div").style(f"flex:{n};background:{col};")
 
     async def _parse(r):
-        # «Плей» = одна СИНХРОННАЯ партия ≤25 файлов (endpoint ждёт до конца). Даём честный сигнал:
-        # старт сразу (notify+лог), затем результат со счётчиками — чтобы не было «идёт или стоит?».
+        # «Плей» = background job на одну партию. GUI верит jobs API, а не оптимистичной кнопке.
         nm = r.get("name", "?")
-        add_log(f"[ПАРС] ▶ {nm}: партия до 25 файлов…")
-        ui.notify(f"▶ Парсинг «{nm}» — партия до 25 файлов…", type="info")
+        limit = int(_setting("row_batch_limit"))
+        add_log(f"[ПАРС] ▶ {nm}: партия до {limit} файлов…")
+        _notify(f"▶ Парсинг «{nm}» — ставлю job на партию до {limit} файлов…", type="info")
         try:
-            d = await api_post(f"/api/rag/parse-batch/{r['id']}?limit=25", {})
+            d = await api_post(f"/api/rag/parse-batch/{r['id']}?{urlencode({'limit': limit, 'background': 'true'})}", {})
         except Exception as e:  # noqa: BLE001
             add_log(f"[ПАРС] ✗ {nm}: {e}")
-            ui.notify(last_api_error_text(f"Парсинг «{nm}» не запустился"), type="negative")
+            _notify(last_api_error_text(f"Парсинг «{nm}» не запустился"), type="negative")
             return
         if not d:
             add_log(f"[ПАРС] ✗ {nm}: отказ (вероятно, защита памяти — см. статус)")
-            ui.notify(last_api_error_text(f"Парсинг «{nm}»: отказ (память?)"), type="negative")
+            _notify(last_api_error_text(f"Парсинг «{nm}»: отказ (память?)"), type="negative")
             await _refresh_status()
             return
-        res = (d or {}).get("result", {}) or {}
-        chunks, errs, rem = res.get("chunks", 0), res.get("errors", 0), res.get("remaining_pending", 0)
-        msg = f"✓ «{nm}»: +{chunks} чанков · ошибок {errs} · осталось {rem}"
-        if rem:
-            msg += " — повтори «плей» или жми «Пуск» (индексатор) для всех"
+        msg = f"✓ «{nm}»: job {d.get('job_id', '?')} создана · pending {d.get('pending', 0)}"
         add_log(f"[ПАРС] {msg}")
-        ui.notify(msg, type="positive" if not errs else "warning")
-        await _refresh()
+        _notify(msg, type="positive")
+        await _refresh_status()
 
     async def _repair(r):
         d = await api_post(f"/api/rag/datasets/{r['id']}/repair", {})
         n = (d or {}).get("requeued", 0)
-        ui.notify(f"Ремонт {r['name']}: в очередь {n} файлов — нажми Пуск" if n else "Ошибочных файлов нет",
+        damaged = (d or {}).get("encoding_requeued", 0)
+        job_id = (d or {}).get("job_id") or "?"
+        _notify((f"Ремонт «{r['name']}» запущен: файлов {n}, повреждённый текст {damaged} · задача {job_id}")
+                if n else "Повреждений не найдено",
                   type="warning" if n else "info")
         await _refresh()
 
@@ -130,17 +469,38 @@ def build_samovar():
         ok = await ui.run_javascript(f"confirm('Удалить датасет {r['name']}? Необратимо.')", timeout=10)
         if ok:
             await api_delete(f"/api/rag/datasets/{r['id']}")
-            ui.notify(f"Удалён: {r['name']}", type="warning")
+            _notify(f"Удалён: {r['name']}", type="warning")
             await _refresh()
 
+    async def _ask_project(r):
+        ds_id = str((r or {}).get("id") or (r or {}).get("dataset_id") or "").strip()
+        name = str((r or {}).get("name") or (r or {}).get("folder") or ds_id).strip()
+        if not ds_id:
+            ui.notify("У датасета нет id", type="warning")
+            return
+        question = (
+            f"прочитай проектный датасет «{name}»: что это за проект, "
+            "какие тома/разделы/таблицы/чертежи видны, где искать ключевые данные и что не прочитано"
+        )
+        params = urlencode({"scope": f"ds:{ds_id}", "question": question, "tab": "chat"})
+        path = str(getattr(context.client.request, "url", "") or "")
+        target_path = "/les/classic" if "/les/classic" in path else "/classic"
+        ui.navigate.to(f"{target_path}?{params}")
+
     async def _start_all():
-        await api_post("/api/runtime/dispatcher/reindex/start", {"parse_method": "scheduler"})
-        ui.notify("Индексатор запущен", type="positive")
+        payload = _scheduler_payload()
+        add_log("[PARSE_SCHEDULER] top Пуск → /api/rag/parse-scheduler")
+        d = await api_post("/api/rag/parse-scheduler", payload)
+        if d:
+            _notify(f"Индексатор запущен: job {d.get('job_id', '?')}", type="positive")
+            add_log(f"[PARSE_SCHEDULER] job {d.get('job_id', '?')} queued")
+        else:
+            _notify(last_api_error_text("Индексатор не запустился"), type="negative")
         await _refresh_status()
 
     async def _stop_all():
         await api_post("/api/runtime/dispatcher/reindex/pause", {"reason": "operator"})
-        ui.notify("Индексатор остановлен", type="warning")
+        _notify("Индексатор остановлен", type="warning")
         await _refresh_status()
 
     files_dialog = ui.dialog()
@@ -151,23 +511,43 @@ def build_samovar():
             with ui.row().classes("items-center w-full").style("gap:10px;"):
                 ui.label(r["name"]).classes("sov-panel-title")
                 ui.label(f"{r['total']} файлов · {r['indexed']} в индексе · {r['pending']} ждут · "
-                         f"{r['error']} ошибок · {r['chunks']} чанков").classes("sov-muted")
+                         f"{r['error']} ошибок · {r['chunks']} фрагментов").classes("sov-muted")
                 ui.element("div").style("flex:1;")
                 if r["error"]:
                     ui.button("Ремонт", icon="o_build",
-                              on_click=lambda rr=r: asyncio.create_task(_repair(rr))).props("flat dense no-caps").style("color:var(--accent);")
+                              on_click=_ui_handler(_repair, r)).props("flat dense no-caps").style("color:var(--accent);")
+            layer_summary = ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;margin:2px 0 8px;")
             flist = ui.column().classes("w-full sov-advanced-scroll").style("gap:0;")
         files_dialog.open()
         d = await api_get(f"/api/rag/documents?dataset_id={r['id']}&limit=1500") or {}
+        docs = d.get("documents", []) if isinstance(d, dict) else []
+        layer_summary.clear()
+        with layer_summary:
+            for label, count in _layer_counts(docs):
+                ui.label(f"{label} · {count}").style(
+                    "font-size:11px;color:var(--accent);border:1px solid var(--border);"
+                    "border-radius:999px;padding:2px 7px;background:rgba(16,185,129,.06);"
+                )
         flist.clear()
         with flist:
-            for it in d.get("documents", []):
+            for it in docs:
                 st = it.get("status", "")
                 col = "var(--ok)" if st == "INDEXED" else "var(--warn)" if st == "PENDING" else "var(--err)"
                 with ui.row().classes("items-center w-full").style(
                         "gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);"):
                     ui.icon("o_circle").style(f"font-size:8px;color:{col};")
-                    ui.label((it.get("file_name") or "?")[-70:]).style("font-size:13px;flex:1;overflow:hidden;")
+                    with ui.column().style("flex:1;gap:2px;min-width:0;"):
+                        ui.label((it.get("file_name") or "?")[-90:]).style(
+                            "font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                        )
+                        labels = _doc_layer_labels(it)
+                        if labels:
+                            with ui.row().classes("items-center").style("gap:4px;flex-wrap:wrap;"):
+                                for label in labels[:4]:
+                                    ui.label(label).style(
+                                        "font-size:10px;color:var(--dim);border:1px solid var(--border);"
+                                        "border-radius:999px;padding:1px 6px;"
+                                    )
                     ui.label(st).style(f"font-size:11.5px;color:{col};")
                 if st == "ERROR" and it.get("last_error"):
                     with ui.row().classes("w-full").style("gap:6px;padding:0 4px 6px 20px;"):
@@ -182,15 +562,68 @@ def build_samovar():
         browse = {"path": ""}
         with add_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:560px;"):
             ui.label("Добавить датасет").classes("sov-panel-title")
-            ui.label("Папка индексируется in-place (без копии в storage).").classes("sov-muted")
+            ui.label("Папка индексируется на месте: исходные файлы не копируются.").classes("sov-muted")
             name_in = ui.input("Название").props("dense outlined").classes("w-full")
             with ui.row().classes("items-center w-full").style("gap:8px;"):
                 path_lbl = ui.label("Папка не выбрана").style(
                     "flex:1;font-size:13px;color:var(--dim);border:1px solid var(--border);"
                     "border-radius:8px;padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
-                ui.button("Обзор…", icon="o_folder_open",
-                          on_click=lambda: _open_browser()).props("no-caps flat dense").style("color:var(--accent);")
+                browse_btn = ui.button("Обзор…", icon="o_folder_open").props(
+                    "no-caps flat dense"
+                ).style("color:var(--accent);")
+                native_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                    "no-caps flat dense"
+                ).style("color:var(--accent);")
             parse_sw = ui.switch("Сразу индексировать", value=True)
+
+            with ui.expansion("Google / Яндекс через веб", icon="o_cloud", value=False).classes("w-full"):
+                ui.label(
+                    "Укажи ссылку или ID папки Google Drive, либо путь Яндекс Диска вида disk:/Проекты/ПД. "
+                    "LES скачает папку в mirror-кэш и сделает из неё датасет."
+                ).classes("sov-muted")
+                with ui.row().classes("items-center w-full").style("gap:8px;"):
+                    cloud_provider = ui.select(
+                        options={"google_drive": "Google Drive", "yandex_disk": "Яндекс Диск"},
+                        value="google_drive",
+                        label="Провайдер",
+                    ).props("dense outlined emit-value map-options").style("min-width:170px;")
+                    cloud_locator = ui.input(
+                        "Ссылка / ID / путь папки",
+                        placeholder="https://drive.google.com/drive/folders/... или disk:/Проекты/ПД",
+                    ).props("dense outlined clearable").classes("flex-1")
+
+                async def _do_cloud_add():
+                    nm = (name_in.value or "").strip()
+                    locator = (cloud_locator.value or "").strip()
+                    if not nm or not locator:
+                        ui.notify("Нужны название датасета и ссылка/путь облачной папки", type="warning")
+                        return
+                    payload = {
+                        "provider": cloud_provider.value,
+                        "locator": locator,
+                        "dataset_name": nm,
+                        "parse": bool(parse_sw.value),
+                        "parse_limit": 25,
+                        "max_files": 500,
+                        "background": True,
+                    }
+                    d = await api_post("/api/rag/cloud-drives/sync", payload)
+                    if d and d.get("status") in {"started", "registered"}:
+                        add_dialog.close()
+                        ui.notify(f"Облачная папка «{nm}» подключается как датасет", type="positive")
+                        add_log(f"[CLOUD_DRIVE] {cloud_provider.value}: {locator} → «{nm}»")
+                        await _refresh()
+                    else:
+                        ui.notify(last_api_error_text("Не удалось подключить облачную папку"), type="negative")
+
+                with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:6px;"):
+                    ui.button(
+                        "Подключить веб-папку",
+                        icon="o_cloud_sync",
+                        on_click=_do_cloud_add,
+                    ).props("no-caps dense").style(
+                        "background:var(--accent);color:var(--bg);border-radius:8px;"
+                    )
 
             # вложенный браузер папок (клик-навигация по серверной ФС, без печати пути)
             with ui.dialog() as fdlg, ui.card().style("min-width:520px;max-width:92vw;"):
@@ -215,11 +648,14 @@ def build_samovar():
                 with fb_list:
                     if d.get("path"):
                         ui.button("↑ Вверх", icon="o_arrow_upward",
-                                  on_click=lambda u=d.get("parent"): asyncio.create_task(_nav(u or ""))
+                                  on_click=_ui_handler(_nav, d.get("parent") or "")
                                   ).props("flat dense no-caps").classes("w-full")
                     for e in d.get("dirs", []):
-                        ui.button(f"{e['name']}   ·   {e.get('file_count', 0)} файл.", icon="o_folder",
-                                  on_click=lambda p=e["path"]: asyncio.create_task(_nav(p))
+                        is_cloud = e.get("source") == "cloud_drive"
+                        icon = "o_cloud" if is_cloud else "o_folder"
+                        suffix = f" · {e.get('provider_title')}" if is_cloud and e.get("provider_title") else ""
+                        ui.button(f"{e['name']}{suffix}   ·   {e.get('file_count', 0)} файл.", icon=icon,
+                                  on_click=_ui_handler(_nav, e["path"])
                                   ).props("flat dense no-caps align=left").classes("w-full")
                     if not d.get("dirs") and d.get("path"):
                         ui.label("Подпапок нет — можно выбрать эту.").classes("sov-muted").style("padding:6px;")
@@ -232,15 +668,32 @@ def build_samovar():
                     path_lbl.style("color:var(--text);")
                     fdlg.close()
 
-            def _open_browser():
+            async def _open_browser(*_event_args):
                 fdlg.open()
-                asyncio.create_task(_nav(""))
+                await _nav("")
+
+            async def _open_native_folder(*_event_args):
+                path = await _pick_local_folder(
+                    initial=picked["path"] or browse["path"],
+                    title="Выберите папку для датасета",
+                )
+                if path:
+                    picked["path"] = path
+                    path_lbl.set_text(path)
+                    path_lbl.style("color:var(--text);")
+
+            browse_btn.on("click", _open_browser)
+            native_btn.on("click", _open_native_folder)
 
             async def _do_add():
                 nm = (name_in.value or "").strip()
                 pth = picked["path"]
                 if not nm or not pth:
                     ui.notify("Нужны название и выбранная папка (Обзор…)", type="negative")
+                    return
+                plan = await api_post("/api/rag/external/intake-plan", {"path": pth, "dataset_name": nm})
+                if not isinstance(plan, dict) or plan.get("status") != "ok":
+                    ui.notify(last_api_error_text("Не удалось построить план загрузки"), type="negative")
                     return
                 ds = await api_post(f"/api/rag/datasets?name={quote(nm)}", {})
                 did = (ds or {}).get("id")
@@ -254,6 +707,12 @@ def build_samovar():
                                     "parse_limit": 25, "background": True})
                 add_dialog.close()
                 if r and r.get("status") in ("started", "registered"):
+                    parse_job = r.get("parse_job") if isinstance(r.get("parse_job"), dict) else {}
+                    if parse_job.get("job_id"):
+                        add_log(
+                            f"[EXT_INDEX] «{nm}»: parse job {parse_job.get('job_id')} · "
+                            f"batch {parse_job.get('batch_limit')} · max {parse_job.get('max_batches')}"
+                        )
                     ui.notify(f"Индексация «{nm}» запущена — файлы появятся в датасете", type="positive")
                     await _refresh()
                 else:
@@ -265,19 +724,20 @@ def build_samovar():
             with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:8px;"):
                 ui.button("Отмена", on_click=add_dialog.close).props("flat dense no-caps").style("color:var(--dim);")
                 ui.button("Индексировать", icon="o_bolt",
-                          on_click=lambda: asyncio.create_task(_do_add())).props("no-caps").style(
+                          on_click=_do_add).props("no-caps").style(
                           "background:var(--accent);color:var(--bg);border-radius:8px;")
         add_dialog.open()
 
     def _row_actions(r):
-        ui.button(icon="o_folder_open", on_click=lambda rr=r: asyncio.create_task(_open_files(rr))).props(
+        ui.button("Проект", icon="o_account_tree", on_click=_ui_handler(_ask_project, r)).props(
+            "flat dense no-caps").style("font-size:11px;padding:2px 6px;color:var(--accent);")
+        ui.button(icon="o_folder_open", on_click=_ui_handler(_open_files, r)).props(
             'flat dense round aria-label="Файлы"').style("color:var(--dim);")
-        if r["error"]:
-            ui.button(icon="o_build", on_click=lambda rr=r: asyncio.create_task(_repair(rr))).props(
-                'flat dense round aria-label="Ремонт"').style("color:var(--accent);")
-        ui.button(icon="o_play_arrow", on_click=lambda rr=r: asyncio.create_task(_parse(rr))).props(
+        ui.button(icon="o_build", on_click=_ui_handler(_repair, r)).props(
+            'flat dense round aria-label="Проверить и починить"').style("color:var(--accent);")
+        ui.button(icon="o_play_arrow", on_click=_ui_handler(_parse, r)).props(
             'flat dense round aria-label="Пуск"').style("color:var(--ok);")
-        ui.button(icon="o_delete", on_click=lambda rr=r: asyncio.create_task(_delete(rr))).props(
+        ui.button(icon="o_delete", on_click=_ui_handler(_delete, r)).props(
             'flat dense round aria-label="Удалить"').style("color:var(--dim);")
 
     def _visible_rows():
@@ -327,7 +787,7 @@ def build_samovar():
                         ui.label("Статус").style("flex:1.4;")
                         ui.label("Файлы" + _sort_arrow("files")).style("flex:1.6;cursor:pointer;").on(
                             "click", lambda: _set_sort("files"))
-                        ui.label("Чанки" + _sort_arrow("chunks")).style("width:70px;cursor:pointer;").on(
+                        ui.label("Фрагменты" + _sort_arrow("chunks")).style("width:88px;cursor:pointer;").on(
                             "click", lambda: _set_sort("chunks"))
                         ui.label("").style("width:160px;")
                     for r in vis:
@@ -337,7 +797,16 @@ def build_samovar():
                             ui.label(r["name"]).style("flex:2;font-size:14px;font-weight:500;")
                             with ui.row().classes("items-center").style("flex:1.4;gap:5px;"):
                                 ui.icon(ico).style(f"font-size:15px;color:{col};")
-                                ui.label(txt).style(f"font-size:12px;color:{col};")
+                                with ui.column().style("gap:1px;"):
+                                    ui.label(txt).style(f"font-size:12px;color:{col};")
+                                    if r["pending"]:
+                                        detail = (
+                                            f"лёгкие {r.get('pending_light', 0)} · "
+                                            f"сканы {r.get('pending_ocr', 0)}"
+                                        )
+                                        if r.get("pending_unknown"):
+                                            detail += f" · ? {r.get('pending_unknown', 0)}"
+                                        ui.label(detail).style("font-size:10.5px;color:var(--dim);")
                             with ui.column().style("flex:1.6;gap:2px;"):
                                 _bar(r)
                             ui.label(str(r["chunks"])).style("width:70px;font-size:13px;color:var(--text);")
@@ -352,28 +821,48 @@ def build_samovar():
                             with ui.row().classes("items-center w-full").style("gap:8px;margin-bottom:8px;"):
                                 ui.icon("o_circle").style(f"font-size:9px;color:{col};")
                                 ui.label(r["name"]).style("font-size:14px;font-weight:500;flex:1;")
-                                ui.label(f"{r['chunks']} чанков").classes("sov-muted")
+                                ui.label(f"{r['chunks']} фрагментов").classes("sov-muted")
                             _bar(r)
                             with ui.row().classes("items-center w-full").style("gap:6px;margin-top:8px;"):
-                                ui.label(txt).style(f"font-size:12px;color:{col};flex:1;")
+                                extra = ""
+                                if r["pending"]:
+                                    extra = f" · лёгкие {r.get('pending_light', 0)} · сканы {r.get('pending_ocr', 0)}"
+                                ui.label(txt + extra).style(f"font-size:12px;color:{col};flex:1;")
                                 _row_actions(r)
 
     async def _refresh_status():
-        # Тикает каждые 5с НЕЗАВИСИМО от _parse (который ждёт батч) → ловит «PARSING» датасета
-        # живьём: parse_dataset ставит статус PARSING в БД на время партии. Так видно «идёт/стоит».
+        # Тикает каждые 5с НЕЗАВИСИМО от _parse. Верим активной job, а не stale dataset.status:
+        # PENDING — это очередь, PARSING — только если есть живой scheduler/batch.
         st = await api_get("/api/runtime/dispatcher/status") or {}
+        idx = await api_get("/api/indexing-mode") or {}
         disp = bool((st.get("reindex") or {}).get("running") or st.get("running"))
-        ds = await api_get("/api/rag/datasets") or []
-        ds_list = ds if isinstance(ds, list) else (ds.get("datasets") or [])
-        parsing = [d.get("name", "?") for d in ds_list if str(d.get("status", "")).upper() == "PARSING"]
+        jobs = await api_get("/api/jobs/summary?limit=40") or {}
+        readiness = await api_get("/api/rag/readiness") or {}
+        job_items = jobs.get("jobs", []) if isinstance(jobs, dict) else []
+        _S["jobs"] = job_items
+        _S["readiness"] = readiness if isinstance(readiness, dict) else {}
+        if isinstance(idx, dict):
+            _S["memory"] = idx.get("memory_state") if isinstance(idx.get("memory_state"), dict) else {}
+        active_parse = [
+            j for j in job_items
+            if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
+            and (j.get("type") == "rag_parse_scheduler" or "parse" in str(j.get("type", "")).lower())
+        ]
+        pending = sum(int(r.get("pending") or 0) for r in _S.get("rows", []))
         if _refs["status"]:
-            if parsing:
-                extra = f" +{len(parsing) - 3}" if len(parsing) > 3 else ""
-                _refs["status"].set_text(f"Индексатор: ПАРСИНГ идёт — {', '.join(parsing[:3])}{extra}")
+            if active_parse:
+                current = active_parse[0]
+                _refs["status"].set_text(
+                    f"Индексатор: выполняется задача {str(current.get('id', ''))[:12]} "
+                    f"{current.get('processed', 0)}/{current.get('total', 0)}"
+                )
             elif disp:
-                _refs["status"].set_text("Индексатор: идёт…")
+                _refs["status"].set_text("Индексатор включён, но активной задачи разбора нет")
+            elif pending:
+                _refs["status"].set_text(f"Индексатор: простаивает · ждут {pending} файлов")
             else:
                 _refs["status"].set_text("Индексатор: простаивает")
+        _render_ops()
 
     async def _refresh():
         try:
@@ -446,7 +935,7 @@ def build_samovar():
         _refs["stats"] = {}
         _STAT_DEFS = (("datasets", "Датасеты", "var(--text)"), ("files", "Файлов", "var(--text)"),
                       ("indexed", "В индексе", "var(--ok)"), ("pending", "Ждут", "var(--warn)"),
-                      ("error", "Ошибки", "var(--err)"), ("chunks", "Чанков", "var(--accent)"))
+                      ("error", "Ошибки", "var(--err)"), ("chunks", "Фрагментов", "var(--accent)"))
         with ui.element("div").style("display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"
                                      "gap:10px;width:100%;"):
             for _k, _lbl, _col in _STAT_DEFS:
@@ -469,28 +958,96 @@ def build_samovar():
                     _refs["fbtn"][_fk] = ui.button(_flbl, on_click=lambda k=_fk: _set_filter(k)).props(
                         "flat dense no-caps").style(
                         f"font-size:.7rem;color:{'var(--accent)' if _fk == 'all' else 'var(--dim)'};")
+        _refs["ops"] = ui.column().classes("w-full").style("gap:8px;")
+        _refs["settings"] = {}
+        with ui.expansion("Настройки индексации", icon="o_tune", value=False).classes("w-full").style(
+            "border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);"
+        ):
+            ui.label("Лучше не менять без причины: небольшая партия и пауза берегут память, особенно перед разбором сканов.").style(
+                "font-size:12px;color:var(--warn);padding:0 12px 8px;"
+            )
+            with ui.element("div").style(
+                "display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));"
+                "gap:8px;padding:0 12px 12px;"
+            ):
+                batch_in = ui.number("batch", value=_setting("batch_limit"), min=1, max=25, step=1).props(
+                    "dense outlined"
+                )
+                max_in = ui.number("max партий", value=_setting("max_batches"), min=1, max=500, step=1).props(
+                    "dense outlined"
+                )
+                cooldown_in = ui.number("пауза, с", value=_setting("cooldown_sec"), min=0, max=600, step=5).props(
+                    "dense outlined"
+                )
+                min_ram_in = ui.number("мин. RAM, GB", value=_setting("min_free_gb"), min=1, max=64, step=1).props(
+                    "dense outlined"
+                )
+                swap_in = ui.number("swap %, инфо", value=_setting("max_swap_pct"), min=0, max=100, step=5).props(
+                    "dense outlined"
+                )
+                row_batch_in = ui.number("play batch", value=_setting("row_batch_limit"), min=1, max=25, step=1).props(
+                    "dense outlined"
+                )
+            with ui.row().classes("items-center w-full").style("gap:10px;flex-wrap:wrap;padding:0 12px 12px;"):
+                unload_between_sw = ui.switch("выгружать MLX между партиями", value=_setting("unload_between_batches"))
+                unload_before_sw = ui.switch("выгрузить MLX перед стартом", value=_setting("unload_before_start"))
+                ui.element("div").style("flex:1;")
+                ui.button("По умолчанию", icon="o_restart_alt", on_click=_reset_index_settings).props(
+                    "flat dense no-caps"
+                ).style("color:var(--dim);")
+            _refs["settings"].update({
+                "batch_limit": batch_in,
+                "max_batches": max_in,
+                "cooldown_sec": cooldown_in,
+                "min_free_gb": min_ram_in,
+                "max_swap_pct": swap_in,
+                "row_batch_limit": row_batch_in,
+                "unload_between_batches": unload_between_sw,
+                "unload_before_start": unload_before_sw,
+            })
+            batch_in.on_value_change(lambda *_: _set_setting("batch_limit", batch_in.value))
+            max_in.on_value_change(lambda *_: _set_setting("max_batches", max_in.value))
+            cooldown_in.on_value_change(lambda *_: _set_setting("cooldown_sec", cooldown_in.value))
+            min_ram_in.on_value_change(lambda *_: _set_setting("min_free_gb", min_ram_in.value))
+            swap_in.on_value_change(lambda *_: _set_setting("max_swap_pct", swap_in.value))
+            row_batch_in.on_value_change(lambda *_: _set_setting("row_batch_limit", row_batch_in.value))
+            unload_between_sw.on_value_change(lambda *_: _set_setting("unload_between_batches", unload_between_sw.value))
+            unload_before_sw.on_value_change(lambda *_: _set_setting("unload_before_start", unload_before_sw.value))
         with ui.row().classes("items-center w-full").style("gap:10px;"):
             ui.button("Пуск", icon="o_play_arrow",
-                      on_click=lambda: asyncio.create_task(_start_all())).props("flat dense no-caps").style("color:var(--ok);")
+                      on_click=_start_all).props("flat dense no-caps").style("color:var(--ok);")
             ui.button("Стоп", icon="o_pause",
-                      on_click=lambda: asyncio.create_task(_stop_all())).props("flat dense no-caps").style("color:var(--dim);")
+                      on_click=_stop_all).props("flat dense no-caps").style("color:var(--dim);")
             ui.element("div").style("width:1px;height:16px;background:var(--border);")
             _refs["status"] = ui.label("Индексатор: …").classes("sov-muted")
             ui.element("div").style("flex:1;")
             ui.button("Обновить", icon="o_refresh",
-                      on_click=lambda: asyncio.create_task(_refresh())).props("flat dense no-caps").style("color:var(--dim);")
+                      on_click=_refresh).props("flat dense no-caps").style("color:var(--dim);")
         _refs["disp"] = ui.column().classes("w-full").style("gap:8px;")
 
     _upd_toggle()
-    asyncio.create_task(_refresh())
+    ui.timer(0.1, _refresh, once=True)
     # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
-    ui.timer(5.0, lambda: asyncio.create_task(_refresh_status()))
-    ui.timer(20.0, lambda: asyncio.create_task(_refresh()))
+    ui.timer(5.0, _refresh_status)
+    ui.timer(20.0, _refresh)
 
 
 def build_samovar_legacy():
     """LEGACY (v0.23 и ранее) — старая страница С.А.М.О.В.А.Р. Сохранена для отката
     (sovushka_ng.py: build_samovar → build_samovar_legacy при проблемах с новой)."""
+
+    def _grid_handler(coro_func):
+        async def _handler(event):
+            await coro_func(event.args)
+
+        return _handler
+
+    def _ui_handler(coro_func, *args, **kwargs):
+        async def _handler(*_event_args):
+            await coro_func(*args, **kwargs)
+
+        return _handler
+
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-0"):
@@ -502,7 +1059,7 @@ def build_samovar_legacy():
                 )
             ui.button(
                 "↻ ОБНОВИТЬ",
-                on_click=lambda: asyncio.create_task(refresh_and_render())
+                on_click=refresh_and_render
             ).props("no-caps outline").style(
                 "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
             )
@@ -516,6 +1073,7 @@ def build_samovar_legacy():
                 ("idx",    "В индексе",        "var(--ok)"),
                 ("pend",   "Ожидают",          "var(--warn)"),
                 ("err",    "Ошибок",           "var(--err)"),
+                ("miss",   "Пропало",          "var(--err)"),
                 ("chunks", "Чанков Qdrant",    "var(--text)"),
             ]:
                 with ui.card().classes("kpi-box flex-1"):
@@ -609,6 +1167,7 @@ def build_samovar_legacy():
             {"name": "indexed",  "label": "В индексе", "field": "indexed",  "align": "right",  "sortable": True},
             {"name": "pending",  "label": "Ожидают",  "field": "pending",  "align": "right",  "sortable": True},
             {"name": "errors",   "label": "Ошибки",   "field": "errors",   "align": "right",  "sortable": True},
+            {"name": "missing",  "label": "Пропало",  "field": "missing",  "align": "right",  "sortable": True},
             {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "right",  "sortable": True},
             {"name": "status",   "label": "Статус",   "field": "status",   "align": "left"},
             {"name": "sensitivity", "label": "Данные", "field": "sensitivity", "align": "center"},
@@ -643,9 +1202,13 @@ def build_samovar_legacy():
             <q-td :props="props">
               <span :style="{color: props.value > 0 ? '#ef4444' : '#94a3b8', fontWeight:'700'}">{{ props.value }}</span>
             </q-td>""")
+        sam_grid.add_slot("body-cell-missing", """
+            <q-td :props="props">
+              <span :style="{color: props.value > 0 ? '#ef4444' : '#94a3b8', fontWeight:'700'}">{{ props.value }}</span>
+            </q-td>""")
         sam_grid.add_slot("body-cell-status", """
             <q-td :props="props">
-              <span :style="{color: ['INDEXED','READY','COMPLETED'].includes(props.value)?'#10b981':['PARSING','SCANNING'].includes(props.value)?'#f59e0b':'#94a3b8'}">
+              <span :style="{color: ['INDEXED','READY','COMPLETED'].includes(props.value)?'#10b981':['PARSING','SCANNING','WAITING'].includes(props.value)?'#f59e0b':props.value==='MISSING'||props.value==='ERROR'?'#ef4444':'#94a3b8'}">
                 {{ props.value }}
               </span>
             </q-td>""")
@@ -690,12 +1253,12 @@ def build_samovar_legacy():
               </div>
               <span v-else style="color:#64748b;font-size:.6rem;">—</span>
             </q-td>""")
-        sam_grid.on("setgroup", lambda e: asyncio.create_task(_set_group(e.args)))
-        sam_grid.on("inspect", lambda e: asyncio.create_task(_open_index_dialog(e.args)))
-        sam_grid.on("sync",  lambda e: asyncio.create_task(_sync_row(e.args)))
-        sam_grid.on("reset", lambda e: asyncio.create_task(_reset_row(e.args)))
-        sam_grid.on("parse", lambda e: asyncio.create_task(_parse_row(e.args)))
-        sam_grid.on("setsens", lambda e: asyncio.create_task(_set_sensitivity(e.args)))
+        sam_grid.on("setgroup", _grid_handler(_set_group))
+        sam_grid.on("inspect", _grid_handler(_open_index_dialog))
+        sam_grid.on("sync", _grid_handler(_sync_row))
+        sam_grid.on("reset", _grid_handler(_reset_row))
+        sam_grid.on("parse", _grid_handler(_parse_row))
+        sam_grid.on("setsens", _grid_handler(_set_sensitivity))
 
         selected_index = {"row": {}}
         with ui.dialog() as index_dialog:
@@ -762,9 +1325,13 @@ def build_samovar_legacy():
                     ).props("flat round dense").tooltip("Только ERROR")
 
                 index_docs_status = ui.label("показано: —").style("font-size:.65rem;color:var(--dim);")
+                index_layer_summary = ui.row().classes("items-center w-full").style(
+                    "gap:6px;flex-wrap:wrap;margin:2px 0 4px;"
+                )
                 index_docs_cols = [
                     {"name": "status", "label": "Статус", "field": "status", "align": "left", "sortable": True},
                     {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
+                    {"name": "layers", "label": "Слои", "field": "layers", "align": "left"},
                     {"name": "source", "label": "Источник (in-place)", "field": "source", "align": "left"},
                     {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
                     {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
@@ -793,6 +1360,13 @@ def build_samovar_legacy():
                       <div :title="props.value" style="max-width:460px;white-space:normal;word-break:break-word;font-family:var(--font-chat);font-size:.68rem;">
                         {{ props.value }}
                       </div>
+                    </q-td>""")
+                index_docs_grid.add_slot("body-cell-layers", """
+                    <q-td :props="props">
+                      <span v-if="props.value" style="color:#10b981;white-space:normal;word-break:break-word;font-size:.62rem;">
+                        {{ props.value }}
+                      </span>
+                      <span v-else style="color:#64748b;">—</span>
                     </q-td>""")
                 index_docs_grid.add_slot("body-cell-source", """
                     <q-td :props="props">
@@ -917,9 +1491,22 @@ def build_samovar_legacy():
                 ui.button("Обзор…", icon="o_folder_open", on_click=_open_folder_browser).props(
                     "dense no-caps flat"
                 ).tooltip("Выбрать папку кликами, без печати пути")
+                native_ext_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                    "dense no-caps flat"
+                ).tooltip("Открыть системный выбор папки на локальной машине")
                 ext_limit_input = ui.number("parse", value=25, min=1, max=500, step=5).props(
                     "dense outlined"
                 ).style("width:96px;font-size:.7rem;").tooltip("Сколько файлов распарсить сразу")
+
+            async def _pick_external_native(*_event_args):
+                path = await _pick_local_folder(
+                    initial=(ext_path_input.value or "").strip(),
+                    title="Выберите внешнюю папку для индексации",
+                )
+                if path:
+                    _set_external_path(path)
+
+            native_ext_btn.on("click", _pick_external_native)
 
             with ui.row().classes("gap-2 w-full items-center"):
                 ext_dataset_select = ui.select(
@@ -962,6 +1549,7 @@ def build_samovar_legacy():
                     d = await api_post("/api/rag/index-external", payload)
                     ext_index_btn.props(remove="loading")
                     if d and d.get("status") == "registered":
+                        parse_job = d.get("parse_job") if isinstance(d.get("parse_job"), dict) else {}
                         ui.notify(
                             f"In-place: +{d.get('registered_files', 0)} файлов из "
                             f"«{d.get('source_root', '')}» (без копии)"
@@ -973,11 +1561,73 @@ def build_samovar_legacy():
                             f"пропущено типов {d.get('skipped_unsupported', 0)} · "
                             f"вне корня {d.get('skipped_outside_root', 0)}"
                         )
+                        if parse_job.get("job_id"):
+                            add_log(
+                                f"[EXT_INDEX] parse job {parse_job.get('job_id')} · "
+                                f"batch {parse_job.get('batch_limit')} · max {parse_job.get('max_batches')}"
+                            )
                         ext_new_ds_input.value = ""
                         await asyncio.sleep(2)
                         await refresh_and_render()
                     else:
                         ui.notify(last_api_error_text("Ошибка in-place индексации"), type="negative")
+
+                async def do_check_external():
+                    path = (ext_path_input.value or "").strip()
+                    ds_id = (ext_dataset_select.value or "").strip()
+                    if not path or not ds_id:
+                        ui.notify("Выбери путь и датасет для проверки", type="warning")
+                        return
+                    ext_check_btn.props("loading")
+                    d = await api_post(
+                        "/api/rag/external/check",
+                        {"path": path, "dataset_id": ds_id, "parse": False, "limit": 25},
+                    )
+                    ext_check_btn.props(remove="loading")
+                    if d and d.get("status") == "ok":
+                        c = d.get("counts", {})
+                        ui.notify(
+                            f"Проверка: новых {c.get('new', 0)}, изменённых {c.get('changed', 0)}, "
+                            f"удалённых {c.get('deleted', 0)}, без изменений {c.get('unchanged', 0)}",
+                            type="info",
+                        )
+                        add_log(f"[EXT_CHECK] {path} → {ds_id}: {c}")
+                    else:
+                        ui.notify(last_api_error_text("Ошибка проверки внешней папки"), type="negative")
+
+                async def do_sync_external():
+                    path = (ext_path_input.value or "").strip()
+                    ds_id = (ext_dataset_select.value or "").strip()
+                    if not path or not ds_id:
+                        ui.notify("Выбери путь и датасет для синхронизации", type="warning")
+                        return
+                    payload = {
+                        "path": path,
+                        "dataset_id": ds_id,
+                        "parse": True,
+                        "parse_limit": int(ext_limit_input.value or 25),
+                        "include_deleted": True,
+                    }
+                    ext_sync_btn.props("loading")
+                    d = await api_post("/api/rag/external/sync", payload)
+                    ext_sync_btn.props(remove="loading")
+                    if d and d.get("status") == "synced":
+                        diff = d.get("diff", {})
+                        c = diff.get("counts", {})
+                        ui.notify(
+                            f"Синхронизация: +/∆ {d.get('registered', 0)}, "
+                            f"удалённых помечено {d.get('missing_marked', 0)}"
+                            f"{' · парсинг запущен' if d.get('parse_started') else ''}",
+                            type="positive",
+                        )
+                        add_log(
+                            f"[EXT_SYNC] {path} → {ds_id}: counts={c}, "
+                            f"registered={d.get('registered', 0)}, missing={d.get('missing_marked', 0)}"
+                        )
+                        await asyncio.sleep(1)
+                        await refresh_and_render()
+                    else:
+                        ui.notify(last_api_error_text("Ошибка синхронизации внешней папки"), type="negative")
 
                 ext_index_btn = ui.button(
                     "⤵ ИНДЕКСИРОВАТЬ IN-PLACE",
@@ -986,6 +1636,21 @@ def build_samovar_legacy():
                     "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
                     "color:var(--ok);font-size:.7rem;font-weight:900;"
                 )
+                with ui.row().classes("gap-2 w-full"):
+                    ext_check_btn = ui.button(
+                        "ПРОВЕРИТЬ ПАПКУ",
+                        icon="o_fact_check",
+                        on_click=do_check_external,
+                    ).props("dense no-caps flat").style(
+                        "border:1px solid var(--border);color:var(--accent);font-size:.68rem;"
+                    )
+                    ext_sync_btn = ui.button(
+                        "СИНХРОНИЗИРОВАТЬ ИЗМЕНЕНИЯ",
+                        icon="o_sync",
+                        on_click=do_sync_external,
+                    ).props("dense no-caps flat").style(
+                        "border:1px solid var(--border);color:var(--ok);font-size:.68rem;"
+                    )
 
         # ── External Radar: обзор внешних корней/карты/уже in-place датасетов ──
         with ui.card().classes("card-les w-full"):
@@ -1008,11 +1673,21 @@ def build_samovar_legacy():
                     return
                 roots = d.get("roots", [])
                 cands = d.get("candidates", [])
+                cloud = d.get("cloud_drives") if isinstance(d.get("cloud_drives"), dict) else {}
+                providers = cloud.get("providers") if isinstance(cloud.get("providers"), dict) else {}
                 radar_status.text = (
                     f"{len(roots)} корн. · external docs {d.get('external_documents', 0)} · "
                     f"кандидатов {len(cands)}"
                 )
                 with radar_box:
+                    if providers:
+                        with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
+                            ui.label("Web-диски:").style("font-size:.65rem;color:var(--dim);")
+                            for key, item in providers.items():
+                                configured = bool(item.get("configured"))
+                                ui.label(
+                                    f"{item.get('label') or key}: {'готов' if configured else 'нужен токен'}"
+                                ).classes("tag-acc" if configured else "tag-warn")
                     if not roots:
                         ui.label("Корней нет: задай LES_EXTERNAL_SOURCE_ROOTS или выбери папку через Обзор.").style(
                             "font-size:.7rem;color:var(--dim);"
@@ -1199,6 +1874,20 @@ def build_samovar_legacy():
                 ).props("dense outlined").classes("flex-1").style(
                     "background:var(--bg);font-size:.75rem;"
                 )
+                scan_native_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                    "dense no-caps flat"
+                ).tooltip("Открыть системный выбор папки на локальной машине")
+
+                async def pick_scan_folder(*_event_args):
+                    path = await _pick_local_folder(
+                        initial=(scan_path_input.value or "").strip(),
+                        title="Выберите папку архива для сканирования",
+                    )
+                    if path:
+                        scan_path_input.value = path
+                        scan_path_input.update()
+
+                scan_native_btn.on("click", pick_scan_folder)
 
                 async def do_scan():
                     path = (scan_path_input.value or "").strip()
@@ -1354,6 +2043,7 @@ def build_samovar_legacy():
                 {"name": "domain", "label": "Domain", "field": "domain", "align": "left", "sortable": True},
                 {"name": "route", "label": "Route", "field": "route", "align": "left", "sortable": True},
                 {"name": "content", "label": "Content", "field": "content", "align": "left", "sortable": True},
+                {"name": "layers", "label": "Слои", "field": "layers", "align": "left"},
                 {"name": "complexity", "label": "Complexity", "field": "complexity", "align": "left", "sortable": True},
                 {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
                 {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
@@ -1377,6 +2067,13 @@ def build_samovar_legacy():
                   <div :title="props.value" style="max-width:360px;white-space:normal;word-break:break-word;font-family:var(--font-chat);font-size:.68rem;">
                     {{ props.value }}
                   </div>
+                </q-td>""")
+            docs_grid.add_slot("body-cell-layers", """
+                <q-td :props="props">
+                  <span v-if="props.value" style="color:#10b981;white-space:normal;word-break:break-word;font-size:.62rem;">
+                    {{ props.value }}
+                  </span>
+                  <span v-else style="color:#64748b;">—</span>
                 </q-td>""")
             docs_grid.add_slot("body-cell-error", """
                 <q-td :props="props">
@@ -1420,6 +2117,7 @@ def build_samovar_legacy():
                 "route": item.get("route_dataset", ""),
                 "doc_type": item.get("doc_type", ""),
                 "content": item.get("content_type", ""),
+                "layers": " · ".join(_doc_layer_labels(item)[:4]),
                 "complexity": item.get("complexity", ""),
                 "chunks": item.get("chunk_count", 0),
                 "size": _format_size(int(item.get("file_size") or 0)),
@@ -1471,6 +2169,13 @@ def build_samovar_legacy():
                 f"показано: {len(doc_rows)}/{docs.get('total', len(doc_rows))} · "
                 f"фильтр: {index_status_select.value or 'ВСЕ'} · поиск: {(index_query_input.value or '').strip() or '—'}"
             )
+            index_layer_summary.clear()
+            with index_layer_summary:
+                for label, count in _layer_counts(docs.get("documents", [])):
+                    ui.label(f"{label} · {count}").style(
+                        "font-size:.62rem;color:var(--accent);border:1px solid var(--border);"
+                        "border-radius:999px;padding:2px 7px;background:rgba(16,185,129,.06);"
+                    )
             index_docs_grid.rows = doc_rows
             index_docs_grid.update()
             if render_main:
@@ -1709,9 +2414,14 @@ def build_samovar_legacy():
                     ext_dataset_select.value = None
                 ext_dataset_select.update()
 
-            tot_src = tot_idx = tot_pending = tot_errors = tot_chunks = 0
+            tot_src = tot_idx = tot_pending = tot_errors = tot_missing = tot_chunks = 0
             rows = []
             seen_ds = set()
+            active_job_labels = {
+                str(j.get("dataset_name") or j.get("source") or "")
+                for j in jobs.values()
+                if str(j.get("status", "")).upper() in {"QUEUED", "RUNNING", "PARSING", "STARTED"}
+            }
             for src in sources:
                 folder = src.get("folder", "")
                 if not src.get("dataset_id") and any(name.startswith(f"{folder}_") for name in dataset_names):
@@ -1721,12 +2431,14 @@ def build_samovar_legacy():
                 indexed = ds.get("indexed_files", src.get("indexed_files", 0))
                 pending = ds.get("pending_files", max(0, total - indexed))
                 errors  = ds.get("error_files", 0)
+                missing = ds.get("missing_files", src.get("missing_files", 0))
                 chunks  = ds.get("chunks", ds.get("chunk_count", 0) or 0)
                 status  = ds.get("status", src.get("dataset_status", "NOT_CREATED"))
                 tot_src    += total
                 tot_idx    += indexed
                 tot_pending += pending
                 tot_errors  += errors
+                tot_missing += missing
                 tot_chunks += chunks
                 if src.get("dataset_id"):
                     seen_ds.add(src.get("dataset_id"))
@@ -1749,6 +2461,7 @@ def build_samovar_legacy():
                         f"{last_job['status']} "
                         f"{last_job.get('processed',0)}/{last_job.get('total',0)}"
                     )
+                active_row = folder in active_job_labels or f"{folder}_Index" in active_job_labels
 
                 rows.append({
                     "folder":     folder,
@@ -1757,8 +2470,17 @@ def build_samovar_legacy():
                     "indexed":    indexed,
                     "pending":    pending,
                     "errors":     errors,
+                    "missing":    missing,
                     "chunks":     chunks,
-                    "status":     status,
+                    "status":     _computed_index_status(
+                        raw_status=status,
+                        total=int(total or 0),
+                        indexed=int(indexed or 0),
+                        pending=int(pending or 0),
+                        errors=int(errors or 0),
+                        missing=int(missing or 0),
+                        active=active_row,
+                    ),
                     "sensitivity": (ds_map.get(src.get("dataset_id", "")) or {}).get("sensitivity", "P0"),
                     "group_name": (ds_map.get(src.get("dataset_id", "")) or {}).get("group_name", ""),
                     "job_info":   job_info,
@@ -1774,11 +2496,14 @@ def build_samovar_legacy():
                 indexed = ds.get("indexed_files", ds.get("doc_count", 0) or 0)
                 pending = ds.get("pending_files", 0)
                 errors = ds.get("error_files", 0)
+                missing = ds.get("missing_files", 0)
                 chunks = ds.get("chunks", ds.get("chunk_count", 0) or 0)
+                active_row = ds.get("name", ds_id) in active_job_labels or ds_id in active_job_labels
                 tot_src += total
                 tot_idx += indexed
                 tot_pending += pending
                 tot_errors += errors
+                tot_missing += missing
                 tot_chunks += chunks
                 rows.append({
                     "folder":     ds.get("name", ds_id),
@@ -1787,8 +2512,17 @@ def build_samovar_legacy():
                     "indexed":    indexed,
                     "pending":    pending,
                     "errors":     errors,
+                    "missing":    missing,
                     "chunks":     chunks,
-                    "status":     ds.get("status", ""),
+                    "status":     _computed_index_status(
+                        raw_status=ds.get("status", ""),
+                        total=int(total or 0),
+                        indexed=int(indexed or 0),
+                        pending=int(pending or 0),
+                        errors=int(errors or 0),
+                        missing=int(missing or 0),
+                        active=active_row,
+                    ),
                     "sensitivity": ds.get("sensitivity", "P0"),
                     "group_name": ds.get("group_name", ""),
                     "job_info":   "",
@@ -1801,6 +2535,7 @@ def build_samovar_legacy():
                 tot_idx = totals.get("indexed_files", tot_idx)
                 tot_pending = totals.get("pending_files", tot_pending)
                 tot_errors = totals.get("error_files", tot_errors)
+                tot_missing = totals.get("missing_files", tot_missing)
                 tot_chunks = totals.get("chunks", tot_chunks)
 
             sam_kpi["ds"].set_text(str(totals.get("datasets", len(datasets) or len(sources))))
@@ -1808,6 +2543,7 @@ def build_samovar_legacy():
             sam_kpi["idx"].set_text(str(tot_idx))
             sam_kpi["pend"].set_text(str(tot_pending))
             sam_kpi["err"].set_text(str(tot_errors))
+            sam_kpi["miss"].set_text(str(tot_missing))
             sam_kpi["chunks"].set_text(str(tot_chunks))
             scheduler_jobs = [
                 (jid, j) for jid, j in jobs.items()
@@ -1846,7 +2582,7 @@ def build_samovar_legacy():
             else:
                 start_scheduler_btn.props(remove="disabled")
             scheduler_status.set_text(
-                f"pending: {tot_pending} · errors: {tot_errors} · "
+                f"pending: {tot_pending} · errors: {tot_errors} · missing: {tot_missing} · "
                 f"job: {(last_scheduler[0][:12] + ' ' + last_scheduler[1].get('status','')) if last_scheduler else '—'}"
                 + (" · старт заблокирован preflight guard" if parse_blocked else "")
             )

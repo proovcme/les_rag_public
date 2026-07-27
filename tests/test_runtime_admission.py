@@ -54,6 +54,42 @@ def test_chat_admission_allows_stale_macos_swap_when_ram_is_plentiful():
     assert result.memory_state == "GREEN"
 
 
+def test_chat_admission_allows_realistic_stale_macos_swap_default():
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"},
+        metrics_cache={"ram_free_gb": 18.6, "swap_used_gb": 4.1, "swap_pct": 75.8},
+    )
+
+    assert result.allowed is True
+    assert result.memory_state == "GREEN"
+
+
+def test_chat_admission_allows_loaded_local_model_on_24gb_mac_default(monkeypatch):
+    """The hard guard must not reject the request after MLX consumed its lease.
+
+    Memory pressure is still reported as CRITICAL and the MLX host keeps its
+    own 85% swap hard stop; this only separates operator state from admission.
+    """
+    monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
+    for name in (
+        "LES_CHAT_MIN_FREE_GB",
+        "LES_CHAT_MAX_SWAP_PCT",
+        "LES_CHAT_MAX_SWAP_USED_GB",
+        "LES_CHAT_SWAP_RELIEF_FREE_GB",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"},
+        metrics_cache={"ram_free_gb": 4.8, "swap_used_gb": 2.4, "swap_pct": 75.7},
+        active_jobs=0,
+        llm_available=True,
+    )
+
+    assert result.allowed is True
+    assert result.memory_state == "CRITICAL"
+
+
 def test_chat_admission_blocks_indexing_mode_before_memory_checks(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "mlx")
     monkeypatch.setenv("EMBED_BACKEND", "sentence_transformers")
@@ -141,8 +177,9 @@ def test_chat_admission_allows_cloud_generation_during_indexing(monkeypatch):
     assert "active_jobs=1" not in result.reason
 
 
-def test_chat_admission_blocks_unconfigured_cloud_fallback_during_indexing(monkeypatch):
+def test_chat_admission_treats_unconfigured_cloud_as_local_coreml_fallback(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "openai")
+    monkeypatch.setenv("EMBED_BACKEND", "coreml")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     result = evaluate_chat_admission(
         current_mode={"mode": "indexing"},
@@ -153,9 +190,12 @@ def test_chat_admission_blocks_unconfigured_cloud_fallback_during_indexing(monke
         max_swap_pct=60.0,
     )
 
-    assert result.allowed is False
-    assert "Indexing mode is active" in result.reason
-    assert "active_jobs=1" in result.reason
+    # An unconfigured cloud provider resolves to local MLX.  The local path is
+    # allowed only because indexing is isolated in Core ML and memory is green;
+    # the sentence-transformers case above remains blocked.
+    assert result.allowed is True
+    assert result.indexing_chat_policy["provider_is_cloud"] is False
+    assert result.indexing_chat_policy["reason"] == "coreml_index_green_memory"
 
 
 def test_chat_admission_blocks_active_jobs_and_busy_llm():

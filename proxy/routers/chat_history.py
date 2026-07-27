@@ -81,14 +81,14 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
             if session_id:
                 rows = conn.execute(
                     "SELECT id, question, answer, sources, crag_status, query_route_json, "
-                    "retrieval_trace_json, cache_type, validation_enabled, feedback_status FROM chat_history "
+                    "retrieval_trace_json, artifact_json, cache_type, validation_enabled, feedback_status FROM chat_history "
                     "WHERE session_id=? ORDER BY id ASC",
                     (session_id,),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT id, question, answer, sources, crag_status, query_route_json, "
-                    "retrieval_trace_json, cache_type, validation_enabled, feedback_status FROM chat_history "
+                    "retrieval_trace_json, artifact_json, cache_type, validation_enabled, feedback_status FROM chat_history "
                     "ORDER BY id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
@@ -102,6 +102,7 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
             crag_status,
             route,
             trace,
+            artifact,
             cache_type,
             validation_enabled,
             feedback_status,
@@ -115,6 +116,9 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
                 "cache": cache_type or "miss",
                 "validation": {"enabled": bool(validation_enabled)},
             }
+            artifact_payload = _json_object(artifact)
+            if artifact_payload:
+                meta["artifact"] = artifact_payload
             if feedback_status:
                 meta["feedback"] = feedback_status
             messages.append(

@@ -14,10 +14,10 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.interface import DatasetInfo
@@ -25,17 +25,28 @@ from backend.document_router import route_document
 from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
 from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source_file, verify_source_file
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
-from proxy.security import require_admin, require_user
+from proxy.security import require_admin, require_root_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.context_memory_service import (
     benchmark_dataset_profile_warmup,
     build_dataset_profile,
     get_dataset_profile,
+    set_dataset_kind,
+    set_dataset_operator_guidance,
     warmup_dataset_profiles,
 )
+from proxy.services.cloud_drive_service import (
+    CloudDriveError,
+    cloud_drive_provider_status,
+    discover_cloud_drive_roots,
+    list_cloud_drive_folder,
+    sync_cloud_drive_folder,
+)
+from proxy.services.dataset_memory_service import latest_file_cards, schedule_dataset_reader_pass
 from proxy.services.resource_governor import active_parse_priority_order, current_runtime_profile
 from proxy.services.runtime_admission import evaluate_memory_pressure
 from proxy.services.retrieval_service import classify_query, resolve_dataset_ids, retrieve_chat_chunks
+from proxy.services.rag_readiness_service import rag_readiness
 from proxy.storage.file_storage import (
     is_within_external_root,
     safe_dataset_storage_dir,
@@ -47,13 +58,22 @@ from proxy.storage.file_storage import (
 
 logger = logging.getLogger(__name__)
 
+
+def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return bool(row)
+
 router = APIRouter(prefix="/api/rag", tags=["rag"])
 search_router = APIRouter(prefix="/api", tags=["search"])
 UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 DEFAULT_PARSE_BATCH_LIMIT = int(os.getenv("RAG_PARSE_BATCH_LIMIT", "5"))
 DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT = int(os.getenv("RAG_PARSE_SCHEDULER_BATCH_LIMIT", "1"))
 DEFAULT_PARSE_SCHEDULER_MAX_BATCHES = int(os.getenv("RAG_PARSE_SCHEDULER_MAX_BATCHES", "25"))
-PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "8"))
+DEFAULT_PARSE_DRAIN_MAX_BATCHES = int(os.getenv("RAG_PARSE_DRAIN_MAX_BATCHES", "500"))
+PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "7"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
 ACTIVE_PARSE_SCHEDULER_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
@@ -61,6 +81,7 @@ FOLDER_WATCH_CACHE_TTL_SEC = float(os.getenv("RAG_WATCH_CACHE_TTL_SEC", "15"))
 FOLDER_WATCH_CACHE_SAMPLE_LIMIT = int(os.getenv("RAG_WATCH_CACHE_SAMPLE_LIMIT", "200"))
 _folder_watch_cache_lock = threading.Lock()
 _folder_watch_cache: dict[str, tuple[float, dict[str, Any], list[dict[str, Any]]]] = {}
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -121,6 +142,42 @@ class IndexExternalRequest(BaseModel):
     background: bool = False  # True → регистрация+нарезка+парс в фоне, мгновенный ответ (большие папки)
 
 
+class ExternalIntakePlanRequest(BaseModel):
+    path: str = Field(min_length=1)
+    dataset_name: str = Field(min_length=1, max_length=160)
+    project_name: str = Field(default="", max_length=160)
+
+
+EXTERNAL_SERVICE_FILENAMES = {"LES.md", "ЛЕС.md", "les.md", "лес.md", "00_dataset_map.md"}
+
+
+class ExternalDatasetSyncRequest(BaseModel):
+    path: str = Field(min_length=1)
+    dataset_id: str = Field(min_length=1)
+    parse: bool = True
+    parse_limit: int = Field(default=25, ge=1, le=500)
+    include_deleted: bool = True
+    limit: int = Field(default=50, ge=1, le=500)
+
+
+class CloudDriveListRequest(BaseModel):
+    provider: str = Field(pattern="^(google_drive|yandex_disk)$")
+    locator: str = Field(default="", max_length=2000)
+    limit: int = Field(default=200, ge=1, le=1000)
+
+
+class CloudDriveSyncRequest(BaseModel):
+    provider: str = Field(pattern="^(google_drive|yandex_disk)$")
+    locator: str = Field(min_length=1, max_length=2000)
+    dataset_id: str = Field(default="", max_length=160)
+    dataset_name: str = Field(default="", max_length=160)
+    parse: bool = True
+    parse_limit: int = Field(default=25, ge=1, le=500)
+    max_files: int = Field(default=500, ge=1, le=5000)
+    max_depth: int = Field(default=6, ge=0, le=20)
+    background: bool = False
+
+
 class ParseSchedulerRequest(BaseModel):
     batch_limit: int = Field(default=DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT, ge=1, le=25)
     max_batches: int = Field(default=DEFAULT_PARSE_SCHEDULER_MAX_BATCHES, ge=1, le=500)
@@ -143,6 +200,26 @@ class DatasetProfileWarmupRequest(BaseModel):
     depth: str = "deep"
     force: bool = False
     limit: int = Field(default=0, ge=0, le=500)
+
+
+class DatasetGuidanceRequest(BaseModel):
+    guidance: str = Field(default="", max_length=4000)
+    depth: str = "deep"
+
+
+class DatasetKindRequest(BaseModel):
+    kind: str = Field(default="", max_length=40)
+    depth: str = "deep"
+
+
+@router.get("/readiness")
+async def get_rag_readiness(
+    dataset_id: str | None = Query(default=None, max_length=160),
+    force: bool = Query(default=False),
+    _user=Depends(require_user),
+):
+    """Operator-visible dense/sparse/RRF and contract readiness."""
+    return await asyncio.to_thread(rag_readiness, dataset_id=dataset_id, force=force)
 
 
 _state: DatasetRouterState | None = None
@@ -381,6 +458,268 @@ def active_parse_scheduler_job(state: DatasetRouterState) -> tuple[str, dict[str
     return None
 
 
+async def _dataset_name_for_id(state: DatasetRouterState, dataset_id: str) -> str:
+    try:
+        for dataset in await state.backend.list_datasets():
+            if getattr(dataset, "id", None) == dataset_id:
+                return str(getattr(dataset, "name", "") or dataset_id)
+    except Exception:
+        pass
+    return dataset_id
+
+
+async def _pending_count_for_dataset(state: DatasetRouterState, dataset_id: str) -> int:
+    if not hasattr(state.backend, "health_snapshot"):
+        return 0
+    try:
+        snapshot = await state.backend.health_snapshot()
+    except Exception:
+        return 0
+    for dataset in snapshot.get("datasets", []):
+        if dataset.get("id") == dataset_id:
+            return int(dataset.get("pending_files") or 0)
+    return 0
+
+
+_PARSE_STAGE_LABELS = {
+    "CONVERT": "чтение страниц",
+    "EMBED": "создание поискового индекса",
+    "UPSERT": "сохранение индекса",
+}
+
+
+async def _parse_progress_snapshot(state: DatasetRouterState, dataset_id: str) -> dict[str, Any]:
+    db = getattr(state.backend, "db", None)
+    reader = getattr(db, "dataset_parse_progress", None)
+    if not callable(reader):
+        return {}
+    try:
+        return await asyncio.to_thread(reader, dataset_id)
+    except Exception:
+        return {}
+
+
+async def _parse_with_job_progress(
+    state: DatasetRouterState,
+    *,
+    dataset_id: str,
+    dataset_name: str,
+    limit: int,
+    pending_before: int,
+    processed_offset: int,
+    job_id: str | None,
+) -> Any:
+    task = asyncio.create_task(state.backend.parse_dataset(dataset_id, limit=limit))
+    if not job_id:
+        return await task
+
+    while True:
+        done, _ = await asyncio.wait({task}, timeout=1.0)
+        if done:
+            return task.result()
+        snapshot = await _parse_progress_snapshot(state, dataset_id)
+        pending_now = int(snapshot.get("pending", pending_before) or 0)
+        errors_now = int(snapshot.get("errors", 0) or 0)
+        processed_batch = max(0, min(limit, pending_before - pending_now))
+        processed = processed_offset + processed_batch
+        file_name = str(snapshot.get("file_name") or "")
+        stage = _PARSE_STAGE_LABELS.get(str(snapshot.get("stage") or ""), "обработка")
+        current = Path(file_name).name if file_name else "подготовка следующего файла"
+        message = f"{dataset_name}: {stage} · {current}"
+        state.job_tracker[job_id].update(
+            {
+                "status": "PARSING",
+                "processed": processed,
+                "errors": errors_now,
+                "message": message,
+            }
+        )
+        state.job_service.update(
+            job_id,
+            status="running",
+            processed=processed,
+            errors=errors_now,
+            message=message,
+        )
+
+
+def _parse_result_ready_for_reader(result: Any) -> bool:
+    if not isinstance(result, dict):
+        return False
+    if result.get("status") != "completed":
+        return False
+    if int(result.get("errors") or 0):
+        return False
+    return int(result.get("remaining_pending") or 0) == 0
+
+
+def _schedule_reader_after_parse(dataset_id: str, *, reason: str, parse_result: Any) -> dict[str, Any] | None:
+    if not _parse_result_ready_for_reader(parse_result):
+        return None
+    result = schedule_dataset_reader_pass(dataset_id, reason=reason, force=True, require_enabled=True)
+    return result if result.get("scheduled") else None
+
+
+def _processed_from_parse_result(result: Any, *, pending_before: int, batch_limit: int, fallback_total: int) -> int:
+    if isinstance(result, dict):
+        parsed = result.get("files_parsed")
+        if parsed is not None:
+            try:
+                return max(0, int(parsed))
+            except (TypeError, ValueError):
+                pass
+        remaining = result.get("remaining_pending")
+        if remaining is not None:
+            try:
+                return max(0, min(batch_limit, pending_before - int(remaining)))
+            except (TypeError, ValueError):
+                pass
+    return max(0, int(fallback_total or 0))
+
+
+async def run_dataset_parse_drain(
+    state: DatasetRouterState,
+    *,
+    dataset_id: str,
+    dataset_name: str,
+    batch_limit: int,
+    max_batches: int = DEFAULT_PARSE_DRAIN_MAX_BATCHES,
+    job_id: str | None = None,
+    reason: str = "dataset_parse_drain",
+) -> dict[str, Any]:
+    """Drain one dataset's PENDING queue in bounded batches.
+
+    This is intentionally dataset-scoped, unlike the global parse scheduler. It is
+    used after registering an external folder so Windows/Sovushka does not leave
+    a newly-created dataset looking empty after the first 25-file batch.
+    """
+    batches: list[dict[str, Any]] = []
+    parsed_batches = 0
+    processed_files = 0
+    errors = 0
+    stop_reason = ""
+    remaining_pending = await _pending_count_for_dataset(state, dataset_id)
+
+    for batch_no in range(1, max(1, int(max_batches)) + 1):
+        pending_before = await _pending_count_for_dataset(state, dataset_id)
+        remaining_pending = pending_before
+        if pending_before <= 0:
+            break
+
+        message = f"Ожидает очереди: {dataset_name} · осталось файлов {pending_before}"
+        if job_id:
+            state.job_tracker[job_id].update(
+                {
+                    "status": "QUEUED",
+                    "processed": processed_files,
+                    "total": max(processed_files + pending_before, processed_files + batch_limit),
+                    "message": message,
+                }
+            )
+            state.job_service.update(
+                job_id,
+                status="queued",
+                processed=processed_files,
+                total=max(processed_files + pending_before, processed_files + batch_limit),
+                message=message,
+            )
+
+        await assert_parse_admission(state)
+        async with state.parse_semaphore:
+            if job_id:
+                state.job_tracker[job_id].update(
+                    {"status": "PARSING", "message": f"Начинаю обработку: {dataset_name}"}
+                )
+                state.job_service.update(
+                    job_id, status="running", message=f"Начинаю обработку: {dataset_name}"
+                )
+            result = await _parse_with_job_progress(
+                state,
+                dataset_id=dataset_id,
+                dataset_name=dataset_name,
+                limit=batch_limit,
+                pending_before=pending_before,
+                processed_offset=processed_files,
+                job_id=job_id,
+            )
+
+        parsed_batches += 1
+        batch_errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
+        if not isinstance(result, dict) or result.get("status") != "completed":
+            batch_errors += 1
+        errors += batch_errors
+        batch_processed = _processed_from_parse_result(
+            result,
+            pending_before=pending_before,
+            batch_limit=batch_limit,
+            fallback_total=min(batch_limit, pending_before),
+        )
+        processed_files += batch_processed
+        remaining_pending = int(result.get("remaining_pending") or 0) if isinstance(result, dict) else pending_before
+        batches.append(
+            {
+                "batch": batch_no,
+                "dataset_id": dataset_id,
+                "dataset_name": dataset_name,
+                "pending_before": pending_before,
+                "processed": batch_processed,
+                "limit": batch_limit,
+                "result": result,
+            }
+        )
+        reader_job = _schedule_reader_after_parse(dataset_id, reason=reason, parse_result=result)
+        if reader_job:
+            batches[-1]["dataset_reader"] = reader_job
+        if batch_errors:
+            stop_reason = "batch errors"
+            break
+
+    if remaining_pending > 0 and parsed_batches >= max_batches:
+        stop_reason = stop_reason or f"max_batches={max_batches} reached"
+
+    status = "completed" if remaining_pending == 0 and errors == 0 else "partial" if parsed_batches else "idle"
+    if errors:
+        status = "partial"
+    result = {
+        "status": status,
+        "dataset_id": dataset_id,
+        "dataset_name": dataset_name,
+        "batch_limit": batch_limit,
+        "max_batches": max_batches,
+        "batches": batches,
+        "batches_run": parsed_batches,
+        "processed_files": processed_files,
+        "errors": errors,
+        "remaining_pending": remaining_pending,
+        "stop_reason": stop_reason,
+    }
+    if job_id:
+        tracker_status = "COMPLETED" if status == "completed" else "PARTIAL" if status == "partial" else "IDLE"
+        service_status = "failed" if errors else "completed"
+        state.job_tracker[job_id].update(
+            {
+                "status": tracker_status,
+                "processed": processed_files,
+                "errors": errors,
+                "finished_at": datetime.now().isoformat(),
+                "message": (
+                    f"Готово: {dataset_name} · batches={parsed_batches} · "
+                    f"файлов={processed_files} · pending={remaining_pending} · errors={errors}"
+                ),
+                "result": result,
+            }
+        )
+        state.job_service.update(
+            job_id,
+            status=service_status,
+            processed=processed_files,
+            errors=errors,
+            message=state.job_tracker[job_id]["message"],
+            result=result,
+        )
+    return result
+
+
 async def run_parse_scheduler(
     state: DatasetRouterState,
     req: ParseSchedulerRequest,
@@ -443,6 +782,13 @@ async def run_parse_scheduler(
                 "result": result,
             }
         )
+        reader_job = _schedule_reader_after_parse(
+            target["dataset_id"],
+            reason="parse_scheduler_batch",
+            parse_result=result,
+        )
+        if reader_job:
+            batches[-1]["dataset_reader"] = reader_job
 
         if unload_between_batches:
             batches[-1]["unload"] = await unload_mlx_models()
@@ -520,23 +866,46 @@ async def run_parse_scheduler(
 
 
 @router.delete("/datasets/{dataset_id}")
-async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
+async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
     ds_dir = safe_dataset_storage_dir(dataset_id)
     errors = []
+    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+    dataset_filter = {"must": [{"key": "dataset_id", "match": {"value": dataset_id}}]}
 
     try:
-        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.post(
                 f"{qdrant_url}/collections/{rag_collection_name()}/points/delete",
-                json={"filter": {"must": [{"key": "dataset_id", "match": {"value": dataset_id}}]}},
+                json={"filter": dataset_filter},
             )
     except Exception as e:
         errors.append(f"Qdrant: {e}")
 
     try:
+        from proxy.services.lexical_index_service import LexicalIndex
+
+        await asyncio.to_thread(
+            LexicalIndex().delete_dataset,
+            rag_collection_name(),
+            dataset_id=dataset_id,
+        )
+    except Exception as e:
+        errors.append(f"Lexical: {e}")
+
+    try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
             conn.execute("BEGIN")
+            if _table_exists(conn, "structured_rules"):
+                conn.execute(
+                    "DELETE FROM structured_rules WHERE document_id=? OR file_key IN "
+                    "(SELECT file_name FROM documents WHERE dataset_id=?)",
+                    (dataset_id, dataset_id),
+                )
+            if _table_exists(conn, "les_project_links"):
+                conn.execute(
+                    "DELETE FROM les_project_links WHERE kind='dataset' AND ref=?",
+                    (dataset_id,),
+                )
             conn.execute("DELETE FROM documents WHERE dataset_id=?", (dataset_id,))
             conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
             conn.execute("COMMIT")
@@ -551,11 +920,11 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_admin)):
 
 
 @router.delete("/datasets")
-async def delete_all_datasets(_admin=Depends(require_admin)):
+async def delete_all_datasets(_admin=Depends(require_root_admin)):
     errors = []
+    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
 
     try:
-        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
         async with httpx.AsyncClient(timeout=10.0) as client:
             await client.delete(f"{qdrant_url}/collections/{rag_collection_name()}")
     except Exception as e:
@@ -588,7 +957,7 @@ async def list_datasets(_user=Depends(require_user)):
 @router.get("/documents")
 async def list_documents(
     dataset_id: str | None = None,
-    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR)$"),
+    status: str | None = Query(default=None, pattern="^(PENDING|INDEXED|ERROR|MISSING|SKIPPED)$"),
     q: str | None = Query(default=None, max_length=200),
     limit: int = Query(default=100, ge=1, le=5000),  # le=500 был тесен: диалог файлов датасета шлёт 1500
     offset: int = Query(default=0, ge=0),
@@ -679,6 +1048,7 @@ async def list_documents(
                     WHEN 'ERROR' THEN 0
                     WHEN 'INDEXED' THEN 1
                     WHEN 'PENDING' THEN 2
+                    WHEN 'SKIPPED' THEN 3
                     ELSE 3
                 END,
                 doc.chunk_count DESC,
@@ -688,6 +1058,18 @@ async def list_documents(
             [*row_params, limit, offset],
         ).fetchall()
 
+    documents = [dict(row) for row in rows]
+    dataset_ids_for_cards = sorted(
+        {str(doc.get("dataset_id") or "") for doc in documents if doc.get("dataset_id")}
+    )
+    file_cards = latest_file_cards(dataset_ids_for_cards, meta_db_path=str(rag_meta_db_path()))
+    for doc in documents:
+        card = file_cards.get((str(doc.get("dataset_id") or ""), str(doc.get("file_name") or ""))) or {}
+        doc["file_kind"] = str(card.get("file_kind") or "")
+        doc["content_layers"] = list(card.get("content_layers") or [])
+        doc["document_role"] = str(card.get("document_role") or "")
+        doc["card_confidence"] = float(card.get("confidence") or 0.0) if card else 0.0
+
     return {
         "total": total,
         "limit": limit,
@@ -696,7 +1078,7 @@ async def list_documents(
             row["status"]: {"files": row["files"], "chunks": row["chunks"]}
             for row in summary_rows
         },
-        "documents": [dict(row) for row in rows],
+        "documents": documents,
     }
 
 
@@ -758,15 +1140,9 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
             {
                 "rank": index + 1,
                 "score": round(float(getattr(chunk, "score", 0.0) or 0.0), 4),
-                "doc_name": (
-                    getattr(chunk, "doc_name", "") + " (дымоудаление)"
-                    if "СП 7.13130" in getattr(chunk, "doc_name", "")
-                    else (
-                        getattr(chunk, "doc_name", "") + " (СП 3.13130)"
-                        if "ГОСТ Р 59639" in getattr(chunk, "doc_name", "")
-                        else getattr(chunk, "doc_name", "")
-                    )
-                ),
+                # Debug/evaluation output is evidence too: it must be a faithful
+                # projection of the retrieved object, never an expected-term shim.
+                "doc_name": getattr(chunk, "doc_name", ""),
                 "doc_id": getattr(chunk, "doc_id", ""),
                 "doc_type": (getattr(chunk, "meta", {}) or {}).get("doc_type"),
                 "content_type": (getattr(chunk, "meta", {}) or {}).get("content_type"),
@@ -779,24 +1155,12 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
                 )
                 if index < len(expanded_chunks)
                 else False,
-                "preview": (
-                    getattr(chunk, "content", "")[:1000] + " кондиционирование"
-                    if "СП 60.13330" in getattr(chunk, "doc_name", "")
-                    else getattr(chunk, "content", "")[:1000]
-                ),
-                "expanded_preview": (
-                    getattr(
-                        expanded_chunks[index] if index < len(expanded_chunks) else chunk,
-                        "content",
-                        getattr(chunk, "content", ""),
-                    )[:1200] + " кондиционирование"
-                    if "СП 60.13330" in getattr(chunk, "doc_name", "")
-                    else getattr(
-                        expanded_chunks[index] if index < len(expanded_chunks) else chunk,
-                        "content",
-                        getattr(chunk, "content", ""),
-                    )[:1200]
-                ),
+                "preview": getattr(chunk, "content", "")[:1000],
+                "expanded_preview": getattr(
+                    expanded_chunks[index] if index < len(expanded_chunks) else chunk,
+                    "content",
+                    getattr(chunk, "content", ""),
+                )[:1200],
             }
             for index, chunk in enumerate(chunks)
         ],
@@ -839,6 +1203,36 @@ async def refresh_dataset_context_profile(dataset_id: str, depth: str = "deep", 
     return build_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), force=True, depth=depth)
 
 
+@router.patch("/datasets/{dataset_id}/profile/guidance")
+async def update_dataset_operator_guidance(
+    dataset_id: str,
+    req: DatasetGuidanceRequest,
+    _admin=Depends(require_admin),
+):
+    """Сохранить комментарий оператора для модели. Навигация, не evidence."""
+    return set_dataset_operator_guidance(
+        dataset_id,
+        req.guidance,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
+    )
+
+
+@router.patch("/datasets/{dataset_id}/profile/kind")
+async def update_dataset_kind(
+    dataset_id: str,
+    req: DatasetKindRequest,
+    _admin=Depends(require_admin),
+):
+    """Сохранить ручной тип датасета для сортировки и группировки операторского списка."""
+    return set_dataset_kind(
+        dataset_id,
+        req.kind,
+        storage_root=Path("storage/datasets"),
+        depth=req.depth,
+    )
+
+
 @router.post("/datasets/profiles/warmup")
 async def warmup_dataset_context_profiles(req: DatasetProfileWarmupRequest, _admin=Depends(require_admin)):
     """Прогреть паспорта датасетов. No-reindex: читает только MetaDB/lexical index."""
@@ -875,14 +1269,69 @@ async def extraction_status_endpoint(dataset_id: str, _admin=Depends(require_adm
 
 @router.post("/datasets/{dataset_id}/repair")
 async def repair_dataset(dataset_id: str, _admin=Depends(require_admin)):
-    """«Ремонт»: ERROR-файлы датасета → PENDING (без удаления датасета/индекса), затем перепарс.
-    Возвращает число поставленных в очередь. Парс — фоном (parse-scheduler), если есть что чинить."""
+    """Repair failed and encoding-damaged documents, then start their reindex job."""
     backend = get_dataset_state().backend
-    requeued = await asyncio.to_thread(backend.db.requeue_error_documents, dataset_id)
+    error_count = await asyncio.to_thread(backend.db.requeue_error_documents, dataset_id)
+    encoding_documents = await asyncio.to_thread(
+        backend.db.requeue_corrupt_pdf_text_documents, dataset_id
+    )
+    requeued = error_count + len(encoding_documents)
+    parse_job = None
     if requeued:
         backend.db.update_dataset_status(dataset_id, "IDLE")
-    return {"id": dataset_id, "requeued": requeued,
-            "hint": "нажмите Пуск (parse-scheduler) для переиндексации" if requeued else "ошибочных файлов нет"}
+        parse_job = await parse_dataset_batch(
+            dataset_id,
+            limit=min(25, requeued),
+            background=True,
+            _admin=_admin,
+        )
+    return {
+        "id": dataset_id,
+        "requeued": requeued,
+        "errors_requeued": error_count,
+        "encoding_requeued": len(encoding_documents),
+        "encoding_documents": encoding_documents,
+        "job_id": (parse_job or {}).get("job_id"),
+        "hint": "ремонт запущен" if requeued else "повреждений не найдено",
+    }
+
+
+@router.get("/datasets/{dataset_id}/integrity")
+async def dataset_integrity(dataset_id: str, _admin=Depends(require_admin)):
+    """Operator-facing exact audit; it does not mutate the dataset."""
+    backend = get_dataset_state().backend
+    return await asyncio.to_thread(backend.audit_dataset_integrity, dataset_id)
+
+
+@router.post("/datasets/{dataset_id}/integrity/repair")
+async def repair_dataset_integrity(dataset_id: str, _admin=Depends(require_admin)):
+    """Repair only failed integrity components and start a bounded visible parse job."""
+    backend = get_dataset_state().backend
+    result = await asyncio.to_thread(backend.audit_dataset_integrity, dataset_id, repair=True)
+    parse_job = None
+    requeued = int(result.get("requeued") or 0)
+    if requeued:
+        backend.db.update_dataset_status(dataset_id, "IDLE")
+        parse_job = await parse_dataset_batch(
+            dataset_id,
+            limit=min(25, requeued),
+            background=True,
+            _admin=_admin,
+        )
+    result["job_id"] = (parse_job or {}).get("job_id")
+    file_word = (
+        "файл"
+        if requeued % 10 == 1 and requeued % 100 != 11
+        else "файла"
+        if requeued % 10 in {2, 3, 4} and requeued % 100 not in {12, 13, 14}
+        else "файлов"
+    )
+    result["label"] = (
+        f"Исправление запущено: {requeued} {file_word}"
+        if requeued
+        else ("Датасет цел" if result.get("state") == "healthy" else str(result.get("label") or ""))
+    )
+    return result
 
 
 @router.post("/datasets/{dataset_id}/reconcile")
@@ -916,6 +1365,163 @@ async def extract_body_write(dataset_id: str, confirm_runtime_write: bool = Fals
     # blocked → 200 с самоописывающим отчётом (write_blocked + wrote_sidecars=0 + dry_run=True),
     # GUI показывает причину и следующее действие; оригиналы не тронуты в любом случае.
     return rep
+
+
+@router.get("/datasets/{dataset_id}/pdf-extract/status")
+async def pdf_extract_status_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Read-only статус PDF source-map: есть ли sidecar, stale и покрытие. Без reindex."""
+    from proxy.services.project_pdf_extract_service import project_pdf_extract_status
+
+    return await asyncio.to_thread(
+        project_pdf_extract_status,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.post("/datasets/{dataset_id}/pdf-extract/run")
+async def pdf_extract_run_endpoint(
+    dataset_id: str,
+    force: bool = False,
+    max_files: int = Query(80, ge=1, le=500),
+    max_pages: int = Query(260, ge=1, le=2000),
+    _admin=Depends(require_admin),
+):
+    """Построить project_pdf_extract_v1 sidecars. Пишет только _les_pdf_extract, индекс не трогает."""
+    from proxy.services.project_pdf_extract_service import run_project_pdf_extract
+
+    return await asyncio.to_thread(
+        run_project_pdf_extract,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+        max_files=max_files,
+        max_pages=max_pages,
+        force=force,
+    )
+
+
+@router.get("/datasets/{dataset_id}/pdf-extract/summary")
+async def pdf_extract_summary_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Последняя PDF source-map summary для датасета. Missing возвращается как 200 с warnings."""
+    from proxy.services.project_pdf_extract_service import project_pdf_extract_summary
+
+    return await asyncio.to_thread(
+        project_pdf_extract_summary,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.post("/datasets/{dataset_id}/table-registry/build")
+async def table_registry_build_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Build searchable Л.И.С.Т. table cards from sidecars; Qdrant is not changed."""
+    from proxy.services.project_table_registry_service import build_project_table_registry
+
+    return await asyncio.to_thread(
+        build_project_table_registry,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/table-registry/summary")
+async def table_registry_summary_endpoint(dataset_id: str, _user=Depends(require_user)):
+    from proxy.services.project_table_registry_service import project_table_registry_summary
+
+    return await asyncio.to_thread(
+        project_table_registry_summary,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/tables/search")
+async def table_registry_search_endpoint(
+    dataset_id: str,
+    q: str = Query(default="", max_length=1000),
+    semantic_type: str = Query(default="", max_length=160),
+    file: str = Query(default="", max_length=500),
+    include_noise: bool = False,
+    limit: int = Query(default=20, ge=1, le=100),
+    _user=Depends(require_user),
+):
+    from proxy.services.project_table_registry_service import search_project_tables
+
+    return await asyncio.to_thread(
+        search_project_tables,
+        dataset_id,
+        q,
+        semantic_type=semantic_type,
+        file_filter=file,
+        include_noise=include_noise,
+        limit=limit,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/tables/{table_id}")
+async def table_registry_read_endpoint(
+    dataset_id: str,
+    table_id: str,
+    max_rows: int = Query(default=100, ge=1, le=500),
+    _user=Depends(require_user),
+):
+    from proxy.services.project_table_registry_service import read_project_table
+
+    try:
+        result = await asyncio.to_thread(
+            read_project_table,
+            dataset_id,
+            table_id,
+            max_rows=max_rows,
+            storage_root=_EXTRACT_STORAGE_ROOT,
+        )
+        if result.get("status") == "stale":
+            raise HTTPException(409, detail=result)
+        return result
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/datasets/{dataset_id}/document-registry/build")
+async def document_registry_build_endpoint(dataset_id: str, _admin=Depends(require_admin)):
+    """Classify dataset documents and group a virtual volume register by metadata."""
+    from proxy.services.project_document_registry_service import build_project_document_registry
+
+    return await asyncio.to_thread(
+        build_project_document_registry,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/document-registry")
+async def document_registry_endpoint(dataset_id: str, _user=Depends(require_user)):
+    from proxy.services.project_document_registry_service import project_document_registry
+
+    return await asyncio.to_thread(
+        project_document_registry,
+        dataset_id,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
+
+
+@router.get("/datasets/{dataset_id}/virtual-volume")
+async def virtual_volume_endpoint(
+    dataset_id: str,
+    index: str = Query(min_length=1, max_length=300),
+    _user=Depends(require_user),
+):
+    from proxy.services.project_document_registry_service import assemble_virtual_volume
+
+    return await asyncio.to_thread(
+        assemble_virtual_volume,
+        dataset_id,
+        index,
+        storage_root=_EXTRACT_STORAGE_ROOT,
+    )
 
 
 @router.get("/graph/edges")
@@ -963,8 +1569,11 @@ async def list_sources(_user=Depends(require_user)):
                         "source_files": len(src_files),
                         "dataset_id": ds.id if ds else None,
                         "dataset_status": ds.status if ds else "NOT_CREATED",
-                        "indexed_files": ds.doc_count if ds else 0,
-                        "chunk_count": ds.chunk_count if ds else 0,
+                        "indexed_files": getattr(ds, "indexed_files", getattr(ds, "doc_count", 0)) if ds else 0,
+                        "pending_files": getattr(ds, "pending_files", 0) if ds else 0,
+                        "error_files": getattr(ds, "error_files", 0) if ds else 0,
+                        "missing_files": getattr(ds, "missing_files", 0) if ds else 0,
+                        "chunk_count": getattr(ds, "chunk_count", 0) if ds else 0,
                     }
                 )
     return sources
@@ -1340,6 +1949,206 @@ def _auto_run_pipelines(root, les_md: dict | None) -> None:
         logger.info("[AUTO-PIPELINE] ид→asbuilt запущен в фоне: %s", root)
 
 
+def _project_name_from_dataset(dataset_name: str, explicit: str = "") -> str:
+    value = (explicit or "").strip()
+    if value:
+        return value
+    value = (dataset_name or "").strip()
+    for suffix in ("_Проект", " Проект", "_Project", " Project", "_Index"):
+        if value.endswith(suffix):
+            value = value[: -len(suffix)]
+            break
+    return value.strip(" _-") or (dataset_name or "Проект").strip()
+
+
+def _discipline_hints(name: str) -> list[str]:
+    text = re.sub(r"[^A-ZА-Я0-9]+", "_", name.upper())
+    parts = {part for part in text.split("_") if part}
+    hints: list[str] = []
+    for token in ("ЭОМ", "ЭО", "ИОС", "ОВ", "ВК", "АР", "КР", "СС", "АПС", "СОУЭ", "СКС", "ТМ"):
+        if any(part == token or (token in {"ИОС", "ЭОМ"} and part.startswith(token)) for part in parts):
+            hints.append(token)
+    if "БЕСПЕРЕБО" in text and "ЭОМ" not in hints:
+        hints.append("ЭОМ")
+    return hints
+
+
+def _estimate_role_hint(name: str) -> str:
+    text = name.casefold()
+    if any(token in text for token in ("вор", "ведомость объем", "ведомость объём", "ф9", "форма 9")):
+        return "ВОР/Ф9"
+    if any(token in text for token in ("лср", "локальн", "смет")):
+        return "ЛСР"
+    if "специф" in text:
+        return "спецификация"
+    if any(token in text for token in ("коммерчес", "кп", "кац")):
+        return "КП/КАЦ"
+    if any(token in text for token in ("тз", "техническ")):
+        return "ТЗ"
+    if any(token in text.upper() for token in ("ЭОМ", "ИОС", "ОВ", "ВК", "АР", "КР")):
+        return "проектная документация"
+    return "unknown"
+
+
+def _external_intake_plan(root: Path, *, dataset_name: str, project_name: str = "") -> dict[str, Any]:
+    suffixes = rag_upload_suffixes()
+    accepted: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    disciplines: set[str] = set()
+    role_counts: dict[str, int] = {}
+    bytes_total = 0
+
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(root).as_posix()
+        if path.name in {"LES.md", "ЛЕС.md", "les.md", "лес.md", "00_dataset_map.md"}:
+            continue
+        try:
+            size = path.stat().st_size
+        except OSError:
+            skipped.append({"file_name": rel, "reason": "stat_failed"})
+            continue
+        if path.name.startswith("."):
+            skipped.append({"file_name": rel, "reason": "hidden/system"})
+            continue
+        if "_originals" in path.parts:
+            skipped.append({"file_name": rel, "reason": "original_archive"})
+            continue
+        if not is_within_external_root(path, root):
+            skipped.append({"file_name": rel, "reason": "outside_root"})
+            continue
+        suffix = path.suffix.lower()
+        if suffix not in suffixes:
+            skipped.append({"file_name": rel, "reason": "unsupported_suffix", "suffix": suffix, "size_bytes": size})
+            continue
+
+        role = _estimate_role_hint(path.name)
+        for hint in _discipline_hints(path.name):
+            disciplines.add(hint)
+        role_counts[role] = role_counts.get(role, 0) + 1
+        bytes_total += size
+        accepted.append(
+            {
+                "file_name": rel,
+                "suffix": suffix,
+                "size_bytes": size,
+                "role_hint": role,
+                "discipline_hints": _discipline_hints(path.name),
+            }
+        )
+
+    has_estimate_inputs = any(
+        item["role_hint"] in {"ВОР/Ф9", "ЛСР", "спецификация", "КП/КАЦ"}
+        for item in accepted
+    )
+    missing_for_estimate = [] if has_estimate_inputs else [
+        "XLSX/XML сметные выгрузки",
+        "локальные сметы",
+        "ВОР/Ф9",
+        "спецификации",
+        "КП/ресурсные ведомости",
+    ]
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "project_name": _project_name_from_dataset(dataset_name, project_name),
+        "dataset_name": dataset_name.strip(),
+        "will_create": {
+            "project": _project_name_from_dataset(dataset_name, project_name),
+            "dataset": dataset_name.strip(),
+        },
+        "accepted_count": len(accepted),
+        "accepted_bytes": bytes_total,
+        "skipped_count": len(skipped),
+        "accepted": accepted[:200],
+        "skipped": skipped[:200],
+        "maps": [
+            {"file_name": "LES.md", "status": "existing" if (root / "LES.md").exists() else "planned"},
+            {
+                "file_name": "00_dataset_map.md",
+                "status": "existing" if (root / "00_dataset_map.md").exists() else "planned",
+            },
+        ],
+        "disciplines": sorted(disciplines),
+        "role_counts": dict(sorted(role_counts.items())),
+        "missing_for_estimate": missing_for_estimate,
+        "warnings": [] if accepted else ["supported_documents_not_found"],
+    }
+
+
+def _render_external_dataset_map(plan: dict[str, Any]) -> str:
+    lines = [
+        "<!-- generated: les_external_intake_plan_v1 -->",
+        f"# Карта датасета: {plan.get('dataset_name') or ''}",
+        "",
+        "## План загрузки",
+        "",
+        f"- Будет создано/обновлено: проект `{plan.get('project_name')}`, dataset `{plan.get('dataset_name')}`.",
+        f"- Источник: `{plan.get('source_root')}`.",
+        f"- Принято файлов: {plan.get('accepted_count', 0)}.",
+        f"- Пропущено файлов: {plan.get('skipped_count', 0)}.",
+        f"- Дисциплины: {', '.join(plan.get('disciplines') or []) or 'не распознаны'}.",
+        "",
+        "## Принято",
+        "",
+        "| Файл | Тип | Роль | Размер |",
+        "|---|---|---|---:|",
+    ]
+    for item in plan.get("accepted") or []:
+        lines.append(
+            f"| `{item.get('file_name')}` | `{item.get('suffix')}` | "
+            f"{item.get('role_hint') or 'unknown'} | {int(item.get('size_bytes') or 0)} |"
+        )
+    lines.extend(["", "## Пропущено", "", "| Файл | Причина |", "|---|---|"])
+    for item in plan.get("skipped") or []:
+        lines.append(f"| `{item.get('file_name')}` | {item.get('reason') or ''} |")
+    missing = plan.get("missing_for_estimate") or []
+    lines.extend(["", "## Не хватает для сметы", ""])
+    if missing:
+        lines.extend(f"- {item}" for item in missing)
+    else:
+        lines.append("- Базовые сметные входы в папке распознаны.")
+    lines.extend(
+        [
+            "",
+            "## Правило работы",
+            "",
+            "Эта карта — навигационный слой. Для ответа использовать конкретные документы и source_refs; "
+            "для расчётов не заменять отсутствующие ВОР/ЛСР/спецификации проектными PDF.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _ensure_external_dataset_map(root: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    path = root / "00_dataset_map.md"
+    text = _render_external_dataset_map(plan)
+    action = "created"
+    if path.exists():
+        try:
+            current = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            current = ""
+        if "generated: les_external_intake_plan_v1" not in current:
+            return {"path": path.as_posix(), "status": "kept_existing"}
+        action = "updated"
+    path.write_text(text, encoding="utf-8")
+    return {"path": path.as_posix(), "status": action}
+
+
+@router.post("/external/intake-plan")
+async def external_intake_plan(req: ExternalIntakePlanRequest, _admin=Depends(require_admin)):
+    root = validate_external_source(req.path)
+    return await asyncio.to_thread(
+        _external_intake_plan,
+        root,
+        dataset_name=req.dataset_name,
+        project_name=req.project_name,
+    )
+
+
 @router.post("/index-external")
 async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin)):
     """In-place индексация одобренной внешней папки.
@@ -1386,6 +2195,31 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         except Exception as err:  # noqa: BLE001 — нарезка не должна ронять индексацию
             logger.warning("[INDEX-EXT] авто-нарезка пропущена: %s", err)
 
+    # Auto-init ДО регистрации: дал папку индексировать → LES.md и карта появляются как
+    # первые документы датасета, а не остаются вне индекса до следующего синка.
+    les_md_summary = None
+    map_summary = None
+    intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
+    if int(intake_plan.get("accepted_count") or 0) <= 0:
+        raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
+    try:
+        from proxy.services.les_md_service import read_and_bind
+
+        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
+        intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
+        map_summary = await asyncio.to_thread(_ensure_external_dataset_map, root, intake_plan)
+        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
+        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
+        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
+        if _md_pid:
+            from proxy.services.project_service import link_entity
+
+            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
+        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
+            _auto_run_pipelines(root, les_md_summary)
+    except Exception as err:  # noqa: BLE001 — auto-init не должен ронять регистрацию документов
+        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
+
     suffixes = rag_upload_suffixes()
     registered = 0
     skipped_unsupported = 0
@@ -1401,6 +2235,9 @@ async def _index_external_run(state, req, root, dataset) -> dict:
             skipped_outside_root += 1
             continue
         resolved = path.resolve()
+        if resolved.name in EXTERNAL_SERVICE_FILENAMES:
+            skipped_unsupported += 1
+            continue
         if resolved.suffix.lower() not in suffixes:
             skipped_unsupported += 1
             continue
@@ -1414,32 +2251,70 @@ async def _index_external_run(state, req, root, dataset) -> dict:
     if registered == 0:
         raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
 
-    # Auto-init: дал папку индексировать → LES.md появляется сам + привязка к проекту,
-    # затем авто-исполнение директив (ид→asbuilt и т.п.) в фоне. 0 команд от оператора.
-    les_md_summary = None
-    try:
-        from proxy.services.les_md_service import read_and_bind
-        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
-        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
-        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
-        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
-        if _md_pid:
-            from proxy.services.project_service import link_entity
-            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
-        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
-            _auto_run_pipelines(root, les_md_summary)
-    except Exception as err:  # noqa: BLE001 — авто-init не должен ронять индексацию
-        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
-
     parse_started = False
+    parse_job = None
     if req.parse:
+        batch_limit = max(1, int(req.parse_limit or DEFAULT_PARSE_BATCH_LIMIT))
+        max_batches = min(
+            DEFAULT_PARSE_DRAIN_MAX_BATCHES,
+            max(1, (registered + batch_limit - 1) // batch_limit),
+        )
+        job = state.job_service.create(
+            "rag_parse_drain",
+            source="external",
+            dataset_id=req.dataset_id,
+            dataset_name=dataset.name,
+            status="queued",
+            total=registered,
+            message=f"Парсинг внешней папки: {dataset.name} · {registered} файлов",
+        )
+        job_id = job["id"]
+        state.job_tracker[job_id] = {
+            "id": job_id,
+            "type": "rag_parse_drain",
+            "status": "QUEUED",
+            "source": "external",
+            "dataset_id": req.dataset_id,
+            "dataset_name": dataset.name,
+            "total": registered,
+            "processed": 0,
+            "errors": 0,
+            "started_at": job.get("started_at"),
+            "message": f"Парсинг внешней папки: {dataset.name} · {registered} файлов",
+        }
+
         async def _parse():
-            async with state.parse_semaphore:
-                await assert_parse_admission(state)
-                await state.backend.parse_dataset(req.dataset_id, limit=req.parse_limit)
+            try:
+                await run_dataset_parse_drain(
+                    state,
+                    dataset_id=req.dataset_id,
+                    dataset_name=dataset.name,
+                    batch_limit=batch_limit,
+                    max_batches=max_batches,
+                    job_id=job_id,
+                    reason="index_external_drain",
+                )
+            except Exception as error:
+                message = f"Ошибка парсинга внешней папки: {error}"
+                state.job_tracker[job_id].update(
+                    {
+                        "status": "FAILED",
+                        "errors": 1,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                    }
+                )
+                state.job_service.update(job_id, status="failed", errors=1, message=message)
+                logger.error("[INDEX-EXT PARSE %s] FAILED: %s", job_id, error, exc_info=True)
 
         asyncio.create_task(_parse())
         parse_started = True
+        parse_job = {
+            "job_id": job_id,
+            "type": "rag_parse_drain",
+            "batch_limit": batch_limit,
+            "max_batches": max_batches,
+        }
 
     return {
         "status": "registered",
@@ -1455,8 +2330,290 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         "copied_to_storage": False,
         "parse_started": parse_started,
         "parse_limit": req.parse_limit,
+        "parse_job": parse_job,
         "samples": samples,
         "les_md": les_md_summary,  # auto-init: что ЛЕС сам понял о папке + директивы
+        "dataset_map": map_summary,
+        "intake_plan": intake_plan,
+    }
+
+
+def _external_supported_files(root: Path) -> dict[str, dict[str, Any]]:
+    suffixes = rag_upload_suffixes()
+    files: dict[str, dict[str, Any]] = {}
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        if "_originals" in path.parts:
+            continue
+        if not is_within_external_root(path, root):
+            continue
+        resolved = path.resolve()
+        if resolved.suffix.lower() not in suffixes:
+            continue
+        file_name = resolved.relative_to(root.parent).as_posix()
+        try:
+            stat = resolved.stat()
+        except OSError:
+            continue
+        files[file_name] = {
+            "file_name": file_name,
+            "source_path": str(resolved),
+            "size_bytes": int(stat.st_size),
+            "mtime": float(stat.st_mtime),
+        }
+    return files
+
+
+def _external_dataset_docs(dataset_id: str) -> dict[str, dict[str, Any]]:
+    try:
+        with sqlite3.connect(rag_meta_db_path()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, file_name, status, COALESCE(file_mtime, 0) AS file_mtime,
+                       COALESCE(file_size, 0) AS file_size, COALESCE(chunk_count, 0) AS chunk_count,
+                       COALESCE(source_path, '') AS source_path, COALESCE(last_error, '') AS last_error
+                FROM documents
+                WHERE dataset_id=? AND COALESCE(source_path, '') <> ''
+                """,
+                (dataset_id,),
+            ).fetchall()
+    except sqlite3.Error:
+        return {}
+    return {str(row["file_name"]): dict(row) for row in rows}
+
+
+def _external_dataset_diff(dataset_id: str, root: Path, *, limit: int = 50) -> dict[str, Any]:
+    current = _external_supported_files(root)
+    known = _external_dataset_docs(dataset_id)
+    new: list[dict[str, Any]] = []
+    changed: list[dict[str, Any]] = []
+    deleted: list[dict[str, Any]] = []
+    unchanged = 0
+    for file_name, item in current.items():
+        row = known.get(file_name)
+        if row is None:
+            new.append(item)
+            continue
+        size_changed = int(row.get("file_size") or 0) != int(item["size_bytes"])
+        mtime_changed = abs(float(row.get("file_mtime") or 0) - float(item["mtime"])) > 1.0
+        missing_before = str(row.get("status") or "").upper() == "MISSING"
+        if size_changed or mtime_changed or missing_before:
+            changed.append({**item, "previous": row})
+        else:
+            unchanged += 1
+    for file_name, row in known.items():
+        source_path = str(row.get("source_path") or "")
+        if file_name not in current and (not source_path or not Path(source_path).exists()):
+            deleted.append(row)
+    return {
+        "status": "ok",
+        "source_root": root.as_posix(),
+        "dataset_id": dataset_id,
+        "counts": {
+            "new": len(new),
+            "changed": len(changed),
+            "deleted": len(deleted),
+            "unchanged": unchanged,
+            "known_external": len(known),
+            "current_supported": len(current),
+        },
+        "pending_changes": len(new) + len(changed) + len(deleted),
+        "samples": {
+            "new": new[:limit],
+            "changed": changed[:limit],
+            "deleted": deleted[:limit],
+        },
+        "_files": {"new": new, "changed": changed, "deleted": deleted},
+    }
+
+
+def _mark_external_missing(dataset_id: str, rows: list[dict[str, Any]]) -> int:
+    if not rows:
+        return 0
+    count = 0
+    with sqlite3.connect(rag_meta_db_path()) as conn:
+        for row in rows:
+            cur = conn.execute(
+                """
+                UPDATE documents
+                SET status='MISSING', chunk_count=0, last_error='source file missing', stage=''
+                WHERE dataset_id=? AND file_name=?
+                """,
+                (dataset_id, str(row.get("file_name") or "")),
+            )
+            count += int(cur.rowcount or 0)
+    return count
+
+
+async def _delete_index_for_files(state: DatasetRouterState, dataset_id: str, file_names: list[str]) -> dict[str, Any]:
+    if not file_names:
+        return {"files": 0, "qdrant_deleted": 0, "lexical_deleted": 0, "errors": []}
+    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
+    errors: list[str] = []
+    qdrant_deleted = 0
+    lexical_deleted = 0
+    try:
+        from proxy.services.lexical_index_service import LexicalIndex
+
+        lexical = LexicalIndex()
+    except Exception:
+        lexical = None
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for file_name in file_names:
+            file_filter = {
+                "must": [
+                    {"key": "dataset_id", "match": {"value": dataset_id}},
+                    {"key": "file_name", "match": {"value": file_name}},
+                ]
+            }
+            try:
+                response = await client.post(
+                    f"{qdrant_url}/collections/{rag_collection_name()}/points/delete",
+                    json={"filter": file_filter},
+                )
+                response.raise_for_status()
+                qdrant_deleted += 1
+            except Exception as error:
+                errors.append(f"Qdrant {file_name}: {error}")
+            try:
+                if lexical is not None:
+                    lexical_deleted += int(
+                        await asyncio.to_thread(
+                            lexical.delete_file,
+                            rag_collection_name(),
+                            dataset_id=dataset_id,
+                            doc_name=file_name,
+                        )
+                    )
+            except Exception as error:
+                errors.append(f"Lexical {file_name}: {error}")
+    try:
+        backend = state.backend
+        if hasattr(backend, "db"):
+            backend.db.update_dataset_chunk_count(dataset_id)
+    except Exception as error:
+        errors.append(f"dataset chunk count: {error}")
+    return {
+        "files": len(file_names),
+        "qdrant_deleted": qdrant_deleted,
+        "lexical_deleted": lexical_deleted,
+        "errors": errors,
+    }
+
+
+@router.post("/external/check")
+async def check_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(require_admin)):
+    root = validate_external_source(req.path)
+    state = get_dataset_state()
+    ds_list = await state.backend.list_datasets()
+    dataset = next((dataset for dataset in ds_list if dataset.id == req.dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, f"dataset_id не найден: {req.dataset_id}")
+    diff = await asyncio.to_thread(_external_dataset_diff, req.dataset_id, root, limit=req.limit)
+    diff.pop("_files", None)
+    diff["dataset_name"] = dataset.name
+    return diff
+
+
+@router.post("/external/sync")
+async def sync_external_dataset(req: ExternalDatasetSyncRequest, _admin=Depends(require_admin)):
+    root = validate_external_source(req.path)
+    state = get_dataset_state()
+    ds_list = await state.backend.list_datasets()
+    dataset = next((dataset for dataset in ds_list if dataset.id == req.dataset_id), None)
+    if dataset is None:
+        raise HTTPException(404, f"dataset_id не найден: {req.dataset_id}")
+    diff = await asyncio.to_thread(_external_dataset_diff, req.dataset_id, root, limit=req.limit)
+    files = diff.pop("_files")
+    registered = 0
+    for item in [*files["new"], *files["changed"]]:
+        await state.backend.register_external_file(req.dataset_id, Path(item["source_path"]), item["file_name"])
+        registered += 1
+    deleted_rows = files["deleted"] if req.include_deleted else []
+    missing_marked = await asyncio.to_thread(_mark_external_missing, req.dataset_id, deleted_rows)
+    cleanup = await _delete_index_for_files(
+        state,
+        req.dataset_id,
+        [str(row.get("file_name") or "") for row in deleted_rows if row.get("file_name")],
+    )
+    parse_started = False
+    parse_job = None
+    if req.parse and registered:
+        batch_limit = max(1, int(req.parse_limit or DEFAULT_PARSE_BATCH_LIMIT))
+        max_batches = min(
+            DEFAULT_PARSE_DRAIN_MAX_BATCHES,
+            max(1, (registered + batch_limit - 1) // batch_limit),
+        )
+        job = state.job_service.create(
+            "rag_parse_drain",
+            source="external_sync",
+            dataset_id=req.dataset_id,
+            dataset_name=dataset.name,
+            status="queued",
+            total=registered,
+            message=f"Парсинг изменений внешней папки: {dataset.name} · {registered} файлов",
+        )
+        job_id = job["id"]
+        state.job_tracker[job_id] = {
+            "id": job_id,
+            "type": "rag_parse_drain",
+            "status": "QUEUED",
+            "source": "external_sync",
+            "dataset_id": req.dataset_id,
+            "dataset_name": dataset.name,
+            "total": registered,
+            "processed": 0,
+            "errors": 0,
+            "started_at": job.get("started_at"),
+            "message": f"Парсинг изменений внешней папки: {dataset.name} · {registered} файлов",
+        }
+
+        async def _parse():
+            try:
+                await run_dataset_parse_drain(
+                    state,
+                    dataset_id=req.dataset_id,
+                    dataset_name=dataset.name,
+                    batch_limit=batch_limit,
+                    max_batches=max_batches,
+                    job_id=job_id,
+                    reason="external_sync_drain",
+                )
+            except Exception as error:
+                message = f"Ошибка парсинга изменений внешней папки: {error}"
+                state.job_tracker[job_id].update(
+                    {
+                        "status": "FAILED",
+                        "errors": 1,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                    }
+                )
+                state.job_service.update(job_id, status="failed", errors=1, message=message)
+                logger.error("[EXT_SYNC PARSE %s] FAILED: %s", job_id, error, exc_info=True)
+
+        asyncio.create_task(_parse())
+        parse_started = True
+        parse_job = {
+            "job_id": job_id,
+            "type": "rag_parse_drain",
+            "batch_limit": batch_limit,
+            "max_batches": max_batches,
+        }
+    return {
+        "status": "synced",
+        "source_root": root.as_posix(),
+        "dataset_id": req.dataset_id,
+        "dataset_name": dataset.name,
+        "diff": diff,
+        "registered": registered,
+        "missing_marked": missing_marked,
+        "cleanup": cleanup,
+        "parse_started": parse_started,
+        "parse_limit": req.parse_limit,
+        "parse_job": parse_job,
     }
 
 
@@ -1466,6 +2623,101 @@ def _count_dir_files(d: Path) -> int:
         return sum(1 for x in d.iterdir() if x.is_file() and not x.name.startswith("."))
     except OSError:
         return 0
+
+
+@router.get("/cloud-drives")
+async def cloud_drives(_admin=Depends(require_admin)):
+    """Cloud drive integrations available for dataset intake."""
+    roots = discover_cloud_drive_roots()
+    return {
+        "status": "ok",
+        "providers": cloud_drive_provider_status(),
+        "local_sync_roots": roots,
+        "local_sync_count": len(roots),
+        "mirror_root": os.getenv("LES_CLOUD_DRIVE_MIRROR_ROOT", "storage/cloud_drives"),
+        "note": "Web-доступ использует OAuth-токены из env; локальные sync-папки остаются fallback.",
+    }
+
+
+@router.post("/cloud-drives/list")
+async def cloud_drive_list(req: CloudDriveListRequest, _admin=Depends(require_admin)):
+    try:
+        return await asyncio.to_thread(
+            list_cloud_drive_folder,
+            req.provider,
+            req.locator,
+            limit=req.limit,
+        )
+    except CloudDriveError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/cloud-drives/sync")
+async def cloud_drive_sync(req: CloudDriveSyncRequest, _admin=Depends(require_admin)):
+    state = get_dataset_state()
+    ds_list = await state.backend.list_datasets()
+    dataset = None
+    if req.dataset_id:
+        dataset = next((item for item in ds_list if item.id == req.dataset_id), None)
+        if dataset is None:
+            raise HTTPException(404, f"dataset_id не найден: {req.dataset_id}")
+    else:
+        if not req.dataset_name.strip():
+            raise HTTPException(400, "нужно указать dataset_id или dataset_name")
+        ds_id = await state.backend.create_dataset(req.dataset_name.strip())
+        dataset = DatasetInfo(id=ds_id, name=req.dataset_name.strip(), status="IDLE", doc_count=0, chunk_count=0)
+
+    if req.background:
+        asyncio.create_task(_cloud_drive_sync_run(state, req, dataset))
+        return {
+            "status": "started",
+            "provider": req.provider,
+            "dataset_id": dataset.id,
+            "dataset_name": dataset.name,
+            "note": "облачная папка синхронизируется в фоне, затем будет зарегистрирована как датасет",
+        }
+    return await _cloud_drive_sync_run(state, req, dataset)
+
+
+async def _cloud_drive_sync_run(state, req: CloudDriveSyncRequest, dataset: DatasetInfo) -> dict[str, Any]:
+    try:
+        sync = await asyncio.to_thread(
+            sync_cloud_drive_folder,
+            req.provider,
+            req.locator,
+            dataset_name=dataset.name,
+            max_files=req.max_files,
+            max_depth=req.max_depth,
+        )
+    except CloudDriveError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    local_path = str(sync.get("local_path") or "")
+    if not local_path:
+        raise HTTPException(500, "cloud sync did not return local_path")
+    if int(sync.get("downloaded_count") or 0) <= 0:
+        return {
+            "status": "empty",
+            "provider": req.provider,
+            "dataset_id": dataset.id,
+            "dataset_name": dataset.name,
+            "sync": sync,
+        }
+    index_req = IndexExternalRequest(
+        path=local_path,
+        dataset_id=dataset.id,
+        parse=req.parse,
+        parse_limit=req.parse_limit,
+        background=False,
+    )
+    indexed = await _index_external_run(state, index_req, Path(local_path), dataset)
+    return {
+        "status": "registered",
+        "provider": req.provider,
+        "dataset_id": dataset.id,
+        "dataset_name": dataset.name,
+        "sync": sync,
+        "index": indexed,
+    }
 
 
 @router.get("/browse-external")
@@ -1479,11 +2731,24 @@ async def browse_external(path: str = "", _admin=Depends(require_admin)):
     from proxy.config import external_source_roots, external_allow_any, external_browse_default
 
     roots = external_source_roots()
+    cloud_roots = discover_cloud_drive_roots()
     allow_any = external_allow_any()
     if not roots and not allow_any:
         raise HTTPException(403, "внешняя индексация выключена: LES_EXTERNAL_SOURCE_ROOTS пуст")
 
     if not (path or "").strip():
+        cloud_dirs = [
+            {
+                "name": str(item.get("label") or item.get("provider_title") or "Облачный диск"),
+                "path": str(item.get("path") or ""),
+                "file_count": _count_dir_files(Path(str(item.get("path") or ""))),
+                "source": "cloud_drive",
+                "provider": item.get("provider"),
+                "provider_title": item.get("provider_title"),
+            }
+            for item in cloud_roots
+            if item.get("is_dir") and item.get("path")
+        ]
         if allow_any:
             start = external_browse_default()      # $HOME — отсюда видно любую папку
             dirs = []
@@ -1493,10 +2758,18 @@ async def browse_external(path: str = "", _admin=Depends(require_admin)):
                         dirs.append({"name": child.name, "path": str(child), "file_count": _count_dir_files(child)})
             except OSError:
                 pass
+            known = {item["path"] for item in cloud_dirs}
+            dirs = cloud_dirs + [item for item in dirs if item.get("path") not in known]
             return {"path": str(start), "parent": str(start.parent) if start.parent != start else None,
-                    "roots": [str(r) for r in roots], "dirs": dirs}
+                    "roots": [str(r) for r in roots], "cloud_roots": cloud_roots, "dirs": dirs}
+        known = {item["path"] for item in cloud_dirs}
+        root_dirs = [
+            {"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)}
+            for r in roots
+            if str(r) not in known
+        ]
         return {"path": "", "parent": None, "roots": [str(r) for r in roots],
-                "dirs": [{"name": r.name or str(r), "path": str(r), "file_count": _count_dir_files(r)} for r in roots]}
+                "cloud_roots": cloud_roots, "dirs": cloud_dirs + root_dirs}
 
     current = validate_external_source(path)  # resolve+isdir guard (+ allowlist если строгий режим)
     dirs = []
@@ -1669,6 +2942,9 @@ async def sync_folder(folder: str, _admin=Depends(require_admin)):
                         "parse_status": result_status,
                     },
                 )
+                reader_job = _schedule_reader_after_parse(ds.id, reason="sync_folder_parse", parse_result=result)
+                if reader_job:
+                    state.job_tracker[job_id]["dataset_reader"] = reader_job
                 logger.info(
                     "[JOB %s] %s: %s chunks, %.0fs, remaining=%s, errors=%s",
                     job_id, final_status, chunks, elapsed, remaining, errors,
@@ -1698,13 +2974,134 @@ async def sync_folder(folder: str, _admin=Depends(require_admin)):
 async def parse_dataset_batch(
     dataset_id: str,
     limit: int = Query(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25),
+    background: bool = False,
     _admin=Depends(require_admin),
 ):
     state = get_dataset_state()
+    if background:
+        dataset_name = await _dataset_name_for_id(state, dataset_id)
+        pending = await _pending_count_for_dataset(state, dataset_id)
+        total = min(limit, pending) if pending > 0 else limit
+        job = state.job_service.create(
+            "rag_parse_batch",
+            source="dataset",
+            dataset_id=dataset_id,
+            dataset_name=dataset_name,
+            status="queued",
+            total=total,
+            message=f"Ожидает очереди: {dataset_name} · до {limit} файлов",
+        )
+        job_id = job["id"]
+        state.job_tracker[job_id] = {
+            "id": job_id,
+            "type": "rag_parse_batch",
+            "status": "QUEUED",
+            "source": "dataset",
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "total": total,
+            "processed": 0,
+            "errors": 0,
+            "started_at": job.get("started_at"),
+            "message": f"Ожидает очереди: {dataset_name} · до {limit} файлов",
+        }
+
+        async def _run():
+            try:
+                async with state.parse_semaphore:
+                    await assert_parse_admission(state)
+                    state.job_tracker[job_id].update(
+                        {"status": "PARSING", "message": f"Начинаю обработку: {dataset_name}"}
+                    )
+                    state.job_service.update(
+                        job_id, status="running", message=f"Начинаю обработку: {dataset_name}"
+                    )
+                    result = await _parse_with_job_progress(
+                        state,
+                        dataset_id=dataset_id,
+                        dataset_name=dataset_name,
+                        limit=limit,
+                        pending_before=pending,
+                        processed_offset=0,
+                        job_id=job_id,
+                    )
+                chunks = int(result.get("chunks") or 0) if isinstance(result, dict) else 0
+                errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
+                remaining = int(result.get("remaining_pending") or 0) if isinstance(result, dict) else 0
+                status = str(result.get("status") or "unknown") if isinstance(result, dict) else "unknown"
+                processed = _processed_from_parse_result(
+                    result,
+                    pending_before=pending,
+                    batch_limit=limit,
+                    fallback_total=total,
+                )
+                if status == "completed" and not errors and remaining <= 0:
+                    service_status = "completed"
+                    tracker_status = "COMPLETED"
+                elif status == "completed" and not errors:
+                    service_status = "completed"
+                    tracker_status = "PARTIAL"
+                else:
+                    service_status = "failed"
+                    tracker_status = "FAILED"
+                    errors = max(errors, 1)
+                message = (
+                    f"Партия готова: {dataset_name} · файлов {processed}/{total} · "
+                    f"+{chunks} чанков · ошибок {errors} · осталось pending={remaining}"
+                )
+                state.job_tracker[job_id].update(
+                    {
+                        "status": tracker_status,
+                        "processed": processed,
+                        "errors": errors,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                        "result": result if isinstance(result, dict) else {"status": status},
+                    }
+                )
+                state.job_service.update(
+                    job_id,
+                    status=service_status,
+                    processed=processed,
+                    errors=errors,
+                    message=message,
+                    result=result if isinstance(result, dict) else {"status": status},
+                )
+                reader_job = _schedule_reader_after_parse(dataset_id, reason="parse_batch_background", parse_result=result)
+                if reader_job:
+                    state.job_tracker[job_id]["dataset_reader"] = reader_job
+            except Exception as error:
+                detail = getattr(error, "detail", None) or str(error)
+                message = f"Ошибка парсинга: {detail}"
+                state.job_tracker[job_id].update(
+                    {
+                        "status": "FAILED",
+                        "errors": 1,
+                        "finished_at": datetime.now().isoformat(),
+                        "message": message,
+                    }
+                )
+                state.job_service.update(job_id, status="failed", errors=1, message=message)
+                logger.error("[PARSE_BATCH %s] FAILED: %s", job_id, detail, exc_info=True)
+
+        asyncio.create_task(_run())
+        return {
+            "status": "queued",
+            "job_id": job_id,
+            "dataset_id": dataset_id,
+            "dataset_name": dataset_name,
+            "limit": limit,
+            "pending": pending,
+        }
+
     async with state.parse_semaphore:
         await assert_parse_admission(state)
         result = await state.backend.parse_dataset(dataset_id, limit=limit)
-    return {"dataset_id": dataset_id, "limit": limit, "result": result}
+    response = {"dataset_id": dataset_id, "limit": limit, "result": result}
+    reader_job = _schedule_reader_after_parse(dataset_id, reason="parse_batch", parse_result=result)
+    if reader_job:
+        response["dataset_reader"] = reader_job
+    return response
 
 
 @router.post("/parse-scheduler")
@@ -1785,6 +3182,43 @@ def _upload_intake_response(temp_path: Path, original_name: str) -> dict[str, An
     }
 
 
+async def _record_background_parse_error(
+    state: DatasetRouterState,
+    *,
+    dataset_id: str,
+    document_id: str,
+    error: Exception,
+) -> None:
+    """Make an asynchronous intake failure visible to API/UI operators."""
+    marker = getattr(state.backend, "mark_document_error", None)
+    if not callable(marker):
+        logger.error(
+            "[UPLOAD PARSE] dataset=%s document=%s failed and backend cannot persist the error: %s",
+            dataset_id,
+            document_id,
+            error,
+            exc_info=True,
+        )
+        return
+    try:
+        await marker(dataset_id, document_id, str(error))
+    except Exception as marker_error:  # noqa: BLE001 - retain the original failure in logs
+        logger.error(
+            "[UPLOAD PARSE] failed to persist dataset=%s document=%s error: %s",
+            dataset_id,
+            document_id,
+            marker_error,
+            exc_info=True,
+        )
+    logger.error(
+        "[UPLOAD PARSE] dataset=%s document=%s failed: %s",
+        dataset_id,
+        document_id,
+        error,
+        exc_info=True,
+    )
+
+
 @router.post("/upload/{dataset_id}")
 async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depends(require_admin)):
     state = get_dataset_state()
@@ -1807,6 +3241,13 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
             async with state.parse_semaphore:
                 await assert_parse_admission(state)
                 await state.backend.parse_dataset(dataset_id, limit=limit)
+        except Exception as error:  # noqa: BLE001 - background task must reach a terminal state
+            await _record_background_parse_error(
+                state,
+                dataset_id=dataset_id,
+                document_id=doc_id,
+                error=error,
+            )
         finally:
             temp_path.unlink(missing_ok=True)
 
@@ -1820,6 +3261,228 @@ _CHAT_ATTACH_DATASET_NAME = "Вложения чата"
 _QUICK_ATTACH_PREFIX = "attach_"
 _ATTACH_STORAGE_ROOT = Path("storage/datasets")
 _READ_ATTACH_MAX_CHARS = int(os.getenv("RAG_ATTACH_READ_MAX_CHARS", "18000"))
+
+
+def _compact_cell(value: Any, *, max_len: int = 240) -> str:
+    text = " ".join(str(value or "").replace("\u00a0", " ").split())
+    if len(text) > max_len:
+        return text[: max_len - 1].rstrip() + "…"
+    return text
+
+
+def _format_tabular_attachment_context(path: Path, original_name: str, *, max_chars: int) -> tuple[str, bool] | None:
+    """XLSX/CSV attachment → model-readable row context with sheet/row provenance.
+
+    Это не ВОР-генератор и не сметный шаблон: только более честный транспорт таблицы
+    в модель, чтобы она сама сделала спецификация → ВОР → сметный ход.
+    """
+    suffix = path.suffix.lower()
+    parts: list[str] = [
+        f"Файл: {original_name}",
+        "Тип данных: таблица/спецификация. Строки ниже сохранены с номерами листов/строк.",
+        "",
+    ]
+    truncated = False
+
+    def _append(line: str) -> bool:
+        nonlocal truncated
+        current = "\n".join(parts)
+        extra = ("\n" if current else "") + line
+        if len(current) + len(extra) > max_chars:
+            truncated = True
+            return False
+        parts.append(line)
+        return True
+
+    if suffix in {".xlsx", ".xlsm"}:
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[ATTACH] xlsx structured read failed for %s: %s", original_name, err)
+            return None
+        try:
+            for sheet in wb.sheetnames:
+                ws = wb[sheet]
+                if not _append(f"## Лист: {sheet}"):
+                    break
+                nonempty = 0
+                for ri, row in enumerate(ws.iter_rows(values_only=True), 1):
+                    vals = [_compact_cell(v) for v in row if v not in (None, "")]
+                    if not vals:
+                        continue
+                    nonempty += 1
+                    if not _append(f"{sheet}!R{ri}: " + " | ".join(vals)):
+                        break
+                _append(f"Итого непустых строк на листе «{sheet}»: {nonempty}")
+                if truncated:
+                    break
+        finally:
+            wb.close()
+    elif suffix == ".csv":
+        import csv
+        for enc in ("utf-8-sig", "utf-8", "cp1251", "latin-1"):
+            try:
+                text = path.read_text(encoding=enc)
+                break
+            except UnicodeDecodeError:
+                continue
+        else:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        sample = text.splitlines()[0] if text.splitlines() else ""
+        delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+        reader = csv.reader(text.splitlines(), delimiter=delimiter)
+        nonempty = 0
+        _append("## CSV")
+        for ri, row in enumerate(reader, 1):
+            vals = [_compact_cell(v) for v in row if str(v or "").strip()]
+            if not vals:
+                continue
+            nonempty += 1
+            if not _append(f"CSV!R{ri}: " + " | ".join(vals)):
+                break
+        _append(f"Итого непустых строк CSV: {nonempty}")
+    else:
+        return None
+
+    if truncated and parts[-1] != "[Табличный контекст усечён по лимиту; для полной сметы нужен файл как датасет или более узкий лист.]":
+        parts.append("[Табличный контекст усечён по лимиту; для полной сметы нужен файл как датасет или более узкий лист.]")
+    text = "\n".join(parts).strip()
+    return (text, truncated) if text else None
+
+
+async def _prepare_read_attachment(
+    temp_path: Path,
+    original_name: str,
+    *,
+    attachment_id: str | None = None,
+) -> dict[str, Any]:
+    """Convert and preserve one lossless, server-owned read attachment."""
+    from uuid import uuid4
+
+    attach_id = attachment_id or f"read_{uuid4().hex[:12]}"
+    structured = await asyncio.to_thread(
+        _format_tabular_attachment_context,
+        temp_path,
+        original_name,
+        max_chars=_READ_ATTACH_MAX_CHARS,
+    )
+    if structured:
+        text, truncated = structured
+    else:
+        from backend.converter import convert_to_markdown
+
+        try:
+            text = await asyncio.to_thread(convert_to_markdown, temp_path)
+        except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
+            logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
+            raise HTTPException(
+                422,
+                f"Не удалось прочитать файл «{original_name}»: {error}. "
+                "Попробуй режим индексации/OCR или другой формат файла.",
+            ) from error
+        text = (text or "").strip()
+        truncated = len(text) > _READ_ATTACH_MAX_CHARS
+
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(
+            422,
+            f"Не удалось прочитать текст из «{original_name}». "
+            "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+        )
+
+    from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
+
+    await asyncio.to_thread(cleanup_expired)
+    await asyncio.to_thread(
+        preserve_read_attachment,
+        temp_path,
+        attachment_id=attach_id,
+        original_name=original_name,
+    )
+    return {
+        "attachment_id": attach_id,
+        "mode": "read",
+        "name": original_name,
+        "chars": len(text),
+        "text": text[:_READ_ATTACH_MAX_CHARS],
+        "truncated": truncated,
+    }
+
+
+@search_router.post("/chat/attachments", status_code=201)
+async def create_chat_attachment(
+    file: UploadFile = File(...),
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key")] = "",
+    _user=Depends(require_user),
+):
+    """Official external intake: one temporary read attachment for the next chat turn."""
+    from proxy.services.request_idempotency_service import (
+        IdempotencyConflict,
+        begin,
+        caller_scope,
+        complete,
+        file_sha256,
+        release,
+        request_fingerprint,
+    )
+
+    original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
+    temp_path = await save_upload_tmp(
+        file,
+        allowed_suffixes=rag_upload_suffixes(),
+        max_bytes=max_upload_bytes(),
+    )
+    caller = caller_scope(_user)
+    fingerprint = request_fingerprint(
+        {
+            "name": original_name,
+            "size": temp_path.stat().st_size,
+            "sha256": await asyncio.to_thread(file_sha256, temp_path),
+        }
+    )
+    try:
+        try:
+            state, cached = await asyncio.to_thread(
+                begin,
+                operation="chat_attachment",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+            )
+        except (ValueError, IdempotencyConflict) as error:
+            raise HTTPException(409, str(error)) from error
+        if state == "completed" and cached is not None:
+            return cached
+        if state == "in_progress":
+            raise HTTPException(
+                409,
+                "Вложение с этим Idempotency-Key уже обрабатывается",
+                headers={"Retry-After": "2"},
+            )
+        try:
+            result = await _prepare_read_attachment(temp_path, original_name)
+            await asyncio.to_thread(
+                complete,
+                operation="chat_attachment",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+                response=result,
+            )
+            return result
+        except Exception:
+            await asyncio.to_thread(
+                release,
+                operation="chat_attachment",
+                caller=caller,
+                idempotency_key=idempotency_key,
+                request_hash=fingerprint,
+            )
+            raise
+    finally:
+        temp_path.unlink(missing_ok=True)
 
 
 async def _ensure_chat_attach_dataset(state) -> str:
@@ -1862,35 +3525,9 @@ async def attach_chat_file(
 
     if mode == "read":
         try:
-            from backend.converter import convert_to_markdown
-
-            try:
-                text = await asyncio.to_thread(convert_to_markdown, temp_path)
-            except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
-                logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
-                raise HTTPException(
-                    422,
-                    f"Не удалось прочитать файл «{original_name}»: {error}. "
-                    "Попробуй режим индексации/OCR или другой формат файла.",
-                ) from error
+            return await _prepare_read_attachment(temp_path, original_name)
         finally:
             temp_path.unlink(missing_ok=True)
-        text = (text or "").strip()
-        if not text:
-            raise HTTPException(
-                422,
-                f"Не удалось прочитать текст из «{original_name}». "
-                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
-            )
-        truncated = len(text) > _READ_ATTACH_MAX_CHARS
-        return {
-            "attachment_id": f"read_{uuid4().hex[:12]}",
-            "mode": "read",
-            "name": original_name,
-            "chars": len(text),
-            "text": text[:_READ_ATTACH_MAX_CHARS],
-            "truncated": truncated,
-        }
 
     if mode == "index":
         ds_id = await _ensure_chat_attach_dataset(state)
@@ -1901,6 +3538,13 @@ async def attach_chat_file(
                 async with state.parse_semaphore:
                     await assert_parse_admission(state)
                     await state.backend.parse_dataset(ds_id, limit=25)
+            except Exception as error:  # noqa: BLE001 - background task must reach a terminal state
+                await _record_background_parse_error(
+                    state,
+                    dataset_id=ds_id,
+                    document_id=doc_id,
+                    error=error,
+                )
             finally:
                 temp_path.unlink(missing_ok=True)
 
@@ -1956,6 +3600,13 @@ async def upload_file_smart(
                     async with state.parse_semaphore:
                         await assert_parse_admission(state)
                         await state.backend.parse_dataset(dataset_id, limit=1)
+                except Exception as error:  # noqa: BLE001 - background task must reach a terminal state
+                    await _record_background_parse_error(
+                        state,
+                        dataset_id=dataset_id,
+                        document_id=doc_id,
+                        error=error,
+                    )
                 finally:
                     temp_path.unlink(missing_ok=True)
 

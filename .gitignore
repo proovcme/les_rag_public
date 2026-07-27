@@ -1,9 +1,12 @@
 # Данные и Секреты (НИКОГДА не пушить)
 .env
-data/
+data/*
+legacy/data/
+tmp/
 storage/
 RAG_Content/
 logs/
+config/prompts/prompt_overrides.json
 .claude/
 .nicegui/
 standalone/cad_bim_viewer/JSON/
@@ -18,6 +21,10 @@ __pycache__/
 build/
 develop-eggs/
 dist/
+desktop/tauri/node_modules/
+desktop/tauri/src-tauri/target/
+desktop/tauri/src-tauri/resources/runtime/
+desktop/tauri/src-tauri/resources/bootstrap.sh
 downloads/
 eggs/
 .eggs/
@@ -43,6 +50,7 @@ Thumbs.db
 .aider*
 
 # Generated local workbench exports
+.codex_tmp/
 qdrant_visualizer/data.js
 scratch/
 

@@ -376,7 +376,7 @@ def _llm_text(prompt: str, *, max_tokens: int = 400) -> str:
 
     base = os.getenv("OPENAI_BASE_URL", "").rstrip("/")
     key = os.getenv("OPENAI_API_KEY", "").strip()
-    model = os.getenv("OPENAI_MODEL", "gpt-4.1")
+    model = os.getenv("OPENAI_MODEL", "gpt-5.4")
     if not base or not key:
         return ""
     url = f"{base}/chat/completions" if base.endswith("/v1") else f"{base}/v1/chat/completions"

@@ -21,12 +21,14 @@ EXCLUDE_PATTERNS = (
     "__pycache__/*",
     "*.pyc",
     ".pytest_cache/*",
+    ".nicegui/*",
     ".mypy_cache/*",
     ".DS_Store",
     "*/.DS_Store",
     ".qdrant-initialized",
     "*/.qdrant-initialized",
     ".claude/*",
+    ".codex_tmp/*",
     ".aider*",
     "node_modules/*",
     "*/node_modules/*",
@@ -41,10 +43,21 @@ EXCLUDE_PATTERNS = (
     "snapshots/*",
     "local_private_archive/*",
     "outputs/*",
+    "tmp/*",
     "legacy/data/*",
     "exporters/artifacts/*",
     "standalone/cad_bim_viewer/ifc-sample/*",
     "dist/*",
+    "desktop/tauri/src-tauri/target/*",
+    "desktop/tauri/src-tauri/resources/*",
+    # ARTEL is a separate Revit product with its own installer and release
+    # lifecycle. LES boxed artifacts must not silently bundle it.
+    "products/artel/*",
+    "tools/*artel*.py",
+    "tests/test_artel*.py",
+    "schema/artel_*",
+    "golden/artel_*",
+    "examples/artel/*",
 )
 
 

@@ -10,12 +10,16 @@ from proxy.services.context_memory_service import (
     build_context_memory_block,
     build_dataset_profile,
     get_chat_profile,
+    set_dataset_kind,
+    set_dataset_operator_guidance,
     warmup_dataset_profiles,
 )
 from proxy.services.notebook_service import (
     build_dataset_notebook,
     build_gesn_notebook,
+    build_smeta_norm_rag_notebook,
     service_source_notebooks,
+    smeta_norm_rag_prompt_excerpt,
     warmup_dataset_notebooks,
 )
 
@@ -106,11 +110,55 @@ def test_dataset_profile_writes_sidecar(tmp_path, monkeypatch):
     assert profile["document_count"] == 2
     assert profile["chunk_count"] == 12
     assert "coverage_note" in profile
+    assert profile["top_documents"][0]["file_name"] == "01-ПЗ.pdf"
+    assert profile["top_documents"][0]["source"] == "metadb.documents"
     sidecar = storage_root / "ds-1" / DATASET_PROFILE_FILE
     assert sidecar.exists()
     saved = json.loads(sidecar.read_text())
     assert saved["name"] == "Проект ПД"
     assert saved["sample_files"][0]["file_name"]
+
+
+def test_dataset_operator_guidance_is_navigation_not_evidence(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+
+    profile = set_dataset_operator_guidance(
+        "ds-1",
+        "Это ПД котельной; сначала смотреть ПЗ и спецификацию, архивные КП не считать актуальными.",
+        storage_root=storage_root,
+    )
+
+    assert profile["operator_guidance_role"] == "navigation_not_evidence"
+    assert "ПД котельной" in profile["operator_guidance"]
+    saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text(encoding="utf-8"))
+    assert saved["operator_guidance"] == profile["operator_guidance"]
+
+    block = build_context_memory_block(dataset_ids=["ds-1"], storage_root=storage_root)
+
+    assert "комментарий оператора для модели" in block
+    assert "не evidence" in block
+    assert "архивные КП" in block
+
+
+def test_dataset_kind_is_manual_navigation_metadata(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "les_meta.db"
+    storage_root = tmp_path / "storage" / "datasets"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _seed_meta_db(db_path)
+
+    profile = set_dataset_kind("ds-1", "проект", storage_root=storage_root)
+
+    assert profile["dataset_kind"] == "project"
+    assert profile["dataset_kind_label"] == "Проект"
+    saved = json.loads((storage_root / "ds-1" / DATASET_PROFILE_FILE).read_text(encoding="utf-8"))
+    assert saved["dataset_kind"] == "project"
+
+    block = build_context_memory_block(dataset_ids=["ds-1"], storage_root=storage_root)
+
+    assert "тип датасета: Проект" in block
 
 
 def test_deep_dataset_profile_uses_bounded_lexical_index(tmp_path, monkeypatch):
@@ -152,8 +200,36 @@ def test_dataset_notebook_wraps_profile_as_navigation_not_evidence(tmp_path, mon
     assert notebook["is_evidence"] is False
     assert notebook["profile"]["dataset_id"] == "ds-1"
     assert notebook["notebook_summary"]["key_terms"]
+    assert notebook["notebook_summary"]["priority_files"]
+    assert "01-ПЗ.pdf" in notebook["prompt_excerpt"]
     assert "НЕ evidence" not in notebook["prompt_excerpt"]
     assert "не evidence" in notebook["prompt_excerpt"].lower()
+
+
+def test_dataset_notebook_priority_files_downrank_service_noise(monkeypatch):
+    from proxy.services import notebook_service as nb
+
+    monkeypatch.setattr(nb, "build_dataset_profile", lambda *args, **kwargs: {
+        "dataset_id": "norms",
+        "name": "Нормы",
+        "document_count": 2,
+        "chunk_count": 902,
+        "deep": {
+            "available": True,
+            "top_documents": [
+                {"doc_name": "fsnb2022/00_dataset_card.md", "chunks": 900},
+                {"doc_name": "fsnb2022/projected_text/gesnm10-06-001-01.md", "chunks": 2},
+            ],
+        },
+        "document_types": [],
+        "domains": [],
+        "routes": [],
+        "keywords": [],
+    })
+
+    notebook = nb.build_dataset_notebook("norms")
+
+    assert notebook["notebook_summary"]["priority_files"][0]["file_name"].endswith("gesnm10-06-001-01.md")
 
 
 def test_warmup_dataset_notebooks_uses_profiles_without_reindex(tmp_path, monkeypatch):
@@ -204,12 +280,16 @@ def test_gesn_notebook_maps_required_collections(monkeypatch):
     assert "электро" in by_code["21"]["area"]
     assert notebook["is_evidence"] is False
     assert "Блокнот ГЭСН" in notebook["prompt_excerpt"]
+    assert "Типовые вопросы применимости" in notebook["prompt_excerpt"]
+    assert "группа грунта" in notebook["prompt_excerpt"]
+    assert "РИМ/ГЭСН" in notebook["prompt_excerpt"]
 
 
 def test_service_source_notebooks_returns_gesn_first(monkeypatch):
     from proxy.services import notebook_service as nb
 
     nb.build_gesn_notebook.cache_clear()
+    nb.build_smeta_norm_rag_notebook.cache_clear()
     monkeypatch.setattr(nb, "build_gesn_notebook", lambda: {
         "name": "ГЭСН: карта сборников",
         "context_role": "navigation",
@@ -218,10 +298,55 @@ def test_service_source_notebooks_returns_gesn_first(monkeypatch):
         "collections": [],
         "prompt_excerpt": "x",
     })
+    monkeypatch.setattr(nb, "build_smeta_norm_rag_notebook", lambda: {
+        "name": "Сметный RAG",
+        "context_role": "navigation",
+        "is_evidence": False,
+        "notebook_summary": {"purpose": "x"},
+        "source_layers": [],
+        "domain_routes": [],
+        "collections": [],
+        "prompt_excerpt": "x",
+    })
 
     result = service_source_notebooks()
 
     assert result["notebooks"][0]["id"] == "gesn"
+    assert result["notebooks"][1]["id"] == "smeta_norms"
+
+
+def test_smeta_norm_rag_notebook_is_navigation_map_not_candidate_selector():
+    from proxy.services import notebook_service as nb
+    from proxy.smeta_core.base_registry import active_base
+
+    nb.build_smeta_norm_rag_notebook.cache_clear()
+    notebook = build_smeta_norm_rag_notebook()
+
+    # Compare the configured file name, not the absolute checkout path: the
+    # canonical repository itself is named LES_v2 on developer machines.
+    assert Path(active_base()["base_path"]).name == "les_smeta_base.sqlite"
+    assert notebook["id"] == "smeta_norms"
+    assert notebook["context_role"] == "navigation"
+    assert notebook["is_evidence"] is False
+    layer_ids = {layer["id"] for layer in notebook["source_layers"]}
+    assert {"norms", "resources", "fgis_split", "lsr_form", "project_sources"} <= layer_ids
+    sks = next(route for route in notebook["domain_routes"] if "СКС" in route["domain"])
+    assert "ГЭСНм10" in sks["keys"]
+    assert "ГЭСНм10" in sks["available_keys"]
+    assert sks["status"] == "available"
+    assert "не заменять всю СКС" in sks["caution"]
+    by_collection = {item["collection"]: item for item in notebook["collections"]}
+    assert by_collection["ГЭСНм10"]["status"] == "available"
+    assert by_collection["ГЭСНм10"]["examples"]
+    assert any(str(ex["code"]).startswith("ГЭСНм:10-") for ex in by_collection["ГЭСНм10"]["examples"])
+    assert notebook["availability"]["rule"].startswith("available означает наличие реальных карточек")
+    assert notebook["availability"]["missing_route_collections"] == []
+    assert notebook["norm_store"]["norm_count"] >= 47_000
+    assert notebook["norm_store"]["collections"] >= 100
+    text = smeta_norm_rag_prompt_excerpt(notebook)
+    assert "ВОР → база/сборник/таблица" in text
+    assert "полный шифр" in text
+    assert "navigation" not in text.lower() or "НЕ evidence" in text
 
 
 def test_warmup_dataset_profiles_builds_all_requested(tmp_path, monkeypatch):

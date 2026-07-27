@@ -1,6 +1,6 @@
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.17.1
     container_name: les-qdrant
     restart: unless-stopped
     ports:
@@ -66,4 +66,3 @@ networks:
 
 volumes:
   les-qdrant-data:
-

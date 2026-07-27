@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 # Корень рантайма ОТ ФАЙЛА, не от CWD: иначе UI-сервис (другой WorkingDirectory) не находил .env
 # и TRUSTED_NETWORKS падал в дефолт (только loopback) → ZeroTier/доверенные сети бились в логин ВОЛК.
 ROOT = Path(__file__).resolve().parent.parent
-ENV_PATH = ROOT / ".env"
+ENV_PATH = Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
 load_dotenv(ENV_PATH, override=False)
 
 PROXY_URL = os.getenv("PROXY_URL", "http://localhost:8050")

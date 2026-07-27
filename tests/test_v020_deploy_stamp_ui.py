@@ -66,8 +66,10 @@ def test_version_no_secrets():
     for m in ("password", "secret", "token", "api_key", "apikey", "sk-", "openrouter"):
         assert m not in blob
 
-def test_version_brief_has_harness():
-    assert f"h{vs.HARNESS_VERSION}" in vs.version_brief() and vs.LES_VERSION in vs.version_brief()
+def test_version_brief_has_one_product_version_and_build():
+    brief = vs.version_brief()
+    assert vs.PRODUCT_VERSION in brief and f"сборка {vs.BUILD_NUMBER}" in brief
+    assert " · app " not in brief and " · h" not in brief
 
 
 # ── §5 copy answer ────────────────────────────────────────────────────────────────────────
@@ -90,20 +92,24 @@ def test_copy_does_not_include_hidden_trace_by_default():
     assert "ПОЛНОЕ ТЕЛО" not in t and "version_info" not in t and "trace" not in t.lower()
 
 
-# ── §10 prompt chips → меню «Примеры» ─────────────────────────────────────────────────────
+# ── §10 contextual mode guidance ──────────────────────────────────────────────────────────
 
 def test_old_prompt_chips_not_rendered_inline():
     from sovushka.pages import chat as chat_mod
     src = inspect.getsource(chat_mod)
-    # старый inline-цикл по демо-чипам убран; вместо него меню «Примеры»
+    # Старые общие demo chips/menu убраны: примеры относятся к выбранному режиму.
     assert 'ui.label("примеры:")' not in src
-    assert "_EXAMPLE_GROUPS" in src and "ui.menu()" in src
+    assert "_EXAMPLE_GROUPS" not in src
+    assert "CHAT_MODE_GUIDANCE" in src and "sov-mode-guide" in src
 
-def test_prompt_examples_menu_grouped():
+def test_prompt_examples_are_grouped_by_mode_and_bounded():
     from sovushka.pages import chat as chat_mod
-    src = inspect.getsource(chat_mod)
-    for grp in ("Нормы", "Проект", "Смета", "ВОР/ЛСР", "Почта", "Поиск в источнике"):
-        assert grp in src
+
+    assert set(chat_mod.CHAT_MODE_GUIDANCE) == {"text", "rag", "smeta", "doc_review"}
+    for guide in chat_mod.CHAT_MODE_GUIDANCE.values():
+        assert guide["description"]
+        assert guide["data_hint"]
+        assert 1 <= len(guide["examples"]) <= 3
 
 
 # ── §5/§7 answer actions + copy в пузыре ──────────────────────────────────────────────────

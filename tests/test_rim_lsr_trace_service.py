@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from proxy.services.rim_lsr_trace_service import build_lsr_trace, build_position_trace
+from proxy.services.rim_lsr_trace_service import (
+    build_lsr_trace,
+    build_lsr_trace_from_visible_rows,
+    build_position_trace,
+    positions_from_visible_lsr_rows,
+)
 
 
 CODE = "ГЭСН12-01-034-02"
@@ -40,6 +45,69 @@ def test_rim_trace_from_gesn_seed_reproduces_gold_position():
     assert rows["group_material"]["columns"]["12"] == 83.62
     assert rows["nr"]["source"] == "Пр/812"
     assert rows["sp"]["source"] == "Пр/774"
+
+
+def test_visible_rows_accept_colon_prefixed_norm_codes():
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "basis": "ГЭСНм:08-03-575-01",
+            "title": "Монтаж прибора или аппарата",
+            "unit": "шт",
+            "quantity": 1,
+        }
+    ])
+
+    summary = trace["summary"]
+    assert summary["bound_rows"] == 1
+    assert trace["row_bindings"][0]["status"] == "bound"
+    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм08-03-575-01"
+
+
+def test_visible_rows_accept_engineering_count_unit_aliases():
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "basis": "ГЭСНм:08-03-575-01",
+            "title": "Установка электротехнического аппарата",
+            "unit": "компл",
+            "quantity": 1,
+        },
+        {
+            "basis": "ГЭСН:17-01-010-01",
+            "title": "Установка ревизионных люков",
+            "unit": "шт",
+            "quantity": 10,
+        },
+    ])
+
+    summary = trace["summary"]
+    assert summary["bound_rows"] == 2
+    assert trace["row_bindings"][0]["quantity_trace"]["status"] == "direct_from_row"
+    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "unit_conversion"
+    assert trace["sections"][0]["positions"][0]["code"] == "ГЭСНм08-03-575-01"
+    assert trace["sections"][0]["positions"][1]["code"] == "ГЭСН17-01-010-01"
+
+
+def test_visible_rows_convert_piece_dimensions_to_area_norm_qty():
+    trace = build_lsr_trace_from_visible_rows([
+        {
+            "basis": "ГЭСН:15-01-052-01",
+            "title": "Разработка проема 400х400 мм",
+            "unit": "шт",
+            "quantity": 10,
+        },
+        {
+            "basis": "ГЭСН:15-01-059-01",
+            "title": "Монтаж ревизионного лючка 400х400 мм скрытого типа",
+            "unit": "шт",
+            "quantity": 10,
+        },
+    ])
+
+    assert trace["summary"]["bound_rows"] == 2
+    assert trace["row_bindings"][0]["position"]["qty"] == 0.1
+    assert trace["row_bindings"][1]["position"]["qty"] == 0.016
+    assert trace["row_bindings"][0]["quantity_trace"]["status"] == "unit_conversion"
+    assert trace["row_bindings"][1]["quantity_trace"]["status"] == "piece_area_conversion"
 
 
 def test_rim_trace_applies_resource_coefficients_by_kind():
@@ -113,6 +181,83 @@ def test_rim_trace_preserves_fgis_current_vs_base_index_columns():
     assert trace["summary"]["direct"] == 3509.13
 
 
+def test_missing_price_and_unresolved_resource_review_separate_known_and_full_amount():
+    trace = build_position_trace({
+        "code": "ГЭСН00-00-000-00",
+        "name": "Тестовая аналоговая работа",
+        "unit": "шт",
+        "qty": 2,
+        "nr_pct": 0,
+        "sp_pct": 0,
+        "resource_review_status": "unresolved",
+        "resource_review_reason": "не проверен чужой материал",
+        "resources": [
+            {"kind": "material", "code": "01.1", "name": "Материал без цены", "unit": "шт", "per_unit": 1},
+        ],
+    })
+
+    summary = trace["summary"]
+    assert summary["known_amount"] == 0.0
+    assert summary["full_amount"] is None
+    assert summary["amount_status"] == "partial"
+    assert "resource_review_unresolved" in summary["completeness_reasons"]
+    assert any(str(reason).startswith("price_missing:") for reason in summary["completeness_reasons"])
+    assert _rows_by_type(trace)["position_total"]["columns"]["3"] == "Известная стоимость позиции"
+
+
+def test_explicit_empty_resource_revision_is_not_rehydrated_from_norm(monkeypatch):
+    """An empty model revision is data, not a request to restore raw norm resources."""
+    from proxy.services import gesn_service
+
+    norm = {
+        "code": "ГЭСНм08-02-409-09",
+        "name": "Прокладка труб гофрированных",
+        "unit": "100 м",
+        "resources": [
+            {"kind": "labor", "code": "1-100-36", "name": "Средний разряд", "unit": "чел.-ч", "per_unit": 15.2, "price": 500},
+        ],
+        "_source_kind": "seed_yaml",
+    }
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+
+    trace = build_position_trace({
+        "code": norm["code"], "qty": 1.6, "resources": [], "nr_pct": 0, "sp_pct": 0,
+        "resource_review_status": "unresolved",
+        "resource_review_reason": "модель не подтвердила компоненты",
+    })
+
+    assert not [row for row in trace["rows"] if str(row.get("type") or "").startswith("resource_")]
+    assert trace["summary"]["labor_qty"] == 0
+    assert trace["summary"]["known_amount"] == 0
+
+
+def test_hydrated_norm_resources_are_labor_normalized_at_render_boundary(monkeypatch):
+    """The final renderer must not add average, aggregate and grade detail together."""
+    from proxy.services import gesn_service
+
+    norm = {
+        "code": "ГЭСНм08-02-409-09",
+        "name": "Прокладка труб гофрированных",
+        "unit": "100 м",
+        "resources": [
+            {"kind": "labor", "code": "1-100-36", "name": "Средний разряд работы 3.6", "unit": "чел.-ч", "per_unit": 15.2, "price": 500},
+            {"kind": "labor", "code": "", "name": "ЗАТРАТЫ ТРУДА РАБОЧИХ, ВСЕГО: В ТОМ ЧИСЛЕ:", "unit": "чел.-ч", "per_unit": 15.6, "price": 500},
+            {"kind": "labor", "code": "2-100-02", "name": "Рабочий 2 разряда", "unit": "чел.-ч", "per_unit": 0.02, "price": 500},
+            {"kind": "labor", "code": "2-100-03", "name": "Рабочий 3 разряда", "unit": "чел.-ч", "per_unit": 10.75, "price": 500},
+            {"kind": "labor", "code": "2-100-04", "name": "Рабочий 4 разряда", "unit": "чел.-ч", "per_unit": 4.83, "price": 500},
+        ],
+        "_source_kind": "seed_yaml",
+    }
+    monkeypatch.setattr(gesn_service, "get_norm", lambda *_args, **_kwargs: norm)
+
+    trace = build_position_trace({"code": norm["code"], "qty": 1, "nr_pct": 0, "sp_pct": 0})
+
+    labor_rows = [row for row in trace["rows"] if row.get("type") == "resource_labor"]
+    assert [row["columns"]["2"] for row in labor_rows] == ["2-100-02", "2-100-03", "2-100-04"]
+    assert trace["summary"]["labor_qty"] == 15.6
+    assert trace["summary"]["ozp"] == 7800
+
+
 def test_build_lsr_trace_multi_position_sections_and_grand_total():
     # две gold-позиции в двух разделах → общий итог = 2× эталон; итоги разделов и свод — Σ позиций
     positions = [
@@ -160,3 +305,75 @@ def test_build_lsr_trace_default_section_when_unspecified():
     lsr = build_lsr_trace([{"code": CODE, "qty": 0.61}])
     assert [s["section"] for s in lsr["sections"]] == ["Без раздела"]
     assert lsr["summary"]["total"] == 11813.04
+
+
+def test_positions_from_visible_lsr_rows_converts_physical_unit_to_norm_qty():
+    bound = positions_from_visible_lsr_rows([
+        {"basis": "ГЭСН 12-01-034-02", "title": "Устройство обрешетки", "quantity": "61", "unit": "м2"}
+    ])
+
+    assert bound["row_bindings"][0]["status"] == "bound"
+    assert bound["positions"][0]["code"] == CODE
+    assert bound["positions"][0]["qty"] == 0.61
+    assert bound["row_bindings"][0]["quantity_trace"]["formula"] == "61.0 м2 × 1 / 100 = 0.61"
+
+
+def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {
+                "basis": "ГЭСН 12-01-034-02",
+                "title": "Устройство обрешетки",
+                "quantity": "61",
+                "unit": "м2",
+                "section": "Кровля",
+            }
+        ],
+        name="Видимые строки",
+    )
+
+    assert lsr["summary"]["result_status"] == "priced_final"
+    assert lsr["summary"]["input_rows"] == 1
+    assert lsr["summary"]["bound_rows"] == 1
+    assert lsr["summary"]["total"] == 11813.04
+    assert lsr["sections"][0]["section"] == "Кровля"
+
+
+def test_lsr_trace_from_visible_rows_keeps_unbound_rows_out_of_priced_final():
+    lsr = build_lsr_trace_from_visible_rows(
+        [
+            {"basis": "ГЭСН 12-01-034-02", "title": "Устройство обрешетки", "quantity": "61", "unit": "м2"},
+            {"title": "Работа без выбранной нормы", "quantity": "1", "unit": "шт"},
+        ]
+    )
+
+    assert lsr["summary"]["result_status"] == "priced_partial"
+    assert lsr["summary"]["bound_rows"] == 1
+    assert lsr["summary"]["unbound_rows"] == 1
+    assert lsr["row_bindings"][1]["status"] == "norm_selection_required"
+
+
+def test_unbound_lsr_placeholder_uses_blank_missing_price_not_zero():
+    from proxy.smeta_core.contracts import WorkItem
+    from proxy.smeta_core.lsr_renderer import _placeholder
+
+    missing = _placeholder(
+        WorkItem(work_id="row-2", title="Работа без нормы", quantity=1, unit="шт"),
+        "norm_selection_required",
+        "норма не выбрана",
+    )
+
+    assert missing["summary"]["total"] is None
+    assert missing["rows"][0]["columns"]["12"] is None
+    assert missing["rows"][1]["columns"]["12"] is None
+
+
+def test_lsr_trace_from_visible_rows_does_not_bind_unknown_norm_code():
+    lsr = build_lsr_trace_from_visible_rows(
+        [{"basis": "ГЭСН 99-99-999-99", "title": "Неизвестная норма", "quantity": "1", "unit": "шт"}]
+    )
+
+    assert lsr["summary"]["result_status"] == "norm_selection_required"
+    assert lsr["summary"]["bound_rows"] == 0
+    assert lsr["summary"]["unbound_rows"] == 1
+    assert lsr["row_bindings"][0]["status"] == "norm_not_found"

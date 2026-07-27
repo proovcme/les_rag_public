@@ -1,0 +1,8 @@
+{
+  "schema": "les.windows-uv.v1",
+  "version": "0.11.29",
+  "archive_url": "https://github.com/astral-sh/uv/releases/download/0.11.29/uv-x86_64-pc-windows-msvc.zip",
+  "archive_sha256": "a047d55651bc3e0ca24595b25ec4cfcb10f9dca9fb56514e661269b37d4fae68",
+  "binary_sha256": "6d40479cd1d0d5db7fc0fe68ad703fc8acbd84bba50d864bb97461f6af9d9561",
+  "binary_name": "uv.exe"
+}

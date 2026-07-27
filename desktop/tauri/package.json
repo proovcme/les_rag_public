@@ -1,0 +1,11 @@
+{
+  "name": "les-desktop",
+  "private": true,
+  "version": "0.24.48",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4"
+  }
+}

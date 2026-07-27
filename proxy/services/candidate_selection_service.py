@@ -119,7 +119,7 @@ def select_candidates(
         status = "needs_model_choice"
         action = "ask_model_to_choose_or_request_input"
         selected = ""
-        reason = "верхний кандидат не прошёл применимость или единицу измерения"
+        reason = "нужно уточнить норму или измеритель"
     return {
         "schema": SCHEMA,
         "status": status,

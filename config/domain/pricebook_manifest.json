@@ -1,0 +1,23 @@
+{
+  "schema": "les_pricebook_manifest_v1",
+  "default_book": "sankt-peterburg_2kv2026",
+  "hidden_stems": [
+    "spb_refresh",
+    "spb_2kv2026",
+    "omskaya-oblast_2kv2026",
+    "nizhegorodskaya-oblast_2kv2026"
+  ],
+  "aliases": {
+    "spb_2kv2026": "sankt-peterburg_2kv2026"
+  },
+  "quarantined_stems": {
+    "omskaya-oblast_2kv2026": "byte-identical to another region; regional identity is not proven",
+    "nizhegorodskaya-oblast_2kv2026": "byte-identical to Sarov book; regional identity is not proven"
+  },
+  "notes": {
+    "spb_refresh": "scratch refresh sample, not a visible pricebook",
+    "spb_2kv2026": "byte-identical duplicate of sankt-peterburg_2kv2026",
+    "omskaya-oblast_2kv2026": "quarantined, no cross-region alias",
+    "nizhegorodskaya-oblast_2kv2026": "quarantined, no cross-region alias"
+  }
+}

@@ -1,4 +1,8 @@
-"""LES Unified Construction Harness v0.3 — единый evidence-driven слой по строительным intent'ам.
+"""Legacy feature-off evidence router for non-smeta compatibility.
+
+It is not allowed to become a second estimate application.  The historical
+``estimate_from_bor`` handler is retained only until its fixtures migrate to
+``proxy.smeta_core.application``.
 
 НЕ Profile→Workflow→Runtime rewrite, НЕ свободный агент, НЕ публичный режим. Тонкий слой за
 feature-flag (LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED, OFF дефолт): keyword-роутинг intent →
@@ -28,6 +32,8 @@ from proxy.services.evidence_contract import (
     EvidenceType,
     block_of,
 )
+
+LEGACY_PRIVATE = True
 
 # ── feature flag ─────────────────────────────────────────────────────────────────────────
 
@@ -943,10 +949,10 @@ def compose_unified_answer(result: ConstructionHarnessResult) -> str:
             asm = f" ({'; '.join(it.assumptions)})" if it.assumptions else ""
             lines.append(f"- {it.title}{num}{blk}{asm}{src}")
         lines.append("")
-    # итог сметы — только при complete; иначе partial как диагностика
+    # итог сметы — только при complete; partial не превращаем в видимые деньги
     if result.total_status == "complete" and result.final_total is not None:
         lines.append(f"**ИТОГО: {result.final_total} ₽** (рассчитано, без блокеров)")
     elif result.partial_total is not None:
-        lines.append(f"_Диагностическая сумма по рассчитанным позициям: ~{result.partial_total} ₽ — НЕ итоговая "
-                     f"смета (есть блокеры/нехватка данных)._")
+        lines.append("_Итог не сформирован: есть принятые расчётные строки, но сумму не показываю "
+                     "как стоимость, пока есть блокеры или нехватка данных._")
     return "\n".join(lines).strip() or "По запросу evidence не собрано."

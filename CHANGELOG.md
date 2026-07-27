@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.24.45 — 2026-07-23
+
+- Public repository стал полным safe tracked team source для сборки и PR-review.
+- Восстановлены активные algorithm/architecture/runbook docs из private без
+  runtime data, credentials и закрытых operator runbooks.
+- Добавлены индексы алгоритмов/skills и `make docs-check` в обязательный
+  `make verify`.
+- Public demo contract приведён к фактическому потоку:
+  landing → key login → local или OpenRouter/OpenAI BYOK provider setup.
+
 ## 0.24.0.405 — 2026-07-13
 
 - Выпущен Windows-установщик с разделением заменяемого кода и постоянных пользовательских

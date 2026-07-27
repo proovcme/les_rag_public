@@ -1,0 +1,241 @@
+{
+  "_comment": "Лицензионно безопасный public fixture-pack: вымышленные карточки с реальными шифрами-контрактами тестов. Не ФСНБ. Ресурсы норм без provenance → pricing остаётся untrusted, navigation — trusted.",
+  "edition": "PUBLIC-FIXTURE-2026",
+  "norms": [
+    {
+      "norm_key": "ГЭСНм:08-03-575-01",
+      "base_type": "ГЭСНм",
+      "norm_code": "ГЭСНм08-03-575-01",
+      "norm_name": "Монтаж прибора или аппарата: установка и присоединение",
+      "norm_unit": "шт",
+      "work_steps": ["Присоединение.", "Установка."],
+      "source_doc": "public-fixture://gesnm08",
+      "source_guid": "fixture-gesnm-08-03-575-01",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_code": "1-100-40",
+          "resource_name": "Средний разряд работы 4,0",
+          "resource_unit": "чел.-ч",
+          "per_unit": 1.0,
+          "price": 632.85
+        },
+        {
+          "kind": "material",
+          "resource_code": "01.1.01.01-0001",
+          "resource_name": "Крепёж тестовый без рыночной цены",
+          "resource_unit": "шт",
+          "per_unit": 1.0,
+          "price": 3.78
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСНм:08-02-409-09",
+      "base_type": "ГЭСНм",
+      "norm_code": "ГЭСНм08-02-409-09",
+      "norm_name": "Прокладка труб гофрированных из ПВХ для защиты кабелей",
+      "norm_unit": "100 м",
+      "work_steps": ["Прокладка гофрированной трубы ПВХ.", "Крепление."],
+      "source_doc": "public-fixture://gesnm08",
+      "source_guid": "fixture-gesnm-08-02-409-09",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_code": "1-100-36",
+          "resource_name": "Средний разряд работы 3,6",
+          "resource_unit": "чел.-ч",
+          "per_unit": 15.2,
+          "price": 500.0
+        },
+        {
+          "kind": "material",
+          "resource_code": "",
+          "resource_name": "Труба гофрированная ПВХ",
+          "resource_unit": "м",
+          "per_unit": 100.0
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСНм:08-02-410-01",
+      "base_type": "ГЭСНм",
+      "norm_code": "ГЭСНм08-02-410-01",
+      "norm_name": "Прокладка труб гладких ПВХ (соседняя навигация)",
+      "norm_unit": "100 м",
+      "work_steps": ["Прокладка трубы.", "Крепление."],
+      "source_doc": "public-fixture://gesnm08",
+      "source_guid": "fixture-gesnm-08-02-410-01",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 3,0",
+          "resource_unit": "чел.-ч",
+          "per_unit": 10.0,
+          "price": 450.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Труба ПВХ гладкая",
+          "resource_unit": "м",
+          "per_unit": 100.0
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСНм:08-03-576-01",
+      "base_type": "ГЭСНм",
+      "norm_code": "ГЭСНм08-03-576-01",
+      "norm_name": "Монтаж щита распределительного (соседняя навигация)",
+      "norm_unit": "шт",
+      "work_steps": ["Установка щита.", "Подключение."],
+      "source_doc": "public-fixture://gesnm08",
+      "source_guid": "fixture-gesnm-08-03-576-01",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 4,0",
+          "resource_unit": "чел.-ч",
+          "per_unit": 2.0,
+          "price": 600.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Метизы",
+          "resource_unit": "кг",
+          "per_unit": 0.5
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСН:17-01-010-01",
+      "base_type": "ГЭСН",
+      "norm_code": "ГЭСН17-01-010-01",
+      "norm_name": "Установка ревизионных люков",
+      "norm_unit": "100 шт",
+      "work_steps": ["Установка люка."],
+      "source_doc": "public-fixture://gesn17",
+      "source_guid": "fixture-gesn-17-01-010-01",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 3,0",
+          "resource_unit": "чел.-ч",
+          "per_unit": 8.0,
+          "price": 480.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Крепёж люка",
+          "resource_unit": "шт",
+          "per_unit": 100.0,
+          "price": 1.0
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСН:15-01-052-01",
+      "base_type": "ГЭСН",
+      "norm_code": "ГЭСН15-01-052-01",
+      "norm_name": "Разработка проёмов в конструкциях",
+      "norm_unit": "100 отверстий",
+      "work_steps": ["Разработка проёма."],
+      "source_doc": "public-fixture://gesn15",
+      "source_guid": "fixture-gesn-15-01-052-01",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 3,5",
+          "resource_unit": "чел.-ч",
+          "per_unit": 12.0,
+          "price": 500.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Расходный материал сверления",
+          "resource_unit": "шт",
+          "per_unit": 100.0,
+          "price": 2.0
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСН:15-01-059-01",
+      "base_type": "ГЭСН",
+      "norm_code": "ГЭСН15-01-059-01",
+      "norm_name": "Монтаж ревизионных лючков скрытого типа",
+      "norm_unit": "100 м2",
+      "work_steps": ["Монтаж лючка."],
+      "source_doc": "public-fixture://gesn15",
+      "source_guid": "fixture-gesn-15-01-059-01",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 3,0",
+          "resource_unit": "чел.-ч",
+          "per_unit": 20.0,
+          "price": 480.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Лючок ревизионный",
+          "resource_unit": "шт",
+          "per_unit": 50.0,
+          "price": 10.0
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСН:15-04-006-02",
+      "base_type": "ГЭСН",
+      "norm_code": "ГЭСН15-04-006-02",
+      "norm_name": "Грунтовка потолков",
+      "norm_unit": "100 м2",
+      "work_steps": ["Грунтовка поверхности."],
+      "source_doc": "public-fixture://gesn15",
+      "source_guid": "fixture-gesn-15-04-006-02",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 3,0",
+          "resource_unit": "чел.-ч",
+          "per_unit": 5.0,
+          "price": 480.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Грунтовка",
+          "resource_unit": "кг",
+          "per_unit": 10.0,
+          "price": 50.0
+        }
+      ]
+    },
+    {
+      "norm_key": "ГЭСН:15-02-038-02",
+      "base_type": "ГЭСН",
+      "norm_code": "ГЭСН15-02-038-02",
+      "norm_name": "Шпатлевка потолков",
+      "norm_unit": "100 м2",
+      "work_steps": ["Шпатлевка поверхности."],
+      "source_doc": "public-fixture://gesn15",
+      "source_guid": "fixture-gesn-15-02-038-02",
+      "resources": [
+        {
+          "kind": "labor",
+          "resource_name": "Средний разряд работы 3,5",
+          "resource_unit": "чел.-ч",
+          "per_unit": 8.0,
+          "price": 500.0
+        },
+        {
+          "kind": "material",
+          "resource_name": "Шпатлёвка",
+          "resource_unit": "кг",
+          "per_unit": 20.0,
+          "price": 40.0
+        }
+      ]
+    }
+  ]
+}

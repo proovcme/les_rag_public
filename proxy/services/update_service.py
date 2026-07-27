@@ -1,0 +1,412 @@
+"""Explicit, operator-triggered LES release checks and Windows installer launch."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import zipfile
+import base64
+from pathlib import Path
+from pathlib import PurePosixPath
+from urllib.parse import urlparse
+
+import httpx
+
+from proxy.services.version_service import LES_VERSION
+
+
+REPOSITORY = os.getenv("LES_UPDATE_REPOSITORY", "proovcme/les_rag_public").strip()
+UPDATE_MANIFEST_URL = os.getenv(
+    "LES_UPDATE_MANIFEST_URL",
+    f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json",
+).strip()
+INSTALLER_ASSET = "LES-Setup.exe"
+CHECKSUM_ASSET = f"{INSTALLER_ASSET}.sha256"
+VPS_PATCH_MANIFEST_URL = os.getenv(
+    "LES_VPS_PATCH_MANIFEST_URL", "https://les.ovc.me/updates/latest.json"
+).strip()
+VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
+VPS_PATCH_SCHEMA = "les.vps-patch.v1"
+VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
+VPS_PATCH_ALLOWED_FILES = {
+    "sovushka_ng.py",
+    "proxy_server.py",
+    "tools/vps_patch_apply.py",
+    "config/version.json",
+}
+VPS_PATCH_DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "installers", "desktop"}
+VPS_PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"}
+_SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
+
+
+class UpdateError(RuntimeError):
+    pass
+
+
+def version_tuple(value: str) -> tuple[int, ...]:
+    normalized = str(value or "").strip().lstrip("vV")
+    parts = normalized.split(".")
+    if not parts or any(not part.isdigit() for part in parts):
+        raise UpdateError(f"Некорректная версия выпуска: {value!r}")
+    return tuple(int(part) for part in parts)
+
+
+def release_summary(payload: dict, *, current_version: str = LES_VERSION) -> dict:
+    if payload.get("schema") != "les.update.v1":
+        raise UpdateError("Неподдерживаемая схема файла обновления")
+    latest = str(payload.get("version") or "").strip().lstrip("vV")
+    current_key = version_tuple(current_version)
+    latest_key = version_tuple(latest)
+    tag = f"v{latest}"
+    release_root = f"https://github.com/{REPOSITORY}/releases/download/{tag}"
+    installer_url = f"{release_root}/{INSTALLER_ASSET}"
+    checksum_url = f"{release_root}/{CHECKSUM_ASSET}"
+    available = latest_key > current_key
+    return {
+        "current_version": current_version,
+        "latest_version": latest,
+        "available": available,
+        "install_supported": sys.platform.startswith("win"),
+        "package_complete": True,
+        "name": str(payload.get("name") or tag),
+        "notes": str(payload.get("notes") or "")[:4000],
+        "published_at": payload.get("published_at"),
+        "html_url": payload.get("html_url") or f"https://github.com/{REPOSITORY}/releases/tag/{tag}",
+        "installer_url": installer_url,
+        "checksum_url": checksum_url,
+    }
+
+
+async def check_update(*, client: httpx.AsyncClient | None = None) -> dict:
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    try:
+        if not _trusted_release_url(UPDATE_MANIFEST_URL):
+            raise UpdateError("Задан недоверенный адрес файла обновления")
+        response = await client.get(
+            UPDATE_MANIFEST_URL,
+            headers={"User-Agent": "LES-updater"},
+        )
+        response.raise_for_status()
+        return release_summary(response.json())
+    except UpdateError:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise UpdateError(f"Не удалось проверить выпуск: {exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+def update_root() -> Path:
+    configured = os.getenv("LES_WINDOWS_STATE_ROOT", "").strip()
+    if configured:
+        root = Path(configured)
+    else:
+        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        if not local_app_data:
+            raise UpdateError("LOCALAPPDATA не задан; обновление доступно только в Windows-сборке")
+        root = Path(local_app_data) / "LES"
+    return root / "artifacts" / "updates"
+
+
+def _trusted_release_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname in {"github.com", "objects.githubusercontent.com"}
+
+
+def _trusted_patch_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.scheme == "https" and parsed.hostname == "les.ovc.me" and parsed.path.startswith("/updates/")
+
+
+def parse_checksum(text: str) -> str:
+    match = _SHA256.search(text or "")
+    if not match:
+        raise UpdateError("В выпуске отсутствует корректная контрольная сумма SHA-256")
+    return match.group(1).lower()
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while block := stream.read(8 * 1024 * 1024):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+async def _download(
+    client: httpx.AsyncClient,
+    url: str,
+    target: Path,
+    *,
+    max_bytes: int,
+    trusted_url=_trusted_release_url,
+) -> None:
+    if not trusted_url(url):
+        raise UpdateError("Обновление содержит недоверенный адрес загрузки")
+    temporary = target.with_suffix(target.suffix + ".part")
+    temporary.unlink(missing_ok=True)
+    total = 0
+    try:
+        async with client.stream("GET", url) as response:
+            response.raise_for_status()
+            with temporary.open("wb") as output:
+                async for block in response.aiter_bytes():
+                    total += len(block)
+                    if total > max_bytes:
+                        raise UpdateError("Файл обновления превышает допустимый размер")
+                    output.write(block)
+        temporary.replace(target)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+async def download_and_launch_update() -> dict:
+    if not sys.platform.startswith("win"):
+        raise UpdateError("Установка обновления этой кнопкой поддерживается только в Windows-сборке")
+    info = await check_update()
+    if not info["available"]:
+        raise UpdateError("Новая версия не найдена")
+    if not info["package_complete"]:
+        raise UpdateError("В выпуске нет installer или файла SHA-256")
+
+    root = update_root() / info["latest_version"]
+    root.mkdir(parents=True, exist_ok=True)
+    installer = root / INSTALLER_ASSET
+    checksum = root / CHECKSUM_ASSET
+    async with httpx.AsyncClient(timeout=1200.0, follow_redirects=True) as client:
+        await _download(client, info["checksum_url"], checksum, max_bytes=16 * 1024)
+        await _download(client, info["installer_url"], installer, max_bytes=1024 * 1024 * 1024)
+
+    expected = parse_checksum(checksum.read_text(encoding="utf-8", errors="replace"))
+    actual = sha256_file(installer)
+    if actual != expected:
+        installer.unlink(missing_ok=True)
+        raise UpdateError(f"Контрольная сумма обновления не совпала: ожидалось {expected}, получено {actual}")
+
+    subprocess.Popen([str(installer)], cwd=str(root), close_fds=True)  # noqa: S603 — verified local artifact
+    return {
+        **info,
+        "status": "installer_launched",
+        "sha256": actual,
+        "installer": str(installer),
+    }
+
+
+def runtime_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def patch_status_path() -> Path:
+    return update_root() / "vps-patch-status.json"
+
+
+def _ps_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, str]:
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", patch_id)[:32] or "update"
+    task_name = f"LES-Patch-{safe_id}"
+    arguments = f'"{helper}" --job "{job}"'
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$name={_ps_literal(task_name)}; "
+        "Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue; "
+        f"$action=New-ScheduledTaskAction -Execute {_ps_literal(str(sys.executable))} "
+        f"-Argument {_ps_literal(arguments)}; "
+        "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
+        "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
+        "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null; "
+        "Start-ScheduledTask -TaskName $name"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    return task_name, encoded
+
+
+def _validate_patch_feed(payload: dict) -> dict:
+    if payload.get("schema") != VPS_PATCH_FEED_SCHEMA:
+        raise UpdateError("Неподдерживаемая схема быстрого обновления")
+    patch = payload.get("patch")
+    if not isinstance(patch, dict) or patch.get("schema") != VPS_PATCH_SCHEMA:
+        raise UpdateError("Манифест быстрого обновления повреждён")
+    archive_url = str(payload.get("archive_url") or "")
+    archive_sha256 = str(payload.get("archive_sha256") or "").lower()
+    if not _trusted_patch_url(archive_url) or not re.fullmatch(r"[0-9a-f]{64}", archive_sha256):
+        raise UpdateError("Быстрое обновление опубликовано с недоверенного адреса или без SHA-256")
+    files = patch.get("files")
+    if not isinstance(files, list) or not files or len(files) > 200:
+        raise UpdateError("В быстром обновлении некорректный список файлов")
+    root = runtime_root()
+    target_matches = 0
+    compatible_files = 0
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise UpdateError("Некорректная запись файла в обновлении")
+        rel = PurePosixPath(str(entry.get("path") or ""))
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+            raise UpdateError("Обновление содержит небезопасный путь")
+        normalized = rel.as_posix()
+        if any(part in VPS_PATCH_DENIED_PARTS for part in rel.parts):
+            raise UpdateError("Обновление пытается изменить запрещённую часть приложения")
+        if not (normalized in VPS_PATCH_ALLOWED_FILES or normalized.startswith(VPS_PATCH_ALLOWED_ROOTS)):
+            raise UpdateError("Обновление пытается выйти за список заменяемых файлов")
+        if Path(normalized).suffix.lower() not in VPS_PATCH_SUFFIXES:
+            raise UpdateError("Обновление содержит неподдерживаемый тип файла")
+        target = root / Path(*rel.parts)
+        current = sha256_file(target) if target.is_file() else None
+        target_hash = str(entry.get("sha256") or "")
+        accepted_hashes = {
+            str(value).lower()
+            for value in (entry.get("accepted_sha256") or [])
+            if re.fullmatch(r"[0-9a-fA-F]{64}", str(value))
+        }
+        accepted_hashes.update(
+            str(value).lower()
+            for value in (entry.get("base_sha256"), target_hash)
+            if value
+        )
+        if current == target_hash:
+            target_matches += 1
+        if current in accepted_hashes or (
+            current is None
+            and (entry.get("base_sha256") is None or bool(entry.get("accepted_missing")))
+        ):
+            compatible_files += 1
+    available = target_matches != len(files)
+    compatible = compatible_files == len(files)
+    return {
+        "patch_id": str(patch.get("patch_id") or ""),
+        "base_commit": str(patch.get("base_commit") or ""),
+        "target_commit": str(patch.get("target_commit") or ""),
+        "files": len(files),
+        "available": available,
+        "compatible": compatible,
+        "message": (
+            "Быстрое обновление доступно"
+            if available and compatible
+            else "Обновление уже установлено"
+            if not available
+            else "Текущие файлы не соответствуют базе патча; требуется полный выпуск"
+        ),
+        "archive_url": archive_url,
+        "archive_sha256": archive_sha256,
+        "patch": patch,
+    }
+
+
+async def check_vps_patch(*, client: httpx.AsyncClient | None = None) -> dict:
+    if not _trusted_patch_url(VPS_PATCH_MANIFEST_URL):
+        raise UpdateError("Задан недоверенный адрес быстрых обновлений")
+    owns_client = client is None
+    if client is None:
+        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+    try:
+        response = await client.get(VPS_PATCH_MANIFEST_URL, headers={"User-Agent": "LES-vps-updater"})
+        if response.status_code == 404:
+            return {
+                "patch_id": "",
+                "available": False,
+                "compatible": True,
+                "files": 0,
+                "message": "Быстрых обновлений пока нет",
+            }
+        response.raise_for_status()
+        return _validate_patch_feed(response.json())
+    except UpdateError:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise UpdateError(f"Не удалось проверить быстрое обновление: {exc}") from exc
+    finally:
+        if owns_client:
+            await client.aclose()
+
+
+def read_vps_patch_status() -> dict:
+    path = patch_status_path()
+    if not path.is_file():
+        return {"schema": "les.vps-patch-status.v1", "state": "idle", "message": "Обновление не запускалось"}
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {"schema": "les.vps-patch-status.v1", "state": "failed", "message": "Не удалось прочитать состояние обновления"}
+
+
+async def download_and_launch_vps_patch() -> dict:
+    if not sys.platform.startswith("win"):
+        raise UpdateError("Быстрое обновление поддерживается только в Windows-сборке")
+    info = await check_vps_patch()
+    if not info["available"]:
+        raise UpdateError("Быстрое обновление уже установлено")
+    if not info["compatible"]:
+        raise UpdateError(info["message"])
+    root = update_root() / "vps" / info["patch_id"]
+    root.mkdir(parents=True, exist_ok=True)
+    archive = root / "patch.zip"
+    async with httpx.AsyncClient(timeout=600.0, follow_redirects=True) as client:
+        await _download(
+            client,
+            info["archive_url"],
+            archive,
+            max_bytes=64 * 1024 * 1024,
+            trusted_url=_trusted_patch_url,
+        )
+    actual = sha256_file(archive)
+    if actual != info["archive_sha256"]:
+        archive.unlink(missing_ok=True)
+        raise UpdateError("Контрольная сумма быстрого обновления не совпала")
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            bundled = json.loads(bundle.read("manifest.json"))
+            if bundled != info["patch"]:
+                raise UpdateError("Манифест внутри архива не совпадает с опубликованным")
+            names = set(bundle.namelist())
+            expected = {"manifest.json", *(f"payload/{entry['path']}" for entry in bundled["files"])}
+            if names != expected:
+                raise UpdateError("Архив быстрого обновления содержит лишние или отсутствующие файлы")
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
+        raise UpdateError(f"Архив быстрого обновления повреждён: {exc}") from exc
+    state_root = update_root().parents[1]
+    helper = root / "vps_patch_apply.py"
+    shutil.copy2(runtime_root() / "tools" / "vps_patch_apply.py", helper)
+    status = patch_status_path()
+    job = root / "job.json"
+    job.write_text(
+        json.dumps(
+            {
+                "runtime_root": str(runtime_root()),
+                "state_root": str(state_root),
+                "archive": str(archive),
+                "status_path": str(status),
+                "patch_id": info["patch_id"],
+                "helper_task_name": "",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    task_name, encoded_command = _patch_task_command(helper, job, info["patch_id"])
+    job_payload = json.loads(job.read_text(encoding="utf-8"))
+    job_payload["helper_task_name"] = task_name
+    job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    status.write_text(json.dumps({"schema": "les.vps-patch-status.v1", "state": "starting", "stage": "downloaded", "patch_id": info["patch_id"], "message": "Обновление проверено, начинаю установку"}, ensure_ascii=False, indent=2), encoding="utf-8")
+    launched = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded_command],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if launched.returncode != 0:
+        raise UpdateError("Windows не смог запустить независимую задачу обновления")
+    return {**info, "state": "starting", "message": "Обновление проверено и запущено"}

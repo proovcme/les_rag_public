@@ -1,0 +1,46 @@
+les.ovc.me {
+	encode zstd gzip
+
+	redir /updates /updates/ 308
+	handle_path /updates/* {
+		header {
+			Cache-Control "no-store"
+			X-Content-Type-Options "nosniff"
+		}
+		root * /var/www/les-updates
+		file_server
+	}
+
+	# The landing stays public. Only the key login, authenticated UI and
+	# key-protected API are forwarded to the Mac reference runtime.
+	@les_api path /api/*
+	handle @les_api {
+		reverse_proxy 10.195.146.98:8050 {
+			header_up X-LES-Trusted-Network ""
+		}
+	}
+
+	@les_ui path /login /provider-setup /classic /classic/* /les /les/classic /les/classic/* /lite-api/* /_nicegui* /static/*
+	handle @les_ui {
+		reverse_proxy 10.195.146.98:8051 {
+			header_up X-LES-Trusted-Network ""
+		}
+	}
+
+	@retired_runtime path /lite-runtime/*
+	handle @retired_runtime {
+		respond 404
+	}
+
+	handle {
+		header {
+			Cache-Control "no-store"
+			X-Content-Type-Options "nosniff"
+			Referrer-Policy "no-referrer"
+			X-Frame-Options "DENY"
+		}
+		root * /var/www/les-landing
+		try_files {path} /index.html
+		file_server
+	}
+}

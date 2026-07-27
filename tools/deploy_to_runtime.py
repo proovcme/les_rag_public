@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -32,7 +33,7 @@ RT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 # tracked-файл, который я уже выкатил, иначе метится «рантайм ≠ HEAD» (а рантайм = МОЯ копия).
 MANIFEST = DEV / ".deploy_manifest.json"
 
-ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/")
+ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/", "skills/")
 ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
 ALLOWED_SUFFIX = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
 
@@ -43,7 +44,6 @@ def _sha(b: bytes) -> str:
 
 
 def _load_manifest() -> dict[str, str]:
-    import json
     try:
         return json.loads(MANIFEST.read_text(encoding="utf-8"))
     except Exception:
@@ -51,13 +51,13 @@ def _load_manifest() -> dict[str, str]:
 
 
 def _save_manifest(m: dict[str, str]) -> None:
-    import json
     MANIFEST.write_text(json.dumps(m, ensure_ascii=False, indent=0), encoding="utf-8")
 
 # путь-префикс → launchd-сервис для рестарта
 SERVICE_BY_PREFIX = (
     ("sovushka_ng.py", "com.les.sovushka"),
     ("sovushka/", "com.les.sovushka"),
+    ("mlx_host.py", "me.ovc.les.mlx"),
     ("proxy/", "me.ovc.les.proxy"),
     ("backend/", "me.ovc.les.proxy"),
     ("config/", "me.ovc.les.proxy"),
@@ -69,8 +69,7 @@ def _git(args: list[str]) -> str:
                           capture_output=True, text=True).stdout
 
 
-def _changed_files() -> list[str]:
-    out = _git(["status", "--porcelain"])
+def _paths_from_status(out: str) -> list[str]:
     files: list[str] = []
     for line in out.splitlines():
         if len(line) < 4:
@@ -78,12 +77,52 @@ def _changed_files() -> list[str]:
         path = line[3:].strip().strip('"')
         if " -> " in path:                       # переименование
             path = path.split(" -> ", 1)[1]
-        files.append(path)
+        dev_path = DEV / path
+        if dev_path.is_dir():
+            for child in sorted(p for p in dev_path.rglob("*") if p.is_file()):
+                files.append(str(child.relative_to(DEV)))
+        else:
+            files.append(path)
     return files
 
 
-def _head_bytes(path: str) -> bytes | None:
-    r = subprocess.run(["git", "-C", str(DEV), "show", f"HEAD:{path}"],
+def _deployed_commit() -> str:
+    try:
+        payload = json.loads((RT / ".les_deploy_stamp.json").read_text(encoding="utf-8"))
+    except (FileNotFoundError, OSError, json.JSONDecodeError):
+        return ""
+    return str(payload.get("deployed_commit") or "").strip() if isinstance(payload, dict) else ""
+
+
+def _changed_files() -> list[str]:
+    """Return committed changes since the live stamp plus working-tree changes.
+
+    Deploying from a clean release commit must not become a no-op merely because
+    ``git status`` is empty.  The runtime stamp is the baseline for publication.
+    """
+    files = _paths_from_status(_git(["status", "--porcelain"]))
+    deployed = _deployed_commit()
+    if deployed and deployed != "unknown":
+        diff = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(DEV),
+                "diff",
+                "--name-only",
+                "--diff-filter=ACMRT",
+                f"{deployed}..HEAD",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if diff.returncode == 0:
+            files.extend(line.strip() for line in diff.stdout.splitlines() if line.strip())
+    return sorted(set(files))
+
+
+def _commit_bytes(commit: str, path: str) -> bytes | None:
+    r = subprocess.run(["git", "-C", str(DEV), "show", f"{commit}:{path}"],
                        capture_output=True)
     return r.stdout if r.returncode == 0 else None
 
@@ -92,7 +131,19 @@ def _allowed(path: str) -> bool:
     return (path in ALLOWED_FILES or path.startswith(ALLOWED_DIRS)) and Path(path).suffix in ALLOWED_SUFFIX
 
 
-def classify(path: str, manifest: dict[str, str]) -> tuple[str, bool]:
+def _service_for_path(path: str) -> str | None:
+    for prefix, service in SERVICE_BY_PREFIX:
+        if path.startswith(prefix):
+            return service
+    return None
+
+
+def classify(
+    path: str,
+    manifest: dict[str, str],
+    *,
+    deployed_commit: str = "",
+) -> tuple[str, bool]:
     """(класс, безопасно_копировать)."""
     dev_p, rt_p = DEV / path, RT / path
     if not dev_p.is_file():
@@ -104,7 +155,10 @@ def classify(path: str, manifest: dict[str, str]) -> tuple[str, bool]:
         return "identical", False
     if manifest.get(path) == _sha(rt_b):
         return "deployed", True              # рантайм = МОЯ прошлая выкатка (без рантайм-онли правок)
-    head = _head_bytes(path)
+    deployed = _commit_bytes(deployed_commit, path) if deployed_commit else None
+    if deployed is not None and rt_b == deployed:
+        return "clean@deployed", True        # runtime = файл из deploy stamp commit
+    head = _commit_bytes("HEAD", path)
     if head is None:
         return "session(new)", True          # untracked: рантайм = моя прежняя копия
     if rt_b == head:
@@ -127,12 +181,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     manifest = _load_manifest()
+    deployed_commit = _deployed_commit()
     copied: list[str] = []
     services: set[str] = set()
     diverged: list[str] = []
     print(f"Рантайм: {RT}\n{'ВЫКАТКА' if args.apply else 'DRY-RUN (--apply чтобы применить)'}\n")
     for f in sorted(candidates):
-        kind, safe = classify(f, manifest)
+        kind, safe = classify(f, manifest, deployed_commit=deployed_commit)
         forced = (not safe) and kind == "DIVERGENT" and args.force
         ok = safe or forced
         verb = "FORCE-копирую" if forced else "копирую"
@@ -147,10 +202,8 @@ def main(argv: list[str] | None = None) -> int:
             shutil.copy2(DEV / f, RT / f)
             manifest[f] = _sha((DEV / f).read_bytes())   # запомнить, что выкатил
             copied.append(f)
-        for prefix, svc in SERVICE_BY_PREFIX:
-            if f.startswith(prefix):
-                services.add(svc)
-                break
+        if service := _service_for_path(f):
+            services.add(service)
 
     print()
     if diverged:

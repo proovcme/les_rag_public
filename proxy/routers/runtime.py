@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
+import psutil
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -20,7 +21,8 @@ from pydantic import BaseModel, Field
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
-from proxy.security import require_admin
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+from proxy.security import require_admin, require_root_admin
 from proxy.services.resource_governor import (
     active_parse_priority_order,
     current_runtime_profile,
@@ -36,6 +38,7 @@ from proxy.services.runtime_admission import (
     generation_semaphore,
 )
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
+from proxy.services.version_service import version_info
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +126,7 @@ class RuntimeRouterState:
 
 
 _state: RuntimeRouterState | None = None
-DEFAULT_OPENAI_MODEL = "gpt-4.1"
+DEFAULT_OPENAI_MODEL = "gpt-5.4"
 
 
 def set_runtime_state(state: RuntimeRouterState) -> None:
@@ -230,7 +233,6 @@ async def health():
 async def version():
     """v0.19: единый version-объект ЛЕС (product/harness/schema + git + флаги + runtime-divergence).
     Без секретов, без падений — git недоступен → 'unknown'."""
-    from proxy.services.version_service import version_info
     return version_info()
 
 
@@ -252,6 +254,8 @@ async def _live_datasets_and_projects():
                         "chunk_count": getattr(d, "chunk_count", 0),
                         "source_type": getattr(d, "group_name", "") or "dataset",
                         "qdrant_status": "indexed" if getattr(d, "chunk_count", 0) else "unknown",
+                        "dataset_scope": getattr(d, "dataset_scope", "user") or "user",
+                        "module_id": getattr(d, "module_id", "") or "",
                     })
     except Exception as e:  # noqa: BLE001
         logger.warning("[SCOPE] list_datasets failed: %s", e)
@@ -295,7 +299,7 @@ async def warmup_models(_admin=Depends(require_admin)):
     results = {}
     async with httpx.AsyncClient(timeout=120.0) as client:
         for name, model in [
-            ("main", os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit")),
+            ("main", os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)),
             ("val", os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")),
         ]:
             try:
@@ -348,6 +352,19 @@ async def _unload_mlx_models() -> dict[str, Any]:
 
 
 async def _host_memory() -> dict[str, Any]:
+    provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider != "mlx":
+        vm = await asyncio.to_thread(psutil.virtual_memory)
+        return {
+            "provider": provider,
+            "ram_total_gb": vm.total / 1e9,
+            "ram_free_gb": vm.available / 1e9,
+            "ram_used_gb": vm.used / 1e9,
+            "swap_used_gb": 0,
+            "swap_total_gb": 0,
+            "swap_pct": 0,
+            "source": "psutil_non_mlx_provider",
+        }
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(f"{mlx_url()}/api/host_memory")
@@ -799,7 +816,7 @@ async def create_backup(_admin=Depends(require_admin)):
 
 
 @router.post("/backup/delete")
-async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_admin)):
+async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_root_admin)):
     """
     Deletes a specific SQLite backup file or Qdrant snapshot.
     """
@@ -871,7 +888,7 @@ class BackupRestoreRequest(BaseModel):
 
 
 @router.post("/backup/restore")
-async def restore_backup(req: BackupRestoreRequest, _admin=Depends(require_admin)):
+async def restore_backup(req: BackupRestoreRequest, _admin=Depends(require_root_admin)):
     """Запускает restore_runtime.sh ОТЦЕПЛЕННО (скрипт сам остановит/поднимет proxy).
     ОПАСНО: перезаписывает живой индекс и метабазу. .env не трогается без with_env."""
     import subprocess

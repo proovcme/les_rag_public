@@ -145,6 +145,128 @@ def citation_artifact(sources: list) -> dict:
     return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
 
 
+_SOURCE_MARKER_RE = re.compile(r"\[Источник\s+\d+(?:\s*\|[^\]]+)?\]")
+_SOURCE_NOTE_RE = re.compile(r"^\s*(?:>\s*)?(?:[-*]\s*)?Источники\s*:", re.I)
+
+
+def split_inline_source_notes(text: str) -> tuple[str, list[dict]]:
+    """Strip explicit ``Источники: ...`` service lines from the visible answer.
+
+    Inline markers such as ``[Источник 1]`` stay in normal prose. Full source
+    note lines move to a separate artifact so the chat bubble does not become a
+    wall of green quote blocks.
+    """
+    body_lines: list[str] = []
+    notes: list[dict] = []
+    for line in str(text or "").splitlines():
+        raw = line.rstrip()
+        stripped = raw.strip()
+        if stripped and _SOURCE_NOTE_RE.match(stripped):
+            clean = re.sub(r"^\s*>\s*", "", raw).strip()
+            clean = re.sub(r"^\s*[-*]\s*", "", clean).strip()
+            markers = _SOURCE_MARKER_RE.findall(clean)
+            notes.append({"text": clean, "markers": markers})
+            continue
+        body_lines.append(raw)
+    body = "\n".join(body_lines)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    return body, notes
+
+
+def _md_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", "<br>").strip()
+
+
+def source_notes_artifact(
+    answer: str,
+    sources: list | None = None,
+    source_map: Any | None = None,
+) -> dict:
+    """Build a Markdown artifact with answer source notes and source inventory.
+
+    This is deliberately presentation-only: it does not invent sources and does
+    not change answer semantics.
+    """
+    _, notes = split_inline_source_notes(answer)
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    def _add_source(source: Any, label: str = "") -> None:
+        idx = len(rows) + 1
+        c = source_chip(source, idx)
+        source_ref = ""
+        snippet = ""
+        if isinstance(source, dict):
+            source_ref = str(source.get("source_ref") or source.get("ref") or source.get("path") or "")
+            snippet = str(source.get("snippet") or source.get("excerpt") or source.get("text") or "")[:220]
+            label = label or str(source.get("label") or source.get("source_label") or "")
+        else:
+            source_ref = str(source or "")
+        key = source_ref or f"{c.get('file')}#{c.get('locator')}#{snippet}"
+        if not key or key in seen:
+            return
+        seen.add(key)
+        title = " · ".join(p for p in (c.get("file"), c.get("locator")) if p) or source_ref or "источник"
+        rows.append({
+            "label": label or f"Источник {idx}",
+            "title": title,
+            "kind": c.get("kind") or "",
+            "source_ref": source_ref,
+            "snippet": snippet,
+            "weak": c.get("weak"),
+            "has_ref": c.get("has_ref"),
+        })
+
+    for i, source in enumerate(sources or [], 1):
+        _add_source(source, f"Источник {i}")
+    if isinstance(source_map, dict):
+        for label, source in source_map.items():
+            if isinstance(source, list):
+                for item in source:
+                    _add_source(item, str(label))
+            else:
+                _add_source(source, str(label))
+    elif isinstance(source_map, list):
+        for source in source_map:
+            _add_source(source)
+
+    if not notes and not rows:
+        return {}
+
+    lines = ["# Источники ответа"]
+    if notes:
+        lines += [
+            "",
+            "## Пометки из ответа",
+            "",
+            "| № | Метки | Текст пометки |",
+            "|---:|---|---|",
+        ]
+        for i, note in enumerate(notes, 1):
+            markers = ", ".join(note.get("markers") or [])
+            lines.append(f"| {i} | {_md_cell(markers)} | {_md_cell(note.get('text'))} |")
+    if rows:
+        lines += [
+            "",
+            "## Перечень источников",
+            "",
+            "| № | Метка | Источник | Тип | source_ref / фрагмент |",
+            "|---:|---|---|---|---|",
+        ]
+        for i, row in enumerate(rows, 1):
+            ref = row.get("source_ref") or row.get("snippet") or ("без точной ссылки" if not row.get("has_ref") else "")
+            lines.append(
+                f"| {i} | {_md_cell(row.get('label'))} | {_md_cell(row.get('title'))} | "
+                f"{_md_cell(row.get('kind'))} | {_md_cell(ref)} |"
+            )
+    return {
+        "type": "answer_sources",
+        "title": "Источники ответа",
+        "mode": "markdown",
+        "content": "\n".join(lines).strip(),
+    }
+
+
 def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     """One source → drawer payload for GUI.
 
@@ -235,6 +357,27 @@ def trace_summary(unified_trace: dict | None) -> str:
     parts = []
     if ut.get("intent"):
         parts.append(f"route: {ut['intent']}")
+    topic_trace = ut.get("topic_guided_retrieval") if isinstance(ut.get("topic_guided_retrieval"), dict) else {}
+    if topic_trace:
+        selected_topics = topic_trace.get("selected_topics") or []
+        topic_labels = [
+            str(item.get("label") or item.get("id") or "")
+            for item in selected_topics
+            if isinstance(item, dict) and str(item.get("label") or item.get("id") or "").strip()
+        ]
+        topic_part = ", ".join(topic_labels[:2]) if topic_labels else "topic-guided"
+        targeted = topic_trace.get("targeted_chunk_count")
+        fallback = topic_trace.get("wide_fallback_chunk_count")
+        promoted = topic_trace.get("wide_fallback_promoted") if isinstance(topic_trace.get("wide_fallback_promoted"), dict) else {}
+        promoted_doc = str(promoted.get("doc_name") or "").rsplit("/", 1)[-1]
+        suffix = []
+        if targeted is not None:
+            suffix.append(f"targeted {targeted}")
+        if fallback is not None:
+            suffix.append(f"fallback {fallback}")
+        if promoted_doc:
+            suffix.append(f"promoted {promoted_doc}")
+        parts.append("topic: " + topic_part + (f" ({', '.join(suffix)})" if suffix else ""))
     tiers = ut.get("searched_tiers") or []
     if tiers:
         parts.append("tiers: " + ", ".join(tiers))

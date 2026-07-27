@@ -74,7 +74,7 @@ from tools.gesn_import import (
     _safe_float,
 )
 
-DEFAULT_OUT = Path("data/gesn_base/gesn2022.parquet")
+DEFAULT_OUT = Path("storage/cache/gesn_fgis/gesn2022_fgis_raw.parquet")
 
 # ── категории расхода → kind ──────────────────────────────────────────
 # Шапки категорий в PDF/JSON: «1 ЗАТРАТЫ ТРУДА РАБОЧИХ», «2 Затраты труда машинистов»,
@@ -320,15 +320,18 @@ def _loads_tolerant_json(s: str) -> Any:
 
 
 def _record_base_type(rec: dict[str, Any]) -> str:
+    """Return only an explicit family from FGIS metadata; never default bare rows to ГЭСН."""
     explicit = rec.get("documentTypeName")
     if explicit:
-        return _base_type_from_code(explicit)
+        detected = _base_type_from_code(explicit, default="")
+        if detected:
+            return detected
     for field in ("documentName", "normTableName", "name"):
         text = str(rec.get(field) or "")
         m = re.search(r"ГЭСН[А-Яа-я]*", text)
         if m:
-            return _base_type_from_code(m.group(0))
-    return "ГЭСН"
+            return _base_type_from_code(m.group(0), default="")
+    return ""
 
 
 def _resource_code_for_kind(kind: str, cipher: str) -> str:
@@ -356,22 +359,43 @@ def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
     ``normTableJson`` — колонки-нормы (number/name/meterName). ``normTableValueTableJson`` —
     строки расхода: категория-шапка (NormTablePartParentId=null, Cipher=«1»..«4») задаёт kind,
     дочерние строки — ресурсы (Cipher=код, NormTablePartNormValueList=[{NormNumber, Value}]).
+    ``normCatalogWorkTableJson`` — состав работ по NormNumber; это источник для model_card,
+    а не расчётная логика.
     """
     out: list[dict[str, Any]] = []
     for rec in _latest_fgis_records(records_json):
         base_type = _record_base_type(rec)
+        if not base_type:
+            continue
         source_doc = rec.get("documentName") or rec.get("normTableName") or ""
         source_guid = rec.get("normLegalDocPublishedGuid") or rec.get("guid") or ""
         cols = rec.get("normTableJson")
         vals = rec.get("normTableValueTableJson")
+        works = rec.get("normCatalogWorkTableJson")
         if isinstance(cols, str):
             cols = _loads_tolerant_json(cols)
         if isinstance(vals, str):
             vals = _loads_tolerant_json(vals)
+        if isinstance(works, str):
+            works = _loads_tolerant_json(works)
         cols, vals = cols or [], vals or []
         col_meta: dict[str, tuple[str, str]] = {}
         for c in cols:
             col_meta[_strip_em(c.get("number"))] = (c.get("name") or "", c.get("meterName") or "")
+        common_units = {str(unit).strip() for _name, unit in col_meta.values() if str(unit).strip()}
+        common_unit = next(iter(common_units)) if len(common_units) == 1 else ""
+        work_steps_by_norm: dict[str, list[str]] = {}
+        if isinstance(works, list):
+            for item in works:
+                if not isinstance(item, dict):
+                    continue
+                num = _strip_em(item.get("NormNumber"))
+                step = _strip_html(item.get("Name"))
+                if not num or not step:
+                    continue
+                bucket = work_steps_by_norm.setdefault(num, [])
+                if step not in bucket:
+                    bucket.append(step)
         # дерево: parentId → kind (по шапке категории)
         kind_by_part: dict[Any, str] = {}
         for row in vals:
@@ -397,6 +421,12 @@ def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if per_unit is None:
                     continue
                 name, unit = col_meta.get(num, ("", ""))
+                # Exact FGIS search often puts only the requested norm in normTableJson,
+                # while the resource value table contains every sibling column. Each
+                # value still carries NormName and all columns share the table meter.
+                # Propagate only those explicit fields; never borrow another norm name.
+                name = name or v.get("NormName") or ""
+                unit = unit or common_unit
                 rec_out = {f: None for f in RESOURCE_FIELDS}
                 rec_out["norm_code"] = _norm_code(num)
                 rec_out["base_type"] = base_type
@@ -405,6 +435,7 @@ def parse_fgis_json(records_json: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 rec_out["source_guid"] = source_guid
                 rec_out["norm_name"] = name
                 rec_out["norm_unit"] = unit
+                rec_out["work_steps"] = json.dumps(work_steps_by_norm.get(num) or [], ensure_ascii=False)
                 rec_out["kind"] = kind
                 rec_out["per_unit"] = per_unit
                 rec_out["resource_code"] = _resource_code_for_kind(kind, cipher)
@@ -449,13 +480,22 @@ def build_parquet(records: list[dict[str, Any]], out_path: str | Path = DEFAULT_
 
     out_path = Path(out_path)
     if append and out_path.exists():
-        old = pd.read_parquet(out_path)
+        try:
+            old = pd.read_parquet(out_path)
+        except Exception as exc:  # noqa: BLE001 - corrupt cache must not block a fresh rebuild
+            raise RuntimeError(
+                f"corrupt GESN parquet (refuse append): {out_path}: {exc}"
+            ) from exc
         df = pd.concat([old, df], ignore_index=True)
         if "norm_key" not in df.columns or df["norm_key"].isna().all():
             dedupe_cols = ["norm_code", "kind", "resource_code", "resource_name"]
         df = df.drop_duplicates(subset=dedupe_cols, keep="last")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_path, compression="snappy", index=False)
+    # Atomic replace: an interrupted mid-write previously left an unreadable
+    # snappy page ("Unexpected end of stream") and blocked resume forever.
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    df.to_parquet(tmp_path, compression="snappy", index=False)
+    tmp_path.replace(out_path)
     norm_keys = sorted({r.get("norm_key") or r.get("norm_code") for r in records if r.get("norm_code")})
     return {"parquet": str(out_path), "norms": len(norm_keys), "resources": len(df)}
 

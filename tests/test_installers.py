@@ -39,6 +39,13 @@ def test_release_artifact_excludes_private_runtime_paths():
         ROOT / "exporters" / "artifacts" / "exporters.zip",
         ROOT / "products" / "artel" / "MyVeras.Core" / "obj" / "project.assets.json",
         ROOT / "products" / "artel" / "MyVeras.Core" / "bin" / "Release" / "x.dll",
+        ROOT / "products" / "artel" / "installer" / "ARTEL.iss",
+        ROOT / "tools" / "artel_backend_service.py",
+        ROOT / "tools" / "seed_artel_learning_cases.py",
+        ROOT / "tests" / "test_artel_packaging.py",
+        ROOT / "schema" / "artel_family_learning_case.schema.json",
+        ROOT / "golden" / "artel_fop_set.json",
+        ROOT / "examples" / "artel" / "family_learning_case.metal_cabinet.json",
     ]
 
     for path in excluded:

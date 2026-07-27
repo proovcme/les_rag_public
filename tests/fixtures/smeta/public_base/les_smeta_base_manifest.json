@@ -1,0 +1,38 @@
+{
+  "schema": "les_smeta_base_v2",
+  "minimum_norms": 0,
+  "created_at": "2026-07-23T12:33:21.561663+00:00",
+  "source": {
+    "path": "C:\\Users\\MVBul\\Projects\\les_rag_public\\tests\\fixtures\\smeta\\public_base\\public_norms.parquet",
+    "sha256": "3c4d289dc9edd46ed4a4e75ffc5425dfb2ae5f92f32b3948397e05459bc61b28",
+    "rows": 18,
+    "norm_keys": 9
+  },
+  "output": {
+    "path": "C:\\Users\\MVBul\\Projects\\les_rag_public\\tests\\fixtures\\smeta\\public_base\\les_smeta_base.sqlite",
+    "sha256": "5cfc31fffe33fd28395987861d8686fcdd213b61240d8d2fbb816178914a7513",
+    "edition": "PUBLIC-FIXTURE-2026",
+    "norms": 9,
+    "resources": 18
+  },
+  "excluded": {
+    "rows_missing_norm_key": 0,
+    "resource_rows_missing_kind_or_name": 0,
+    "resource_identity_duplicates_dropped": 0,
+    "norms_missing_name_or_unit": 0,
+    "norms_without_resources": 0,
+    "untrusted_identity_rows_quarantined": 0,
+    "family_mismatch_rows_quarantined": 0,
+    "metadata_conflict_norms": 0
+  },
+  "examples": {
+    "missing_metadata_norm_keys": [],
+    "norms_without_resources": [],
+    "metadata_conflict_norm_keys": []
+  },
+  "integrity": {
+    "path": "C:\\Users\\MVBul\\AppData\\Local\\Temp\\les_public_smeta_sf_mr2b7\\les_smeta_base_integrity.json",
+    "schema": "les_smeta_base_integrity_v1",
+    "verdict": "failed"
+  }
+}

@@ -1,28 +1,49 @@
-# Сборка LesMailPoller.exe + регистрация задачи планировщика (классический Outlook, Win).
-#
-#   powershell -ExecutionPolicy Bypass -File setup_task.ps1                 # собрать + поставить задачу
-#   powershell -ExecutionPolicy Bypass -File setup_task.ps1 -EveryMinutes 5
-#   powershell -ExecutionPolicy Bypass -File setup_task.ps1 -Remove
-#
-# Задача interactive ("/it") — исполняется в сессии пользователя, где живёт Outlook (только так
-# COM-объект Outlook виден). Без админа. Эквивалент без PowerShell — csc + schtasks (см. README).
-# Log: %LOCALAPPDATA%\LES\logs\mail_poller.log. URL ЛЕС — %LOCALAPPDATA%\LES\mail_addin_url.txt.
-
-param([int]$EveryMinutes = 3, [switch]$Remove)
+# Build/install the classic-Outlook E.ZH.I.K. sidecar and interactive task.
+param(
+  [int]$EveryMinutes = 3,
+  [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "LES\bin"),
+  [string]$StateRoot = (Join-Path $env:LOCALAPPDATA "LES\mail"),
+  [switch]$Probe,
+  [switch]$Remove
+)
 $ErrorActionPreference = "Stop"
-$here = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$exe  = Join-Path $here "LesMailPoller.exe"
-$task = "LES Mail Poller"
+$task = "LES E.ZH.I.K. Outlook Collector"
 
-if ($Remove) { schtasks /delete /tn $task /f; return }
+if ($Remove) {
+  schtasks /delete /tn $task /f 2>$null
+  exit 0
+}
 
-# 1) Сборка (голый csc .NET Framework, winexe — без окна)
-$csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-& $csc /nologo /target:winexe /out:"$exe" /r:System.dll /r:System.Core.dll /r:Microsoft.CSharp.dll (Join-Path $here "LesMailPoller.cs")
-if ($LASTEXITCODE -ne 0) { throw "csc failed ($LASTEXITCODE)" }
+$sourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Definition
+$source = Join-Path $sourceRoot "LesMailPoller.cs"
+$compiler = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+if (-not (Test-Path -LiteralPath $compiler)) {
+  $compiler = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+}
+if (-not (Test-Path -LiteralPath $compiler)) { throw ".NET Framework csc.exe not found" }
 
-# 2) Задача: каждые N минут, в сессии текущего пользователя (interactive)
-$me = "$env:COMPUTERNAME\$env:USERNAME"
-schtasks /create /tn $task /tr "`"$exe`"" /sc minute /mo $EveryMinutes /ru $me /it /f
-schtasks /run /tn $task   # разовый прогон сейчас
-"task '$task' каждые $EveryMinutes мин, ru=$me; log: %LOCALAPPDATA%\LES\logs\mail_poller.log"
+New-Item -ItemType Directory -Force -Path $InstallRoot, $StateRoot | Out-Null
+$target = Join-Path $InstallRoot "LesMailPoller.exe"
+& $compiler /nologo /target:winexe /out:"$target" /r:System.dll /r:System.Core.dll /r:Microsoft.CSharp.dll $source
+if ($LASTEXITCODE -ne 0) { throw "LesMailPoller compile failed ($LASTEXITCODE)" }
+
+"http://127.0.0.1:8050/api/mail/collector/import" |
+  Set-Content -LiteralPath (Join-Path $StateRoot "collector_url.txt") -Encoding ASCII
+
+$identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$command = "`"$target`""
+schtasks /create /tn $task /tr $command /sc minute /mo $EveryMinutes /ru $identity /it /f | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Task Scheduler registration failed ($LASTEXITCODE)" }
+
+if ($Probe) {
+  & $target --probe
+  if ($LASTEXITCODE -ne 0) { throw "Outlook probe failed ($LASTEXITCODE)" }
+}
+
+[ordered]@{
+  task = $task
+  executable = $target
+  interval_minutes = $EveryMinutes
+  interactive_user = $identity
+  state_root = $StateRoot
+} | ConvertTo-Json -Compress

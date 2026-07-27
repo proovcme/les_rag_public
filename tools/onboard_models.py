@@ -5,8 +5,10 @@ hang on a lazy download. Weights are fetched into the standard Hugging Face cach
 via ``snapshot_download`` — idempotent (cached repos are skipped) and resumable.
 
 Model ids are read from ``.env`` (falling back to ``env.example``), so this stays
-in sync with whatever models the runtime is configured to use. Cloud-only setups
-(no local MLX) can skip everything with ``--skip-if-cloud``.
+in sync with whatever models the runtime is configured to use. Setups that do
+not use local Hugging Face / MLX weights can skip everything with
+``--skip-if-cloud``; the flag name is historical and also covers Ollama,
+Lemonade and OpenAI-compatible local servers.
 
 Usage:
     uv run python tools/onboard_models.py            # download configured weights
@@ -16,8 +18,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,9 +32,15 @@ MODEL_ENV_KEYS = ("MLX_MODEL", "LLM_MODEL", "EMBEDDING_MODEL")
 
 # Fallbacks if the key is absent from both .env and env.example.
 DEFAULTS = {
-    "MLX_MODEL": "mlx-community/Qwen3.5-4B-OptiQ-4bit",
+    "MLX_MODEL": DEFAULT_LOCAL_MLX_MODEL,
     "EMBEDDING_MODEL": "Qwen/Qwen3-Embedding-0.6B",
 }
+
+
+def configured_env_path() -> Path:
+    """Use the persistent installer env when bootstrap separated code and state."""
+    configured = os.getenv("LES_ENV_PATH", "").strip()
+    return Path(configured).expanduser() if configured else ROOT / ".env"
 
 
 def _read_env_file(path: Path) -> dict[str, str]:
@@ -50,7 +61,7 @@ def _read_env_file(path: Path) -> dict[str, str]:
 
 def resolve_models() -> list[str]:
     env = _read_env_file(ROOT / "env.example")
-    env.update(_read_env_file(ROOT / ".env"))  # .env wins
+    env.update(_read_env_file(configured_env_path()))  # persistent .env wins
     repos: list[str] = []
     for key in MODEL_ENV_KEYS:
         repo = env.get(key) or DEFAULTS.get(key, "")
@@ -62,10 +73,32 @@ def resolve_models() -> list[str]:
     return repos
 
 
+def active_provider() -> str:
+    env = _read_env_file(configured_env_path())
+    return (
+        env.get("LES_LLM_PROVIDER")
+        or env.get("LES_PROVIDER")
+        or env.get("PROVIDER")
+        or ""
+    ).strip().lower()
+
+
 def is_cloud_only() -> bool:
-    env = _read_env_file(ROOT / ".env")
-    provider = (env.get("LES_PROVIDER") or env.get("PROVIDER") or "").lower()
+    provider = active_provider()
     return provider in {"openai", "openrouter", "cloud"}
+
+
+def should_skip_local_weight_download() -> bool:
+    provider = active_provider()
+    return provider in {
+        "openai",
+        "openrouter",
+        "cloud",
+        "ollama",
+        "lemonade",
+        "openai-compatible",
+        "openai_compatible",
+    }
 
 
 def download(repo_id: str) -> bool:
@@ -90,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--skip-if-cloud",
         action="store_true",
-        help="do nothing when the active provider is cloud (openai/openrouter)",
+        help="do nothing when the active provider does not need local HF weights",
     )
     args = parser.parse_args(argv)
 
@@ -100,8 +133,9 @@ def main(argv: list[str] | None = None) -> int:
             print(repo)
         return 0
 
-    if args.skip_if_cloud and is_cloud_only():
-        print("[onboard] cloud provider active — skipping local weight download")
+    if args.skip_if_cloud and should_skip_local_weight_download():
+        provider = active_provider() or "unknown"
+        print(f"[onboard] provider {provider} does not need local HF weights — skipping")
         return 0
 
     if not models:

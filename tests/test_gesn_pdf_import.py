@@ -122,6 +122,63 @@ def test_fgis_json_builds_parquet(tmp_path):
     assert list(df.columns) == list(RESOURCE_FIELDS)
 
 
+def test_fgis_json_keeps_work_steps_from_catalog_work_table():
+    records = [
+        {
+            "documentName": "Сборник 15<br/>Таблица ГЭСН 15-02-036",
+            "documentTypeName": "ГЭСН",
+            "id": 1,
+            "normLegalDocPublishedGuid": "guid",
+            "normTableJson": [
+                {
+                    "number": "15-02-036-02",
+                    "name": "Штукатурка по сетке без устройства каркаса: улучшенная потолков",
+                    "meterName": "100 м2",
+                }
+            ],
+            "normCatalogWorkTableJson": [
+                {
+                    "NormNumber": "15-02-036-02",
+                    "Name": "Натягивание проволочной сетки.",
+                },
+                {
+                    "NormNumber": "15-02-036-02",
+                    "Name": "Оштукатуривание и отделка поверхностей.",
+                },
+            ],
+            "normTableValueTableJson": [
+                {
+                    "NormTablePartNormValueList": [],
+                    "NormTablePartParentId": None,
+                    "Cipher": "1",
+                    "Name": "Затраты труда рабочих",
+                    "NormTablePartId": 10,
+                },
+                {
+                    "NormTablePartNormValueList": [
+                        {
+                            "NormNumber": "15-02-036-02",
+                            "Value": "128",
+                        }
+                    ],
+                    "NormTablePartParentId": 10,
+                    "Cipher": "1-100-36",
+                    "Name": "Средний разряд работы 3.6",
+                    "UnitName": "чел.-ч",
+                    "NormTablePartId": 11,
+                },
+            ],
+        }
+    ]
+
+    recs = parse_fgis_json(records)
+
+    assert recs
+    assert recs[0]["work_steps"] == (
+        '["Натягивание проволочной сетки.", "Оштукатуривание и отделка поверхностей."]'
+    )
+
+
 @pytest.mark.skipif(not PDF.exists(), reason="официальный PDF не скачан (data/ в gitignore)")
 def test_pdf_reproduces_etalon():
     """PDF путь: все значения эталона; машинисты — по PDF-факту (1.02, не 1.01)."""

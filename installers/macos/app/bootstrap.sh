@@ -68,8 +68,28 @@ cd "$INSTALL_DIR" || fail "нет каталога установки $INSTALL_D
 # Bare `uv sync` evicts mlx-lm (see memory runtime-uv-sync-mlx-extra) → always
 # pass --extra mac-mlx. --extra desktop pulls the native shell (pywebview+tray).
 notify "Готовлю окружение…"
-echo "uv sync --extra mac-mlx --extra desktop"
-"$UV" sync --extra mac-mlx --extra desktop || fail "uv sync не удался"
+if [ "${LES_TAURI_SHELL:-0}" = "1" ]; then
+  echo "uv sync --extra mac-mlx (Tauri owns desktop shell)"
+  "$UV" sync --extra mac-mlx || fail "uv sync не удался"
+else
+  echo "uv sync --extra mac-mlx --extra desktop (legacy fallback)"
+  "$UV" sync --extra mac-mlx --extra desktop || fail "uv sync не удался"
+fi
+
+# Tauri owns the native window. Lifecycle menu actions must not start the old
+# pywebview shell or repeat provider/model onboarding.
+if [ "${LES_TAURI_SHELL:-0}" = "1" ]; then
+  case "${LES_TAURI_ACTION:-start}" in
+    stop)
+      "$UV" run lesctl stop --include-ui || fail "не удалось остановить службы"
+      exit 0
+      ;;
+    restart)
+      "$UV" run lesctl restart --include-ui || fail "не удалось перезапустить службы"
+      exit 0
+      ;;
+  esac
+fi
 
 # --- 4. .env + runtime directories ------------------------------------------
 "$UV" run lesctl init --profile mac-native >/dev/null 2>&1 || true
@@ -90,8 +110,13 @@ echo "onboard models"
 # native window + tray, and degrades to a browser tab if the GUI deps are
 # missing. It blocks while the window is open, so run it foreground.
 notify "Запускаю Совушку…"
-echo "les_shell"
-"$UV" run python -m tools.les_shell || fail "не удалось запустить шелл"
+if [ "${LES_TAURI_SHELL:-0}" = "1" ]; then
+  echo "lesctl start --include-ui (Tauri shell)"
+  "$UV" run lesctl start --include-ui || fail "не удалось поднять службы"
+else
+  echo "les_shell (legacy fallback)"
+  "$UV" run python -m tools.les_shell || fail "не удалось запустить шелл"
+fi
 
 echo "===== $(date '+%Y-%m-%d %H:%M:%S') bootstrap done ====="
 exit 0

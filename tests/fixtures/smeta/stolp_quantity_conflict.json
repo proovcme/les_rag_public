@@ -1,0 +1,93 @@
+{
+  "region": "СПб",
+  "period": "2 кв. 2026",
+  "text_total": {
+    "label": "text_total",
+    "value": "664 711,12",
+    "unit": "кг"
+  },
+  "table_total": {
+    "label": "table_total",
+    "value": "664 711,72",
+    "unit": "кг"
+  },
+  "mass_rows": [
+    {"label": "tier_1", "value": "29 626,56", "unit": "кг"},
+    {"label": "tier_2", "value": "72 052,58", "unit": "кг"},
+    {"label": "tier_3", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_4", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_5", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_6", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_7", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_8", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_9", "value": "65 000,00", "unit": "кг"},
+    {"label": "tier_10", "value": "108 032,58", "unit": "кг"},
+    {"label": "tier_11_pedestal", "value": "32 180,00", "unit": "кг"}
+  ],
+  "partial_groups": [
+    {
+      "label": "rows_1_10",
+      "input_labels": [
+        "tier_1",
+        "tier_2",
+        "tier_3",
+        "tier_4",
+        "tier_5",
+        "tier_6",
+        "tier_7",
+        "tier_8",
+        "tier_9",
+        "tier_10"
+      ]
+    }
+  ],
+  "quantity_conflict_form": [
+    {
+      "variant": "А",
+      "volume": "664,71112 т",
+      "source": "текст ТЗ",
+      "composition": "заявлено как общая масса 11 ярусов",
+      "calculation_status": "договорная величина, конфликтует с таблицей"
+    },
+    {
+      "variant": "Б",
+      "volume": "664,71172 т",
+      "source": "итоговая строка таблицы / сумма строк 1-10",
+      "composition": "фактически без 11-го яруса",
+      "calculation_status": "считать, если 11-й ярус исключён"
+    },
+    {
+      "variant": "В",
+      "volume": "696,89172 т",
+      "source": "сумма всех 11 строк / бронза+сталь",
+      "composition": "включает все 11 ярусов",
+      "calculation_status": "считать, если весь перечень входит в объём"
+    }
+  ],
+  "bolt_inputs": {
+    "base_anchor_m36": 48,
+    "base_anchor_m24": 96,
+    "intertier_joints": 10,
+    "bolts_per_intertier_joint_m20": 144,
+    "control_tightening_percent": 20
+  },
+  "forbidden_answer_markers": [
+    "252 706,82 + 444 184,90 = 664 711,72",
+    "разница 0,180 т",
+    "масса 664,711 т проверена",
+    "priced_final"
+  ],
+  "required_answer_markers": [
+    "форма развилки исходных объёмов",
+    "664,71112 т",
+    "664,71172 т",
+    "696,89172 т",
+    "32,180 т",
+    "0,60 кг",
+    "сумма строк 1-10",
+    "сумма всех 11 строк",
+    "РИМ/ГЭСН",
+    "рынок",
+    "scenario_estimate"
+  ]
+}

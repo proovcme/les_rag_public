@@ -3,6 +3,7 @@
 Живой end-to-end (первый токен < 2с на MLX) — [live]; здесь проверяем плумбинг
 без сервисов: серверный кадр/события и клиентский парсер SSE.
 """
+import asyncio
 import json
 
 import httpx
@@ -11,6 +12,33 @@ import pytest
 from proxy.routers import chat as chat_router
 from proxy.routers.chat import ChatRequest, _sse_event, chat_stream
 from sovushka import state as sov_state
+
+
+def test_persist_session_id_survives_via_user_storage(monkeypatch):
+    store = {}
+
+    class _UserStorage(dict):
+        def get(self, key, default=None):
+            return store.get(key, default)
+
+        def __setitem__(self, key, value):
+            store[key] = value
+
+    class _AppStorage:
+        user = _UserStorage()
+
+    monkeypatch.setattr(sov_state, "app", type("A", (), {"storage": _AppStorage()})())
+    monkeypatch.setitem(sov_state.state, "session_id", "ephemeral-old")
+
+    sid = sov_state.persist_session_id("sess-keep-me")
+    assert sid == "sess-keep-me"
+    assert store["les_chat_session_id"] == "sess-keep-me"
+    assert sov_state.state["session_id"] == "sess-keep-me"
+
+    monkeypatch.setitem(sov_state.state, "session_id", "other-in-memory")
+    restored = sov_state.ensure_session_id()
+    assert restored == "sess-keep-me"
+    assert sov_state.state["session_id"] == "sess-keep-me"
 
 
 # ── серверная сторона ───────────────────────────────────────────────
@@ -91,6 +119,71 @@ async def test_chat_stream_reset_then_final(monkeypatch):
     resp = await chat_stream(ChatRequest(question="q"), _user=None)
     body = await _drain(resp)
     assert body.index("event: reset") < body.index('data: "финал"')
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_recovers_long_answer_instead_of_late_reset_error(monkeypatch):
+    monkeypatch.setenv("LES_STREAM_RECOVERY_MIN_CHARS", "20")
+    monkeypatch.setenv("LES_STREAM_RESET_PRESERVE_CHARS", "20")
+    saved = {}
+
+    def fake_save(**kwargs):
+        saved.update(kwargs)
+        return 42
+
+    async def long_answer_then_tail_failure(req, token_sink=None):
+        await token_sink({"event": "sources", "data": {"sources": ["project.pdf"]}})
+        for piece in ("Готовый ", "инженерный ", "ответ по проекту."):
+            await token_sink({"event": "token", "data": piece})
+        await token_sink({"event": "reset", "data": ""})
+        await token_sink({"event": "token", "data": "дубль после reset"})
+        raise RuntimeError("tail stream timeout")
+
+    monkeypatch.setattr(chat_router, "_run_chat", long_answer_then_tail_failure)
+    monkeypatch.setattr(chat_router, "save_chat_history", fake_save)
+    resp = await chat_stream(ChatRequest(question="расскажи про проект", session_id="sess-1"), _user=None)
+    body = await _drain(resp)
+
+    assert "event: reset" not in body
+    assert "дубль после reset" not in body
+    assert "event: error" not in body
+    assert "event: final" in body
+    final_blob = body.split("event: final\ndata: ", 1)[1].split("\n\n", 1)[0]
+    final = json.loads(final_blob)
+    assert final["answer"] == "Готовый инженерный ответ по проекту."
+    assert final["crag_status"] == "UNVALIDATED"
+    assert final["sources"] == ["project.pdf"]
+    assert final["history_id"] == 42
+    assert final["retrieval_trace"]["stream_recovery"]["reason"] == "RuntimeError"
+    assert final["retrieval_trace"]["stream_recovery"]["reset_suppressed"] is True
+    assert saved["session_id"] == "sess-1"
+    assert saved["question"] == "расскажи про проект"
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_waits_for_runner_instead_of_cancel_on_client_close(monkeypatch):
+    import inspect
+
+    source = inspect.getsource(chat_stream)
+    assert "task.cancel()" not in source
+    assert "client disconnected; waiting for runner to finish" in source
+
+    finished = {"v": False}
+
+    async def slow_run(req, token_sink=None):
+        await token_sink({"event": "token", "data": "часть"})
+        await asyncio.sleep(0.05)
+        finished["v"] = True
+        return {"answer": "готово", "crag_status": "VERIFIED", "sources": []}
+
+    monkeypatch.setattr(chat_router, "_run_chat", slow_run)
+    resp = await chat_stream(ChatRequest(question="q"), _user=None)
+    agen = resp.body_iterator
+    first = await agen.__anext__()
+    assert "event: progress" in (first if isinstance(first, str) else first.decode())
+    await agen.aclose()
+    await asyncio.sleep(0.1)
+    assert finished["v"] is True
 
 
 @pytest.mark.asyncio

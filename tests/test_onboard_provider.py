@@ -63,6 +63,13 @@ def test_already_configured(tmp_path):
     assert op.already_configured(env) is True
 
 
+def test_provider_platform_compatibility():
+    assert op.provider_compatible_with_platform("ollama", "windows") is True
+    assert op.provider_compatible_with_platform("openai", "windows") is True
+    assert op.provider_compatible_with_platform("mlx", "windows") is False
+    assert op.provider_compatible_with_platform("mlx", "macos") is True
+
+
 def test_main_skip_if_configured(tmp_path, monkeypatch, capsys):
     env = tmp_path / ".env"
     env.write_text("LES_LLM_PROVIDER=openai\n", encoding="utf-8")
@@ -80,6 +87,31 @@ def test_main_non_interactive_provider_writes_env(tmp_path, monkeypatch):
     text = env.read_text(encoding="utf-8")
     assert "LES_LLM_PROVIDER=openrouter" in text
     assert "OPENROUTER_API_KEY=sk-1" in text
+
+
+def test_main_windows_replaces_stale_mlx_provider(tmp_path, monkeypatch, capsys):
+    env = tmp_path / ".env"
+    env.write_text("LES_LLM_PROVIDER=mlx\nMLX_MODEL=local/model\n", encoding="utf-8")
+    monkeypatch.setattr(op, "ENV_PATH", env)
+
+    assert op.main(["--provider", "ollama", "--ensure-platform", "windows"]) == 0
+
+    text = env.read_text(encoding="utf-8")
+    assert "LES_LLM_PROVIDER=ollama" in text
+    assert "OLLAMA_MODEL=qwen3.5:9b" in text
+    assert "LLM_MODEL=qwen3.5:9b" in text
+    assert "несовместим" in capsys.readouterr().out
+
+
+def test_main_windows_preserves_compatible_cloud_provider(tmp_path, monkeypatch, capsys):
+    env = tmp_path / ".env"
+    env.write_text("LES_LLM_PROVIDER=openai\nOPENAI_API_KEY=kept\n", encoding="utf-8")
+    monkeypatch.setattr(op, "ENV_PATH", env)
+
+    assert op.main(["--provider", "ollama", "--ensure-platform", "windows"]) == 0
+
+    assert env.read_text(encoding="utf-8") == "LES_LLM_PROVIDER=openai\nOPENAI_API_KEY=kept\n"
+    assert "совместим" in capsys.readouterr().out
 
 
 def test_main_show(tmp_path, monkeypatch, capsys):

@@ -25,6 +25,30 @@ def test_route_csv_smeta_to_parquet(tmp_path):
     assert route.pipeline == "parquet"
 
 
+def test_route_smeta_ru_norm_archive_projection_to_category_dataset(tmp_path):
+    path = tmp_path / "RAG_Content/TABLE_SMETA/SMETA_RU_NORM/fsnb2022/00_dataset_card.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        "# Smeta.RU norm dataset\n\nФСНБ-2022 ГЭСН ГЭСНм ФСБЦ ресурсы",
+        encoding="utf-8",
+    )
+
+    route = route_document(path)
+
+    assert route.domain == "SMETA_RU_NORM_FSNB2022"
+    assert route.dataset_name == "SMETA_RU_NORM_FSNB2022_Index"
+
+
+def test_smeta_service_cards_route_to_separate_system_dataset(tmp_path):
+    path = tmp_path / "RAG_Content/TABLE_SMETA/SMETA_SERVICE/collection_01.md"
+    path.parent.mkdir(parents=True)
+    path.write_text("# ГЭСН 01\nНавигационная карточка сборника", encoding="utf-8")
+    route = route_document(path)
+    assert route.domain == "SMETA_SERVICE"
+    assert route.dataset_name == "SMETA_SERVICE_Index"
+    assert route.doc_type in {"NORMATIVE", "SMETA"}
+
+
 def test_route_pdf_with_table_signals_to_markdown_pdf_tables():
     probe = DocumentProbe(
         path=Path("Спецификация.pdf"),
@@ -44,6 +68,68 @@ def test_route_pdf_with_table_signals_to_markdown_pdf_tables():
     assert route.content_type == "mixed"
     assert route.complexity == "structured"
     assert route.pipeline == "markdown_pdf_tables"
+
+
+def test_project_pdf_with_weak_smeta_word_is_not_table_smeta():
+    probe = DocumentProbe(
+        path=Path("27_05-22-Р-ЭОМ.1_19.06.2025.pdf"),
+        suffix=".pdf",
+        size_bytes=27_000_000,
+        page_count=83,
+        text_sample=(
+            "Центр обработки данных. Система бесперебойного гарантированного "
+            "электроснабжения. В пояснениях встречается смета затрат."
+        ),
+        has_text_layer=True,
+        has_tables=True,
+        table_count_hint=3,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "DOCUMENT"
+    assert route.domain == "NTD_ELECTRICAL"
+    assert route.dataset_name == "NTD_ELECTRICAL_Index"
+    assert route.pipeline == "markdown_pdf_tables"
+
+
+def test_project_pdf_with_normative_references_stays_project_document():
+    probe = DocumentProbe(
+        path=Path("27_05-22-Р-ЭОМ.1 Изм.8.3 полный.pdf"),
+        suffix=".pdf",
+        size_bytes=33_000_000,
+        page_count=117,
+        text_sample=(
+            "Заказчик: ООО «Научный центр «Большая цифра». Центр обработки данных. "
+            "РАБОЧАЯ ДОКУМЕНТАЦИЯ. Система бесперебойного гарантированного "
+            "электропитания. Технические решения соответствуют сводам правил, "
+            "ГОСТ и СП, действующим на территории Российской Федерации."
+        ),
+        has_text_layer=True,
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "DOCUMENT"
+    assert route.domain == "NTD_ELECTRICAL"
+
+
+def test_pdf_named_smeta_still_routes_to_table_smeta():
+    probe = DocumentProbe(
+        path=Path("Локальная смета ЭОМ.pdf"),
+        suffix=".pdf",
+        size_bytes=2_000_000,
+        page_count=12,
+        text_sample="Наименование работ Ед.изм. Количество Стоимость",
+        has_text_layer=True,
+        has_tables=True,
+    )
+
+    route = classify_document(probe)
+
+    assert route.doc_type == "SMETA"
+    assert route.domain == "TABLE_SMETA"
 
 
 def test_route_scan_pdf_to_needs_ocr():

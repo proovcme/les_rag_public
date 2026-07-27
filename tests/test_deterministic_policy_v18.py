@@ -35,7 +35,13 @@ def test_policy_explicit_term_with_context_not_blocked_by_scope():
 def test_policy_command_channels_pass_through():
     assert P("tasks", "создай задачу проверить АОСР")[0] is True
     assert P("preset", "переключись на облако")[0] is True
-    assert P("smeta", "цена 91.05.01-017")[0] is True
+
+
+def test_professional_domain_channels_do_not_return_code_final():
+    for channel in ("smeta", "asbuilt", "doc_registry", "field"):
+        ok, why = P(channel, "цена 91.05.01-017", candidate={"operation": "price"})
+        assert ok is False
+        assert why == "professional_domain_requires_model_final"
 
 def test_policy_classifiers():
     assert pol.is_source_scoped_query("найди х в спецификации")
@@ -154,5 +160,5 @@ def test_v06_resource_real_workbook_regression():
 
 def test_v03_lsr_regression():
     from proxy.services import construction_harness_service as ch
-    asm = ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])
+    asm = ch.lsr_assemble([{"code": "ГЭСН12-01-034-02", "work": "обрешётка", "unit": "м2", "qty": 720}])
     assert asm["asm_positions"][0]["qty"] == 7.2

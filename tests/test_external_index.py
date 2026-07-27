@@ -10,7 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.qdrant_adapter import MetaDB, QdrantLlamaIndexAdapter
-from proxy.storage.file_storage import validate_external_source
+from proxy.storage.file_storage import repair_windows_mojibake_path, validate_external_source
 
 
 # ── Валидатор: безопасность ──────────────────────────────────────────────────
@@ -34,6 +34,17 @@ def test_validate_external_source_allow_any_accepts_any_dir(tmp_path, monkeypatc
     with pytest.raises(HTTPException) as exc:           # несуществующий → 404 (guard)
         validate_external_source(str(tmp_path / "nope"))
     assert exc.value.status_code == 404
+
+
+def test_validate_external_source_repairs_windows_cp866_mojibake(tmp_path, monkeypatch):
+    monkeypatch.delenv("LES_EXTERNAL_ALLOW_ANY", raising=False)
+    monkeypatch.delenv("LES_EXTERNAL_SOURCE_ROOTS", raising=False)
+    real = tmp_path / "00_Лесной 64_Котельная"
+    real.mkdir()
+    mojibake = str(real).encode("cp866").decode("cp1251")
+
+    assert repair_windows_mojibake_path(mojibake) == str(real)
+    assert validate_external_source(mojibake) == real.resolve()
 
 
 def test_validate_external_source_accepts_path_inside_root(tmp_path, monkeypatch):

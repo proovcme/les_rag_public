@@ -1,8 +1,8 @@
-"""DeterministicFinalPolicy (v0.18) — детерминированный final-ответ разрешён ТОЛЬКО при явном намерении.
+"""DeterministicFinalPolicy (v0.18+) — детерминированный final-ответ только для control-plane.
 
-Класс-фикс взамен точечного stopword-фикса: legacy deterministic-каналы (glossary/registry) больше не
-перехватывают проектные/descriptive/source-scoped вопросы. Glossary — только если литеральный термин
-реально в запросе. Registry — только точный глобальный реестр. Лёгкий, без unified-стека (runtime-safe).
+Класс-фикс взамен точечного stopword-фикса: legacy deterministic-каналы больше не перехватывают
+проектные/descriptive/source-scoped вопросы. Professional-domain каналы не имеют права становиться
+финальным visible answer: код может вернуть tool-result, но ответ формулирует модель.
 """
 
 from __future__ import annotations
@@ -93,12 +93,15 @@ def glossary_term_in_query(concept_id: str | None, question: str) -> bool:
         return False
 
 
-# каналы-команды (явные императивы/режимы) — не относятся к hijack-классу, пропускаем как есть
+# каналы-команды (явные императивы/режимы) — не относятся к professional-domain answer.
 _COMMAND_CHANNELS = frozenset({
-    "tasks", "preset", "asbuilt", "les_md", "field", "decision", "memory", "help",
-    "doc_registry", "agent_command", "smeta",
+    "tasks", "preset", "les_md", "decision", "memory", "help", "agent_command",
 })
-# каналы, которые МОГУТ перехватить нарративный/проектный вопрос → жёсткая policy
+# professional-domain каналы должны быть tools/model-context, а не финальным ответом кода.
+_PROFESSIONAL_DOMAIN_CHANNELS = frozenset({
+    "asbuilt", "doc_registry", "field", "smeta",
+})
+# каналы, которые МОГУТ перехватить нарративный/проектный вопрос → жёсткая policy.
 _GATED_CHANNELS = frozenset({"glossary", "registry"})
 
 
@@ -108,8 +111,12 @@ def can_return_deterministic_final(channel: str, question: str, *, project_id: i
     в unified/router/RAG (а не выдаёт случайный термин/глобальный реестр)."""
     q = (question or "").lower().replace("ё", "е")
     cand = candidate or {}
-    if channel not in _GATED_CHANNELS:
+    if channel in _PROFESSIONAL_DOMAIN_CHANNELS:
+        return False, "professional_domain_requires_model_final"
+    if channel in _COMMAND_CHANNELS:
         return True, "command_or_tool_channel"
+    if channel not in _GATED_CHANNELS:
+        return False, "deterministic_final_not_allowed"
 
     scoped = is_source_scoped_query(q)
     descriptive = is_project_descriptive_query(q)

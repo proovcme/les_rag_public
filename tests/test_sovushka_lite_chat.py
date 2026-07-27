@@ -16,6 +16,9 @@ def test_lite_chat_html_uses_static_shell_and_local_bridge():
     assert "/api/chat" in html
     assert "/api/chat/history/" in html
     assert "history_id: data.history_id || null" in html
+    assert "restoreSessionHistory" in html
+    assert "/api/chat/history?session_id=" in html
+    assert "Сессия восстановлена." in html
     assert "Плохой ответ" in html
     assert "bad_answer" in html
     assert "Источник не из того датасета" in html
@@ -23,7 +26,8 @@ def test_lite_chat_html_uses_static_shell_and_local_bridge():
     assert "Е.Ж.И.К. Почта" in html
     assert "/classic" in html
     assert "Индексирование активно:" in html
-    assert 'const isLocalUi = location.port === "8051";' in html
+    assert 'location.port === "8051"' in html
+    assert 'location.port === "8061"' in html
     assert "bot.innerHTML" not in html
 
 
