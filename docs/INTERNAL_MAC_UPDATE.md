@@ -37,6 +37,9 @@ make status-mac-update
 - `.env`, `data/`, `storage/`, `RAG_Content/`, индексы, секреты, desktop/installer и baseline
   запрещены на уровнях builder, API validator и detached helper;
 - перед заменой каждый установленный файл обязан совпасть с base или target SHA;
+- частично восстановленный старый runtime принимается только когда его полный текущий SHA
+  подтверждён сохранённым `file_hash_bundle` прежнего deploy stamp для того же пути; произвольный
+  drift продолжает блокировать установку;
 - пакет content-addressed и локальный: updater не публикует feed, tag, GitHub Release и не
   обращается к Legion;
 - повторная установка уже применённого пакета возвращает «Mac уже обновлён».

@@ -87,7 +87,12 @@ def _current_hash(path: Path) -> str | None:
 def _entry_accepts_current(entry: dict[str, Any], current: str | None) -> bool:
     target = str(entry.get("sha256") or "") or None
     base = str(entry.get("base_sha256") or "") or None
-    return current in {base, target} or (
+    accepted = {
+        str(value).lower()
+        for value in (entry.get("accepted_sha256") or [])
+        if len(str(value)) == 64
+    }
+    return current in {base, target, *accepted} or (
         current is None and bool(entry.get("accepted_missing"))
     )
 

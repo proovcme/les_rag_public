@@ -98,6 +98,25 @@ def test_mac_feed_validates_archive_helper_allowlist_and_runtime_base(tmp_path, 
         update_service._validate_mac_update_feed(feed)
 
 
+def test_mac_feed_accepts_only_explicit_full_hash_from_previous_deploy_stamp(
+    tmp_path, monkeypatch
+):
+    runtime, update_root, feed = _prepared_update(
+        tmp_path, current=b"partial-restored\n", target=b"new\n"
+    )
+    current_hash = _sha(b"partial-restored\n")
+    feed["update"]["files"][0]["base_sha256"] = _sha(b"declared-base\n")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    monkeypatch.setattr(update_service, "mac_update_root", lambda: update_root)
+
+    blocked = update_service._validate_mac_update_feed(feed)
+    assert blocked["compatible"] is False
+
+    feed["update"]["files"][0]["accepted_sha256"] = [current_hash]
+    accepted = update_service._validate_mac_update_feed(feed)
+    assert accepted["compatible"] is True
+
+
 def test_mac_builder_excludes_repo_docs_desktop_and_user_state():
     assert mac_update.normalize_path("proxy/services/example.py") == "proxy/services/example.py"
     for path in ("docs/README.md", "desktop/app.json", "data/private.db", ".env"):

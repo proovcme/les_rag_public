@@ -85,15 +85,43 @@ def _resolve_commit(value: str) -> str:
 
 
 def _runtime_base_commit(runtime: Path) -> str:
+    payload = _runtime_stamp(runtime)
+    commit = str(payload.get("deployed_commit") or "").strip()
+    if not commit or commit == "unknown":
+        raise RuntimeError("Mac runtime deploy stamp has no base commit")
+    return _resolve_commit(commit)
+
+
+def _runtime_stamp(runtime: Path) -> dict[str, Any]:
     stamp = runtime / ".les_deploy_stamp.json"
     try:
         payload = json.loads(stamp.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise RuntimeError("Mac runtime deploy stamp is missing or unreadable") from exc
-    commit = str(payload.get("deployed_commit") or "").strip()
-    if not commit or commit == "unknown":
-        raise RuntimeError("Mac runtime deploy stamp has no base commit")
-    return _resolve_commit(commit)
+    if not isinstance(payload, dict):
+        raise RuntimeError("Mac runtime deploy stamp has invalid shape")
+    return payload
+
+
+def _stamped_runtime_hashes(runtime: Path, stamp: dict[str, Any]) -> dict[str, str]:
+    """Return only full hashes whose prefix is explicitly owned by deploy stamp."""
+    bundle = stamp.get("file_hash_bundle")
+    if not isinstance(bundle, dict):
+        return {}
+    accepted: dict[str, str] = {}
+    for raw_path, raw_prefix in bundle.items():
+        try:
+            path = normalize_path(str(raw_path))
+        except ValueError:
+            continue
+        prefix = str(raw_prefix or "").strip().lower()
+        target = runtime / Path(*PurePosixPath(path).parts)
+        if len(prefix) < 16 or not target.is_file():
+            continue
+        current = sha256_file(target)
+        if current.startswith(prefix):
+            accepted[path] = current
+    return accepted
 
 
 def _changed_entries(base: str, target: str) -> list[tuple[str, str]]:
@@ -132,10 +160,12 @@ def build_update(
     target: str,
     output: Path = UPDATE_ROOT,
     contract: dict[str, Any] | None = None,
+    accepted_runtime_hashes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     base_commit = _resolve_commit(base)
     target_commit = _resolve_commit(target)
     contract = contract or patch_release.load_contract()
+    accepted_runtime_hashes = accepted_runtime_hashes or {}
     changes = _changed_entries(base_commit, target_commit)
     if not changes:
         raise ValueError("Mac update has no deployable changes")
@@ -161,6 +191,12 @@ def build_update(
             "sha256": sha256_bytes(after) if after is not None else None,
             "bytes": len(after) if after is not None else 0,
         }
+        accepted_current = str(accepted_runtime_hashes.get(path) or "")
+        if accepted_current and accepted_current not in {
+            entry["base_sha256"],
+            entry["sha256"],
+        }:
+            entry["accepted_sha256"] = [accepted_current]
         files.append(entry)
         if after is not None:
             payload[path] = after
@@ -230,8 +266,13 @@ def build_update(
 
 def prepare() -> dict[str, Any]:
     target = patch_release.require_clean_pushed_branch(BRANCH)
+    stamp = _runtime_stamp(RUNTIME)
     base = _runtime_base_commit(RUNTIME)
-    return build_update(base=base, target=target)
+    return build_update(
+        base=base,
+        target=target,
+        accepted_runtime_hashes=_stamped_runtime_hashes(RUNTIME, stamp),
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

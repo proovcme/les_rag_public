@@ -501,13 +501,18 @@ def _validate_mac_update_feed(payload: dict) -> dict:
         current = sha256_file(target) if target.is_file() else None
         base_hash = str(entry.get("base_sha256") or "") or None
         target_hash = str(entry.get("sha256") or "") or None
+        accepted_hashes = {
+            str(value).lower()
+            for value in (entry.get("accepted_sha256") or [])
+            if re.fullmatch(r"[0-9a-fA-F]{64}", str(value))
+        }
         if operation == "delete":
             target_is_current = current is None
         else:
             target_is_current = current == target_hash
         if target_is_current:
             target_matches += 1
-        if current in {base_hash, target_hash} or (
+        if current in {base_hash, target_hash, *accepted_hashes} or (
             current is None and bool(entry.get("accepted_missing"))
         ):
             compatible_files += 1
