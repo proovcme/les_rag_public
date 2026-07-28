@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.25.0 (dev; 0.24.46 published)
-номер сборки:              470     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.470 (dev; Windows не выпускался)
+номер сборки:              471     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.471 (dev; Windows не выпускался)
 ветка выпуска:             main
 dev implementation:       main; 0.25.0 product/RAG boundary release
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
@@ -18,7 +18,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
 ```
 
-> 0.25.0 / build 470 — продуктовые экраны, отдельный ФГИС-сметный RAG и user-owned общий корпус
+> 0.25.0 / build 471 — продуктовые экраны, отдельный ФГИС-сметный RAG и user-owned общий корпус
 >
 > Дата: 2026-07-28
 > Статус: dev; clean smeta generation/release gate выполняются.
@@ -40,8 +40,10 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > фиксирует `backfill_complete`, production interval увеличен до десяти минут, run-duration видна
 > в безопасном логе, а Windows platform gate компилирует настоящий C# sidecar и выполняет cursor
 > self-test. Первый production smoke обнаружил второй реальный дефект: синхронная RAG-регистрация и
-> parser удерживали COM-сборщик более четырёх минут. Build 470 подтверждает raw snapshot до отдельной
-> последовательной RAG-очереди, запускает parser только после её опустошения и ограничивает один
+> parser удерживали COM-сборщик более четырёх минут. Build 470 вынес RAG upload, но повторный Legion
+> smoke доказал, что exact parsing до HTTP 202 всё ещё удерживает Outlook. Build 471 атомарно
+> сохраняет raw+spool manifest и возвращает 202 до exact registry; spool переживает restart,
+> запускает parser только после опустошения очереди и ограничивает один
 > Outlook-проход 10 снимками/12 секундами. Диагноз подтверждён живой задачей Legion; выпуск требует
 > повторного измерения установленного сборщика.
 > Совушка разделена по рабочим задачам: «Документы» показывают только фактические RAG-фрагменты
@@ -53,8 +55,8 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > Gate до commit: generation `49 818/49 818`, dense `49 818`, BM25 sparse `49 818`,
 > compatible fingerprint/base `49 818`, native RRF + typed rehydration ready; quality probe
 > `12/12` с обоими каналами в RRF top-5 и без missing cards; hybrid+rerank semantic smoke `2/2`.
-> `make verify` — 2751 collected; `make test` — 2742 passed / 9 skipped; mail gate
-> `62 passed`; native Cargo и повторные platform/release gates выполняются для build 470. HTTP release smoke
+> `make verify` — 2752 collected; `make test` — 2743 passed / 9 skipped; mail gate
+> `63 passed`; native Cargo и повторные platform/release gates выполняются для build 471. HTTP release smoke
 > `pass=6/warn=3/fail=0`. FIRE/HVAC `16/16` не применим к пустому user-owned `les_rag` и честно
 > зафиксирован как `N/A: corpus absent`, без системного seed. Commit/CI/Legion/publication — далее.
 > Первый clean GitHub run `30339455936` выявил две скрытые зависимости локального контура:
