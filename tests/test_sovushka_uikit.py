@@ -26,6 +26,7 @@ def test_feedback_state_rejects_unknown_kind():
 def test_uikit_has_accessible_motion_and_control_contract():
     assert "--sov-ui-hit: 40px" in UIKIT_CSS
     assert ":focus-visible" in UIKIT_CSS
+    assert "outline: 2px solid var(--accent) !important" in UIKIT_CSS
     assert "prefers-reduced-motion: reduce" in UIKIT_CSS
     assert "transition: all" not in UIKIT_CSS
     assert "scale(.96)" in UIKIT_CSS
@@ -245,3 +246,30 @@ def test_configuration_home_uses_uikit_and_progressive_disclosure():
     assert ".sov-config-status-strip" in UIKIT_CSS
     assert ".sov-config-contours" in UIKIT_CSS
     assert ".sov-config-disclosure" in UIKIT_CSS
+
+
+def test_dataset_registry_uses_uikit_and_keeps_operator_controls_secondary():
+    source = Path("sovushka/pages/samovar.py").read_text(encoding="utf-8")
+    active = source.split("def build_samovar_legacy()", maxsplit=1)[0]
+
+    assert '.classes("w-full sov-datasets-page")' in active
+    assert '"Добавить датасет"' in active
+    assert '"Сводка корпуса"' in active
+    assert '"Найти датасет по названию"' in active
+    assert '"Открыть файлы"' in active
+    assert '"Управление индексатором"' in active
+    assert '"Тонкая настройка партий и памяти"' in active
+    assert "render_feedback_state(" in active
+    assert "action_button(" in active
+    assert "text_field(" in active
+    assert '"mode": "table"' not in active
+    assert 'ui.button("Добавить"' not in active
+
+    for contract in (
+        ".sov-dataset-summary",
+        ".sov-dataset-registry",
+        ".sov-dataset-row",
+        ".sov-dataset-toolbar",
+        ".sov-dataset-disclosure",
+    ):
+        assert contract in UIKIT_CSS

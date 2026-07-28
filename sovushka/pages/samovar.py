@@ -11,7 +11,15 @@ from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
 from sovushka.config import UI_PORT
-from sovushka.uikit.components import acronym_identity
+from sovushka.uikit.components import (
+    acronym_identity,
+    action_button,
+    panel,
+    render_feedback_state,
+    section_heading,
+    status_badge,
+    text_field,
+)
 from sovushka.state import (
     state,
     api_get,
@@ -123,10 +131,8 @@ def _operator_queue_notice(
 
 
 def build_samovar():
-    """Датасеты (v0.24) — таблица/карточки, светофор статуса, бар файлов, Пуск/Стоп/Ремонт,
-    ошибка→что делать, диалог файлов, одна кнопка «Добавить». На API proxy/routers/datasets."""
+    """Датасеты — реестр наборов, их фактическая готовность и управление индексатором."""
     _S = {
-        "mode": "table",
         "rows": [],
         "q": "",
         "filter": "all",
@@ -135,7 +141,7 @@ def build_samovar():
         "readiness": {},
         "index_settings": dict(_DEFAULT_INDEX_SETTINGS),
     }
-    _refs = {"disp": None, "kpi": None, "status": None, "ops": None, "tbtn": None, "cbtn": None}
+    _refs = {"disp": None, "status": None, "ops": None}
 
     def _notify(message: str, type: str = "info", **kwargs):
         try:
@@ -245,42 +251,43 @@ def build_samovar():
         ]
         recent = [j for j in jobs if "parse" in str(j.get("type", "")).lower()][:5]
         with panel:
-            with ui.element("div").classes("card-les w-full").style("padding:12px 14px;"):
-                with ui.row().classes("items-center w-full").style("gap:10px;flex-wrap:wrap;"):
-                    ui.icon("o_radar").style("color:var(--accent);font-size:18px;")
-                    ui.label("Оператор индекса").style("font-size:14px;font-weight:700;")
-                    ui.label(f"очередь {counts['pending']}").style(
-                        "font-size:12px;color:var(--text);font-variant-numeric:tabular-nums;"
+            with ui.element("div").classes("sov-dataset-operator-summary"):
+                with ui.row().classes("items-center w-full sov-dataset-operator-line"):
+                    ui.icon("o_radar").classes("sov-dataset-operator-icon")
+                    ui.label("Оператор индекса · состояние очереди").classes("sov-dataset-operator-title")
+                    status_badge(
+                        f"{counts['pending']} ждут" if counts["pending"] else "очередь пуста",
+                        "warn" if counts["pending"] else "ok",
                     )
-                    ui.label(f"лёгкие {counts['light']}").style("font-size:12px;color:var(--ok);")
-                    ui.label(f"сканы {counts['ocr']}").style("font-size:12px;color:var(--warn);")
+                    ui.label(f"лёгкие файлы {counts['light']}").classes("sov-dataset-operator-fact")
+                    ui.label(f"сканы {counts['ocr']}").classes("sov-dataset-operator-fact")
                     if counts["unknown"]:
-                        ui.label(f"не распознано {counts['unknown']}").style("font-size:12px;color:var(--dim);")
+                        ui.label(f"не распознано {counts['unknown']}").classes("sov-dataset-operator-fact")
                     if counts["errors"]:
-                        ui.label(f"ошибки {counts['errors']}").style("font-size:12px;color:var(--err);")
-                    ui.element("div").style("flex:1;")
+                        status_badge(f"ошибки {counts['errors']}", "error")
+                    ui.element("div").classes("sov-flex-spacer")
                     mem_color = "var(--ok)" if state_name in {"GREEN", "OK"} else "var(--warn)" if state_name in {"YELLOW", "RED"} else "var(--err)"
                     memory_label = {"GREEN": "НОРМА", "OK": "НОРМА", "YELLOW": "МАЛО", "RED": "КРИТИЧНО"}.get(
                         state_name, "НЕТ ДАННЫХ"
                     )
                     ui.label(
                         f"ОЗУ свободно {float(mem.get('ram_free_gb') or 0):.1f} ГБ · {memory_label}"
-                    ).style(f"font-size:12px;color:{mem_color};font-variant-numeric:tabular-nums;")
+                    ).classes("sov-dataset-operator-memory").style(f"color:{mem_color};")
                 if reason:
                     swap_pct = float(mem.get("swap_pct") or 0)
                     ui.label(
                         "Памяти достаточно для разбора файлов."
                         if state_name in {"GREEN", "OK"}
                         else f"Разбор ограничен по памяти; файл подкачки занят на {swap_pct:.0f}%."
-                    ).style("font-size:11.5px;color:var(--dim);margin-top:4px;")
+                    ).classes("sov-dataset-operator-note")
                 if counts["ocr"] and state_name in {"RED", "CRITICAL"}:
                     ui.label(
                         "Сканы лучше отложить: можно разбирать текст, документы и таблицы, а тяжёлые сканы оставить до нормальной памяти."
-                    ).style("font-size:12px;color:var(--warn);margin-top:6px;")
+                    ).classes("sov-dataset-operator-note sov-dataset-operator-note--warn")
                 if _settings_changed():
-                    ui.label("Настройки отличаются от умолчания. Лучше трогать только если понимаем, зачем.").style(
-                        "font-size:12px;color:var(--warn);margin-top:6px;"
-                    )
+                    ui.label(
+                        "Настройки отличаются от умолчания. Меняйте их только для конкретной задачи."
+                    ).classes("sov-dataset-operator-note sov-dataset-operator-note--warn")
                 if active:
                     for job in active[:3]:
                         total = int(job.get("total") or 0)
@@ -288,21 +295,21 @@ def build_samovar():
                         pct = float(job.get("percent") or 0)
                         eta = str(job.get("eta_text") or "")
                         msg = str(job.get("message") or "")
-                        with ui.column().classes("w-full").style("gap:4px;margin-top:10px;"):
-                            with ui.row().classes("items-center w-full").style("gap:8px;"):
-                                ui.label(str(job.get("dataset_name") or job.get("source") or "очередь")).style(
-                                    "font-size:12.5px;font-weight:700;flex:1;"
-                                )
-                                ui.label(str(job.get("id") or "")[:12]).style("font-size:11px;color:var(--dim);")
-                                ui.label(_job_status_label(str(job.get("status") or ""))).style(
-                                    f"font-size:11px;color:{_job_status_color(str(job.get('status') or ''))};"
-                                )
+                        with ui.column().classes("w-full sov-dataset-active-job"):
+                            with ui.row().classes("items-center w-full sov-dataset-active-job__head"):
+                                ui.label(
+                                    str(job.get("dataset_name") or job.get("source") or "очередь")
+                                ).classes("sov-dataset-active-job__title")
+                                ui.label(str(job.get("id") or "")[:12]).classes("sov-dataset-active-job__id")
+                                ui.label(_job_status_label(str(job.get("status") or ""))).classes(
+                                    "sov-dataset-active-job__status"
+                                ).style(f"color:{_job_status_color(str(job.get('status') or ''))};")
                                 if eta:
-                                    ui.label(f"Осталось {eta}").style("font-size:11px;color:var(--dim);")
+                                    ui.label(f"Осталось {eta}").classes("sov-dataset-active-job__meta")
                             ui.linear_progress(value=max(0.0, min(1.0, pct / 100.0))).props(
-                                "instant-feedback color=orange"
-                            ).style("height:7px;border-radius:4px;")
-                            ui.label(f"{processed}/{total} · {msg}").style("font-size:11.5px;color:var(--dim);")
+                                "instant-feedback color=green"
+                            ).classes("sov-dataset-active-job__progress")
+                            ui.label(f"{processed}/{total} · {msg}").classes("sov-dataset-active-job__meta")
                 elif recent:
                     last = recent[0]
                     last_status = str(last.get("status") or "").upper()
@@ -317,14 +324,13 @@ def build_samovar():
                     )
                     if notice:
                         message, tone = notice
-                        color = "var(--ok)" if tone == "ready" else "var(--err)"
-                        ui.label(message).style(
-                            f"font-size:12px;color:{color};font-weight:700;margin-top:8px;"
+                        ui.label(message).classes(
+                            f"sov-dataset-operator-notice sov-dataset-operator-notice--{tone}"
                         )
                     else:
                         ui.label(
                             f"Последняя задача: {_job_status_label(last_status)} · {last_message}"
-                        ).style("font-size:11.5px;color:var(--dim);margin-top:8px;")
+                        ).classes("sov-dataset-operator-note")
 
     def _ui_handler(coro_func, *args, **kwargs):
         async def _handler(*_event_args):
@@ -428,8 +434,7 @@ def build_samovar():
         return ("var(--dim)", "Пусто", "o_remove")
 
     def _bar(r):
-        with ui.element("div").style("height:7px;border-radius:4px;overflow:hidden;display:flex;"
-                                     "background:var(--bg-mod);min-width:120px;"):
+        with ui.element("div").classes("sov-dataset-progress"):
             for n, col in ((r["indexed"], "var(--ok)"), (r["pending"], "var(--warn)"), (r["error"], "var(--err)")):
                 if n:
                     ui.element("div").style(f"flex:{n};background:{col};")
@@ -618,22 +623,31 @@ def build_samovar():
                         ui.notify(last_api_error_text("Не удалось подключить облачную папку"), type="negative")
 
                 with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:6px;"):
-                    ui.button(
+                    action_button(
                         "Подключить веб-папку",
                         icon="o_cloud_sync",
                         on_click=_do_cloud_add,
-                    ).props("no-caps dense").style(
-                        "background:var(--accent);color:var(--bg);border-radius:8px;"
+                        variant="primary",
+                        compact=True,
                     )
 
             # вложенный браузер папок (клик-навигация по серверной ФС, без печати пути)
             with ui.dialog() as fdlg, ui.card().style("min-width:520px;max-width:92vw;"):
                 ui.label("Выбор папки").classes("sov-panel-title")
                 with ui.row().classes("items-center w-full").style("gap:8px;margin:6px 0;"):
-                    fb_sel = ui.button("Выбрать эту", icon="o_check",
-                                       on_click=lambda: _pick()).props("no-caps").style(
-                                       "background:var(--accent);color:var(--bg);border-radius:8px;")
-                    ui.button("Отмена", on_click=fdlg.close).props("flat no-caps dense").style("color:var(--dim);")
+                    fb_sel = action_button(
+                        "Выбрать эту",
+                        icon="o_check",
+                        on_click=lambda: _pick(),
+                        variant="primary",
+                        compact=True,
+                    )
+                    action_button(
+                        "Отмена",
+                        on_click=fdlg.close,
+                        variant="quiet",
+                        compact=True,
+                    )
                     fb_path = ui.label("…").style("flex:1;text-align:right;font-size:12px;"
                                                   "color:var(--accent);word-break:break-all;")
                 fb_list = ui.column().classes("w-full").style("max-height:340px;overflow:auto;gap:2px;")
@@ -723,23 +737,57 @@ def build_samovar():
                     await _refresh()
 
             with ui.row().classes("justify-end w-full").style("gap:8px;margin-top:8px;"):
-                ui.button("Отмена", on_click=add_dialog.close).props("flat dense no-caps").style("color:var(--dim);")
-                ui.button("Индексировать", icon="o_bolt",
-                          on_click=_do_add).props("no-caps").style(
-                          "background:var(--accent);color:var(--bg);border-radius:8px;")
+                action_button(
+                    "Отмена",
+                    on_click=add_dialog.close,
+                    variant="quiet",
+                    compact=True,
+                )
+                action_button(
+                    "Индексировать",
+                    icon="o_bolt",
+                    on_click=_do_add,
+                    variant="primary",
+                )
         add_dialog.open()
 
     def _row_actions(r):
-        ui.button("Проект", icon="o_account_tree", on_click=_ui_handler(_ask_project, r)).props(
-            "flat dense no-caps").style("font-size:11px;padding:2px 6px;color:var(--accent);")
-        ui.button(icon="o_folder_open", on_click=_ui_handler(_open_files, r)).props(
-            'flat dense round aria-label="Файлы"').style("color:var(--dim);")
-        ui.button(icon="o_build", on_click=_ui_handler(_repair, r)).props(
-            'flat dense round aria-label="Проверить и починить"').style("color:var(--accent);")
-        ui.button(icon="o_play_arrow", on_click=_ui_handler(_parse, r)).props(
-            'flat dense round aria-label="Пуск"').style("color:var(--ok);")
-        ui.button(icon="o_delete", on_click=_ui_handler(_delete, r)).props(
-            'flat dense round aria-label="Удалить"').style("color:var(--dim);")
+        action_button(
+            "Открыть файлы",
+            icon="o_folder_open",
+            on_click=_ui_handler(_open_files, r),
+            variant="primary",
+            compact=True,
+        )
+        action_button(
+            "О проекте",
+            icon="o_account_tree",
+            on_click=_ui_handler(_ask_project, r),
+            variant="secondary",
+            compact=True,
+        )
+        with action_button(
+            icon="o_more_horiz",
+            variant="quiet",
+            compact=True,
+            icon_only=True,
+            aria_label=f"Другие действия: {r['name']}",
+            classes="sov-dataset-more",
+        ):
+            with ui.menu().classes("sov-dataset-actions-menu"):
+                ui.menu_item(
+                    "Запустить одну партию",
+                    on_click=_ui_handler(_parse, r),
+                )
+                ui.menu_item(
+                    "Проверить и починить",
+                    on_click=_ui_handler(_repair, r),
+                )
+                ui.separator()
+                ui.menu_item(
+                    "Удалить датасет",
+                    on_click=_ui_handler(_delete, r),
+                ).classes("sov-dataset-menu-danger")
 
     def _visible_rows():
         q = (_S.get("q") or "").strip().lower()
@@ -772,64 +820,68 @@ def build_samovar():
         disp.clear()
         with disp:
             if not _S["rows"]:
-                ui.label("Датасетов нет — нажми «Добавить».").classes("sov-muted").style("padding:18px;")
+                render_feedback_state(
+                    "empty",
+                    detail="Добавьте папку с документами — ЛЕС зарегистрирует её как отдельный датасет.",
+                )
                 return
             vis = _visible_rows()
             if not vis:
-                ui.label("Ничего не найдено по фильтру.").classes("sov-muted").style("padding:18px;")
+                render_feedback_state(
+                    "empty",
+                    detail="Поиск и выбранный фильтр не совпали ни с одним датасетом.",
+                )
                 return
-            if _S["mode"] == "table":
-                with ui.element("div").classes("card-les w-full").style("padding:0;overflow:hidden;"):
-                    with ui.row().classes("items-center w-full").style(
-                            "gap:10px;padding:8px 14px;border-bottom:1px solid var(--border);"
-                            "font-size:11.5px;color:var(--dim);"):
-                        ui.label("Датасет" + _sort_arrow("name")).style("flex:2;cursor:pointer;").on(
-                            "click", lambda: _set_sort("name"))
-                        ui.label("Статус").style("flex:1.4;")
-                        ui.label("Файлы" + _sort_arrow("files")).style("flex:1.6;cursor:pointer;").on(
-                            "click", lambda: _set_sort("files"))
-                        ui.label("Фрагменты" + _sort_arrow("chunks")).style("width:88px;cursor:pointer;").on(
-                            "click", lambda: _set_sort("chunks"))
-                        ui.label("").style("width:160px;")
-                    for r in vis:
-                        col, txt, ico = _light(r)
-                        with ui.row().classes("items-center w-full").style(
-                                "gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);"):
-                            ui.label(r["name"]).style("flex:2;font-size:14px;font-weight:500;")
-                            with ui.row().classes("items-center").style("flex:1.4;gap:5px;"):
-                                ui.icon(ico).style(f"font-size:15px;color:{col};")
-                                with ui.column().style("gap:1px;"):
-                                    ui.label(txt).style(f"font-size:12px;color:{col};")
-                                    if r["pending"]:
-                                        detail = (
-                                            f"лёгкие {r.get('pending_light', 0)} · "
-                                            f"сканы {r.get('pending_ocr', 0)}"
-                                        )
-                                        if r.get("pending_unknown"):
-                                            detail += f" · ? {r.get('pending_unknown', 0)}"
-                                        ui.label(detail).style("font-size:10.5px;color:var(--dim);")
-                            with ui.column().style("flex:1.6;gap:2px;"):
-                                _bar(r)
-                            ui.label(str(r["chunks"])).style("width:70px;font-size:13px;color:var(--text);")
-                            with ui.row().classes("items-center justify-end").style("width:160px;gap:0;"):
-                                _row_actions(r)
-            else:
-                with ui.element("div").style(
-                        "display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px;width:100%;"):
-                    for r in vis:
-                        col, txt, ico = _light(r)
-                        with ui.element("div").classes("card-les").style("padding:12px;"):
-                            with ui.row().classes("items-center w-full").style("gap:8px;margin-bottom:8px;"):
-                                ui.icon("o_circle").style(f"font-size:9px;color:{col};")
-                                ui.label(r["name"]).style("font-size:14px;font-weight:500;flex:1;")
-                                ui.label(f"{r['chunks']} фрагментов").classes("sov-muted")
+            with ui.column().classes("w-full sov-dataset-registry"):
+                for r in vis:
+                    col, txt, ico = _light(r)
+                    tone = (
+                        "error"
+                        if r["error"] or r.get("missing")
+                        else "warn"
+                        if r["pending"]
+                        else "ok"
+                        if r["indexed"]
+                        else "muted"
+                    )
+                    with ui.element("article").classes("sov-dataset-row"):
+                        with ui.row().classes("items-center w-full sov-dataset-row__head"):
+                            with ui.element("div").classes("sov-dataset-row__identity"):
+                                ui.icon(ico).classes("sov-dataset-row__state-icon").style(f"color:{col};")
+                                with ui.column().classes("sov-dataset-row__copy"):
+                                    ui.label(r["name"]).classes("sov-dataset-row__name")
+                                    scope = "Служебный набор" if "_SERVICE_" in str(r["name"]).upper() else "Пользовательский набор"
+                                    group = f" · {r['group']}" if r.get("group") else ""
+                                    ui.label(f"{scope}{group}").classes("sov-dataset-row__scope")
+                            status_badge(txt, tone)
+                        with ui.element("div").classes("sov-dataset-row__facts"):
+                            with ui.element("div").classes("sov-dataset-fact"):
+                                ui.label("Файлы").classes("sov-dataset-fact__label")
+                                ui.label(str(r["total"])).classes("sov-dataset-fact__value")
+                            with ui.element("div").classes("sov-dataset-fact"):
+                                ui.label("В индексе").classes("sov-dataset-fact__label")
+                                ui.label(str(r["indexed"])).classes("sov-dataset-fact__value")
+                            with ui.element("div").classes("sov-dataset-fact"):
+                                ui.label("Ждут").classes("sov-dataset-fact__label")
+                                ui.label(str(r["pending"])).classes("sov-dataset-fact__value")
+                            with ui.element("div").classes("sov-dataset-fact"):
+                                ui.label("Ошибки").classes("sov-dataset-fact__label")
+                                ui.label(str(r["error"])).classes("sov-dataset-fact__value")
+                            with ui.element("div").classes("sov-dataset-fact"):
+                                ui.label("Фрагменты").classes("sov-dataset-fact__label")
+                                ui.label(str(r["chunks"])).classes("sov-dataset-fact__value")
+                        with ui.element("div").classes("sov-dataset-row__progress"):
                             _bar(r)
-                            with ui.row().classes("items-center w-full").style("gap:6px;margin-top:8px;"):
-                                extra = ""
-                                if r["pending"]:
-                                    extra = f" · лёгкие {r.get('pending_light', 0)} · сканы {r.get('pending_ocr', 0)}"
-                                ui.label(txt + extra).style(f"font-size:12px;color:{col};flex:1;")
-                                _row_actions(r)
+                        if r["pending"]:
+                            detail = (
+                                f"В очереди: текст и таблицы {r.get('pending_light', 0)} · "
+                                f"сканы {r.get('pending_ocr', 0)}"
+                            )
+                            if r.get("pending_unknown"):
+                                detail += f" · тип не определён {r.get('pending_unknown', 0)}"
+                            ui.label(detail).classes("sov-dataset-row__note")
+                        with ui.row().classes("items-center w-full sov-dataset-row__actions"):
+                            _row_actions(r)
 
     async def _refresh_status():
         # Тикает каждые 5с НЕЗАВИСИМО от _parse. Верим активной job, а не stale dataset.status:
@@ -883,154 +935,199 @@ def build_samovar():
                 with _refs["disp"]:
                     ui.label(f"Ошибка загрузки датасетов: {exc}").style("color:var(--err);padding:16px;")
 
-    def _upd_toggle():
-        for key, mode in (("tbtn", "table"), ("cbtn", "cards")):
-            if _refs[key]:
-                _refs[key].style("color:" + ("var(--accent)" if _S["mode"] == mode else "var(--dim)"))
-
-    def _set_mode(m):
-        _S["mode"] = m
-        _upd_toggle()
-        _render_rows()
-
     def _set_filter(m):
         _S["filter"] = m
         for key, btn in (_refs.get("fbtn") or {}).items():
-            btn.style(f"font-size:.7rem;color:{'var(--accent)' if key == m else 'var(--dim)'};")
+            btn.classes(remove="sov-dataset-filter--active")
+            if key == m:
+                btn.classes(add="sov-dataset-filter--active")
         _render_rows()
 
-    def _set_sort(key):
-        if _S.get("sort") == key:
-            _S["sort_dir"] = -_S.get("sort_dir", -1)
-        else:
-            _S["sort"] = key
-            _S["sort_dir"] = 1 if key == "name" else -1  # имя по возрастанию, числа по убыванию
-        _render_rows()
+    with ui.column().classes("w-full sov-datasets-page"):
+        with panel(variant="raised", classes="sov-datasets-hero"):
+            with ui.row().classes("items-center w-full sov-datasets-hero__row"):
+                acronym_identity(
+                    "С.А.М.О.В.А.Р.",
+                    "Система Автономная Машинной Обработки Внутренних Архивов РАГ",
+                    icon="o_inventory_2",
+                )
+                ui.element("div").classes("sov-flex-spacer")
+                action_button(
+                    "Добавить датасет",
+                    icon="o_add",
+                    on_click=_open_add,
+                    variant="primary",
+                    classes="sov-dataset-add",
+                )
+            ui.label(
+                "Наборы документов, по которым ЛЕС ищет доказательства. "
+                "Откройте файлы, чтобы проверить фактический состав и готовность индекса."
+            ).classes("sov-datasets-hero__detail")
 
-    def _card_click(k):
-        # карточки статистики кликабельны: статусные → фильтр, числовые → сортировка
-        if k == "datasets":
-            _set_filter("all")
-        elif k in ("indexed", "pending", "error"):
-            _set_filter(k)
-        elif k in ("files", "chunks"):
-            _set_sort(k)
-
-    def _sort_arrow(key):
-        if _S.get("sort") != key:
-            return ""
-        return " ▼" if _S.get("sort_dir", -1) < 0 else " ▲"
-
-    with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-3"):
-        with ui.row().classes("items-center w-full").style("gap:12px;flex-wrap:nowrap;"):
-            acronym_identity(
-                "С.А.М.О.В.А.Р.",
-                "Система Автономная Машинной Обработки Внутренних Архивов РАГ",
-                icon="o_inventory_2",
-            )
-            ui.element("div").style("flex:1;")
-            with ui.row().classes("items-center").style("border:1px solid var(--border);border-radius:8px;overflow:hidden;"):
-                _refs["tbtn"] = ui.button("Таблица", icon="o_table_rows",
-                                          on_click=lambda: _set_mode("table")).props("flat dense no-caps")
-                _refs["cbtn"] = ui.button("Карточки", icon="o_grid_view",
-                                          on_click=lambda: _set_mode("cards")).props("flat dense no-caps")
-            ui.button("Добавить", icon="o_add", on_click=_open_add).props("no-caps").style(
-                "background:var(--accent);color:var(--bg);border-radius:8px;font-weight:500;")
-        # Большая статистика сверху
         _refs["stats"] = {}
-        _STAT_DEFS = (("datasets", "Датасеты", "var(--text)"), ("files", "Файлов", "var(--text)"),
-                      ("indexed", "В индексе", "var(--ok)"), ("pending", "Ждут", "var(--warn)"),
-                      ("error", "Ошибки", "var(--err)"), ("chunks", "Фрагментов", "var(--accent)"))
-        with ui.element("div").style("display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));"
-                                     "gap:10px;width:100%;"):
-            for _k, _lbl, _col in _STAT_DEFS:
-                with ui.element("div").classes("card-les").style("padding:14px 16px;cursor:pointer;").on(
-                        "click", lambda k=_k: _card_click(k)).tooltip(
-                        "клик: статус → фильтр, число → сортировка"):
-                    _refs["stats"][_k] = ui.label("—").style(
-                        f"font-size:26px;font-weight:500;line-height:1;color:{_col};font-variant-numeric:tabular-nums;")
-                    ui.label(_lbl).style("font-size:12px;color:var(--dim);margin-top:6px;")
-        # Фильтр-бар (напрашивался): поиск по имени + фильтр по статусу
-        _refs["fbtn"] = {}
-        with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
-            _fsearch = ui.input(placeholder="Поиск датасета…").props("dense outlined clearable").style(
-                "min-width:220px;font-size:.72rem;")
-            _fsearch.on_value_change(lambda *_: (_S.update(q=(_fsearch.value or "")), _render_rows()))
-            with ui.row().classes("items-center").style(
-                    "border:1px solid var(--border);border-radius:8px;overflow:hidden;"):
-                for _fk, _flbl in (("all", "Все"), ("indexed", "В индексе"), ("pending", "Ждут"),
-                                   ("error", "Ошибки"), ("empty", "Пустые")):
-                    _refs["fbtn"][_fk] = ui.button(_flbl, on_click=lambda k=_fk: _set_filter(k)).props(
-                        "flat dense no-caps").style(
-                        f"font-size:.7rem;color:{'var(--accent)' if _fk == 'all' else 'var(--dim)'};")
-        _refs["ops"] = ui.column().classes("w-full").style("gap:8px;")
-        _refs["settings"] = {}
-        with ui.expansion("Настройки индексации", icon="o_tune", value=False).classes("w-full").style(
-            "border:1px solid var(--border);border-radius:8px;background:var(--bg-panel);"
-        ):
-            ui.label("Лучше не менять без причины: небольшая партия и пауза берегут память, особенно перед разбором сканов.").style(
-                "font-size:12px;color:var(--warn);padding:0 12px 8px;"
-            )
-            with ui.element("div").style(
-                "display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));"
-                "gap:8px;padding:0 12px 12px;"
-            ):
-                batch_in = ui.number("batch", value=_setting("batch_limit"), min=1, max=25, step=1).props(
-                    "dense outlined"
+        with panel(variant="inset", classes="sov-dataset-summary"):
+            with ui.element("div").classes("sov-dataset-summary__copy"):
+                ui.label("Сводка корпуса").classes("sov-dataset-summary__title")
+                ui.label("Только фактические файлы и состояние индекса").classes(
+                    "sov-dataset-summary__detail"
                 )
-                max_in = ui.number("max партий", value=_setting("max_batches"), min=1, max=500, step=1).props(
-                    "dense outlined"
-                )
-                cooldown_in = ui.number("пауза, с", value=_setting("cooldown_sec"), min=0, max=600, step=5).props(
-                    "dense outlined"
-                )
-                min_ram_in = ui.number("мин. RAM, GB", value=_setting("min_free_gb"), min=1, max=64, step=1).props(
-                    "dense outlined"
-                )
-                swap_in = ui.number("swap %, инфо", value=_setting("max_swap_pct"), min=0, max=100, step=5).props(
-                    "dense outlined"
-                )
-                row_batch_in = ui.number("play batch", value=_setting("row_batch_limit"), min=1, max=25, step=1).props(
-                    "dense outlined"
-                )
-            with ui.row().classes("items-center w-full").style("gap:10px;flex-wrap:wrap;padding:0 12px 12px;"):
-                unload_between_sw = ui.switch("выгружать MLX между партиями", value=_setting("unload_between_batches"))
-                unload_before_sw = ui.switch("выгрузить MLX перед стартом", value=_setting("unload_before_start"))
-                ui.element("div").style("flex:1;")
-                ui.button("По умолчанию", icon="o_restart_alt", on_click=_reset_index_settings).props(
-                    "flat dense no-caps"
-                ).style("color:var(--dim);")
-            _refs["settings"].update({
-                "batch_limit": batch_in,
-                "max_batches": max_in,
-                "cooldown_sec": cooldown_in,
-                "min_free_gb": min_ram_in,
-                "max_swap_pct": swap_in,
-                "row_batch_limit": row_batch_in,
-                "unload_between_batches": unload_between_sw,
-                "unload_before_start": unload_before_sw,
-            })
-            batch_in.on_value_change(lambda *_: _set_setting("batch_limit", batch_in.value))
-            max_in.on_value_change(lambda *_: _set_setting("max_batches", max_in.value))
-            cooldown_in.on_value_change(lambda *_: _set_setting("cooldown_sec", cooldown_in.value))
-            min_ram_in.on_value_change(lambda *_: _set_setting("min_free_gb", min_ram_in.value))
-            swap_in.on_value_change(lambda *_: _set_setting("max_swap_pct", swap_in.value))
-            row_batch_in.on_value_change(lambda *_: _set_setting("row_batch_limit", row_batch_in.value))
-            unload_between_sw.on_value_change(lambda *_: _set_setting("unload_between_batches", unload_between_sw.value))
-            unload_before_sw.on_value_change(lambda *_: _set_setting("unload_before_start", unload_before_sw.value))
-        with ui.row().classes("items-center w-full").style("gap:10px;"):
-            ui.button("Пуск", icon="o_play_arrow",
-                      on_click=_start_all).props("flat dense no-caps").style("color:var(--ok);")
-            ui.button("Стоп", icon="o_pause",
-                      on_click=_stop_all).props("flat dense no-caps").style("color:var(--dim);")
-            ui.element("div").style("width:1px;height:16px;background:var(--border);")
-            _refs["status"] = ui.label("Индексатор: …").classes("sov-muted")
-            ui.element("div").style("flex:1;")
-            ui.button("Обновить", icon="o_refresh",
-                      on_click=_refresh).props("flat dense no-caps").style("color:var(--dim);")
-        _refs["disp"] = ui.column().classes("w-full").style("gap:8px;")
+            with ui.element("div").classes("sov-dataset-summary__metrics"):
+                for _k, _lbl in (
+                    ("datasets", "наборов"),
+                    ("files", "файлов"),
+                    ("indexed", "в индексе"),
+                    ("pending", "ждут"),
+                    ("error", "ошибок"),
+                    ("chunks", "фрагментов"),
+                ):
+                    with ui.element("div").classes("sov-dataset-summary__metric"):
+                        _refs["stats"][_k] = ui.label("—").classes("sov-dataset-summary__value")
+                        ui.label(_lbl).classes("sov-dataset-summary__label")
 
-    _upd_toggle()
+        with panel(variant="plain", classes="sov-dataset-registry-panel"):
+            with ui.row().classes("items-center w-full sov-dataset-section-head"):
+                section_heading(
+                    "Датасеты",
+                    "Найдите набор, проверьте его состав и откройте нужные файлы.",
+                )
+                ui.element("div").classes("sov-flex-spacer")
+                action_button(
+                    icon="o_refresh",
+                    on_click=_refresh,
+                    variant="quiet",
+                    compact=True,
+                    icon_only=True,
+                    aria_label="Обновить список датасетов",
+                    classes="sov-dataset-refresh",
+                )
+            _refs["fbtn"] = {}
+            with ui.element("div").classes("sov-dataset-toolbar"):
+                _fsearch = text_field(
+                    placeholder="Найти датасет по названию",
+                    clearable=True,
+                    classes="sov-dataset-search",
+                )
+                _fsearch.on_value_change(lambda *_: (_S.update(q=(_fsearch.value or "")), _render_rows()))
+                with ui.row().classes("items-center sov-dataset-filters"):
+                    for _fk, _flbl in (
+                        ("all", "Все"),
+                        ("indexed", "Готовы"),
+                        ("pending", "Ждут"),
+                        ("error", "Ошибки"),
+                        ("empty", "Пустые"),
+                    ):
+                        active_class = " sov-dataset-filter--active" if _fk == "all" else ""
+                        _refs["fbtn"][_fk] = action_button(
+                            _flbl,
+                            on_click=lambda k=_fk: _set_filter(k),
+                            variant="quiet",
+                            compact=True,
+                            classes=f"sov-dataset-filter{active_class}",
+                        )
+            _refs["disp"] = ui.column().classes("w-full sov-dataset-results")
+
+        with ui.expansion(
+            "Управление индексатором",
+            icon="o_settings_input_component",
+            value=False,
+        ).classes("w-full sov-dataset-disclosure"):
+            ui.label(
+                "Служебные операции и настройки индексации. "
+                "Для просмотра и поиска по готовым данным открывать этот блок не нужно."
+            ).classes("sov-dataset-disclosure__intro")
+            _refs["ops"] = ui.column().classes("w-full sov-dataset-operator")
+            with ui.row().classes("items-center w-full sov-dataset-index-controls"):
+                action_button(
+                    "Запустить очередь",
+                    icon="o_play_arrow",
+                    on_click=_start_all,
+                    variant="primary",
+                    compact=True,
+                )
+                action_button(
+                    "Остановить",
+                    icon="o_pause",
+                    on_click=_stop_all,
+                    variant="secondary",
+                    compact=True,
+                )
+                _refs["status"] = ui.label("Индексатор: …").classes("sov-dataset-index-status")
+                ui.element("div").classes("sov-flex-spacer")
+                action_button(
+                    "Обновить состояние",
+                    icon="o_refresh",
+                    on_click=_refresh,
+                    variant="quiet",
+                    compact=True,
+                )
+            _refs["settings"] = {}
+            with ui.expansion(
+                "Тонкая настройка партий и памяти",
+                icon="o_tune",
+                value=False,
+            ).classes("w-full sov-dataset-settings"):
+                ui.label(
+                    "Стандартные значения безопаснее для памяти. Меняйте их только для конкретной задачи."
+                ).classes("sov-dataset-settings__note")
+                with ui.element("div").classes("sov-dataset-settings__grid"):
+                    batch_in = ui.number("Файлов в партии", value=_setting("batch_limit"), min=1, max=25, step=1).props(
+                        "dense outlined"
+                    )
+                    max_in = ui.number("Максимум партий", value=_setting("max_batches"), min=1, max=500, step=1).props(
+                        "dense outlined"
+                    )
+                    cooldown_in = ui.number("Пауза, секунд", value=_setting("cooldown_sec"), min=0, max=600, step=5).props(
+                        "dense outlined"
+                    )
+                    min_ram_in = ui.number("Минимум RAM, ГБ", value=_setting("min_free_gb"), min=1, max=64, step=1).props(
+                        "dense outlined"
+                    )
+                    swap_in = ui.number("Swap, %", value=_setting("max_swap_pct"), min=0, max=100, step=5).props(
+                        "dense outlined"
+                    )
+                    row_batch_in = ui.number("Ручная партия", value=_setting("row_batch_limit"), min=1, max=25, step=1).props(
+                        "dense outlined"
+                    )
+                with ui.row().classes("items-center w-full sov-dataset-settings__switches"):
+                    unload_between_sw = ui.switch(
+                        "Выгружать MLX между партиями",
+                        value=_setting("unload_between_batches"),
+                    )
+                    unload_before_sw = ui.switch(
+                        "Выгрузить MLX перед стартом",
+                        value=_setting("unload_before_start"),
+                    )
+                    ui.element("div").classes("sov-flex-spacer")
+                    action_button(
+                        "По умолчанию",
+                        icon="o_restart_alt",
+                        on_click=_reset_index_settings,
+                        variant="quiet",
+                        compact=True,
+                    )
+                _refs["settings"].update({
+                    "batch_limit": batch_in,
+                    "max_batches": max_in,
+                    "cooldown_sec": cooldown_in,
+                    "min_free_gb": min_ram_in,
+                    "max_swap_pct": swap_in,
+                    "row_batch_limit": row_batch_in,
+                    "unload_between_batches": unload_between_sw,
+                    "unload_before_start": unload_before_sw,
+                })
+                batch_in.on_value_change(lambda *_: _set_setting("batch_limit", batch_in.value))
+                max_in.on_value_change(lambda *_: _set_setting("max_batches", max_in.value))
+                cooldown_in.on_value_change(lambda *_: _set_setting("cooldown_sec", cooldown_in.value))
+                min_ram_in.on_value_change(lambda *_: _set_setting("min_free_gb", min_ram_in.value))
+                swap_in.on_value_change(lambda *_: _set_setting("max_swap_pct", swap_in.value))
+                row_batch_in.on_value_change(lambda *_: _set_setting("row_batch_limit", row_batch_in.value))
+                unload_between_sw.on_value_change(
+                    lambda *_: _set_setting("unload_between_batches", unload_between_sw.value)
+                )
+                unload_before_sw.on_value_change(
+                    lambda *_: _set_setting("unload_before_start", unload_before_sw.value)
+                )
+
     ui.timer(0.1, _refresh, once=True)
     # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
     ui.timer(5.0, _refresh_status)

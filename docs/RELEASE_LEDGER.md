@@ -7,17 +7,32 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.12 (Sovushka configuration home)
-номер сборки:              485     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.485 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.13 (Sovushka dataset registry)
+номер сборки:              486     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.486 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; configuration passport + disclosures
-задеплоено на рантайм:     Mac 0.25.12 / build 485 target; Legion не затрагивался
+dev implementation:       codex/sovushka-ui-kit; dataset registry + corpus passport
+задеплоено на рантайм:     Mac 0.25.13 / build 486 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.12 / build 485 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.13 / build 486 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.13 / build 486 — реестр датасетов вместо технического dashboard
+>
+> Дата: 2026-07-28
+> Статус: внутреннее web-only обновление Mac. Экран «Датасеты» переведён на
+> UI KIT: один компактный паспорт фактического корпуса, поиск и фильтры,
+> одинаковые строки наборов с явными статусами, составом и основными действиями.
+> Переключатель «таблица/карточки», шесть отдельных KPI-карточек и россыпь
+> иконок действий удалены. «Открыть файлы» и «О проекте» подписаны; ручной
+> запуск партии, ремонт и удаление находятся в меню дополнительных действий.
+> Индексатор, память и тонкие параметры партий собраны в один служебный
+> disclosure ниже реестра. Пустые и отфильтрованные состояния используют общий
+> feedback-компонент. На 390 px нет page-level horizontal overflow. API, RAG,
+> файлы, пользовательские данные и индексы не изменяются; Tauri/DMG, Legion и
+> public не затрагиваются.
+>
 > 0.25.12 / build 485 — UI-ветка устанавливается штатным Mac updater
 >
 > Дата: 2026-07-28
