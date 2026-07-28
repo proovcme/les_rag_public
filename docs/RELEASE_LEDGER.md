@@ -7,17 +7,30 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.10 (Sovushka canonical UI kit)
-номер сборки:              483     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.483 (internal identity; app bundle не пересобирается)
-ветка выпуска:             codex/audit-rag
-dev implementation:       codex/audit-rag; shared primitives + unified icon alignment
-задеплоено на рантайм:     Mac 0.25.10 / build 483 target; Legion не затрагивался
+версия продукта (SemVer):  0.25.11 (Sovushka configuration home)
+номер сборки:              484     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.484 (internal identity; app bundle не пересобирается)
+ветка выпуска:             codex/sovushka-ui-kit
+dev implementation:       codex/sovushka-ui-kit; configuration passport + disclosures
+задеплоено на рантайм:     Mac 0.25.11 / build 484 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.10 / build 483 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.11 / build 484 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.11 / build 484 — рабочая конфигурация без dashboard и синего legacy UI
+>
+> Дата: 2026-07-28
+> Статус: внутреннее web-only обновление Mac. «Конфигурация → Состояние»
+> переведена на UI KIT: один паспорт готовности, фирменное зелёное primary
+> действие и четыре вертикальных контура вместо пяти KPI-карточек и тёмной
+> горизонтальной схемы. Синие локальные controls удалены. Детали проверки,
+> резервные копии, словарь и технический журнал раскрываются по запросу;
+> постоянный чёрный terminal-footer удалён и больше не отнимает 120 px рабочей
+> высоты. Кнопка «Журнал» открывает общий буфер событий. На 390 px экран не
+> имеет горизонтального overflow. Tauri/DMG, Rust, Legion, public, RAG,
+> пользовательские данные и индексы не затрагиваются.
+>
 > 0.25.10 / build 483 — канонический UI KIT и единая геометрия controls
 >
 > Дата: 2026-07-28

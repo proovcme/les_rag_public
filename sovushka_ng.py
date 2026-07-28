@@ -320,7 +320,6 @@ async def classic_chat_page(request: Request):
 @ui.page("/les/classic/")
 async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
-    from sovushka.components.logterm import build_log_terminal
     from sovushka.pages.diag import build_diag
     from sovushka.pages.instrumenty import build_instrumenty
     from sovushka.pages.mail import build_mail_settings
@@ -387,9 +386,6 @@ async def classic_admin_page(request: Request):
                 _build_qdrant_visualizer_panel(visualizer_url)
             with ui.tab_panel(tab_volk):
                 build_volk()
-
-        # Подвал (Лог)
-        build_log_terminal()
 
     # Восстанавливаем последний активный таб
     _last_tab = app.storage.user.get("last_tab", "Состояние")

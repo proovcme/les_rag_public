@@ -782,6 +782,422 @@ html {
   font-weight: 850 !important;
 }
 
+/* Configuration home: one readiness passport, then readable working contours.
+   Secondary and risky tools stay in disclosures instead of competing with status. */
+.sov-config-page {
+  width: min(100%, 1120px);
+  min-width: 0;
+  margin: 0 auto;
+  padding: 20px;
+  gap: 12px !important;
+}
+
+.sov-config-hero {
+  width: 100%;
+  max-width: 100%;
+  padding: 18px;
+  background:
+    linear-gradient(
+      120deg,
+      color-mix(in srgb, var(--accent) 7%, var(--card-bg)),
+      var(--card-bg) 52%
+    );
+  overflow: hidden;
+}
+
+.sov-config-hero__row,
+.sov-config-disclosure__header {
+  width: 100%;
+  min-width: 0;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.sov-config-hero__identity {
+  width: 100%;
+  min-width: 0;
+  max-width: 720px;
+  gap: 5px !important;
+}
+
+.sov-config-hero .sov-acronym-identity {
+  max-width: 100%;
+}
+
+.sov-config-eyebrow {
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.2;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.sov-config-intro,
+.sov-config-last-run,
+.sov-config-disclosure__intro {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.sov-config-last-run {
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sov-config-hero__actions,
+.sov-config-disclosure__actions {
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.sov-config-status-strip {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  margin-top: 16px;
+  grid-template-columns: minmax(260px, 1fr) minmax(360px, auto);
+  border: 1px solid color-mix(in srgb, var(--border) 86%, transparent);
+  border-radius: var(--sov-ui-radius-card);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  overflow: hidden;
+}
+
+.sov-config-status-strip__overall {
+  min-width: 0;
+}
+
+.sov-config-readiness {
+  --sov-config-tone: var(--dim);
+  display: flex;
+  min-height: 76px;
+  padding: 12px 14px;
+  gap: 10px;
+  align-items: center;
+}
+
+.sov-config-readiness--ok { --sov-config-tone: var(--ok); }
+.sov-config-readiness--warn { --sov-config-tone: var(--warn); }
+.sov-config-readiness--err { --sov-config-tone: var(--err); }
+
+.sov-config-readiness__mark {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  color: var(--sov-config-tone);
+  border: 1px solid color-mix(in srgb, var(--sov-config-tone) 45%, var(--border));
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sov-config-tone) 8%, var(--card-bg));
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.sov-config-readiness__copy {
+  min-width: 0;
+}
+
+.sov-config-readiness__title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 760;
+  line-height: 1.3;
+}
+
+.sov-config-readiness__detail {
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.4;
+}
+
+.sov-config-status-strip__metrics {
+  display: grid;
+  min-width: 360px;
+  grid-template-columns: repeat(4, minmax(82px, 1fr));
+  border-left: 1px solid var(--border);
+}
+
+.sov-config-metric {
+  display: flex;
+  min-width: 0;
+  padding: 11px 10px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  border-left: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  text-align: center;
+}
+
+.sov-config-metric:first-child {
+  border-left: 0;
+}
+
+.sov-config-metric__value {
+  color: var(--text);
+  font-family: var(--sov-ui-font-code);
+  font-size: 18px;
+  font-weight: 780;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.sov-config-metric__label {
+  margin-top: 3px;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.sov-config-metric--ok .sov-config-metric__value { color: var(--ok); }
+.sov-config-metric--warn .sov-config-metric__value { color: var(--warn); }
+.sov-config-metric--error .sov-config-metric__value { color: var(--err); }
+
+.sov-config-section {
+  padding: 16px;
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-config-contours {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  margin-top: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.sov-config-contour {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--sov-ui-radius-card);
+  background: color-mix(in srgb, var(--bg) 48%, var(--card-bg));
+  overflow: hidden;
+}
+
+.sov-config-contour__title {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-mod) 68%, transparent);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.25;
+}
+
+.sov-config-contour__body {
+  display: grid;
+}
+
+.sov-config-service {
+  --sov-config-tone: var(--dim);
+  display: grid;
+  min-width: 0;
+  min-height: 54px;
+  padding: 9px 11px;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.sov-config-service:first-child { border-top: 0; }
+.sov-config-service--ok { --sov-config-tone: var(--ok); }
+.sov-config-service--warn { --sov-config-tone: var(--warn); }
+.sov-config-service--err { --sov-config-tone: var(--err); }
+
+.sov-config-service__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sov-config-tone);
+}
+
+.sov-config-service__copy { min-width: 0; }
+
+.sov-config-service__name {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sov-config-service__detail {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sov-config-service__status {
+  padding: 3px 6px;
+  color: var(--sov-config-tone);
+  border: 1px solid color-mix(in srgb, var(--sov-config-tone) 42%, var(--border));
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sov-config-tone) 6%, var(--card-bg));
+  font-size: 10px;
+  font-weight: 720;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.sov-config-disclosure {
+  min-width: 0;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--sov-ui-radius-card);
+  background: var(--card-bg);
+  box-shadow: var(--sov-ui-shadow-card);
+  overflow: hidden;
+}
+
+.sov-config-disclosure > .q-expansion-item__container > .q-item {
+  min-height: 46px;
+  padding: 8px 12px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.sov-config-disclosure > .q-expansion-item__container > .q-expansion-item__content {
+  padding: 0 12px 12px;
+}
+
+.sov-config-disclosure__header {
+  margin-bottom: 10px;
+  align-items: center;
+}
+
+.sov-config-checks,
+.sov-config-backups {
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  gap: 8px !important;
+}
+
+.sov-config-check {
+  --sov-config-tone: var(--dim);
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--sov-config-tone);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 42%, var(--card-bg));
+}
+
+.sov-config-check--ok { --sov-config-tone: var(--ok); }
+.sov-config-check--warn { --sov-config-tone: var(--warn); }
+.sov-config-check--err { --sov-config-tone: var(--err); }
+
+.sov-config-check__header,
+.sov-config-check__values {
+  width: 100%;
+  min-width: 0;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.sov-config-check__name {
+  min-width: 0;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.sov-config-check__status {
+  flex: 0 0 auto;
+  color: var(--sov-config-tone);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.sov-config-check__values { margin-top: 4px; }
+
+.sov-config-check__value {
+  min-width: 0;
+  color: var(--sov-config-tone);
+  font-family: var(--sov-ui-font-code);
+  font-size: 13px;
+  font-weight: 720;
+}
+
+.sov-config-check__expected,
+.sov-config-check__message,
+.sov-config-check__latency {
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.sov-config-check__expected { flex: 0 0 auto; }
+.sov-config-check__message { margin-top: 4px; }
+.sov-config-check__latency {
+  margin-top: 4px;
+  font-family: var(--sov-ui-font-code);
+  font-variant-numeric: tabular-nums;
+}
+
+.sov-config-log {
+  height: 190px;
+  margin-top: 10px;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--bg) 88%, var(--card-bg));
+  font-family: var(--sov-ui-font-code);
+  font-size: 11px;
+}
+
+.sov-config-page .diag-acronym-grid {
+  margin-top: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.sov-config-page .diag-acronym-item {
+  min-height: 0;
+  padding: 10px;
+  border-color: var(--border);
+  background: color-mix(in srgb, var(--bg) 44%, var(--card-bg));
+  box-shadow: none;
+}
+
+.sov-config-page .diag-acronym-code {
+  color: var(--accent);
+  font-family: var(--sov-ui-font-prose);
+  font-size: 12px;
+  font-weight: 760;
+}
+
+.sov-config-page .diag-acronym-full {
+  color: var(--text);
+  font-family: var(--sov-ui-font-prose);
+  font-size: 11px;
+}
+
+.sov-config-page .diag-acronym-role {
+  color: var(--dim);
+  font-family: var(--sov-ui-font-prose);
+  font-size: 11px;
+}
+
 @media (min-width: 901px) {
   .sov-app-shell {
     display: grid !important;
@@ -1234,6 +1650,40 @@ html {
   .sov-mail-status-copy { width: 100%; flex-basis: 100%; }
   .sov-mail-status-metric { flex: 1; }
   .sov-mail-collect-button { width: 100%; }
+  .sov-config-page {
+    width: 100%;
+    padding: 12px;
+  }
+  .sov-config-hero {
+    padding: 14px;
+  }
+  .sov-config-hero__row,
+  .sov-config-disclosure__header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sov-config-hero__actions,
+  .sov-config-disclosure__actions {
+    width: 100%;
+  }
+  .sov-config-run .q-btn__content {
+    flex-wrap: nowrap;
+    white-space: nowrap;
+  }
+  .sov-config-status-strip {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sov-config-status-strip__metrics {
+    min-width: 0;
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+  .sov-config-contours {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sov-config-page .diag-acronym-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 520px) {
@@ -1249,6 +1699,22 @@ html {
   }
   .sov-composer-key-hint {
     display: none;
+  }
+  .sov-config-status-strip__metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sov-config-metric:nth-child(3) {
+    border-top: 1px solid var(--border);
+    border-left: 0;
+  }
+  .sov-config-metric:nth-child(4) {
+    border-top: 1px solid var(--border);
+  }
+  .sov-config-disclosure__actions {
+    flex-direction: column;
+  }
+  .sov-config-disclosure__actions .sov-ui-button {
+    width: 100%;
   }
 }
 

@@ -219,3 +219,29 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     assert '"Забрать ещё"' in mail
     assert "sov-mail-status-strip" in mail
     assert '"target_file"' in mail
+
+
+def test_configuration_home_uses_uikit_and_progressive_disclosure():
+    diag = Path("sovushka/pages/diag.py").read_text(encoding="utf-8")
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    assert 'classes("sov-config-page")' in diag
+    assert 'variant="primary"' in diag
+    assert '"Проверить систему"' in diag
+    assert '"Рабочие контуры"' in diag
+    for disclosure in (
+        "Детали последней проверки",
+        "С.У.Х.А.Р.И.К. · Резервные копии",
+        "Словарь системных сокращений",
+        "Технический журнал",
+    ):
+        assert disclosure in diag
+
+    assert "rgba(59,130,246" not in diag
+    assert "ЗАПУСТИТЬ ПРОВЕРКУ" not in diag
+    assert "kpi-box" not in diag
+    assert "diag-live-map" not in diag
+    assert "build_log_terminal()" not in shell
+    assert ".sov-config-status-strip" in UIKIT_CSS
+    assert ".sov-config-contours" in UIKIT_CSS
+    assert ".sov-config-disclosure" in UIKIT_CSS

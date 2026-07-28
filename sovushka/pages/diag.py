@@ -10,11 +10,16 @@ from nicegui import ui
 from sovushka.state import state, api_get, api_post, add_log, active_llm_provider
 from sovushka.config import MLX_URL
 from sovushka.components.charts import _html, esc
-from sovushka.uikit.components import acronym_identity
+from sovushka.uikit.components import (
+    acronym_identity,
+    action_button,
+    panel,
+    section_heading,
+)
 
 
 def _build_diag_map_html(results: list) -> str:
-    """Строит компактную HTML-карту контура с живыми статусами узлов."""
+    """Строит читаемый реестр контуров с живыми статусами узлов."""
     result_map = {r["name"]: r for r in results}
 
     def st(*names: str) -> str:
@@ -26,62 +31,94 @@ def _build_diag_map_html(results: list) -> str:
     def safe_status(value: str) -> str:
         return value if value in {"ok", "warn", "err", "idle"} else "idle"
 
-    def node(title: str, subtitle: str, status: str, *, hub: bool = False) -> str:
+    def node(title: str, subtitle: str, status: str) -> str:
         status = safe_status(status)
-        label = {"ok": "OK", "warn": "WARN", "err": "ERR", "idle": "WAIT"}[status]
-        hub_cls = " diag-node-hub" if hub else ""
+        label = {
+            "ok": "Готов",
+            "warn": "Внимание",
+            "err": "Ошибка",
+            "idle": "Не проверено",
+        }[status]
         return (
-            f'<div class="diag-node diag-node-{status}{hub_cls}">'
-            f'  <div class="diag-node-head">'
-            f'    <span class="diag-node-dot"></span>'
-            f'    <span class="diag-node-title">{esc(title)}</span>'
-            f'    <span class="diag-node-state">{label}</span>'
+            f'<div class="sov-config-service sov-config-service--{status}">'
+            f'  <span class="sov-config-service__dot" aria-hidden="true"></span>'
+            f'  <div class="sov-config-service__copy">'
+            f'    <div class="sov-config-service__name">{esc(title)}</div>'
+            f'    <div class="sov-config-service__detail">{esc(subtitle)}</div>'
             f'  </div>'
-            f'  <div class="diag-node-sub">{esc(subtitle)}</div>'
+            f'  <span class="sov-config-service__status">{label}</span>'
             f'</div>'
         )
 
     def group(title: str, items: list[str]) -> str:
         return (
-            '<div class="diag-map-group">'
-            f'  <div class="diag-map-group-title">{esc(title)}</div>'
-            f'  <div class="diag-map-group-body">{"".join(items)}</div>'
-            '</div>'
+            '<section class="sov-config-contour">'
+            f'  <h3 class="sov-config-contour__title">{esc(title)}</h3>'
+            f'  <div class="sov-config-contour__body">{"".join(items)}</div>'
+            '</section>'
         )
 
-    ingress = [
-        node("Сеть", "интернет / доступы", st("Интернет", "Сеть (интернет)")),
-        node("С.О.В.У.Ш.К.А.", "NiceGUI :8051", "ok"),
-    ]
-    proxy = node("les-proxy", "FastAPI :8050", st("les-proxy :8050"), hub=True)
     groups = [
-        group("RAG-память", [
-            node("Qdrant", "векторы :6333", st("Qdrant :6333")),
-            node("Qwen index", "chunks = points", st("Qdrant индекс", "Qdrant :6333")),
-            node("SQLite", "метабаза", st("SQLite метабаза")),
+        group("Доступ и интерфейс", [
+            node("Сеть", "интернет и внешние доступы", st("Интернет", "Сеть (интернет)")),
+            node("С.О.В.У.Ш.К.А.", "веб-интерфейс · порт 8051", "ok"),
+            node("les-proxy", "API и маршрутизация · порт 8050", st("les-proxy :8050")),
+        ]),
+        group("Поиск и данные", [
+            node("Qdrant", "векторный индекс · порт 6333", st("Qdrant :6333")),
+            node("Qwen index", "согласованность chunks и points", st("Qdrant индекс", "Qdrant :6333")),
+            node("SQLite", "метаданные документов", st("SQLite метабаза")),
         ]),
         group("Модели", [
-            node("MLX Host", "локальный inference :8080", st("MLX Backend", "MLX Host :8080")),
-            node("Latency", "health / chat", st("MLX latency", "Chat latency (тест)")),
-            node("Т.О.С.К.А.", "quality gate", st("Т.О.С.К.А. статистика")),
+            node("MLX Host", "локальный inference · порт 8080", st("MLX Backend", "MLX Host :8080")),
+            node("Latency", "время ответа health и chat", st("MLX latency", "Chat latency (тест)")),
+            node("Т.О.С.К.А.", "контроль качества ответов", st("Т.О.С.К.А. статистика")),
         ]),
-        group("Хост", [
-            node("RAM", "память", st("RAM")),
-            node("CPU", "нагрузка", st("CPU")),
+        group("Ресурсы Mac", [
+            node("RAM", "оперативная память", st("RAM")),
+            node("CPU", "текущая нагрузка", st("CPU")),
             node("Диск", "свободное место", st("Диск")),
-            node("Docker", "runtime отсутствует", st("Docker runtime", "Docker")),
+            node("Runtime", "сервисы работают через LaunchAgents", st("Docker runtime", "Docker")),
         ]),
     ]
 
     return (
-        '<div class="diag-live-map">'
-        f'  <div class="diag-map-stack">{"".join(ingress)}</div>'
-        '  <div class="diag-map-arrow" aria-hidden="true"></div>'
-        f'  <div class="diag-map-proxy">{proxy}</div>'
-        '  <div class="diag-map-arrow" aria-hidden="true"></div>'
-        f'  <div class="diag-map-groups">{"".join(groups)}</div>'
+        '<div class="sov-config-contours" role="list" '
+        'aria-label="Состояние системных контуров">'
+        f'{"".join(groups)}'
         '</div>'
     )
+
+
+def _build_overall_status_html(status: str = "idle") -> str:
+    """Возвращает главный статус конфигурации без dashboard-KPI."""
+    safe_status = status if status in {"ok", "warn", "err"} else "idle"
+    icon, title, detail = {
+        "idle": ("○", "Проверка ещё не запускалась", "Запустите проверку, чтобы получить актуальный статус."),
+        "ok": ("✓", "Система готова", "Критических проблем не обнаружено."),
+        "warn": ("!", "Нужно внимание", "Есть предупреждения, работа системы не заблокирована."),
+        "err": ("×", "Есть ошибки", "Откройте детали проверки и технический журнал."),
+    }[safe_status]
+    return (
+        f'<div class="sov-config-readiness sov-config-readiness--{safe_status}" '
+        'role="status" aria-live="polite">'
+        f'  <span class="sov-config-readiness__mark" aria-hidden="true">{icon}</span>'
+        '  <div class="sov-config-readiness__copy">'
+        f'    <div class="sov-config-readiness__title">{title}</div>'
+        f'    <div class="sov-config-readiness__detail">{detail}</div>'
+        '</div>'
+        '</div>'
+    )
+
+
+def _build_diag_metric(label: str, value: str = "—", *, tone: str = "muted"):
+    """Строит компактную строку показателя внутри единого status strip."""
+    with ui.element("div").classes(
+        f"sov-config-metric sov-config-metric--{tone}"
+    ):
+        value_label = ui.label(value).classes("sov-config-metric__value")
+        ui.label(label).classes("sov-config-metric__label")
+    return value_label
 
 
 def _build_acronym_glossary_html() -> str:
@@ -170,93 +207,114 @@ def _normalize_diag_payload(payload: dict) -> dict:
 
 def build_diag():
     """Строит содержимое вкладки Д.И.А.Г.Н.О.З. Вызывать внутри with ui.tab_panel(tab_diag)."""
-    with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
+    with ui.column().classes("sov-config-page"):
 
-        # ── Заголовок и кнопка ──────────────────
-        with ui.row().classes("items-center justify-between w-full"):
-            with ui.column().classes("gap-0"):
-                acronym_identity(
-                    "Д.И.А.Г.Н.О.З.",
-                    "Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья",
-                    icon="o_health_and_safety",
-                )
-                diag_ts_lbl = ui.label("Последний прогон: —").style(
-                    "font-size:.6rem;color:var(--dim);"
-                )
-            with ui.row().classes("gap-2"):
-                diag_run_btn = ui.button(
-                    "▶ ЗАПУСТИТЬ ПРОВЕРКУ",
-                    on_click=lambda: asyncio.create_task(run_diag())
-                ).props("no-caps").style(
-                    "background:rgba(59,130,246,.15);border:1px solid var(--accent);"
-                    "color:var(--accent);font-family:var(--font);font-weight:900;font-size:.75rem;"
-                )
-                ui.button(
-                    "📋 В ЛОГ",
-                    on_click=lambda: _diag_to_log()
-                ).props("no-caps flat").style("font-size:.7rem;color:var(--dim);")
+        # ── Паспорт конфигурации ─────────────────
+        with panel(variant="raised", classes="sov-config-hero"):
+            with ui.row().classes("sov-config-hero__row"):
+                with ui.column().classes("sov-config-hero__identity"):
+                    ui.label("Конфигурация").classes("sov-config-eyebrow")
+                    acronym_identity(
+                        "Д.И.А.Г.Н.О.З.",
+                        "Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья",
+                        icon="o_health_and_safety",
+                    )
+                    ui.label(
+                        "Проверка рабочих контуров Л.Е.С. без изменения данных и настроек."
+                    ).classes("sov-config-intro")
+                    diag_ts_lbl = ui.label("Последний прогон: —").classes(
+                        "sov-config-last-run"
+                    )
+                with ui.row().classes("sov-config-hero__actions"):
+                    diag_run_btn = action_button(
+                        "Проверить систему",
+                        icon="o_play_arrow",
+                        on_click=lambda: asyncio.create_task(run_diag()),
+                        variant="primary",
+                        classes="sov-config-run",
+                    )
+                    action_button(
+                        "Журнал",
+                        icon="o_terminal",
+                        on_click=lambda: _open_diag_log(),
+                        variant="quiet",
+                        compact=True,
+                    )
 
-        # ── Итоговые KPI диагностики ─────────────
-        with ui.row().classes("w-full gap-3"):
-            diag_overall = _html(
-                '<div class="kpi-box flex-1" style="text-align:center;">'
-                '<div class="kpi-val" style="font-size:2rem;">—</div>'
-                '<div class="kpi-lbl">ОБЩИЙ СТАТУС</div></div>'
+            with ui.element("div").classes("sov-config-status-strip"):
+                diag_overall = _html(_build_overall_status_html()).classes(
+                    "sov-config-status-strip__overall"
+                )
+                with ui.element("div").classes("sov-config-status-strip__metrics"):
+                    diag_ok_kpi = _build_diag_metric("Готово", tone="ok")
+                    diag_warn_kpi = _build_diag_metric("Внимание", tone="warn")
+                    diag_err_kpi = _build_diag_metric("Ошибки", tone="error")
+                    diag_time_kpi = _build_diag_metric("Время, мс")
+
+        # ── Рабочие контуры ──────────────────────
+        with panel(variant="plain", classes="sov-config-section"):
+            section_heading(
+                "Рабочие контуры",
+                "Статус сервисов после последней проверки. Серый статус означает, что проверка ещё не запускалась.",
             )
-            diag_ok_kpi   = _diag_kpi_box("—", "ОК",          "var(--ok)")
-            diag_warn_kpi = _diag_kpi_box("—", "ПРЕДУПРЕЖДЕНИЙ", "var(--warn)")
-            diag_err_kpi  = _diag_kpi_box("—", "ОШИБОК",      "var(--err)")
-            diag_time_kpi = _diag_kpi_box("—", "ВРЕМЯ (мс)",  "var(--dim)")
+            diag_map = _html(_build_diag_map_html([])).classes("w-full")
 
-        # ── Живая схема состояния ────────────────
-        with ui.card().classes("card-les w-full"):
-            with ui.row().classes("items-center justify-between mb-2"):
-                _html('<div class="section-title">ЖИВАЯ КАРТА КОНТУРА</div>')
-                ui.label("Цвет узла = результат последнего прогона").style("font-size:.6rem;color:var(--dim);")
-            with ui.element("div").classes("diag-map-wrap"):
-                diag_map = _html(_build_diag_map_html([])).classes("w-full")
+        # ── Детали последней проверки ────────────
+        with ui.expansion(
+            "Детали последней проверки",
+            icon="o_fact_check",
+        ).classes("sov-config-disclosure w-full") as diag_details_expansion:
+            ui.label(
+                "Здесь появятся отдельные проверки, фактические значения и ожидаемое состояние."
+            ).classes("sov-config-disclosure__intro")
+            diag_cards = ui.column().classes("sov-config-checks")
 
         # ── С.У.Х.А.Р.И.К. Резервные копии ────────
-        with ui.card().classes("card-les w-full"):
-            with ui.row().classes("items-center justify-between w-full mb-2"):
-                with ui.column().classes("gap-0"):
-                    _html('<div class="section-title">С.У.Х.А.Р.И.К. — РЕЗЕРВНЫЕ КОПИИ</div>')
-                    ui.label("Управление снапшотами Qdrant и SQLite метабазой (ротация 3 копии)").style(
-                        "font-size:.62rem;color:var(--dim);"
+        with ui.expansion(
+            "С.У.Х.А.Р.И.К. · Резервные копии",
+            icon="o_backup",
+        ).classes("sov-config-disclosure w-full"):
+            with ui.row().classes("sov-config-disclosure__header"):
+                ui.label(
+                    "Снапшоты Qdrant и SQLite-метабазы. Хранятся три последние копии."
+                ).classes("sov-config-disclosure__intro")
+                with ui.row().classes("sov-config-disclosure__actions"):
+                    backup_create_btn = action_button(
+                        "Создать копию",
+                        icon="o_add_to_drive",
+                        on_click=lambda: asyncio.create_task(create_backup()),
+                        variant="secondary",
+                        compact=True,
                     )
-                with ui.row().classes("gap-2"):
-                    backup_create_btn = ui.button(
-                        "⚡ СОЗДАТЬ БЭКАП",
-                        on_click=lambda: asyncio.create_task(create_backup())
-                    ).props("no-caps").style(
-                        "background:rgba(16,185,129,.15);border:1px solid var(--ok);"
-                        "color:var(--ok);font-family:var(--font);font-weight:900;font-size:.75rem;"
+                    backup_restore_btn = action_button(
+                        "Восстановить",
+                        icon="o_restore",
+                        on_click=lambda: asyncio.create_task(open_restore_dialog()),
+                        variant="danger",
+                        compact=True,
                     )
-                    backup_restore_btn = ui.button(
-                        "♻ ВОССТАНОВИТЬ",
-                        on_click=lambda: asyncio.create_task(open_restore_dialog())
-                    ).props("no-caps").style(
-                        "background:rgba(245,181,74,.12);border:1px solid var(--warn);"
-                        "color:var(--warn);font-family:var(--font);font-weight:900;font-size:.75rem;"
-                    )
+            backup_lists_el = ui.column().classes("sov-config-backups")
 
-            # Контейнер для списков
-            backup_lists_el = ui.column().classes("w-full gap-3")
-
-        # ── Словарь сокращений ───────────────────
-        with ui.card().classes("card-les w-full"):
-            _html('<div class="section-title" style="margin-bottom:8px;">СЛОВАРЬ АКРОНИМОВ</div>')
+        # ── Термины ──────────────────────────────
+        with ui.expansion(
+            "Словарь системных сокращений",
+            icon="o_menu_book",
+        ).classes("sov-config-disclosure w-full"):
+            ui.label(
+                "Расшифровки модулей и служебных контуров Л.Е.С."
+            ).classes("sov-config-disclosure__intro")
             _html(_build_acronym_glossary_html()).classes("w-full")
 
-        # ── Визуализация — карточки чеков ────────
-        diag_cards = ui.grid(columns=2).classes("w-full gap-3")
-
-        # ── Лог диагностики ───────────────────────
-        with ui.card().classes("card-les w-full"):
-            _html('<div class="section-title" style="margin-bottom:8px;">ЛОГ ПРОГОНА</div>')
-            diag_log_el = ui.log(max_lines=80).classes("w-full").style(
-                "background:var(--bg);color:var(--ok);font-family:var(--font);"
-                "font-size:.68rem;height:160px;border:none;"
+        # ── Технический журнал ───────────────────
+        with ui.expansion(
+            "Технический журнал",
+            icon="o_terminal",
+        ).classes("sov-config-disclosure w-full") as diag_log_expansion:
+            ui.label(
+                "Служебный вывод последнего прогона. Нужен для диагностики, а не для ежедневной работы."
+            ).classes("sov-config-disclosure__intro")
+            diag_log_el = ui.log(max_lines=80).classes(
+                "sov-config-log w-full"
             )
 
         # Таймер для начальной загрузки бэкапов
@@ -266,7 +324,6 @@ def build_diag():
 
     STATUS_ICON  = {"ok": "✓", "warn": "⚠", "err": "✗"}
     STATUS_COLOR = {"ok": "var(--ok)", "warn": "var(--warn)", "err": "var(--err)"}
-    STATUS_TAG   = {"ok": "tag-ok", "warn": "tag-warn", "err": "tag-err"}
 
     async def load_backups():
         data = await api_get("/api/backup/status")
@@ -323,11 +380,11 @@ def build_diag():
 
     async def create_backup():
         backup_create_btn.props("disabled")
-        backup_create_btn.set_text("⌛ Создание...")
+        backup_create_btn.set_text("Создание…")
         ui.notify("Запущено создание резервной копии SQLite & Qdrant...", type="info")
         res = await api_post("/api/backup/create")
         backup_create_btn.props(remove="disabled")
-        backup_create_btn.set_text("⚡ СОЗДАТЬ БЭКАП")
+        backup_create_btn.set_text("Создать копию")
         if res:
             sqlite_ok = res.get("sqlite", {}).get("ok")
             qdrant_ok = res.get("qdrant", {}).get("ok")
@@ -410,30 +467,26 @@ def build_diag():
         with diag_cards:
             for r in results:
                 s = r["status"]
-                color = STATUS_COLOR.get(s, "var(--dim)")
-                icon  = STATUS_ICON.get(s, "?")
-                tag   = STATUS_TAG.get(s, "tag-dim")
-                with ui.card().classes("card-les").style(
-                    f"border-left:3px solid {color};"
+                label = {"ok": "Готово", "warn": "Внимание", "err": "Ошибка"}.get(
+                    s, "Нет данных"
+                )
+                with ui.element("article").classes(
+                    f"sov-config-check sov-config-check--{s}"
                 ):
-                    with ui.row().classes("items-center justify-between mb-1"):
-                        ui.label(r["name"]).style(
-                            "font-size:.78rem;font-weight:900;color:var(--text);"
-                        )
-                        _html(f'<span class="{tag}">{icon} {s.upper()}</span>')
-                    with ui.row().classes("items-center gap-3"):
-                        ui.label(r["value"]).style(
-                            f"font-size:.85rem;font-weight:900;color:{color};"
-                        )
-                        ui.label(f"ожидалось: {r['expected']}").style(
-                            "font-size:.6rem;color:var(--dim);"
+                    with ui.row().classes("sov-config-check__header"):
+                        ui.label(r["name"]).classes("sov-config-check__name")
+                        ui.label(label).classes("sov-config-check__status")
+                    with ui.row().classes("sov-config-check__values"):
+                        ui.label(r["value"]).classes("sov-config-check__value")
+                        ui.label(f"Ожидалось: {r['expected']}").classes(
+                            "sov-config-check__expected"
                         )
                     if r.get("message"):
-                        ui.label(r["message"]).style(
-                            "font-size:.65rem;color:var(--dim);margin-top:2px;"
+                        ui.label(r["message"]).classes(
+                            "sov-config-check__message"
                         )
-                    ui.label(f"⏱ {r['latency_ms']} ms").style(
-                        "font-size:.6rem;color:var(--border-hl, #4a5568);margin-top:4px;"
+                    ui.label(f"{r['latency_ms']} мс").classes(
+                        "sov-config-check__latency"
                     )
 
     async def run_diag():
@@ -443,7 +496,7 @@ def build_diag():
 
         state["diag_running"] = True
         diag_run_btn.props("disabled")
-        diag_run_btn.set_text("⌛ Диагностика...")
+        diag_run_btn.set_text("Проверка…")
         diag_log_el.clear()
 
         add_log("[DIAG] ▶ Запуск диагностики системы...")
@@ -466,13 +519,7 @@ def build_diag():
             total_ms = d.get("total_ms", 0)
             ts      = d.get("timestamp", "—")
 
-            overall_icon = {"ok": "✓ ОК", "warn": "⚠ WARN", "err": "✗ ОШИБКИ"}.get(overall, "?")
-            overall_color = STATUS_COLOR.get(overall, "var(--dim)")
-            diag_overall.set_content(
-                f'<div class="kpi-box flex-1" style="text-align:center;border-color:{overall_color};">'
-                f'<div class="kpi-val" style="font-size:2rem;color:{overall_color};">{overall_icon}</div>'
-                f'<div class="kpi-lbl">ОБЩИЙ СТАТУС</div></div>'
-            )
+            diag_overall.set_content(_build_overall_status_html(overall))
             diag_ok_kpi.set_text(str(ok_c))
             diag_warn_kpi.set_text(str(warn_c))
             diag_err_kpi.set_text(str(err_c))
@@ -503,7 +550,7 @@ def build_diag():
         finally:
             state["diag_running"] = False
             diag_run_btn.props(remove="disabled")
-            diag_run_btn.set_text("▶ ЗАПУСТИТЬ ПРОВЕРКУ")
+            diag_run_btn.set_text("Проверить систему")
 
     async def _run_local_diag() -> dict:
         """Встроенная диагностика — имена чеков соответствуют карте в _build_diag_map_html."""
@@ -646,26 +693,8 @@ def build_diag():
             "checks": results,
         }
 
-    def _diag_to_log():
-        results = state.get("diag_results", [])
-        if not results:
-            add_log("[DIAG] Нет данных — сначала запусти диагностику")
-            ui.notify("Сначала запусти диагностику", type="warning")
-            return
-        add_log("─" * 60)
-        add_log("[DIAG] ОТЧЁТ ДИАГНОСТИКИ СИСТЕМЫ Л.Е.С.")
-        add_log("─" * 60)
-        for r in results:
-            icon = STATUS_ICON.get(r["status"], "?")
-            add_log(f"[DIAG] {icon} {r['name']}: {r['value']}  ({r['latency_ms']}ms)"
-                    + (f" — {r['message']}" if r.get("message") else ""))
-        add_log("─" * 60)
-        ui.notify("Результаты записаны в лог", type="positive")
-
-
-def _diag_kpi_box(val: str, lbl: str, color: str):
-    """Хелпер для отрисовки KPI."""
-    with ui.card().classes("kpi-box flex-1"):
-        v = ui.label(val).style(f"font-size:1.6rem;font-weight:900;color:{color};")
-        ui.label(lbl).style("font-size:.62rem;text-transform:uppercase;color:var(--dim);margin-top:4px;")
-    return v
+    def _open_diag_log():
+        diag_log_el.clear()
+        for line in state.get("logs", [])[-80:]:
+            diag_log_el.push(line)
+        diag_log_expansion.set_value(True)
