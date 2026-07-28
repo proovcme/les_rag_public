@@ -12,7 +12,6 @@ If Core ML hits a native SIGSEGV, launchd only has to recover this child.
 from __future__ import annotations
 
 import argparse
-import fcntl
 import hashlib
 import json
 import os
@@ -23,6 +22,11 @@ import traceback
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # Windows may test helpers; Core ML inference itself remains macOS-only.
+    fcntl = None  # type: ignore[assignment]
 
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
@@ -52,7 +56,8 @@ def _load_stable_compiled_model(ct: Any, model_path: Path, compute_unit: Any):
     compiled_path.parent.mkdir(parents=True, exist_ok=True)
     lock_path = compiled_path.parent / f"{model_path.stem}.compile.lock"
     with lock_path.open("a+b") as lock_file:
-        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
         if not compiled_path.is_dir():
             temporary_path = compiled_path.parent / (
                 f".{compiled_path.stem}.{os.getpid()}.mlmodelc"

@@ -10,6 +10,9 @@ concurrency:
   group: platform-gates-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test-and-native-build:
     name: ${{ matrix.platform }}
@@ -44,6 +47,15 @@ jobs:
 
       - name: Sync frozen Python environment
         run: uv sync --frozen
+
+      - name: Restore verified smeta test baseline
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          uv run python -c "from pathlib import Path; Path('dist').mkdir(exist_ok=True)"
+          gh release download ci-smeta-baseline-20260728 --pattern LES-smeta-baseline.zip --dir dist --clobber
+          uv run python -m tools.smeta_release_baseline verify --archive dist/LES-smeta-baseline.zip
+          uv run python -m tools.smeta_release_baseline provision --archive dist/LES-smeta-baseline.zip --state-root .
 
       - name: Verify version, imports and test collection
         run: uv run python tools/platform_release_gate.py verify

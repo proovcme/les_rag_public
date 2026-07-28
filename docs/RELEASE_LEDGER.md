@@ -53,6 +53,12 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > `61 passed` + native Cargo; Mac platform gate и Tauri release binary зелёные; HTTP release smoke
 > `pass=6/warn=3/fail=0`. FIRE/HVAC `16/16` не применим к пустому user-owned `les_rag` и честно
 > зафиксирован как `N/A: corpus absent`, без системного seed. Commit/CI/Legion/publication — далее.
+> Первый clean GitHub run `30339455936` выявил две скрытые зависимости локального контура:
+> suite ожидала ignored smeta/FSEM data, а Windows collect импортировал POSIX-only `fcntl`.
+> Для CI опубликован private immutable baseline prerelease
+> `ci-smeta-baseline-20260728` (archive SHA `11829581…2dd`), который workflow сначала
+> верифицирует/provision-ит; CoreML file lock теперь условен только на Windows, где сам CoreML
+> backend не запускается. Никакие тесты ради зелёного не исключены.
 
 > 0.24.47 / build 468 — truthful test layers, safe smeta base and rerank/table contracts
 >

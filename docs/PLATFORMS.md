@@ -101,8 +101,13 @@ are junctions to that root; Qdrant uses `les-qdrant-data`.
 
 `.github/workflows/verify.yml` runs the canonical Python suite and a real
 `tauri build --no-bundle` on `macos-14` and `windows-2022` for every PR and
-push to `main`. This proves both native shells compile without pretending that
-a hosted runner has production data or installed Ollama/Qdrant.
+push to `main`. Clean runners download the private immutable prerelease fixture
+`ci-smeta-baseline-20260728`, verify its manifest/SHA/counts through
+`tools.smeta_release_baseline` and provision only linked ФГИС/ФСНБ/FSEM files
+before pytest. This is not user RAG or production state. CoreML cache helpers
+remain importable on Windows without POSIX `fcntl`; CoreML inference itself
+stays macOS-only. This proves both native shells compile without pretending
+that a hosted runner has installed Ollama/Qdrant.
 
 The production workflow is intentionally separate:
 `.github/workflows/release.yml` runs on the approved self-hosted Mac release
