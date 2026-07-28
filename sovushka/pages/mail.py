@@ -239,6 +239,13 @@ def build_mail_settings() -> None:
         else:
             ui.notify(last_api_error_text("Синхронизация не удалась"), type="negative")
 
+    async def run_outlook_collector() -> None:
+        result = await api_post("/api/mail/collector/run", {})
+        if isinstance(result, dict) and result.get("status") == "started":
+            ui.notify("Сбор новых писем запущен; Outlook освободится не позднее 15 секунд", type="positive")
+        else:
+            ui.notify(last_api_error_text("Не удалось запустить сбор Outlook"), type="negative")
+
     def add_account() -> None:
         with ui.dialog() as dialog, ui.card().classes("sov-mail-settings-dialog"):
             ui.label("Подключить IMAP").classes("sov-mail-settings-dialog-title")
@@ -308,8 +315,13 @@ def build_mail_settings() -> None:
                 with ui.column().classes("gap-0").style("flex:1;"):
                     ui.label("Classic Outlook на Legion").classes("sov-mail-settings-card-title")
                     ui.label(
-                        "Read-only sidecar · завершённая история не перечитывается · опрос раз в 10 минут."
+                        "Read-only sidecar · запускается только вручную · жёсткий предел 15 секунд."
                     ).classes("sov-mail-settings-note")
+                ui.button(
+                    "Забрать новые письма",
+                    icon="o_mark_email_unread",
+                    on_click=lambda: asyncio.create_task(run_outlook_collector()),
+                ).props("unelevated no-caps")
             if state.get("loading"):
                 with ui.row().classes("items-center sov-mail-settings-loading"):
                     ui.spinner(size="sm")

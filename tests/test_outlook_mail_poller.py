@@ -35,6 +35,9 @@ def test_outlook_sidecar_is_read_only_resumable_and_uploads_unicode_msg():
     assert "duration_ms=" in source
     assert "private const int BatchLimit = 10;" in source
     assert "RunBudgetMilliseconds = 12000" in source
+    assert "HardStopMilliseconds = 15000" in source
+    assert "Environment.Exit(0)" in source
+    assert "run forced stop duration_ms=" in source
     assert "RunBudgetExceeded()" in source
     assert "if (!Register(" in source
     assert "GetItemFromID(entryId, storeId)" in source
@@ -43,17 +46,20 @@ def test_outlook_sidecar_is_read_only_resumable_and_uploads_unicode_msg():
     assert ".UnRead =" not in source
 
 
-def test_windows_bootstrap_installs_bounded_interactive_ten_minute_task():
+def test_windows_bootstrap_installs_bounded_manual_interactive_task():
     setup = (ROOT / "clients/outlook_mail_poller/setup_task.ps1").read_text(encoding="utf-8")
     bootstrap = (ROOT / "installers/windows/app/bootstrap.ps1").read_text(encoding="utf-8-sig")
 
     assert "LES E.ZH.I.K. Outlook Collector" in setup
-    assert "[int]$EveryMinutes = 10" in setup
-    assert "/sc minute /mo $EveryMinutes" in setup
-    assert "/it /f" in setup
+    assert "New-ScheduledTaskAction -Execute $target" in setup
+    assert "Register-ScheduledTask" in setup
+    assert 'schedule = "manual"' in setup
+    assert "New-TimeSpan -Seconds 20" in setup
+    assert "/sc minute" not in setup
+    assert "New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive" in setup
     assert "collector/import" in setup
     assert "outlook_mail_poller\\setup_task.ps1" in bootstrap
-    assert "-EveryMinutes 10" in bootstrap
+    assert "-EveryMinutes" not in bootstrap
     production = (ROOT / "tools/windows_production_deploy.ps1").read_text(encoding="utf-8-sig")
     assert "LesMailPoller.exe" in production
     assert "--probe" in production
@@ -92,6 +98,8 @@ def test_mail_ui_is_read_only_and_scopes_chat_to_the_mailbox_dataset():
     assert "scope=ds:{account['dataset_id']}" in page
     assert "Ответить" not in page
     assert "Переслать" not in page
+    assert "Забрать новые письма" in page
+    assert "/api/mail/collector/run" in page
 
 
 @pytest.mark.asyncio

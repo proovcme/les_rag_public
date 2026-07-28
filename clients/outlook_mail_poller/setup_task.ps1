@@ -1,6 +1,5 @@
 # Build/install the classic-Outlook E.ZH.I.K. sidecar and interactive task.
 param(
-  [int]$EveryMinutes = 10,
   [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "LES\bin"),
   [string]$StateRoot = (Join-Path $env:LOCALAPPDATA "LES\mail"),
   [switch]$Probe,
@@ -31,9 +30,13 @@ if ($LASTEXITCODE -ne 0) { throw "LesMailPoller compile failed ($LASTEXITCODE)" 
   Set-Content -LiteralPath (Join-Path $StateRoot "collector_url.txt") -Encoding ASCII
 
 $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$command = "`"$target`""
-schtasks /create /tn $task /tr $command /sc minute /mo $EveryMinutes /ru $identity /it /f | Out-Null
-if ($LASTEXITCODE -ne 0) { throw "Task Scheduler registration failed ($LASTEXITCODE)" }
+$action = New-ScheduledTaskAction -Execute $target
+$principal = New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive
+$settings = New-ScheduledTaskSettingsSet `
+  -ExecutionTimeLimit (New-TimeSpan -Seconds 20) `
+  -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings -Force |
+  Out-Null
 
 if ($Probe) {
   & $target --probe
@@ -43,7 +46,7 @@ if ($Probe) {
 [ordered]@{
   task = $task
   executable = $target
-  interval_minutes = $EveryMinutes
+  schedule = "manual"
   interactive_user = $identity
   state_root = $StateRoot
 } | ConvertTo-Json -Compress
