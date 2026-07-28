@@ -30,7 +30,7 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert "font-variant-numeric: tabular-nums" in UIKIT_CSS
     assert "text-wrap: balance" in UIKIT_CSS
     assert "text-wrap: pretty" in UIKIT_CSS
-    assert "grid-template-columns: 224px minmax(0, 1fr)" in UIKIT_CSS
+    assert "grid-template-columns: 96px minmax(0, 1fr)" in UIKIT_CSS
     assert "@media (max-width: 900px)" in UIKIT_CSS
 
 

@@ -331,7 +331,7 @@ html {
 @media (min-width: 901px) {
   .sov-app-shell {
     display: grid !important;
-    grid-template-columns: 224px minmax(0, 1fr);
+    grid-template-columns: 96px minmax(0, 1fr);
     grid-template-rows: 100vh;
     align-items: stretch;
     overflow: hidden;
@@ -341,11 +341,11 @@ html {
     grid-column: 1;
     grid-row: 1;
     display: flex !important;
-    width: 224px !important;
+    width: 96px !important;
     height: 100vh !important;
     min-height: 0;
-    padding: 16px 12px 12px !important;
-    gap: 8px !important;
+    padding: 12px 8px 10px !important;
+    gap: 5px !important;
     align-items: stretch !important;
     flex-direction: column;
     border-right: 1px solid var(--border);
@@ -362,21 +362,24 @@ html {
   }
 
   .sov-brand-block {
-    min-height: 40px;
+    min-height: 36px;
     margin: 0 !important;
-    padding: 4px 8px;
+    padding: 2px 0;
+    justify-content: center;
   }
 
   .sov-brand-block .les-brand {
-    font-size: 17px !important;
+    font-size: 13px !important;
     letter-spacing: -.01em;
   }
 
   .sov-ui-version-badge {
     align-self: stretch;
     width: 100%;
-    margin: 0 0 8px !important;
-    justify-content: flex-start;
+    margin: 0 0 5px !important;
+    padding-inline: 3px !important;
+    justify-content: center;
+    font-size: 8px !important;
     color: var(--dim) !important;
     background: var(--bg) !important;
     border-color: var(--border) !important;
@@ -394,23 +397,30 @@ html {
 
   .sov-nav-switch {
     width: 100%;
-    min-height: 42px !important;
-    justify-content: flex-start;
+    min-height: 52px !important;
+    padding: 4px 2px !important;
+    justify-content: center;
+    font-size: 9px !important;
   }
 
   .sov-nav-switch .q-btn__content {
     width: 100%;
-    gap: 10px;
-    justify-content: flex-start;
+    gap: 2px;
+    flex-direction: column;
+    justify-content: center;
   }
 
   .sov-nav-switch .q-icon {
-    font-size: 19px;
+    font-size: 18px;
   }
 
   .sov-sidebar-caption {
     display: block;
-    margin: 14px 10px 2px;
+    margin: 10px 2px 2px;
+    overflow: hidden;
+    font-size: 8px;
+    text-align: center;
+    white-space: nowrap;
   }
 
   .les-top-tabs {
@@ -434,7 +444,7 @@ html {
     height: 44px !important;
     min-height: 44px !important;
     margin: 1px 0;
-    padding: 0 12px;
+    padding: 0 4px;
     border-radius: 7px;
     justify-content: flex-start;
   }
@@ -444,14 +454,18 @@ html {
     width: 100%;
     height: 44px !important;
     min-height: 44px !important;
-    gap: 10px;
+    gap: 4px;
     align-items: center;
     flex-direction: row;
     justify-content: flex-start;
   }
 
   .les-top-tabs .q-tab__label {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 9px;
     text-align: left;
+    text-overflow: ellipsis;
   }
 
   .les-top-tabs .q-tab__indicator {
@@ -468,7 +482,7 @@ html {
     width: 100%;
     margin: auto 0 0 !important;
     padding-top: 9px;
-    gap: 2px !important;
+    gap: 0 !important;
     align-items: center;
     justify-content: flex-start;
     border-top: 1px solid var(--border);
@@ -478,13 +492,18 @@ html {
   .sov-ui-header-action {
     width: 100%;
     min-height: 38px;
-    justify-content: flex-start;
+    justify-content: center;
   }
 
   .sov-ui-header-action .q-btn__content {
     width: 100%;
-    gap: 8px;
-    justify-content: flex-start;
+    gap: 0;
+    justify-content: center;
+  }
+
+  .sov-ui-header-action .q-btn__content > :not(.q-icon),
+  .sov-ui-header-secondary {
+    font-size: 0 !important;
   }
 
   .sov-app-content .sov-chat-shell {

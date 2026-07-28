@@ -7,16 +7,25 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.5 (internal Mac UI correction)
-номер сборки:              478     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.478 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.6 (compact Mac web UI correction)
+номер сборки:              479     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.479 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/audit-rag
 dev implementation:       codex/audit-rag; primary Chat/Studio/Config navigation
-задеплоено на рантайм:     Mac 0.25.5 / build 478; Legion не затрагивался
+задеплоено на рантайм:     Mac 0.25.6 / build 479; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.5 / build 478; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.6 / build 479; runtime alignment обязан быть aligned
 ```
+
+> 0.25.6 / build 479 — компактный app-rail без потери основных кнопок
+>
+> Дата: 2026-07-28
+> Статус: внутреннее web-only обновление Mac после визуальной приёмки; Tauri,
+> DMG, Rust, Legion и public не затрагиваются. Desktop rail уменьшен с 224 до
+> 96 px: «Чат», «Студия» и «Конфигурация» остаются подписанными кнопками с
+> иконками, вторичные разделы уплотнены, а рабочая область возвращает 128 px.
+> Mobile-контракт 62 px и три кнопки 40×40 не меняется.
 
 > 0.25.5 / build 478 — классическая зелёная Совушка в структуре Locia
 >
