@@ -86,3 +86,18 @@ def test_ollama_native_body_stream_and_think_flag():
 def test_assistant_text_parses_native_message_shape():
     # нативный ответ ollama: {"message": {"content": ...}} — think:false → content чист
     assert _assistant_text({"content": "Нет, я в облаке."}) == "Нет, я в облаке."
+
+
+def test_assistant_text_reads_openai_tool_call_arguments():
+    message = {
+        "content": None,
+        "tool_calls": [{
+            "type": "function",
+            "function": {
+                "name": "submit_json",
+                "arguments": '{"rows":[{"work_id":"w1","action":"read_norm"}]}',
+            },
+        }],
+    }
+
+    assert _assistant_text(message) == '{"rows":[{"work_id":"w1","action":"read_norm"}]}'

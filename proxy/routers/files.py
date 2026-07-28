@@ -11,13 +11,17 @@ in-place (котельная и пр.), были видны и листалис�
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from proxy.security import require_user
+from proxy.services.file_viewer_service import file_viewer_html, is_viewable_file
+from proxy.services.pdf_contour_service import render_page_preview
+from proxy.services.pdf_viewer_service import pdf_file_info, viewer_html
 
 router = APIRouter(prefix="/api/rag", tags=["files"])
 
@@ -63,7 +67,12 @@ def _split_key(path: str) -> tuple[str, str]:
     if path and _ROOT_SEP in path:
         key, rel = path.split(_ROOT_SEP, 1)
         return key, rel
-    return _DEFAULT_KEY, (path or "")
+    rel = path or ""
+    if rel == _DEFAULT_KEY:
+        rel = ""
+    elif rel.startswith(f"{_DEFAULT_KEY}/"):
+        rel = rel[len(_DEFAULT_KEY) + 1:]
+    return _DEFAULT_KEY, rel
 
 
 def _safe(path: str) -> Path:
@@ -148,3 +157,120 @@ async def rag_file_raw(path: str, _user=Depends(require_user)):
     if not p.is_file():
         raise HTTPException(404, "файл не найден")
     return FileResponse(p)
+
+
+def _pdf(path: str) -> Path:
+    target = _safe(path)
+    if not target.is_file():
+        raise HTTPException(404, "файл не найден")
+    if target.suffix.lower() != ".pdf":
+        raise HTTPException(415, "viewer доступен только для PDF")
+    return target
+
+
+def _bbox(value: str, *, field: str) -> tuple[float, float, float, float] | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        values = tuple(float(item.strip()) for item in raw.split(","))
+    except ValueError as exc:
+        raise HTTPException(400, f"{field} должен содержать четыре числа") from exc
+    if len(values) != 4:
+        raise HTTPException(400, f"{field} должен содержать четыре числа")
+    return values
+
+
+@router.get("/file/pdf-info")
+async def rag_file_pdf_info(path: str, _user=Depends(require_user)):
+    target = _pdf(path)
+    try:
+        return await asyncio.to_thread(pdf_file_info, target)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get("/file/pdf-preview")
+async def rag_file_pdf_preview(
+    path: str,
+    page: int = Query(default=1, ge=1),
+    width: int = Query(default=1100, ge=320, le=1800),
+    highlight_bbox: str = Query(default="", max_length=160),
+    _user=Depends(require_user),
+):
+    target = _pdf(path)
+    try:
+        content = await asyncio.to_thread(
+            render_page_preview,
+            target,
+            page_number=page,
+            max_width=width,
+            highlight_bbox=_bbox(highlight_bbox, field="highlight_bbox"),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return Response(
+        content=content,
+        media_type="image/png",
+        headers={"Cache-Control": "private, no-store", "Content-Disposition": f'inline; filename="page-{page}.png"'},
+    )
+
+
+@router.get("/file/pdf-viewer", response_class=HTMLResponse)
+async def rag_file_pdf_viewer(
+    path: str,
+    page: int = Query(default=1, ge=1),
+    bbox: str = Query(default="", max_length=160),
+    _user=Depends(require_user),
+):
+    target = _pdf(path)
+    try:
+        info = await asyncio.to_thread(pdf_file_info, target)
+        html = viewer_html(
+            path_id=path,
+            file_name=str(info["name"]),
+            page_count=int(info["page_count"]),
+            initial_page=page,
+            highlight_bbox=_bbox(bbox, field="bbox"),
+        )
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "private, no-store"})
+
+
+@router.get("/file/viewer", response_class=HTMLResponse)
+async def rag_file_viewer(
+    path: str,
+    page: int = Query(default=1, ge=1),
+    bbox: str = Query(default="", max_length=160),
+    locator: str = Query(default="", max_length=240),
+    sheet: str = Query(default="", max_length=180),
+    _user=Depends(require_user),
+):
+    """One guarded, read-only GUI entry point for PDF and office evidence."""
+    target = _safe(path)
+    if not target.is_file():
+        raise HTTPException(404, "файл не найден")
+    if not is_viewable_file(target):
+        raise HTTPException(415, "встроенный просмотр для этого формата недоступен")
+    try:
+        if target.suffix.lower() == ".pdf":
+            info = await asyncio.to_thread(pdf_file_info, target)
+            content = viewer_html(
+                path_id=path,
+                file_name=str(info["name"]),
+                page_count=int(info["page_count"]),
+                initial_page=page,
+                highlight_bbox=_bbox(bbox, field="bbox"),
+            )
+        else:
+            content = await asyncio.to_thread(
+                file_viewer_html,
+                target,
+                path_id=path,
+                locator=locator,
+                sheet=sheet,
+            )
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(400, f"Не удалось открыть предпросмотр: {str(exc)[:240]}") from exc
+    return HTMLResponse(content, headers={"Cache-Control": "private, no-store"})

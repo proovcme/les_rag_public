@@ -156,7 +156,7 @@ async def field_delete(entry_id: int, _user=Depends(require_user)):
 class AsbuiltExtractReq(BaseModel):
     path: str = Field(min_length=1)              # файл или папка внутри LES_EXTERNAL_SOURCE_ROOTS
     rotate: str = "auto"                          # auto | 0 | 90 | 180 | 270
-    ocr_engine: str = "local"                     # local (gemma) | cloud (gpt-4.1 через proxyapi)
+    ocr_engine: str = "local"                     # local (gemma) | cloud (gpt-5.4 через proxyapi)
     write: bool = False                           # true → создать записи журнала (status=pending)
     status: str = "pending"
     project_id: int = 0

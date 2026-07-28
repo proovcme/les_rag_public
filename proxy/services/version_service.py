@@ -1,13 +1,14 @@
 """version_service (v0.19) — ЕДИНЫЙ центр версий ЛЕС: product/harness/schema + git + флаги + runtime-
 divergence. Чтобы оператор сразу видел, ЧТО запущено и какой commit откатывать. Без секретов, без падений.
 
-Версии берутся отсюда (не хардкодятся по UI). `/api/version` отдаёт version_info(); чат кладёт version_info
-в trace; бейдж в шапке показывает version_brief().
+Версии читаются из config/version.json (не хардкодятся по UI). `/api/version` отдаёт version_info();
+чат кладёт version_info в trace; бейдж в шапке показывает version_brief().
 """
 
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -16,11 +17,16 @@ from typing import Any
 
 # ── центральные версии ────────────────────────────────────────────────────────────────────
 
-APP_VERSION = "5.1.0"                 # пользовательская «маркетинговая» версия ЛЕС
-HARNESS_VERSION = "0.24"             # веха roadmap (v0.NN); двигать на смене вехи
-# Гранулярная версия «где мы»: 0.<веха>.<фича>.<патч>. Двигать КАЖДУЮ фичу/фикс + строка в
-# docs/RELEASE_LEDGER.md. Это основной номер в /api/version и бейдже (см. docs/RELEASE_LEDGER.md).
-LES_VERSION = "0.24.0.46"
+_VERSION_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "version.json"
+_VERSION_CONFIG = json.loads(_VERSION_CONFIG_PATH.read_text(encoding="utf-8"))
+PRODUCT_VERSION = str(_VERSION_CONFIG["product_version"])
+BUILD_NUMBER = int(_VERSION_CONFIG["build_number"])
+DESKTOP_VERSION = str(_VERSION_CONFIG["desktop_version"])
+HARNESS_VERSION = str(_VERSION_CONFIG["harness_schema_version"])
+# Backward-compatible field names for API clients. Both now identify the same
+# public product; the independent Windows build number is BUILD_NUMBER.
+APP_VERSION = PRODUCT_VERSION
+LES_VERSION = PRODUCT_VERSION
 EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
@@ -32,45 +38,106 @@ _RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
 # критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).
 # v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
 _CRITICAL_FILES = (
+    "backend/interface.py",
+    "backend/rag_config.py",
     "backend/qdrant_adapter.py",
+    "backend/document_router.py",
     "proxy/app.py",
     "proxy/routers/external_radar.py",
     "proxy/routers/datasets.py",
+    "proxy/routers/lsr.py",
     "proxy/routers/chat.py",
+    "proxy/routers/speckle.py",
     "proxy/routers/doc_review.py",
+    "proxy/routers/tools.py",
     "proxy/routers/runtime.py",
     "proxy/routers/service_sources.py",
     "proxy/routers/notebooks.py",
     "proxy/routers/prompts.py",
     "proxy/services/doc_extract_service.py",
+    "proxy/services/evidence_packet_service.py",
+    "proxy/services/extract_service.py",
     "proxy/services/context_memory_service.py",
     "proxy/services/lexical_index_service.py",
+    "proxy/services/retrieval_quality_service.py",
+    "proxy/services/retrieval_service.py",
+    "proxy/smeta_core/contracts.py",
+    "proxy/smeta_core/integrity.py",
+    "proxy/smeta_core/norm_browser.py",
+    "proxy/smeta_core/workflow.py",
+    "proxy/services/cad_bim_graph.py",
+    "proxy/services/clause_lookup_service.py",
     "proxy/services/notebook_service.py",
+    "proxy/services/dataset_memory_service.py",
     "proxy/services/prompt_registry_service.py",
+    "proxy/services/project_summary_service.py",
     "proxy/services/saferag_service.py",
     "proxy/services/external_radar_service.py",
     "proxy/services/doc_review_service.py",
+    "proxy/services/doc_review_retrieval_service.py",
+    "proxy/services/document_explorer_service.py",
+    "proxy/services/tool_harness_service.py",
     "proxy/services/candidate_selection_service.py",
     "proxy/services/estimate_harness_service.py",
     "proxy/services/estimate_math_service.py",
+    "proxy/services/quantity_trace_service.py",
+    "proxy/services/active_state_service.py",
+    "proxy/services/les_module_service.py",
+    "proxy/services/scoped_rag_builder.py",
+    "proxy/services/skill_snippet_registry.py",
+    "proxy/services/tool_trace_policy.py",
+    "proxy/services/smeta_artifact_service.py",
+    "proxy/services/smeta_norm_store.py",
+    "proxy/services/rim_lsr_trace_service.py",
+    "proxy/services/rim_trace_xlsx_service.py",
     "proxy/services/sidecar_ops_service.py",
+    "proxy/services/answer_form_service.py",
     "proxy/services/deterministic_policy_service.py",
     "proxy/services/glossary_chat_service.py",
     "proxy/services/memory_service.py",
     "proxy/services/notebook_study_service.py",
     "proxy/services/smeta_chat_service.py",
+    "proxy/services/gesn_service.py",
+    "proxy/services/gesn_update_service.py",
     "proxy/services/service_source_registry.py",
     "proxy/services/scope_service.py",
     "proxy/services/title_block_extract_service.py",
+    "proxy/services/drawing_manifest_service.py",
+    "proxy/services/pd_rd_manifest_service.py",
+    "proxy/services/project_pdf_extract_service.py",
+    "proxy/services/project_pdf_table_service.py",
+    "proxy/services/electrical_schematic_service.py",
+    "proxy/services/electrical_materials_service.py",
+    "proxy/services/electrical_evidence_summary_service.py",
     "proxy/services/version_service.py",
     "proxy/services/workflow_plan_service.py",
     "proxy/routers/chat_history.py",
+    "config/prompts/smeta_estimator_role.json",
+    "config/domain/nr_sp.yaml",
+    "config/domain/pricebook_manifest.json",
+    "config/domain/electrical_schema_terms.yaml",
+    "skills/smeta/SKILL.md",
+    "tools/smetnoedelo_rag_import.py",
+    "tools/les_tool_harness.py",
+    "tools/drawing_manifest.py",
+    "tools/pd_rd_manifest.py",
+    "tools/electrical_schematic.py",
+    "tools/electrical_materials.py",
+    "tools/electrical_evidence_summary.py",
+    "tools/smeta_ru_norm_download.py",
+    "tools/smeta_ru_norm_rag_ingest.py",
+    "tools/build_smeta_structured_base.py",
+    "tools/build_smeta_service_rag.py",
+    "tools/gesn_unify_base.py",
+    "tools/gesn_update_from_fgis.py",
     "sovushka/pages/chat.py",
+    "sovushka/pages/documents.py",
     "sovushka/pages/instrumenty.py",
     "sovushka/components/header.py",
     "sovushka/answer_render.py",
     "sovushka/styles.py",
     "sovushka_ng.py",
+    "mlx_host.py",
     "config/service_sources.yaml",
 )
 # файлы, которых в рантайме намеренно НЕТ (flag-OFF, dev-only) — их отсутствие НЕ divergence
@@ -196,6 +263,8 @@ def write_deploy_stamp(*, dev_root: Path | None = None, runtime_root: Path | Non
         if h is not None:
             bundle[rel] = h
     stamp = {
+        "product_version": PRODUCT_VERSION, "build_number": BUILD_NUMBER,
+        "desktop_version": DESKTOP_VERSION,
         "les_version": LES_VERSION, "app_version": APP_VERSION, "harness_version": HARNESS_VERSION,
         "deployed_commit": deployed_commit, "deployed_branch": deployed_branch,
         "deployed_at": deployed_at or "unknown", "deployed_by": "local",
@@ -241,6 +310,9 @@ def version_info() -> dict[str, Any]:
     ds = deploy_stamp()
     import sys
     return {
+        "product_version": PRODUCT_VERSION,
+        "build_number": BUILD_NUMBER,
+        "desktop_version": DESKTOP_VERSION,
         "les_version": LES_VERSION,
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
@@ -273,6 +345,8 @@ def version_info_trace() -> dict[str, Any]:
     """Лёгкий version_info для trace каждого ответа (без runtime-divergence-сканов, дёшево)."""
     gi = git_info()
     return {
+        "product_version": PRODUCT_VERSION,
+        "build_number": BUILD_NUMBER,
         "les_version": LES_VERSION,
         "app_version": APP_VERSION,
         "harness_version": HARNESS_VERSION,
@@ -284,8 +358,8 @@ def version_info_trace() -> dict[str, Any]:
 
 
 def version_brief() -> str:
-    """Короткая строка для бейджа: «Л.Е.С. 5.1.0 · h0.20 · 5ded539»."""
+    """Короткая строка для бейджа: одна версия продукта + номер сборки."""
     gi = git_info()
     c = gi["git_commit"]
-    return (f"Л.Е.С. {LES_VERSION} · app {APP_VERSION} · h{HARNESS_VERSION}"
+    return (f"Л.Е.С. {PRODUCT_VERSION} · сборка {BUILD_NUMBER}"
             + (f" · {c}" if c and c != "unknown" else ""))

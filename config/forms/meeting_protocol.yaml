@@ -1,0 +1,12 @@
+# Протокол совещания — ручной/агентный черновик с обязательной проверкой человеком.
+id: meeting_protocol
+title: Протокол совещания
+legal_basis: Рабочий документ проекта; решения и поручения подтверждаются участниками
+fields:
+  - { key: object_name, label: Объект, type: str, source: "project.name" }
+  - { key: meeting_topic, label: Тема совещания, type: str, source: "manual" }
+  - { key: participants, label: Участники, type: list, source: "manual" }
+  - { key: agenda, label: Повестка, type: str, source: "manual" }
+  - { key: decisions, label: Решения, type: str, source: "manual" }
+  - { key: assignments, label: Поручения, type: str, source: "manual" }
+  - { key: date, label: Дата, type: str, source: "date.today" }

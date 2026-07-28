@@ -8,7 +8,7 @@ source-chips, trace-summary. Чистые (без NiceGUI) → юнит-тест
 from __future__ import annotations
 
 import re
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from typing import Any
 
 # ── strip markdown из ячеек таблицы (фикс `**Тип котельной**` в ячейке) ───────────────────
@@ -103,6 +103,13 @@ _KIND_HUMAN = {"parquet_row": "таблица", "file_body": "текст", "eml_
                "extracted_body": "извлечено", "workbook_cell": "ячейка", "lexical_chunk": "индекс",
                "vector_chunk": "vector", "filename_metadata": "имя файла"}
 
+_EMBEDDED_VIEW_EXTENSIONS = {
+    ".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".eml",
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
+    ".txt", ".md", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".log",
+    ".ini", ".cfg", ".sql", ".py", ".html", ".svg", ".csv", ".tsv",
+}
+
 
 def source_chip(source: Any, index: int | None = None) -> dict:
     """source (строка source_ref или dict) → {n, file, locator, kind, has_ref, weak}. Нет ref → has_ref=False
@@ -145,6 +152,128 @@ def citation_artifact(sources: list) -> dict:
     return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
 
 
+_SOURCE_MARKER_RE = re.compile(r"\[Источник\s+\d+(?:\s*\|[^\]]+)?\]")
+_SOURCE_NOTE_RE = re.compile(r"^\s*(?:>\s*)?(?:[-*]\s*)?Источники\s*:", re.I)
+
+
+def split_inline_source_notes(text: str) -> tuple[str, list[dict]]:
+    """Strip explicit ``Источники: ...`` service lines from the visible answer.
+
+    Inline markers such as ``[Источник 1]`` stay in normal prose. Full source
+    note lines move to a separate artifact so the chat bubble does not become a
+    wall of green quote blocks.
+    """
+    body_lines: list[str] = []
+    notes: list[dict] = []
+    for line in str(text or "").splitlines():
+        raw = line.rstrip()
+        stripped = raw.strip()
+        if stripped and _SOURCE_NOTE_RE.match(stripped):
+            clean = re.sub(r"^\s*>\s*", "", raw).strip()
+            clean = re.sub(r"^\s*[-*]\s*", "", clean).strip()
+            markers = _SOURCE_MARKER_RE.findall(clean)
+            notes.append({"text": clean, "markers": markers})
+            continue
+        body_lines.append(raw)
+    body = "\n".join(body_lines)
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    return body, notes
+
+
+def _md_cell(value: Any) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", "<br>").strip()
+
+
+def source_notes_artifact(
+    answer: str,
+    sources: list | None = None,
+    source_map: Any | None = None,
+) -> dict:
+    """Build a Markdown artifact with answer source notes and source inventory.
+
+    This is deliberately presentation-only: it does not invent sources and does
+    not change answer semantics.
+    """
+    _, notes = split_inline_source_notes(answer)
+    rows: list[dict] = []
+    seen: set[str] = set()
+
+    def _add_source(source: Any, label: str = "") -> None:
+        idx = len(rows) + 1
+        c = source_chip(source, idx)
+        source_ref = ""
+        snippet = ""
+        if isinstance(source, dict):
+            source_ref = str(source.get("source_ref") or source.get("ref") or source.get("path") or "")
+            snippet = str(source.get("snippet") or source.get("excerpt") or source.get("text") or "")[:220]
+            label = label or str(source.get("label") or source.get("source_label") or "")
+        else:
+            source_ref = str(source or "")
+        key = source_ref or f"{c.get('file')}#{c.get('locator')}#{snippet}"
+        if not key or key in seen:
+            return
+        seen.add(key)
+        title = " · ".join(p for p in (c.get("file"), c.get("locator")) if p) or source_ref or "источник"
+        rows.append({
+            "label": label or f"Источник {idx}",
+            "title": title,
+            "kind": c.get("kind") or "",
+            "source_ref": source_ref,
+            "snippet": snippet,
+            "weak": c.get("weak"),
+            "has_ref": c.get("has_ref"),
+        })
+
+    for i, source in enumerate(sources or [], 1):
+        _add_source(source, f"Источник {i}")
+    if isinstance(source_map, dict):
+        for label, source in source_map.items():
+            if isinstance(source, list):
+                for item in source:
+                    _add_source(item, str(label))
+            else:
+                _add_source(source, str(label))
+    elif isinstance(source_map, list):
+        for source in source_map:
+            _add_source(source)
+
+    if not notes and not rows:
+        return {}
+
+    lines = ["# Источники ответа"]
+    if notes:
+        lines += [
+            "",
+            "## Пометки из ответа",
+            "",
+            "| № | Метки | Текст пометки |",
+            "|---:|---|---|",
+        ]
+        for i, note in enumerate(notes, 1):
+            markers = ", ".join(note.get("markers") or [])
+            lines.append(f"| {i} | {_md_cell(markers)} | {_md_cell(note.get('text'))} |")
+    if rows:
+        lines += [
+            "",
+            "## Перечень источников",
+            "",
+            "| № | Метка | Источник | Тип | source_ref / фрагмент |",
+            "|---:|---|---|---|---|",
+        ]
+        for i, row in enumerate(rows, 1):
+            ref = row.get("source_ref") or row.get("snippet") or ("без точной ссылки" if not row.get("has_ref") else "")
+            lines.append(
+                f"| {i} | {_md_cell(row.get('label'))} | {_md_cell(row.get('title'))} | "
+                f"{_md_cell(row.get('kind'))} | {_md_cell(ref)} |"
+            )
+    return {
+        "type": "answer_sources",
+        "title": "Источники ответа",
+        "mode": "markdown",
+        "content": "\n".join(lines).strip(),
+    }
+
+
 def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     """One source → drawer payload for GUI.
 
@@ -155,20 +284,46 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     item["n"] = index or item["n"]
     source_ref = str(item.get("source_ref") or "")
     file_part, _, location = source_ref.partition("#")
+    suffix_match = re.search(r"(\.[a-z0-9]+)$", file_part, re.I)
+    suffix = suffix_match.group(1).lower() if suffix_match else ""
     open_url = ""
+    viewer_url = ""
     unavailable_reason = ""
     if not item.get("has_ref"):
         unavailable_reason = "У источника нет source_ref: открыть нельзя, можно только проверить текст ответа."
     elif item.get("weak"):
         unavailable_reason = "Источник слабый/vector: точное место не гарантировано, доступно копирование source_ref."
-    elif "/" in file_part or re.search(r"\.(pdf|docx?|xlsx?|csv|md|txt|eml|jsonl?)$", file_part, re.I):
+    elif "/" in file_part or suffix in _EMBEDDED_VIEW_EXTENSIONS or suffix in {".doc", ".xls"}:
         open_url = f"/lite-api/rag/file/raw?path={quote(file_part)}"
+        page_match = re.search(r"(?:^|[#;&])(?:p|page=?)\s*(\d+)(?:$|[#;&])", location, re.I)
+        page_number = int(page_match.group(1)) if page_match else 1
+        if suffix == ".pdf" and page_match:
+            open_url += f"#page={page_number}"
+        if suffix in _EMBEDDED_VIEW_EXTENSIONS:
+            params: dict[str, str | int] = {"path": file_part, "locator": location}
+            if suffix == ".pdf":
+                params["page"] = page_number
+                bbox_value: Any = None
+                if isinstance(source, dict):
+                    bbox_value = source.get("bbox") or source.get("bbox_pt")
+                if not bbox_value and isinstance(source, dict):
+                    fragments = source.get("pdf_fragment_bboxes") or []
+                    if fragments and isinstance(fragments[0], dict):
+                        bbox_value = fragments[0].get("bbox") or fragments[0].get("bbox_pt")
+                if isinstance(bbox_value, (list, tuple)) and len(bbox_value) == 4:
+                    try:
+                        params["bbox"] = ",".join(str(float(value)) for value in bbox_value)
+                    except (TypeError, ValueError):
+                        pass
+            viewer_url = f"/lite-api/rag/file/viewer?{urlencode(params)}"
     # Нормативные/расчётные refs вида "ГЭСН-2022#06-..." или "ГОСТ...#clause=..."
     # не являются локальными файлами. Не пугаем оператора техническим предупреждением: ref остаётся
     # в copy_text, а drawer просто показывает название источника и цитату/сниппет.
     item.update({
         "location": location,
         "open_url": open_url,
+        "viewer_url": viewer_url,
+        "is_pdf": file_part.lower().endswith(".pdf"),
         "unavailable_reason": unavailable_reason,
         "copy_text": source_ref if source_ref else item.get("file", ""),
     })
@@ -235,6 +390,27 @@ def trace_summary(unified_trace: dict | None) -> str:
     parts = []
     if ut.get("intent"):
         parts.append(f"route: {ut['intent']}")
+    topic_trace = ut.get("topic_guided_retrieval") if isinstance(ut.get("topic_guided_retrieval"), dict) else {}
+    if topic_trace:
+        selected_topics = topic_trace.get("selected_topics") or []
+        topic_labels = [
+            str(item.get("label") or item.get("id") or "")
+            for item in selected_topics
+            if isinstance(item, dict) and str(item.get("label") or item.get("id") or "").strip()
+        ]
+        topic_part = ", ".join(topic_labels[:2]) if topic_labels else "topic-guided"
+        targeted = topic_trace.get("targeted_chunk_count")
+        fallback = topic_trace.get("wide_fallback_chunk_count")
+        promoted = topic_trace.get("wide_fallback_promoted") if isinstance(topic_trace.get("wide_fallback_promoted"), dict) else {}
+        promoted_doc = str(promoted.get("doc_name") or "").rsplit("/", 1)[-1]
+        suffix = []
+        if targeted is not None:
+            suffix.append(f"targeted {targeted}")
+        if fallback is not None:
+            suffix.append(f"fallback {fallback}")
+        if promoted_doc:
+            suffix.append(f"promoted {promoted_doc}")
+        parts.append("topic: " + topic_part + (f" ({', '.join(suffix)})" if suffix else ""))
     tiers = ut.get("searched_tiers") or []
     if tiers:
         parts.append("tiers: " + ", ".join(tiers))

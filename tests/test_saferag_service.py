@@ -82,9 +82,38 @@ def test_concentrate_sources_uses_lexical_rank_score():
     ]
 
     ranked = rank_chunks_for_question("Что относится к противодымной защите?", chunks)
-    focused = concentrate_sources(ranked, max_docs=1, min_score=0.35)
+    focused = concentrate_sources(ranked, max_docs=2, min_score=0.35)
 
-    assert [chunk.doc_name for chunk in focused] == ["doc-b"]
+    assert "doc-b" in [chunk.doc_name for chunk in focused]
+
+
+def test_concentrate_sources_does_not_drop_low_score_lexical_match():
+    chunks = [
+        Chunk("общий текст", "doc-a", 0.8),
+        Chunk("пожарная сигнализация автоматика: установка предназначена для обнаружения пожара", "doc-b", 0.12),
+    ]
+
+    ranked = rank_chunks_for_question("пожарная сигнализация автоматика", chunks)
+    focused = concentrate_sources(ranked, max_docs=2, min_score=0.35)
+
+    assert "doc-b" in [chunk.doc_name for chunk in focused]
+
+
+def test_concentrate_sources_keeps_protected_target_documents():
+    chunks = [
+        Chunk("top semantic hit", "semantic-top.docx", 0.95),
+        Chunk("another semantic hit", "semantic-second.docx", 0.9),
+        Chunk("opened file passport data", "ПЗ.docx", 0.5),
+    ]
+
+    focused = concentrate_sources(
+        chunks,
+        max_docs=1,
+        min_score=0.35,
+        protected_doc_names=["ПЗ.docx"],
+    )
+
+    assert [chunk.doc_name for chunk in focused] == ["semantic-top.docx", "ПЗ.docx"]
 
 
 def test_concentrate_sources_deduplicates_copied_documents():

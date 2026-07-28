@@ -34,6 +34,8 @@ _ENUM_TOKENS = (
 _FULL_TOKENS = (
     "собери все", "собери всё", "подробно", "максимально подроб", "развернут", "развёрнут",
     "детально", "всё что", "все что есть", "полный обзор", "полностью опиши", "исчерпыва",
+    "инженерный обзор", "технические решения", "что не сход", "что не так",
+    "требует проверки", "разночтени",
 )
 # Явная краткость. Само по себе «расскажи» — широкий запрос, не команда резать ответ.
 _BRIEF_TOKENS = (
@@ -63,9 +65,16 @@ _ENUM = AnswerForm(
 )
 _FULL = AnswerForm(
     "full",
-    "Форма ответа: развёрнуто, структурируй по разделам с короткими подзаголовками. Покрой "
-    "ВСЕ относящиеся к вопросу требования из контекста, каждое — со ссылкой на источник/пункт.",
-    8192,
+    "Форма ответа: развёрнуто, но без простыни. Структурируй по коротким разделам. "
+    "Для обзорных инженерных ответов предпочитай списки и короткие абзацы; markdown-таблицы "
+    "используй только для небольших сравнений, не превращай весь ответ в таблицу. "
+    "Если вопрос просит инженерный обзор/технические решения/что не сходится, обязательно "
+    "используй порядок: 1) паспорт объекта; 2) ключевые технические решения; "
+    "3) важные файлы/разделы; 4) несостыковки и что проверить; 5) детали, если осталось место. "
+    "Раздел 4 обязателен: если явных противоречий нет в контексте, назови зоны проверки "
+    "и какие первоисточники открыть. Детали перечисляй сжато; не трать весь лимит на один раздел. "
+    "Каждое важное число/утверждение — со ссылкой на источник/пункт.",
+    3072,
 )
 _BRIEF = AnswerForm(
     "brief",
@@ -74,6 +83,28 @@ _BRIEF = AnswerForm(
     1024,
 )
 _DEFAULT = AnswerForm("default", "", 8192)   # снят блок длины по умолчанию (было 2048) — не режем ответ
+
+_RESPONSE_LENGTHS: dict[str, tuple[int, str]] = {
+    "short": (1024, "Пользователь выбрал короткий ответ: дай только вывод и необходимое обоснование."),
+    # Standard intentionally preserves the previously successful default ceiling.
+    "standard": (8192, "Пользователь выбрал обычную длину: ответь достаточно полно, без лишнего повторения."),
+    "detailed": (12288, "Пользователь выбрал подробный ответ: раскрой выводы, evidence и ограничения."),
+    "maximum": (16384, "Пользователь выбрал полный разбор: не сокращай полезные детали ради краткости."),
+}
+
+
+def apply_response_length(form: AnswerForm, preference: str | None) -> AnswerForm:
+    """Apply an explicit operator preference to generation, not retrieval or routing.
+
+    The operator-owned setting is allowed to change the token ceiling and add one
+    lightweight instruction.  It does not choose facts, sources or professional
+    decisions for the model.
+    """
+    selected = _RESPONSE_LENGTHS.get(str(preference or "").strip().casefold())
+    if not selected:
+        return form
+    max_tokens, instruction = selected
+    return AnswerForm(form.intent, " ".join(x for x in (form.instruction, instruction) if x), max_tokens)
 
 
 def classify_answer_form(question: str) -> AnswerForm:
@@ -87,10 +118,10 @@ def classify_answer_form(question: str) -> AnswerForm:
 
     if _has(_VALUE_TOKENS):
         return _VALUE
-    if _has(_ENUM_TOKENS):
-        return _ENUM
     if _has(_FULL_TOKENS):
         return _FULL
+    if _has(_ENUM_TOKENS):
+        return _ENUM
     if _has(_BRIEF_TOKENS):
         return _BRIEF
     return _DEFAULT

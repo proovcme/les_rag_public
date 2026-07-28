@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -133,11 +134,12 @@ def ensure_dirs() -> list[str]:
 
 def init_env(force: bool = False) -> str:
     source = ROOT / "env.example"
-    target = ROOT / ".env"
+    target = Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
     if target.exists() and not force:
         return ".env exists"
     if not source.exists():
         raise FileNotFoundError("env.example not found")
+    target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
     return ".env created from env.example" if not force else ".env overwritten from env.example"
 
@@ -200,7 +202,7 @@ def apply_env_overrides(overrides: dict[str, str], target: Path | None = None) -
     Комментарии и прочие строки сохраняются. Возвращает применённые ключи."""
     if not overrides:
         return []
-    target = target or (ROOT / ".env")
+    target = target or Path(os.getenv("LES_ENV_PATH", str(ROOT / ".env"))).expanduser()
     lines = target.read_text(encoding="utf-8").splitlines() if target.exists() else []
     applied: list[str] = []
     remaining = dict(overrides)

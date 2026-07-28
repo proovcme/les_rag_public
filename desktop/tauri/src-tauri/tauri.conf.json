@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ЛЕС",
+  "version": "5.1.469",
+  "identifier": "me.ovc.les",
+  "build": {
+    "frontendDist": "../web"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "ЛЕС · Совушка",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 940,
+        "minHeight": 680,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "url": "index.html"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "Локальная экспертная система",
+    "longDescription": "ЛЕС — локальная экспертная система для строительных документов, RAG и расчётов.",
+    "resources": {
+      "resources/": "."
+    },
+    "icon": [
+      "../../../installers/macos/app/LES.icns",
+      "../../../installers/windows/app/LES.ico"
+    ],
+    "macOS": {
+      "minimumSystemVersion": "13.0"
+    },
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "installerHooks": "windows-installer-hooks.nsh"
+      }
+    }
+  }
+}

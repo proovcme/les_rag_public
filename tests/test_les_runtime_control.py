@@ -144,6 +144,56 @@ def test_parse_memory_processes_marks_les_and_protected_processes():
     assert processes[2].protected is True
 
 
+def test_parse_tasklist_memory_processes_windows_csv():
+    output = (
+        '"Memory Compression","3096","Services","0","2,522,112 K"\n'
+        '"python.exe","21640","Console","1","512,000 K"\n'
+        '"cmd.exe","10","Console","1","8,192 K"\n'
+    )
+
+    processes = runtime_control._parse_tasklist_memory_processes(output)
+
+    assert [process.pid for process in processes] == [3096, 21640, 10]
+    assert processes[0].rss_mb == 2463.0
+    assert processes[0].protected is True
+    assert processes[1].command == "python.exe"
+
+
+def test_memory_processes_missing_platform_command_returns_empty(monkeypatch):
+    monkeypatch.setattr(runtime_control.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        runtime_control,
+        "_run",
+        lambda args, timeout=20: runtime_control.subprocess.CompletedProcess(
+            args=args,
+            returncode=127,
+            stdout="",
+            stderr="missing",
+        ),
+    )
+
+    assert runtime_control.memory_processes() == []
+
+
+def test_process_command_uses_tasklist_on_windows(monkeypatch):
+    monkeypatch.setattr(runtime_control.platform, "system", lambda: "Windows")
+    calls = []
+
+    def fake_run(args, timeout=20):
+        calls.append(args)
+        return runtime_control.subprocess.CompletedProcess(
+            args=args,
+            returncode=0,
+            stdout='"python.exe","21640","Console","1","512,000 K"\n',
+            stderr="",
+        )
+
+    monkeypatch.setattr(runtime_control, "_run", fake_run)
+
+    assert runtime_control._process_command(21640) == "python.exe"
+    assert calls[0][:2] == ["tasklist", "/FI"]
+
+
 def test_memory_preflight_candidates_exclude_les_and_protected(monkeypatch):
     processes = [
         runtime_control.MemoryProcess(10, "ovc", 1200.0, "Chrome", les_owned=False, protected=False),
@@ -233,6 +283,44 @@ def test_start_service_enables_disabled_launch_agent(monkeypatch):
     assert result.ok is True
     assert calls[0] == ["enable", service.label]
     assert any(call[:2] == ["launchctl", "bootstrap"] for call in calls if isinstance(call, list) and len(call) >= 2)
+
+
+def test_restart_service_reloads_launchd_when_forced_plist_changed(monkeypatch):
+    service = runtime_control.SERVICES["mlx"]
+    status = runtime_control.ServiceStatus(
+        key=service.key,
+        title=service.title,
+        label=service.label,
+        loaded=True,
+        running=True,
+        pid=123,
+        port=8080,
+        port_pid=123,
+        health="ok",
+        detail="HTTP 200",
+    )
+    calls = []
+
+    monkeypatch.setattr(runtime_control, "_install", lambda svc: True)
+    monkeypatch.setattr(runtime_control, "_loaded", lambda svc: True)
+    monkeypatch.setattr(
+        runtime_control,
+        "stop_service",
+        lambda key, wait, terminate_listener: calls.append(("stop", key, wait, terminate_listener))
+        or runtime_control.ActionResult("stop", key, True, "stopped", status),
+    )
+    monkeypatch.setattr(
+        runtime_control,
+        "start_service",
+        lambda key, wait: calls.append(("start", key, wait))
+        or runtime_control.ActionResult("start", key, True, "started", status),
+    )
+
+    result = runtime_control.restart_service("mlx")
+
+    assert result.ok is True
+    assert result.message == "reloaded plist and restarted"
+    assert calls == [("stop", "mlx", True, True), ("start", "mlx", True)]
 
 
 def test_ui_service_uses_lightweight_health_endpoint():

@@ -1,0 +1,59 @@
+meta:
+  schema: electrical_schema_terms_v1
+  title: Electrical schematic/load-table aliases
+  note: >
+    Domain dictionary for reading electrical single-line schemes and load
+    calculation tables. These aliases guide extraction only; they do not make
+    design decisions.
+
+load_fields:
+  panel:
+    label: "Щит / распределительное устройство"
+    aliases: ["щит", "панель", "ВРУ", "ГРЩ", "РУ", "распределительное устройство"]
+  consumer:
+    label: "Электроприемник / потребитель"
+    aliases: ["электроприемник", "электроприёмник", "потребитель", "наименование", "нагрузка"]
+  line_id:
+    label: "Линия / группа / фидер"
+    aliases: ["линия", "группа", "гр.", "фидер"]
+  p_installed_kw:
+    label: "Pуст, кВт — установленная мощность"
+    aliases: ["Руст", "Р уст", "Pуст", "P уст", "Ру", "Pу", "P installed", "установленная мощность"]
+    unit: "кВт"
+  p_calc_kw:
+    label: "Pр, кВт — расчетная мощность"
+    aliases: ["Рр", "Р расч", "Pр", "P calc", "расчетная мощность", "расчётная мощность"]
+    unit: "кВт"
+  q_calc_kvar:
+    label: "Qр, квар — расчетная реактивная мощность"
+    aliases: ["Qр", "Q расч", "реактивная мощность"]
+    unit: "квар"
+  s_calc_kva:
+    label: "Sр, кВА — расчетная полная мощность"
+    aliases: ["Sр", "S расч", "полная мощность"]
+    unit: "кВА"
+  i_calc_a:
+    label: "Iр, А — расчетный ток"
+    aliases: ["Iр", "I расч", "Iрасч", "расчетный ток", "расчётный ток"]
+    unit: "А"
+  cos_phi:
+    label: "cos phi"
+    aliases: ["cosφ", "cos фи", "cos phi", "коэффициент мощности"]
+  ku:
+    label: "Коэффициент спроса / использования"
+    aliases: ["Кс", "Ку", "коэффициент спроса", "коэффициент использования"]
+  cable:
+    label: "Кабель / провод"
+    aliases: ["кабель", "провод", "марка кабеля", "марка провода"]
+  cable_length_m:
+    label: "L, м — длина кабеля"
+    aliases: ["L", "L, м", "длина", "длина кабеля", "длина линии"]
+    unit: "м"
+  protection:
+    label: "Аппарат защиты"
+    aliases: ["аппарат защиты", "автомат", "автоматический выключатель", "QF", "защита"]
+
+text_nodes:
+  panel_prefixes: ["ВРУ", "ГРЩ", "РЩ", "ЩО", "ЩР", "ЩС", "ЩЭ", "ЩК", "ЩУ", "РУ", "ТП", "КТП", "РП", "ШР", "ШС"]
+  protection_prefixes: ["QF", "QFD", "QS", "FU", "KM", "АВ", "ВА"]
+  cable_prefixes: ["ВВГ", "ВВГнг", "АВВГ", "ПвВГ", "ППГнг", "NYM", "КГ", "ПУГВ", "ПВС"]

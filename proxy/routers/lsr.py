@@ -70,6 +70,17 @@ class LsrTraceRequest(BaseModel):
     meta: Optional[dict[str, Any]] = None       # шапка формы: stroika/object/lsr_no/subject/price_level/osnovanie
 
 
+class LsrRowsTraceRequest(BaseModel):
+    rows: list[dict[str, Any]]                  # видимые/выбранные строки ЛСР/ВОР с basis/code + quantity/unit
+    name: Optional[str] = None
+    book: Optional[str] = None
+    kac_prices: Optional[dict[str, float]] = None
+    k_ozp: Optional[float] = None
+    k_em: Optional[float] = None
+    coefficient_basis: Optional[str] = None
+    meta: Optional[dict[str, Any]] = None
+
+
 @router.get("/stesnennost/conditions")
 async def stesn_conditions(_user=Depends(require_user)):
     """Каталог условий стеснённости (коэф. к ОЗП/ЭМ) — из config/domain/stesnennost.yaml."""
@@ -103,22 +114,49 @@ async def gesn_expand(code: str, qty: float = Query(1.0), _user=Depends(require_
     return {"code": code, "qty": qty, "resources": lines}
 
 
+@router.get("/norms/browse")
+async def smeta_norm_browse(
+    q: str = Query(""),
+    family: str = Query(""),
+    collection: str = Query(""),
+    table: str = Query(""),
+    limit: int = Query(50, ge=1, le=1000),
+    _user=Depends(require_user),
+):
+    """Read-only typed norm browser. It returns cards/navigation and never selects a norm."""
+    from proxy.smeta_core.norm_browser import browse_norm_catalog, browse_norms
+
+    if q.strip():
+        return await asyncio.to_thread(browse_norms, q, limit=min(limit, 50))
+    return await asyncio.to_thread(
+        browse_norm_catalog,
+        family=family,
+        collection=collection,
+        table=table,
+        limit=limit,
+    )
+
+
 @router.post("/assemble")
 async def lsr_assemble(req: AssembleRequest, _user=Depends(require_user)):
     """Собрать ЛСР из позиций: ресурсы→цены (ФГИС ЦС/КАЦ)→стеснённость→НР/СП→Всего→свод."""
     try:
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             la.assemble, req.positions,
             book=req.book, kac_prices=req.kac_prices,
             condition=req.condition, k_ozp=req.k_ozp, k_em=req.k_em,
         )
+        result["api_contract"] = "calculation_only"
+        result["workflow_authority"] = False
+        result["evidence_status"] = "not_asserted"
+        return result
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
 @router.post("/rim-trace")
 async def lsr_rim_trace(req: RimTraceRequest, _user=Depends(require_user)):
-    """РИМ-трасса ОДНОЙ позиции ЛСР: доказательные строки по графам Приложения 4 к 421/пр
+    """РИМ-трасса ОДНОЙ позиции ЛСР: доказательные строки по графам Приложения 3 к 421/пр
     (происхождение цены fgis_current/base_index/manual/kac/missing). Read-only evidence-слой —
     контракт /assemble НЕ меняется (handoff Codex, шаг #1). 0 LLM: код считает, missing виден."""
     try:
@@ -137,8 +175,8 @@ async def lsr_rim_trace(req: RimTraceRequest, _user=Depends(require_user)):
 
 @router.post("/rim-trace/export")
 async def lsr_rim_trace_export(req: RimTraceRequest, _user=Depends(require_user)):
-    """РИМ-трасса позиции → XLSX по форме Приложения 4 к 421/пр. Рендер ГОТОВОЙ трассы (не калькулятор):
-    те же числа, что /rim-trace, разложены по графам 1-12 + «Источник» (происхождение цены). Скачивание
+    """РИМ-трасса позиции → XLSX по форме Приложения 3 к 421/пр. Рендер ГОТОВОЙ трассы (не калькулятор):
+    те же числа, что /rim-trace, разложены по графам 1-12. Скачивание
     через /api/lsr/download. Контракт /assemble и /rim-trace не меняется."""
     try:
         pricebook = await asyncio.to_thread(la._resolve_book, req.book)
@@ -171,7 +209,7 @@ async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
     Read-only evidence-слой — контракт /assemble не меняется."""
     try:
         pricebook = await asyncio.to_thread(la._resolve_book, req.book)
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             rim.build_lsr_trace, req.positions,
             pricebook=pricebook,
             kac_map=req.kac_prices,
@@ -180,13 +218,43 @@ async def lsr_multi_trace(req: LsrTraceRequest, _user=Depends(require_user)):
             coefficient_basis=(req.coefficient_basis or ""),
             name=(req.name or ""),
         )
+        result["api_contract"] = "calculation_only"
+        result["workflow_authority"] = False
+        result["evidence_status"] = "not_asserted"
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@router.post("/lsr-trace/from-rows")
+async def lsr_multi_trace_from_rows(req: LsrRowsTraceRequest, _user=Depends(require_user)):
+    """Видимые/подтверждённые строки ЛСР/ВОР с уже выбранным шифром нормы → РИМ-трасса.
+
+    Код не выбирает норму: строки без ``basis/code`` возвращаются как ``norm_selection_required``.
+    Физические количества переводятся в измеритель нормы (например 61 м2 / 100 м2 = 0.61).
+    """
+    try:
+        from proxy.smeta_core.application import calculate_visible_rows_revision
+
+        return await asyncio.to_thread(
+            calculate_visible_rows_revision, req.rows,
+            selected_by="user",
+            created_by="user",
+            change_note="API /api/lsr/lsr-trace/from-rows",
+            book=req.book,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+            title=(req.name or "Локальный сметный расчет (смета)"),
+        )
     except ValueError as e:
         raise HTTPException(400, str(e))
 
 
 @router.post("/lsr-trace/export")
 async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_user)):
-    """МНОГОПОЗИЦИОННАЯ ЛСР → XLSX по форме Приложения 4 к 421/пр: шапка с общим итогом + разделы
+    """МНОГОПОЗИЦИОННАЯ ЛСР → XLSX по форме Приложения 3 к 421/пр: шапка с общим итогом + разделы
     («Раздел N» → позиции с непрерывной нумерацией → «Итого по разделу N») + «ВСЕГО по смете».
     Рендер ГОТОВОЙ трассы (не калькулятор). Скачивание через /api/lsr/download."""
     try:
@@ -204,6 +272,39 @@ async def lsr_multi_trace_export(req: LsrTraceRequest, _user=Depends(require_use
         raise HTTPException(400, str(e))
     _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
     name = f"lsr_trace_{int(time.time())}.xlsx"
+    out = _EXPORT_DIR / name
+    await asyncio.to_thread(rim_xlsx.render_lsr_xlsx, lsr, out, meta=(req.meta or {}))
+    return {
+        "name": lsr.get("name"),
+        "summary": lsr["summary"],
+        "sections": [{"section": s["section"], "total": s["total"]} for s in lsr.get("sections", [])],
+        "path": str(out),
+        "download": f"/api/lsr/download?path={name}",
+    }
+
+
+@router.post("/lsr-trace/from-rows/export")
+async def lsr_multi_trace_from_rows_export(req: LsrRowsTraceRequest, _user=Depends(require_user)):
+    """Строки ЛСР/ВОР с выбранными шифрами → XLSX ЛСР РИМ по форме Приложения 3."""
+    try:
+        from proxy.smeta_core.application import calculate_visible_rows_revision
+
+        lsr = await asyncio.to_thread(
+            calculate_visible_rows_revision, req.rows,
+            selected_by="user",
+            created_by="user",
+            change_note="API /api/lsr/lsr-trace/from-rows/export",
+            book=req.book,
+            kac_map=req.kac_prices,
+            k_ozp=(req.k_ozp if req.k_ozp is not None else 1.0),
+            k_em=(req.k_em if req.k_em is not None else 1.0),
+            coefficient_basis=(req.coefficient_basis or ""),
+            title=(req.name or "Локальный сметный расчет (смета)"),
+        )
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    _EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"lsr_trace_rows_{int(time.time())}.xlsx"
     out = _EXPORT_DIR / name
     await asyncio.to_thread(rim_xlsx.render_lsr_xlsx, lsr, out, meta=(req.meta or {}))
     return {

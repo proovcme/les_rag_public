@@ -15,6 +15,7 @@ from proxy.services import version_service as vs
 
 def test_version_has_app_and_harness_versions():
     vi = vs.version_info()
+    assert vi["product_version"] == vs.PRODUCT_VERSION and vi["build_number"] == vs.BUILD_NUMBER
     assert vi["app_version"] == vs.APP_VERSION and vi["harness_version"] == vs.HARNESS_VERSION
     assert vi["evidence_schema_version"] and vi["extraction_schema_version"]
 
@@ -41,7 +42,7 @@ def test_version_git_unavailable_safe(monkeypatch):
 
 def test_version_brief_format():
     b = vs.version_brief()
-    assert b.startswith("Л.Е.С.") and vs.APP_VERSION in b
+    assert b.startswith("Л.Е.С.") and vs.PRODUCT_VERSION in b and f"сборка {vs.BUILD_NUMBER}" in b
 
 
 # ── §2 endpoint (через TestClient, без живого прокси) ──────────────────────────────────────
@@ -121,6 +122,8 @@ def test_chat_response_has_version_info():
     from proxy.routers.chat import _version_stamp
     stamp = _version_stamp()
     assert "version_info" in stamp
+    assert stamp.get("llm_provider")
+    assert stamp.get("llm_model")
     vi = stamp["version_info"]
     assert vi["app_version"] == vs.APP_VERSION and vi["harness_version"] == vs.HARNESS_VERSION
     assert "git_commit" in vi and "feature_flags" in vi
@@ -156,14 +159,12 @@ def test_global_registry_still_available_after_versioning():
 def test_releases_doc_exists():
     assert Path("docs/releases.md").exists()
     txt = Path("docs/releases.md").read_text()
-    assert "v0.18" in txt and "5ded539" in txt and vs.APP_VERSION in txt
+    assert "config/version.json" in txt
+    assert "RELEASE_LEDGER.md" in txt
+    assert "SOFTWARE_VERSIONS.md" in txt
 
 
 # ── регрессии ─────────────────────────────────────────────────────────────────────────────
-
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True
 
 def test_deterministic_policy_regression():
     from proxy.services.deterministic_policy_service import can_return_deterministic_final as P

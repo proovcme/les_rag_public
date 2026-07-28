@@ -3,9 +3,14 @@ S.O.V.U.Sh.K.A. v5.0 - system map page.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import re
+from typing import Any
+
 from nicegui import ui
 
-from sovushka.state import state
+from sovushka.state import api_get, state
 
 
 SYSTEM_MAP = """%%{init: {"theme": "dark", "themeVariables": {"fontFamily": "ui-monospace, SFMono-Regular, Menlo", "primaryColor": "#162232", "primaryBorderColor": "#38bdf8", "primaryTextColor": "#f8fbff", "lineColor": "#7dd3fc", "tertiaryColor": "#0b1118"}}}%%
@@ -123,6 +128,71 @@ def _shorten(text: str, limit: int = 120) -> str:
     return text if len(text) <= limit else f"{text[:limit - 1]}..."
 
 
+def _mermaid_node_id(raw: Any) -> str:
+    digest = hashlib.sha1(str(raw or "").encode("utf-8", errors="ignore")).hexdigest()[:12]
+    return f"n{digest}"
+
+
+def _mermaid_label(raw: Any, *, limit: int = 70) -> str:
+    text = re.sub(r"\s+", " ", str(raw or "")).strip()
+    if len(text) > limit:
+        text = text[:limit - 1].rstrip() + "..."
+    return text.replace('"', "'").replace("[", "(").replace("]", ")")
+
+
+def knowledge_graph_to_mermaid(payload: dict[str, Any], *, max_nodes: int = 140, max_edges: int = 220) -> str:
+    nodes_raw = payload.get("nodes") if isinstance(payload, dict) else []
+    edges_raw = payload.get("edges") if isinstance(payload, dict) else []
+    if not isinstance(nodes_raw, list) or not nodes_raw:
+        return "flowchart TB\n    empty[\"Граф пуст: нет проектов/датасетов/документов\"]"
+
+    def weight(node: dict[str, Any]) -> tuple[int, int, str]:
+        kind_rank = {"project": 0, "dataset": 1, "document": 2}.get(str(node.get("kind") or ""), 9)
+        return (kind_rank, -int(node.get("chunks") or 0), str(node.get("label") or node.get("id") or ""))
+
+    nodes = [node for node in nodes_raw if isinstance(node, dict)]
+    nodes = sorted(nodes, key=weight)[:max(1, max_nodes)]
+    allowed = {str(node.get("id") or "") for node in nodes if node.get("id")}
+    lines = [
+        '%%{init: {"theme": "dark", "themeVariables": {"fontFamily": "ui-monospace, SFMono-Regular, Menlo"}}}%%',
+        "flowchart TB",
+    ]
+    for node in nodes:
+        node_id = _mermaid_node_id(node.get("id"))
+        kind = str(node.get("kind") or "node")
+        label = _mermaid_label(node.get("label") or node.get("id"))
+        suffix = ""
+        if kind == "document" and node.get("chunks") is not None:
+            suffix = f"<br/>{int(node.get('chunks') or 0)} chunks"
+        shape_open, shape_close = ("[(", ")]") if kind == "dataset" else ("[", "]")
+        if kind == "project":
+            shape_open, shape_close = ("[[", "]]")
+        lines.append(f'    {node_id}{shape_open}"{label}{suffix}"{shape_close}')
+    emitted = 0
+    for edge in edges_raw if isinstance(edges_raw, list) else []:
+        if not isinstance(edge, dict):
+            continue
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        if source not in allowed or target not in allowed:
+            continue
+        label = _mermaid_label(edge.get("type") or "", limit=24)
+        arrow = f' -- "{label}" --> ' if label else " --> "
+        lines.append(f"    {_mermaid_node_id(source)}{arrow}{_mermaid_node_id(target)}")
+        emitted += 1
+        if emitted >= max_edges:
+            break
+    omitted = max(0, len(nodes_raw) - len(nodes))
+    if omitted:
+        lines.append(f'    omitted["ещё {omitted} узлов скрыто для читаемости"]')
+    lines.extend([
+        "    classDef project fill:#162232,stroke:#38bdf8,color:#f8fbff;",
+        "    classDef dataset fill:#10231d,stroke:#22e06f,color:#f8fbff;",
+        "    classDef document fill:#2b2312,stroke:#ffd166,color:#f8fbff;",
+    ])
+    return "\n".join(lines)
+
+
 def build_mermaid():
     """Build the system map page. Call inside tab_panel(tab_mermaid)."""
     initial_key = state.get("mermaid_template") or "Карта системы"
@@ -173,6 +243,18 @@ def build_mermaid():
                         ).props("no-caps unelevated align=left").classes("les-map-preset w-full")
                         template_buttons[name] = button
 
+                    async def load_knowledge_graph() -> None:
+                        payload = await api_get("/api/rag/graph/full")
+                        code = knowledge_graph_to_mermaid(payload if isinstance(payload, dict) else {})
+                        render(code, "Граф знаний")
+
+                    button = ui.button(
+                        "Граф знаний",
+                        icon="o_account_tree",
+                        on_click=lambda: asyncio.create_task(load_knowledge_graph()),
+                    ).props("no-caps unelevated align=left").classes("les-map-preset w-full")
+                    template_buttons["Граф знаний"] = button
+
                 with ui.row().classes("gap-2 w-full"):
                     ui.button(
                         "Отрисовать",
@@ -211,4 +293,5 @@ META = {
     "Поток индексации": "Файлы идут через routing, chunking, embeddings и сверку Qdrant/SQLite.",
     "Runtime": "Сервисы живут на host LaunchAgents; Docker не участвует в штатном контуре.",
     "Доступ": "В.О.Л.К. назначает роль, proxy проверяет API-запросы.",
+    "Граф знаний": "Живой граф проектов, датасетов, документов и ссылок из /api/rag/graph/full.",
 }

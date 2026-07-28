@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -29,6 +30,7 @@ CHILD_KEYS = {
 SKIP_KEYS = {
     "bbox",
     "geometry",
+    "tables",
     "vertices",
     "faces",
     "colors",
@@ -189,6 +191,7 @@ def import_payload(
     relations: list[dict[str, str]] = []
     properties: list[dict[str, str]] = []
     resolved_profile = normalize_profile(profile or detect_profile(payload, source))
+    tables = _payload_tables(payload)
     _walk_payload(
         payload,
         import_id=import_id,
@@ -202,7 +205,7 @@ def import_payload(
     projection_prefix = "cad_bim_speckle" if source_kind == "speckle" else "cad_bim_json"
     projection_path = root / "exports" / f"{projection_prefix}_{import_id}.md"
     projection_path.write_text(
-        render_projection(import_id, source, resolved_profile, elements, relations, properties, source_kind=source_kind),
+        render_projection(import_id, source, resolved_profile, elements, relations, properties, source_kind=source_kind, tables=tables),
         encoding="utf-8",
     )
 
@@ -327,6 +330,253 @@ def graph_summary(db_path: Path = CAD_BIM_DB_PATH) -> dict[str, Any]:
             ).fetchall()
         ]
     return {"db_path": db_path.as_posix(), "totals": totals, "imports": imports}
+
+
+def cad_bim_import_inventory(
+    *,
+    db_path: Path = CAD_BIM_DB_PATH,
+    meta_db_path: str | Path | None = None,
+    limit: int = 200,
+) -> dict[str, Any]:
+    """Read-only CAD/BIM import inventory with projection index status.
+
+    This is an operator diagnostic: graph DB stays the source for imports, while
+    MetaDB documents tell whether generated markdown projections are actually
+    indexed in `CAD_BIM_Index`.
+    """
+
+    init_graph_db(db_path)
+    safe_limit = max(1, min(int(limit or 200), 1000))
+    warnings: list[str] = []
+    with sqlite3.connect(db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        total_imports = conn.execute("SELECT COUNT(*) FROM cad_bim_imports").fetchone()[0]
+        totals = {
+            "imports": total_imports,
+            "elements": conn.execute("SELECT COUNT(*) FROM cad_bim_elements").fetchone()[0],
+            "relations": conn.execute("SELECT COUNT(*) FROM cad_bim_relations").fetchone()[0],
+            "properties": conn.execute("SELECT COUNT(*) FROM cad_bim_properties").fetchone()[0],
+        }
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT
+                  i.id, i.source, i.source_kind, i.profile, i.created_at,
+                  i.element_count, i.relation_count, i.property_count, i.projection_path,
+                  (SELECT COUNT(*) FROM cad_bim_elements e WHERE e.import_id = i.id) AS actual_element_count,
+                  (SELECT COUNT(*) FROM cad_bim_relations r WHERE r.import_id = i.id) AS actual_relation_count,
+                  (SELECT COUNT(*) FROM cad_bim_properties p WHERE p.import_id = i.id) AS actual_property_count
+                FROM cad_bim_imports i
+                ORDER BY i.created_at DESC
+                LIMIT ?
+                """,
+                (safe_limit,),
+            ).fetchall()
+        ]
+
+    resolved_meta_db_path = Path(meta_db_path) if meta_db_path is not None else _default_meta_db_path()
+    projection_docs, doc_warnings = _load_cad_bim_projection_docs(resolved_meta_db_path)
+    warnings.extend(doc_warnings)
+
+    imports: list[dict[str, Any]] = []
+    duplicate_buckets: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        element_count = int(row.get("element_count") or 0)
+        relation_count = int(row.get("relation_count") or 0)
+        property_count = int(row.get("property_count") or 0)
+        source_basename = _cad_bim_source_basename(row.get("source", ""))
+        source_fingerprint = _cad_bim_source_fingerprint(
+            row.get("source", ""),
+            profile=row.get("profile", ""),
+            element_count=element_count,
+            relation_count=relation_count,
+            property_count=property_count,
+        )
+        indexed_documents = _projection_docs_for_import(
+            projection_docs,
+            import_id=str(row["id"]),
+            projection_path=str(row.get("projection_path") or ""),
+        )
+        projection_index_status = _projection_index_status(indexed_documents)
+        item = {
+            **row,
+            "source_basename": source_basename,
+            "source_fingerprint": source_fingerprint,
+            "quality_status": _cad_bim_import_quality(element_count, relation_count),
+            "indexed_count": len(indexed_documents),
+            "indexed_documents": indexed_documents,
+            "projection_index_status": projection_index_status,
+        }
+        imports.append(item)
+        duplicate_buckets.setdefault(source_fingerprint, []).append(item)
+
+    duplicate_groups = [
+        {
+            "source_fingerprint": fingerprint,
+            "count": len(items),
+            "import_ids": [item["id"] for item in items],
+            "sources": [item["source"] for item in items],
+            "profile": items[0].get("profile", ""),
+            "element_count": items[0].get("element_count", 0),
+            "relation_count": items[0].get("relation_count", 0),
+            "property_count": items[0].get("property_count", 0),
+        }
+        for fingerprint, items in duplicate_buckets.items()
+        if len(items) > 1
+    ]
+
+    minimal_count = sum(1 for item in imports if item["quality_status"] in {"empty", "minimal", "suspicious"})
+    duplicate_indexed_count = sum(1 for item in imports if item["projection_index_status"] == "duplicate_indexed")
+    totals.update(
+        {
+            "imports_returned": len(imports),
+            "projection_documents": len(projection_docs),
+            "duplicate_groups": len(duplicate_groups),
+            "weak_imports": minimal_count,
+            "duplicate_indexed_imports": duplicate_indexed_count,
+        }
+    )
+    return {
+        "db_path": db_path.as_posix(),
+        "meta_db_path": resolved_meta_db_path.as_posix(),
+        "limit": safe_limit,
+        "totals": totals,
+        "imports": imports,
+        "duplicate_groups": duplicate_groups,
+        "warnings": warnings,
+    }
+
+
+def _default_meta_db_path() -> Path:
+    try:
+        from backend.rag_config import rag_meta_db_path
+
+        return Path(rag_meta_db_path())
+    except Exception:  # noqa: BLE001
+        return Path(os.getenv("RAG_META_DB_PATH", "data/les_meta_qwen.db"))
+
+
+def _load_cad_bim_projection_docs(meta_db_path: Path) -> tuple[list[dict[str, Any]], list[str]]:
+    if not meta_db_path.exists():
+        return [], [f"meta_db_not_found:{meta_db_path.as_posix()}"]
+    warnings: list[str] = []
+    try:
+        with sqlite3.connect(meta_db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            if not _sqlite_table_exists(conn, "documents"):
+                return [], ["meta_db_documents_table_missing"]
+            doc_columns = _sqlite_columns(conn, "documents")
+            datasets_exists = _sqlite_table_exists(conn, "datasets")
+            select_id = "d.id AS id" if "id" in doc_columns else "'' AS id"
+            select_status = "d.status AS status" if "status" in doc_columns else "'' AS status"
+            select_chunk_count = "COALESCE(d.chunk_count, 0) AS chunk_count" if "chunk_count" in doc_columns else "0 AS chunk_count"
+            select_dataset_id = "d.dataset_id AS dataset_id" if "dataset_id" in doc_columns else "'' AS dataset_id"
+            join = ""
+            conditions = ["d.file_name LIKE '%cad_bim_json_%'", "d.file_name LIKE '%cad_bim_speckle_%'"]
+            if datasets_exists and "dataset_id" in doc_columns:
+                join = "LEFT JOIN datasets ds ON ds.id = d.dataset_id"
+                conditions.append("ds.name = 'CAD_BIM_Index'")
+            if "dataset_id" in doc_columns:
+                conditions.append("d.dataset_id = 'CAD_BIM_Index'")
+            rows = conn.execute(
+                f"""
+                SELECT {select_id}, d.file_name, {select_status}, {select_chunk_count}, {select_dataset_id}
+                FROM documents d
+                {join}
+                WHERE d.file_name IS NOT NULL AND ({' OR '.join(conditions)})
+                ORDER BY d.file_name
+                """
+            ).fetchall()
+    except Exception as error:  # noqa: BLE001
+        return [], [f"meta_db_projection_lookup_failed:{error}"]
+    docs = []
+    for row in rows:
+        docs.append(
+            {
+                "id": str(row["id"] or ""),
+                "file_name": str(row["file_name"] or ""),
+                "status": str(row["status"] or ""),
+                "chunk_count": int(row["chunk_count"] or 0),
+                "dataset_id": str(row["dataset_id"] or "") if "dataset_id" in row.keys() else "",
+            }
+        )
+    return docs, warnings
+
+
+def _sqlite_table_exists(conn: sqlite3.Connection, table: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone() is not None
+
+
+def _sqlite_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+def _projection_docs_for_import(
+    projection_docs: list[dict[str, Any]],
+    *,
+    import_id: str,
+    projection_path: str,
+) -> list[dict[str, Any]]:
+    projection_name = Path(projection_path).name if projection_path else ""
+    matches = []
+    for doc in projection_docs:
+        file_name = str(doc.get("file_name") or "")
+        file_base = Path(file_name).name
+        if import_id and import_id in file_name:
+            matches.append(doc)
+        elif projection_name and (file_base == projection_name or file_name.endswith(projection_name)):
+            matches.append(doc)
+    return matches
+
+
+def _projection_index_status(indexed_documents: list[dict[str, Any]]) -> str:
+    if not indexed_documents:
+        return "not_indexed"
+    if len(indexed_documents) > 1:
+        return "duplicate_indexed"
+    status = str(indexed_documents[0].get("status") or "").strip().upper()
+    if status and status != "INDEXED":
+        return status.lower()
+    return "indexed"
+
+
+def _cad_bim_source_basename(source: str) -> str:
+    return Path(str(source or "")).name
+
+
+def _cad_bim_source_fingerprint(
+    source: str,
+    *,
+    profile: str,
+    element_count: int,
+    relation_count: int,
+    property_count: int,
+) -> str:
+    name = _cad_bim_source_basename(source)
+    stem = name[:-len(".cad_bim_graph.json")] if name.endswith(".cad_bim_graph.json") else Path(name).stem
+    stem = re.sub(r"_[0-9a-f]{10,16}$", "", stem, flags=re.IGNORECASE)
+    stem = re.sub(r"^kotelnaya_(?:repair_)?\d+[\s_.-]+", "", stem, flags=re.IGNORECASE)
+    compact = re.sub(r"[^0-9a-zа-я]+", "", stem.casefold().replace("ё", "е"))
+    return "|".join(
+        [
+            str(profile or "generic").casefold(),
+            compact or stem.casefold() or name.casefold(),
+            str(int(element_count or 0)),
+            str(int(relation_count or 0)),
+            str(int(property_count or 0)),
+        ]
+    )
+
+
+def _cad_bim_import_quality(element_count: int, relation_count: int) -> str:
+    if element_count <= 0:
+        return "empty"
+    if element_count <= 2 or relation_count <= 0:
+        return "minimal"
+    if element_count <= 10:
+        return "suspicious"
+    return "ok"
 
 
 def lookup_element_context(
@@ -573,6 +823,7 @@ def render_projection(
     relations: list[dict[str, str]],
     properties: list[dict[str, str]] | None = None,
     source_kind: str = "json",
+    tables: list[dict[str, Any]] | None = None,
 ) -> str:
     relation_counts: dict[str, int] = {}
     for relation in relations:
@@ -595,6 +846,7 @@ def render_projection(
         "Source formats: DWG, DXF, RVT, IFC, Excel/Power BI, Speckle",
         "",
     ]
+    lines.extend(_drawn_table_projection_lines(tables or []))
     # W6.1 — агрегатные сводки (этаж×система×категория) перед поэлементными чанками
     lines.extend(_aggregate_projection_lines(elements, properties_by_source))
     for element in elements:
@@ -614,6 +866,267 @@ def render_projection(
                 lines.append(f"  - {key}: {value}")
         lines.append("")
     return "\n".join(lines).strip() + "\n"
+
+
+def _payload_tables(payload: Any) -> list[dict[str, Any]]:
+    if isinstance(payload, dict) and isinstance(payload.get("tables"), list):
+        return [item for item in payload["tables"] if isinstance(item, dict)]
+    return []
+
+
+def _markdown_cell(value: Any) -> str:
+    text = str(value or "").replace("\r", "\n").replace("\n", "<br>").strip()
+    return text.replace("|", "\\|")
+
+
+def _row_cells(row: dict[str, Any]) -> list[str]:
+    cells = row.get("cells")
+    if not isinstance(cells, list):
+        return []
+    out: list[str] = []
+    for cell in cells:
+        if isinstance(cell, dict):
+            out.append(str(cell.get("text") or cell.get("value") or ""))
+        else:
+            out.append(str(cell or ""))
+    return out
+
+
+_POSITION_TOKEN_RE = re.compile(r"^\s*(\d{1,4})(?:[.)])?\s*$")
+_LEADING_POSITION_RE = re.compile(r"^\s*(\d{1,4})(?:[.)])?\s+(.+?)\s*$", re.S)
+_TRAILING_POSITION_RE = re.compile(r"^(.+?)\s+(\d{1,4})(?:[.)])?\s*$", re.S)
+_UNIT_TOKEN_RE = re.compile(r"^(шт\.?|компл\.?|к-т|м|м2|м3|кг|т|л|пог\.?\s*м)\s*$", re.I)
+_NUMBER_TOKEN_RE = re.compile(r"^\d+(?:[,.]\d+)?$")
+
+
+def _normalize_table_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value.replace("\r", "\n").strip())
+
+
+def _split_position_cell(value: str) -> tuple[str | None, str]:
+    text = _normalize_table_text(value)
+    if not text:
+        return None, ""
+    match = _POSITION_TOKEN_RE.match(text)
+    if match:
+        return match.group(1), ""
+    match = _LEADING_POSITION_RE.match(text)
+    if match:
+        return match.group(1), match.group(2).strip()
+    match = _TRAILING_POSITION_RE.match(text)
+    if match:
+        return match.group(2), match.group(1).strip()
+    return None, text
+
+
+def _is_unit_text(value: str) -> bool:
+    return bool(_UNIT_TOKEN_RE.match(_normalize_table_text(value)))
+
+
+def _is_number_text(value: str) -> bool:
+    return bool(_NUMBER_TOKEN_RE.match(_normalize_table_text(value)))
+
+
+def _logical_spec_positions(rows: list[dict[str, Any]], *, limit: int = 80) -> list[str]:
+    """Best-effort logical rows for CAD schedules drawn with primitive lines."""
+
+    positions: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+
+    def finish_current() -> None:
+        nonlocal current
+        if current is not None:
+            positions.append(current)
+            current = None
+
+    for row in sorted(rows, key=_row_index):
+        if _row_index(row) < 2:
+            continue
+        cells = _row_cells(row)
+        nonempty = [(idx, _normalize_table_text(cell)) for idx, cell in enumerate(cells) if cell.strip()]
+        if not nonempty:
+            continue
+
+        found: tuple[str, int, str] | None = None
+        for idx, text in nonempty[:4]:
+            pos, remainder = _split_position_cell(text)
+            if pos:
+                found = (pos, idx, remainder)
+                break
+
+        if found:
+            finish_current()
+            pos, pos_idx, remainder = found
+            current = {
+                "position": pos,
+                "name_parts": [],
+                "mark_parts": [],
+                "manufacturer": "",
+                "unit": "",
+                "qty": "",
+                "row": _row_index(row),
+            }
+            candidates: list[tuple[int, str]] = []
+            if remainder:
+                candidates.append((pos_idx, remainder))
+            for idx, text in nonempty:
+                if idx == pos_idx:
+                    continue
+                candidates.append((idx, text))
+
+            unit_item = next(((idx, text) for idx, text in candidates if _is_unit_text(text)), None)
+            unit_idx = unit_item[0] if unit_item else None
+            if unit_item:
+                current["unit"] = unit_item[1]
+                qty_item = next(
+                    ((idx, text) for idx, text in candidates if idx > unit_idx and _is_number_text(text)),
+                    None,
+                )
+                if qty_item:
+                    current["qty"] = qty_item[1]
+
+            before_unit = [(idx, text) for idx, text in candidates if unit_idx is None or idx < unit_idx]
+            if before_unit:
+                current["name_parts"].append(before_unit[0][1])
+            if len(before_unit) >= 2:
+                current["mark_parts"].append(before_unit[1][1])
+            if len(before_unit) >= 3:
+                current["manufacturer"] = before_unit[-1][1]
+            continue
+
+        if current is None:
+            continue
+
+        for idx, text in nonempty:
+            if _is_unit_text(text) or _is_number_text(text):
+                continue
+            if idx <= 2:
+                current["name_parts"].append(text)
+            elif idx <= 5 and len(current["mark_parts"]) < 3:
+                current["mark_parts"].append(text)
+
+    finish_current()
+
+    lines: list[str] = []
+    for item in positions[:limit]:
+        name = " ".join(part for part in item["name_parts"] if part).strip()
+        mark = " ".join(part for part in item["mark_parts"] if part).strip()
+        bits = [f"position {item['position']} / позиция {item['position']}"]
+        if name:
+            bits.append(f"name: {name}")
+        if mark:
+            bits.append(f"mark: {mark}")
+        if item.get("manufacturer"):
+            bits.append(f"manufacturer: {item['manufacturer']}")
+        if item.get("unit"):
+            bits.append(f"unit: {item['unit']}")
+        if item.get("qty"):
+            bits.append(f"qty: {item['qty']}")
+        bits.append(f"source_row: {item['row']}")
+        lines.append(" | ".join(_markdown_cell(bit) for bit in bits))
+    return lines
+
+
+def _drawn_table_projection_lines(tables: list[dict[str, Any]]) -> list[str]:
+    if not tables:
+        return []
+    lines = [
+        "## CAD drawn tables",
+        "",
+        f"- Tables detected: {len(tables)}",
+        "- Source: line/polyline grid plus TEXT/MTEXT assigned to cells",
+        "",
+    ]
+    for index, table in enumerate(tables[:12], start=1):
+        rows = [row for row in table.get("rows", []) if isinstance(row, dict)]
+        nonempty_rows = [row for row in rows if any(_row_cells(row))]
+        if not nonempty_rows:
+            continue
+        column_count = int(table.get("column_count") or 0)
+        used_columns = [
+            col
+            for col in range(column_count)
+            if any(col < len(_row_cells(row)) and _row_cells(row)[col].strip() for row in nonempty_rows)
+        ][:24]
+        if not used_columns:
+            continue
+        bbox = table.get("bbox") if isinstance(table.get("bbox"), dict) else {}
+        bbox_text = ""
+        if bbox:
+            bbox_text = f" x={bbox.get('x0')}..{bbox.get('x1')}, y={bbox.get('y0')}..{bbox.get('y1')}"
+        lines.extend(
+            [
+                f"## CAD drawn table {table.get('id') or index}",
+                "",
+                f"- Rows: {table.get('row_count') or len(rows)}",
+                f"- Columns: {column_count}",
+                f"- Non-empty cells: {table.get('nonempty_cell_count') or '-'}",
+                f"- BBox:{bbox_text or ' -'}",
+                "",
+            ]
+        )
+        data_rows = [row for row in nonempty_rows if _row_index(row) >= 2]
+        logical_positions = _logical_spec_positions(nonempty_rows)
+        if logical_positions:
+            lines.append(f"### CAD drawn table {table.get('id') or index} first positions / первые три позиции")
+            lines.append("")
+            for line in logical_positions[:12]:
+                lines.append(f"- {line}")
+            lines.append("")
+            lines.append(f"### CAD drawn table {table.get('id') or index} logical positions / позиции спецификации")
+            lines.append("")
+            lines.append("- Logical spec positions / позиции спецификации:")
+            for line in logical_positions[:40]:
+                lines.append(f"  - {line}")
+            lines.append("")
+        if data_rows:
+            lines.append("- First data rows / первые позиции:")
+            for row in data_rows[:12]:
+                compact = _compact_row_text(row)
+                if compact:
+                    lines.append(f"  - row {row.get('index', '')}: {_markdown_cell(compact)}")
+            lines.append("")
+            lines.append("- Data rows:")
+            for row in data_rows[:80]:
+                compact = _compact_row_text(row)
+                if compact:
+                    lines.append(f"  - row {row.get('index', '')}: {_markdown_cell(compact)}")
+            lines.append("")
+        lines.append("- Compact non-empty rows:")
+        for row in nonempty_rows[:80]:
+            compact = _compact_row_text(row)
+            if compact:
+                lines.append(f"  - row {row.get('index', '')}: {_markdown_cell(compact)}")
+        lines.append("")
+        header = ["row", *[f"C{col + 1}" for col in used_columns]]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("| " + " | ".join(["---"] * len(header)) + " |")
+        for row in nonempty_rows[:80]:
+            cells = _row_cells(row)
+            rendered = [str(row.get("index", ""))]
+            rendered.extend(_markdown_cell(cells[col] if col < len(cells) else "") for col in used_columns)
+            lines.append("| " + " | ".join(rendered) + " |")
+        if len(nonempty_rows) > 80:
+            lines.append(f"| ... | trimmed: {len(nonempty_rows) - 80} more non-empty rows | |")
+        lines.append("")
+    if len(tables) > 12:
+        lines.append(f"- Trimmed tables in projection: {len(tables) - 12}")
+        lines.append("")
+    return lines
+
+
+def _row_index(row: dict[str, Any]) -> int:
+    try:
+        return int(row.get("index", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _compact_row_text(row: dict[str, Any]) -> str:
+    compact = " | ".join(cell.strip() for cell in _row_cells(row) if cell.strip())
+    if len(compact) > 1200:
+        compact = compact[:1200].rstrip() + "..."
+    return compact
 
 
 def _profile_projection_lines(profile: str, element: dict[str, str], relation_count: int) -> list[str]:

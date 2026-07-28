@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "description": "BAI canary for the common evidence core. It checks document, table and security-system retrieval before a BAI index migration is considered.",
+  "cases": [
+    {
+      "id": "bai_ios52_document_composition",
+      "question": "Покажи состав проекта по разделу ИОС 5.2",
+      "dataset_filter": "449190eb-050e-422f-91a6-54852469201a",
+      "top_k": 8,
+      "min_chunks": 1,
+      "source_any": ["ИОС 5.2", "Состав проекта"]
+    },
+    {
+      "id": "bai_ios52_explanatory_note",
+      "question": "Что указано в пояснительной записке раздела ИОС 5.2?",
+      "dataset_filter": "449190eb-050e-422f-91a6-54852469201a",
+      "top_k": 8,
+      "min_chunks": 1,
+      "source_any": ["ИОС 5.2", "Пояснительная записка"]
+    },
+    {
+      "id": "bai_security_system",
+      "question": "Какие решения предусмотрены по комплексной системе безопасности?",
+      "dataset_filter": "449190eb-050e-422f-91a6-54852469201a",
+      "top_k": 8,
+      "min_chunks": 1,
+      "source_any": ["КСБ", "безопасност"]
+    },
+    {
+      "id": "bai_drawing_register_table",
+      "question": "Что содержится в таблице BAI/Байконур.xlsx?",
+      "dataset_filter": "449190eb-050e-422f-91a6-54852469201a",
+      "top_k": 8,
+      "min_chunks": 1,
+      "source_any": ["Байконур.xlsx"]
+    }
+  ]
+}

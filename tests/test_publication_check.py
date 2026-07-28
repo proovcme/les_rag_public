@@ -18,3 +18,17 @@ def test_secret_scan_ignores_placeholders_and_flags_real_values(tmp_path):
     hits = secret_hits(tmp_path, ["safe.env", "risky.env"])
     assert len(hits) == 1
     assert hits[0][0] == "risky.env"
+
+
+def test_secret_scan_distinguishes_opaque_reference_key_from_secret_value(tmp_path):
+    provider = tmp_path / "provider.py"
+    provider.write_text(
+        '_SECRET_REF_KEY = "llm_provider_secret_ref"\n'
+        'OPENAI_API_KEY = "sk-' + "a" * 40 + '"\n',
+        encoding="utf-8",
+    )
+
+    hits = secret_hits(tmp_path, ["provider.py"])
+    assert len(hits) == 1
+    assert hits[0][0] == "provider.py"
+    assert hits[0][1] == 2

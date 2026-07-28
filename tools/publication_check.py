@@ -22,7 +22,7 @@ FORBIDDEN_PREFIXES = (
     "storage/",
 )
 FORBIDDEN_EXACT = {".env"}
-REQUIRED_PUBLIC_FILES = ("README.md", "LICENSE", "SECURITY.md")
+REQUIRED_PUBLIC_FILES = ("README.md", "LICENSE", "SECURITY.md", "docs/PUBLICATION_CHECKLIST.md")
 HIGH_SIGNAL_SECRET_PATTERNS = (
     re.compile(r"-----BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -35,6 +35,12 @@ ASSIGNMENT_SECRET_PATTERNS = (
         r"(?!$|[\"']?$|_|change_me|your_|example|placeholder|none|null|false|true|old-|.*-secret)"
         r"[\"']?[^\"'\s#]{12,}"
     ),
+)
+SAFE_REFERENCE_ASSIGNMENT_PATTERN = re.compile(
+    r"^\s*[A-Z0-9_]*(?:API_KEY|SECRET|PASSWORD|TOKEN)[A-Z0-9_]*"
+    r"(?:REF|REFERENCE)(?:_KEY)?\s*=\s*[\"'][a-z][a-z0-9_.:-]*"
+    r"(?:_ref|_reference)[\"']\s*(?:#.*)?$",
+    re.IGNORECASE,
 )
 ASSIGNMENT_SKIP_PREFIXES = ("tests/", "docs/archive/", "legacy/")
 SKIP_SCAN_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".ico", ".pdf", ".xlsx", ".docx", ".parquet"}
@@ -86,6 +92,11 @@ def secret_hits(root: Path, paths: list[str]) -> list[tuple[str, int, str]]:
                     break
             else:
                 if rel.startswith(ASSIGNMENT_SKIP_PREFIXES):
+                    continue
+                # Names of fields that store an opaque in-memory-vault
+                # reference are metadata, not credentials. High-signal token
+                # patterns above still take precedence and remain blocking.
+                if SAFE_REFERENCE_ASSIGNMENT_PATTERN.match(line):
                     continue
                 for pat in ASSIGNMENT_SECRET_PATTERNS:
                     if pat.search(line):

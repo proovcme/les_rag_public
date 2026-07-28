@@ -22,6 +22,39 @@ def _new_session_id() -> str:
     return str(uuid.uuid4())
 
 
+_SESSION_STORAGE_KEY = "les_chat_session_id"
+
+
+def get_persisted_session_id() -> str | None:
+    """Return the browser-durable chat session id when storage is available."""
+    try:
+        value = str(app.storage.user.get(_SESSION_STORAGE_KEY) or "").strip()
+    except Exception:
+        return None
+    return value or None
+
+
+def persist_session_id(session_id: str) -> str:
+    """Keep the active session in both process state and NiceGUI user storage."""
+    sid = str(session_id or "").strip() or _new_session_id()
+    state["session_id"] = sid
+    try:
+        app.storage.user[_SESSION_STORAGE_KEY] = sid
+    except Exception:
+        pass
+    return sid
+
+
+def ensure_session_id() -> str:
+    """Restore the durable session, or persist the current/new id."""
+    persisted = get_persisted_session_id()
+    if persisted:
+        state["session_id"] = persisted
+        return persisted
+    current = str(state.get("session_id") or "").strip() or _new_session_id()
+    return persist_session_id(current)
+
+
 state = {
     "mode": "rag",
     "mode_model": "mlx-community/Qwen3-14B-4bit",
@@ -73,6 +106,22 @@ def _auth_headers() -> dict:
     except Exception:
         key = ""
     return {"X-API-Key": key} if key else {}
+
+
+def _request_payload(path: str, data: Optional[dict]) -> dict:
+    """Attach the current per-session provider only to chat requests."""
+    payload = dict(data or {})
+    if path in {"/api/chat", "/api/chat/stream"}:
+        from sovushka.provider_session import provider_request_config
+
+        try:
+            provider_config = provider_request_config()
+        except RuntimeError:
+            # Offline/unit callers have no NiceGUI request storage context.
+            provider_config = None
+        if provider_config is not None:
+            payload["provider_config"] = provider_config
+    return payload
 
 
 def _api_success() -> None:
@@ -132,13 +181,24 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         base = PROXY_URL
     try:
         async with httpx.AsyncClient(timeout=180.0) as client:
-            r = await client.post(f"{base}{path}", json=data or {}, headers=_auth_headers())
+            r = await client.post(f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers())
             r.raise_for_status()
             _api_success()
             return r.json()
     except Exception as e:
         _api_error("POST", path, e)
         return None
+
+
+async def active_llm_provider() -> str:
+    settings = await api_get("/api/settings")
+    if isinstance(settings, dict):
+        providers = settings.get("providers")
+        if isinstance(providers, dict):
+            active = str(providers.get("active") or "").strip().lower()
+            if active:
+                return active
+    return os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
 
 
 async def api_post_file(
@@ -177,7 +237,7 @@ async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optio
     try:
         async with httpx.AsyncClient(timeout=300.0) as client:
             async with client.stream(
-                "POST", f"{base}{path}", json=data or {}, headers=_auth_headers()
+                "POST", f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers()
             ) as r:
                 if r.status_code != 200:
                     body = (await r.aread()).decode("utf-8", "replace")
@@ -387,6 +447,10 @@ async def refresh_proxy_logs(limit: int = 120):
 
 async def refresh_mlx():
     from sovushka.config import MLX_URL
+    provider = await active_llm_provider()
+    if provider != "mlx":
+        state["mlx_health"] = {"status": "disabled", "provider": provider}
+        return
     prev_loaded = state["mlx_health"].get("main_model", {}).get("loaded") if isinstance(state["mlx_health"].get("main_model"), dict) else None
     d = await api_get("/api/health", base=MLX_URL)
     if d:

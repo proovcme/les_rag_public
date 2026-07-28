@@ -21,7 +21,7 @@
 
 ```powershell
 cd clients\outlook_mail_poller
-powershell -ExecutionPolicy Bypass -File setup_task.ps1        # собрать + поставить задачу (каждые 3 мин)
+powershell -ExecutionPolicy Bypass -File setup_task.ps1        # собрать + поставить задачу (каждые 10 мин)
 ```
 
 Без PowerShell-политики — голым `csc` + `schtasks` (cmd):

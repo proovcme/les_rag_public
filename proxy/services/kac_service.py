@@ -44,7 +44,9 @@ def analyze_kac(
 ) -> dict[str, Any]:
     """Котировки поставщиков → КАЦ по материалам.
 
-    quote = {material, supplier, unit, price, source?}. strategy: 'min' (экономичный) | 'median'.
+    quote = {material, supplier, unit, price, source?, price_includes_vat?, vat_pct?}.
+    Prices included VAT are normalized to net before comparison and before entering
+    the LSR. The scenario VAT is added later by the tax policy service.
     Возвращает {materials:[...], summary:{...}, strategy, min_suppliers}.
     """
     groups: dict[str, list[dict[str, Any]]] = {}
@@ -56,10 +58,26 @@ def analyze_kac(
         if key not in groups:
             groups[key] = []
             order.append(key)
+        gross_price = _price(q.get("price"))
+        includes_vat = bool(q.get("price_includes_vat", False))
+        vat_pct = _price(q.get("vat_pct"))
+        normalization_error = ""
+        net_price = gross_price
+        if includes_vat:
+            if vat_pct is None or vat_pct < 0:
+                normalization_error = "price_includes_vat requires explicit vat_pct"
+                net_price = None
+            elif gross_price is not None:
+                net_price = round(gross_price / (1.0 + vat_pct / 100.0), 6)
         groups[key].append({
             "supplier": str(q.get("supplier") or "").strip(),
             "unit": str(q.get("unit") or "").strip(),
-            "price": _price(q.get("price")),
+            "price": net_price,
+            "price_original": gross_price,
+            "price_includes_vat": includes_vat,
+            "vat_pct": vat_pct,
+            "vat_basis": str(q.get("vat_basis") or "").strip(),
+            "normalization_error": normalization_error,
             "source": str(q.get("source") or "").strip(),
             "material": str(q.get("material") or "").strip(),
         })
@@ -93,6 +111,9 @@ def analyze_kac(
             "chosen_price": (chosen["price"] if chosen else None),
             "chosen_supplier": (chosen["supplier"] if chosen else ""),
             "chosen_source": (chosen["source"] if chosen else ""),
+            "chosen_price_original": (chosen["price_original"] if chosen else None),
+            "chosen_price_includes_vat": (chosen["price_includes_vat"] if chosen else False),
+            "chosen_vat_pct": (chosen["vat_pct"] if chosen else None),
             "min_price": (min(prices) if prices else None),
             "max_price": (max(prices) if prices else None),
             "spread": round(spread, 2),

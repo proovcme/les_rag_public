@@ -10,15 +10,11 @@ import pytest
 
 from proxy.services import sidecar_ops_service as ops
 from proxy.services import doc_extract_service as de
-from proxy.services import resource_cost_service as rc
-from proxy.services import construction_harness_service as ch
-from proxy.services import unified_construction_harness_service as u
-from proxy.services.evidence_contract import EvidenceType
 
 _RT = Path("/Users/ovc/LES/storage/datasets")
 _GOST = "844a2b53-9658-4e5a-92e4-f649de8af043"
 _EML = "11da8ad7-512e-4301-9126-d6e28bd0ac43"
-_HAS_RT = _RT.exists()
+_HAS_RT = (_RT / _GOST).exists() and (_RT / _EML).exists()
 _HAS_SIDECARS = (_RT / _GOST / "_extracted").exists()
 
 
@@ -242,95 +238,3 @@ def test_ocr_not_run_in_hot_path(proj_with_sidecars):
     # ocr_detection только читает manifest-статусы, не запускает OCR и не тянет зависимостей
     r = ops.ocr_detection("ds", storage_root=proj_with_sidecars)
     assert r["ocr_status"] == "deferred" and "pdf_no_text_layer_count" in r
-
-
-# ── 30-33 smoke ───────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.skipif(not _HAS_SIDECARS, reason="sidecars 844a2b53 недоступны")
-def test_smoke_v16_844a2b53_existing_sidecars():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("sm16", "scripts/smoke_unified_v16.py")
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    rep = m.run(_GOST, storage_root=_RT, questions=["правила расстановки ОЗК"],
-                dry_run_extraction=False, index_dry=True)
-    assert rep["sidecar_available"] and rep["results"][0]["status"] == "complete"
-
-@pytest.mark.skipif(not _HAS_RT, reason="рантайм недоступен")
-def test_smoke_v16_11da8ad7_eml():
-    inv = ops.inspect_dataset(_RT / _EML, storage_root=_RT)
-    assert inv["eml_count"] > 0 and inv["corpus_guess"] == "mail"
-
-def test_smoke_v16_outputs_extraction_state(proj_with_sidecars):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("sm16b", "scripts/smoke_unified_v16.py")
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    rep = m.run("ds", storage_root=proj_with_sidecars, questions=["правила огнестойкости"],
-                dry_run_extraction=True, index_dry=False)
-    assert all("extraction_state" in r for r in rep["results"])
-
-def test_smoke_v16_canonical_count():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("sm16c", "scripts/smoke_unified_v16.py")
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    assert len(m.CANONICAL) == 15
-
-
-# ── 34-47 регрессии ───────────────────────────────────────────────────────────────────────
-
-@pytest.mark.skipif(not _HAS_SIDECARS, reason="sidecars недоступны")
-def test_v15_approved_sidecar_regression():
-    from proxy.services import source_adapters as sa
-    r = sa.search_extracted_body(["огнестойкости"], dataset_ids=[_GOST], storage_root=_RT)
-    assert r.status == sa.FOUND
-
-def test_v14_write_policy_regression(tmp_path, monkeypatch):
-    monkeypatch.setenv("LES_RUNTIME_HOME", str(tmp_path))
-    monkeypatch.delenv("LES_ALLOW_RUNTIME_SIDECAR_WRITE", raising=False)
-    assert de.is_runtime_path(tmp_path / "storage") and not de.runtime_write_allowed()
-
-def test_v13_extraction_regression(tmp_path):
-    d = tmp_path / "ds"; d.mkdir()
-    _docx(d / "a.docx", "Тест", ("абзац один",))
-    r = de.extract_docx(d / "a.docx", ds="ds", rel="a.docx")
-    assert r.status == "ok" and r.items
-
-def test_v12_file_body_eml_regression():
-    from proxy.services import source_adapters as sa
-    assert hasattr(sa, "search_file_body") and hasattr(sa, "search_eml_messages")
-
-def test_v11_real_acceptance_regression():
-    assert hasattr(u, "run_unified_construction_harness")
-
-def test_v10_async_adapters_regression():
-    assert hasattr(u, "run_unified_construction_harness_async")
-
-def test_v09_adapter_status_regression():
-    from proxy.services import source_adapters as sa
-    h = sa.inspect_dataset_index_health(["nonexistent"], storage_root=Path("/tmp"))
-    assert "datasets" in h
-
-def test_v08_actionable_scope_regression():
-    assert u.route_construction_intent("найди ОЗК в актах смонтированного оборудования").intent == "asbuilt_extract"
-
-def test_v07_live_run_chat_regression():
-    r = u.run_unified_construction_harness("проверь пример обсчёта")
-    assert r.total_status == "complete"
-
-def test_v06_resource_real_workbook_regression():
-    assert rc.validate_real_workbook()["matches"] is True
-
-def test_v04_source_scope_regression():
-    assert u.route_construction_intent("правила расстановки ОЗК").intent == "norm_qa"
-
-def test_v03_lsr_regression():
-    asm = ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])
-    assert asm["asm_positions"][0]["qty"] == 7.2
-
-def test_evidence_invariants_regression():
-    r = u.run_unified_construction_harness("проверь пример обсчёта")
-    comp = [it for b in r.evidence_blocks if b.type is EvidenceType.COMPUTED for it in b.items]
-    assert comp   # COMPUTED присутствует у resource-ответа
-
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True

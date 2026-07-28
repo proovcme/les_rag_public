@@ -1,5 +1,7 @@
 """ProfileResolver — контракт маршрутизации (Codex §10.1A)."""
 
+import json
+
 import pytest
 
 from proxy.services.profile_resolver import (
@@ -16,7 +18,7 @@ def test_explicit_modes_map_to_profiles():
     cases = {
         "smeta": "estimate_harness",
         "review": "normcontrol",
-        "kp": "kp_stub",
+        "kp": "grounded_rag",
         "rag": "grounded_rag",
         "free": "free_llm",
     }
@@ -173,18 +175,89 @@ async def test_query_route_carries_honest_profile_for_glossary():
     assert prof["profile_id"] == "auto"
     assert prof["route_source"] == "regex"
     assert prof["channel"] == "glossary"
+    assert resp["versions"]["version_info"]["app_version"]
 
 
 @pytest.mark.asyncio
 async def test_query_route_carries_profile_for_explicit_mode(monkeypatch):
-    # явный режим «Смета» → профиль estimate_harness, источник explicit_mode. В тесте петлю
-    # закрываем сразу, чтобы не дергать живую LLM.
+    # Explicit-mode trace must be testable without entering any model/tool workflow.
     from proxy.routers import chat as chat_router
     _mock_chat_state(chat_router)
-    monkeypatch.setattr(chat_router, "_harness_complete", lambda messages: '{"final": true}')
+
+    async def fake_free_mode(req, token_sink=None):
+        return "offline explicit-mode probe"
+
+    monkeypatch.setattr(chat_router, "_run_free_mode", fake_free_mode)
     resp = await chat_router.chat(
-        chat_router.ChatRequest(question="что такое ОЖР", mode="smeta"), _user=object())
+        chat_router.ChatRequest(question="что такое ОЖР", mode="free"), _user=object())
     prof = resp["query_route"]["profile"]
-    assert prof["profile_id"] == "estimate_harness"
+    assert prof["profile_id"] == "free_llm"
     assert prof["route_source"] == "explicit_mode"
-    assert prof["executor"] == "cloud_large"
+    assert prof["executor"] == "local_large"
+
+
+@pytest.mark.asyncio
+async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
+    from proxy.routers import chat as chat_router
+    _mock_chat_state(chat_router)
+    plan = {
+        "object": {"object_type": "work_item"},
+        "works": [
+            ["Разработка траншеи вручную", "разработка грунта траншеи вручную",
+             "earthworks", "excavation", "разработка", "м3", {}],
+        ],
+    }
+    def complete(messages):
+        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
+            payload = json.loads(messages[-2]["content"])
+            shortlist = payload["search_norm"]["shortlist"]
+            candidate = next(
+                (
+                    c for c in shortlist
+                    if c.get("applicability_status") == "accepted"
+                    and c.get("unit_compatible") is not False
+                ),
+                shortlist[0],
+            )
+            return json.dumps({
+                "selected_code": candidate["norm_code"],
+                "selection_kind": "exact",
+                "analog_limitations": [],
+                "reason": "выбрано моделью из shortlist",
+                "ask_user": "",
+            }, ensure_ascii=False)
+        return json.dumps(plan, ensure_ascii=False)
+
+    monkeypatch.setattr(chat_router, "_harness_complete", complete)
+
+    resp = await chat_router.chat(
+        chat_router.ChatRequest(
+            question=(
+                "регион санкт-петербург, нужно рассчитать сметную стоимость работ по "
+                "разработке траншеи вручную, объем выработки грунта 200 м3"
+            )
+        ),
+        _user=object(),
+    )
+
+    prof = resp["query_route"]["profile"]
+    assert prof["profile_id"] == "auto"
+    assert prof["route_source"] == "keyword"
+    assert prof["channel"] == "harness_mode"
+    assert prof["operation"] == "estimate_harness_auto_work"
+    assert resp["query_route"]["operation"] == "estimate_harness_auto_work"
+    assert resp["total_status"] == "partial"
+    assert resp.get("final_total") is None
+    answer = resp["answer"]
+    assert "Расчётный протокол" in answer
+    # Routing must preserve partial/finality and surface whatever unresolved
+    # conditions the model-selected norm actually carries.  The route test must
+    # not prescribe a professional checklist independently of that norm card.
+    assert any(
+        marker in answer
+        for marker in (
+            "Проверить по выбранным нормам",
+            "Нужно выбрать норму или уточнить параметры",
+            "нормы, параметры и ценовые источники",
+        )
+    )

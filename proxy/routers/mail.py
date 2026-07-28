@@ -3,11 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import hashlib
+import os
+import subprocess
+import sys
+import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.mail_ingest import (
@@ -21,14 +27,20 @@ from backend.mail_ingest import (
     summarize_mail_files,
 )
 from backend.mail_threads import filter_mail_messages, group_mail_threads, read_mail_messages
+from backend.mail_profile import build_mail_vector_profile
 from proxy.routers.datasets import (
     DEFAULT_PARSE_BATCH_LIMIT,
     active_parse_scheduler_job,
     assert_parse_admission,
     get_dataset_state,
 )
-from proxy.security import require_admin, require_user
+from proxy.security import require_admin, require_internal, require_user
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
+from proxy.services.mail_registry_service import (
+    get_mail_registry,
+    mail_dataset_name,
+)
+from proxy.services.mail_sync_service import settings_for_account, sync_imap_account
 
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
@@ -71,12 +83,118 @@ class MailAppleImportRequest(BaseModel):
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
 
 
+class MailAccountCreateRequest(BaseModel):
+    kind: str
+    label: str = Field(min_length=1, max_length=160)
+    provider: str = ""
+    host: str = ""
+    port: int = Field(default=993, ge=1, le=65535)
+    login: str = ""
+    password: str = ""
+    ssl: bool = True
+    folders: list[str] = Field(default_factory=lambda: ["*"])
+    native_account_id: str = ""
+
+
+class MailAccountUpdateRequest(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=160)
+    enabled: bool | None = None
+    host: str | None = None
+    port: int | None = Field(default=None, ge=1, le=65535)
+    login: str | None = None
+    password: str | None = None
+    ssl: bool | None = None
+    folders: list[str] | None = None
+
+
+class MailAccountSyncRequest(BaseModel):
+    mode: str = "incremental"
+    max_messages: int = Field(default=200, ge=1, le=2000)
+    parse: bool = True
+    parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
+    parse_batches: int = Field(default=20, ge=1, le=40)
+
+
+class MailLegacyMigrationRequest(BaseModel):
+    source_folder: str = "MAIL"
+    max_files: int = Field(default=5000, ge=1, le=50000)
+    parse: bool = True
+    parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
+
+
 async def _mail_dataset_id(state: Any) -> tuple[str, bool]:
+    """Legacy shared dataset retained only for backward-compatible routes."""
     datasets = await state.backend.list_datasets()
     existing = next((dataset for dataset in datasets if dataset.name == MAIL_DATASET_NAME), None)
     if existing:
         return existing.id, False
     return await state.backend.create_dataset(MAIL_DATASET_NAME), True
+
+
+def _mail_account_config(req: MailAccountCreateRequest) -> dict[str, Any]:
+    provider = req.provider.strip().casefold()
+    host = req.host.strip()
+    port = req.port
+    ssl = req.ssl
+    if provider == "yandex":
+        host, port, ssl = "imap.yandex.ru", 993, True
+    return {
+        "provider": provider,
+        "host": host,
+        "port": port,
+        "login": req.login.strip(),
+        "ssl": ssl,
+        "folders": [folder.strip() for folder in req.folders if folder.strip()] or ["*"],
+    }
+
+
+async def _create_mail_account(req: MailAccountCreateRequest) -> dict[str, Any]:
+    kind = req.kind.strip().casefold()
+    if kind not in {"imap", "outlook_classic"}:
+        raise HTTPException(status_code=400, detail=f"unsupported mail account kind: {kind}")
+    if kind == "imap" and not (req.login.strip() and (req.host.strip() or req.provider == "yandex")):
+        raise HTTPException(status_code=400, detail="IMAP account requires host/provider and login")
+    account_id = str(uuid.uuid4())
+    dataset_name = mail_dataset_name(req.label, account_id)
+    state = get_dataset_state()
+    dataset_id = await state.backend.create_dataset(dataset_name)
+    try:
+        return get_mail_registry().create_account(
+            kind=kind,
+            label=req.label,
+            config=_mail_account_config(req) if kind == "imap" else {
+                "exclude_special": ["junk", "trash", "drafts"]
+            },
+            secret=req.password if kind == "imap" else "",
+            native_account_id=req.native_account_id,
+            account_id=account_id,
+            dataset_id=dataset_id,
+            dataset_name=dataset_name,
+        )
+    except Exception as error:
+        # Dataset deletion is intentionally not attempted: destructive cleanup
+        # requires an explicit operator action and the orphan remains visible.
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+async def _ensure_outlook_store_account(store_id: str, label: str) -> dict[str, Any]:
+    registry = get_mail_registry()
+    existing = registry.find_outlook_account(store_id=store_id)
+    if existing:
+        return existing
+    return await _create_mail_account(
+        MailAccountCreateRequest(
+            kind="outlook_classic",
+            label=label or "Outlook",
+            native_account_id=store_id,
+        )
+    )
+
+
+def _require_loopback(request: Request) -> None:
+    host = str(request.client.host if request.client else "")
+    if host not in {"127.0.0.1", "::1", "localhost", "testclient"}:
+        raise HTTPException(status_code=403, detail="mail collector endpoint is loopback-only")
 
 
 async def _mail_dataset_and_root(state: Any) -> tuple[Any, Path]:
@@ -127,6 +245,46 @@ async def _maybe_parse_mail_dataset(state: Any, dataset_id: str, *, parse: bool,
         await assert_parse_admission(state)
         parse_result = await state.backend.parse_dataset(dataset_id, limit=parse_limit)
     return True, "", parse_result
+
+
+_mail_parse_tasks: dict[str, asyncio.Task] = {}
+
+
+async def _parse_mailbox_until_idle(account_id: str, dataset_id: str) -> None:
+    """Debounced parser for sidecar intake; one task per mailbox dataset."""
+    try:
+        await asyncio.sleep(2.0)
+        state = get_dataset_state()
+        registry = get_mail_registry()
+        final_result: dict[str, Any] | None = None
+        for _batch in range(40):
+            started, blocked, result = await _maybe_parse_mail_dataset(
+                state, dataset_id, parse=True, parse_limit=25
+            )
+            if blocked or not started:
+                break
+            final_result = result
+            if (
+                not result
+                or int(result.get("remaining_pending") or 0) <= 0
+                or int(result.get("errors") or 0) > 0
+            ):
+                break
+        if final_result and int(final_result.get("remaining_pending") or 0) == 0 and int(final_result.get("errors") or 0) == 0:
+            for message in registry.list_messages(
+                account_id=account_id, index_status="registered", limit=1000
+            ):
+                registry.mark_indexed(message["id"], status="indexed")
+    finally:
+        _mail_parse_tasks.pop(dataset_id, None)
+
+
+def _schedule_mailbox_parse(account_id: str, dataset_id: str) -> None:
+    current = _mail_parse_tasks.get(dataset_id)
+    if current is None or current.done():
+        _mail_parse_tasks[dataset_id] = asyncio.create_task(
+            _parse_mailbox_until_idle(account_id, dataset_id)
+        )
 
 
 async def _upload_fetched_mail(state: Any, fetched: list[Any]) -> tuple[str, bool, list[dict[str, Any]]]:
@@ -263,6 +421,342 @@ def _redact_imap_error(error: Exception, settings: Any) -> str:
     return detail
 
 
+@router.get("/accounts")
+async def list_mail_accounts(_user=Depends(require_user)):
+    registry = get_mail_registry()
+    return {
+        "component": "Е.Ж.И.К.",
+        "accounts": registry.list_accounts(),
+        "folders": registry.list_folders(),
+    }
+
+
+@router.post("/accounts")
+async def create_mail_account(req: MailAccountCreateRequest, _admin=Depends(require_admin)):
+    account = await _create_mail_account(req)
+    return {"status": "created", "account": account}
+
+
+@router.patch("/accounts/{account_id}")
+async def update_mail_account(
+    account_id: str,
+    req: MailAccountUpdateRequest,
+    _admin=Depends(require_admin),
+):
+    registry = get_mail_registry()
+    try:
+        current = registry.get_account(account_id, include_secret_state=False)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="mail account not found") from error
+    config: dict[str, Any] = {}
+    for key in ("host", "port", "login", "ssl", "folders"):
+        value = getattr(req, key)
+        if value is not None:
+            config[key] = value
+    try:
+        account = registry.update_account(
+            account_id,
+            label=req.label,
+            enabled=req.enabled,
+            config=config or None,
+            secret=req.password,
+        )
+    except Exception as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    assert account["dataset_id"] == current["dataset_id"]
+    return {"status": "updated", "account": account}
+
+
+@router.post("/accounts/{account_id}/test")
+async def test_mail_account(account_id: str, _admin=Depends(require_admin)):
+    registry = get_mail_registry()
+    try:
+        account = registry.get_account(account_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="mail account not found") from error
+    if account["kind"] == "outlook_classic":
+        return {"status": "ready", "kind": account["kind"], "dataset_id": account["dataset_id"]}
+    try:
+        settings = settings_for_account(account, registry.account_secret(account_id))
+        from backend.mail_ingest import _open_imap_client
+
+        client = await asyncio.to_thread(_open_imap_client, settings)
+        try:
+            await asyncio.to_thread(client.login, settings.login, settings.password)
+            status, _rows = await asyncio.to_thread(client.list)
+            if status != "OK":
+                raise RuntimeError("IMAP LIST failed")
+        finally:
+            try:
+                await asyncio.to_thread(client.logout)
+            except Exception:
+                pass
+    except Exception as error:
+        detail = _redact_imap_error(error, settings if "settings" in locals() else None)
+        raise HTTPException(status_code=502, detail=f"IMAP test failed: {detail}") from error
+    return {"status": "ready", "kind": "imap", "dataset_id": account["dataset_id"]}
+
+
+@router.post("/accounts/{account_id}/sync")
+async def sync_mail_account(
+    account_id: str,
+    req: MailAccountSyncRequest,
+    _admin=Depends(require_admin),
+):
+    registry = get_mail_registry()
+    try:
+        account = registry.get_account(account_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="mail account not found") from error
+    if account["kind"] != "imap":
+        raise HTTPException(status_code=409, detail="Outlook is synchronized by the Windows sidecar")
+    if req.mode not in {"full", "incremental"}:
+        raise HTTPException(status_code=400, detail="mode must be full or incremental")
+    settings = settings_for_account(account, registry.account_secret(account_id))
+    try:
+        fetched = await asyncio.to_thread(
+            sync_imap_account,
+            settings,
+            registry,
+            account_id=account_id,
+            mode=req.mode,
+            max_messages=req.max_messages,
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"IMAP sync failed: {_redact_imap_error(error, settings)}",
+        ) from error
+
+    state = get_dataset_state()
+    uploaded: list[dict[str, Any]] = []
+    for registered in fetched:
+        message = registry.get_message(registered.message_id)
+        doc_id = await state.backend.upload_file(
+            account["dataset_id"],
+            registered.file.path,
+            relative_path=registered.file.relative_path,
+        )
+        registry.mark_indexed(message["id"], rag_doc_id=doc_id, status="registered")
+        uploaded.append({"doc_id": doc_id, **registered.payload()})
+
+    parse_started = False
+    parse_blocked = ""
+    parse_results: list[dict[str, Any]] = []
+    if req.parse:
+        for _batch in range(req.parse_batches):
+            started, blocked, result = await _maybe_parse_mail_dataset(
+                state, account["dataset_id"], parse=True, parse_limit=req.parse_limit
+            )
+            parse_started = parse_started or started
+            parse_blocked = blocked
+            if result:
+                parse_results.append(result)
+            if (
+                blocked
+                or not result
+                or int(result.get("remaining_pending") or 0) <= 0
+                or int(result.get("errors") or 0) > 0
+            ):
+                break
+    parse_result = parse_results[-1] if parse_results else None
+    if (
+        parse_started and parse_result
+        and int(parse_result.get("remaining_pending") or 0) == 0
+        and int(parse_result.get("errors") or 0) == 0
+    ):
+        for item in uploaded:
+            registry.mark_indexed(item["registry_message_id"], rag_doc_id=item["doc_id"], status="indexed")
+    return {
+        "status": "registered" if uploaded else "no_new_mail",
+        "account_id": account_id,
+        "dataset_id": account["dataset_id"],
+        "dataset_name": account["dataset_name"],
+        "files": len(uploaded),
+        "uploaded": uploaded,
+        "parse_started": parse_started,
+        "parse_blocked": parse_blocked,
+        "parse_results": parse_results,
+        "parse_result": parse_result,
+    }
+
+
+@router.post("/accounts/{account_id}/migrate-legacy")
+async def migrate_legacy_mail_to_account(
+    account_id: str,
+    req: MailLegacyMigrationRequest,
+    _admin=Depends(require_admin),
+):
+    """Additively copy an operator-selected legacy mail tree into one mailbox dataset."""
+    registry = get_mail_registry()
+    try:
+        account = registry.get_account(account_id, include_secret_state=False)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="mail account not found") from error
+    try:
+        source_dir = resolve_mail_source_folder(req.source_folder)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    files = iter_mail_files(source_dir, max_files=req.max_files)
+    state = get_dataset_state()
+    registered_count = 0
+    uploaded: list[dict[str, str]] = []
+    for source_file in files:
+        source_relative = source_file.relative_to(source_dir).as_posix()
+        relative_path = f"legacy/{req.source_folder.strip('/')}/{source_relative}"
+        message, created = registry.register_message(
+            account_id=account_id,
+            raw_path=source_file,
+            relative_path=relative_path,
+            source_kind=account["kind"],
+            native_id=f"legacy:{source_relative}",
+            folder_native_id="legacy",
+            folder_path=req.source_folder,
+        )
+        doc_id = await state.backend.upload_file(
+            account["dataset_id"], source_file, relative_path=relative_path
+        )
+        registry.mark_indexed(message["id"], rag_doc_id=doc_id, status="registered")
+        registered_count += int(created)
+        uploaded.append({"message_id": message["id"], "doc_id": doc_id, "relative_path": relative_path})
+    parse_started, parse_blocked, parse_result = await _maybe_parse_mail_dataset(
+        state,
+        account["dataset_id"],
+        parse=req.parse and bool(uploaded),
+        parse_limit=req.parse_limit,
+    )
+    if req.parse and uploaded and (
+        not parse_result or int(parse_result.get("remaining_pending") or 0) > 0
+    ):
+        _schedule_mailbox_parse(account_id, account["dataset_id"])
+    return {
+        "status": "registered",
+        "account_id": account_id,
+        "dataset_id": account["dataset_id"],
+        "source_folder": req.source_folder,
+        "files": len(uploaded),
+        "new_messages": registered_count,
+        "uploaded": uploaded,
+        "legacy_source_retained": True,
+        "parse_started": parse_started,
+        "parse_blocked": parse_blocked,
+        "parse_result": parse_result,
+    }
+
+
+@router.post("/collector/import")
+async def import_outlook_message(
+    request: Request,
+    message: UploadFile = File(...),
+    store_id: str = Form(...),
+    entry_id: str = Form(...),
+    store_label: str = Form(default="Outlook"),
+    folder_id: str = Form(default=""),
+    folder_path: str = Form(default=""),
+    internet_message_id: str = Form(default=""),
+    received_at: str = Form(default=""),
+    _internal=Depends(require_internal),
+):
+    _require_loopback(request)
+    suffix = Path(message.filename or "message.msg").suffix.casefold()
+    if suffix not in {".msg", ".eml"}:
+        raise HTTPException(status_code=400, detail="collector accepts only .msg or .eml")
+    raw = await message.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="empty mail message")
+    account = await _ensure_outlook_store_account(store_id, store_label)
+    digest = hashlib.sha256(raw).hexdigest()
+    root = Path(os.getenv("LES_MAIL_STATE_ROOT", "storage/mail")) / account["id"] / "raw"
+    root.mkdir(parents=True, exist_ok=True)
+    raw_path = root / f"{digest}{suffix}"
+    if not raw_path.exists():
+        raw_path.write_bytes(raw)
+    relative_path = f"outlook/{account['id']}/{digest}{suffix}"
+    registry = get_mail_registry()
+    registered, created = registry.register_message(
+        account_id=account["id"],
+        raw_path=raw_path,
+        relative_path=relative_path,
+        source_kind="outlook_classic",
+        native_id=entry_id,
+        internet_message_id=internet_message_id,
+        folder_native_id=folder_id,
+        folder_path=folder_path,
+        outlook_store_id=store_id,
+        outlook_entry_id=entry_id,
+        received_at=received_at,
+    )
+    state = get_dataset_state()
+    doc_id = await state.backend.upload_file(
+        account["dataset_id"], raw_path, relative_path=relative_path
+    )
+    registry.mark_indexed(registered["id"], rag_doc_id=doc_id, status="registered")
+    _schedule_mailbox_parse(account["id"], account["dataset_id"])
+    return {
+        "status": "registered",
+        "created": created,
+        "account_id": account["id"],
+        "dataset_id": account["dataset_id"],
+        "message_id": registered["id"],
+        "doc_id": doc_id,
+    }
+
+
+@router.post("/messages/{message_id}/open")
+async def open_mail_message(
+    message_id: str,
+    request: Request,
+    _user=Depends(require_user),
+):
+    _require_loopback(request)
+    try:
+        message = get_mail_registry().get_message(message_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="mail message not found") from error
+    if message["source_kind"] != "outlook_classic":
+        raise HTTPException(status_code=409, detail="only Outlook messages can be opened in Outlook")
+    if not sys.platform.startswith("win"):
+        raise HTTPException(status_code=501, detail="opening Outlook originals is available on Windows")
+    collector = Path(
+        os.getenv(
+            "LES_OUTLOOK_COLLECTOR_EXE",
+            str(Path(os.getenv("LOCALAPPDATA", "")) / "LES" / "bin" / "LesMailPoller.exe"),
+        )
+    )
+    if not collector.is_file():
+        raise HTTPException(status_code=503, detail="Outlook collector is not installed")
+    encode = lambda value: base64.urlsafe_b64encode(str(value).encode("utf-8")).decode("ascii")
+    subprocess.Popen(
+        [str(collector), "--open", encode(message["outlook_store_id"]), encode(message["outlook_entry_id"])],
+        close_fds=True,
+    )
+    return {"status": "opening", "message_id": message_id}
+
+
+@router.get("/messages/{message_id}")
+async def get_registered_mail_message(message_id: str, _user=Depends(require_user)):
+    registry = get_mail_registry()
+    try:
+        message = registry.get_message(message_id)
+        account = registry.get_account(message["account_id"], include_secret_state=False)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="mail message not found") from error
+    path = Path(message["raw_path"])
+    if not path.is_file():
+        raise HTTPException(status_code=410, detail="mail snapshot is missing")
+    profile = await asyncio.to_thread(build_mail_vector_profile, path, source_dir=path.parent)
+    return {
+        "component": "Е.Ж.И.К.",
+        "account": account,
+        "message": message,
+        "profile": profile.payload(),
+        "body": profile.body,
+        "attachments": [item.payload() for item in profile.attachments],
+    }
+
+
 @router.get("/status")
 async def mail_status(_user=Depends(require_user)):
     state = get_dataset_state()
@@ -273,7 +767,7 @@ async def mail_status(_user=Depends(require_user)):
     try:  # статус внутреннего IMAP-поллера (proxy.app.mail_autosync) — ленивый импорт без циклов
         import os as _os
         from proxy.app import mail_autosync as _autosync
-        autosync = {**_autosync, "poll_sec": int(_os.getenv("MAIL_IMAP_POLL_SEC", "0") or "0")}
+        autosync = {**_autosync, "poll_sec": int(_os.getenv("MAIL_IMAP_POLL_SEC", "180") or "180")}
     except Exception:
         pass
     return {
@@ -285,18 +779,55 @@ async def mail_status(_user=Depends(require_user)):
         "imap": imap_settings.public_payload(),
         "autosync": autosync,
         "apple_mail": apple_mail_public_payload(),
+        "accounts": get_mail_registry().list_accounts(),
     }
 
 
 @router.get("/messages")
 async def list_mail_messages(
+    account_id: str = Query(default="", max_length=80),
+    folder: str = Query(default="", max_length=500),
     q: str = Query(default="", max_length=500),
     participant: str = Query(default="", max_length=300),
     thread_key: str = Query(default="", max_length=80),
+    date_from: str = Query(default="", max_length=40),
+    date_to: str = Query(default="", max_length=40),
+    index_status: str = Query(default="", max_length=40),
     limit: int = Query(default=100, ge=1, le=1000),
     max_files: int = Query(default=2000, ge=1, le=10000),
     _user=Depends(require_user),
 ):
+    account_id = account_id if isinstance(account_id, str) else ""
+    folder = folder if isinstance(folder, str) else ""
+    date_from = date_from if isinstance(date_from, str) else ""
+    date_to = date_to if isinstance(date_to, str) else ""
+    index_status = index_status if isinstance(index_status, str) else ""
+    if account_id:
+        try:
+            account = get_mail_registry().get_account(account_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="mail account not found") from error
+        messages = get_mail_registry().list_messages(
+            account_id=account_id,
+            folder=folder,
+            q=q,
+            participant=participant,
+            date_from=date_from,
+            date_to=date_to,
+            index_status=index_status,
+            limit=limit,
+        )
+        if thread_key:
+            messages = [item for item in messages if item["thread_key"] == thread_key]
+        return {
+            "component": "Е.Ж.И.К.",
+            "account_id": account_id,
+            "dataset_name": account["dataset_name"],
+            "dataset_id": account["dataset_id"],
+            "total": len(messages),
+            "limit": limit,
+            "messages": messages,
+        }
     state = get_dataset_state()
     dataset, messages = await _load_mail_messages(
         state,
@@ -318,6 +849,7 @@ async def list_mail_messages(
 
 @router.get("/threads")
 async def list_mail_threads(
+    account_id: str = Query(default="", max_length=80),
     q: str = Query(default="", max_length=500),
     participant: str = Query(default="", max_length=300),
     limit: int = Query(default=50, ge=1, le=500),
@@ -325,6 +857,35 @@ async def list_mail_threads(
     _user=Depends(require_user),
 ):
     state = get_dataset_state()
+    account_id = account_id if isinstance(account_id, str) else ""
+    if account_id:
+        try:
+            account = get_mail_registry().get_account(account_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail="mail account not found") from error
+        datasets = await state.backend.list_datasets()
+        dataset = next((item for item in datasets if item.id == account["dataset_id"]), None)
+        if not dataset:
+            raise HTTPException(status_code=404, detail="mailbox dataset not found")
+        content_dir = getattr(state.backend, "content_dir", None)
+        if content_dir is None:
+            raise HTTPException(status_code=501, detail="mail view requires file-backed backend")
+        dataset_root = Path(content_dir).resolve() / dataset.id
+        messages = await asyncio.to_thread(read_mail_messages, dataset_root, max_files=max_files)
+        messages = filter_mail_messages(messages, q=q, participant=participant)
+        threads = group_mail_threads(messages)
+        participants = sorted({person for message in messages for person in message.participants}, key=str.casefold)
+        return {
+            "component": "Е.Ж.И.К.",
+            "account_id": account_id,
+            "dataset_name": account["dataset_name"],
+            "dataset_id": account["dataset_id"],
+            "total_threads": len(threads),
+            "total_messages": len(messages),
+            "participants": participants,
+            "limit": limit,
+            "threads": [thread.summary_payload() for thread in threads[:limit]],
+        }
     dataset, messages = await _load_mail_messages(state, max_files=max_files, q=q, participant=participant)
     threads = group_mail_threads(messages)
     selected = threads[:limit]

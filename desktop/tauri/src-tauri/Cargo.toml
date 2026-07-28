@@ -1,0 +1,23 @@
+[package]
+name = "les-desktop"
+version = "5.1.469"
+description = "Native desktop shell for LES"
+authors = ["LES"]
+edition = "2021"
+
+[lib]
+name = "les_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+serde_json = "1.0"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
+panic = "abort"

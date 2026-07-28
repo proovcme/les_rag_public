@@ -162,11 +162,11 @@ def test_base_type_prevents_gesn_gesnm_collision(tmp_path: Path):
     gs.load_base_norms.cache_clear()
     construction = gs.get_norm("ГЭСН38-01-001-01", base_path=str(out))
     metal = gs.get_norm("ГЭСНм38-01-001-01", base_path=str(out))
-    bare = gs.get_norm("38-01-001-01", base_path=str(out))
+    bare = gs.get_norm("38-01-001-01", base_path=str(out), strict_family=True)
 
     assert construction is not None and "плотин" in construction["name"]
     assert metal is not None and "Листовые конструкции" in metal["name"]
-    assert bare is not None and bare["key"] == "ГЭСН:38-01-001-01"
+    assert bare is None
 
     lines = gs.expand_position("ГЭСНм38-01-001-01", 2.0, base_path=str(out))
     assert lines == [{

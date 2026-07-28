@@ -19,6 +19,7 @@ from backend.metrics_collector import init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
 from proxy.config import CORS_ALLOWED_ORIGIN_REGEX, CORS_ALLOWED_ORIGINS
+from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.bor import router as bor_router
 from proxy.routers.diff import router as diff_router
@@ -45,6 +46,8 @@ from proxy.routers.normcontrol import router as normcontrol_router
 from proxy.routers.notebooks import router as notebooks_router
 from proxy.routers.prompts import router as prompts_router
 from proxy.routers.doc_review import router as doc_review_router
+from proxy.routers.documents import router as documents_router
+from proxy.routers.tools import router as tools_router
 from proxy.routers.chat import ChatRouterState, ensure_chat_history_schema, router as chat_router, set_chat_state
 from proxy.routers.chat_history import router as chat_history_router
 from proxy.routers.datasets import DatasetRouterState, router as datasets_router, search_router, set_dataset_state
@@ -73,6 +76,7 @@ def _select_reranker_cls():
 
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
+from proxy.routers.updates import router as updates_router
 from proxy.routers.service_sources import router as service_sources_router
 from proxy.routers.speckle import cad_bim_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
@@ -106,7 +110,7 @@ job_service = JobService()
 current_mode = {
     "mode": CHAT_MODE,
     "runtime_profile": PROFILE_CHAT,
-    "model": os.getenv("LLM_MODEL", "mlx-community/Qwen3-14B-4bit"),
+    "model": os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL),
     "chat_generation": "allowed",
 }
 
@@ -178,15 +182,17 @@ mail_autosync = {"last_sync": 0.0, "last_count": 0, "runs": 0, "last_error": "",
 
 
 async def mail_imap_autosync_loop():
-    """Е.Ж.И.К. — ВНУТРЕННИЙ IMAP-сервис. MAIL_IMAP_POLL_SEC>0 + MAIL_IMAP_* (host/login/password) →
-    периодически тянет НОВУЮ почту (инкрементально по чекпойнту) → MAIL_Index → парс. 0/без кредов = выкл.
-    ЛЕС сам забирает почту в RAG, без внешнего Outlook-поллера/аддина."""
+    """Poll every enabled IMAP account into that mailbox's private dataset.
+
+    The env-driven single MAIL_Index importer remains a compatibility fallback
+    only when the account registry is empty.
+    """
     from backend.mail_ingest import fetch_imap_eml_files, imap_settings_from_env
 
     await asyncio.sleep(25)  # дать backend подняться
     while True:
         try:
-            interval = int(os.getenv("MAIL_IMAP_POLL_SEC", "0") or "0")
+            interval = int(os.getenv("MAIL_IMAP_POLL_SEC", "180") or "180")
         except ValueError:
             interval = 0
         mail_autosync["enabled"] = interval > 0
@@ -194,25 +200,62 @@ async def mail_imap_autosync_loop():
             await asyncio.sleep(300)  # выключен — перечитываем флаг раз в 5 мин
             continue
         try:
-            settings = imap_settings_from_env()
-            if getattr(settings, "configured", False):
-                from proxy.routers.datasets import get_dataset_state
-                from proxy.routers.mail import _upload_fetched_mail
-                state = get_dataset_state()
-                fetched = await asyncio.to_thread(fetch_imap_eml_files, settings, max_messages=200)
+            from proxy.routers.datasets import get_dataset_state
+            from proxy.services.mail_registry_service import get_mail_registry
+            from proxy.services.mail_sync_service import settings_for_account, sync_imap_account
+
+            state = get_dataset_state()
+            registry = get_mail_registry()
+            accounts = [
+                account for account in registry.list_accounts()
+                if account.get("enabled") and account.get("kind") == "imap"
+            ]
+            total = 0
+            for account in accounts:
+                settings = settings_for_account(account, registry.account_secret(account["id"]))
+                fetched = await asyncio.to_thread(
+                    sync_imap_account,
+                    settings,
+                    registry,
+                    account_id=account["id"],
+                    mode="incremental",
+                    max_messages=200,
+                )
+                for item in fetched:
+                    doc_id = await state.backend.upload_file(
+                        account["dataset_id"], item.file.path, relative_path=item.file.relative_path
+                    )
+                    registry.mark_indexed(item.message_id, rag_doc_id=doc_id, status="registered")
                 if fetched:
-                    dataset_id, _created, _uploaded = await _upload_fetched_mail(state, fetched)
                     try:
+                        result = None
+                        for _batch in range(40):
+                            result = await state.backend.parse_dataset(account["dataset_id"], limit=25)
+                            if int(result.get("remaining_pending") or 0) <= 0 or int(result.get("errors") or 0) > 0:
+                                break
+                        if int(result.get("remaining_pending") or 0) == 0:
+                            for item in fetched:
+                                registry.mark_indexed(item.message_id, status="indexed")
+                    except Exception as parse_err:  # noqa: BLE001
+                        logger.warning("[ЕЖИК] autosync parse account=%s: %s", account["id"], parse_err)
+                total += len(fetched)
+
+            if not accounts:
+                settings = imap_settings_from_env()
+                if getattr(settings, "configured", False):
+                    from proxy.routers.mail import _upload_fetched_mail
+
+                    fetched = await asyncio.to_thread(fetch_imap_eml_files, settings, max_messages=200)
+                    if fetched:
+                        dataset_id, _created, _uploaded = await _upload_fetched_mail(state, fetched)
                         await state.backend.parse_dataset(dataset_id, limit=25)
-                    except Exception as parse_err:  # noqa: BLE001 — парс не роняет поллер
-                        logger.warning("[ЕЖИК] autosync parse: %s", parse_err)
-                    logger.info("[ЕЖИК] IMAP autosync: +%s писем → RAG", len(fetched))
-                    mail_autosync.update(last_sync=time.time(), last_count=len(fetched),
-                                         runs=mail_autosync["runs"] + 1, last_error="")
-                else:
-                    mail_autosync.update(last_sync=time.time(), last_count=0, last_error="")
-            else:
-                logger.debug("[ЕЖИК] autosync: MAIL_IMAP_* не заданы — пропуск")
+                    total = len(fetched)
+            mail_autosync.update(
+                last_sync=time.time(), last_count=total,
+                runs=mail_autosync["runs"] + 1, last_error="",
+            )
+            if total:
+                logger.info("[ЕЖИК] IMAP autosync: +%s писем across %s accounts", total, len(accounts))
         except Exception as error:  # noqa: BLE001 — поллер не падает
             mail_autosync["last_error"] = str(error)[:200]
             logger.warning("[ЕЖИК] IMAP autosync failed: %s", error)
@@ -228,11 +271,13 @@ async def metrics_collector_loop():
 
             host_mem = {}
             try:
-                mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-                async with httpx.AsyncClient(timeout=2.0) as client:
-                    response = await client.get(f"{mlx_url}/api/host_memory")
-                    if response.status_code == 200:
-                        host_mem = response.json()
+                provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+                if provider == "mlx":
+                    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+                    async with httpx.AsyncClient(timeout=2.0) as client:
+                        response = await client.get(f"{mlx_url}/api/host_memory")
+                        if response.status_code == 200:
+                            host_mem = response.json()
             except Exception:
                 pass
 
@@ -315,8 +360,16 @@ async def _warmup_models():
 
     await asyncio.sleep(3)  # дать бэкенду/MLX-хосту подняться
     try:
-        await rag_backend.retrieve("прогрев системы при запуске", dataset_ids=None, top_k=2)
-        logger.info("[WARMUP] эмбеддер/ретрив прогрет")
+        from proxy.services.retrieval_service import hybrid_backend
+
+        retrieve = (
+            rag_backend.retrieve_native_hybrid
+            if hybrid_backend() == "qdrant_native"
+            and hasattr(rag_backend, "retrieve_native_hybrid")
+            else rag_backend.retrieve
+        )
+        await retrieve("прогрев системы при запуске", dataset_ids=None, top_k=2)
+        logger.info("[WARMUP] dense+sparse RRF прогрет")
     except Exception as exc:
         logger.warning("[WARMUP] embed: %s", exc)
     try:
@@ -333,7 +386,7 @@ async def _warmup_models():
         # Прогрев основной LLM: грузит main-движок на старте, иначе первый реальный
         # запрос после рестарта платил холодную загрузку модели (~100-120с).
         mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-        model = os.getenv("LLM_MODEL", "mlx-community/Qwen3.5-4B-MLX-4bit")
+        model = os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)
         async with httpx.AsyncClient(timeout=180) as client:
             await client.post(
                 f"{mlx}/v1/chat/completions",
@@ -444,8 +497,11 @@ def create_app():
     fastapi_app.include_router(notebooks_router)
     fastapi_app.include_router(prompts_router)
     fastapi_app.include_router(doc_review_router)
+    fastapi_app.include_router(documents_router)
+    fastapi_app.include_router(tools_router)
     fastapi_app.include_router(service_sources_router)
     fastapi_app.include_router(settings_router)
+    fastapi_app.include_router(updates_router)
     fastapi_app.include_router(cad_bim_router)
     fastapi_app.include_router(chat_history_router)
     fastapi_app.include_router(datasets_router)

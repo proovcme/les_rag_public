@@ -19,6 +19,8 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import subprocess
 import sys
 import threading
@@ -32,29 +34,63 @@ ROOT = Path(__file__).resolve().parents[1]
 UI_URL = "http://127.0.0.1:8051/les"
 HEALTH_URL = "http://127.0.0.1:8051/healthz"
 WINDOW_TITLE = "ЛЕС · Совушка"
+_runtime_ui_url = UI_URL
+_runtime_health_url = HEALTH_URL
 
 
 def _log_dir() -> Path:
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Logs" / "LES"
     if sys.platform.startswith("win"):
-        import os
-
         base = os.environ.get("LOCALAPPDATA", str(Path.home()))
         return Path(base) / "LES" / "logs"
     return Path.home() / ".local" / "state" / "les" / "logs"
 
 
-# ── health / lifecycle (deterministic, unit-tested) ─────────────────────────
-def healthy(url: str = HEALTH_URL, timeout: float = 2.0) -> bool:
+def current_ui_url() -> str:
+    return _runtime_ui_url
+
+
+def current_health_url() -> str:
+    return _runtime_health_url
+
+
+def _windows_state_path() -> Path:
+    return ROOT / "logs" / "windows-light-state.json"
+
+
+def _apply_runtime_state(payload: dict) -> None:
+    global _runtime_health_url, _runtime_ui_url
+
+    ui_url = str(payload.get("ui_url") or "").strip()
+    health_url = str(payload.get("ui_health_url") or "").strip()
+    if ui_url:
+        _runtime_ui_url = ui_url
+    if health_url:
+        _runtime_health_url = health_url
+
+
+def _load_windows_runtime_state() -> None:
+    path = _windows_state_path()
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return
+    if isinstance(payload, dict):
+        _apply_runtime_state(payload)
+
+
+# ── health / lifecycle (deterministic, unit-tested) ─────────────────────────
+def healthy(url: str | None = None, timeout: float = 2.0) -> bool:
+    target_url = url or current_health_url()
+    try:
+        with urllib.request.urlopen(target_url, timeout=timeout) as response:
             return response.status == 200
     except Exception:
         return False
 
 
-def wait_healthy(url: str = HEALTH_URL, attempts: int = 90, delay: float = 1.0) -> bool:
+def wait_healthy(url: str | None = None, attempts: int = 90, delay: float = 1.0) -> bool:
     for _ in range(attempts):
         if healthy(url):
             return True
@@ -79,7 +115,9 @@ def start_stack() -> bool:
     # Windows has no launchd: bring the stack up via start-light.ps1. macOS/Linux
     # use les_runtime_control (launchd labels + ordered start).
     if _platform() == "windows":
-        return subprocess.run(_win_script("start-light.ps1"), check=False).returncode == 0
+        result = subprocess.run(_win_script("start-light.ps1"), check=False, capture_output=True, text=True)
+        _load_windows_runtime_state()
+        return result.returncode == 0
     from tools import les_runtime_control as rc
 
     try:
@@ -109,6 +147,8 @@ def restart_stack() -> None:
 
 def ensure_started() -> bool:
     """Bring the stack up if it is not already serving the UI."""
+    if _platform() == "windows":
+        _load_windows_runtime_state()
     if healthy():
         return True
     start_stack()
@@ -135,7 +175,7 @@ def run_headless() -> int:
     if not ensure_started():
         print("LES: не удалось поднять службы — см. логи", file=sys.stderr)
         return 1
-    webbrowser.open(UI_URL)
+    webbrowser.open(current_ui_url())
     return 0
 
 
@@ -193,7 +233,7 @@ def run_gui() -> int:
 
     def boot() -> None:
         if ensure_started():
-            window.load_url(UI_URL)
+            window.load_url(current_ui_url())
         else:
             window.load_html(
                 "<body style='background:#0f1115;color:#e66;font-family:sans-serif;"
@@ -203,7 +243,7 @@ def run_gui() -> int:
     def on_open() -> None:
         try:
             window.show()
-            window.load_url(UI_URL)
+            window.load_url(current_ui_url())
         except Exception:
             pass
 

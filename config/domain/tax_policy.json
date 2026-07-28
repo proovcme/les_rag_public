@@ -1,0 +1,12 @@
+{
+  "schema": "les_tax_policy_v1",
+  "rates": [
+    {
+      "tax": "VAT",
+      "effective_from": "2026-01-01",
+      "vat_pct": 22.0,
+      "basis": "Федеральный закон от 28.11.2025 № 425-ФЗ; пункт 3 статьи 164 НК РФ",
+      "source_url": "https://www.nalog.gov.ru/new2026/"
+    }
+  ]
+}

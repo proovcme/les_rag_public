@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import glob
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,46 @@ from typing import Any
 import yaml
 
 from backend.rag_config import rag_meta_db_path
+from proxy.smeta_core.base_registry import active_base
 
 DEFAULT_CONFIG = Path("config/service_sources.yaml")
+
+
+def _active_base_tokens() -> dict[str, str]:
+    active = active_base()
+    return {
+        "${SMETA_BASE}": str(active.get("base_path") or ""),
+        "${SMETA_BASE_MANIFEST}": str(active.get("manifest_path") or ""),
+        "${SMETA_BASE_INTEGRITY}": str(active.get("integrity_path") or ""),
+        "${SMETA_BASE_SOURCE}": str(active.get("source_path") or ""),
+    }
+
+
+def _expand_active_path(value: Any) -> str:
+    raw = str(value or "").strip()
+    return _active_base_tokens().get(raw, raw)
+
+
+def _resolve_source_paths(src: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the canonical smeta-base pointer once for every registry consumer."""
+    resolved = dict(src)
+    resolved["paths"] = [
+        path for value in (src.get("paths") or []) if (path := _expand_active_path(value))
+    ]
+    for key in ("structured_base_path", "base_manifest_path", "integrity_report"):
+        if key in src:
+            resolved[key] = _expand_active_path(src.get(key))
+    required_documents: list[dict[str, Any]] = []
+    for item in src.get("required_documents") or []:
+        row = dict(item)
+        for key in ("preferred_paths", "raw_paths"):
+            row[key] = [
+                path for value in (item.get(key) or []) if (path := _expand_active_path(value))
+            ]
+        required_documents.append(row)
+    if required_documents:
+        resolved["required_documents"] = required_documents
+    return resolved
 
 
 def _file_info(path: str) -> dict[str, Any]:
@@ -59,8 +98,12 @@ def _folders_for_source(src: dict[str, Any], files: list[dict[str, Any]]) -> lis
     return out
 
 
+def _glob_matches(pattern: str) -> list[str]:
+    return sorted(glob.glob(pattern, recursive="**" in pattern))
+
+
 def _glob_infos(pattern: str) -> list[dict[str, Any]]:
-    matches = sorted(glob.glob(pattern))
+    matches = _glob_matches(pattern)
     if not matches:
         return [{**_file_info(pattern), "matches": 0}]
     return [{**_file_info(m), "matches": len(matches)} for m in matches]
@@ -71,6 +114,13 @@ def _load_config(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     data.setdefault("sources", [])
     return data
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 def _status(required_mode: str, present: bool) -> str:
@@ -110,12 +160,52 @@ def _dataset_hits(query: dict[str, Any] | None) -> dict[str, Any]:
         hay = f"{ds_name} {file_name} {domain}".casefold()
         domain_ok = not domains or domain in domains
         needle_ok = not needles or any(n in hay for n in needles)
-        if not (domain_ok or needle_ok):
+        if not (domain_ok and needle_ok):
             continue
         docs += 1
         rec = by_ds.setdefault(str(ds_id), {"id": str(ds_id), "name": ds_name or str(ds_id), "documents": 0})
         rec["documents"] += 1
     return {"datasets": sorted(by_ds.values(), key=lambda x: x["name"]), "documents": docs}
+
+
+def _required_document_manifest(src: dict[str, Any]) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    summary = {"ready": 0, "partial": 0, "missing_blocking": 0, "missing_degraded": 0}
+    for req in src.get("required_documents") or []:
+        preferred_paths = [str(x) for x in req.get("preferred_paths") or [] if str(x).strip()]
+        raw_paths = [str(x) for x in req.get("raw_paths") or [] if str(x).strip()]
+        preferred_hits = [m for pattern in preferred_paths for m in _glob_matches(pattern)]
+        raw_hits = [m for pattern in raw_paths for m in _glob_matches(pattern)]
+        requiredness = str(req.get("requiredness") or "degraded")
+        if preferred_hits:
+            status = "ready"
+        elif raw_hits:
+            status = "partial"
+        else:
+            status = "missing_blocking" if requiredness == "blocking" else "missing_degraded"
+        summary[status] = summary.get(status, 0) + 1
+        rows.append(
+            {
+                "id": req.get("id"),
+                "label": req.get("label") or req.get("id"),
+                "status": status,
+                "requiredness": requiredness,
+                "preferred_files": req.get("preferred_files") or [],
+                "accepted_files": req.get("accepted_files") or [],
+                "preferred_paths": preferred_paths,
+                "raw_paths": raw_paths,
+                "found_preferred": preferred_hits[:50],
+                "found_raw": raw_hits[:50],
+                "found_preferred_count": len(preferred_hits),
+                "found_raw_count": len(raw_hits),
+                "needed_for": req.get("needed_for") or [],
+            }
+        )
+    return {
+        "schema": "service_source_required_documents_v1",
+        "summary": {"total": len(rows), **summary},
+        "items": rows,
+    }
 
 
 def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict[str, Any]) -> dict[str, Any]:
@@ -128,6 +218,15 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
                 if rows is not None:
                     facts.setdefault("parquet_rows", 0)
                     facts["parquet_rows"] += rows
+            elif Path(f["path"]).name.startswith("les_smeta_base") and f["path"].endswith("_manifest.json"):
+                manifest = _read_json(Path(f["path"]))
+                output = manifest.get("output") or {}
+                excluded = manifest.get("excluded") or {}
+                if output:
+                    facts["structured_norms"] = output.get("norms")
+                    facts["structured_resources"] = output.get("resources")
+                if excluded:
+                    facts["excluded_norms_missing_name_or_unit"] = excluded.get("norms_missing_name_or_unit")
         try:
             from proxy.services.gesn_service import load_base_norms, load_norms
 
@@ -136,9 +235,10 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
         except Exception:
             pass
     elif source_id == "fgis_price_base":
-        facts["pricebooks"] = len(existing)
+        pricebooks = [f for f in existing if str(f.get("path") or "").endswith(".parquet")]
+        facts["pricebooks"] = len(pricebooks)
         total = 0
-        for f in existing:
+        for f in pricebooks:
             rows = _parquet_rows(f["path"])
             if rows:
                 total += rows
@@ -162,16 +262,49 @@ def _facts_for_source(source_id: str, files: list[dict[str, Any]], dataset: dict
 def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
     cfg = _load_config(path)
     out: list[dict[str, Any]] = []
-    totals = {"ok": 0, "missing_blocking": 0, "missing_degraded": 0}
-    for src in cfg.get("sources", []):
+    totals = {"ok": 0, "missing_blocking": 0, "missing_degraded": 0, "quarantined_blocking": 0}
+    for configured_src in cfg.get("sources", []):
+        src = _resolve_source_paths(configured_src)
         files: list[dict[str, Any]] = []
         for p in src.get("paths") or []:
             files.extend(_glob_infos(str(p)))
         dataset = _dataset_hits(src.get("dataset_query"))
+        required_documents = _required_document_manifest(src)
+        req_summary = required_documents.get("summary") or {}
         has_files = any(f.get("exists") for f in files) if files else False
         has_dataset = bool(dataset.get("documents"))
         present = has_files or has_dataset
-        status = _status(str(src.get("status_if_missing") or "degraded"), present)
+        if req_summary.get("total"):
+            if int(req_summary.get("missing_blocking") or 0):
+                status = "missing_blocking"
+            elif int(req_summary.get("missing_degraded") or 0) or int(req_summary.get("partial") or 0):
+                status = "missing_degraded"
+            else:
+                status = "ok"
+        else:
+            status = _status(str(src.get("status_if_missing") or "degraded"), present)
+        integrity: dict[str, Any] = {}
+        if src.get("integrity_required"):
+            from proxy.smeta_core.integrity import normative_base_integrity
+
+            configured_paths = [str(value) for value in (src.get("paths") or [])]
+            base_path = str(src.get("structured_base_path") or (configured_paths[0] if configured_paths else ""))
+            manifest_path = str(
+                src.get("base_manifest_path")
+                or (configured_paths[1] if len(configured_paths) > 1 else "")
+            )
+            integrity = normative_base_integrity(
+                base_path=base_path,
+                manifest_path=manifest_path,
+                report_path=str(src.get("integrity_report") or "data/smeta_base/les_smeta_base_integrity.json"),
+            )
+            # Supporting seed/config/source files are not a machine normative
+            # base.  Without the actual SQLite file this is missing, not a
+            # misleading "files found, quarantined" state.
+            present = bool(base_path and Path(base_path).is_file())
+            status = _status(str(src.get("status_if_missing") or "degraded"), present)
+            if present and not integrity.get("trusted_for_pricing"):
+                status = "quarantined_blocking"
         totals[status] = totals.get(status, 0) + 1
         item = {
             "id": src.get("id"),
@@ -187,6 +320,8 @@ def service_sources(path: Path | str = DEFAULT_CONFIG) -> dict[str, Any]:
             "operator_hint": src.get("operator_hint") or "",
             "operator_action": src.get("operator_action") or "",
             "process_label": src.get("process_label") or "Проверить источник",
+            "required_documents": required_documents,
+            "integrity": integrity,
         }
         item["facts"] = _facts_for_source(str(item["id"]), files, dataset)
         out.append(item)
@@ -220,9 +355,25 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
     folders = [f["path"] for f in item.get("folders") or [] if f.get("path")]
     missing_files = [f["path"] for f in item.get("files") or [] if not f.get("exists")]
     found_files = [f["path"] for f in item.get("files") or [] if f.get("exists")]
+    required_documents = item.get("required_documents") or {}
+    req_summary = required_documents.get("summary") or {}
     label = item.get("label") or source_id
-    if status == "ok":
+    if req_summary.get("total"):
+        ready = int(req_summary.get("ready") or 0)
+        partial = int(req_summary.get("partial") or 0)
+        missing = int(req_summary.get("missing_blocking") or 0) + int(req_summary.get("missing_degraded") or 0)
+        if missing:
+            msg = f"{label}: Play проверил состав. Готово {ready}, частично {partial}, не хватает {missing}."
+        else:
+            msg = f"{label}: Play проверил состав. Готово {ready}, частично {partial}, критичных пропусков нет."
+    elif status == "ok":
         msg = f"{label}: источник найден. ЛЕС может использовать эти данные."
+    elif status == "quarantined_blocking":
+        reasons = "; ".join(str(x) for x in ((item.get("integrity") or {}).get("reasons") or [])[:4])
+        msg = (
+            f"{label}: файлы найдены, но база помещена в карантин и не может подтверждать "
+            f"финальную стоимость. {reasons or 'Нет пройденного semantic integrity report.'}"
+        )
     elif status == "missing_blocking":
         where = ", ".join(folders[:3]) or ", ".join(missing_files[:3]) or "служебную папку источника"
         msg = f"{label}: данных нет. Положи нужные файлы в {where} и запусти проверку ещё раз."
@@ -238,4 +389,6 @@ def process_service_source(source_id: str, path: Path | str = DEFAULT_CONFIG) ->
         "missing_files": missing_files,
         "found_files": found_files,
         "facts": item.get("facts") or {},
+        "required_documents": required_documents,
+        "integrity": item.get("integrity") or {},
     }

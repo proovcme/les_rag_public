@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from PIL import Image, ImageDraw
 
 from proxy.services.table_detect import detect_table_regions
@@ -19,6 +20,7 @@ def _grid_image(w=400, h=300, box=(50, 40, 300, 260)):
 
 
 def test_detects_grid_region():
+    pytest.importorskip("cv2", reason="OpenCV table detection is an optional runtime capability")
     regs = detect_table_regions(_grid_image())
     assert len(regs) >= 1
     r = regs[0]
@@ -31,6 +33,7 @@ def test_blank_has_no_tables():
 
 
 def test_regions_normalized_and_sane():
+    pytest.importorskip("cv2", reason="OpenCV table detection is an optional runtime capability")
     for r in detect_table_regions(_grid_image()):
         assert len(r) == 4
         assert all(0.0 <= v <= 1.0 for v in r)

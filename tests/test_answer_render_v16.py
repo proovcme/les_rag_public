@@ -96,6 +96,22 @@ def test_trace_summary_no_mail_body():
     s = ar.trace_summary({"intent": "mail_entity_search", "adapter_statuses": {"mail": "unavailable"}})
     assert "body" not in s.lower() and "mail=unavailable" in s
 
+
+def test_trace_summary_shows_topic_guided_retrieval():
+    s = ar.trace_summary({
+        "topic_guided_retrieval": {
+            "selected_topics": [{"label": "пожарная сигнализация и автоматика"}],
+            "targeted_chunk_count": 24,
+            "wide_fallback_chunk_count": 24,
+            "wide_fallback_promoted": {"doc_name": "BAI/OUT/ИОС 5.4/СО1Б-17.05-ИОС5.4.pdf"},
+        }
+    })
+
+    assert "topic: пожарная сигнализация" in s
+    assert "targeted 24" in s and "fallback 24" in s
+    assert "promoted СО1Б-17.05-ИОС5.4.pdf" in s
+
+
 def test_trace_summary_empty():
     assert ar.trace_summary(None) == "" and ar.trace_summary({}) == ""
 
@@ -125,6 +141,50 @@ def test_citation_drawer_item_opens_file_like_refs():
     assert item["open_url"].startswith("/lite-api/rag/file/raw?path=RAG_Content")
     assert item["location"] == "para85"
     assert item["snippet"] == "фрагмент"
+    assert item["viewer_url"].startswith("/lite-api/rag/file/viewer?")
+    assert "locator=para85" in item["viewer_url"]
+
+
+def test_citation_drawer_item_opens_pdf_on_exact_page():
+    item = ar.citation_drawer_item({
+        "source_ref": "RAG_Content/PROJECT/План этажа.pdf#p12",
+        "source_kind": "pdf_text_layer",
+    })
+
+    assert item["open_url"].startswith("/lite-api/rag/file/raw?path=RAG_Content")
+    assert "%D0%9F%D0%BB%D0%B0%D0%BD%20%D1%8D%D1%82%D0%B0%D0%B6%D0%B0.pdf" in item["open_url"]
+    assert item["open_url"].endswith("#page=12")
+    assert "page=12" in item["viewer_url"]
+    assert item["is_pdf"] is True
+
+
+def test_citation_drawer_item_accepts_pdf_page_equals_and_bbox():
+    item = ar.citation_drawer_item({
+        "source_ref": "RAG_Content/PROJECT/section.pdf#page=7",
+        "bbox_pt": [10, 20, 110, 55],
+    })
+
+    assert item["open_url"].endswith("#page=7")
+    assert "page=7" in item["viewer_url"]
+    assert "bbox=10.0%2C20.0%2C110.0%2C55.0" in item["viewer_url"]
+
+
+def test_citation_drawer_item_ignores_malformed_bbox_without_hiding_source():
+    item = ar.citation_drawer_item({
+        "source_ref": "RAG_Content/PROJECT/section.pdf#p2",
+        "bbox": ["bad", 20, 110, 55],
+    })
+
+    assert "page=2" in item["viewer_url"]
+    assert "bbox=" not in item["viewer_url"]
+
+
+def test_citation_drawer_item_routes_excel_locator_to_embedded_viewer():
+    item = ar.citation_drawer_item({"source_ref": "RAG_Content/ВОР.xlsx#Лист 1!R42"})
+
+    assert item["viewer_url"].startswith("/lite-api/rag/file/viewer?")
+    assert "%D0%9B%D0%B8%D1%81%D1%82+1%21R42" in item["viewer_url"]
+    assert item["open_url"].endswith("%D0%92%D0%9E%D0%A0.xlsx")
 
 def test_citation_drawer_item_disabled_without_ref():
     item = ar.citation_drawer_item({"file": "doc.pdf"})
@@ -142,6 +202,34 @@ def test_citation_drawer_item_logical_ref_no_operator_warning():
     assert item["open_url"] == ""
     assert item["copy_text"] == "ГЭСН-2022#06-16-005-01"
     assert item["unavailable_reason"] == ""
+
+def test_split_inline_source_notes_keeps_prose_readable():
+    text = (
+        "Адрес подтвержден [Источник 1].\n"
+        "Источники: [Источник 1] BAI/ОЦТ/ИОС_5.2/03_Пояснительная записка.docx — адрес объекта"
+    )
+    body, notes = ar.split_inline_source_notes(text)
+
+    assert "Адрес подтвержден [Источник 1]." in body
+    assert "Источники:" not in body
+    assert notes[0]["markers"] == ["[Источник 1]"]
+    assert "Пояснительная записка.docx" in notes[0]["text"]
+
+def test_source_notes_artifact_lists_notes_and_sources():
+    artifact = ar.source_notes_artifact(
+        "Факт.\nИсточники: [Источник 1] файл — фрагмент",
+        sources=[{
+            "source_ref": "BAI/ОЦТ/ИОС_5.2/03_Пояснительная записка.docx#para12",
+            "source_kind": "extracted_body",
+            "snippet": "Адрес объекта",
+        }],
+    )
+
+    assert artifact["title"] == "Источники ответа"
+    assert artifact["mode"] == "markdown"
+    assert "## Пометки из ответа" in artifact["content"]
+    assert "## Перечень источников" in artifact["content"]
+    assert "Пояснительная записка.docx" in artifact["content"]
 
 def test_group_evidence_sections_order_and_missing_visible():
     from proxy.services.evidence_contract import EvidenceItem, EvidenceType, block_of

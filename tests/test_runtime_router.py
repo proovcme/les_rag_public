@@ -174,7 +174,7 @@ def test_openai_provider_status_defaults_to_gpt_model(monkeypatch):
     status = runtime._provider_status()
 
     assert status["provider"] == "openai"
-    assert status["model"] == "gpt-4.1"
+    assert status["model"] == "gpt-5.4"
 
 
 @pytest.mark.asyncio

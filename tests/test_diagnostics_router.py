@@ -41,3 +41,73 @@ async def test_run_diagnostics_aggregates_check_statuses(monkeypatch, diagnostic
     assert result["embedding"]["profile"]
     assert result["embedding"]["collection"]
     assert result["ok_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_clean_runtime_without_verifiable_answers_is_warning(monkeypatch):
+    previous = diagnostics._state
+    diagnostics.set_diagnostics_state(
+        diagnostics.DiagnosticsRouterState(
+            crag_stats={"verified": 0, "no_data": 2, "hallucination": 0, "unvalidated": 0},
+            proxy_start=0.0,
+        )
+    )
+    monkeypatch.setattr(
+        diagnostics.httpx,
+        "AsyncClient",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("skip external")),
+    )
+    monkeypatch.setattr(
+        diagnostics.psutil,
+        "virtual_memory",
+        lambda: type("VM", (), {"percent": 10, "used": 1, "total": 2})(),
+    )
+    monkeypatch.setattr(diagnostics.psutil, "cpu_percent", lambda interval=0.0: 1.0)
+    monkeypatch.setattr(
+        diagnostics.psutil,
+        "disk_usage",
+        lambda path: type("DU", (), {"percent": 10, "free": 1024**3})(),
+    )
+    try:
+        result = await diagnostics.run_diagnostics(_internal=object())
+    finally:
+        diagnostics._state = previous
+
+    crag = next(check for check in result["checks"] if check["name"] == "Т.О.С.К.А. статистика")
+    assert crag["status"] == "warn"
+    assert "нет проверяемых ответов" in crag["message"]
+
+
+@pytest.mark.asyncio
+async def test_sparse_validation_sample_is_warning_not_runtime_error(monkeypatch):
+    previous = diagnostics._state
+    diagnostics.set_diagnostics_state(
+        diagnostics.DiagnosticsRouterState(
+            crag_stats={"verified": 0, "no_data": 0, "hallucination": 0, "unvalidated": 1},
+            proxy_start=0.0,
+        )
+    )
+    monkeypatch.setattr(
+        diagnostics.httpx,
+        "AsyncClient",
+        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("skip external")),
+    )
+    monkeypatch.setattr(
+        diagnostics.psutil,
+        "virtual_memory",
+        lambda: type("VM", (), {"percent": 10, "used": 1, "total": 2})(),
+    )
+    monkeypatch.setattr(diagnostics.psutil, "cpu_percent", lambda interval=0.0: 1.0)
+    monkeypatch.setattr(
+        diagnostics.psutil,
+        "disk_usage",
+        lambda path: type("DU", (), {"percent": 10, "free": 1024**3})(),
+    )
+    try:
+        result = await diagnostics.run_diagnostics(_internal=object())
+    finally:
+        diagnostics._state = previous
+
+    crag = next(check for check in result["checks"] if check["name"] == "Т.О.С.К.А. статистика")
+    assert crag["status"] == "warn"
+    assert "мало проверяемых ответов" in crag["message"]

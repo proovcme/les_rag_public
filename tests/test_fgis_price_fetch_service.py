@@ -54,6 +54,22 @@ def test_slug_from_subject_quarter():
     assert _slug("Москва", "1 квартал 2026") == "moskva_1kv2026"
 
 
+def test_public_metadata_retries_transient_ssl_failure(monkeypatch):
+    calls = {"count": 0}
+
+    def flaky(_path):
+        calls["count"] += 1
+        if calls["count"] < 3:
+            raise TimeoutError("ssl handshake timeout")
+        return [{"id": 281, "name": "Алтайский край"}]
+
+    monkeypatch.setattr(pf, "_get_json", flaky)
+    monkeypatch.setattr(pf.time, "sleep", lambda _seconds: None)
+
+    assert pf.list_subjects() == [{"id": 281, "name": "Алтайский край"}]
+    assert calls["count"] == 3
+
+
 def _patch_channel(monkeypatch, *, split_src: Path | None):
     """Заглушить сетевой чейн ФГИС ЦС детерминированными метаданными + локальным файлом."""
     monkeypatch.setattr(pf, "list_subjects",
@@ -99,6 +115,31 @@ def test_import_region_period_not_found(tmp_path, monkeypatch):
     res = pf.import_region(subject="Петербург", quarter="9 квартал 1999",
                            name="x", out_root=tmp_path / "pb")
     assert res["ok"] is False and res["stage"] == "period"
+
+
+def test_import_price_zone_uses_explicit_zone_identity(tmp_path, monkeypatch):
+    src = tmp_path / "split.xlsx"
+    _make_split_form(src)
+
+    def _fake_fetch(zone_id, period_id, dest):
+        assert zone_id == 777
+        assert period_id == 888
+        Path(dest).write_bytes(src.read_bytes())
+        return src.stat().st_size
+
+    monkeypatch.setattr(pf, "fetch_split_form", _fake_fetch)
+    res = pf.import_price_zone(
+        subject={"id": 316, "name": "Регион"},
+        zone={"id": 777, "name": "Ценовая зона 2"},
+        period={"id": 888, "name": "1 квартал 2026"},
+        name="region_zone-777",
+        out_root=tmp_path / "pb",
+    )
+
+    assert res["ok"] is True
+    assert res["price_zone_id"] == 777
+    assert res["period_id"] == 888
+    assert res["region"] == "Ценовая зона 2"
 
 
 def test_lookup_local_first_hits_local(tmp_path, monkeypatch):

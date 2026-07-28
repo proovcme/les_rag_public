@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from nicegui import app, ui
 
 from backend.auth import logout
@@ -20,6 +21,9 @@ def build_header(
     *,
     admin_tabs: bool | None = None,
     include_chat: bool = True,
+    include_documents: bool = False,
+    include_datasets: bool = False,
+    include_mail: bool = True,
     admin_link: bool = False,
     chat_link: bool = False,
     visualizer_url: str | None = None,
@@ -31,6 +35,7 @@ def build_header(
 
     tab_refs = {}
     show_admin_tabs = is_admin if admin_tabs is None else admin_tabs
+    is_windows = sys.platform.startswith("win")
 
     with ui.element("header").classes("w-full").style(
         "position:sticky;top:0;z-index:999;"
@@ -128,11 +133,20 @@ def build_header(
                 # иначе оператор не видит служебные источники, ВОР и нормоконтроль.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
+                tab_refs["mail_settings"] = ui.tab("Настройка почты", icon="o_mark_email_read")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
                 tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
+                if include_datasets and "samovar" not in tab_refs:
+                    tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
+                if include_documents and "documents" not in tab_refs:
+                    tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
+                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_document")
+                    tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
+                if include_mail and "mail" not in tab_refs:
+                    tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
 
         # ── Контролы (справа) ─────────────────────────────────────────────────
@@ -189,7 +203,7 @@ def build_header(
                     ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
 
                 if admin_link:
-                    ui.button("АДМИНКА", on_click=lambda: ui.navigate.to("/les")).props(
+                    ui.button("КОНФИГУРАЦИЯ", on_click=lambda: ui.navigate.to("/les")).props(
                         "flat no-caps dense"
                     ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
 
@@ -205,7 +219,7 @@ def build_header(
                 with ui.dialog() as settings_dialog, ui.card().style(
                     "background:var(--bg-panel);border:1px solid var(--border);min-width:640px;padding:24px;"
                 ):
-                    ui.label("⚙ НАСТРОЙКИ Л.Е.С.").style(
+                    ui.label("НАСТРОЙКИ Л.Е.С.").style(
                         "font-size:.95rem;font-weight:900;margin-bottom:8px;"
                     )
                     # Однозначный ответ «какая модель отвечает» — всегда наверху диалога.
@@ -239,22 +253,27 @@ def build_header(
                             "border:1px solid var(--border);color:var(--warn);background:transparent;flex:1;")
                         ui.button("⚖ Микс", on_click=lambda: _apply_preset("mix")).props("no-caps flat").style(
                             "border:1px solid var(--border);color:var(--accent);background:transparent;flex:1;")
+                    provider_options = {
+                        "ollama": "Ollama — локально",
+                        "openrouter": "OpenRouter — облако",
+                        "openai": "OpenAI-compatible — облако",
+                    }
+                    if not is_windows:
+                        provider_options = {"mlx": "MLX — локально на Mac", **provider_options}
                     set_provider = ui.select(
-                        {
-                            "mlx": "MLX — локальный (валидация Т.О.С.К.А.; блок по памяти активен)",
-                            "ollama": "Ollama — локальный (без валидации; блок по памяти активен)",
-                            "openrouter": "OpenRouter — ОБЛАКО (без валидации; блок по памяти снят)",
-                            "openai": "OpenAI-compatible — ОБЛАКО (без валидации; блок по памяти снят)",
-                        },
+                        provider_options,
                         label="Активный LLM-провайдер",
-                        value="mlx",
+                        value="ollama" if is_windows else "mlx",
                     ).style("width:100%;font-family:var(--font);")
-                    # Локальная модель чата (MLX): лёгкий 4B (основной) ↔ тяжёлый 9B (резерв).
-                    # Переключается вживую через /api/settings/mlx-model — без рестарта хоста.
-                    _mlx_loading = {"v": False}
-                    set_llm = ui.select({}, label="Локальная модель (MLX): 4B быстрый / 9B тяжёлый").props(
-                        "dense outlined"
-                    ).style("width:100%;font-family:var(--font);")
+                    with ui.column().classes("w-full gap-2") as mlx_settings:
+                        # Mac-only MLX runtime. Windows production uses Ollama and never shows these controls.
+                        _mlx_loading = {"v": False}
+                        set_llm = ui.select({}, label="Локальная модель MLX").props(
+                            "dense outlined"
+                        ).style("width:100%;font-family:var(--font);")
+                        set_embed = ui.input("Модель эмбеддингов MLX", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                        set_url = ui.input("Адрес MLX", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    mlx_settings.set_visibility(not is_windows)
 
                     async def _apply_mlx_model(e) -> None:
                         if _mlx_loading["v"]:
@@ -276,10 +295,34 @@ def build_header(
                             ui.notify(last_api_error_text("Не удалось переключить локальную модель"), type="negative")
 
                     set_llm.on_value_change(_apply_mlx_model)
-                    set_embed = ui.input("Embedding Модель",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_url   = ui.input("MLX URL",  value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_ollama_url = ui.input("Ollama URL", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_ollama_model = ui.input("Ollama Model (например gemma4:12b)", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_ollama_url = ui.input("Адрес Ollama", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_ollama_model = ui.input("Модель Ollama, например gemma4:12b", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_smeta_engine = ui.select(
+                        {
+                            "native": "Native loop (контрольный)",
+                            "qwen_agent": "Qwen-Agent (локально)",
+                            "google_adk": "Google ADK (облако)",
+                        },
+                        value="native",
+                        label="Движок сметчика",
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_smeta_model = ui.input("Модель для смет", value="qwen3.5:9b").props(
+                        'hint="Можно указать gemma4:12b для чистой проверки"'
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_smeta_fallback_model = ui.input(
+                        "Резервная модель для смет", value="qwen3.5:9b"
+                    ).props('hint="Очисти поле, чтобы проверять выбранную модель без подстраховки"').style(
+                        "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
+                    )
+                    set_google_model = ui.input(
+                        "Google model для смет", value="gemini-3.5-flash"
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_google_key = ui.input(
+                        "Google API Key", value="", password=True, password_toggle_button=True
+                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
+                    set_google_clear = ui.checkbox("Сбросить Google API key", value=False).style(
+                        "color:var(--text);font-family:var(--font);"
+                    )
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Облачные провайдеры").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
                     set_openrouter_url = ui.input("OpenRouter Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
@@ -290,7 +333,7 @@ def build_header(
                     set_openai_model = ui.input("OpenAI-compatible Model", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openai_key = ui.input("OpenAI-compatible API Key", value="", password=True, password_toggle_button=True).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_openai_clear = ui.checkbox("Сбросить OpenAI-compatible key", value=False).style("color:var(--text);font-family:var(--font);")
-                    # W3.3/ADR-9: данные по чувствительности. P0 — только локально (MLX),
+                    # W3.3/ADR-9: данные по чувствительности. P0 — только локально,
                     # P1 — можно в облако, P2 — облако ТОЛЬКО при этом согласии. Уровень
                     # датасета ставится в САМОВАРе (колонка «Данные»).
                     set_cloud_consent = ui.checkbox("Разрешить облако для данных P2 (согласие)", value=False).style(
@@ -298,7 +341,7 @@ def build_header(
                     )
                     _html(
                         '<div class="sov-muted" style="font-size:.6rem;line-height:1.4;">P0 (приватные: НТД по умолчанию, '
-                        'почта, договоры) всегда локально на MLX. Уровень датасета — в САМОВАРе → «Данные».</div>'
+                        'почта, договоры) всегда остаются на этой машине. Уровень датасета — в САМОВАРе → «Данные».</div>'
                     )
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Е.Ж.И.К. IMAP").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
@@ -366,10 +409,23 @@ def build_header(
                             except Exception:
                                 pass
                             active = (providers.get("active") or "mlx").lower()
-                            set_provider.set_value(active if active in ("mlx", "ollama", "openrouter", "openai") else "mlx")
+                            default_provider = "ollama" if is_windows else "mlx"
+                            set_provider.set_value(active if active in provider_options else default_provider)
                             ollama = providers.get("ollama") or {}
                             set_ollama_url.set_value(ollama.get("base_url", "http://127.0.0.1:11434"))
                             set_ollama_model.set_value(ollama.get("model", ""))
+                            set_smeta_model.set_value(d.get("smeta_document_model") or "qwen3.5:9b")
+                            set_smeta_fallback_model.set_value(d.get("smeta_document_fallback_model", "qwen3.5:9b"))
+                            smeta_engine = d.get("smeta_agent_engine") or "native"
+                            set_smeta_engine.set_value(
+                                smeta_engine if smeta_engine in {"native", "qwen_agent", "google_adk"} else "native"
+                            )
+                            set_google_model.set_value(d.get("smeta_google_model") or "gemini-3.5-flash")
+                            set_google_key.set_value("")
+                            set_google_key.props(
+                                f"placeholder=\"{'key уже задан; оставь пустым, чтобы не менять' if d.get('google_api_key_set') else 'Google API key'}\""
+                            )
+                            set_google_clear.set_value(False)
                             openrouter = providers.get("openrouter") or {}
                             openai = providers.get("openai_compatible") or {}
                             set_openrouter_url.set_value(openrouter.get("base_url", "https://openrouter.ai/api/v1"))
@@ -401,6 +457,78 @@ def build_header(
 
                     asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
+                    ui.label("Быстрое обновление ЛЕС").style(
+                        "color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;"
+                    )
+                    update_status = ui.label(
+                        "Проверка выполняется только по нажатию. Рабочие данные не затрагиваются."
+                    ).style("color:var(--dim);font-size:.68rem;width:100%;")
+
+                    async def _check_application_update() -> None:
+                        from sovushka.state import api_get
+
+                        update_button.disable()
+                        update_status.set_text("Проверяю доступный патч…")
+                        result = await api_get("/api/update/patch/check")
+                        if not isinstance(result, dict):
+                            update_status.set_text(last_api_error_text("Не удалось проверить обновление"))
+                            return
+                        if not result.get("available"):
+                            update_status.set_text("Все быстрые обновления уже установлены.")
+                            return
+                        if not result.get("compatible"):
+                            update_status.set_text(str(result.get("message") or "Требуется полный выпуск."))
+                            return
+                        update_status.set_text(
+                            f"Доступно быстрое обновление: {int(result.get('files') or 0)} файлов."
+                        )
+                        update_button.enable()
+
+                    async def _install_application_update() -> None:
+                        from sovushka.state import api_post
+
+                        update_button.disable()
+                        update_status.set_text("Скачиваю и проверяю патч…")
+                        result = await api_post("/api/update/patch/install", {})
+                        if not isinstance(result, dict):
+                            update_status.set_text(last_api_error_text("Не удалось запустить обновление"))
+                            return
+                        update_status.set_text("Патч проверен. ЛЕС перезапустится и сам проверит результат.")
+                        ui.notify("Быстрое обновление запущено", type="positive")
+
+                        async def _watch_patch() -> None:
+                            for _ in range(120):
+                                await asyncio.sleep(2)
+                                state = await api_get("/api/update/patch/status")
+                                if not isinstance(state, dict):
+                                    continue
+                                update_status.set_text(str(state.get("message") or "Обновляю ЛЕС…"))
+                                if state.get("state") in {"ready", "failed"}:
+                                    if state.get("state") == "ready":
+                                        ui.notify("ЛЕС обновлён", type="positive")
+                                    else:
+                                        ui.notify("Патч отменён, предыдущая версия восстановлена", type="negative")
+                                    return
+
+                        asyncio.create_task(_watch_patch())
+
+                    with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
+                        ui.button(
+                            "Проверить патч",
+                            icon="o_system_update_alt",
+                            on_click=_check_application_update,
+                        ).props("no-caps flat").style(
+                            "border:1px solid var(--border);color:var(--accent);background:transparent;"
+                        )
+                        update_button = ui.button(
+                            "Установить",
+                            icon="o_download",
+                            on_click=_install_application_update,
+                        ).props("no-caps disable").style(
+                            "border:1px solid var(--accent);color:var(--accent);background:transparent;"
+                        )
+
+                    ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("⚠ Опасная зона").style("color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;")
 
                     async def _reset_all():
@@ -426,9 +554,18 @@ def build_header(
                                 "llm_model":   set_llm.value,
                                 "embed_model": set_embed.value,
                                 "mlx_url":     set_url.value,
-                                "llm_provider": set_provider.value or "mlx",
+                                "llm_provider": set_provider.value or ("ollama" if is_windows else "mlx"),
                                 "ollama_base_url": set_ollama_url.value or "",
                                 "ollama_model": set_ollama_model.value or "",
+                                "smeta_agent_engine": set_smeta_engine.value or "native",
+                                "smeta_document_provider": (
+                                    "ollama" if is_windows and set_smeta_engine.value == "native" else ""
+                                ),
+                                "smeta_document_model": set_smeta_model.value or "",
+                                "smeta_document_fallback_model": set_smeta_fallback_model.value or "",
+                                "smeta_google_model": set_google_model.value or "gemini-3.5-flash",
+                                "google_api_key": set_google_key.value or None,
+                                "google_api_key_clear": bool(set_google_clear.value),
                                 "openrouter_base_url": set_openrouter_url.value or "",
                                 "openrouter_model": set_openrouter_model.value or "",
                                 "openrouter_api_key": set_openrouter_key.value or None,
@@ -459,7 +596,9 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
-                ui.button(icon="o_settings", on_click=lambda: settings_dialog.open()).props('flat dense round aria-label="Настройки"').style("color:var(--dim);")
+                ui.button("Настройки", icon="o_settings", on_click=lambda: settings_dialog.open()).props(
+                    'flat dense no-caps aria-label="Настройки"'
+                ).style("color:var(--dim);font-size:.62rem;")
 
             # Пользователь / выход
             ui.button(auth_holder or auth_role, icon=("o_shield" if is_admin else "o_person"),

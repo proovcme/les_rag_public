@@ -111,6 +111,17 @@ def test_hidden_system_dataset_has_visible_reason():
     sysd = [d for d in o["system_datasets"] if d["id"] == "sx"]
     assert sysd and sysd[0].get("hidden_reason")                   # не скрыт молча — с reason
 
+def test_typed_module_dataset_is_grouped_as_system_without_name_hint():
+    options = s.scope_options(
+        [{"id": "svc", "name": "SMETA_SERVICE_Index", "dataset_scope": "system", "module_id": "smeta"}],
+        [],
+        {},
+    )
+    assert options["datasets"] == []
+    assert options["system_datasets"][0]["module_id"] == "smeta"
+    assert options["system_datasets"][0]["source_type"] == "module:smeta"
+    assert "smeta" in options["system_datasets"][0]["hidden_reason"]
+
 def test_scope_options_counts():
     o = s.scope_options(_DS, _PROJ, _LINKS)["counts"]
     assert o["datasets_total"] == 4 and o["datasets_unassigned"] == 1 and o["datasets_system"] == 1
@@ -185,10 +196,6 @@ def test_version_endpoint_still_has_deployed_commit():
     app = FastAPI(); app.include_router(router)
     d = TestClient(app).get("/api/version").json()
     assert "deployed_commit" in d and d["harness_version"] == vs.HARNESS_VERSION and "les_version" in d
-
-def test_flag_off_preserves_chat_behavior():
-    import os
-    assert os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "0") in ("0", "", None) or True
 
 def test_v06_resource_real_workbook_regression():
     from proxy.services import resource_cost_service as rc

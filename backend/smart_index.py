@@ -109,6 +109,24 @@ def build_smart_plan(root: Path) -> dict[str, Any]:
     for path in accepted_files:
         try:
             route = route_document(path)
+            # Bundled/module-generated projections are not part of the general
+            # user RAG corpus. Smeta owns FGIS -> typed SQLite -> dedicated
+            # dense+sparse navigation; other module sources need an explicit
+            # typed ingestion path instead of leaking through sync-smart.
+            from proxy.services.system_dataset_service import system_dataset_spec
+
+            if system_dataset_spec(route.dataset_name) is not None:
+                rejected_reasons["module_owned_source"] += 1
+                rejected.append(
+                    {
+                        "accepted": False,
+                        "reason": "module_owned_source",
+                        "path": path.as_posix(),
+                        "suffix": path.suffix.lower(),
+                        "size_bytes": path.stat().st_size,
+                    }
+                )
+                continue
             datasets[route.dataset_name].append(
                 {
                     "path": path.as_posix(),

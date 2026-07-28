@@ -64,7 +64,20 @@ def test_kac_price_for_unlisted_material():
 def test_missing_price_flagged():
     pos = {"name": "z", "resources": [{"kind": "material", "name": "Неизвестный", "qty": 1}]}
     r = compute_position(pos)
-    assert r["flags"] and "нет цены" in r["flags"][0]
+    assert r["flags"] and "нужен КАЦ" in r["flags"][0]
+    assert r["price_requirements"][0]["action"] == "needs_kac"
+    assert r["resources"][0]["price_action"] == "needs_kac"
+
+
+def test_missing_non_material_prices_are_actionable():
+    pos = {"name": "z", "resources": [
+        {"kind": "labor", "name": "Рабочий", "qty": 1},
+        {"kind": "machinist", "name": "Машинист", "qty": 1},
+        {"kind": "machine", "name": "Кран", "qty": 1},
+    ]}
+    r = compute_position(pos)
+    actions = [req["action"] for req in r["price_requirements"]]
+    assert actions == ["needs_labor_rate", "needs_machinist_rate", "needs_fgis_price"]
 
 
 def test_assemble_rollup():
@@ -73,6 +86,49 @@ def test_assemble_rollup():
     assert res["summary"]["total"] == round(11813.04 * 2, 2)
     assert len(res["sections"]) == 1
     assert res["sections"][0]["positions"] == 2
+
+
+def test_default_pricebook_prefers_spb_over_first_alphabetic(monkeypatch):
+    from proxy.services import fgis_price_service as fps
+    from proxy.services import lsr_assembly_service as la
+
+    chosen = {}
+
+    class FakeBook:
+        region = "Санкт-Петербург"
+        quarter = "2 квартал 2026 г."
+
+    monkeypatch.setattr(
+        fps,
+        "available_pricebooks",
+        lambda *a, **k: ["/tmp/altayskiy-kray_2kv2026.parquet", "/tmp/spb_2kv2026.parquet"],
+    )
+    def _fake_get_pricebook(path):
+        chosen["path"] = path
+        return FakeBook()
+
+    monkeypatch.setattr(fps, "get_pricebook", _fake_get_pricebook)
+
+    book = la._resolve_book(None)
+
+    assert isinstance(book, FakeBook)
+    assert chosen["path"] == "/tmp/spb_2kv2026.parquet"
+
+
+def test_assemble_code_only_applies_explicit_nr_sp_rule_from_typed_collection():
+    res = assemble([{
+        "code": "ГЭСНм08-03-575-01",
+        "qty": 1,
+        "nr_sp_rule_id": "nrsp-49.3",
+        "section": "Электромонтаж",
+    }], book="spb_2kv2026")
+
+    pos = res["positions"][0]
+    assert pos["nr_sp_trace"]["rule_id"] == "nrsp-49.3"
+    assert pos["base"]["nr"] == 613.86
+    assert pos["base"]["sp"] == 322.75
+    assert pos["total"] == 1573.24
+    assert res["summary"]["total"] == 1573.24
 
 
 def test_machinist_aggregate_split_by_mapped_machines():
@@ -108,7 +164,7 @@ def test_machinist_aggregate_stays_missing_without_complete_mapping():
     res = compute_position(pos)
 
     assert res["base"]["zpm"] == 0
-    assert res["flags"] and "Затраты труда машинистов" in res["flags"][0]
+    assert any("Затраты труда машинистов" in flag for flag in res["flags"])
 
 
 def test_export_assembled_csv_and_xlsx(tmp_path):

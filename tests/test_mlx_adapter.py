@@ -1,5 +1,6 @@
 import asyncio
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -187,6 +188,44 @@ def test_force_unload_drops_everything(monkeypatch):
     assert cleared == [True]
 
 
+def test_chat_template_passes_native_tools_to_tokenizer():
+    captured = {}
+
+    class Tokenizer:
+        def apply_chat_template(self, messages, **kwargs):
+            captured["messages"] = messages
+            captured["kwargs"] = kwargs
+            return "tool-aware-prompt"
+
+    manager = mlx_adapter.MLXMemoryManager("local-model")
+    manager.tokenizer = Tokenizer()
+    tools = [{"type": "function", "function": {"name": "search_norms", "parameters": {"type": "object"}}}]
+
+    prompt = manager.apply_chat_template(
+        [{"role": "user", "content": "Найди норму"}],
+        enable_thinking=False,
+        tools=tools,
+    )
+
+    assert prompt == "tool-aware-prompt"
+    assert captured["kwargs"]["tools"] == tools
+    assert captured["kwargs"]["enable_thinking"] is False
+
+
+def test_chat_template_fallback_keeps_tool_contract_without_loaded_tokenizer():
+    manager = mlx_adapter.MLXMemoryManager("local-model")
+    tools = [{"type": "function", "function": {"name": "read_norm", "parameters": {"type": "object"}}}]
+
+    prompt = manager.apply_chat_template(
+        [{"role": "user", "content": "Открой норму"}],
+        tools=tools,
+    )
+
+    assert '"name": "read_norm"' in prompt
+    assert "<tool_call>" in prompt
+    assert "Открой норму" in prompt
+
+
 # ── generate_text требует start() (event-loop guard) ──────────────────────────
 
 @pytest.mark.asyncio
@@ -239,3 +278,55 @@ async def test_generate_text_strips_stop_tokens(monkeypatch):
 
     out = await m.generate_text("p")
     assert out == "ответ"  # обрезан stop-токен и пробелы
+
+
+@pytest.mark.asyncio
+async def test_generate_text_clears_transient_metal_cache_after_each_turn(monkeypatch):
+    cleared = []
+
+    async def fake_to_thread(fn, *a, **kw):
+        return "ответ"
+
+    monkeypatch.setattr(mlx_adapter.asyncio, "to_thread", fake_to_thread)
+    monkeypatch.setattr(mlx_adapter, "_clear_metal_cache", lambda: cleared.append(True))
+    m = mlx_adapter.MLXMemoryManager("model")
+    m._lock = asyncio.Lock()
+    m.model = object()
+    m.tokenizer = object()
+
+    assert await m.generate_text("p") == "ответ"
+    assert m.model is not None
+    assert cleared == [True]
+
+
+@pytest.mark.asyncio
+async def test_stream_text_yields_real_chunks_metrics_and_clears_cache(monkeypatch):
+    cleared = []
+
+    def fake_stream(*args, **kwargs):
+        yield SimpleNamespace(
+            text="первый ", prompt_tokens=12, prompt_tps=30.0,
+            generation_tokens=1, generation_tps=10.0,
+            peak_memory=2.5, finish_reason=None,
+        )
+        yield SimpleNamespace(
+            text="токен", prompt_tokens=12, prompt_tps=30.0,
+            generation_tokens=2, generation_tps=11.0,
+            peak_memory=2.5, finish_reason="stop",
+        )
+
+    monkeypatch.setattr(mlx_adapter, "_mlx_stream_generate", fake_stream)
+    monkeypatch.setattr(mlx_adapter, "_clear_metal_cache", lambda: cleared.append(True))
+    m = mlx_adapter.MLXMemoryManager("model")
+    m._lock = asyncio.Lock()
+    m.model = object()
+    m.tokenizer = object()
+
+    chunks = [item async for item in m.stream_text("prompt", max_tokens=8)]
+
+    assert [text for text, _ in chunks] == ["первый ", "токен"]
+    assert chunks[-1][1]["prompt_tokens"] == 12
+    assert chunks[-1][1]["generation_tps"] == 11.0
+    assert chunks[-1][1]["finish_reason"] == "stop"
+    assert m.model is not None
+    assert cleared == [True]

@@ -6,7 +6,7 @@
   1) эмбеддинг строки/ячейки таблицы ≠ натуральный запрос → низкий ранг;
   2) даже когда нужный СП поднят (doc_router/фильтр), приложение тонет под прозой.
 
-ЭМПИРИКА (2026-06-23, живой индекс les_rag_qwen3_06b):
+ЭМПИРИКА (2026-06-23, старое физическое поколение; production alias теперь `les_rag`):
   • В нормативных СП НЕТ чанков type=table_row — это поле ставит ТОЛЬКО parquet_writer
     для xlsx-спецификаций/смет (664 шт., все из проектных датасетов). Поэтому
     «фильтр по type=table_row» (вариант A из ADR-12) для норм даёт ПУСТО.
@@ -94,7 +94,15 @@ async def fetch_table_appendix_chunks(
     try:
         # Тянем заведомо БОЛЬШЕ, чем нужно: дальше отфильтруем по pipe-плотности.
         over_k = max(pool_n * 4, 24)
-        candidates = await rag_backend.retrieve(
+        from proxy.services.retrieval_service import hybrid_backend
+
+        retrieve = (
+            rag_backend.retrieve_native_hybrid
+            if hybrid_backend() == "qdrant_native"
+            and hasattr(rag_backend, "retrieve_native_hybrid")
+            else rag_backend.retrieve
+        )
+        candidates = await retrieve(
             retrieval_query or question,
             dataset_ids=dataset_ids,
             top_k=over_k,

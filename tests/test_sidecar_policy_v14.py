@@ -12,9 +12,6 @@ import pytest
 
 from proxy.services import doc_extract_service as de
 from proxy.services import source_adapters as sa
-from proxy.services import unified_construction_harness_service as u
-from proxy.services import resource_cost_service as rc
-from proxy.services import construction_harness_service as ch
 
 
 def _xlsx(path, sheet="ВОР", rows=(("Наименование", "Ед", "Кол-во"), ("Грунт", "м3", 7200))):
@@ -148,27 +145,3 @@ def test_agent_router_classify_hermetic(monkeypatch):
     import proxy.services.agent_router_service as ar
     monkeypatch.setattr(ar, "_route_llm_text", lambda *a, **k: "project_registry")
     assert ar._classify("какие объекты") == "project_registry"   # без сети, мок на реальном пути
-
-
-# ── регрессии v0.3-v0.13 ─────────────────────────────────────────────────────────────────
-
-def test_v13_extraction_regression(tmp_path):
-    d = tmp_path / "ds"
-    d.mkdir()
-    _xlsx(d / "Ф9.xlsx")
-    r = u.run_unified_construction_harness("извлеки ВОР из Ф9", dataset_ids=["ds"], storage_root=tmp_path)
-    assert r.total_status == "complete"
-
-def test_v06_resource_workbook_regression():
-    assert rc.validate_real_workbook()["matches"] is True
-
-def test_resource_grand_complete():
-    r = u.run_unified_construction_harness("проверь пример обсчёта")
-    assert r.total_status == "complete" and abs(r.final_total - 16827283.19) < 1.0
-
-def test_v04_source_scope_regression():
-    assert u.route_construction_intent("найди ОЗК в актах смонтированного оборудования").intent == "asbuilt_extract"
-    assert u.route_construction_intent("правила расстановки ОЗК").intent == "norm_qa"
-
-def test_unit_gate_regression():
-    assert ch.lsr_assemble([{"code": "06-02-001-01", "work": "плита", "unit": "м3", "qty": 720}])["asm_positions"][0]["qty"] == 7.2

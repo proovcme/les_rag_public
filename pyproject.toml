@@ -1,6 +1,6 @@
 [project]
 name = "les-v2"
-version = "0.1.1.dev0"
+version = "0.25.0"
 description = "Л.Е.С. — Локальная Экспертная Система"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -35,6 +35,12 @@ dependencies = [
     "markitdown>=0.0.1",
     "langextract>=1.1.0",
     "ezdxf>=1.3.0",
+    # ── Сметные агенты (RAG/расчёт остаются в LES) ────────────────
+    "qwen-agent==0.0.34",
+    # qwen-agent 0.0.34 imports audio helpers from its core package but does not
+    # declare SoundFile in the minimal extra.
+    "soundfile>=0.12.1",
+    "google-adk==2.5.0",
     # ── UI ───────────────────────────────────────────────────────
     "nicegui>=2.0.0",
     # ── Утилиты ──────────────────────────────────────────────────
@@ -51,6 +57,10 @@ mac-mlx = [
     "torch>=2.2.0",
     "torchvision>=0.17.0",
     "coremltools>=9.0",
+]
+windows-reranker = [
+    "sentence-transformers>=3.0.0",
+    "torch>=2.2.0",
 ]
 parsers = [
     "docling>=2.101.0",
@@ -84,6 +94,6 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["backend", "proxy", "proxy.clients", "proxy.repositories", "proxy.routers", "proxy.services", "proxy.storage", "proxy.workers", "sovushka", "tools"]
-include = ["mlx_host.py", "proxy_server.py", "sovushka_ng.py"]
+include = ["mlx_host.py", "lemonade_host.py", "proxy_server.py", "sovushka_ng.py"]
 
 [tool.uv]

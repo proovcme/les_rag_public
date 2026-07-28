@@ -124,17 +124,17 @@ def _retry(fn, *, retries: int = 3, backoff: float = 1.5):
 
 def list_subjects() -> list[dict[str, Any]]:
     """Субъекты РФ ФГИС ЦС: [{'id', 'name'}, …] (открыто, без auth)."""
-    return _get_json("EstimatedPrice/CountrySubjects") or []
+    return _retry(lambda: _get_json("EstimatedPrice/CountrySubjects")) or []
 
 
 def price_zones(subject_id: int) -> list[dict[str, Any]]:
     """Ценовые зоны субъекта: [{'id', 'name'}, …]."""
-    return _get_json(f"EstimatedPrice/PriceZones?subjectId={int(subject_id)}") or []
+    return _retry(lambda: _get_json(f"EstimatedPrice/PriceZones?subjectId={int(subject_id)}")) or []
 
 
 def periods(price_zone_id: int) -> list[dict[str, Any]]:
     """Доступные периоды (кварталы) зоны: [{'id', 'name'}, …], свежий первым."""
-    return _get_json(f"EstimatedPrice/Periods?priceZoneId={int(price_zone_id)}") or []
+    return _retry(lambda: _get_json(f"EstimatedPrice/Periods?priceZoneId={int(price_zone_id)}")) or []
 
 
 def resolve_subject(name_substr: str) -> Optional[dict[str, Any]]:
@@ -220,6 +220,61 @@ def import_region(
         tmp.unlink(missing_ok=True)
 
 
+def import_price_zone(
+    *,
+    subject: dict[str, Any],
+    zone: dict[str, Any],
+    period: dict[str, Any],
+    name: str,
+    out_root: str | Path = fps.DEFAULT_PRICE_ROOT,
+) -> dict[str, Any]:
+    """Download one explicitly discovered FGIS price-zone/period pair.
+
+    Unlike :func:`import_region`, this function does not silently pick the first
+    zone of a subject.  The bulk catalogue updater uses it so multi-zone regions
+    are complete and every saved book retains the official numeric identities.
+    """
+    subject_id = int(subject.get("id") or 0)
+    zone_id = int(zone.get("id") or 0)
+    period_id = int(period.get("id") or 0)
+    if not subject_id or not zone_id or not period_id:
+        return {"ok": False, "stage": "metadata", "note": "неполная идентичность субъект/зона/период"}
+
+    out = Path(out_root) / f"{Path(name).name}.parquet"
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tf:
+        tmp = Path(tf.name)
+    try:
+        size = fetch_split_form(zone_id, period_id, tmp)
+        if size < 1024:
+            return {"ok": False, "stage": "download", "note": f"файл подозрительно мал ({size} б)"}
+        subject_name = str(subject.get("name") or "")
+        zone_name = str(zone.get("name") or "")
+        region_label = zone_name if zone_name and zone_name != subject_name else subject_name
+        summary = fps.build_price_parquet(
+            tmp,
+            out,
+            region=region_label,
+            quarter=str(period.get("name") or ""),
+        )
+        fps.get_pricebook.cache_clear()
+        return {
+            "ok": True,
+            "name": out.stem,
+            "rows": summary["rows"],
+            "region": summary["region"],
+            "quarter": summary["quarter"],
+            "subject_id": subject_id,
+            "price_zone_id": zone_id,
+            "period_id": period_id,
+            "bytes": size,
+            "parquet": summary["parquet"],
+        }
+    except RuntimeError as exc:
+        return {"ok": False, "stage": "download", "note": str(exc)}
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 # ─────────────────────────────────────────
 # Локаль-первый lookup (костинг) + добор-по-промаху
 # ─────────────────────────────────────────
@@ -241,10 +296,9 @@ def lookup_local_first(
     """
     path: Optional[str] = None
     if book:
-        path = next((p for p in fps.available_pricebooks() if Path(p).stem == book), None)
+        path = fps.resolve_pricebook_path(book, root=fps.DEFAULT_PRICE_ROOT, allow_scratch=True)
     else:
-        books = fps.available_pricebooks()
-        path = books[0] if books else None
+        path = fps.resolve_pricebook_path(root=fps.DEFAULT_PRICE_ROOT)
 
     if path:
         rec = fps.get_pricebook(path).lookup(code)

@@ -4,6 +4,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+class EmbeddingContractError(RuntimeError):
+    """The embedding server returned vectors from a different model than requested."""
+
+
 @dataclass
 class Chunk:
     content:  str
@@ -18,10 +22,18 @@ class DatasetInfo:
     id:          str
     name:        str
     status:      str
+    # Total registered documents. Indexed-only count is exposed separately.
     doc_count:   int
     chunk_count: int
     sensitivity: str = "P0"  # W3.3 (ADR-9): P0 local-only / P1 cloud-ok / P2 cloud-с-согласия
     group_name:  str = ""    # пользовательская группа для организации списка в САМОВАРе
+    files:        int = 0
+    indexed_files: int = 0
+    pending_files: int = 0
+    error_files: int = 0
+    missing_files: int = 0
+    dataset_scope: str = "user"  # user | system; ownership, not content kind
+    module_id: str = ""         # owner for system datasets (smeta, normcontrol, ...)
 
 
 class RAGBackend(ABC):
@@ -36,6 +48,10 @@ class RAGBackend(ABC):
 
     @abstractmethod
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str: ...
+
+    async def mark_document_error(self, dataset_id: str, document_id: str, error: str) -> None:
+        """Persist a background intake failure instead of leaving the document PENDING."""
+        raise NotImplementedError
 
     @abstractmethod
     async def register_external_file(self, dataset_id: str, source_path: Path, file_name: str) -> str:

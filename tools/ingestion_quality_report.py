@@ -74,7 +74,7 @@ def _collection() -> str:
         from backend.rag_config import rag_collection_name
         return rag_collection_name()
     except Exception:
-        return "les_rag_qwen3_06b"
+        return "les_rag"
 
 
 def scroll_points(limit: int, *, batch: int = 500) -> list[dict[str, Any]]:

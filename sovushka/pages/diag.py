@@ -7,7 +7,7 @@ import asyncio
 import time
 from nicegui import ui
 
-from sovushka.state import state, api_get, api_post, add_log
+from sovushka.state import state, api_get, api_post, add_log, active_llm_provider
 from sovushka.config import MLX_URL
 from sovushka.components.charts import _html, esc
 
@@ -529,6 +529,9 @@ def build_diag():
 
         # ── MLX Host — имя совпадает с node_map ──
         async def chk_mlx():
+            provider = await active_llm_provider()
+            if provider != "mlx":
+                return "warn", provider.upper(), "MLX or local provider", "MLX Host не опрашивается для текущего провайдера"
             r = await api_get("/api/health", base=MLX_URL)
             if not r:
                 return "err", "DOWN", "UP", "MLX Host недоступен"

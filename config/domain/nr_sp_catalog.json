@@ -1,0 +1,2881 @@
+{
+  "schema": "nr_sp_catalog_v1",
+  "created_at": "2026-07-10T14:13:15.939632+00:00",
+  "sources": {
+    "nr": {
+      "path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+      "sha256": "28b0b376f110cf6f21975f4bab41f120d661d6b7bf072cb39682a036a72c4e24",
+      "order": "812/pr"
+    },
+    "sp": {
+      "path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+      "sha256": "21f2c34b3cd3af15366f309dbda30a6af88a261c0e4a68edb0cc507a4c9a547d",
+      "order": "774/pr"
+    }
+  },
+  "rules": [
+    {
+      "rule_id": "nrsp-1.1",
+      "rule_no": "1.1",
+      "label": "механизированным способом",
+      "collections": [
+        "ГЭСН:01"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.1.1; Приказ 774/пр п.1.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 6,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          5
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-1.2",
+      "rule_no": "1.2",
+      "label": "ручным способом",
+      "collections": [
+        "ГЭСН:01"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 40.0,
+      "basis": "Приказ 812/пр п.1.2; Приказ 774/пр п.1.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 7,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          6
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-1.3",
+      "rule_no": "1.3",
+      "label": "с применением средств гидромеханизации",
+      "collections": [
+        "ГЭСН:01"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.1.3; Приказ 774/пр п.1.3",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 8,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          7
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-1.4",
+      "rule_no": "1.4",
+      "label": "по другим видам работ (подготовительным, сопутствующим, укрепительным)",
+      "collections": [
+        "ГЭСН:01"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 41.0,
+      "basis": "Приказ 812/пр п.1.4; Приказ 774/пр п.1.4",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 9,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          8
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-1.5",
+      "rule_no": "1.5",
+      "label": "механизированное рыхление и разработка вечномерзлого грунта",
+      "collections": [
+        "ГЭСН:01"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.1.5; Приказ 774/пр п.1.5",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 10,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          9
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-2",
+      "rule_no": "2",
+      "label": "Горновскрышные работы",
+      "collections": [
+        "ГЭСН:02"
+      ],
+      "nr_pct": 99.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.2; Приказ 774/пр п.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 11,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          10
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-3",
+      "rule_no": "3",
+      "label": "Буровзрывные работы",
+      "collections": [
+        "ГЭСН:03"
+      ],
+      "nr_pct": 106.0,
+      "sp_pct": 67.0,
+      "basis": "Приказ 812/пр п.3; Приказ 774/пр п.3",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 12,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          11
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-4",
+      "rule_no": "4",
+      "label": "Скважины",
+      "collections": [
+        "ГЭСН:04"
+      ],
+      "nr_pct": 106.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.4; Приказ 774/пр п.4",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 13,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          12
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-5.1",
+      "rule_no": "5.1",
+      "label": "свайные работы",
+      "collections": [
+        "ГЭСН:05"
+      ],
+      "nr_pct": 117.0,
+      "sp_pct": 70.0,
+      "basis": "Приказ 812/пр п.5.1; Приказ 774/пр п.5.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 15,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          14
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-5.2",
+      "rule_no": "5.2",
+      "label": "опускные колодцы",
+      "collections": [
+        "ГЭСН:05"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 51.0,
+      "basis": "Приказ 812/пр п.5.2; Приказ 774/пр п.5.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 16,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          15
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-5.3",
+      "rule_no": "5.3",
+      "label": "закрепление грунтов",
+      "collections": [
+        "ГЭСН:05"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 52.0,
+      "basis": "Приказ 812/пр п.5.3; Приказ 774/пр п.5.3",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 17,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          16
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-6",
+      "rule_no": "6",
+      "label": "Бетонные и железобетонные монолитные конструкции и работы в строительстве (за исключением пунктов 6.1, 6.2)",
+      "collections": [
+        "ГЭСН:06"
+      ],
+      "nr_pct": 102.0,
+      "sp_pct": 58.0,
+      "basis": "Приказ 812/пр п.6; Приказ 774/пр п.6",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 18,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          17
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-6.1",
+      "rule_no": "6.1",
+      "label": "с применением индустриальных видов опалубки",
+      "collections": [
+        "ГЭСН:06"
+      ],
+      "nr_pct": 108.0,
+      "sp_pct": 55.0,
+      "basis": "Приказ 812/пр п.6.1; Приказ 774/пр п.6.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 19,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          18
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-6.2",
+      "rule_no": "6.2",
+      "label": "конструкции зданий атомных электростанций",
+      "collections": [
+        "ГЭСН:06"
+      ],
+      "nr_pct": 132.0,
+      "sp_pct": 65.0,
+      "basis": "Приказ 812/пр п.6.2; Приказ 774/пр п.6.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 20,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          19
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-7",
+      "rule_no": "7",
+      "label": "Бетонные и железобетонные сборные конструкции и работы в строительстве (за исключением пунктов 7.1 и 7.2)",
+      "collections": [
+        "ГЭСН:07"
+      ],
+      "nr_pct": 110.0,
+      "sp_pct": 73.0,
+      "basis": "Приказ 812/пр п.7; Приказ 774/пр п.7",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 22,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          20
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-7.1",
+      "rule_no": "7.1",
+      "label": "жилых, общественных и административно-бытовых зданий промышленных предприятий",
+      "collections": [
+        "ГЭСН:07"
+      ],
+      "nr_pct": 116.0,
+      "sp_pct": 80.0,
+      "basis": "Приказ 812/пр п.7.1; Приказ 774/пр п.7.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 23,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          21
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-7.2",
+      "rule_no": "7.2",
+      "label": "конструкции зданий атомных электростанций",
+      "collections": [
+        "ГЭСН:07"
+      ],
+      "nr_pct": 148.0,
+      "sp_pct": 85.0,
+      "basis": "Приказ 812/пр п.7.2; Приказ 774/пр п.7.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 24,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          22
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-8",
+      "rule_no": "8",
+      "label": "Конструкции из кирпича и блоков",
+      "collections": [
+        "ГЭСН:08"
+      ],
+      "nr_pct": 110.0,
+      "sp_pct": 69.0,
+      "basis": "Приказ 812/пр п.8; Приказ 774/пр п.8",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 26,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          23
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-9",
+      "rule_no": "9",
+      "label": "Строительные металлические конструкции (за исключением пункта 9.1)",
+      "collections": [
+        "ГЭСН:09"
+      ],
+      "nr_pct": 93.0,
+      "sp_pct": 62.0,
+      "basis": "Приказ 812/пр п.9; Приказ 774/пр п.9",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 27,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          24
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-9.1",
+      "rule_no": "9.1",
+      "label": "конструкции атомных электрических станций",
+      "collections": [
+        "ГЭСН:09"
+      ],
+      "nr_pct": 111.0,
+      "sp_pct": 85.0,
+      "basis": "Приказ 812/пр п.9.1; Приказ 774/пр п.9.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 28,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          25
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-10",
+      "rule_no": "10",
+      "label": "Деревянные конструкции",
+      "collections": [
+        "ГЭСН:10"
+      ],
+      "nr_pct": 108.0,
+      "sp_pct": 55.0,
+      "basis": "Приказ 812/пр п.10; Приказ 774/пр п.10",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 30,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          26
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-11",
+      "rule_no": "11",
+      "label": "Полы",
+      "collections": [
+        "ГЭСН:11"
+      ],
+      "nr_pct": 112.0,
+      "sp_pct": 65.0,
+      "basis": "Приказ 812/пр п.11; Приказ 774/пр п.11",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 31,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          27
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-12",
+      "rule_no": "12",
+      "label": "Кровли",
+      "collections": [
+        "ГЭСН:12"
+      ],
+      "nr_pct": 109.0,
+      "sp_pct": 57.0,
+      "basis": "Приказ 812/пр п.12; Приказ 774/пр п.12",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 32,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          28
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-13",
+      "rule_no": "13",
+      "label": "Защита строительных конструкций и оборудования от коррозии",
+      "collections": [
+        "ГЭСН:13"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 51.0,
+      "basis": "Приказ 812/пр п.13; Приказ 774/пр п.13",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 33,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          29
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-14",
+      "rule_no": "14",
+      "label": "Конструкции в сельском строительстве (за исключением пунктов 14.1, 14.2)",
+      "collections": [
+        "ГЭСН:14"
+      ],
+      "nr_pct": 95.0,
+      "sp_pct": 64.0,
+      "basis": "Приказ 812/пр п.14; Приказ 774/пр п.14",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 34,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          30
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-14.1",
+      "rule_no": "14.1",
+      "label": "здания и сооружения из бетонных и железобетонных конструкций",
+      "collections": [
+        "ГЭСН:14"
+      ],
+      "nr_pct": 113.0,
+      "sp_pct": 62.0,
+      "basis": "Приказ 812/пр п.14.1; Приказ 774/пр п.14.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 35,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          31
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-14.2",
+      "rule_no": "14.2",
+      "label": "установка железобетонных конструкций при строительстве теплиц и овощехранилищ",
+      "collections": [
+        "ГЭСН:14"
+      ],
+      "nr_pct": 99.0,
+      "sp_pct": 59.0,
+      "basis": "Приказ 812/пр п.14.2; Приказ 774/пр п.14.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 36,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          32
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-15",
+      "rule_no": "15",
+      "label": "Отделочные работы",
+      "collections": [
+        "ГЭСН:15"
+      ],
+      "nr_pct": 100.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.15; Приказ 774/пр п.15",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 37,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          33
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-16",
+      "rule_no": "16",
+      "label": "Сантехнические работы: внутренние (трубопроводы, внутренние устройства водопровода, канализации, отопления, газоснабжения, вентиляция и кондиционирование воздуха)",
+      "collections": [
+        "ГЭСН:16"
+      ],
+      "nr_pct": 121.0,
+      "sp_pct": 72.0,
+      "basis": "Приказ 812/пр п.16; Приказ 774/пр п.16",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 38,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          34
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-16",
+      "rule_no": "16",
+      "label": "Сантехнические работы: внутренние (трубопроводы, внутренние устройства водопровода, канализации, отопления, газоснабжения, вентиляция и кондиционирование воздуха)",
+      "collections": [
+        "ГЭСН:17"
+      ],
+      "nr_pct": 121.0,
+      "sp_pct": 72.0,
+      "basis": "Приказ 812/пр п.16; Приказ 774/пр п.16",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 39,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          35
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-16",
+      "rule_no": "16",
+      "label": "Сантехнические работы: внутренние (трубопроводы, внутренние устройства водопровода, канализации, отопления, газоснабжения, вентиляция и кондиционирование воздуха)",
+      "collections": [
+        "ГЭСН:18"
+      ],
+      "nr_pct": 121.0,
+      "sp_pct": 72.0,
+      "basis": "Приказ 812/пр п.16; Приказ 774/пр п.16",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 40,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          36
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-16",
+      "rule_no": "16",
+      "label": "Сантехнические работы: внутренние (трубопроводы, внутренние устройства водопровода, канализации, отопления, газоснабжения, вентиляция и кондиционирование воздуха)",
+      "collections": [
+        "ГЭСН:19"
+      ],
+      "nr_pct": 121.0,
+      "sp_pct": 72.0,
+      "basis": "Приказ 812/пр п.16; Приказ 774/пр п.16",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 41,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          37
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-16",
+      "rule_no": "16",
+      "label": "Сантехнические работы: внутренние (трубопроводы, внутренние устройства водопровода, канализации, отопления, газоснабжения, вентиляция и кондиционирование воздуха)",
+      "collections": [
+        "ГЭСН:20"
+      ],
+      "nr_pct": 121.0,
+      "sp_pct": 72.0,
+      "basis": "Приказ 812/пр п.16; Приказ 774/пр п.16",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 42,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          38
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-17",
+      "rule_no": "17",
+      "label": "Временные сборно-разборные здания и сооружения",
+      "collections": [
+        "ГЭСН:21"
+      ],
+      "nr_pct": 96.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.17; Приказ 774/пр п.17",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 44,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          40
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-18",
+      "rule_no": "18",
+      "label": "Наружные сети водопровода, канализации, теплоснабжения, газопроводы",
+      "collections": [
+        "ГЭСН:22"
+      ],
+      "nr_pct": 117.0,
+      "sp_pct": 74.0,
+      "basis": "Приказ 812/пр п.18; Приказ 774/пр п.18",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 45,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          41
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-18",
+      "rule_no": "18",
+      "label": "Наружные сети водопровода, канализации, теплоснабжения, газопроводы",
+      "collections": [
+        "ГЭСН:23"
+      ],
+      "nr_pct": 117.0,
+      "sp_pct": 74.0,
+      "basis": "Приказ 812/пр п.18; Приказ 774/пр п.18",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 46,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          42
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-18",
+      "rule_no": "18",
+      "label": "Наружные сети водопровода, канализации, теплоснабжения, газопроводы",
+      "collections": [
+        "ГЭСН:24"
+      ],
+      "nr_pct": 117.0,
+      "sp_pct": 74.0,
+      "basis": "Приказ 812/пр п.18; Приказ 774/пр п.18",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 47,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          43
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-19",
+      "rule_no": "19",
+      "label": "Магистральные и промысловые трубопроводы",
+      "collections": [
+        "ГЭСН:25"
+      ],
+      "nr_pct": 111.0,
+      "sp_pct": 60.0,
+      "basis": "Приказ 812/пр п.19; Приказ 774/пр п.19",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 48,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          44
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-20",
+      "rule_no": "20",
+      "label": "Теплоизоляционные работы",
+      "collections": [
+        "ГЭСН:26"
+      ],
+      "nr_pct": 97.0,
+      "sp_pct": 55.0,
+      "basis": "Приказ 812/пр п.20; Приказ 774/пр п.20",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 49,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          45
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-21",
+      "rule_no": "21",
+      "label": "Автомобильные дороги (за исключением пункта 21.1)",
+      "collections": [
+        "ГЭСН:27"
+      ],
+      "nr_pct": 147.0,
+      "sp_pct": 134.0,
+      "basis": "Приказ 812/пр п.21; Приказ 774/пр п.21",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 50,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          46
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-21.1",
+      "rule_no": "21.1",
+      "label": "устройство покрытий дорожек, тротуаров, мостовых и площадок и прочее",
+      "collections": [
+        "ГЭСН:27"
+      ],
+      "nr_pct": 113.0,
+      "sp_pct": 77.0,
+      "basis": "Приказ 812/пр п.21.1; Приказ 774/пр п.21.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 52,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          48
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-22",
+      "rule_no": "22",
+      "label": "Железные дороги",
+      "collections": [
+        "ГЭСН:28"
+      ],
+      "nr_pct": 109.0,
+      "sp_pct": 65.0,
+      "basis": "Приказ 812/пр п.22; Приказ 774/пр п.22",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 53,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          49
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-23.1",
+      "rule_no": "23.1",
+      "label": "закрытый способ работ",
+      "collections": [
+        "ГЭСН:29"
+      ],
+      "nr_pct": 146.0,
+      "sp_pct": 75.0,
+      "basis": "Приказ 812/пр п.23.1; Приказ 774/пр п.23.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 55,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          51
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-23.2",
+      "rule_no": "23.2",
+      "label": "открытый способ работ",
+      "collections": [
+        "ГЭСН:29"
+      ],
+      "nr_pct": 126.0,
+      "sp_pct": 60.0,
+      "basis": "Приказ 812/пр п.23.2; Приказ 774/пр п.23.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 56,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          52
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-24",
+      "rule_no": "24",
+      "label": "Мосты и трубы",
+      "collections": [
+        "ГЭСН:30"
+      ],
+      "nr_pct": 140.0,
+      "sp_pct": 93.0,
+      "basis": "Приказ 812/пр п.24; Приказ 774/пр п.24",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 57,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          53
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-25",
+      "rule_no": "25",
+      "label": "Аэродромы",
+      "collections": [
+        "ГЭСН:31"
+      ],
+      "nr_pct": 107.0,
+      "sp_pct": 69.0,
+      "basis": "Приказ 812/пр п.25; Приказ 774/пр п.25",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 59,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          55
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-26",
+      "rule_no": "26",
+      "label": "Трамвайные пути",
+      "collections": [
+        "ГЭСН:32"
+      ],
+      "nr_pct": 106.0,
+      "sp_pct": 56.0,
+      "basis": "Приказ 812/пр п.26; Приказ 774/пр п.26",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 60,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          56
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-27",
+      "rule_no": "27",
+      "label": "Линии электропередачи",
+      "collections": [
+        "ГЭСН:33"
+      ],
+      "nr_pct": 103.0,
+      "sp_pct": 60.0,
+      "basis": "Приказ 812/пр п.27; Приказ 774/пр п.27",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 61,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          57
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-28",
+      "rule_no": "28",
+      "label": "Сооружения связи, радиовещания и телевидения",
+      "collections": [
+        "ГЭСН:34"
+      ],
+      "nr_pct": 98.0,
+      "sp_pct": 58.0,
+      "basis": "Приказ 812/пр п.28; Приказ 774/пр п.28",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 62,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          58
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-29.1",
+      "rule_no": "29.1",
+      "label": "прохождение горных выработок",
+      "collections": [
+        "ГЭСН:35"
+      ],
+      "nr_pct": 103.0,
+      "sp_pct": 41.0,
+      "basis": "Приказ 812/пр п.29.1; Приказ 774/пр п.29.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 64,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          60
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-29.2",
+      "rule_no": "29.2",
+      "label": "другие работы",
+      "collections": [
+        "ГЭСН:35"
+      ],
+      "nr_pct": 97.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.29.2; Приказ 774/пр п.29.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 65,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          61
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-30",
+      "rule_no": "30",
+      "label": "Земляные конструкции гидротехнических сооружений",
+      "collections": [
+        "ГЭСН:36"
+      ],
+      "nr_pct": 97.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.30; Приказ 774/пр п.30",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 66,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          62
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-31",
+      "rule_no": "31",
+      "label": "Бетонные и железобетонные конструкции гидротехнических сооружений",
+      "collections": [
+        "ГЭСН:37"
+      ],
+      "nr_pct": 117.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.31; Приказ 774/пр п.31",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 67,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          63
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-32",
+      "rule_no": "32",
+      "label": "Каменные конструкции гидротехнических сооружений",
+      "collections": [
+        "ГЭСН:38"
+      ],
+      "nr_pct": 108.0,
+      "sp_pct": 56.0,
+      "basis": "Приказ 812/пр п.32; Приказ 774/пр п.32",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 68,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          64
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-33",
+      "rule_no": "33",
+      "label": "Металлические конструкции гидротехнических сооружений",
+      "collections": [
+        "ГЭСН:39"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 63.0,
+      "basis": "Приказ 812/пр п.33; Приказ 774/пр п.33",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 69,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          65
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-34",
+      "rule_no": "34",
+      "label": "Деревянные конструкции гидротехнических сооружений",
+      "collections": [
+        "ГЭСН:40"
+      ],
+      "nr_pct": 109.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.34; Приказ 774/пр п.34",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 70,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          66
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-35",
+      "rule_no": "35",
+      "label": "Гидроизоляционные работы в гидротехнических сооружениях",
+      "collections": [
+        "ГЭСН:41"
+      ],
+      "nr_pct": 102.0,
+      "sp_pct": 58.0,
+      "basis": "Приказ 812/пр п.35; Приказ 774/пр п.35",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 71,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          67
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-36",
+      "rule_no": "36",
+      "label": "Берегоукрепительные работы",
+      "collections": [
+        "ГЭСН:42"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 51.0,
+      "basis": "Приказ 812/пр п.36; Приказ 774/пр п.36",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 72,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          68
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-37",
+      "rule_no": "37",
+      "label": "Судовозные пути стапелей и слипов",
+      "collections": [
+        "ГЭСН:43"
+      ],
+      "nr_pct": 97.0,
+      "sp_pct": 56.0,
+      "basis": "Приказ 812/пр п.37; Приказ 774/пр п.37",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 73,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          69
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-38",
+      "rule_no": "38",
+      "label": "Подводно-строительные (водолазные) работы",
+      "collections": [
+        "ГЭСН:44"
+      ],
+      "nr_pct": 108.0,
+      "sp_pct": 55.0,
+      "basis": "Приказ 812/пр п.38; Приказ 774/пр п.38",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 74,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          70
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-39",
+      "rule_no": "39",
+      "label": "Промышленные печи и трубы",
+      "collections": [
+        "ГЭСН:45"
+      ],
+      "nr_pct": 102.0,
+      "sp_pct": 62.0,
+      "basis": "Приказ 812/пр п.39; Приказ 774/пр п.39",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 75,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          71
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-40.1",
+      "rule_no": "40.1",
+      "label": "усиление и замена существующих конструкций, возведение отдельных конструктивных элементов (за исключением работ по приготовлению материалов в построечных условиях)",
+      "collections": [
+        "ГЭСН:46"
+      ],
+      "nr_pct": 103.0,
+      "sp_pct": 59.0,
+      "basis": "Приказ 812/пр п.40.1; Приказ 774/пр п.40.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 77,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          73
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-40.2",
+      "rule_no": "40.2",
+      "label": "разборка отдельных конструктивных элементов здания (сооружения), а также зданий (сооружений) в целом",
+      "collections": [
+        "ГЭСН:46"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 52.0,
+      "basis": "Приказ 812/пр п.40.2; Приказ 774/пр п.40.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 78,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          74
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-41",
+      "rule_no": "41",
+      "label": "Озеленение. Защитные лесонасаждения",
+      "collections": [
+        "ГЭСН:47"
+      ],
+      "nr_pct": 103.0,
+      "sp_pct": 72.0,
+      "basis": "Приказ 812/пр п.41; Приказ 774/пр п.41",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 79,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          75
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-42",
+      "rule_no": "42",
+      "label": "Металлообрабатывающее оборудование",
+      "collections": [
+        "ГЭСНм:01"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.42; Приказ 774/пр п.42",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 81,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          77
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-43",
+      "rule_no": "43",
+      "label": "Деревообрабатывающее оборудование",
+      "collections": [
+        "ГЭСНм:02"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.43; Приказ 774/пр п.43",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 82,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          78
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-44",
+      "rule_no": "44",
+      "label": "Подъемно-транспортное оборудование",
+      "collections": [
+        "ГЭСНм:03"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.44; Приказ 774/пр п.44",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 83,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          79
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-45",
+      "rule_no": "45",
+      "label": "Дробильно-размольное, обогатительное и агломерационное оборудование",
+      "collections": [
+        "ГЭСНм:04"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.45; Приказ 774/пр п.45",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 84,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          80
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-46",
+      "rule_no": "46",
+      "label": "Весовое оборудование",
+      "collections": [
+        "ГЭСНм:05"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 47.0,
+      "basis": "Приказ 812/пр п.46; Приказ 774/пр п.46",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 85,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          81
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-47",
+      "rule_no": "47",
+      "label": "Теплосиловое оборудование",
+      "collections": [
+        "ГЭСНм:06"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.47; Приказ 774/пр п.47",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 86,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          82
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-48",
+      "rule_no": "48",
+      "label": "Компрессорные установки, насосы и вентиляторы",
+      "collections": [
+        "ГЭСНм:07"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 47.0,
+      "basis": "Приказ 812/пр п.48; Приказ 774/пр п.48",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 87,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          83
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-49.1",
+      "rule_no": "49.1",
+      "label": "на атомных электростанциях",
+      "collections": [
+        "ГЭСНм:08"
+      ],
+      "nr_pct": 126.0,
+      "sp_pct": 68.0,
+      "basis": "Приказ 812/пр п.49.1; Приказ 774/пр п.49.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 89,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          85
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-49.2",
+      "rule_no": "49.2",
+      "label": "на горнорудных объектах",
+      "collections": [
+        "ГЭСНм:08"
+      ],
+      "nr_pct": 97.0,
+      "sp_pct": 56.0,
+      "basis": "Приказ 812/пр п.49.2; Приказ 774/пр п.49.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 90,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          86
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-49.3",
+      "rule_no": "49.3",
+      "label": "на других объектах",
+      "collections": [
+        "ГЭСНм:08"
+      ],
+      "nr_pct": 97.0,
+      "sp_pct": 51.0,
+      "basis": "Приказ 812/пр п.49.3; Приказ 774/пр п.49.3",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 91,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          87
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-50",
+      "rule_no": "50",
+      "label": "Электрические печи",
+      "collections": [
+        "ГЭСНм:09"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 48.0,
+      "basis": "Приказ 812/пр п.50; Приказ 774/пр п.50",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 93,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          88
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-51.1",
+      "rule_no": "51.1",
+      "label": "прокладка и монтаж сетей связи",
+      "collections": [
+        "ГЭСНм:10"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.51.1; Приказ 774/пр п.51.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 95,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          90
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-51.2",
+      "rule_no": "51.2",
+      "label": "монтаж радиотелевизионного и электронного оборудования",
+      "collections": [
+        "ГЭСНм:10"
+      ],
+      "nr_pct": 95.0,
+      "sp_pct": 53.0,
+      "basis": "Приказ 812/пр п.51.2; Приказ 774/пр п.51.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 97,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          92
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-51.3",
+      "rule_no": "51.3",
+      "label": "прокладка и монтаж междугородных линий связи",
+      "collections": [
+        "ГЭСНм:10"
+      ],
+      "nr_pct": 111.0,
+      "sp_pct": 52.0,
+      "basis": "Приказ 812/пр п.51.3; Приказ 774/пр п.51.3",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 98,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          94
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-51.4",
+      "rule_no": "51.4",
+      "label": "устройство сигнализации, централизации, блокировки и связи на железных дорогах",
+      "collections": [
+        "ГЭСНм:10"
+      ],
+      "nr_pct": 94.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.51.4; Приказ 774/пр п.51.4",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 100,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          96
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-52",
+      "rule_no": "52",
+      "label": "Устройство средств посадки самолетов и систем управления воздушным движением на аэродромах",
+      "collections": [
+        "ГЭСНм:08",
+        "ГЭСНм:10",
+        "ГЭСНм:11"
+      ],
+      "nr_pct": 96.0,
+      "sp_pct": 48.0,
+      "basis": "Приказ 812/пр п.52; Приказ 774/пр п.52",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 101,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          97,
+          98
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-53",
+      "rule_no": "53",
+      "label": "Приборы, средства автоматизации и вычислительной техники (за исключением пункта 52)",
+      "collections": [
+        "ГЭСНм:11"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.53; Приказ 774/пр п.53",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 102,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          99
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-54",
+      "rule_no": "54",
+      "label": "Технологические трубопроводы",
+      "collections": [
+        "ГЭСНм:12"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.54; Приказ 774/пр п.54",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 103,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          100
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-55",
+      "rule_no": "55",
+      "label": "Оборудование атомных электрических станций",
+      "collections": [
+        "ГЭСНм:13"
+      ],
+      "nr_pct": 122.0,
+      "sp_pct": 60.0,
+      "basis": "Приказ 812/пр п.55; Приказ 774/пр п.55",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 105,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          102
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-56",
+      "rule_no": "56",
+      "label": "Оборудование прокатных производств",
+      "collections": [
+        "ГЭСНм:14"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.56; Приказ 774/пр п.56",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 107,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          103
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-57",
+      "rule_no": "57",
+      "label": "Оборудование для очистки газов",
+      "collections": [
+        "ГЭСНм:15"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.57; Приказ 774/пр п.57",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 108,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          104
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-58",
+      "rule_no": "58",
+      "label": "Оборудование предприятий черной металлургии",
+      "collections": [
+        "ГЭСНм:16"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.58; Приказ 774/пр п.58",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 109,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          105
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-59",
+      "rule_no": "59",
+      "label": "Оборудование предприятий цветной металлургии",
+      "collections": [
+        "ГЭСНм:17"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.59; Приказ 774/пр п.59",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 110,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          106
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-60",
+      "rule_no": "60",
+      "label": "Оборудование предприятий химической и нефтеперерабатывающей промышленности",
+      "collections": [
+        "ГЭСНм:18"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.60; Приказ 774/пр п.60",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 112,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          107
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-61",
+      "rule_no": "61",
+      "label": "Оборудование предприятий угольной и торфяной промышленности",
+      "collections": [
+        "ГЭСНм:19"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.61; Приказ 774/пр п.61",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 113,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          108
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-62",
+      "rule_no": "62",
+      "label": "Оборудование сигнализации, централизации, блокировки и контактной сети на железнодорожном транспорте",
+      "collections": [
+        "ГЭСНм:20"
+      ],
+      "nr_pct": 95.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.62; Приказ 774/пр п.62",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 114,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          109
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-63",
+      "rule_no": "63",
+      "label": "Оборудование метрополитенов и тоннелей",
+      "collections": [
+        "ГЭСНм:21"
+      ],
+      "nr_pct": 96.0,
+      "sp_pct": 60.0,
+      "basis": "Приказ 812/пр п.63; Приказ 774/пр п.63",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 115,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          110
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-64",
+      "rule_no": "64",
+      "label": "Оборудование гидроэлектрических станций и гидротехнических сооружений",
+      "collections": [
+        "ГЭСНм:22"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 47.0,
+      "basis": "Приказ 812/пр п.64; Приказ 774/пр п.64",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 116,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          111
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-65",
+      "rule_no": "65",
+      "label": "Оборудование предприятий электротехнической промышленности",
+      "collections": [
+        "ГЭСНм:23"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.65; Приказ 774/пр п.65",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 117,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          112
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-66",
+      "rule_no": "66",
+      "label": "Оборудование предприятий промышленности строительных материалов",
+      "collections": [
+        "ГЭСНм:24"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 47.0,
+      "basis": "Приказ 812/пр п.66; Приказ 774/пр п.66",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 118,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          113
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-67",
+      "rule_no": "67",
+      "label": "Оборудование предприятий целлюлозно-бумажной промышленности",
+      "collections": [
+        "ГЭСНм:25"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 47.0,
+      "basis": "Приказ 812/пр п.67; Приказ 774/пр п.67",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 119,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          114
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-68",
+      "rule_no": "68",
+      "label": "Оборудование предприятий текстильной промышленности",
+      "collections": [
+        "ГЭСНм:26"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.68; Приказ 774/пр п.68",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 120,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          115
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-69",
+      "rule_no": "69",
+      "label": "Оборудование предприятий полиграфической промышленности",
+      "collections": [
+        "ГЭСНм:27"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.69; Приказ 774/пр п.69",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 121,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          116
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-70",
+      "rule_no": "70",
+      "label": "Оборудование предприятий пищевой промышленности",
+      "collections": [
+        "ГЭСНм:28"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.70; Приказ 774/пр п.70",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 122,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          117
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-71",
+      "rule_no": "71",
+      "label": "Оборудование театрально-зрелищных предприятий",
+      "collections": [
+        "ГЭСНм:29"
+      ],
+      "nr_pct": 87.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.71; Приказ 774/пр п.71",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 123,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          118
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-72",
+      "rule_no": "72",
+      "label": "Оборудование зернохранилищ и предприятий по переработке зерна",
+      "collections": [
+        "ГЭСНм:30"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.72; Приказ 774/пр п.72",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 124,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          119
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-73",
+      "rule_no": "73",
+      "label": "Оборудование предприятий кинематографии",
+      "collections": [
+        "ГЭСНм:31"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.73; Приказ 774/пр п.73",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 126,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          120
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-74",
+      "rule_no": "74",
+      "label": "Оборудование предприятий электронной промышленности и промышленности средств связи",
+      "collections": [
+        "ГЭСНм:32"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.74; Приказ 774/пр п.74",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 127,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          121
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-75",
+      "rule_no": "75",
+      "label": "Оборудование предприятий легкой промышленности",
+      "collections": [
+        "ГЭСНм:33"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.75; Приказ 774/пр п.75",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 128,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          122
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-76",
+      "rule_no": "76",
+      "label": "Оборудование учреждений здравоохранения и предприятий медицинской промышленности",
+      "collections": [
+        "ГЭСНм:34"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.76; Приказ 774/пр п.76",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 129,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          123
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-77",
+      "rule_no": "77",
+      "label": "Оборудование сельскохозяйственных производств",
+      "collections": [
+        "ГЭСНм:35"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.77; Приказ 774/пр п.77",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 130,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          124
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-78",
+      "rule_no": "78",
+      "label": "Оборудование предприятий бытового обслуживания и коммунального хозяйства",
+      "collections": [
+        "ГЭСНм:36"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.78; Приказ 774/пр п.78",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 131,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          125
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-79",
+      "rule_no": "79",
+      "label": "Оборудование общего назначения",
+      "collections": [
+        "ГЭСНм:37"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.79; Приказ 774/пр п.79",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 132,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          126
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-80",
+      "rule_no": "80",
+      "label": "Изготовление технологических металлических конструкций в условиях производственных баз",
+      "collections": [
+        "ГЭСНм:38"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.80; Приказ 774/пр п.80",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 133,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          127
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-81",
+      "rule_no": "81",
+      "label": "Контроль монтажных сварных соединений",
+      "collections": [
+        "ГЭСНм:39"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.81; Приказ 774/пр п.81",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 134,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          128
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-82",
+      "rule_no": "82",
+      "label": "Дополнительное перемещение оборудования и материальных ресурсов, сверх предусмотренного государственными элементными сметными нормами на монтаж оборудования",
+      "collections": [
+        "ГЭСНм:40"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.82; Приказ 774/пр п.82",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 135,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          129
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-85.1",
+      "rule_no": "85.1",
+      "label": "механизированным способом",
+      "collections": [
+        "ГЭСНр:51"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 41.0,
+      "basis": "Приказ 812/пр п.85.1; Приказ 774/пр п.85.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 141,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          135
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-85.2",
+      "rule_no": "85.2",
+      "label": "вручную",
+      "collections": [
+        "ГЭСНр:51"
+      ],
+      "nr_pct": 87.0,
+      "sp_pct": 40.0,
+      "basis": "Приказ 812/пр п.85.2; Приказ 774/пр п.85.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 142,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          136
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-86",
+      "rule_no": "86",
+      "label": "Фундаменты",
+      "collections": [
+        "ГЭСНр:52"
+      ],
+      "nr_pct": 93.0,
+      "sp_pct": 55.0,
+      "basis": "Приказ 812/пр п.86; Приказ 774/пр п.86",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 143,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          137
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-87",
+      "rule_no": "87",
+      "label": "Стены",
+      "collections": [
+        "ГЭСНр:53"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 52.0,
+      "basis": "Приказ 812/пр п.87; Приказ 774/пр п.87",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 144,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          138
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-88",
+      "rule_no": "88",
+      "label": "Перекрытия",
+      "collections": [
+        "ГЭСНр:54"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 59.0,
+      "basis": "Приказ 812/пр п.88; Приказ 774/пр п.88",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 145,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          139
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-89",
+      "rule_no": "89",
+      "label": "Перегородки",
+      "collections": [
+        "ГЭСНр:55"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.89; Приказ 774/пр п.89",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 146,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          140
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-90",
+      "rule_no": "90",
+      "label": "Проемы",
+      "collections": [
+        "ГЭСНр:56"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 47.0,
+      "basis": "Приказ 812/пр п.90; Приказ 774/пр п.90",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 147,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          141
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-91",
+      "rule_no": "91",
+      "label": "Полы",
+      "collections": [
+        "ГЭСНр:57"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 49.0,
+      "basis": "Приказ 812/пр п.91; Приказ 774/пр п.91",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 148,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          142
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-92",
+      "rule_no": "92",
+      "label": "Крыши, кровли",
+      "collections": [
+        "ГЭСНр:58"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.92; Приказ 774/пр п.92",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 149,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          143
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-93",
+      "rule_no": "93",
+      "label": "Лестницы, крыльца",
+      "collections": [
+        "ГЭСНр:59"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.93; Приказ 774/пр п.93",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 150,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          144
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-94",
+      "rule_no": "94",
+      "label": "Печные работы",
+      "collections": [
+        "ГЭСНр:60"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.94; Приказ 774/пр п.94",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 151,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          145
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-95",
+      "rule_no": "95",
+      "label": "Штукатурные работы",
+      "collections": [
+        "ГЭСНр:61"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.95; Приказ 774/пр п.95",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 152,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          146
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-96",
+      "rule_no": "96",
+      "label": "Малярные работы",
+      "collections": [
+        "ГЭСНр:62"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.96; Приказ 774/пр п.96",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 153,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          147
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-97",
+      "rule_no": "97",
+      "label": "Стекольные, обойные и облицовочные работы",
+      "collections": [
+        "ГЭСНр:63"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 45.0,
+      "basis": "Приказ 812/пр п.97; Приказ 774/пр п.97",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 154,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          148
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-98",
+      "rule_no": "98",
+      "label": "Лепные работы",
+      "collections": [
+        "ГЭСНр:64"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 43.0,
+      "basis": "Приказ 812/пр п.98; Приказ 774/пр п.98",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 155,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          149
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-99.1",
+      "rule_no": "99.1",
+      "label": "демонтаж и разборка",
+      "collections": [
+        "ГЭСНр:65"
+      ],
+      "nr_pct": 87.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.99.1; Приказ 774/пр п.99.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 157,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          151
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-99.2",
+      "rule_no": "99.2",
+      "label": "смена труб, санприборов, запорной арматуры и другое",
+      "collections": [
+        "ГЭСНр:65"
+      ],
+      "nr_pct": 103.0,
+      "sp_pct": 52.0,
+      "basis": "Приказ 812/пр п.99.2; Приказ 774/пр п.99.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 158,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          152
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-100.1",
+      "rule_no": "100.1",
+      "label": "демонтаж, разборка, очистка;",
+      "collections": [
+        "ГЭСНр:66"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.100.1; Приказ 774/пр п.100.1",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 160,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          154
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-100.2",
+      "rule_no": "100.2",
+      "label": "замена участков трубопроводов, восстановление и замена изделий и другое",
+      "collections": [
+        "ГЭСНр:66"
+      ],
+      "nr_pct": 104.0,
+      "sp_pct": 60.0,
+      "basis": "Приказ 812/пр п.100.2; Приказ 774/пр п.100.2",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 161,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          155
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-101",
+      "rule_no": "101",
+      "label": "Электромонтажные работы",
+      "collections": [
+        "ГЭСНр:67"
+      ],
+      "nr_pct": 91.0,
+      "sp_pct": 48.0,
+      "basis": "Приказ 812/пр п.101; Приказ 774/пр п.101",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 162,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          156
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-102",
+      "rule_no": "102",
+      "label": "Благоустройство",
+      "collections": [
+        "ГЭСНр:68"
+      ],
+      "nr_pct": 102.0,
+      "sp_pct": 54.0,
+      "basis": "Приказ 812/пр п.102; Приказ 774/пр п.102",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 163,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          157
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-103",
+      "rule_no": "103",
+      "label": "Прочие ремонтно-строительные работы",
+      "collections": [
+        "ГЭСНр:69"
+      ],
+      "nr_pct": 92.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.103; Приказ 774/пр п.103",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 164,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          158
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-104",
+      "rule_no": "104",
+      "label": "Капитальный ремонт и модернизация оборудования лифтов",
+      "collections": [
+        "ГЭСНмр:01"
+      ],
+      "nr_pct": 89.0,
+      "sp_pct": 44.0,
+      "basis": "Приказ 812/пр п.104; Приказ 774/пр п.104",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 166,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          160
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-104",
+      "rule_no": "104",
+      "label": "Капитальный ремонт и модернизация оборудования лифтов",
+      "collections": [
+        "ГЭСНмр:01"
+      ],
+      "nr_pct": 74.0,
+      "sp_pct": 36.0,
+      "basis": "Приказ 812/пр п.104; Приказ 774/пр п.104",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 167,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          161
+        ]
+      }
+    },
+    {
+      "rule_id": "nrsp-105",
+      "rule_no": "105",
+      "label": "Ревизия трубопроводной арматуры",
+      "collections": [
+        "ГЭСНмр:02"
+      ],
+      "nr_pct": 90.0,
+      "sp_pct": 46.0,
+      "basis": "Приказ 812/пр п.105; Приказ 774/пр п.105",
+      "source": {
+        "nr_path": "/Users/ovc/Documents/сметный модуль/Накладные_812_ПР.docx",
+        "nr_table": 5,
+        "nr_row": 168,
+        "sp_path": "/Users/ovc/Documents/сметный модуль/СП_774_ПР.docx",
+        "sp_table": 4,
+        "sp_rows": [
+          162
+        ]
+      }
+    }
+  ],
+  "summary": {
+    "rules": 135,
+    "collections": 108,
+    "ambiguous_collections": [
+      "ГЭСН:01",
+      "ГЭСН:05",
+      "ГЭСН:06",
+      "ГЭСН:07",
+      "ГЭСН:09",
+      "ГЭСН:14",
+      "ГЭСН:27",
+      "ГЭСН:29",
+      "ГЭСН:35",
+      "ГЭСН:46",
+      "ГЭСНм:08",
+      "ГЭСНм:10",
+      "ГЭСНм:11",
+      "ГЭСНмр:01",
+      "ГЭСНр:51",
+      "ГЭСНр:65",
+      "ГЭСНр:66"
+    ],
+    "unmatched_rows": 0
+  },
+  "unmatched": []
+}

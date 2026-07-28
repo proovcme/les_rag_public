@@ -28,7 +28,7 @@ def test_vor_uses_native_template(tmp_path: Path):
 
 def test_ks_forms_registered():
     ids = {f["id"] for f in forms_service.list_forms()}
-    assert {"vor", "ks2", "ks3"} <= ids
+    assert {"vor", "ks2", "ks3", "technical_letter", "meeting_protocol"} <= ids
 
 
 def test_template_anchor_writes_rows(tmp_path: Path):

@@ -75,6 +75,28 @@ def test_evaluate_response_reports_missing_expected_evidence():
     assert "route=NTD != GKRF" in result.detail
 
 
+def test_evaluate_response_checks_expected_retrieval_quality():
+    case = golden.GoldenCase(
+        id="missing-source",
+        question="широкий запрос по разнородному корпусу",
+        min_chunks=1,
+        expected_quality_status="weak",
+    )
+
+    passed = golden.evaluate_response(case, {
+        "retrieval_trace": {"quality_status": "weak"},
+        "chunks": [{"score": 0.31, "doc_name": "neighbour.pdf", "preview": "смежный том"}],
+    })
+    failed = golden.evaluate_response(case, {
+        "retrieval_trace": {"quality_status": "good"},
+        "chunks": [{"score": 0.31, "doc_name": "neighbour.pdf", "preview": "смежный том"}],
+    })
+
+    assert passed.ok is True
+    assert failed.ok is False
+    assert "quality=good != weak" in failed.detail
+
+
 def test_load_cases_accepts_cases_object(tmp_path):
     path = tmp_path / "golden.json"
     path.write_text(
@@ -106,8 +128,32 @@ def test_load_cases_accepts_cases_object(tmp_path):
             dataset_filter="NTD",
             expected_route_filter="NTD_FIRE",
             must_find=("term",),
+            must_find_same_chunk=True,
             source_any=("source",),
             source_top_any=("top-source",),
             source_top_k=2,
         )
     ]
+
+
+def test_expected_terms_do_not_pass_from_filename_or_cross_chunk_scatter():
+    case = golden.GoldenCase(
+        id="strict-content",
+        question="q",
+        must_find=("вентиляц", "условие"),
+    )
+
+    filename_only = golden.evaluate_response(case, {
+        "chunks": [{"doc_name": "Вентиляция.docx", "preview": "условие применения"}],
+    })
+    scattered = golden.evaluate_response(case, {
+        "chunks": [
+            {"doc_name": "a.docx", "preview": "вентиляция"},
+            {"doc_name": "b.docx", "preview": "условие"},
+        ],
+    })
+
+    assert filename_only.ok is False
+    assert "missing terms: вентиляц" in filename_only.detail
+    assert scattered.ok is False
+    assert "split across unrelated chunks" in scattered.detail

@@ -11,14 +11,17 @@ from proxy.services import gesn_service
 SAMPLE = {
     "CODE": "ГЭСН 11-01-011-01",
     "NAME": "Устройство стяжек: цементных толщиной 20 мм — 100 м2",
-    "COMPOSITION": {"RESOURCES": [
+    "COMPOSITION": {
+        "JOBS": ["Подготовка основания.", "Устройство стяжки."],
+        "RESOURCES": [
         {"CODE": "1-100-22", "NAME": "Затраты труда рабочих (Средний разряд - 2,2)", "QUAN": "35.6", "UNIT": "чел.-ч"},
         {"CODE": "2", "NAME": "Затраты труда машинистов", "QUAN": "1.27", "UNIT": "чел.-ч"},
         {"CODE": "91.06.06-048", "NAME": "Подъемники одномачтовые", "QUAN": "1.27", "UNIT": "маш.-ч"},
         {"CODE": "91.07.04-002", "NAME": "Вибраторы поверхностные", "QUAN": "7.82", "UNIT": "маш.-ч"},
         {"CODE": "01.7.03.01-0001", "NAME": "Вода", "QUAN": "3.5", "UNIT": "м3"},
         {"CODE": "04.3.01.09", "NAME": "Раствор готовый кладочный", "QUAN": "2.04", "UNIT": "м3"},
-    ]},
+        ],
+    },
     "REQUESTS": {"USED": 64, "BALANCE": 436},
 }
 
@@ -27,6 +30,7 @@ def test_map_norm_classifies_and_parses():
     n = map_norm(SAMPLE)
     assert n["code"] == "11-01-011-01"          # префикс «ГЭСН» снят
     assert n["unit"] == "100 м2"                  # из «— 100 м2»
+    assert n["work_steps"] == ["Подготовка основания.", "Устройство стяжки."]
     kinds = [r["kind"] for r in n["resources"]]
     assert kinds == ["labor", "machinist", "machine", "machine", "material", "material"]
     labor = n["resources"][0]
@@ -42,6 +46,7 @@ def test_cache_then_read_via_gesn_service(tmp_path: Path):
     # gesn_service читает из базы (тот же контракт нормы)
     norm = gesn_service.get_norm("11-01-011-01", base_path=str(pq))
     assert norm is not None and norm["unit"] == "100 м2"
+    assert norm["work_steps"] == ["Подготовка основания.", "Устройство стяжки."]
     lines = gesn_service.expand_position("ГЭСН11-01-011-01", 2, base_path=str(pq))  # префикс ≡
     assert lines is not None
     labor = next(l for l in lines if l["kind"] == "labor")
