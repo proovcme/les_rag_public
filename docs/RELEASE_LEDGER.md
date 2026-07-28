@@ -7,21 +7,23 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.0 (dev; 0.24.46 published)
+версия продукта (SemVer):  0.25.0 (published)
 номер сборки:              473     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.473 (dev; Windows не выпускался)
+версия Tauri/NSIS:         5.1.473 (published)
 ветка выпуска:             main
 dev implementation:       main; 0.25.0 product/RAG boundary release
-задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
-Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.24.46
-следующий выпуск:          0.25.0 после полного release gate
-рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
+задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
+следующий выпуск:          не назначен
+рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
 ```
 
 > 0.25.0 / build 473 — продуктовые экраны, отдельный ФГИС-сметный RAG и user-owned общий корпус
 >
 > Дата: 2026-07-28
-> Статус: dev; clean smeta generation/release gate выполняются.
+> Статус: опубликован 2026-07-28; private build commit
+> `8cbda3971e817002749fee502667200a53f952ff`, public source commit
+> `1fde2ea66973c1aeb715e3bdd43761ca126244d8`.
 > Каноническая сметная база выровнена на более новую прошедшую integrity редакцию ФГИС/ФСНБ:
 > 49 818 норм, 504 891 ресурсов и 1 576 ФСЭМ; прежняя редакция сохранена в recovery, immutable
 > release baseline пересобрана и проверена. Общий `les_rag` закреплён за документами пользователя:
@@ -63,9 +65,14 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > compatible fingerprint/base `49 818`, native RRF + typed rehydration ready; quality probe
 > `12/12` с обоими каналами в RRF top-5 и без missing cards; hybrid+rerank semantic smoke `2/2`.
 > `make verify` — 2752 collected; `make test` — 2743 passed / 9 skipped; mail gate
-> `63 passed`; native Cargo и повторные platform/release gates выполняются для build 473. HTTP release smoke
+> `63 passed`; native Cargo и повторные platform/release gates зелёные для build 473. HTTP release smoke
 > `pass=6/warn=3/fail=0`. FIRE/HVAC `16/16` не применим к пустому user-owned `les_rag` и честно
-> зафиксирован как `N/A: corpus absent`, без системного seed. Commit/CI/Legion/publication — далее.
+> зафиксирован как `N/A: corpus absent`, без системного seed. GitHub platform gates:
+> private `30355432052`, public `30355621916`, оба macOS+Windows success. Изолированный Windows
+> smoke: bootstrap ready, ФГИС `49 818/504 891/1 576`, контрольный PDF `1` chunk,
+> `dense + qdrant_sparse + lexical`, native RRF. Legion: 0.25.0/build 473, UI 200,
+> desktop `1`, Outlook probe `ok`, задача manual/0 triggers/PT20S, пользовательский RAG не изменён.
+> Публичный релиз содержит проверенные `LES-Setup.exe`, `LES.dmg`, обе SHA-256 и `latest.json`.
 > Первый clean GitHub run `30339455936` выявил две скрытые зависимости локального контура:
 > suite ожидала ignored smeta/FSEM data, а Windows collect импортировал POSIX-only `fcntl`.
 > Для CI опубликован private immutable baseline prerelease
