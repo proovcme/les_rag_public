@@ -160,39 +160,34 @@ def test_patch_release_uses_les_release_suite_without_separate_artel_product():
     assert '["make", "test"],' not in source
 
 
-def test_patch_release_requires_production_legion_heavy_pdf_gate():
+def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     source = (ROOT / "tools" / "patch_release.py").read_text(encoding="utf-8")
     windows = (ROOT / "tools" / "windows_patch_release.ps1").read_text(encoding="utf-8")
     production = (ROOT / "tools" / "windows_production_deploy.ps1").read_text(encoding="utf-8")
 
     assert 'summary.get("production")' in source
-    assert 'indexed_files' in source and 'smoke_dataset_removed' in source
-    assert 'expected_pdf_count = int(production.get("expected_pdf_count") or 0)' in source
-    assert 'int(production.get("indexed_files") or 0) != expected_pdf_count' in source
+    assert 'production_rag.get("retrieval_proof") != "isolated_clean_install_smoke"' in source
+    assert 'production_rag.get("user_corpus_mutated") is not False' in source
+    assert 'production_mail.get("schedule") != "manual"' in source
     assert '"--resume-verified-commit"' in source
     assert '"merge-base", "--is-ancestor"' in source
     assert "windows_production_deploy.ps1" in windows
     assert "production = $production" in windows
-    assert "Heavy PDF polygon must contain at least 4 PDF files" in production
-    assert "$expectedPdfCount = $pdfFiles.Count" in production
-    assert "$indexed.Count -eq $expectedPdfCount" in production
+    assert "Heavy PDF polygon" not in production
+    assert "LES production PDF smoke" not in production
+    assert "user_corpus_mutated = $false" in production
     assert '"RAG_COLLECTION_NAME" $newCollection' in production
     assert "previous_index_contract_incompatible" in production
     assert "old_collection_preserved = $true" in production
     assert "Production index contract is not compatible after bootstrap" in production
-    assert "dense+sparse RRF" in production
-    assert "/api/rag/datasets/$smokeDatasetId" in production
+    assert 'retrieval_proof = "isolated_clean_install_smoke"' in production
     assert "Start-InteractiveLesDesktop" in production
     assert 'Join-Path $InstallRoot "les-desktop.exe"' in production
     assert 'launch_mode = "interactive_scheduled_task"' in production
     assert '$result.stage = "desktop_handoff"' in production
-    assert "$documentPollTransientErrors += 1" in production
-    assert "One transient status timeout must not" in production
-    assert "foreach ($cleanupAttempt in 1..5)" in production
-    assert "$smokeDatasetRemoved = $true" in production
-    assert '$result.stage = "stale_smoke_cleanup"' in production
-    assert '[string]$_.name -like "LES production PDF smoke *"' in production
-    assert "$staleSmokeDatasetsRemoved += 1" in production
+    assert "collector must be manual" in production
+    assert 'schedule = "manual"' in production
+    assert "trigger_count = 0" in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):

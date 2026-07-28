@@ -129,8 +129,9 @@ try {
   if (-not $smoke.ok) { throw "Live Windows smoke did not pass" }
 
   # Only a clean isolated smoke may advance to the actual Legion production
-  # state. The production gate installs in-place, starts the persistent runtime
-  # and proves every current real heavy project PDF through dense+sparse RRF.
+  # state. The isolated smoke already proves PDF ingestion and dense+sparse
+  # RRF. The production gate installs in-place without mutating user datasets,
+  # then checks the persistent runtime, manual Outlook intake and desktop.
   Invoke-Checked "powershell.exe" @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
     (Join-Path $RepoRoot "tools\windows_production_deploy.ps1"),
