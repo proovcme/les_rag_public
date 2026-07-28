@@ -86,6 +86,12 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert "sov-ui-header" in header
     assert "sov-ui-documents" in documents
     assert "sov-ui-evidence-card" in chat
+    assert "С.О.В.А. · Чат" in chat
+    assert "Система обработки и выдачи ответов" in chat
+    assert 'class="sov-owl-mark"' in chat
+    assert 'aria-label="С.О.В.А. — Система обработки и выдачи ответов"' in chat
+    assert 'aria-label="Выбрать область"' not in chat
+    assert "sov-attach-btn" in chat
     assert 'render_feedback_state(' in chat
     assert '"blocker": blocker' in chat
 

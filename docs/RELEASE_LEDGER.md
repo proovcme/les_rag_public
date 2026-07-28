@@ -7,16 +7,29 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.7 (compact Mac web UI contrast correction)
-номер сборки:              480     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.480 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.8 (S.O.V.A. Mac web identity)
+номер сборки:              481     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.481 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/audit-rag
 dev implementation:       codex/audit-rag; primary Chat/Studio/Config navigation
-задеплоено на рантайм:     Mac 0.25.7 / build 480; Legion не затрагивался
+задеплоено на рантайм:     Mac 0.25.8 / build 481; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.7 / build 480; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.8 / build 481; runtime alignment обязан быть aligned
 ```
+
+> 0.25.8 / build 481 — идентичность С.О.В.А. в чате
+>
+> Дата: 2026-07-28
+> Статус: внутреннее web-only обновление Mac. Заголовок чата получил видимое
+> имя `С.О.В.А. · Чат` и расшифровку «Система обработки и выдачи ответов».
+> Рядом добавлен собственный theme-aware inline-SVG знак совы; он имеет
+> доступное текстовое имя, не требует внешнего asset и не меняет логотип
+> Л.Е.С. в app-rail. Технические `sovushka*` identifiers сохранены ради
+> совместимости. Дублирующий выбор scope у composer удалён: датасет/область
+> выбираются только через верхний `Все источники`. Скрепка приведена к
+> единому 40×40 outlined-control с оптическим центрированием, hover и focus.
+> Tauri, DMG, Rust, Legion и public не затрагиваются.
 
 > 0.25.7 / build 480 — читаемый compact rail и единая WCAG-типографика
 >

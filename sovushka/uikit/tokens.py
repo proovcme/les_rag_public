@@ -82,6 +82,67 @@ html {
   text-wrap: pretty;
 }
 
+.sov-ui-shell .sov-chat-identity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.sov-ui-shell .sov-chat-identity-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.sov-ui-shell .sov-owl-mark {
+  display: inline-grid;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  place-items: center;
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-panel));
+}
+
+.sov-ui-shell .sov-owl-mark svg {
+  width: 25px;
+  height: 25px;
+  overflow: visible;
+}
+
+.sov-ui-shell .sov-owl-mark path:first-child,
+.sov-ui-shell .sov-owl-mark circle:not(.sov-owl-eye) {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.sov-ui-shell .sov-owl-eye,
+.sov-ui-shell .sov-owl-beak {
+  fill: currentColor;
+  stroke: none;
+}
+
+.sov-ui-shell .sov-chat-title {
+  font-family: var(--sov-ui-font-prose);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.25;
+  letter-spacing: 0;
+}
+
+.sov-ui-shell .sov-chat-subtitle {
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 400;
+  line-height: 1.35;
+}
+
 .sov-ui-header {
   position: relative;
   z-index: 20;
@@ -280,6 +341,38 @@ html {
 .sov-app-content .sov-send-btn .q-btn__content,
 .sov-app-content .sov-send-btn .q-icon {
   color: #ffffff !important;
+}
+
+.sov-app-content .sov-attach-btn {
+  width: 40px;
+  min-width: 40px !important;
+  height: 40px;
+  min-height: 40px !important;
+  padding: 0 !important;
+  color: var(--dim) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--sov-ui-radius-control) !important;
+  background: var(--bg-panel) !important;
+  box-shadow: 0 1px 2px rgba(20, 52, 34, .04);
+}
+
+.sov-app-content .sov-attach-btn:hover {
+  color: var(--accent) !important;
+  border-color: color-mix(in srgb, var(--accent) 46%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel)) !important;
+}
+
+.sov-app-content .sov-attach-btn .q-btn__content {
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+}
+
+.sov-app-content .sov-attach-btn .q-icon {
+  margin: 0 !important;
+  font-size: 20px;
+  line-height: 1;
 }
 
 .sov-app-content .sov-mode-guide,
@@ -575,6 +668,12 @@ html {
     height: 100vh;
     min-height: 0;
     padding: 16px 18px;
+  }
+
+  .sov-ui-shell .sov-owl-mark {
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
   }
 }
 

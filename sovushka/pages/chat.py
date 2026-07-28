@@ -529,8 +529,27 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         'flat round dense aria-label="История чата"'
                     ).classes("sov-icon-btn")
                     with ui.column().classes("sov-chat-heading"):
-                        _html('<div class="sov-chat-title">Чат</div>')
-                        _html('<div class="sov-chat-subtitle">Документы, расчёты и проверка</div>')
+                        _html(
+                            '<div class="sov-chat-identity" '
+                            'aria-label="С.О.В.А. — Система обработки и выдачи ответов">'
+                            '<span class="sov-owl-mark" aria-hidden="true">'
+                            '<svg viewBox="0 0 32 32" focusable="false">'
+                            '<path d="M7 10 10 5l6 4 6-4 3 5v9c0 6-4 10-9 10S7 25 7 19Z"/>'
+                            '<circle cx="12" cy="15" r="3.5"/>'
+                            '<circle cx="20" cy="15" r="3.5"/>'
+                            '<circle class="sov-owl-eye" cx="12" cy="15" r="1.25"/>'
+                            '<circle class="sov-owl-eye" cx="20" cy="15" r="1.25"/>'
+                            '<path class="sov-owl-beak" d="m16 17-2.2 3h4.4Z"/>'
+                            '</svg>'
+                            '</span>'
+                            '<span class="sov-chat-identity-copy">'
+                            '<span class="sov-chat-title">С.О.В.А. · Чат</span>'
+                            '<span class="sov-chat-subtitle">'
+                            'Система обработки и выдачи ответов'
+                            '</span>'
+                            '</span>'
+                            '</div>'
+                        )
                 with ui.row().classes("items-center gap-2"):
                     if tabs is not None and tab_documents is not None:
                         ui.button(
@@ -975,16 +994,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 with ui.element("div").classes("sov-composer-footer"):
                     with ui.row().classes("sov-composer-actions"):
                         ui.button(
-                            icon="o_travel_explore",
-                            on_click=lambda: _open_scope_dialog(),
-                        ).props('no-caps flat round aria-label="Выбрать область"').classes(
-                            "sov-composer-action"
-                        ).tooltip("Выбрать проект или датасет")
-                        ui.button(
                             icon="o_attach_file",
                             on_click=lambda: attach_dialog.open(),
                         ).props('no-caps flat round aria-label="Прикрепить файл"').classes(
-                            "sov-composer-action"
+                            "sov-composer-action sov-attach-btn"
                         ).tooltip("Прикрепить файл")
                         response_settings_btn = ui.button(
                             "Настройки ответа", icon="o_tune"
@@ -2675,8 +2688,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         result = await api_post(lock_url, {
             "review_note": (
-                "Проверено пользователем в интерфейсе Совушка; конфликты приняты явно"
-                if accepted_conflict_ids else "Проверено пользователем в интерфейсе Совушка"
+                "Проверено пользователем в интерфейсе С.О.В.А.; конфликты приняты явно"
+                if accepted_conflict_ids else "Проверено пользователем в интерфейсе С.О.В.А."
             ),
             "accepted_conflict_ids": accepted_conflict_ids,
         })
