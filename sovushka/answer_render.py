@@ -137,6 +137,53 @@ def source_chips(sources: list, max_n: int = 12) -> list[dict]:
     return [source_chip(s, i + 1) for i, s in enumerate((sources or [])[:max_n])]
 
 
+def source_usage(source: Any, index: int, answer: str = "") -> dict[str, str]:
+    """Operator label for a retrieved source without exposing ranking internals."""
+    chip = source_chip(source, index)
+    explicit = ""
+    if isinstance(source, dict):
+        explicit = str(
+            source.get("citation_status")
+            or source.get("usage")
+            or ("used" if source.get("used") is True else "")
+        ).casefold()
+    cited_numbers: set[int] = set()
+    for marker in re.findall(
+        r"\[Источники?\s+([0-9,\s;|]+)\]",
+        str(answer or ""),
+        flags=re.IGNORECASE,
+    ):
+        cited_numbers.update(int(value) for value in re.findall(r"\d+", marker))
+    marker_used = int(index) in cited_numbers
+    if chip["weak"] or explicit in {"weak", "rejected"}:
+        return {"code": "weak", "label": "Слабый", "tone": "warn"}
+    if marker_used or explicit in {"used", "cited", "accepted"}:
+        return {"code": "used", "label": "Использован", "tone": "ok"}
+    return {"code": "found", "label": "Найден", "tone": "muted"}
+
+
+def retrieval_notice(trace: dict | None) -> dict[str, str]:
+    """Human notice for loud degraded/blocked retrieval states."""
+    value = trace if isinstance(trace, dict) else {}
+    status = str(value.get("status") or "ok").casefold()
+    code = str(value.get("error_code") or value.get("fallback_reason") or "")
+    if status == "degraded":
+        return {
+            "status": status,
+            "title": "Поиск работает с ограничениями",
+            "detail": code or "Часть обязательного поискового контура недоступна.",
+            "tone": "warn",
+        }
+    if status == "blocked":
+        return {
+            "status": status,
+            "title": "Поиск заблокирован",
+            "detail": code or "Обязательный поисковый контур недоступен.",
+            "tone": "error",
+        }
+    return {}
+
+
 def citation_artifact(sources: list) -> dict:
     """v0.17 §7: артефакт «Цитаты» — source chips + сниппеты (письма ТОЛЬКО snippet, не полное тело).
     Нет source_ref → has_ref=False (предупреждение, не фейк-линк)."""
@@ -146,9 +193,11 @@ def citation_artifact(sources: list) -> dict:
         snippet = ""
         if isinstance(s, dict):
             snippet = str(s.get("snippet") or s.get("excerpt") or "")[:240]
+        usage = source_usage(s, i)
         items.append({"n": i, "file": c["file"], "locator": c["locator"], "kind": c["kind"],
                       "source_ref": (s.get("source_ref") if isinstance(s, dict) else str(s)) if c["has_ref"] else "",
-                      "snippet": snippet, "has_ref": c["has_ref"], "weak": c["weak"]})
+                      "snippet": snippet, "has_ref": c["has_ref"], "weak": c["weak"],
+                      "usage": usage["code"], "usage_label": usage["label"]})
     return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
 
 

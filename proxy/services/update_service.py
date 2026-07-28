@@ -33,6 +33,30 @@ VPS_PATCH_MANIFEST_URL = os.getenv(
 VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
 VPS_PATCH_SCHEMA = "les.vps-patch.v1"
 VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
+MAC_UPDATE_FEED_SCHEMA = "les.mac-update-feed.v1"
+MAC_UPDATE_SCHEMA = "les.mac-update.v1"
+MAC_UPDATE_DENIED_PARTS = {
+    ".env",
+    ".git",
+    "__pycache__",
+    "data",
+    "storage",
+    "RAG_Content",
+    "local_private_archive",
+    "dist",
+    "installers",
+    "desktop",
+}
+MAC_UPDATE_ALLOWED_ROOTS = (
+    "proxy/",
+    "backend/",
+    "sovushka/",
+    "tools/",
+    "config/",
+    "skills/",
+)
+MAC_UPDATE_ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
+MAC_UPDATE_ALLOWED_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
 VPS_PATCH_ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
@@ -410,3 +434,201 @@ async def download_and_launch_vps_patch() -> dict:
     if launched.returncode != 0:
         raise UpdateError("Windows не смог запустить независимую задачу обновления")
     return {**info, "state": "starting", "message": "Обновление проверено и запущено"}
+
+
+def mac_update_root() -> Path:
+    configured = os.getenv("LES_MAC_UPDATE_ROOT", "").strip()
+    if configured:
+        return Path(configured).resolve()
+    return (runtime_root().parent / "LES_update_cache" / "mac").resolve()
+
+
+def mac_update_status_path() -> Path:
+    return mac_update_root() / "status.json"
+
+
+def _path_inside(root: Path, value: str, label: str) -> Path:
+    path = Path(value).resolve()
+    if path != root and root not in path.parents:
+        raise UpdateError(f"{label} находится вне локального каталога обновлений")
+    return path
+
+
+def _validate_mac_update_feed(payload: dict) -> dict:
+    if payload.get("schema") != MAC_UPDATE_FEED_SCHEMA:
+        raise UpdateError("Неподдерживаемая схема Mac-обновления")
+    update = payload.get("update")
+    if not isinstance(update, dict) or update.get("schema") != MAC_UPDATE_SCHEMA:
+        raise UpdateError("Манифест Mac-обновления повреждён")
+    files = update.get("files")
+    if not isinstance(files, list) or not files or len(files) > 500:
+        raise UpdateError("В Mac-обновлении некорректный список файлов")
+    root = mac_update_root()
+    archive = _path_inside(root, str(payload.get("archive") or ""), "Архив")
+    helper = _path_inside(root, str(payload.get("helper") or ""), "Helper")
+    archive_sha = str(payload.get("archive_sha256") or "").lower()
+    helper_sha = str(payload.get("helper_sha256") or "").lower()
+    if (
+        not archive.is_file()
+        or not helper.is_file()
+        or not re.fullmatch(r"[0-9a-f]{64}", archive_sha)
+        or not re.fullmatch(r"[0-9a-f]{64}", helper_sha)
+        or sha256_file(archive) != archive_sha
+        or sha256_file(helper) != helper_sha
+    ):
+        raise UpdateError("Подготовленный Mac-пакет отсутствует или не прошёл SHA-256")
+
+    target_matches = 0
+    compatible_files = 0
+    for entry in files:
+        if not isinstance(entry, dict):
+            raise UpdateError("Некорректная запись файла в Mac-обновлении")
+        rel = PurePosixPath(str(entry.get("path") or "").replace("\\", "/"))
+        if rel.is_absolute() or ".." in rel.parts or not rel.parts:
+            raise UpdateError("Mac-обновление содержит небезопасный путь")
+        if any(part in MAC_UPDATE_DENIED_PARTS for part in rel.parts):
+            raise UpdateError("Mac-обновление пытается изменить пользовательские данные")
+        normalized = rel.as_posix()
+        if not (
+            normalized in MAC_UPDATE_ALLOWED_FILES
+            or normalized.startswith(MAC_UPDATE_ALLOWED_ROOTS)
+        ) or Path(normalized).suffix.lower() not in MAC_UPDATE_ALLOWED_SUFFIXES:
+            raise UpdateError("Mac-обновление пытается выйти за список runtime-файлов")
+        operation = str(entry.get("operation") or "")
+        if operation not in {"replace", "delete"}:
+            raise UpdateError("Mac-обновление содержит неизвестную операцию")
+        target = runtime_root() / Path(*rel.parts)
+        current = sha256_file(target) if target.is_file() else None
+        base_hash = str(entry.get("base_sha256") or "") or None
+        target_hash = str(entry.get("sha256") or "") or None
+        if operation == "delete":
+            target_is_current = current is None
+        else:
+            target_is_current = current == target_hash
+        if target_is_current:
+            target_matches += 1
+        if current in {base_hash, target_hash} or (
+            current is None and bool(entry.get("accepted_missing"))
+        ):
+            compatible_files += 1
+
+    available = target_matches != len(files)
+    compatible = compatible_files == len(files)
+    return {
+        "update_id": str(update.get("update_id") or ""),
+        "base_commit": str(update.get("base_commit") or ""),
+        "target_commit": str(update.get("target_commit") or ""),
+        "product_version": str(update.get("product_version") or ""),
+        "build_number": int(update.get("build_number") or 0),
+        "files": len(files),
+        "bytes": int(payload.get("archive_bytes") or archive.stat().st_size),
+        "available": available,
+        "compatible": compatible,
+        "message": (
+            "Mac-обновление готово к установке"
+            if available and compatible
+            else "Mac уже обновлён"
+            if not available
+            else "Файлы Mac runtime отличаются от подготовленной базы; установка заблокирована"
+        ),
+        "archive": str(archive),
+        "archive_sha256": archive_sha,
+        "helper": str(helper),
+        "helper_sha256": helper_sha,
+        "update": update,
+        "published": False,
+        "user_data_untouched": True,
+    }
+
+
+def check_mac_update() -> dict:
+    if sys.platform != "darwin":
+        raise UpdateError("Локальное Mac-обновление доступно только на macOS")
+    feed = mac_update_root() / "latest.json"
+    if not feed.is_file():
+        return {
+            "available": False,
+            "compatible": True,
+            "files": 0,
+            "bytes": 0,
+            "message": "Подготовленного Mac-обновления нет",
+            "published": False,
+        }
+    try:
+        return _validate_mac_update_feed(json.loads(feed.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError) as exc:
+        raise UpdateError(f"Не удалось прочитать Mac-обновление: {exc}") from exc
+
+
+def read_mac_update_status() -> dict:
+    path = mac_update_status_path()
+    if not path.is_file():
+        return {
+            "schema": "les.mac-update-status.v1",
+            "state": "idle",
+            "message": "Обновление не запускалось",
+        }
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {
+            "schema": "les.mac-update-status.v1",
+            "state": "failed",
+            "message": "Не удалось прочитать состояние Mac-обновления",
+        }
+
+
+def launch_mac_update() -> dict:
+    info = check_mac_update()
+    if not info["available"]:
+        raise UpdateError("Mac уже обновлён или пакет не подготовлен")
+    if not info["compatible"]:
+        raise UpdateError(info["message"])
+    root = mac_update_root()
+    status = mac_update_status_path()
+    job = root / f"{info['update_id']}.job.json"
+    job_payload = {
+        "runtime_root": str(runtime_root()),
+        "archive": info["archive"],
+        "archive_sha256": info["archive_sha256"],
+        "status_path": str(status),
+        "recovery_root": str(runtime_root().parent / "LES_recovery" / "mac-updates"),
+    }
+    temporary = job.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(job_payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, job)
+    status.write_text(
+        json.dumps(
+            {
+                "schema": "les.mac-update-status.v1",
+                "state": "starting",
+                "stage": "prepared",
+                "update_id": info["update_id"],
+                "message": "Пакет проверен, начинаю установку",
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    log = root / f"{info['update_id']}.log"
+    with log.open("ab", buffering=0) as output:
+        process = subprocess.Popen(  # noqa: S603 - local checksum-verified helper
+            [sys.executable, info["helper"], "--job", str(job)],
+            cwd=str(root),
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            close_fds=True,
+        )
+    return {
+        **info,
+        "state": "starting",
+        "pid": process.pid,
+        "message": "Mac-обновление проверено и запущено",
+    }

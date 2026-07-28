@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
+.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
 
 PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
@@ -53,12 +53,11 @@ help:
 	@echo "make ship-full    — полный выкат версии: ship-full-check → deploy-runtime → post-deploy-smoke"
 	@echo "make patch-release — Windows: gates → Legion build/install/RRF-smoke → artifacts; публикация только PATCH_RELEASE_ARGS='--publish --notes-file ...'"
 	@echo "make release-multiplatform — macOS app/DMG + Legion Windows gates/build + одна атомарная GitHub release"
-	@echo "make prepare-audit-rag — один раз: gates + Mac artifacts + checksum-кэш для текущего SHA"
-	@echo "make preflight-audit-rag-update — быстрый read-only статус SHA/cache/Mac; Legion не трогает"
-	@echo "make prepare-audit-rag-legion — один раз на Legion: baseline по SHA + Windows build/isolated smoke"
-	@echo "make inspect-audit-rag-update — проверить prepared bundle без сборки и деплоя"
-	@echo "make deploy-audit-rag-mac — быстрый apply уже подготовленного bundle только на Mac"
-	@echo "make deploy-audit-rag — быстрый apply уже подготовленного bundle на Mac+Legion; ничего не собирает"
+	@echo "make prepare-mac-update — собрать малый пакет изменённых runtime-файлов из чистого pushed commit"
+	@echo "make inspect-mac-update — показать локальный манифест и точный размер пакета"
+	@echo "make apply-mac-update — транзакционно установить пакет на Mac, проверить и откатить при ошибке"
+	@echo "make status-mac-update — показать состояние установки/отката"
+	@echo "make deploy-audit-rag — совместимый псевдоним apply-mac-update; Legion намеренно отключён"
 	@echo "make version-sync — синхронизировать Cargo/Tauri/паспорт версий из config/version.json"
 
 version-sync:
@@ -185,20 +184,24 @@ patch-release:
 release-multiplatform:
 	uv run python tools/multiplatform_release.py $(MULTIPLATFORM_RELEASE_ARGS)
 
-preflight-audit-rag-update:
-	uv run python tools/internal_update.py preflight $(AUDIT_RAG_UPDATE_ARGS)
+prepare-mac-update:
+	uv run python tools/mac_update.py prepare $(AUDIT_RAG_UPDATE_ARGS)
 
-prepare-audit-rag:
-	uv run python tools/internal_update.py prepare $(AUDIT_RAG_UPDATE_ARGS)
+inspect-mac-update:
+	uv run python tools/mac_update.py inspect $(AUDIT_RAG_UPDATE_ARGS)
+
+apply-mac-update:
+	uv run python tools/mac_update.py apply $(AUDIT_RAG_UPDATE_ARGS)
+
+status-mac-update:
+	uv run python tools/mac_update.py status $(AUDIT_RAG_UPDATE_ARGS)
+
+preflight-audit-rag-update inspect-audit-rag-update: inspect-mac-update
+
+prepare-audit-rag: prepare-mac-update
 
 prepare-audit-rag-legion:
-	uv run python tools/internal_update.py prepare-legion $(AUDIT_RAG_UPDATE_ARGS)
+	@echo "Legion отключён: сначала принимаем Mac updater."
+	@exit 2
 
-inspect-audit-rag-update:
-	uv run python tools/internal_update.py inspect $(AUDIT_RAG_UPDATE_ARGS)
-
-deploy-audit-rag-mac:
-	uv run python tools/internal_update.py apply --hosts mac $(AUDIT_RAG_UPDATE_ARGS)
-
-deploy-audit-rag:
-	uv run python tools/internal_update.py apply --hosts mac,legion $(AUDIT_RAG_UPDATE_ARGS)
+deploy-audit-rag-mac deploy-audit-rag: apply-mac-update

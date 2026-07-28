@@ -157,3 +157,33 @@ def test_expected_terms_do_not_pass_from_filename_or_cross_chunk_scatter():
     assert "missing terms: вентиляц" in filename_only.detail
     assert scattered.ok is False
     assert "split across unrelated chunks" in scattered.detail
+
+
+def test_source_verified_gate_rejects_cases_without_source_expectations():
+    cases = [
+        golden.GoldenCase(id="missing", question="q", must_find=("term",)),
+        golden.GoldenCase(id="verified", question="q", source_any=("SP.pdf",)),
+    ]
+
+    assert golden.validate_source_verified_cases(cases) == ["missing"]
+
+
+def test_native_rrf_gate_checks_successful_trace():
+    case = golden.GoldenCase(id="rrf", question="q", min_chunks=1)
+    chunk = {"score": 0.8, "doc_name": "source.pdf", "preview": "evidence"}
+
+    passed = golden.evaluate_response(
+        case,
+        {"chunks": [chunk], "retrieval_trace": {"status": "ok", "fusion": "rrf"}},
+        require_native_rrf=True,
+    )
+    failed = golden.evaluate_response(
+        case,
+        {"chunks": [chunk], "retrieval_trace": {"status": "degraded", "fusion": "dense"}},
+        require_native_rrf=True,
+    )
+
+    assert passed.ok is True
+    assert failed.ok is False
+    assert "retrieval_status=degraded != ok" in failed.detail
+    assert "fusion=dense != rrf" in failed.detail

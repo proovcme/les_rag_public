@@ -50,6 +50,29 @@ def test_source_chips_numbered():
     assert [c["n"] for c in chips] == [1, 2]
 
 
+def test_source_usage_distinguishes_used_found_and_weak():
+    regular = {"source_ref": "a.pdf#p1", "source_kind": "extracted_body"}
+    weak = {"source_ref": "b.pdf#chunk2", "source_kind": "vector_chunk"}
+
+    assert ar.source_usage(regular, 1, "См. [Источник 1]")["code"] == "used"
+    assert ar.source_usage(regular, 2, "См. [Источники 1, 2]")["code"] == "used"
+    assert ar.source_usage(regular, 1, "Без явной цитаты")["code"] == "found"
+    assert ar.source_usage(weak, 2, "См. [Источник 2]")["code"] == "weak"
+
+
+def test_retrieval_notice_is_loud_only_for_degraded_or_blocked():
+    assert ar.retrieval_notice({"status": "ok"}) == {}
+    assert ar.retrieval_notice(
+        {"status": "degraded", "fallback_reason": "reranker unavailable"}
+    ) == {
+        "status": "degraded",
+        "title": "Поиск работает с ограничениями",
+        "detail": "reranker unavailable",
+        "tone": "warn",
+    }
+    assert ar.retrieval_notice({"status": "blocked", "error_code": "MISSING"})["tone"] == "error"
+
+
 # ── evidence badges / status / header ────────────────────────────────────────────────────
 
 def test_evidence_badges_canonical_order():

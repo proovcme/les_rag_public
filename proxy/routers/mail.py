@@ -919,6 +919,8 @@ async def mail_status(_user=Depends(require_user)):
         autosync = {**_autosync, "poll_sec": int(_os.getenv("MAIL_IMAP_POLL_SEC", "180") or "180")}
     except Exception:
         pass
+    registry = get_mail_registry()
+    spool_pending = sum(1 for _ in _mail_state_root().glob("*/spool/*.json"))
     return {
         "component": "Е.Ж.И.К.",
         "status": "ready" if dataset else "not_created",
@@ -928,7 +930,12 @@ async def mail_status(_user=Depends(require_user)):
         "imap": imap_settings.public_payload(),
         "autosync": autosync,
         "apple_mail": apple_mail_public_payload(),
-        "accounts": get_mail_registry().list_accounts(),
+        "accounts": registry.list_accounts(),
+        "summary": {
+            **registry.status_summary(),
+            "spool_pending": spool_pending,
+            "collector_running": any(not task.done() for task in _outlook_upload_tasks.values()),
+        },
     }
 
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from urllib.parse import quote
+import sys
+from urllib.parse import quote, urlencode
 
 from nicegui import ui
 
@@ -11,14 +12,27 @@ from sovushka.state import api_get, api_post, last_api_error_text
 
 
 def build_mail() -> None:
-    state = {"accounts": [], "folders": [], "account": None, "messages": [], "detail": None}
+    state = {
+        "accounts": [],
+        "folders": [],
+        "account": None,
+        "messages": [],
+        "detail": None,
+        "status": {},
+        "collecting": False,
+    }
     refs: dict[str, object] = {}
 
     def notify_error(default: str) -> None:
         ui.notify(last_api_error_text(default), type="negative")
 
     async def load_accounts() -> None:
-        payload = await api_get("/api/mail/accounts")
+        payload, status = await asyncio.gather(
+            api_get("/api/mail/accounts"),
+            api_get("/api/mail/status"),
+        )
+        state["status"] = status if isinstance(status, dict) else {}
+        render_status()
         if not isinstance(payload, dict):
             notify_error("Не удалось загрузить почтовые аккаунты")
             return
@@ -32,12 +46,14 @@ def build_mail() -> None:
         if not state.get("account") and state["accounts"]:
             state["account"] = state["accounts"][0]
         render_accounts()
+        render_status()
         await load_messages()
 
     async def select_account(account: dict) -> None:
         state["account"] = account
         state["detail"] = None
         render_accounts()
+        render_status()
         render_detail()
         await load_messages()
 
@@ -69,6 +85,80 @@ def build_mail() -> None:
             ui.notify("Передано в Outlook", type="positive")
         else:
             notify_error("Не удалось открыть оригинал в Outlook")
+
+    def _message_chat_url(account: dict, message: dict) -> str:
+        subject = str(message.get("subject") or "письмо").strip()
+        params = {
+            "scope": f"ds:{account['dataset_id']}",
+            "tab": "chat",
+            "question": (
+                f"Прочитай письмо «{subject}» и доступные вложения. "
+                "Ответь по их содержанию и явно укажи, чего не удалось извлечь."
+            ),
+        }
+        relative_path = str(message.get("relative_path") or "").strip()
+        if relative_path:
+            params["target_file"] = relative_path
+        return "/classic?" + urlencode(params)
+
+    async def collect_more() -> None:
+        account = state.get("account") or {}
+        if not account:
+            ui.notify("Сначала выберите почтовый ящик", type="warning")
+            return
+        state["collecting"] = True
+        render_status()
+        if account.get("kind") == "imap":
+            result = await api_post(
+                f"/api/mail/accounts/{account['id']}/sync",
+                {"mode": "incremental", "max_messages": 200, "parse": True},
+            )
+        else:
+            result = await api_post("/api/mail/collector/run", {})
+        state["collecting"] = False
+        if not isinstance(result, dict):
+            notify_error("Не удалось забрать новые письма")
+            render_status()
+            return
+        ui.notify("Сбор новых писем запущен", type="positive")
+        await load_accounts()
+
+    def render_status() -> None:
+        panel = refs.get("status")
+        if panel is None:
+            return
+        panel.clear()
+        status = state.get("status") if isinstance(state.get("status"), dict) else {}
+        summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
+        account = state.get("account") or {}
+        last_sync = str(account.get("last_sync") or "ещё не запускался")
+        with panel:
+            with ui.element("section").classes("sov-mail-status-strip"):
+                with ui.column().classes("gap-0 sov-mail-status-copy"):
+                    ui.label("Статус почты").classes("sov-mail-status-title")
+                    ui.label(
+                        f"Последний сбор: {last_sync} · spool: {int(summary.get('spool_pending') or 0)}"
+                    ).classes("sov-mail-status-note")
+                for label, value, tone in (
+                    ("В индексе", summary.get("indexed") or 0, "ok"),
+                    ("Ожидает", summary.get("pending") or 0, "muted"),
+                    ("Ошибки", summary.get("errors") or 0, "warn"),
+                ):
+                    with ui.column().classes(
+                        f"gap-0 sov-mail-status-metric sov-mail-status-metric--{tone}"
+                    ):
+                        ui.label(str(int(value))).classes("sov-mail-status-value")
+                        ui.label(label).classes("sov-mail-status-label")
+                collect = ui.button(
+                    "Забрать ещё",
+                    icon="o_mark_email_unread",
+                    on_click=lambda: asyncio.create_task(collect_more()),
+                ).props("unelevated no-caps").classes("sov-mail-collect-button")
+                if state.get("collecting"):
+                    collect.props("loading disable")
+                elif account.get("kind") == "outlook_classic" and not sys.platform.startswith("win"):
+                    collect.props("disable")
+                    collect.tooltip("Сборщик classic Outlook запускается на Windows")
 
     def render_accounts() -> None:
         panel = refs.get("accounts")
@@ -160,8 +250,8 @@ def build_mail() -> None:
                 ui.button(
                     "Спросить в LES",
                     icon="o_forum",
-                    on_click=lambda: ui.navigate.to(f"/classic?scope=ds:{account['dataset_id']}&tab=chat"),
-                ).props("flat dense no-caps")
+                    on_click=lambda: ui.navigate.to(_message_chat_url(account, message)),
+                ).props("unelevated no-caps").classes("sov-mail-ask-button")
             ui.separator()
             ui.label(detail.get("body") or "(тело не извлечено)").style(
                 "font-size:.72rem;white-space:pre-wrap;line-height:1.55;"
@@ -179,6 +269,8 @@ def build_mail() -> None:
                 ui.label(f"Папка: {location.get('folder_path')}").style("font-size:.6rem;color:var(--dim);")
 
     with ui.column().classes("w-full h-full gap-0").style("padding:14px;background:var(--bg);"):
+        with ui.column().classes("w-full") as status_panel:
+            refs["status"] = status_panel
         with ui.row().classes("items-center w-full gap-2").style("margin-bottom:10px;"):
             refs["search"] = ui.input("Поиск по теме и участникам").props("dense outlined clearable").style(
                 "flex:1;"
@@ -195,6 +287,7 @@ def build_mail() -> None:
             )
 
     render_accounts()
+    render_status()
     render_messages()
     render_detail()
     asyncio.create_task(load_accounts())

@@ -1,5 +1,10 @@
 # Internal updater: prepare once, apply fast
 
+> **Приостановлен для Legion.** Текущий принятый контур — Mac-only
+> [INTERNAL_MAC_UPDATE.md](INTERNAL_MAC_UPDATE.md). Команды
+> `prepare-audit-rag`/`deploy-audit-rag` сейчас являются его совместимыми псевдонимами;
+> Windows/Legion не вызывается. Текст ниже сохранён как проект следующего этапа.
+
 Внутреннее обновление `codex/audit-rag` разделено на подготовку и установку.
 Повторный apply не запускает тесты, не пересобирает приложения и не передаёт
 неизменившуюся сметную базу.

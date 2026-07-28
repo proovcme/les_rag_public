@@ -1822,8 +1822,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 if item.get("snippet"):
                     ui.markdown(f"> {item['snippet']}").classes("sov-artifact-markdown").style("margin-top:8px;")
 
-    def _render_source_tags(srcs: list, crag: str = "", meta: dict | None = None):
-        from sovushka.answer_render import citation_drawer_item, source_chip
+    def _render_source_tags(
+        srcs: list,
+        crag: str = "",
+        meta: dict | None = None,
+        answer: str = "",
+    ):
+        from sovushka.answer_render import citation_drawer_item, source_chip, source_usage
         if not srcs and not crag and not meta:
             return
 
@@ -1837,6 +1842,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     for i, source in enumerate(srcs, 1):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
+                        usage = source_usage(source, i, answer)
                         lbl = f"{i} · {_source_label(source)}"
                         with ui.row().classes("sov-source-row sov-ui-evidence-card"):
                             if item.get("viewer_url"):
@@ -1869,6 +1875,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 ui.label(c["kind"]).classes(
                                     "sov-source-kind sov-source-kind-warn" if c["weak"] else "sov-source-kind"
                                 )
+                            ui.label(usage["label"]).classes(
+                                f"sov-source-usage sov-source-usage--{usage['tone']}"
+                            )
                             if c["has_ref"]:
                                 ui.button(
                                     icon="o_info",
@@ -2767,7 +2776,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         (старый рендер сохраняется)."""
         if not meta:
             return
-        from sovushka.answer_render import header_summary, trace_summary
+        from sovushka.answer_render import header_summary, retrieval_notice, trace_summary
         from sovushka.uikit import render_feedback_state, status_badge
         h = header_summary(meta.get("query_route"), meta.get("evidence_summary"),
                            len(srcs or []), meta.get("total_status"))
@@ -2797,6 +2806,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             else {}
         )
         blocker = meta.get("blocker") if isinstance(meta.get("blocker"), dict) else {}
+        notice = retrieval_notice(retrieval_trace)
+        if notice and notice.get("status") == "degraded":
+            with ui.element("div").classes("sov-retrieval-notice sov-retrieval-notice--warn"):
+                ui.label(notice["title"]).classes("sov-retrieval-notice-title")
+                ui.label(notice["detail"]).classes("sov-retrieval-notice-detail")
         if retrieval_trace.get("status") == "blocked" or meta.get("total_status") == "blocked":
             render_feedback_state(
                 "blocked",
@@ -2880,7 +2894,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.markdown(_format_sources_as_quotes(_disp)).classes("sov-chat-message-text sov-chat-md")
                 else:
                     ui.label(_disp).classes("sov-chat-message-text")
-            _render_source_tags(srcs or [], crag, meta)
+            _render_source_tags(srcs or [], crag, meta, str(text or ""))
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)
@@ -2925,7 +2939,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     )
                 else:
                     label.set_text(str(text or ""))
-            _render_source_tags(srcs or [], crag, meta)
+            _render_source_tags(srcs or [], crag, meta, str(text or ""))
             if meta:
                 _render_suggestions(meta)
                 _render_excerpts(meta)

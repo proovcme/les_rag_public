@@ -202,18 +202,22 @@ def build_header(
 
             if is_admin:
                 if chat_link:
-                    ui.button("ЧАТ", on_click=lambda: ui.navigate.to("/")).props(
-                        "flat no-caps dense"
-                    ).classes("sov-ui-header-secondary").style(
-                        "color:var(--accent);font-size:.62rem;font-family:var(--font);"
-                    )
+                    ui.button(
+                        "Чат",
+                        icon="o_forum",
+                        on_click=lambda: ui.navigate.to("/classic"),
+                    ).props("unelevated no-caps").classes(
+                        "sov-nav-switch sov-nav-switch--chat"
+                    ).tooltip("Перейти в рабочий чат")
 
                 if admin_link:
-                    ui.button("КОНФИГУРАЦИЯ", on_click=lambda: ui.navigate.to("/les")).props(
-                        "flat no-caps dense"
-                    ).classes("sov-ui-header-secondary").style(
-                        "color:var(--accent);font-size:.62rem;font-family:var(--font);"
-                    )
+                    ui.button(
+                        "Конфигурация",
+                        icon="o_tune",
+                        on_click=lambda: ui.navigate.to("/les/classic"),
+                    ).props("unelevated no-caps").classes(
+                        "sov-nav-switch sov-nav-switch--config"
+                    ).tooltip("Открыть состояние и настройки ЛЕС")
 
                 if visualizer_url:
                     ui.link("КВАДРАНТ ↗", target=visualizer_url, new_tab=True).classes(
@@ -468,27 +472,39 @@ def build_header(
                     ui.label("Быстрое обновление ЛЕС").style(
                         "color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;"
                     )
+                    update_check_path = (
+                        "/api/update/patch/check" if is_windows else "/api/update/mac/check"
+                    )
+                    update_install_path = (
+                        "/api/update/patch/install" if is_windows else "/api/update/mac/install"
+                    )
+                    update_status_path = (
+                        "/api/update/patch/status" if is_windows else "/api/update/mac/status"
+                    )
                     update_status = ui.label(
-                        "Проверка выполняется только по нажатию. Рабочие данные не затрагиваются."
+                        "Устанавливается только заранее подготовленный пакет кода. "
+                        "Тесты и сборка по кнопке не запускаются; рабочие данные не затрагиваются."
                     ).style("color:var(--dim);font-size:.68rem;width:100%;")
 
                     async def _check_application_update() -> None:
                         from sovushka.state import api_get
 
                         update_button.disable()
-                        update_status.set_text("Проверяю доступный патч…")
-                        result = await api_get("/api/update/patch/check")
+                        update_status.set_text("Проверяю подготовленный пакет…")
+                        result = await api_get(update_check_path)
                         if not isinstance(result, dict):
                             update_status.set_text(last_api_error_text("Не удалось проверить обновление"))
                             return
                         if not result.get("available"):
-                            update_status.set_text("Все быстрые обновления уже установлены.")
+                            update_status.set_text(str(result.get("message") or "Обновлений нет."))
                             return
                         if not result.get("compatible"):
                             update_status.set_text(str(result.get("message") or "Требуется полный выпуск."))
                             return
+                        package_kib = max(1, int(result.get("bytes") or 0) // 1024)
                         update_status.set_text(
-                            f"Доступно быстрое обновление: {int(result.get('files') or 0)} файлов."
+                            f"Готово: {int(result.get('files') or 0)} файлов · {package_kib} КБ · "
+                            "с автоматическим откатом."
                         )
                         update_button.enable()
 
@@ -496,18 +512,18 @@ def build_header(
                         from sovushka.state import api_post
 
                         update_button.disable()
-                        update_status.set_text("Скачиваю и проверяю патч…")
-                        result = await api_post("/api/update/patch/install", {})
+                        update_status.set_text("Проверяю пакет и точку отката…")
+                        result = await api_post(update_install_path, {})
                         if not isinstance(result, dict):
                             update_status.set_text(last_api_error_text("Не удалось запустить обновление"))
                             return
-                        update_status.set_text("Патч проверен. ЛЕС перезапустится и сам проверит результат.")
+                        update_status.set_text("Пакет проверен. ЛЕС перезапустится и проверит версию и health.")
                         ui.notify("Быстрое обновление запущено", type="positive")
 
                         async def _watch_patch() -> None:
                             for _ in range(120):
                                 await asyncio.sleep(2)
-                                state = await api_get("/api/update/patch/status")
+                                state = await api_get(update_status_path)
                                 if not isinstance(state, dict):
                                     continue
                                 update_status.set_text(str(state.get("message") or "Обновляю ЛЕС…"))

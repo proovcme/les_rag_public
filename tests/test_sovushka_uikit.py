@@ -54,3 +54,19 @@ def test_documents_surface_contract_is_keyword_only_and_complete():
     assert 'def build_documents(*, surface: str = "documents")' in page
     for surface in ("documents", "studio", "cad_bim"):
         assert f'build_documents(surface="{surface}")' in shell
+
+
+def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    documents = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+    mail = Path("sovushka/pages/mail.py").read_text(encoding="utf-8")
+
+    assert '"Чат",' in header and 'icon="o_forum"' in header
+    assert '"Конфигурация",' in header and 'icon="o_tune"' in header
+    assert "sov-nav-switch--chat" in header
+    assert "sov-nav-switch--config" in header
+    assert "sov-docs-sticky-ask" in documents
+    assert '"Спросить в чате"' in documents
+    assert '"Забрать ещё"' in mail
+    assert "sov-mail-status-strip" in mail
+    assert '"target_file"' in mail

@@ -58,6 +58,36 @@ def test_each_mailbox_owns_a_separate_dataset_and_secret_is_not_persisted(tmp_pa
     assert "password" not in first["config"]
 
 
+def test_status_summary_reports_indexed_pending_and_errors_without_content(tmp_path: Path):
+    registry = _registry(tmp_path)
+    account = _account(registry, "Mailbox", "summary")
+    messages = []
+    for index in range(3):
+        path = tmp_path / f"summary-{index}.eml"
+        path.write_bytes(_eml(f"<summary-{index}@example.com>"))
+        message, _ = registry.register_message(
+            account_id=account["id"],
+            raw_path=path,
+            relative_path=path.name,
+            source_kind="imap",
+            native_id=str(index),
+        )
+        messages.append(message)
+    registry.mark_indexed(messages[0]["id"], status="indexed")
+    registry.mark_indexed(messages[1]["id"], status="error")
+
+    summary = registry.status_summary()
+
+    assert summary == {
+        "messages": 3,
+        "indexed": 1,
+        "pending": 1,
+        "errors": 1,
+        "by_status": {"error": 1, "indexed": 1, "pending": 1},
+    }
+    assert "Evidence body" not in str(summary)
+
+
 def test_message_id_dedup_keeps_multiple_folder_locations_and_snapshot(tmp_path: Path):
     registry = _registry(tmp_path)
     account = _account(registry, "Mailbox", "one")

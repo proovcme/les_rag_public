@@ -151,7 +151,22 @@ def request_payload(case: GoldenCase) -> dict[str, Any]:
     return payload
 
 
-def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float = 0.0) -> GoldenResult:
+def validate_source_verified_cases(cases: list[GoldenCase]) -> list[str]:
+    """Return case ids that do not name an expected source."""
+    return [
+        case.id
+        for case in cases
+        if not case.source_any and not case.source_top_any
+    ]
+
+
+def evaluate_response(
+    case: GoldenCase,
+    response: dict[str, Any],
+    elapsed: float = 0.0,
+    *,
+    require_native_rrf: bool = False,
+) -> GoldenResult:
     chunks = response.get("chunks") or []
     if not isinstance(chunks, list):
         return GoldenResult(case.id, False, "response chunks is not a list", elapsed)
@@ -211,13 +226,24 @@ def evaluate_response(case: GoldenCase, response: dict[str, Any], elapsed: float
             failures.append(
                 f"quality={quality_status or '-'} != {case.expected_quality_status}"
             )
+    if require_native_rrf:
+        trace = response.get("retrieval_trace") or {}
+        if str(trace.get("status") or "") != "ok":
+            failures.append(f"retrieval_status={trace.get('status') or '-'} != ok")
+        if str(trace.get("fusion") or "").casefold() != "rrf":
+            failures.append(f"fusion={trace.get('fusion') or '-'} != rrf")
 
     if failures:
         return GoldenResult(case.id, False, "; ".join(failures), elapsed, len(chunks), top_score, sources)
     return GoldenResult(case.id, True, "passed", elapsed, len(chunks), top_score, sources)
 
 
-def run_case(client: GoldenClient, case: GoldenCase) -> GoldenResult:
+def run_case(
+    client: GoldenClient,
+    case: GoldenCase,
+    *,
+    require_native_rrf: bool = False,
+) -> GoldenResult:
     result = client.post_json("/api/rag/retrieve-debug", request_payload(case))
     if result.status != 200:
         return GoldenResult(case.id, False, f"HTTP {result.status}: {result.body[:240]}", result.elapsed)
@@ -225,7 +251,12 @@ def run_case(client: GoldenClient, case: GoldenCase) -> GoldenResult:
         payload = result.json()
     except json.JSONDecodeError as exc:
         return GoldenResult(case.id, False, f"invalid JSON: {exc}", result.elapsed)
-    return evaluate_response(case, payload, result.elapsed)
+    return evaluate_response(
+        case,
+        payload,
+        result.elapsed,
+        require_native_rrf=require_native_rrf,
+    )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -237,6 +268,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--key-role", default="", choices=("", "user", "admin"))
     parser.add_argument("--timeout", type=float, default=float(os.getenv("LES_GOLDEN_TIMEOUT", "30")))
     parser.add_argument("--jsonl", action="store_true", help="Emit machine-readable JSON lines.")
+    parser.add_argument(
+        "--require-source-verification",
+        action="store_true",
+        help="Fail before live calls when a case has no expected source hint.",
+    )
+    parser.add_argument(
+        "--require-native-rrf",
+        action="store_true",
+        help="Require retrieval_trace status=ok and fusion=rrf for every case.",
+    )
     return parser.parse_args(argv)
 
 
@@ -263,6 +304,15 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:
         print(f"Cannot load golden set {args.cases}: {exc}", file=sys.stderr)
         return 2
+    if args.require_source_verification:
+        missing_source_checks = validate_source_verified_cases(cases)
+        if missing_source_checks:
+            print(
+                "Golden cases without source verification: "
+                + ", ".join(missing_source_checks),
+                file=sys.stderr,
+            )
+            return 2
 
     client = GoldenClient(args.proxy_url, args.timeout, api_key)
     if not args.jsonl:
@@ -270,7 +320,11 @@ def main(argv: list[str] | None = None) -> int:
 
     failed = 0
     for case in cases:
-        result = run_case(client, case)
+        result = run_case(
+            client,
+            case,
+            require_native_rrf=bool(args.require_native_rrf),
+        )
         failed += 0 if result.ok else 1
         if args.jsonl:
             print(json.dumps(result.__dict__, ensure_ascii=False), flush=True)

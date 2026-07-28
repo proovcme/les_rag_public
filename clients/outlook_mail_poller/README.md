@@ -1,49 +1,44 @@
-# ЛЕС — поллер почты (классический Outlook, Windows)
+# ЛЕС — сборщик почты classic Outlook (Windows)
 
-Авто-сборщик входящей почты в ЛЕС **без IMAP/OAuth/паролей и без COM-надстройки**. Отдельное
-приложение, которое цепляется к УЖЕ ЗАЛОГИНЕННОМУ Outlook (COM-автоматизация, late binding),
-по таймеру (задача планировщика, каждые N минут) сканит «Входящие» и шлёт новые письма (позже
-чекпойнта) в `POST {LES}/api/mail/push` (тема/отправитель/дата/тело; вложения — задел v2).
+Ручной локальный сборщик для уже открытого classic Outlook. Он не хранит пароль, не использует
+IMAP/OAuth и не отправляет разобранный текст письма. Каждое новое письмо сохраняется через Outlook
+как полный Unicode `.msg` (`olMSGUnicode`, вместе с вложениями), кладётся в durable spool и
+регистрируется в `POST http://127.0.0.1:8050/api/mail/collector/import`.
 
-## Почему так (а не аддин / IMAP)
+Сбор запускается кнопкой «Забрать ещё» в Совушке. Постоянного расписания нет: задача Windows
+зарегистрирована как `LES E.ZH.I.K. Outlook Collector`, но запускается только по явному запросу
+пользователя. Один запуск имеет рабочий бюджет 12 секунд и hard stop 15 секунд, поэтому не может
+зависнуть на часы.
 
-На корпоративном Outlook все «прямые» пути отвалились (проверено на реальной машине):
-- **Office.js-аддин** (`../outlook_addin`) — не сайдлоадится, в Outlook только COM-надстройки;
-- **managed-COM-надстройка** (`../outlook_com_addin`) — не активируется на современном Outlook/.NET4
-  (шимлесс managed-COM фактически депрекейтнут, `CoCreateInstance → 0x80070002`);
-- **IMAP** — на Exchange Online выключен Basic Auth, а ЛЕС ходит логином+паролем.
+## Почему отдельный сборщик
 
-Поллер обходит всё: едет на текущей сессии Outlook, ничего не логинит. Запуск — задачей
-планировщика в **сессии пользователя** (COM-объект Outlook виден только в его сессии; служба
-из сессии 0 к нему не достучится).
+- Он использует текущую пользовательскую сессию Outlook через COM late binding.
+- ЛЕС получает исходный `.msg`, а извлечение, дедупликация, provenance и индексирование остаются
+  в одном серверном workflow.
+- Если proxy временно недоступен, запись остаётся в spool и будет повторно отправлена при следующем
+  ручном запуске.
+- Сборщик не удаляет и не меняет письма в Outlook.
 
 ## Установка
 
 ```powershell
 cd clients\outlook_mail_poller
-powershell -ExecutionPolicy Bypass -File setup_task.ps1        # собрать + поставить задачу (каждые 10 мин)
+powershell -ExecutionPolicy Bypass -File setup_task.ps1
 ```
 
-Без PowerShell-политики — голым `csc` + `schtasks` (cmd):
+Скрипт компилирует `LesMailPoller.exe`, устанавливает его в `%LOCALAPPDATA%\LES\bin` и регистрирует
+интерактивную задачу без расписания. Удаление:
 
-```bat
-"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /target:winexe ^
-  /out:LesMailPoller.exe /r:System.dll /r:System.Core.dll /r:Microsoft.CSharp.dll LesMailPoller.cs
-schtasks /create /tn "LES Mail Poller" /tr "%CD%\LesMailPoller.exe" /sc minute /mo 3 /ru "%COMPUTERNAME%\%USERNAME%" /it /f
+```powershell
+powershell -ExecutionPolicy Bypass -File setup_task.ps1 -Remove
 ```
-
-Снять: `setup_task.ps1 -Remove` (или `schtasks /delete /tn "LES Mail Poller" /f`).
 
 ## Диагностика
 
-- Лог: `%LOCALAPPDATA%\LES\logs\mail_poller.log` — строки `run done: scanned=N pushed=M`, `pushed [200]: …`.
-- Чекпойнт: `%LOCALAPPDATA%\LES\mail_poller_checkpoint.txt` (первый запуск — окно −30 мин, старое не заливает).
-- URL ЛЕС по умолчанию `http://localhost:8050/api/mail/push`; переопределить — `%LOCALAPPDATA%\LES\mail_addin_url.txt`.
-- ЛЕС :8050 должен быть запущен. Пользователь должен быть залогинен (задача interactive).
+- Состояние и spool: `%LOCALAPPDATA%\LES\mail`.
+- URL импорта: `%LOCALAPPDATA%\LES\mail\collector_url.txt`.
+- Локальный API: `POST /api/mail/collector/run`, затем `GET /api/mail/status`.
+- В Совушке видны последний сбор, число писем в индексе, ожидающих записей и ошибок.
 
-## Архитектура
-
-`LesMailPoller.cs` — консоль (`winexe`), `Marshal.GetActiveObject("Outlook.Application")`
-(fallback — `CreateInstance`), late binding (`dynamic`) поверх Outlook → без Office-PIA при
-компиляции (голый csc). `.exe` в гит не кладём — артефакт сборки. Контракт `/api/mail/push`
-тот же, что у Office.js-аддина.
+`LesMailPoller.cs` компилируется штатным .NET Framework `csc`, Office PIA не требуется. Собранный
+`.exe` в Git не хранится.

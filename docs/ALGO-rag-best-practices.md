@@ -317,6 +317,11 @@ chunk_ord/point_id when available
 - missing: честно сказать, чего нет;
 - no-neighbor: не отвечать по соседнему датасету.
 
+Release-профиль golden обязан быть source-verified: каждый кейс задаёт `source_any` и/или
+`source_top_any`, а ожидаемые термины ищутся только в retrieved evidence, не в имени файла.
+Запуск с `--require-source-verification --require-native-rrf` дополнительно требует для каждого
+ответа `retrieval_trace.status=ok` и `fusion=rrf`; blocked/degraded не маскируются проходным score.
+
 Для НС такой golden dataset уже есть: `7fa2dbaa-ee36-422e-8876-80ab28b9b17e`.
 
 ## LES Acceptance Checklist

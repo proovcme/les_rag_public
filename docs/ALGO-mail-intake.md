@@ -35,7 +35,7 @@ Backfill идёт возобновляемыми порциями не боле�
 `backfill_complete`: после достижения старейшего письма последующие запуски вообще не перечисляют
 старую часть `Items`, а проверяют только новые письма. Старые cursor-файлы без этого флага проходят
 один завершающий backfill и автоматически обновляются. Task Scheduler хранит задачу без расписания:
-sidecar запускается только кнопкой «Забрать новые письма» в настройке почты и работает в interactive
+sidecar запускается только кнопкой «Забрать ещё» во вкладке «Почта» и работает в interactive
 user session. Задача не стартует Outlook сама. Команда
 `--open <base64-store> <base64-entry>` вызывает `Session.GetItemFromID(...).Display()`.
 
@@ -97,8 +97,9 @@ message-node каждого письма сохраняет собственну
 - `GET /api/mail/messages/{id}`, `POST /api/mail/messages/{id}/open`.
 
 Старые `/import-imap`, `/messages`, `/threads`, `/push` остаются совместимыми legacy-путями.
-Вкладка «Почта» показывает ящики/папки, цепочки, тело, вложения, provenance и index status. Кнопка
-«Спросить в LES» открывает чат со scope `ds:<dataset_id>` именно этого ящика.
+Вкладка «Почта» показывает ящики/папки, цепочки, тело, вложения, provenance, последний сбор,
+spool, число indexed/pending/error. Кнопка «Спросить в LES» открывает чат со scope
+`ds:<dataset_id>` именно этого ящика и передаёт exact `target_file` выбранного письма.
 
 ## Windows install и acceptance
 

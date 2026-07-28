@@ -126,6 +126,125 @@ html {
   line-height: 1.45;
 }
 
+.sov-nav-switch {
+  min-height: var(--sov-ui-hit) !important;
+  padding: 0 15px !important;
+  border-radius: 11px !important;
+  font-family: var(--sov-ui-font-prose) !important;
+  font-size: .76rem !important;
+  font-weight: 850 !important;
+  letter-spacing: .01em;
+  white-space: nowrap;
+  box-shadow: 0 5px 16px rgba(15, 23, 42, .10);
+}
+
+.sov-nav-switch--chat {
+  color: #052e24 !important;
+  background: var(--accent) !important;
+}
+
+.sov-nav-switch--config {
+  color: var(--text) !important;
+  background: var(--card-bg) !important;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, var(--border)),
+    0 5px 16px rgba(15, 23, 42, .08);
+}
+
+.sov-nav-switch:hover {
+  filter: brightness(1.04);
+}
+
+.sov-source-usage {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: .61rem;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+.sov-source-usage--ok {
+  color: var(--ok);
+  border-color: color-mix(in srgb, var(--ok) 56%, var(--border));
+}
+.sov-source-usage--warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 62%, var(--border));
+}
+.sov-source-usage--muted { color: var(--dim); }
+.sov-retrieval-notice {
+  width: 100%;
+  margin: 6px 0;
+  padding: 9px 11px;
+  border-radius: var(--sov-ui-radius-control);
+  background: color-mix(in srgb, var(--warn) 10%, var(--card-bg));
+}
+.sov-retrieval-notice--warn {
+  border: 1px solid color-mix(in srgb, var(--warn) 55%, var(--border));
+}
+.sov-retrieval-notice-title { font-size: .72rem; font-weight: 850; }
+.sov-retrieval-notice-detail { margin-top: 2px; color: var(--dim); font-size: .65rem; }
+.sov-docs-sticky-ask {
+  position: sticky;
+  z-index: 4;
+  bottom: 0;
+  display: flex;
+  width: 100%;
+  margin-top: 8px;
+  padding: 10px;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--border));
+  border-radius: 13px;
+  background: color-mix(in srgb, var(--card-bg) 90%, var(--accent) 10%);
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, .12);
+}
+.sov-docs-sticky-ask-button {
+  min-height: 42px !important;
+  color: #052e24 !important;
+  background: var(--accent) !important;
+  font-weight: 850 !important;
+}
+.sov-mail-status-strip {
+  display: flex;
+  width: 100%;
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  gap: 12px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 15px;
+  background: var(--card-bg);
+  box-shadow: var(--sov-ui-shadow-card);
+}
+.sov-mail-status-copy { min-width: 180px; flex: 1; }
+.sov-mail-status-title { font-size: .82rem; font-weight: 850; }
+.sov-mail-status-note { margin-top: 2px; color: var(--dim); font-size: .66rem; }
+.sov-mail-status-metric {
+  min-width: 72px;
+  padding: 6px 9px;
+  border-radius: 10px;
+  text-align: center;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+}
+.sov-mail-status-value {
+  font-family: var(--sov-ui-font-code);
+  font-size: .86rem;
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+.sov-mail-status-label { color: var(--dim); font-size: .58rem; }
+.sov-mail-status-metric--ok .sov-mail-status-value { color: var(--ok); }
+.sov-mail-status-metric--warn .sov-mail-status-value { color: var(--warn); }
+.sov-mail-collect-button,
+.sov-mail-ask-button {
+  min-height: 42px !important;
+  color: #052e24 !important;
+  background: var(--accent) !important;
+  font-weight: 850 !important;
+}
+
 @media (max-width: 720px) {
   .sov-ui-shell {
     max-width: 100vw;
@@ -160,6 +279,24 @@ html {
   .sov-ui-header-action .q-icon {
     font-size: 20px;
   }
+  .sov-nav-switch {
+    min-width: var(--sov-ui-hit) !important;
+    width: var(--sov-ui-hit);
+    padding: 0 !important;
+  }
+  .sov-nav-switch .q-btn__content {
+    gap: 0;
+    font-size: 0;
+  }
+  .sov-nav-switch .q-icon {
+    font-size: 20px;
+  }
+  .sov-docs-sticky-ask { align-items: stretch; flex-direction: column; }
+  .sov-docs-sticky-ask-button { width: 100%; }
+  .sov-mail-status-strip { align-items: stretch; flex-wrap: wrap; }
+  .sov-mail-status-copy { width: 100%; flex-basis: 100%; }
+  .sov-mail-status-metric { flex: 1; }
+  .sov-mail-collect-button { width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {

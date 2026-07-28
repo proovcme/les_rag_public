@@ -7,16 +7,36 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.3 (internal rollout target, P0.3)
-номер сборки:              476     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.476 (internal)
+версия продукта (SemVer):  0.25.4 (internal Mac target, audit stages 3–6)
+номер сборки:              477     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.477 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/audit-rag
-dev implementation:       codex/audit-rag; P0.3 prepare-once/apply-fast updater
+dev implementation:       codex/audit-rag; Evidence/Documents/Mail/golden + Mac updater
 задеплоено на рантайм:     Mac 0.25.0 / build 469; Legion 0.25.0 / build 473
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          prepare updater → отдельная приёмка → Legion; без публикации
+следующий выпуск:          малый Mac code package → отдельная приёмка; Legion отключён
 рантайм /api/version:      Mac 0.25.0 / build 469; Legion 0.25.0 / build 473
 ```
+
+> 0.25.4 / build 477 — stages 3–6 + архитектурный Mac updater
+>
+> Дата: 2026-07-28
+> Статус: target внутренней установки на Mac; Legion и публичные поверхности
+> не затрагиваются. В чате видны `degraded/blocked` и роль каждого источника;
+> «Документы» получили цепочку dataset→files и sticky переход в чат; «Почта»
+> показывает sync/index/spool, забирает следующую bounded порцию и передаёт
+> exact письмо в чат. Кнопки «Чат»/«Конфигурация» вынесены в заметную основную
+> навигацию. Golden runner получил строгие source-verified/native-RRF gates.
+>
+> Старый dual-host updater для текущего этапа выключен. `prepare-mac-update`
+> формирует локальный content-addressed ZIP только из runtime diff; не запускает
+> pytest/build, не включает app/DMG, baseline, данные или индексы. Archive,
+> detached helper и каждый файл проверяются SHA-256 и allowlist. Apply делает
+> backup→atomic replace→restart→version/health/index-contract smoke; ошибка
+> возвращает предыдущие файлы и deploy stamp. Публикации/tag/GitHub Release нет.
+> Профильный gate: `178 passed`, повторный критический subset `82 passed`;
+> `make verify`: `2785 collected`. Полная release-suite намеренно не запускалась:
+> этот внутренний Mac code-update не является app/Windows/public release.
 
 > 0.25.3 / build 476 — P0.3 prepare-once/apply-fast internal updater
 >

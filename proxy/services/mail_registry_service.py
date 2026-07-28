@@ -469,6 +469,33 @@ class MailRegistry:
             rows = conn.execute("SELECT id FROM mail_accounts ORDER BY label COLLATE NOCASE").fetchall()
         return [self.get_account(str(row["id"])) for row in rows]
 
+    def status_summary(self) -> dict[str, Any]:
+        """Small operator summary; no message bodies or secret state."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT index_status,COUNT(*) AS count FROM mail_messages GROUP BY index_status"
+            ).fetchall()
+            total = conn.execute("SELECT COUNT(*) FROM mail_messages").fetchone()[0]
+        by_status = {str(row["index_status"]): int(row["count"]) for row in rows}
+        indexed = sum(
+            count
+            for status, count in by_status.items()
+            if status in {"indexed", "registered"}
+        )
+        errors = sum(
+            count
+            for status, count in by_status.items()
+            if status in {"error", "failed"}
+        )
+        pending = max(0, int(total) - indexed - errors)
+        return {
+            "messages": int(total),
+            "indexed": indexed,
+            "pending": pending,
+            "errors": errors,
+            "by_status": by_status,
+        }
+
     def account_secret(self, account_id: str) -> str:
         return self._store().get(account_id)
 

@@ -97,7 +97,8 @@ def test_mail_ui_is_read_only_and_scopes_chat_to_the_mailbox_dataset():
     assert "/api/mail/accounts" in page
     assert "/api/mail/messages" in page
     assert "Открыть в Outlook" in page
-    assert "scope=ds:{account['dataset_id']}" in page
+    assert 'f"ds:{account[\'dataset_id\']}"' in page
+    assert '"target_file"' in page
     assert "Ответить" not in page
     assert "Переслать" not in page
     assert "Забрать новые письма" in page

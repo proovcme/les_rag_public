@@ -2695,10 +2695,14 @@ def build_documents(*, surface: str = "documents") -> None:
                     lambda e: _set_document_file_filter("document_role_filter", str(e.args or "")),
                 )
                 role_select.set_visibility(False)
-            if surface == "studio":
+            if surface in {"studio", "documents"}:
                 with ui.row().classes("items-center w-full").style("gap:6px;padding:2px 4px 6px;"):
                     _label(
-                        f"Файлов-оснований: {len(selected_ids)}",
+                        (
+                            f"Файлов-оснований: {len(selected_ids)}"
+                            if surface == "studio"
+                            else f"Выбрано для вопроса: {len(selected_ids)}"
+                        ),
                         size="10.5px",
                         color="var(--dim)",
                         weight=800,
@@ -2789,7 +2793,7 @@ def build_documents(*, surface: str = "documents") -> None:
                     "click", lambda _e, value=doc_id, name=file_name: _activate_document_row(value, name)
                 ):
                     with ui.row().classes("items-center w-full sov-document-card-head"):
-                        if surface == "studio":
+                        if surface in {"studio", "documents"}:
                             select_btn = ui.button(
                                 icon="o_check_box" if doc_id in selected_ids else "o_check_box_outline_blank",
                             ).props('flat round dense aria-label="Выбрать документ"').classes("sov-icon-btn")
@@ -2847,6 +2851,24 @@ def build_documents(*, surface: str = "documents") -> None:
                 _render_document_row(row)
             if not rows:
                 _label("Файлы и папки не найдены", color="var(--dim)")
+            if surface == "documents" and selected_ids:
+                with ui.element("div").classes("sov-docs-sticky-ask"):
+                    with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                        _label(
+                            f"{len(selected_ids)} файл(ов) выбрано",
+                            size="12px",
+                            weight=900,
+                        )
+                        _label(
+                            "В чате область и список файлов будут закреплены.",
+                            size="10.5px",
+                            color="var(--dim)",
+                        )
+                    ui.button(
+                        "Спросить в чате",
+                        icon="o_forum",
+                        on_click=_ask_about_selected_documents,
+                    ).props("unelevated no-caps").classes("sov-docs-sticky-ask-button")
 
     def _render_map() -> None:
         memory = state.get("dataset_memory") or {}
@@ -3692,7 +3714,7 @@ def build_documents(*, surface: str = "documents") -> None:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_dataset")
                     _label(
-                        "Выберите датасет" if surface == "studio" else "Датасеты",
+                        "1. Выберите датасет" if surface != "cad_bim" else "Датасеты",
                         size="12px",
                         color="var(--dim)",
                         weight=900,
@@ -3723,7 +3745,7 @@ def build_documents(*, surface: str = "documents") -> None:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_folder_copy")
                     _label(
-                        "Тома и файлы-основания" if surface == "studio" else "Файлы",
+                        "2. Тома и файлы-основания" if surface == "studio" else "2. Выберите файлы",
                         size="12px",
                         color="var(--dim)",
                         weight=900,
