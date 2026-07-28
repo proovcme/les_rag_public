@@ -874,7 +874,7 @@ html {
     width: 100%;
     min-height: 36px !important;
     height: 36px !important;
-    padding: 0 8px !important;
+    padding: 0 7px !important;
     justify-content: flex-start !important;
     text-align: left !important;
     font-size: 12.5px !important;
