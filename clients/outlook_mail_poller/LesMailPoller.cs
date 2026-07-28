@@ -15,7 +15,9 @@ namespace LesMailPoller
 {
     internal static class Program
     {
-        private const int BatchLimit = 200;
+        private const int BatchLimit = 10;
+        private const long RunBudgetMilliseconds = 12000;
+        private static Stopwatch RunClock = Stopwatch.StartNew();
         private const string InternetMessageIdSchema =
             "http://schemas.microsoft.com/mapi/proptag/0x1035001F";
 
@@ -73,7 +75,7 @@ namespace LesMailPoller
         {
             if (args.Length > 0 && args[0] == "--self-test-cursor")
                 return CursorSelfTest();
-            Stopwatch runClock = Stopwatch.StartNew();
+            RunClock = Stopwatch.StartNew();
             dynamic app;
             try
             {
@@ -102,7 +104,9 @@ namespace LesMailPoller
             {
                 dynamic session = app.Session;
                 int storeCount = SafeInt(delegate { return (int)session.Stores.Count; });
-                for (int storeIndex = 1; storeIndex <= storeCount && registered < BatchLimit; storeIndex++)
+                for (int storeIndex = 1;
+                    storeIndex <= storeCount && registered < BatchLimit && !RunBudgetExceeded();
+                    storeIndex++)
                 {
                     dynamic store = session.Stores[storeIndex];
                     string storeId = Safe(delegate { return (string)store.StoreID; });
@@ -118,8 +122,13 @@ namespace LesMailPoller
                 return 3;
             }
             Log("run complete scanned=" + scanned + " registered=" + registered +
-                " duration_ms=" + runClock.ElapsedMilliseconds);
+                " duration_ms=" + RunClock.ElapsedMilliseconds);
             return 0;
+        }
+
+        private static bool RunBudgetExceeded()
+        {
+            return RunClock.ElapsedMilliseconds >= RunBudgetMilliseconds;
         }
 
         private static int CursorSelfTest()
@@ -204,13 +213,15 @@ namespace LesMailPoller
             ref int scanned,
             ref int registered)
         {
-            if (registered >= BatchLimit) return;
+            if (registered >= BatchLimit || RunBudgetExceeded()) return;
             string folderId = Safe(delegate { return (string)folder.EntryID; });
             if (excluded.Contains(folderId)) return;
             ScanItems(folder, storeId, storeLabel, folderId, ref scanned, ref registered);
-            if (registered >= BatchLimit) return;
+            if (registered >= BatchLimit || RunBudgetExceeded()) return;
             int childCount = SafeInt(delegate { return (int)folder.Folders.Count; });
-            for (int index = 1; index <= childCount && registered < BatchLimit; index++)
+            for (int index = 1;
+                index <= childCount && registered < BatchLimit && !RunBudgetExceeded();
+                index++)
             {
                 try
                 {
@@ -243,6 +254,7 @@ namespace LesMailPoller
             {
                 for (int index = 1; index <= count; index++)
                 {
+                    if (RunBudgetExceeded()) break;
                     DateTime received;
                     string entryId;
                     if (!TryReceived(items, index, out received, out entryId)) continue;
@@ -253,7 +265,9 @@ namespace LesMailPoller
                     }
                     incremental.Add(index);
                 }
-                for (int position = incremental.Count - 1; position >= 0 && registered < BatchLimit; position--)
+                for (int position = incremental.Count - 1;
+                    position >= 0 && registered < BatchLimit && !RunBudgetExceeded();
+                    position--)
                 {
                     if (!RegisterItemAt(
                         items, incremental[position], storeId, storeLabel, folder, folderId,
@@ -263,11 +277,11 @@ namespace LesMailPoller
 
             // Backfill is confirmed newest-to-oldest. The oldest cursor moves
             // after every HTTP 2xx, so a failed item is retried on the next run.
-            if (cursor.BackfillComplete || registered >= BatchLimit) return;
+            if (cursor.BackfillComplete || registered >= BatchLimit || RunBudgetExceeded()) return;
             bool reachedOldestItem = true;
             for (int index = 1; index <= count; index++)
             {
-                if (registered >= BatchLimit)
+                if (registered >= BatchLimit || RunBudgetExceeded())
                 {
                     reachedOldestItem = false;
                     break;

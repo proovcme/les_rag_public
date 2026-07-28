@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import logging
 import os
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from proxy.services.mail_sync_service import settings_for_account, sync_imap_acc
 
 
 router = APIRouter(prefix="/api/mail", tags=["mail"])
+logger = logging.getLogger(__name__)
 
 
 class MailLocalImportRequest(BaseModel):
@@ -248,6 +250,8 @@ async def _maybe_parse_mail_dataset(state: Any, dataset_id: str, *, parse: bool,
 
 
 _mail_parse_tasks: dict[str, asyncio.Task] = {}
+_outlook_upload_queues: dict[str, asyncio.Queue[tuple[str, Path, str]]] = {}
+_outlook_upload_tasks: dict[str, asyncio.Task] = {}
 
 
 async def _parse_mailbox_until_idle(account_id: str, dataset_id: str) -> None:
@@ -285,6 +289,57 @@ def _schedule_mailbox_parse(account_id: str, dataset_id: str) -> None:
         _mail_parse_tasks[dataset_id] = asyncio.create_task(
             _parse_mailbox_until_idle(account_id, dataset_id)
         )
+
+
+async def _drain_outlook_uploads(account_id: str, dataset_id: str) -> None:
+    """Move accepted Outlook snapshots into RAG without holding the COM caller."""
+    queue = _outlook_upload_queues[dataset_id]
+    uploaded = False
+    try:
+        state = get_dataset_state()
+        registry = get_mail_registry()
+        while True:
+            try:
+                message_id, raw_path, relative_path = queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            try:
+                doc_id = await state.backend.upload_file(
+                    dataset_id,
+                    raw_path,
+                    relative_path=relative_path,
+                )
+                registry.mark_indexed(message_id, rag_doc_id=doc_id, status="registered")
+                uploaded = True
+            except Exception:
+                registry.mark_indexed(message_id, status="error")
+                logger.exception(
+                    "Outlook snapshot RAG registration failed",
+                    extra={"mail_message_id": message_id, "dataset_id": dataset_id},
+                )
+            finally:
+                queue.task_done()
+    finally:
+        _outlook_upload_tasks.pop(dataset_id, None)
+        if uploaded:
+            _schedule_mailbox_parse(account_id, dataset_id)
+
+
+def _queue_outlook_upload(
+    *,
+    account_id: str,
+    dataset_id: str,
+    message_id: str,
+    raw_path: Path,
+    relative_path: str,
+) -> tuple[int, asyncio.Task]:
+    queue = _outlook_upload_queues.setdefault(dataset_id, asyncio.Queue())
+    queue.put_nowait((message_id, raw_path, relative_path))
+    current = _outlook_upload_tasks.get(dataset_id)
+    if current is None or current.done():
+        current = asyncio.create_task(_drain_outlook_uploads(account_id, dataset_id))
+        _outlook_upload_tasks[dataset_id] = current
+    return queue.qsize(), current
 
 
 async def _upload_fetched_mail(state: Any, fetched: list[Any]) -> tuple[str, bool, list[dict[str, Any]]]:
@@ -646,7 +701,7 @@ async def migrate_legacy_mail_to_account(
     }
 
 
-@router.post("/collector/import")
+@router.post("/collector/import", status_code=202)
 async def import_outlook_message(
     request: Request,
     message: UploadFile = File(...),
@@ -688,19 +743,26 @@ async def import_outlook_message(
         outlook_entry_id=entry_id,
         received_at=received_at,
     )
-    state = get_dataset_state()
-    doc_id = await state.backend.upload_file(
-        account["dataset_id"], raw_path, relative_path=relative_path
-    )
-    registry.mark_indexed(registered["id"], rag_doc_id=doc_id, status="registered")
-    _schedule_mailbox_parse(account["id"], account["dataset_id"])
+    index_status = str(registered.get("index_status") or "pending")
+    queue_depth = 0
+    if created or index_status in {"pending", "error"}:
+        registry.mark_indexed(registered["id"], status="queued")
+        queue_depth, _task = _queue_outlook_upload(
+            account_id=account["id"],
+            dataset_id=account["dataset_id"],
+            message_id=registered["id"],
+            raw_path=raw_path,
+            relative_path=relative_path,
+        )
+        index_status = "queued"
     return {
-        "status": "registered",
+        "status": "accepted",
         "created": created,
         "account_id": account["id"],
         "dataset_id": account["dataset_id"],
         "message_id": registered["id"],
-        "doc_id": doc_id,
+        "index_status": index_status,
+        "queue_depth": queue_depth,
     }
 
 
