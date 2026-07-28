@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 from tools import platform_release_gate
 
 
 ROOT = Path(__file__).resolve().parents[1]
+pytestmark = pytest.mark.skipif(
+    shutil.which("make") is None,
+    reason="Makefile profiles are checked on Unix runners",
+)
 
 
 def _dry_make(target: str) -> str:

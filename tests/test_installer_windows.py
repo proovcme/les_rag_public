@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import subprocess
+
+from tools import build_release_artifacts
 from tools import build_windows_installer
 
 
@@ -29,6 +32,24 @@ def test_stage_runtime_is_idempotent(tmp_path):
     first = build_windows_installer.stage_runtime(dest)
     second = build_windows_installer.stage_runtime(dest)  # rebuild over existing
     assert first == second
+
+
+def test_release_inventory_uses_only_git_tracked_files(tmp_path, monkeypatch):
+    tracked = tmp_path / "tracked.txt"
+    untracked = tmp_path / "operator-notes.txt"
+    tracked.write_text("public source", encoding="utf-8")
+    untracked.write_text("local state", encoding="utf-8")
+
+    monkeypatch.setattr(build_release_artifacts, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        build_release_artifacts.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=b"tracked.txt\0",
+        ),
+    )
+
+    assert build_release_artifacts.iter_files() == [tracked]
 
 
 def test_bootstrap_ps1_is_utf8_bom(tmp_path):

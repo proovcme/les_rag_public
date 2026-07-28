@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -343,7 +344,9 @@ def build_structured_base(
         conn.commit()
     finally:
         conn.close()
-    with sqlite3.connect(tmp_out) as preflight_conn:
+    # sqlite3.Connection.__exit__ commits/rolls back but does not close the
+    # handle. Windows therefore keeps the file locked across os.replace/unlink.
+    with closing(sqlite3.connect(tmp_out)) as preflight_conn:
         preflight_norm_count = int(preflight_conn.execute("SELECT count(*) FROM norms").fetchone()[0])
         preflight_missing_provenance = _missing_provenance_count(preflight_conn)
     if preflight_norm_count < int(minimum_norms):
@@ -361,7 +364,7 @@ def build_structured_base(
 
     source_sha256 = _sha256(source)
     base_sha256 = _sha256(out)
-    with sqlite3.connect(out) as check_conn:
+    with closing(sqlite3.connect(out)) as check_conn:
         check_conn.execute("PRAGMA foreign_keys = ON")
         orphan_resources = int(
             check_conn.execute(
