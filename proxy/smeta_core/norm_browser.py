@@ -212,9 +212,17 @@ def _sha256_for_stat(path: str, mtime_ns: int, size: int) -> str:
     return digest.hexdigest()
 
 
+def _rag_manifest_path(base_path: Path) -> Path:
+    """Resolve the active or explicitly staged smeta navigation manifest."""
+    configured = os.getenv("LES_SMETA_NORM_RAG_MANIFEST", "").strip()
+    return Path(configured) if configured else base_path.with_name(
+        "les_smeta_norm_rag_manifest.json"
+    )
+
+
 def _rag_manifest_status(*, base_path: Path, collection: str, embedding_model: str) -> tuple[bool, str]:
     """Fail closed when a sibling vector index is stale or built by another embedder."""
-    manifest_path = base_path.with_name("les_smeta_norm_rag_manifest.json")
+    manifest_path = _rag_manifest_path(base_path)
     try:
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     except Exception:
@@ -237,9 +245,7 @@ def _rag_manifest_status(*, base_path: Path, collection: str, embedding_model: s
 
 def _rag_index_mode(base_path: Path) -> str:
     try:
-        payload = json.loads(
-            base_path.with_name("les_smeta_norm_rag_manifest.json").read_text(encoding="utf-8")
-        )
+        payload = json.loads(_rag_manifest_path(base_path).read_text(encoding="utf-8"))
     except Exception:
         return ""
     return str(payload.get("index_mode") or "hybrid")
@@ -248,9 +254,7 @@ def _rag_index_mode(base_path: Path) -> str:
 def _rag_dense_compatibility(base_path: Path) -> tuple[bool, str]:
     """Dense is usable only in a proven query/document embedding space."""
     try:
-        payload = json.loads(
-            base_path.with_name("les_smeta_norm_rag_manifest.json").read_text(encoding="utf-8")
-        )
+        payload = json.loads(_rag_manifest_path(base_path).read_text(encoding="utf-8"))
     except Exception:
         return False, "manifest_missing_or_invalid"
     built_backend = str(payload.get("embedding_backend") or "").strip().lower()
@@ -418,7 +422,7 @@ def _rerank_cards(
     *,
     limit: int,
 ) -> tuple[list[dict[str, Any]], bool, str]:
-    """Rerank evidence candidates and expose transport failure to the model."""
+    """Fuse cross-encoder order with hybrid retrieval and expose transport failure."""
     if os.getenv("LES_SMETA_NORM_RERANK", "true").strip().casefold() not in {
         "1", "true", "yes", "on",
     }:
@@ -474,7 +478,11 @@ def _rerank_cards(
     reordered = [cards[index] for index in valid_order]
     used = set(valid_order)
     reordered.extend(card for index, card in enumerate(cards) if index not in used)
-    return reordered[:limit], True, "ok"
+    # A cross-encoder is a second relevance signal, not an oracle. Preserve
+    # the independent typed+dense+sparse RRF evidence by fusing both complete
+    # rankings. This prevents a technically healthy but semantically weak
+    # reranker from erasing a strong retrieval head.
+    return _rrf_cards(cards, reordered, limit=limit), True, "ok"
 
 
 def _fts_prefix(term: str) -> str:
@@ -818,7 +826,7 @@ def browse_norms_many(
                 )
                 rerank_ms += (perf_counter() - rerank_started) * 1000
                 if reranked:
-                    backend = f"{backend}+bge_rerank"
+                    backend = f"{backend}+bge_rerank_rrf"
                 else:
                     backend = f"{backend}+rerank_{rerank_status}"
             else:

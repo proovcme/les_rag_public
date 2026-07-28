@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import base64
+import shutil
 import sys
 from pathlib import Path
 
@@ -41,6 +42,38 @@ def test_patch_release_contract_separates_product_and_build(tmp_path):
     )
 
     assert patch_release.load_contract(contract)["product_version"] == "1.2.3"
+
+
+def test_release_requires_successful_platform_gate_for_exact_commit(monkeypatch):
+    monkeypatch.setattr(
+        patch_release,
+        "output",
+        lambda _command, **_kwargs: json.dumps(
+            [
+                {
+                    "headSha": "abc",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "url": "https://example.test/run",
+                }
+            ]
+        ),
+    )
+
+    assert patch_release.require_platform_gate("abc")["conclusion"] == "success"
+
+
+def test_release_rejects_incomplete_platform_gate(monkeypatch):
+    monkeypatch.setattr(
+        patch_release,
+        "output",
+        lambda _command, **_kwargs: json.dumps(
+            [{"headSha": "abc", "status": "in_progress", "conclusion": ""}]
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="not successful"):
+        patch_release.require_platform_gate("abc")
 
 
 @pytest.mark.parametrize(
@@ -182,6 +215,71 @@ def test_patch_release_requires_independent_legion_persistence(monkeypatch):
 
     assert result["ui_status"] == 200
     assert result["desktop_processes"] == 1
+
+
+def test_publish_includes_and_verifies_extra_platform_assets(monkeypatch, tmp_path):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "LES-Setup.exe").write_bytes(b"windows")
+    (dist / "LES-Setup.exe.sha256").write_text("placeholder", encoding="ascii")
+    (dist / "latest.json").write_text(
+        json.dumps({"version": "1.2.3"}),
+        encoding="utf-8",
+    )
+    dmg = dist / "LES.dmg"
+    checksum = dist / "LES.dmg.sha256"
+    dmg.write_bytes(b"macos")
+    checksum.write_text("placeholder", encoding="ascii")
+    monkeypatch.setattr(patch_release, "DIST", dist)
+    monkeypatch.setattr(
+        patch_release.subprocess,
+        "run",
+        lambda *args, **kwargs: patch_release.subprocess.CompletedProcess(
+            args[0], 1, "", ""
+        ),
+    )
+    calls = []
+
+    def fake_run(command, **_kwargs):
+        calls.append(list(command))
+        if command[:3] == ["gh", "release", "download"]:
+            target = Path(command[command.index("--dir") + 1])
+            for source in dist.iterdir():
+                if source.is_file() and source.name != "release-notes.md":
+                    shutil.copy2(source, target / source.name)
+        return patch_release.subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(patch_release, "run", fake_run)
+    (dist / "release-notes.md").write_text("notes", encoding="utf-8")
+
+    patch_release.publish(
+        {
+            "product_version": "1.2.3",
+            "build_number": 4,
+            "desktop_version": "5.1.4",
+        },
+        extra_assets=[dmg, checksum],
+    )
+
+    create = next(call for call in calls if call[:3] == ["gh", "release", "create"])
+    assert str(dmg.resolve()) in create
+    assert str(checksum.resolve()) in create
+
+
+def test_platform_workflows_cover_mac_windows_builds_and_atomic_release():
+    verify = (ROOT / ".github/workflows/verify.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github/workflows/release.yml").read_text(encoding="utf-8")
+    orchestrator = (ROOT / "tools/multiplatform_release.py").read_text(encoding="utf-8")
+
+    assert "macos-14" in verify
+    assert "windows-2022" in verify
+    assert "platform_release_gate.py test" in verify
+    assert "platform_release_gate.py build" in verify
+    assert "environment: production" in release
+    assert "LES_RELEASE_TOKEN" in release
+    assert "tools/multiplatform_release.py" in release
+    assert '"app,dmg"' in orchestrator
+    assert '"--extra-asset"' in orchestrator
 
 
 def test_patch_release_retries_transient_independent_persistence_failure(monkeypatch):

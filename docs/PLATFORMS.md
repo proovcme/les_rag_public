@@ -97,6 +97,24 @@ replaceable NSIS application tree: `%LOCALAPPDATA%\LES` owns `.env`, uv venv,
 MetaDB, source/storage data, artifacts and logs. Runtime-relative directories
 are junctions to that root; Qdrant uses `les-qdrant-data`.
 
+## Automated platform gates and release
+
+`.github/workflows/verify.yml` runs the canonical Python suite and a real
+`tauri build --no-bundle` on `macos-14` and `windows-2022` for every PR and
+push to `main`. This proves both native shells compile without pretending that
+a hosted runner has production data or installed Ollama/Qdrant.
+
+The production workflow is intentionally separate:
+`.github/workflows/release.yml` runs on the approved self-hosted Mac release
+runner. `tools/multiplatform_release.py` builds and verifies `LES.app`/`LES.dmg`,
+then uses the existing SSH Legion contour to build/install/smoke the real NSIS
+package. GitHub release creation receives the verified Mac and Windows assets
+in one command; either platform failing blocks publication. The Windows bundle
+gets only the verified immutable FGIS/FSNB smeta baseline. User RAG data is
+never bundled. Release environment secret `LES_RELEASE_TOKEN` needs Actions
+read for the private source repository and Contents write for
+`proovcme/les_rag_public`; SSH access to Legion stays on the approved runner.
+
 Mac reinstall stress is documented in `docs/MAC_REINSTALL_STRESS.md`; the
 uninstall script is dry-run by default and requires explicit confirmation before
 removing launchd services or runtime data.

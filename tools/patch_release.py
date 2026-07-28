@@ -81,6 +81,50 @@ def require_clean_pushed_branch(branch: str) -> str:
     return head
 
 
+def require_platform_gate(commit: str) -> dict[str, Any]:
+    """Require the macOS+Windows GitHub platform workflow for this exact commit."""
+    raw = output(
+        [
+            "gh",
+            "run",
+            "list",
+            "--workflow",
+            "verify.yml",
+            "--commit",
+            commit,
+            "--limit",
+            "10",
+            "--json",
+            "conclusion,status,headSha,url",
+        ]
+    )
+    runs = json.loads(raw or "[]")
+    matching = [
+        item
+        for item in runs
+        if isinstance(item, dict) and str(item.get("headSha") or "") == commit
+    ]
+    if not matching:
+        raise RuntimeError(f"macOS/Windows platform gate is missing for commit {commit}")
+    successful = next(
+        (
+            item
+            for item in matching
+            if item.get("status") == "completed" and item.get("conclusion") == "success"
+        ),
+        None,
+    )
+    if successful is None:
+        states = ", ".join(
+            f"{item.get('status')}/{item.get('conclusion') or '-'}"
+            for item in matching
+        )
+        raise RuntimeError(
+            f"macOS/Windows platform gate is not successful for {commit}: {states}"
+        )
+    return successful
+
+
 def run_local_gates() -> None:
     for command in (
         ["make", "verify"],
@@ -257,9 +301,25 @@ def create_release_files(contract: dict[str, Any], commit: str, notes: str) -> N
     )
 
 
-def publish(contract: dict[str, Any]) -> None:
+def publish(
+    contract: dict[str, Any],
+    *,
+    extra_assets: Iterable[Path] = (),
+) -> None:
     version = str(contract["product_version"])
     tag = f"v{version}"
+    assets = [
+        DIST / "LES-Setup.exe",
+        DIST / "LES-Setup.exe.sha256",
+        DIST / "latest.json",
+        *(Path(path).resolve() for path in extra_assets),
+    ]
+    missing = [str(path) for path in assets if not path.is_file()]
+    if missing:
+        raise RuntimeError("release assets are missing: " + ", ".join(missing))
+    names = [path.name for path in assets]
+    if len(names) != len(set(names)):
+        raise RuntimeError("release asset names must be unique")
     probe = subprocess.run(
         ["gh", "release", "view", tag, "--repo", PUBLIC_REPOSITORY],
         cwd=ROOT,
@@ -271,9 +331,7 @@ def publish(contract: dict[str, Any]) -> None:
     run(
         [
             "gh", "release", "create", tag,
-            str(DIST / "LES-Setup.exe"),
-            str(DIST / "LES-Setup.exe.sha256"),
-            str(DIST / "latest.json"),
+            *(str(path) for path in assets),
             "--repo", PUBLIC_REPOSITORY,
             "--title", f"ЛЕС {version}",
             "--notes-file", str(DIST / "release-notes.md"),
@@ -287,6 +345,9 @@ def publish(contract: dict[str, Any]) -> None:
         published = json.loads((target / "latest.json").read_text(encoding="utf-8"))
         if published.get("version") != version:
             raise RuntimeError("published latest.json has the wrong product version")
+        for asset in assets:
+            if sha256(target / asset.name) != sha256(asset):
+                raise RuntimeError(f"published {asset.name} differs from verified local artifact")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -309,6 +370,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--publish", action="store_true")
     parser.add_argument(
+        "--extra-asset",
+        action="append",
+        default=[],
+        type=Path,
+        help="additional prebuilt verified asset to publish in the same release",
+    )
+    parser.add_argument(
         "--resume-verified-commit",
         default="",
         help="publish already fetched/verified Legion artifacts for this ancestor runtime commit",
@@ -323,6 +391,8 @@ def main(argv: list[str] | None = None) -> int:
     require_tools(("git", "uv", "make", "ssh", "scp", *( ("gh",) if args.publish else () )))
     contract = load_contract()
     commit = require_clean_pushed_branch(args.branch)
+    if args.publish:
+        require_platform_gate(commit)
     if args.resume_verified_commit:
         if not args.publish:
             raise RuntimeError("resume requires --publish")
@@ -333,7 +403,7 @@ def main(argv: list[str] | None = None) -> int:
             "Исправительное обновление ЛЕС. Подробности зафиксированы в журнале выпуска."
         )
         create_release_files(contract, args.resume_verified_commit, notes)
-        publish(contract)
+        publish(contract, extra_assets=args.extra_asset)
         print(json.dumps({"ok": True, "published": True, "resumed": True, **summary}, ensure_ascii=False, indent=2))
         return 0
     from tools.smeta_release_baseline import create_archive, verify_archive
@@ -367,7 +437,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     create_release_files(contract, commit, notes)
     if args.publish:
-        publish(contract)
+        publish(contract, extra_assets=args.extra_asset)
     print(json.dumps({"ok": True, "published": args.publish, **summary}, ensure_ascii=False, indent=2))
     return 0
 

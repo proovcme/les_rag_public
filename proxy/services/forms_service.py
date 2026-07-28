@@ -125,13 +125,19 @@ def resolve_fields(form_id: str, project_id: int | None = None, manual: dict[str
         source = f.get("source", "manual")
         raw = _resolve_source(source, project_id, manual, f["key"])
         value = _fmt_value(raw, ftype)
+        # A reviewed Studio proposal may fill a field whose preferred typed
+        # source (for example project.name/address) is absent.  Keep the typed
+        # value authoritative when present; otherwise accept the explicit
+        # reviewed fallback carried in ``manual``.
+        if not value and str(manual.get(f["key"], "")).strip():
+            value = _fmt_value(manual[f["key"]], ftype)
         fields.append({
             "key": f["key"],
             "label": f.get("label", f["key"]),
             "type": ftype,
             "source": source,
             "value": value,
-            "needs_input": source == "manual" and not value,
+            "needs_input": not value,
         })
     columns = list(descriptor.get("columns", []) or [])
     return {

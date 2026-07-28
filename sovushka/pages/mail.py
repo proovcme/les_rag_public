@@ -55,21 +55,6 @@ def build_mail() -> None:
         state["messages"] = (payload or {}).get("messages") or [] if isinstance(payload, dict) else []
         render_messages()
 
-    async def sync_account(account: dict, mode: str = "incremental") -> None:
-        if account.get("kind") != "imap":
-            ui.notify("Outlook синхронизируется фоновой задачей Windows", type="info")
-            return
-        ui.notify("Синхронизация запущена", type="info")
-        result = await api_post(
-            f"/api/mail/accounts/{account['id']}/sync",
-            {"mode": mode, "max_messages": 200, "parse": True},
-        )
-        if result:
-            ui.notify(f"Получено писем: {result.get('files', 0)}", type="positive")
-            await load_accounts()
-        else:
-            notify_error("Синхронизация не удалась")
-
     async def show_message(message: dict) -> None:
         payload = await api_get(f"/api/mail/messages/{message['id']}")
         if not isinstance(payload, dict):
@@ -85,60 +70,15 @@ def build_mail() -> None:
         else:
             notify_error("Не удалось открыть оригинал в Outlook")
 
-    def open_add_account_dialog() -> None:
-        with ui.dialog() as dialog, ui.card().style("min-width:520px;padding:20px;"):
-            ui.label("Подключить IMAP-ящик").style("font-size:1rem;font-weight:800;")
-            provider = ui.select(
-                {"yandex": "Яндекс", "custom": "Другой IMAP"}, value="yandex", label="Провайдер"
-            ).classes("w-full")
-            label = ui.input("Название ящика").classes("w-full")
-            login = ui.input("Логин / адрес почты").classes("w-full")
-            password = ui.input("Пароль приложения", password=True, password_toggle_button=True).classes("w-full")
-            host = ui.input("IMAP-сервер", value="imap.yandex.ru").classes("w-full")
-            port = ui.number("Порт", value=993, min=1, max=65535).classes("w-full")
-            ui.label("Пароль сохраняется в Windows Credential Manager и не возвращается API.").style(
-                "font-size:.72rem;color:var(--dim);"
-            )
-
-            async def create() -> None:
-                payload = {
-                    "kind": "imap",
-                    "provider": provider.value,
-                    "label": label.value or login.value,
-                    "login": login.value,
-                    "password": password.value,
-                    "host": host.value,
-                    "port": int(port.value or 993),
-                    "ssl": True,
-                    "folders": ["*"],
-                }
-                result = await api_post("/api/mail/accounts", payload)
-                if not result:
-                    notify_error("Не удалось подключить ящик")
-                    return
-                password.value = ""
-                dialog.close()
-                ui.notify("Ящик добавлен; создан отдельный P0-датасет", type="positive")
-                await load_accounts()
-
-            with ui.row().classes("justify-end w-full"):
-                ui.button("Отмена", on_click=dialog.close).props("flat no-caps")
-                ui.button("Подключить", on_click=create).props("no-caps")
-        dialog.open()
-
     def render_accounts() -> None:
         panel = refs.get("accounts")
         if panel is None:
             return
         panel.clear()
         with panel:
-            with ui.row().classes("items-center justify-between w-full"):
-                ui.label("Ящики").style("font-size:.82rem;font-weight:800;")
-                ui.button(icon="o_add", on_click=open_add_account_dialog).props("flat dense round").tooltip(
-                    "Подключить IMAP"
-                )
+            ui.label("Ящики").style("font-size:.82rem;font-weight:800;")
             if not state["accounts"]:
-                ui.label("Подключите IMAP или запустите Outlook-sidecar на Legion.").style(
+                ui.label("Почтовая сборка ещё не настроена. Откройте конфигуратор → «Настройка почты».").style(
                     "font-size:.72rem;color:var(--dim);padding:12px 0;"
                 )
             selected_id = (state.get("account") or {}).get("id")
@@ -170,13 +110,7 @@ def build_mail() -> None:
         panel.clear()
         with panel:
             account = state.get("account") or {}
-            with ui.row().classes("items-center justify-between w-full"):
-                ui.label(account.get("label") or "Переписка").style("font-size:.82rem;font-weight:800;")
-                ui.button(
-                    "Синхронизировать",
-                    icon="o_sync",
-                    on_click=lambda: asyncio.create_task(sync_account(account)),
-                ).props("flat dense no-caps").style("font-size:.65rem;")
+            ui.label(account.get("label") or "Переписка").style("font-size:.82rem;font-weight:800;")
             if not state["messages"]:
                 ui.label("Писем пока нет.").style("font-size:.72rem;color:var(--dim);padding:20px 0;")
             threads: dict[str, list[dict]] = {}
@@ -264,3 +198,160 @@ def build_mail() -> None:
     render_messages()
     render_detail()
     asyncio.create_task(load_accounts())
+
+
+def build_mail_settings() -> None:
+    """Configurator-only account and collector setup; never renders messages."""
+    state = {"accounts": [], "folders": [], "loading": False}
+    refs: dict[str, object] = {}
+
+    async def load() -> None:
+        state["loading"] = True
+        render()
+        payload = await api_get("/api/mail/accounts")
+        state["loading"] = False
+        if not isinstance(payload, dict):
+            ui.notify(last_api_error_text("Не удалось загрузить настройки почты"), type="negative")
+            render()
+            return
+        state["accounts"] = list(payload.get("accounts") or [])
+        state["folders"] = list(payload.get("folders") or [])
+        render()
+
+    async def test_account(account: dict) -> None:
+        result = await api_post(f"/api/mail/accounts/{account['id']}/test", {})
+        if isinstance(result, dict) and result.get("status") == "ready":
+            ui.notify("Подключение готово", type="positive")
+        else:
+            ui.notify(last_api_error_text("Проверка подключения не прошла"), type="negative")
+
+    async def sync_account(account: dict) -> None:
+        if account.get("kind") != "imap":
+            ui.notify("Outlook собирается интерактивной задачей Windows", type="info")
+            return
+        result = await api_post(
+            f"/api/mail/accounts/{account['id']}/sync",
+            {"mode": "incremental", "max_messages": 200, "parse": True},
+        )
+        if isinstance(result, dict):
+            ui.notify(f"Получено новых писем: {int(result.get('files') or 0)}", type="positive")
+            await load()
+        else:
+            ui.notify(last_api_error_text("Синхронизация не удалась"), type="negative")
+
+    def add_account() -> None:
+        with ui.dialog() as dialog, ui.card().classes("sov-mail-settings-dialog"):
+            ui.label("Подключить IMAP").classes("sov-mail-settings-dialog-title")
+            provider = ui.select(
+                {"yandex": "Яндекс", "custom": "Другой IMAP"},
+                value="yandex",
+                label="Провайдер",
+            ).classes("w-full")
+            label = ui.input("Название ящика").classes("w-full")
+            login = ui.input("Логин / адрес почты").classes("w-full")
+            password = ui.input(
+                "Пароль приложения",
+                password=True,
+                password_toggle_button=True,
+            ).classes("w-full")
+            host = ui.input("IMAP-сервер", value="imap.yandex.ru").classes("w-full")
+            port = ui.number("Порт", value=993, min=1, max=65535).classes("w-full")
+            ui.label(
+                "Секрет сохраняется в системном хранилище и не возвращается API."
+            ).classes("sov-mail-settings-note")
+
+            async def create() -> None:
+                result = await api_post(
+                    "/api/mail/accounts",
+                    {
+                        "kind": "imap",
+                        "provider": provider.value,
+                        "label": label.value or login.value,
+                        "login": login.value,
+                        "password": password.value,
+                        "host": host.value,
+                        "port": int(port.value or 993),
+                        "ssl": True,
+                        "folders": ["*"],
+                    },
+                )
+                if not isinstance(result, dict):
+                    ui.notify(last_api_error_text("Не удалось подключить ящик"), type="negative")
+                    return
+                password.value = ""
+                dialog.close()
+                ui.notify("Ящик подключён", type="positive")
+                await load()
+
+            with ui.row().classes("justify-end w-full"):
+                ui.button("Отмена", on_click=dialog.close).props("flat no-caps")
+                ui.button("Подключить", on_click=create).props("no-caps")
+        dialog.open()
+
+    def render() -> None:
+        panel = refs.get("panel")
+        if panel is None:
+            return
+        panel.clear()
+        with panel:
+            with ui.row().classes("items-center w-full sov-mail-settings-head"):
+                with ui.column().classes("gap-0").style("flex:1;"):
+                    ui.label("Настройка почтовой сборки").classes("sov-mail-settings-title")
+                    ui.label(
+                        "Здесь только подключения и синхронизация. Письма читаются во вкладке «Почта» обычной Совушки."
+                    ).classes("sov-mail-settings-subtitle")
+                ui.button("Подключить IMAP", icon="o_add", on_click=add_account).props(
+                    "unelevated no-caps"
+                )
+            with ui.element("section").classes("sov-mail-collector-card"):
+                ui.icon("o_desktop_windows")
+                with ui.column().classes("gap-0").style("flex:1;"):
+                    ui.label("Classic Outlook на Legion").classes("sov-mail-settings-card-title")
+                    ui.label(
+                        "Read-only sidecar · завершённая история не перечитывается · опрос раз в 10 минут."
+                    ).classes("sov-mail-settings-note")
+            if state.get("loading"):
+                with ui.row().classes("items-center sov-mail-settings-loading"):
+                    ui.spinner(size="sm")
+                    ui.label("Читаю подключения…")
+                return
+            if not state["accounts"]:
+                ui.label("Подключённых ящиков пока нет.").classes("sov-mail-settings-empty")
+                return
+            for account in state["accounts"]:
+                folders = [
+                    str(item.get("path") or "")
+                    for item in state["folders"]
+                    if item.get("account_id") == account.get("id")
+                ]
+                with ui.element("section").classes("sov-mail-account-card"):
+                    with ui.row().classes("items-center w-full"):
+                        with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                            ui.label(account.get("label") or "Почтовый ящик").classes(
+                                "sov-mail-settings-card-title"
+                            )
+                            ui.label(
+                                f"{account.get('kind')} · {account.get('sync_state') or 'idle'}"
+                            ).classes("sov-mail-settings-note")
+                        ui.button(
+                            "Проверить",
+                            icon="o_fact_check",
+                            on_click=lambda _e, item=account: asyncio.create_task(test_account(item)),
+                        ).props("flat no-caps")
+                        ui.button(
+                            "Синхронизировать",
+                            icon="o_sync",
+                            on_click=lambda _e, item=account: asyncio.create_task(sync_account(item)),
+                        ).props("flat no-caps")
+                    ui.label(
+                        account.get("dataset_name") or "Отдельный датасет будет создан автоматически"
+                    ).classes("sov-mail-settings-dataset")
+                    if folders:
+                        ui.label("Папки: " + ", ".join(folders[:12])).classes(
+                            "sov-mail-settings-note"
+                        )
+
+    with ui.column().classes("w-full h-full sov-mail-settings-page") as panel:
+        refs["panel"] = panel
+    render()
+    asyncio.create_task(load())

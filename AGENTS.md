@@ -35,7 +35,11 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 - **`make test-architecture`** — совместимый псевдоним канонической LES-сюиты. Исторический Unified/Construction Harness запускается только явно через `make test-legacy`; ARTEL принадлежит отдельному продукту.
 - **`make test-mail`** — отдельный offline-профиль Е.Ж.И.К.: IMAP/registry/dedup/RAG/API/UI и статический Windows-sidecar contract. **`make test-mail-release`** добавляет Tauri compile-check; установленный classic Outlook подтверждается только живым Legion-гейтом.
 - **`make test`** — основная полная LES-сюита без 11 файлов выключенного Unified/Construction Harness и без `test_artel*`. Архивный профиль не является release-доказательством.
-- **Доменный гейт** (после правок retrieval/router): `uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json` — база **16/16** ([SKILL.md](SKILL.md): качество FIRE/HVAC — это доменная приёмка, не точечные фиксы).
+- **Доменный гейт** (после правок retrieval/router и только при подключённом пользовательском
+  корпусе с источниками набора): `uv run python tools/rag_golden_set.py --cases
+  golden/domain_fire_hvac_set.json` — ожидается **16/16**. Пустой user-owned `les_rag` означает
+  `N/A: corpus absent`, а не повод подмешивать системные СП или ослаблять кейсы
+  ([SKILL.md](SKILL.md): качество FIRE/HVAC — доменная приёмка конкретного корпуса).
 - **CI нет** — гейт запускается вручную.
 
 ## Definition of Done — ЛЮБОЕ изменение

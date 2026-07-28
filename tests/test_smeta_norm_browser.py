@@ -288,7 +288,38 @@ def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
 
     assert used is True
     assert status == "ok"
-    assert [item["norm_code"] for item in ranked] == ["N-4", "N-0", "N-1", "N-2"]
+    assert [item["norm_code"] for item in ranked] == ["N-0", "N-1", "N-4", "N-2"]
+
+
+def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    cards = [
+        {"norm_code": "GOOD-1", "title": "strong hybrid candidate"},
+        {"norm_code": "GOOD-2", "title": "second hybrid candidate"},
+        {"norm_code": "NOISE-1", "title": "weak candidate"},
+        {"norm_code": "NOISE-2", "title": "weak candidate"},
+        {"norm_code": "NOISE-3", "title": "weak candidate"},
+    ]
+
+    class Result:
+        def __init__(self, index):
+            self.metadata = {"index": index}
+
+    class CatastrophicReranker:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def rerank(self, *_args, **_kwargs):
+            return [Result(4), Result(3), Result(2), Result(1), Result(0)]
+
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", lambda: CatastrophicReranker)
+
+    ranked, used, status = norm_browser._rerank_cards("query", cards, limit=3)
+
+    assert used is True
+    assert status == "ok"
+    assert {item["norm_code"] for item in ranked[:3]} & {"GOOD-1", "GOOD-2"}
 
 
 def test_reranker_failure_is_visible_and_preserves_raw_order(monkeypatch):
@@ -438,3 +469,17 @@ def test_norm_rag_projection_does_not_embed_incidental_resources(tmp_path):
 
     assert "Башенный кран" not in row["text"]
     assert "Башенный кран" in row["resource_text"]
+
+
+def test_staged_smeta_manifest_does_not_replace_active_manifest(monkeypatch, tmp_path):
+    from proxy.smeta_core.norm_browser import _rag_manifest_path
+
+    base = tmp_path / "les_smeta_base.sqlite"
+    active = tmp_path / "les_smeta_norm_rag_manifest.json"
+    staged = tmp_path / "les_smeta_norm_cards_v4.manifest.json"
+    active.write_text('{"collection":"active"}', encoding="utf-8")
+    staged.write_text('{"collection":"staged"}', encoding="utf-8")
+    monkeypatch.setenv("LES_SMETA_NORM_RAG_MANIFEST", str(staged))
+
+    assert _rag_manifest_path(base) == staged
+    assert json.loads(active.read_text(encoding="utf-8"))["collection"] == "active"

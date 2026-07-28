@@ -66,6 +66,14 @@ def office_agent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
         "  - { key: today, label: Дата, source: date.today }\n",
         encoding="utf-8",
     )
+    (forms_dir / "project_sheet.yaml").write_text(
+        "id: project_sheet\n"
+        "title: Карточка проекта\n"
+        "fields:\n"
+        "  - { key: object_name, label: Наименование объекта капитального строительства, source: project.name }\n"
+        "  - { key: object_address, label: Адрес объекта, source: project.address }\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("LES_FORMS_DIR", str(forms_dir))
     monkeypatch.setenv("LES_LIST_OFFICE_DIR", str(tmp_path / "list_office"))
     import proxy.services.forms_service as forms_service
@@ -154,6 +162,89 @@ def test_invalid_model_evidence_is_visible_assumption(office_agent):
     ))
     assert {item["status"] for item in result["fields"]} == {"assumption"}
     assert len(result["warnings"]) == 3
+
+
+def test_project_name_and_address_are_retrieved_from_selected_sheet_when_registry_is_empty(
+    office_agent,
+):
+    service, office_service, _tmp_path = office_agent
+    queries = []
+
+    class ProjectSheetReader(FakeReader):
+        def search(self, query: str, *, doc_id: str, limit: int, max_chars: int):
+            queries.append(query)
+            if "адрес" in query.casefold() or "местонахождение" in query.casefold():
+                text = "Адрес объекта: г. Москва, ул. Лесная, д. 7."
+            elif "наименование" in query.casefold() or "название" in query.casefold():
+                text = "Наименование объекта: Реконструкция административного здания."
+            else:
+                text = "Лист общих данных проекта."
+            return {
+                "hits": [{
+                    "point_id": f"p-{len(queries)}",
+                    "dataset_id": "PROJECT_Index",
+                    "doc_id": doc_id,
+                    "doc_name": "Основание.pdf",
+                    "chunk_ord": len(queries),
+                    "section_heading": "Основная надпись",
+                    "text": text,
+                }]
+            }
+
+    async def fake_extract(_schema, _instruction, context, **_kwargs):
+        payload = json.loads(context)
+        by_text = {item["excerpt"]: item["evidence_id"] for item in payload["evidence"]}
+        name_id = next(value for text, value in by_text.items() if "Реконструкция" in text)
+        address_id = next(value for text, value in by_text.items() if "ул. Лесная" in text)
+        return SimpleNamespace(
+            ok=True,
+            attempts=1,
+            errors=[],
+            data={"fields": [
+                {
+                    "key": "object_name",
+                    "value": "Реконструкция административного здания",
+                    "status": "grounded",
+                    "confidence": 0.98,
+                    "evidence_ids": [name_id],
+                    "note": "",
+                },
+                {
+                    "key": "object_address",
+                    "value": "г. Москва, ул. Лесная, д. 7",
+                    "status": "grounded",
+                    "confidence": 0.98,
+                    "evidence_ids": [address_id],
+                    "note": "",
+                },
+            ]},
+        )
+
+    result = asyncio.run(service.prepare_document_ir(
+        "project_sheet",
+        dataset_id="PROJECT_Index",
+        source_refs=[{"doc_id": "doc-1"}],
+        reader=ProjectSheetReader(),
+        extractor=fake_extract,
+    ))
+
+    fields = {item["key"]: item for item in result["fields"]}
+    assert fields["object_name"]["status"] == "grounded"
+    assert fields["object_address"]["status"] == "grounded"
+    assert any(query == "Адрес объекта" for query in queries)
+    assert any("Наименование объекта" in query for query in queries)
+    resolved = office_service.forms_service.resolve_fields(
+        "project_sheet",
+        project_id=None,
+        manual={
+            "object_name": fields["object_name"]["value"],
+            "object_address": fields["object_address"]["value"],
+        },
+    )
+    assert {item["key"]: item["value"] for item in resolved["fields"]} == {
+        "object_name": "Реконструкция административного здания",
+        "object_address": "г. Москва, ул. Лесная, д. 7",
+    }
 
 
 def test_agent_requires_selected_exact_document_and_surfaces_model_failure(office_agent):

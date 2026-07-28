@@ -45,7 +45,20 @@ DATASET_GROUP_OPTIONS = {
 }
 
 
-def build_documents() -> None:
+def build_documents(*, surface: str = "documents") -> None:
+    if surface not in {"documents", "studio", "cad_bim"}:
+        raise ValueError(f"Unknown documents surface: {surface}")
+    initial_mode = {"documents": "map", "studio": "studio", "cad_bim": "cad"}[surface]
+    initial_title = {
+        "documents": "Выберите файл",
+        "studio": "Студия документов",
+        "cad_bim": "CAD/BIM",
+    }[surface]
+    initial_note = {
+        "documents": "Выберите файл: покажем только извлечённое содержимое и оригинал.",
+        "studio": "Черновики DOCX/XLSX по выбранным источникам с обязательной проверкой.",
+        "cad_bim": "Отдельный контур моделей и их проекций.",
+    }[surface]
     state = {
         "datasets": [],
         "documents": [],
@@ -67,7 +80,7 @@ def build_documents() -> None:
         "pdf_contour_page": 0,
         "cad_inventory": {},
         "cad_loading": False,
-        "view_mode": "map",
+        "view_mode": initial_mode,
         "selected_dataset": "",
         "selected_doc_id": "",
         "selected_doc_name": "",
@@ -119,8 +132,8 @@ def build_documents() -> None:
         "office_loading": False,
         "office_creating": False,
         "query": "",
-        "view_title": "Выберите датасет",
-        "view_note": "Л.И.С.Т. — файловый проводник проекта: структура, данные документов и поиск по индексу.",
+        "view_title": initial_title,
+        "view_note": initial_note,
     }
     refs: dict[str, object] = {}
 
@@ -368,7 +381,7 @@ def build_documents() -> None:
         state["view_mode"] = "map"
         state["map_target"] = "file"
         state["view_title"] = _dataset_title(_selected_dataset_row())
-        state["view_note"] = "Краткая справка, содержание и переход к оригиналу файла."
+        state["view_note"] = "Извлечённое содержимое файла и оригинал."
         state["composition_file_loading"] = True
         state["pdf_contour"] = {}
         state["pdf_contour_loading"] = file_name.lower().endswith(".pdf")
@@ -677,9 +690,9 @@ def build_documents() -> None:
         ):
             state[key] = ""
         state["dataset_kind"] = str(_selected_dataset_row().get("dataset_kind") or "")
-        state["view_mode"] = "map"
+        state["view_mode"] = initial_mode
         state["view_title"] = _dataset_title(_selected_dataset_row()) if dataset_id else "Выберите датасет"
-        state["view_note"] = "Паспорт, состав и извлечённые данные датасета."
+        state["view_note"] = initial_note
         service_upload = refs.get("service_upload")
         if service_upload is not None:
             service_upload.set_visibility(_is_system_dataset())
@@ -1107,12 +1120,13 @@ def build_documents() -> None:
     def _office_source_refs() -> list[dict[str, str]]:
         dataset_id = str(state.get("selected_dataset") or "")
         selected = [str(value) for value in (state.get("selected_doc_ids") or []) if str(value)]
-        current = str(state.get("selected_doc_id") or "")
-        if current and current not in selected:
-            selected.append(current)
-        inspected = str((state.get("composition_file") or {}).get("doc_id") or "")
-        if inspected and inspected not in selected:
-            selected.append(inspected)
+        if surface != "studio":
+            current = str(state.get("selected_doc_id") or "")
+            if current and current not in selected:
+                selected.append(current)
+            inspected = str((state.get("composition_file") or {}).get("doc_id") or "")
+            if inspected and inspected not in selected:
+                selected.append(inspected)
         refs_out: list[dict[str, str]] = []
         for doc_id in selected:
             row = _document_by_id(doc_id)
@@ -1152,7 +1166,7 @@ def build_documents() -> None:
             fields = list(data.get("fields") or [])
             manual = dict(state.get("office_manual") or {})
             for field in fields:
-                if str(field.get("source") or "") == "manual" and field.get("key") in manual:
+                if field.get("key") in manual:
                     field["value"] = str(manual.get(field.get("key")) or "")
                     field["needs_input"] = not bool(str(field["value"]).strip())
             state["office_fields"] = fields
@@ -1418,6 +1432,24 @@ def build_documents() -> None:
             selected.append(doc_id)
         state["selected_doc_ids"] = selected
         _render_documents()
+        _render_view()
+
+    def _select_document_group(doc_ids: list[str]) -> None:
+        selected = {str(value) for value in (state.get("selected_doc_ids") or []) if str(value)}
+        group = {str(value) for value in doc_ids if str(value)}
+        if group and group.issubset(selected):
+            selected.difference_update(group)
+        else:
+            selected.update(group)
+        state["selected_doc_ids"] = sorted(selected)
+        _render_documents()
+        _render_view()
+
+    def _activate_document_row(doc_id: str, file_name: str) -> None:
+        if surface == "studio":
+            _toggle_document_selection(doc_id)
+        else:
+            _schedule(_inspect_composition_file(doc_id, file_name))
 
     def _ask_about_selected_documents() -> None:
         selected = {str(value) for value in (state.get("selected_doc_ids") or [])}
@@ -2652,6 +2684,7 @@ def build_documents() -> None:
                     "update:model-value",
                     lambda e: _set_document_file_filter("document_status_filter", str(e.args or "")),
                 )
+                status_select.set_visibility(False)
                 role_select = ui.select(
                     {"": "Все типы", **{value: value for value in role_options}},
                     value=role_filter,
@@ -2661,16 +2694,24 @@ def build_documents() -> None:
                     "update:model-value",
                     lambda e: _set_document_file_filter("document_role_filter", str(e.args or "")),
                 )
-            with ui.row().classes("items-center w-full").style("gap:6px;padding:2px 4px 6px;"):
-                _label(f"Выбрано: {len(selected_ids)}", size="10.5px", color="var(--dim)", weight=800).style("flex:1;")
-                if selected_ids:
-                    ui.button(
-                        "Спросить по выбранным", icon="o_chat", on_click=_ask_about_selected_documents,
-                    ).props("dense no-caps").classes("sov-docs-search-btn")
-                    ui.button(
-                        icon="o_close",
-                        on_click=lambda: (state.__setitem__("selected_doc_ids", []), _render_documents()),
-                    ).props('flat round dense aria-label="Снять выбор"')
+                role_select.set_visibility(False)
+            if surface == "studio":
+                with ui.row().classes("items-center w-full").style("gap:6px;padding:2px 4px 6px;"):
+                    _label(
+                        f"Файлов-оснований: {len(selected_ids)}",
+                        size="10.5px",
+                        color="var(--dim)",
+                        weight=800,
+                    ).style("flex:1;")
+                    if selected_ids:
+                        ui.button(
+                            icon="o_close",
+                            on_click=lambda: (
+                                state.__setitem__("selected_doc_ids", []),
+                                _render_documents(),
+                                _render_view(),
+                            ),
+                        ).props('flat round dense aria-label="Снять выбор"')
             dataset_data_button = refs.get("dataset_data_button")
             if dataset_data_button is not None:
                 dataset_data_button.classes(remove="sov-dataset-data-button--active")
@@ -2739,19 +2780,20 @@ def build_documents() -> None:
                 selected = doc_id in {
                     str(state.get("selected_doc_id") or ""),
                     str((state.get("composition_file") or {}).get("doc_id") or ""),
-                }
+                } or doc_id in selected_ids
                 file_name = str(row.get("file_name") or doc_id)
                 basename = file_name.rsplit("/", 1)[-1]
                 folder = file_name.rsplit("/", 1)[0] if "/" in file_name else ""
                 selected_cls = " sov-document-card--selected" if selected else ""
                 with ui.element("div").classes(f"w-full sov-document-card sov-document-card--tree{selected_cls}").on(
-                    "click", lambda _e, value=doc_id, name=file_name: _schedule(_inspect_composition_file(value, name))
+                    "click", lambda _e, value=doc_id, name=file_name: _activate_document_row(value, name)
                 ):
                     with ui.row().classes("items-center w-full sov-document-card-head"):
-                        select_btn = ui.button(
-                            icon="o_check_box" if doc_id in selected_ids else "o_check_box_outline_blank",
-                        ).props('flat round dense aria-label="Выбрать документ"').classes("sov-icon-btn")
-                        select_btn.on("click.stop", lambda _e, value=doc_id: _toggle_document_selection(value))
+                        if surface == "studio":
+                            select_btn = ui.button(
+                                icon="o_check_box" if doc_id in selected_ids else "o_check_box_outline_blank",
+                            ).props('flat round dense aria-label="Выбрать документ"').classes("sov-icon-btn")
+                            select_btn.on("click.stop", lambda _e, value=doc_id: _toggle_document_selection(value))
                         with ui.element("div").classes("sov-document-icon"):
                             ui.icon(_file_icon(file_name))
                         with ui.column().classes("sov-document-copy"):
@@ -2761,12 +2803,12 @@ def build_documents() -> None:
                                     "sov-document-path"
                                 )
                     indexed = str(row.get("status", "")).upper() == "INDEXED"
-                    meta = [_file_kind(file_name), _format_size(row.get("file_size")), "в индексе" if indexed else "нужна проверка"]
+                    meta = [
+                        _file_kind(file_name),
+                        _format_size(row.get("file_size")),
+                        "есть в RAG" if indexed else "нет текста в RAG",
+                    ]
                     _label("  ·  ".join(meta), size="10.4px", color="var(--dim)").classes("sov-document-meta-text")
-                    if str(row.get("status") or "").upper() == "SKIPPED" and _file_kind(file_name) in {"RVT", "DWG", "IFC"}:
-                        _label("Для просмотра нужна CAD/BIM-проекция", size="10.3px", color="var(--warn)").classes(
-                            "sov-document-attention"
-                        )
 
             open_paths = {str(item) for item in (state.get("document_tree_open") or []) if str(item)}
 
@@ -2783,6 +2825,18 @@ def build_documents() -> None:
                         lambda event, value=path: _remember_document_tree_folder(value, bool(event.value))
                     )
                     with folder_expansion:
+                        if surface == "studio":
+                            group_ids = [
+                                str(item.get("id") or "")
+                                for item in folder.get("files") or []
+                                if str(item.get("id") or "")
+                            ]
+                            group_selected = bool(group_ids) and set(group_ids).issubset(selected_ids)
+                            ui.button(
+                                "Снять том" if group_selected else "Выбрать том",
+                                icon="o_library_add_check",
+                                on_click=lambda _e, values=group_ids: _select_document_group(values),
+                            ).props("flat dense no-caps").classes("sov-studio-volume-select")
                         for row in direct_files.get(path, []):
                             _render_document_row(row)
                         if depth < 7:
@@ -3367,7 +3421,7 @@ def build_documents() -> None:
                     with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
                         _label(label, size="11.5px", weight=800).style("flex:1;min-width:220px;")
                         _badge(source, "tag-dim" if source == "manual" else "tag-acc")
-                    if source == "manual":
+                    if source == "manual" or not value:
                         control = (
                             ui.textarea(value=value, placeholder="Введите содержание…")
                             if key in {"body", "content", "decision", "decisions", "agenda", "assignments", "notes"}
@@ -3450,38 +3504,116 @@ def build_documents() -> None:
                         color="var(--dim)",
                     ).style("margin-top:4px;")
 
-    def _render_fragments() -> None:
-        rows = state["hits"] or state["chunks"]
-        if not rows:
-            with ui.element("div").style(
-                "border:1px dashed var(--border);border-radius:8px;padding:18px;margin-top:12px;"
-            ):
+    def _render_document_reader() -> None:
+        """One-purpose document view: indexed content plus the original file."""
+        file_data = state.get("composition_file") if isinstance(state.get("composition_file"), dict) else {}
+        selected_doc_id = str(file_data.get("doc_id") or state.get("selected_doc_id") or "")
+        selected_name = str(file_data.get("file_name") or state.get("selected_doc_name") or "")
+        if state.get("composition_file_loading"):
+            with ui.row().classes("items-center sov-document-reader-loading"):
+                ui.spinner(size="sm")
+                _label("Читаю содержимое из RAG…", size="12px", color="var(--dim)")
+            return
+        if state.get("hits"):
+            rows = [item for item in state.get("hits") or [] if isinstance(item, dict)]
+            with ui.element("section").classes("sov-document-reader-summary"):
                 _label(
-                    "Здесь будет текст документа или результаты поиска. Пока пусто, зато честно.",
+                    f"Результаты поиска · {len(rows)}",
+                    size="13px",
+                    weight=900,
+                ).classes("sov-document-reader-heading")
+                _label(
+                    "Показаны фрагменты, которые реально есть в индексе.",
+                    size="11px",
+                    color="var(--dim)",
+                ).classes("sov-document-reader-note")
+        elif selected_doc_id:
+            rows = [item for item in file_data.get("chunks") or state.get("chunks") or [] if isinstance(item, dict)]
+            with ui.element("section").classes("sov-document-reader-summary"):
+                with ui.row().classes("items-center w-full sov-document-reader-file"):
+                    with ui.element("div").classes("sov-document-reader-icon"):
+                        ui.icon(_file_icon(selected_name))
+                    with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
+                        _label(
+                            selected_name.rsplit("/", 1)[-1] or "Документ",
+                            size="15px",
+                            weight=900,
+                        ).classes("sov-document-reader-heading")
+                        _label(
+                            f"В RAG: {int(file_data.get('total') or len(rows))} фрагментов",
+                            size="11px",
+                            color="var(--dim)",
+                        ).classes("sov-document-reader-note")
+                    ui.button(
+                        "Показать оригинал",
+                        icon="o_open_in_new",
+                        on_click=lambda _e, name=selected_name, value=selected_doc_id: _schedule(
+                            _open_native_file_name(name, value)
+                        ),
+                    ).props("unelevated no-caps").classes(
+                        "sov-document-reader-original"
+                    )
+        elif state.get("selected_dataset"):
+            indexed = sum(
+                1
+                for item in state.get("documents") or []
+                if str(item.get("status") or "").upper() == "INDEXED"
+            )
+            with ui.element("section").classes("sov-document-reader-empty"):
+                ui.icon("o_description")
+                _label("Выберите файл", size="14px", weight=900)
+                _label(
+                    f"В этом датасете доступно файлов: {indexed}.",
+                    size="11.5px",
                     color="var(--dim)",
                 )
             return
+        else:
+            with ui.element("section").classes("sov-document-reader-empty"):
+                ui.icon("o_folder_open")
+                _label("Выберите датасет и файл", size="14px", weight=900)
+            return
 
-        for item in rows:
-            title = item.get("section_heading") or item.get("parent_heading") or item.get("doc_name") or "фрагмент"
-            text = str(item.get("snippet") or item.get("text") or "")
-            with ui.element("div").classes("w-full").style(
-                "border-bottom:1px solid var(--border);padding:12px 0;"
-            ):
-                with ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;"):
-                    _badge(f"часть {item.get('chunk_ord')}", "tag-acc")
-                    if item.get("rank"):
-                        _badge(f"совпадение {item.get('rank')}")
-                    _label(str(title), size="12px", weight=800).style(
-                        "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:160px;flex:1;"
-                    )
-                _label(str(item.get("doc_name") or ""), size="11px", color="var(--dim)").style(
-                    "margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                )
-                ui.label(text).style(
-                    "white-space:pre-wrap;font-size:12px;line-height:1.5;color:var(--text);"
-                    "margin-top:8px;font-family:var(--font-chat);"
-                )
+        if not rows:
+            with ui.element("section").classes("sov-document-reader-empty"):
+                _label("Извлечённого текста для этого файла нет.", size="12px", color="var(--dim)")
+            return
+        _label("Что есть в RAG", size="13px", weight=900).classes(
+            "sov-document-reader-section-title"
+        )
+        for index, item in enumerate(rows[:40], 1):
+            doc_name = str(item.get("doc_name") or selected_name or "")
+            heading = _plain_index_text(
+                item.get("section_heading") or item.get("parent_heading")
+            )
+            text = str(item.get("snippet") or item.get("text") or "").strip()
+            page = item.get("page") or item.get("source_page") or item.get("page_number")
+            with ui.element("article").classes("sov-document-reader-fragment"):
+                with ui.row().classes("items-center w-full sov-document-reader-fragment-head"):
+                    _label(
+                        heading or (f"Страница {page}" if page else f"Фрагмент {index}"),
+                        size="12px",
+                        weight=850,
+                    ).classes("sov-document-reader-fragment-title")
+                    if doc_name and (state.get("hits") or doc_name != selected_name):
+                        _label(
+                            doc_name.rsplit("/", 1)[-1],
+                            size="10.5px",
+                            color="var(--dim)",
+                        ).classes("sov-document-reader-source")
+                    result_doc_id = str(item.get("doc_id") or "")
+                    if state.get("hits") and result_doc_id:
+                        ui.button(
+                            icon="o_open_in_new",
+                            on_click=lambda _e, value=result_doc_id: _schedule(
+                                _open_native_document(value)
+                            ),
+                        ).props(
+                            'flat round aria-label="Показать оригинал"'
+                        ).classes("sov-document-reader-result-open").tooltip(
+                            "Показать оригинал"
+                        )
+                _label(text, size="11.5px").classes("sov-document-reader-fragment-text")
 
     def _render_view() -> None:
         panel = refs.get("view")
@@ -3491,49 +3623,51 @@ def build_documents() -> None:
         with panel:
             with ui.row().classes("items-center w-full sov-docs-view-head"):
                 with ui.element("div").classes("sov-docs-view-icon"):
-                    ui.icon("o_folder_open")
+                    ui.icon(
+                        "o_folder_open"
+                        if surface == "documents"
+                        else ("o_edit_document" if surface == "studio" else "o_view_in_ar")
+                    )
                 _label(state["view_title"], size="15px", weight=900).classes("sov-docs-view-title").style(
                     "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"
                 )
-                with ui.row().classes("sov-docs-view-tabs"):
-                    ui.button("Л.И.С.Т.", icon="o_account_tree", on_click=_show_map).props(
-                        "flat no-caps"
-                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "map" else "sov-docs-view-tab")
-                    ui.button("Текст", icon="o_article", on_click=_show_fragments).props(
-                        "flat no-caps"
-                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "fragments" else "sov-docs-view-tab")
-                    ui.button("CAD/BIM", icon="o_view_in_ar", on_click=_show_cad_inventory).props(
-                        "flat no-caps"
-                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "cad" else "sov-docs-view-tab")
-                    ui.button("Студия", icon="o_edit_document", on_click=_show_office_studio).props(
-                        "flat no-caps"
-                    ).classes("sov-docs-view-tab sov-docs-view-tab--active" if state["view_mode"] == "studio" else "sov-docs-view-tab")
-                with ui.button(icon="o_more_horiz").props(
-                    'flat round aria-label="Дополнительные действия"'
-                ).classes("sov-docs-more"):
-                    with ui.menu().classes("sov-tools-menu"):
-                        ui.menu_item("Обновить карту", lambda: _schedule(_refresh_memory()))
-                        ui.menu_item("Скопировать источники", _copy_sources)
             _label(state["view_note"], size="11.5px", color="var(--dim)").classes("sov-docs-view-note")
-            if state["view_mode"] == "map":
-                _render_map()
-            elif state["view_mode"] == "cad":
+            if surface == "documents":
+                _render_document_reader()
+            elif surface == "cad_bim":
                 _render_cad_inventory()
-            elif state["view_mode"] == "studio":
-                _render_office_studio()
             else:
-                _render_fragments()
+                _render_office_studio()
 
     def _render_all() -> None:
         _render_datasets()
         _render_documents()
         _render_view()
 
+    async def _load_surface() -> None:
+        if surface == "cad_bim":
+            await _load_cad_inventory()
+            return
+        await _load_datasets()
+        if surface == "studio":
+            await _load_office_studio()
+
+    surface_title = {
+        "documents": "Документы",
+        "studio": "Студия",
+        "cad_bim": "CAD/BIM",
+    }[surface]
+    surface_subtitle = {
+        "documents": "Содержимое в RAG и оригинал файла",
+        "studio": "Датасет → том → файлы-основания → проверяемый черновик",
+        "cad_bim": "Модели и проекции — отдельно от документов",
+    }[surface]
+
     with ui.column().classes("w-full h-full gap-0 sov-docs-shell"):
         with ui.row().classes("items-center w-full sov-docs-topbar"):
             with ui.column().classes("sov-docs-heading"):
-                _label("Документы", size="16px", weight=900).classes("sov-docs-title")
-                _label("Датасеты, файлы, карта проекта и Студия", size="11.5px", color="var(--dim)").classes(
+                _label(surface_title, size="16px", weight=900).classes("sov-docs-title")
+                _label(surface_subtitle, size="11.5px", color="var(--dim)").classes(
                     "sov-docs-subtitle"
                 )
             q_input = ui.input(placeholder="Найти файл, шифр, раздел или текст…").props("outlined clearable").classes(
@@ -3545,15 +3679,24 @@ def build_documents() -> None:
             q_input.on("keydown.enter", lambda _e: _schedule(_search("dataset" if state["selected_dataset"] else "all")))
             with ui.row().classes("items-center").style("gap:5px;flex-wrap:wrap;") as readiness_summary:
                 refs["readiness_summary"] = readiness_summary
-            ui.button("Найти", icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
+            search_button = ui.button("Найти", icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
                 'flat no-caps aria-label="Искать"'
             ).classes("sov-docs-search-btn")
+            if surface == "cad_bim":
+                q_input.set_visibility(False)
+                readiness_summary.set_visibility(False)
+                search_button.set_visibility(False)
 
         with ui.row().classes("w-full flex-1 no-wrap sov-docs-workspace"):
-            with ui.column().classes("h-full no-wrap sov-docs-datasets-panel"):
+            with ui.column().classes("h-full no-wrap sov-docs-datasets-panel") as datasets_column:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_dataset")
-                    _label("Датасеты", size="12px", color="var(--dim)", weight=900)
+                    _label(
+                        "Выберите датасет" if surface == "studio" else "Датасеты",
+                        size="12px",
+                        color="var(--dim)",
+                        weight=900,
+                    )
                 with ui.row().classes("sov-dataset-group-filter"):
                     refs["dataset_group_buttons"] = {}
                     for value, label in DATASET_GROUP_OPTIONS.items():
@@ -3573,16 +3716,24 @@ def build_documents() -> None:
                 dataset_filter.on("keydown.enter", lambda _e: _schedule(_load_datasets(select_first=True)))
                 with ui.column().classes("w-full gap-2 sov-docs-list") as datasets_panel:
                     refs["datasets"] = datasets_panel
+                if surface == "cad_bim":
+                    datasets_column.set_visibility(False)
 
-            with ui.column().classes("h-full no-wrap sov-docs-files-panel"):
+            with ui.column().classes("h-full no-wrap sov-docs-files-panel") as files_column:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_folder_copy")
-                    _label("Файлы и папки", size="12px", color="var(--dim)", weight=900)
+                    _label(
+                        "Тома и файлы-основания" if surface == "studio" else "Файлы",
+                        size="12px",
+                        color="var(--dim)",
+                        weight=900,
+                    )
                 refs["dataset_data_button"] = ui.button(
                     "Данные о датасете",
                     icon="o_dataset",
                     on_click=_show_dataset_data,
                 ).props("flat no-caps").classes("w-full sov-dataset-data-button")
+                refs["dataset_data_button"].set_visibility(False)
                 service_upload = ui.upload(
                     label="Добавить файл",
                     auto_upload=True,
@@ -3602,8 +3753,12 @@ def build_documents() -> None:
                 document_filter.on("keydown.enter", lambda _e: _schedule(_load_documents()))
                 with ui.column().classes("w-full gap-2 sov-docs-list") as documents_panel:
                     refs["documents"] = documents_panel
+                if surface == "cad_bim":
+                    files_column.set_visibility(False)
 
             with ui.column().classes("h-full no-wrap sov-docs-view-panel") as view_panel:
                 refs["view"] = view_panel
+                if surface == "cad_bim":
+                    view_panel.style("width:100%;max-width:none;")
 
-    ui.timer(0.15, lambda: _schedule(_load_datasets()), once=True)
+    ui.timer(0.15, lambda: _schedule(_load_surface()), once=True)

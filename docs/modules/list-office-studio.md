@@ -4,8 +4,8 @@
 
 ## Назначение
 
-Студия превращает действующие дескрипторы Forms в пользовательский GUI-поток:
-выбрать шаблон и объект, привязать файлы-основания, получить от Л.Е.С. предложения
+Студия превращает действующие дескрипторы Forms в самостоятельный пользовательский GUI-поток:
+выбрать датасет, том и конкретные файлы-основания, затем шаблон и объект, получить от Л.Е.С. предложения
 по ручным полям с evidence/confidence, проверить и применить их, создать DOCX/XLSX
 и скачать его из журнала ревизий.
 
@@ -14,7 +14,7 @@
 
 ## Точки входа
 
-- GUI: `sovushka/pages/documents.py` → «Документы» → «Студия»;
+- GUI: `sovushka/pages/documents.py` → отдельная вкладка «Студия»;
 - API: `POST /api/forms/agent-draft`, `GET/POST /api/forms/artifacts`,
   `GET /api/forms/artifacts/{revision_id}/download`;
 - typed IR: `proxy/services/list_office_agent_service.py`;
@@ -45,13 +45,16 @@ revision, state=`draft`, форму, поля и их deterministic source, не
 
 ## Поток
 
-1. GUI получает реестр `config/forms` и список объектов.
+1. GUI получает список датасетов; пользователь выбирает датасет, том/папку и точные
+   файлы-основания, после чего Студия получает реестр `config/forms` и список объектов.
 2. Поля разрешаются действующим Forms-движком: `project.*`, `field.*`, `edges.*`,
    `date.today`, `manual` — без LLM.
 3. Пользователь видит источник и пустое состояние каждого поля.
 4. `POST /api/forms/agent-draft` читает bounded exact/FTS-фрагменты только выбранных
-   документов и вызывает штатный schema-constrained provider LES.
-5. Модель возвращает только ручные поля: `grounded|assumption|missing`, confidence,
+   документов, делает field-specific поиск (в том числе имени и адреса объекта) и вызывает
+   штатный schema-constrained provider LES.
+5. Модель возвращает предложения для всех фактически незаполненных полей:
+   `grounded|assumption|missing`, confidence,
    evidence ids и комментарий. Код принимает лишь известные ключи и серверные evidence ids;
    неподтверждённый `grounded` становится видимым assumption/missing.
 6. GUI показывает предложения и фрагменты-основания. «Применить к полям» не создаёт файл.
@@ -73,6 +76,7 @@ revision, state=`draft`, форму, поля и их deterministic source, не
 - `tests/test_list_office_service.py` — append-only ревизии, неизменность источника,
   missing fields, provenance, SHA fail-closed и path guard;
 - `tests/test_list_office_agent_service.py` — exact selected docs, schema/evidence gate,
+  извлечение имени/адреса из выбранного проектного листа при пустой карточке объекта,
   model failure, assumption downgrade, review gate и сохранение IR в manifest;
 - `tests/test_forms_service_w113.py`, `tests/test_forms_templates.py` — резолв и DOCX/XLSX;
 - `tests/test_static_assets.py` — GUI-проводка Студии;

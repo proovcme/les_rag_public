@@ -86,7 +86,10 @@ Live baseline on 2026-06-01:
 - Keep secrets out of git docs. Use environment variables or the operator password manager for V.O.L.K. keys.
 - Treat `VALIDATOR_BACKEND=rules` as the current stable live default; re-evaluate Core ML validator only after golden accuracy, latency and confidence-threshold gates are clean.
 - Keep `cpu_and_ne` Core ML experiments behind a focused stability gate; previous canaries showed native crash risk.
-- Treat FIRE/HVAC quality as a domain acceptance problem, not as one-off answer fixes. Run `uv run python tools/rag_golden_set.py --cases golden/domain_fire_hvac_set.json` after retrieval/router changes; current baseline is `16/16`.
+- Treat FIRE/HVAC quality as acceptance of a concrete user-owned corpus, not as one-off answer
+  fixes. When that corpus contains the golden sources, run `uv run python tools/rag_golden_set.py
+  --cases golden/domain_fire_hvac_set.json` and require `16/16`. An empty general `les_rag` is
+  `N/A: corpus absent`; never seed system norms or weaken the cases to make it green.
 - Preserve the SQLite `structured_rules` table. Do not drop or wipe it unless explicitly executing a targeted structured index rebuild.
 - Keep the `_parse_with_markitdown` fallback pipeline intact to guarantee clean mammoth/pandas conversion if python dependencies are altered.
 - **MLX VLM OCR Operational Safeguards** (актуально только при `RAG_OCR_BACKEND=mlx`; дефолтный скан-OCR теперь ollama/gemma — см. выше):

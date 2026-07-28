@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
@@ -24,6 +25,7 @@ namespace LesMailPoller
             public long OldestTicks;
             public HashSet<string> NewestEntryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             public HashSet<string> OldestEntryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            public bool BackfillComplete;
         }
 
         private static string StateRoot()
@@ -69,6 +71,9 @@ namespace LesMailPoller
 
         private static int Main(string[] args)
         {
+            if (args.Length > 0 && args[0] == "--self-test-cursor")
+                return CursorSelfTest();
+            Stopwatch runClock = Stopwatch.StartNew();
             dynamic app;
             try
             {
@@ -112,8 +117,37 @@ namespace LesMailPoller
                 Log("scan failed: " + error.Message);
                 return 3;
             }
-            Log("run complete scanned=" + scanned + " registered=" + registered);
+            Log("run complete scanned=" + scanned + " registered=" + registered +
+                " duration_ms=" + runClock.ElapsedMilliseconds);
             return 0;
+        }
+
+        private static int CursorSelfTest()
+        {
+            const string storeId = "self-test-store";
+            const string folderId = "self-test-folder";
+            try
+            {
+                string path = CursorPath(storeId, folderId);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, "11|7|||False", Encoding.ASCII);
+                Cursor incomplete = LoadCursor(storeId, folderId);
+                if (incomplete.NewestTicks != 11 || incomplete.OldestTicks != 7 ||
+                    incomplete.BackfillComplete) return 71;
+                incomplete.BackfillComplete = true;
+                incomplete.NewestEntryIds.Add("newest");
+                incomplete.OldestEntryIds.Add("oldest");
+                SaveCursor(storeId, folderId, incomplete);
+                Cursor completed = LoadCursor(storeId, folderId);
+                if (!completed.BackfillComplete ||
+                    !completed.NewestEntryIds.Contains("newest") ||
+                    !completed.OldestEntryIds.Contains("oldest")) return 72;
+                return 0;
+            }
+            catch
+            {
+                return 73;
+            }
         }
 
         private static dynamic GetOutlook(bool allowStart)
@@ -205,15 +239,18 @@ namespace LesMailPoller
             // Outlook is sorted newest-first. Incremental items are confirmed
             // oldest-first so a failure can never be hidden by a newer cursor.
             var incremental = new List<int>();
-            if (baselineNewest > 0)
+            if (baselineNewest > 0 || cursor.BackfillComplete)
             {
                 for (int index = 1; index <= count; index++)
                 {
                     DateTime received;
                     string entryId;
                     if (!TryReceived(items, index, out received, out entryId)) continue;
-                    if (received.Ticks < baselineNewest) break;
-                    if (received.Ticks == baselineNewest && cursor.NewestEntryIds.Contains(entryId)) continue;
+                    if (baselineNewest > 0)
+                    {
+                        if (received.Ticks < baselineNewest) break;
+                        if (received.Ticks == baselineNewest && cursor.NewestEntryIds.Contains(entryId)) continue;
+                    }
                     incremental.Add(index);
                 }
                 for (int position = incremental.Count - 1; position >= 0 && registered < BatchLimit; position--)
@@ -226,8 +263,15 @@ namespace LesMailPoller
 
             // Backfill is confirmed newest-to-oldest. The oldest cursor moves
             // after every HTTP 2xx, so a failed item is retried on the next run.
-            for (int index = 1; index <= count && registered < BatchLimit; index++)
+            if (cursor.BackfillComplete || registered >= BatchLimit) return;
+            bool reachedOldestItem = true;
+            for (int index = 1; index <= count; index++)
             {
+                if (registered >= BatchLimit)
+                {
+                    reachedOldestItem = false;
+                    break;
+                }
                 DateTime received;
                 string entryId;
                 if (!TryReceived(items, index, out received, out entryId)) continue;
@@ -236,6 +280,11 @@ namespace LesMailPoller
                 if (!RegisterItemAt(
                     items, index, storeId, storeLabel, folder, folderId,
                     false, ref cursor, ref scanned, ref registered)) return;
+            }
+            if (reachedOldestItem)
+            {
+                cursor.BackfillComplete = true;
+                SaveCursor(storeId, folderId, cursor);
             }
         }
 
@@ -401,6 +450,7 @@ namespace LesMailPoller
                 if (values.Length > 1) Int64.TryParse(values[1], out cursor.OldestTicks);
                 if (values.Length > 2) cursor.NewestEntryIds = DecodeSet(values[2]);
                 if (values.Length > 3) cursor.OldestEntryIds = DecodeSet(values[3]);
+                if (values.Length > 4) Boolean.TryParse(values[4], out cursor.BackfillComplete);
             }
             catch { }
             return cursor;
@@ -412,7 +462,8 @@ namespace LesMailPoller
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             string temporary = path + ".tmp";
             string value = cursor.NewestTicks + "|" + cursor.OldestTicks + "|" +
-                EncodeSet(cursor.NewestEntryIds) + "|" + EncodeSet(cursor.OldestEntryIds);
+                EncodeSet(cursor.NewestEntryIds) + "|" + EncodeSet(cursor.OldestEntryIds) + "|" +
+                cursor.BackfillComplete;
             File.WriteAllText(temporary, value, Encoding.ASCII);
             if (File.Exists(path)) File.Replace(temporary, path, null);
             else File.Move(temporary, path);

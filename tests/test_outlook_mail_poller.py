@@ -18,6 +18,12 @@ def test_outlook_sidecar_is_read_only_resumable_and_uploads_unicode_msg():
     assert "if (!RegisterItemAt(" in source
     assert "NewestEntryIds" in source
     assert "OldestEntryIds" in source
+    assert "BackfillComplete" in source
+    assert "if (cursor.BackfillComplete || registered >= BatchLimit) return;" in source
+    assert "cursor.BackfillComplete = true;" in source
+    assert '--self-test-cursor' in source
+    assert "CursorSelfTest()" in source
+    assert "duration_ms=" in source
     assert "if (!Register(" in source
     assert "GetItemFromID(entryId, storeId)" in source
     assert "item.Delete(" not in source
@@ -25,16 +31,17 @@ def test_outlook_sidecar_is_read_only_resumable_and_uploads_unicode_msg():
     assert ".UnRead =" not in source
 
 
-def test_windows_bootstrap_installs_interactive_three_minute_task():
+def test_windows_bootstrap_installs_bounded_interactive_ten_minute_task():
     setup = (ROOT / "clients/outlook_mail_poller/setup_task.ps1").read_text(encoding="utf-8")
     bootstrap = (ROOT / "installers/windows/app/bootstrap.ps1").read_text(encoding="utf-8-sig")
 
     assert "LES E.ZH.I.K. Outlook Collector" in setup
+    assert "[int]$EveryMinutes = 10" in setup
     assert "/sc minute /mo $EveryMinutes" in setup
     assert "/it /f" in setup
     assert "collector/import" in setup
     assert "outlook_mail_poller\\setup_task.ps1" in bootstrap
-    assert "-EveryMinutes 3" in bootstrap
+    assert "-EveryMinutes 10" in bootstrap
     production = (ROOT / "tools/windows_production_deploy.ps1").read_text(encoding="utf-8-sig")
     assert "LesMailPoller.exe" in production
     assert "--probe" in production
@@ -44,6 +51,11 @@ def test_windows_bootstrap_installs_interactive_three_minute_task():
     assert "Unregister-ScheduledTask -TaskName $probeTaskName" in production
     assert "/api/mail/accounts" in production
     assert "password" in production
+
+    platform_gate = (ROOT / "tools/platform_release_gate.py").read_text(encoding="utf-8")
+    assert "def verify_windows_mail_collector()" in platform_gate
+    assert 'verify_windows_mail_collector()' in platform_gate
+    assert '"--self-test-cursor"' in platform_gate
 
 
 def test_mail_has_a_dedicated_offline_and_windows_static_release_gate():

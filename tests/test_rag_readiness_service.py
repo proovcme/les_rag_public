@@ -68,6 +68,42 @@ def test_general_index_with_bad_contract_is_degraded(monkeypatch):
     assert result["reason"] == "contract_incompatible"
 
 
+def test_general_rag_without_user_documents_is_empty_not_blocked(monkeypatch):
+    monkeypatch.setattr(service, "rag_collection_name", lambda: "les_rag")
+    monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 0)
+    monkeypatch.setattr(
+        service,
+        "_lexical_status",
+        lambda collection, dataset_id=None: {
+            "collection": collection,
+            "ready": True,
+            "stale": False,
+            "chunks": 0,
+            "point_count": 0,
+            "indexed_count": 0,
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "index_contract_status",
+        lambda: {
+            "status": "compatible",
+            "compatible": True,
+            "actual": {
+                "point_embedding_fingerprint": "fp",
+                "generation_points": 0,
+            },
+        },
+    )
+
+    result = service._general_status(FakeClient(points=0), {}, dataset_id=None)
+
+    assert result["state"] == "empty"
+    assert result["reason"] == "no_user_documents"
+    assert result["ready"] is False
+    assert result["rrf_ready"] is False
+
+
 def test_general_rrf_is_not_ready_without_alias_lexical_projection(monkeypatch):
     monkeypatch.setattr(service, "rag_collection_name", lambda: "les_rag")
     monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 10)

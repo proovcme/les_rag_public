@@ -1,0 +1,69 @@
+name: multiplatform-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact product version from config/version.json
+        required: true
+        type: string
+      notes:
+        description: Public release notes
+        required: true
+        type: string
+
+concurrency:
+  group: les-production-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: [self-hosted, macOS, ARM64, les-release]
+    timeout-minutes: 240
+    environment: production
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Sync frozen environment
+        run: uv sync --frozen
+
+      - name: Confirm exact release version
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          actual="$(uv run python -c 'import json; print(json.load(open("config/version.json"))["product_version"])')"
+          test "$actual" = "$EXPECTED_VERSION"
+
+      - name: Prepare release notes
+        env:
+          RELEASE_NOTES: ${{ inputs.notes }}
+        run: printf '%s\n' "$RELEASE_NOTES" > "$RUNNER_TEMP/les-release-notes.md"
+
+      - name: Build, smoke and publish macOS plus Windows
+        env:
+          # Fine-grained token: Actions read on this private repo and
+          # Contents write on proovcme/les_rag_public.
+          GH_TOKEN: ${{ secrets.LES_RELEASE_TOKEN }}
+        run: >-
+          uv run python tools/multiplatform_release.py
+          --notes-file "$RUNNER_TEMP/les-release-notes.md"
+          --publish
+
+      - name: Preserve release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: les-release-evidence-${{ inputs.version }}
+          path: |
+            dist/multiplatform-release.json
+            dist/windows-patch-release.json
+            dist/LES-Setup.exe.sha256
+            dist/LES.dmg.sha256
+          if-no-files-found: warn
+          retention-days: 90

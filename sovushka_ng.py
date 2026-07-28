@@ -243,6 +243,8 @@ async def classic_chat_page(request: Request):
         tab_chat = tr["chat"]
         tab_samovar = tr.get("samovar")
         tab_documents = tr.get("documents")
+        tab_studio = tr.get("studio")
+        tab_cad_bim = tr.get("cad_bim")
         tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
@@ -266,7 +268,13 @@ async def classic_chat_page(request: Request):
                     build_samovar()
             if tab_documents:
                 with ui.tab_panel(tab_documents):
-                    build_documents()
+                    build_documents(surface="documents")
+            if tab_studio:
+                with ui.tab_panel(tab_studio):
+                    build_documents(surface="studio")
+            if tab_cad_bim:
+                with ui.tab_panel(tab_cad_bim):
+                    build_documents(surface="cad_bim")
             if tab_mail:
                 with ui.tab_panel(tab_mail):
                     build_mail()
@@ -278,6 +286,7 @@ async def classic_chat_page(request: Request):
     )
     _last_tab = "AI ЧАТ" if _forced_chat_tab else app.storage.user.get("last_chat_tab", "AI ЧАТ")
     _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents,
+               "Студия": tab_studio, "CAD/BIM": tab_cad_bim,
                "Почта": tab_mail, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
         tabs.set_value(_target)
@@ -289,9 +298,8 @@ async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.components.logterm import build_log_terminal
     from sovushka.pages.diag import build_diag
-    from sovushka.pages.documents import build_documents
     from sovushka.pages.instrumenty import build_instrumenty
-    from sovushka.pages.mail import build_mail
+    from sovushka.pages.mail import build_mail_settings
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
 
@@ -322,8 +330,7 @@ async def classic_admin_page(request: Request):
 
         tab_diag       = tr.get("diag")
         tab_samovar    = tr.get("samovar")
-        tab_documents  = tr.get("documents")
-        tab_mail       = tr.get("mail")
+        tab_mail_settings = tr.get("mail_settings")
         tab_instrumenty = tr.get("instrumenty")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_volk       = tr.get("volk")
@@ -347,10 +354,8 @@ async def classic_admin_page(request: Request):
                 build_diag()
             with ui.tab_panel(tab_samovar):
                 build_samovar()
-            with ui.tab_panel(tab_documents):
-                build_documents()
-            with ui.tab_panel(tab_mail):
-                build_mail()
+            with ui.tab_panel(tab_mail_settings):
+                build_mail_settings()
             with ui.tab_panel(tab_instrumenty):
                 build_instrumenty()
             with ui.tab_panel(tab_qdrant_viz):
@@ -366,8 +371,7 @@ async def classic_admin_page(request: Request):
     _tab_map = {
         "Состояние": tab_diag,
         "Датасеты":  tab_samovar,
-        "Документы": tab_documents,
-        "Почта":     tab_mail,
+        "Настройка почты": tab_mail_settings,
         "Инструменты": tab_instrumenty,
         "Визуал":    tab_qdrant_viz,
         "Доступ":    tab_volk,

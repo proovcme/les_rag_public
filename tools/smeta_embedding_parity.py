@@ -43,12 +43,15 @@ def main() -> int:
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     parser.add_argument("--embed-url", default="http://127.0.0.1:8080")
     parser.add_argument("--certify", action="store_true")
+    parser.add_argument("--manifest-path", type=Path)
     parser.add_argument("--report-path", type=Path, required=True)
     args = parser.parse_args()
 
     config = active_base()
     base_path = Path(config["base_path"])
-    manifest_path = base_path.with_name("les_smeta_norm_rag_manifest.json")
+    manifest_path = args.manifest_path or base_path.with_name(
+        "les_smeta_norm_rag_manifest.json"
+    )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     rows = _sample(_rows(base_path), max(2, args.samples))
     texts = [row["text"] for row in rows]

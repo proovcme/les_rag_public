@@ -55,6 +55,22 @@ R1 и R2 — append-only ревизии. R2 получает всю ВОР, от
 пользовательской `mapping_locked`-ревизии. Session/SSE/job/checkpoint/batching/seed — operational
 layer; Ollama/CUDA/Qdrant — runtime profile.
 
+### Граница источников и RAG
+
+Канонический сметный модуль собирается только по контуру
+`ФГИС/ФСНБ → unified parquet → typed SQLite → dedicated smeta navigation index`.
+Typed SQLite хранит точные таблицы и ресурсы; `les_smeta_norm_cards` хранит только
+перестраиваемую проекцию `dense + bm25_sparse`. Поиск выполняет native Qdrant RRF,
+после чего карточки обязательно перечитываются из той же SQLite и общий shortlist
+проходит configured reranker. Выбранная моделью таблица читается из SQLite полностью
+в официальном порядке и не ранжируется.
+
+Общий `les_rag` принадлежит пользовательским документам. Сгенерированные карточки
+`SMETA_SERVICE`, нормативные и ценовые module-owned projections не попадают в него
+через `sync-smart`; их ingestion обязан иметь отдельный typed-контракт. Поэтому
+пустой общий RAG при отсутствии пользовательских документов — корректное состояние,
+а не причина смешивать в него сметный справочник.
+
 ## Запрещено
 
 - отдельный `simple_rag` или другой второй сметный движок;
@@ -63,6 +79,7 @@ layer; Ollama/CUDA/Qdrant — runtime profile.
 - копирование профессиональных полей старой нормы при смене нормы в R2;
 - выдача transport failure за профессиональное решение «нормы нет»;
 - финальный XLSX до явного пользовательского lock.
+- публикация module-owned/FGIS projections в общем пользовательском `les_rag`.
 
 ## Что переносится из экспериментов
 

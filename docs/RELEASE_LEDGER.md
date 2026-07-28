@@ -7,16 +7,52 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.24.47 (dev; 0.24.46 published)
-номер сборки:              468     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.468 (dev; Windows не выпускался)
+версия продукта (SemVer):  0.25.0 (dev; 0.24.46 published)
+номер сборки:              469     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.469 (dev; Windows не выпускался)
 ветка выпуска:             main
-dev implementation:       main; 0.24.47 test/retrieval repair
+dev implementation:       main; 0.25.0 product/RAG boundary release
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.24.46
-следующий выпуск:          0.24.47 после восстановления smeta Qdrant/RRF/rerank smoke
+следующий выпуск:          0.25.0 после полного release gate
 рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
 ```
+
+> 0.25.0 / build 469 — продуктовые экраны, отдельный ФГИС-сметный RAG и user-owned общий корпус
+>
+> Дата: 2026-07-28
+> Статус: dev; clean smeta generation/release gate выполняются.
+> Каноническая сметная база выровнена на более новую прошедшую integrity редакцию ФГИС/ФСНБ:
+> 49 818 норм, 504 891 ресурсов и 1 576 ФСЭМ; прежняя редакция сохранена в recovery, immutable
+> release baseline пересобрана и проверена. Общий `les_rag` закреплён за документами пользователя:
+> `sync-smart` исключает module-owned generated projections, а пробная регистрация 265
+> `SMETA_SERVICE`-карточек отменена до индексации с резервной копией MetaDB.
+> Сметный physical generation получает отдельный manifest и не меняет active contract до gate.
+> Readiness требует полного dense/BM25/fingerprint, live native RRF и typed rehydration;
+> `activate_smeta_rag_generation.py` повторно сверяет Qdrant и атомарно переключает alias вместе с
+> active manifest без ложной общей FTS-проекции. Выбранная моделью таблица читается полностью из
+> typed SQLite в официальном порядке; проверочная ГЭСН01-02-101 вернула 14/14 строк.
+> Cross-encoder больше не может полностью стереть сильный hybrid head: окончательный shortlist
+> строится общим RRF по исходному typed+dense+sparse порядку и cross-encoder порядку. Это закрывает
+> живой провал, где технически `rerank_status=ok` превращал релевантные ГЭСНм10 по патч-панели
+> в железобетонные панели, без добавления СКС-эвристик или предметных boosts.
+> Е.Ж.И.К. больше не перечисляет завершённый Outlook backfill каждые три минуты: per-folder cursor
+> фиксирует `backfill_complete`, production interval увеличен до десяти минут, run-duration видна
+> в безопасном логе, а Windows platform gate компилирует настоящий C# sidecar и выполняет cursor
+> self-test. Диагноз подтверждён живой задачей Legion до установки исправления.
+> Совушка разделена по рабочим задачам: «Документы» показывают только фактические RAG-фрагменты
+> выбранного файла и открытие оригинала; «Студия» и `CAD/BIM` вынесены в самостоятельные вкладки.
+> Студия теперь начинается с датасета, тома и явно выбранных файлов-оснований, а пустые
+> `project.name/address` могут быть заполнены проверенным модельным предложением по выбранному
+> проектному листу. Из конфигуратора удалены рабочие «Документы» и «Почта»; вместо них добавлена
+> отдельная «Настройка почты» без просмотра писем.
+> Gate до commit: generation `49 818/49 818`, dense `49 818`, BM25 sparse `49 818`,
+> compatible fingerprint/base `49 818`, native RRF + typed rehydration ready; quality probe
+> `12/12` с обоими каналами в RRF top-5 и без missing cards; hybrid+rerank semantic smoke `2/2`.
+> `make verify` — 2747 collected; `make test` — 2738 passed / 9 skipped; mail release
+> `61 passed` + native Cargo; Mac platform gate и Tauri release binary зелёные; HTTP release smoke
+> `pass=6/warn=3/fail=0`. FIRE/HVAC `16/16` не применим к пустому user-owned `les_rag` и честно
+> зафиксирован как `N/A: corpus absent`, без системного seed. Commit/CI/Legion/publication — далее.
 
 > 0.24.47 / build 468 — truthful test layers, safe smeta base and rerank/table contracts
 >

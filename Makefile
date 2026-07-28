@@ -1,8 +1,9 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-tauri smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release help
+.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform help
 
 PATCH_RELEASE_ARGS ?=
+MULTIPLATFORM_RELEASE_ARGS ?=
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
@@ -35,6 +36,7 @@ help:
 	@echo "make test-mail      — обязательный offline профиль Е.Ж.И.К. (IMAP/registry/RAG/API/UI/Windows static)"
 	@echo "make test-mail-release — test-mail + Rust compile-check Tauri; live Outlook проверяется на Windows"
 	@echo "make test-tauri    — Rust compile-check Tauri desktop shell"
+	@echo "make platform-gate — portable verify → full tests → native Tauri build на текущей ОС"
 	@echo "make smeta-base   — пересобрать checked unified parquet → structured SQLite → SMETA_SERVICE cards без скачивания"
 	@echo "make smeta-base-source — пересобрать raw/cache → unified parquet → smeta-base без скачивания"
 	@echo "make smeta-base-update — скачать/обновить ГЭСН из ФГИС и прогнать полный smeta-base pipeline; args: SMETA_BASE_UPDATE_ARGS='--all --rate 1.0'"
@@ -49,6 +51,7 @@ help:
 	@echo "make ship         — быстрый выкат: ship-check → deploy-runtime → post-deploy-smoke"
 	@echo "make ship-full    — полный выкат версии: ship-full-check → deploy-runtime → post-deploy-smoke"
 	@echo "make patch-release — Windows: gates → Legion build/install/RRF-smoke → artifacts; публикация только PATCH_RELEASE_ARGS='--publish --notes-file ...'"
+	@echo "make release-multiplatform — macOS app/DMG + Legion Windows gates/build + одна атомарная GitHub release"
 	@echo "make version-sync — синхронизировать Cargo/Tauri/паспорт версий из config/version.json"
 
 version-sync:
@@ -95,6 +98,11 @@ test-mail-release: test-mail test-tauri
 test-tauri:
 	$(HOME)/.cargo/bin/cargo check --manifest-path desktop/tauri/src-tauri/Cargo.toml
 
+platform-gate:
+	uv run python tools/platform_release_gate.py verify
+	uv run python tools/platform_release_gate.py test
+	uv run python tools/platform_release_gate.py build
+
 smeta-base:
 	uv run python -m tools.build_smeta_structured_base
 	uv run python -m tools.build_smeta_service_rag
@@ -110,9 +118,11 @@ smoke-active-artifacts:
 	uv run python -m tools.smeta_release_baseline verify-root --root .
 
 smoke-smeta-rerank:
-	uv run python -m tools.smeta_rerank_ab_probe --require-ok \
+	uv run python -m tools.smeta_rerank_ab_probe --require-ok --require-hybrid --require-quality \
 		--query "монтаж блока аварийного питания светильника" \
+		--expect-after "аварийн|блок питания|светильник" \
 		--query "монтаж патч панели 24 порта" \
+		--expect-after "кросс|телефон|коммутац" \
 		--report-path artifacts/smeta_rerank_ab_smoke.json
 
 smoke-basic:
@@ -164,3 +174,6 @@ ship-full: ship-full-check deploy-runtime post-deploy-smoke
 
 patch-release:
 	uv run python tools/patch_release.py $(PATCH_RELEASE_ARGS)
+
+release-multiplatform:
+	uv run python tools/multiplatform_release.py $(MULTIPLATFORM_RELEASE_ARGS)

@@ -115,14 +115,61 @@ def _missing_dense_keys(client: QdrantClient, collection: str) -> set[str]:
     return keys
 
 
-def _write_manifest(base_path: Path, result: dict[str, object]) -> None:
-    target = base_path.with_name("les_smeta_norm_rag_manifest.json")
-    target.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+def _complete_keys(
+    client: QdrantClient,
+    collection: str,
+    *,
+    base_sha256: str,
+    embedding_fingerprint: str,
+) -> set[str]:
+    """Return resumable points that already match this exact projection."""
+    keys: set[str] = set()
+    offset = None
+    complete_filter = models.Filter(
+        must=[
+            models.HasVectorCondition(has_vector="dense"),
+            models.HasVectorCondition(has_vector=SPARSE_VECTOR_NAME),
+            models.FieldCondition(
+                key="base_sha256",
+                match=models.MatchValue(value=base_sha256),
+            ),
+            models.FieldCondition(
+                key="embedding_fingerprint",
+                match=models.MatchValue(value=embedding_fingerprint),
+            ),
+        ]
+    )
+    while True:
+        points, offset = client.scroll(
+            collection_name=collection,
+            scroll_filter=complete_filter,
+            limit=1000,
+            offset=offset,
+            with_payload=["norm_key"],
+            with_vectors=False,
+        )
+        keys.update(
+            str((point.payload or {}).get("norm_key") or "")
+            for point in points
+            if str((point.payload or {}).get("norm_key") or "")
+        )
+        if offset is None:
+            return keys
 
 
-def _write_build_status(base_path: Path, result: dict[str, object]) -> None:
+def _write_manifest(target: Path, result: dict[str, object]) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    tmp.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    tmp.replace(target)
+
+
+def _write_build_status(target: Path, result: dict[str, object]) -> None:
     """Publish sibling-build progress without replacing the active manifest."""
-    target = base_path.with_name("les_smeta_norm_rag_build.json")
+    target.parent.mkdir(parents=True, exist_ok=True)
     tmp = target.with_suffix(target.suffix + ".tmp")
     tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(target)
@@ -138,6 +185,8 @@ def build(
     local_mps: bool = False,
     local_batch_size: int = 32,
     replace_dense: bool = False,
+    manifest_path: Path | None = None,
+    build_status_path: Path | None = None,
 ) -> dict[str, object]:
     config = active_base()
     base_path = Path(config["base_path"])
@@ -150,7 +199,10 @@ def build(
         raise RuntimeError(
             f"normative base is not trusted for navigation: {integrity.get('navigation_reasons')}"
         )
-    rows = _rows(base_path)
+    all_rows = _rows(base_path)
+    rows = all_rows
+    manifest_path = manifest_path or base_path.with_name("les_smeta_norm_rag_manifest.json")
+    build_status_path = build_status_path or base_path.with_name("les_smeta_norm_rag_build.json")
     base_sha = hashlib.sha256(base_path.read_bytes()).hexdigest()
     client = QdrantClient(
         url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"), timeout=180.0, check_compatibility=False
@@ -169,14 +221,15 @@ def build(
                 SPARSE_VECTOR_NAME: models.SparseVectorParams(modifier=models.Modifier.IDF)
             },
         )
-        for field in (
-            "norm_key",
-            "norm_code",
-            "base_type",
-            "measure_unit",
-            "embedding_fingerprint",
-        ):
-            client.create_payload_index(collection, field, models.PayloadSchemaType.KEYWORD)
+    for field in (
+        "norm_key",
+        "norm_code",
+        "base_type",
+        "measure_unit",
+        "base_sha256",
+        "embedding_fingerprint",
+    ):
+        client.create_payload_index(collection, field, models.PayloadSchemaType.KEYWORD)
     embed_model = (
         os.getenv("LES_SMETA_NORM_EMBED_MODEL", "").strip()
         or str(config.get("rag_embedding_model") or "qwen3-embedding-0.6b")
@@ -193,7 +246,7 @@ def build(
         else:
             missing_keys = _missing_dense_keys(client, collection)
             rows = [row for row in rows if row["norm_key"] in missing_keys]
-            dense_start = len(_rows(base_path)) - len(rows)
+            dense_start = len(all_rows) - len(rows)
             print(f"[smeta-norm-rag] dense resume: missing={len(rows)}")
     else:
         dense_start = 0
@@ -212,7 +265,18 @@ def build(
         embed = None if sparse_only else EmbedClient(
             os.getenv("MLX_URL", "http://127.0.0.1:8080"), model=embed_model
         )
-    total_expected = len(_rows(base_path))
+    total_expected = len(all_rows)
+    completed_start = 0
+    if not recreate and not sparse_only and not dense_only:
+        complete_keys = _complete_keys(
+            client,
+            collection,
+            base_sha256=base_sha,
+            embedding_fingerprint=point_embedding_fingerprint(),
+        )
+        rows = [row for row in rows if row["norm_key"] not in complete_keys]
+        completed_start = total_expected - len(rows)
+        print(f"[smeta-norm-rag] hybrid resume: complete={completed_start}, missing={len(rows)}")
     build_status = {
         "schema": "smeta_norm_rag_build_v1",
         "status": "building",
@@ -226,7 +290,7 @@ def build(
         "started_at": time.time(),
         "updated_at": time.time(),
     }
-    _write_build_status(base_path, build_status)
+    _write_build_status(build_status_path, build_status)
     for offset in range(0, len(rows), max(1, batch_size)):
         batch = rows[offset : offset + max(1, batch_size)]
         if sparse_only:
@@ -271,9 +335,9 @@ def build(
                 "status": "passed",
                 "updated_at": time.time(),
             }
-            _write_manifest(base_path, progress)
+            _write_manifest(manifest_path, progress)
             _write_build_status(
-                base_path,
+                build_status_path,
                 {
                     **build_status,
                     "points": int(client.count(collection, exact=True).count),
@@ -307,19 +371,19 @@ def build(
                 },
             ))
         client.upsert(collection, points=points, wait=True)
-        completed = min(offset + len(batch), len(rows))
-        if completed == len(rows) or completed % max(256, batch_size) == 0:
+        completed = completed_start + offset + len(batch)
+        if completed == total_expected or completed % max(256, batch_size) == 0:
             _write_build_status(
-                base_path,
+                build_status_path,
                 {
                     **build_status,
-                    "points": completed if recreate else int(client.count(collection, exact=True).count),
-                    "dense_points": 0 if sparse_only else completed,
-                    "sparse_points": completed,
+                    "points": int(client.count(collection, exact=True).count),
+                    "dense_points": _dense_count(client, collection),
+                    "sparse_points": _sparse_count(client, collection),
                     "updated_at": time.time(),
                 },
             )
-        print(f"[smeta-norm-rag] {min(offset + len(batch), len(rows))}/{len(rows)}")
+        print(f"[smeta-norm-rag] {completed}/{total_expected}")
     count = int(client.count(collection, exact=True).count)
     dense_points = _dense_count(client, collection)
     sparse_points = _sparse_count(client, collection)
@@ -344,9 +408,9 @@ def build(
             and (sparse_only or dense_points == total_expected)
         ) else "failed",
     }
-    _write_manifest(base_path, result)
+    _write_manifest(manifest_path, result)
     _write_build_status(
-        base_path,
+        build_status_path,
         {
             **build_status,
             "status": "completed" if result["status"] == "passed" else "failed",
@@ -371,6 +435,16 @@ def main() -> int:
     parser.add_argument("--local-mps", action="store_true")
     parser.add_argument("--local-batch-size", type=int, default=32)
     parser.add_argument("--replace-dense", action="store_true")
+    parser.add_argument(
+        "--manifest-path",
+        type=Path,
+        help="generation-scoped manifest; defaults to the active sibling manifest",
+    )
+    parser.add_argument(
+        "--build-status-path",
+        type=Path,
+        help="generation-scoped progress file; defaults to the active sibling status",
+    )
     args = parser.parse_args()
     result = build(
         collection=args.collection,
@@ -381,6 +455,8 @@ def main() -> int:
         local_mps=args.local_mps,
         local_batch_size=args.local_batch_size,
         replace_dense=args.replace_dense,
+        manifest_path=args.manifest_path,
+        build_status_path=args.build_status_path,
     )
     return 0 if result["status"] == "passed" else 1
 

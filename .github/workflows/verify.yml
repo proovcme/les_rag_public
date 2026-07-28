@@ -1,31 +1,63 @@
-# W0.2 (LES3_PLAN): офлайн-гейт на push/PR. Без живых Qdrant/MLX —
-# только compileall + импорт-смоук тестов, ровно как `make verify`.
-# Матрица macos+windows появится в W4.3 после кроссплатформенных правок.
-name: verify
+name: platform-gates
 
-# Авто-триггеры СНЯТЫ: приватный репо на БЕСПЛАТНОМ GitHub — Actions-минуты выжжены (дорогие macOS-
-# runner'ы 10×), любой прогон падает «job was not started». Гейт гоняем ЛОКАЛЬНО: `make verify`.
-# Запуск вручную (Actions → verify → Run) или верни push/PR, когда минуты сбросятся / репо публичный.
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: platform-gates-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
-    runs-on: ubuntu-latest        # офлайн-гейт (compileall + collect) ОС-агностичен; Linux ~10× дешевле macos
-    timeout-minutes: 20            # macos+windows матрица вернётся в W4.3, когда понадобится
+  test-and-native-build:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS-arm64
+            runner: macos-14
+            binary: desktop/tauri/src-tauri/target/release/les-desktop
+          - platform: windows-x64
+            runner: windows-2022
+            binary: desktop/tauri/src-tauri/target/release/les-desktop.exe
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    env:
+      PYTHONUTF8: "1"
+      UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install uv
+      - name: Install uv and Python 3.12
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
+          python-version: "3.12"
 
-      - name: Set up Python
-        run: uv python install 3.12
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/tauri/src-tauri
 
-      - name: Sync dependencies (frozen lock)
+      - name: Sync frozen Python environment
         run: uv sync --frozen
 
-      - name: make verify (compileall + pytest collect-only)
-        run: make verify
+      - name: Verify version, imports and test collection
+        run: uv run python tools/platform_release_gate.py verify
+
+      - name: Run canonical LES tests
+        run: uv run python tools/platform_release_gate.py test
+
+      - name: Build native Tauri shell
+        run: uv run python tools/platform_release_gate.py build
+
+      - name: Upload native shell proof
+        uses: actions/upload-artifact@v4
+        with:
+          name: les-native-${{ matrix.platform }}-${{ github.sha }}
+          path: ${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 14

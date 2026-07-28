@@ -27,8 +27,12 @@ reindex и без удаления legacy-источника.
 3. передаёт `StoreID`, `EntryID`, `PR_INTERNET_MESSAGE_ID`, folder id/path и received time;
 4. двигает per-store/per-folder newest+oldest cursor только после HTTP 2xx.
 
-Backfill идёт возобновляемыми порциями до 200 писем за запуск. Task Scheduler запускает sidecar
-каждые три минуты в interactive user session. Плановая задача не стартует Outlook сама. Команда
+Backfill идёт возобновляемыми порциями до 200 писем за запуск. Per-folder cursor отдельно фиксирует
+`backfill_complete`: после достижения старейшего письма последующие запуски вообще не перечисляют
+старую часть `Items`, а проверяют только новые письма. Старые cursor-файлы без этого флага проходят
+один завершающий backfill и автоматически обновляются. Task Scheduler запускает sidecar каждые
+десять минут в interactive user session; интервал остаётся настраиваемым. Плановая задача не
+стартует Outlook сама. Команда
 `--open <base64-store> <base64-entry>` вызывает `Session.GetItemFromID(...).Display()`.
 
 ### IMAP

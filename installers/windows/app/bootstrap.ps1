@@ -409,7 +409,7 @@ try {
     Write-Status -Phase "mail" -State "running" -Message "Устанавливаю сборщик классического Outlook"
     $mailInstallRoot = Join-Path $StateRoot "bin"
     $mailStateRoot = Join-Path $StateRoot "mail"
-    $mailSetupOutput = @(& $OutlookCollectorSetup -EveryMinutes 3 `
+    $mailSetupOutput = @(& $OutlookCollectorSetup -EveryMinutes 10 `
       -InstallRoot $mailInstallRoot -StateRoot $mailStateRoot)
     if ($LASTEXITCODE -ne 0) { throw "collector setup returned $LASTEXITCODE" }
     $env:LES_OUTLOOK_COLLECTOR_EXE = Join-Path $mailInstallRoot "LesMailPoller.exe"

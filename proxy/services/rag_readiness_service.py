@@ -167,6 +167,23 @@ def _general_status(
             and lexical_point_count in {0, total}
             and int(lexical.get("indexed_count") or 0) == total
         )
+    if contract.get("compatible") and total == 0 and expected == 0:
+        result.update(
+            {
+                "state": "empty",
+                "reason": "no_user_documents",
+                "ready": False,
+                "points": 0,
+                "dense_points": 0,
+                "sparse_points": 0,
+                "compatible_fingerprint_points": 0,
+                "expected_source_points": 0,
+                "expected_generation_points": 0,
+                "lexical": {**lexical, "ready": lexical_complete},
+                "rrf_ready": False,
+            }
+        )
+        return result
     ready = bool(
         contract.get("compatible")
         and channel_complete

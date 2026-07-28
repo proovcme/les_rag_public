@@ -21,6 +21,18 @@ MAX_DOCUMENTS = 8
 MAX_EVIDENCE = 24
 MAX_EXCERPT_CHARS = 900
 MAX_INSTRUCTION_CHARS = 4000
+FIELD_QUERY_HINTS = {
+    "object_name": (
+        "наименование объекта",
+        "название объекта",
+        "объект капитального строительства",
+    ),
+    "object_address": (
+        "адрес объекта",
+        "адрес строительства",
+        "местонахождение объекта",
+    ),
+}
 
 
 class OfficeAgentUnavailable(RuntimeError):
@@ -30,14 +42,18 @@ class OfficeAgentUnavailable(RuntimeError):
 Extractor = Callable[..., Awaitable[Any]]
 
 
-def _manual_fields(form_id: str, project_id: int | None, manual: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _unresolved_fields(
+    form_id: str,
+    project_id: int | None,
+    manual: dict[str, Any],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     resolved = forms_service.resolve_fields(form_id, project_id, manual)
     if resolved is None:
         raise ValueError(f"Форма {form_id!r} не найдена")
     fields = [
         dict(field)
         for field in resolved.get("fields") or []
-        if str(field.get("source") or "manual") == "manual"
+        if not str(field.get("value") or "").strip()
     ]
     return resolved, fields
 
@@ -83,10 +99,9 @@ def _collect_evidence(
     documents: list[dict[str, Any]],
     *,
     instruction: str,
-    field_labels: list[str],
+    fields: list[dict[str, Any]],
     reader: DocumentExplorer,
 ) -> list[dict[str, Any]]:
-    query = " ".join(part for part in [instruction, *field_labels] if str(part).strip())[:MAX_INSTRUCTION_CHARS]
     candidates: list[dict[str, Any]] = []
     seen: set[tuple[str, str, str]] = set()
 
@@ -102,9 +117,25 @@ def _collect_evidence(
     per_document = max(2, MAX_EVIDENCE // max(1, len(documents)))
     for document in documents:
         doc_id = str(document.get("id") or "")
-        if query:
-            search_result = reader.search(query, doc_id=doc_id, limit=min(3, per_document), max_chars=MAX_EXCERPT_CHARS)
+        queries: list[str] = []
+        if instruction:
+            queries.append(instruction)
+        for field in fields:
+            key = str(field.get("key") or "")
+            label = str(field.get("label") or key).strip()
+            for query in (label, *FIELD_QUERY_HINTS.get(key, ())):
+                if query and query not in queries:
+                    queries.append(query)
+        for query in queries:
+            search_result = reader.search(
+                query[:MAX_INSTRUCTION_CHARS],
+                doc_id=doc_id,
+                limit=min(2, per_document),
+                max_chars=MAX_EXCERPT_CHARS,
+            )
             add(list(search_result.get("hits") or []))
+            if len(candidates) >= MAX_EVIDENCE:
+                break
         ordered = reader.document_chunks_by_id(
             doc_id,
             limit=per_document,
@@ -256,8 +287,7 @@ async def prepare_document_ir(
     """Return a reviewable IR; never create or modify an office document."""
     manual = dict(manual or {})
     instruction = str(instruction or "").strip()[:MAX_INSTRUCTION_CHARS]
-    resolved, manual_fields = _manual_fields(form_id, project_id, manual)
-    editable = [field for field in manual_fields if not str(manual.get(str(field.get("key") or ""), "")).strip()]
+    resolved, editable = _unresolved_fields(form_id, project_id, manual)
     reader = reader or explorer()
     documents = await asyncio.to_thread(
         _selected_documents,
@@ -284,7 +314,7 @@ async def prepare_document_ir(
         _collect_evidence,
         documents,
         instruction=instruction,
-        field_labels=[str(field.get("label") or field.get("key") or "") for field in editable],
+        fields=editable,
         reader=reader,
     )
     keys = [str(field.get("key") or "") for field in editable]

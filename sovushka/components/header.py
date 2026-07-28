@@ -133,9 +133,7 @@ def build_header(
                 # иначе оператор не видит служебные источники, ВОР и нормоконтроль.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
-                tab_refs["documents"]  = ui.tab("Документы", icon="o_folder_open")
-                if include_mail:
-                    tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
+                tab_refs["mail_settings"] = ui.tab("Настройка почты", icon="o_mark_email_read")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
@@ -145,6 +143,8 @@ def build_header(
                     tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
                 if include_documents and "documents" not in tab_refs:
                     tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
+                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_document")
+                    tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
                 if include_mail and "mail" not in tab_refs:
                     tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")

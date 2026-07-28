@@ -55,10 +55,10 @@ async def test_rerank_orders_by_endpoint_results(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_rerank_passthrough_when_few_chunks():
+async def test_rerank_passthrough_only_for_single_candidate():
     rr = CrossEncoderReranker()
-    ranked = await rr.rerank("вопрос", _chunks(2), top_k=5)
-    assert len(ranked) == 2
+    ranked = await rr.rerank("вопрос", _chunks(1), top_k=5)
+    assert len(ranked) == 1
     assert all(isinstance(r, RankedChunk) for r in ranked)
 
 

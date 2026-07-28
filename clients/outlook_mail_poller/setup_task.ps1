@@ -1,6 +1,6 @@
 # Build/install the classic-Outlook E.ZH.I.K. sidecar and interactive task.
 param(
-  [int]$EveryMinutes = 3,
+  [int]$EveryMinutes = 10,
   [string]$InstallRoot = (Join-Path $env:LOCALAPPDATA "LES\bin"),
   [string]$StateRoot = (Join-Path $env:LOCALAPPDATA "LES\mail"),
   [switch]$Probe,

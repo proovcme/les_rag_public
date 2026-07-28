@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from qdrant_client import QdrantClient, models
@@ -16,15 +17,21 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collection", required=True)
     parser.add_argument("--base-path", type=Path, required=True)
+    parser.add_argument("--manifest-path", type=Path)
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     parser.add_argument("--report-path", type=Path, required=True)
     args = parser.parse_args()
-    manifest_path = args.base_path.with_name("les_smeta_norm_rag_manifest.json")
+    manifest_path = args.manifest_path or args.base_path.with_name(
+        "les_smeta_norm_rag_manifest.json"
+    )
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    os.environ["LES_SMETA_NORM_RAG_COLLECTION"] = args.collection
+    os.environ["LES_SMETA_NORM_RAG_MANIFEST"] = str(manifest_path)
     client = QdrantClient(
         url=args.qdrant_url, timeout=60.0, check_compatibility=False
     )
     fingerprint = str(manifest.get("point_embedding_fingerprint") or "")
+    base_sha256 = str(manifest.get("base_sha256") or "")
     total = int(client.count(args.collection, exact=True).count)
     dense = int(client.count(
         args.collection,
@@ -47,6 +54,13 @@ def main() -> int:
         )]),
         exact=True,
     ).count) if fingerprint else 0
+    base_compatible = int(client.count(
+        args.collection,
+        count_filter=models.Filter(must=[models.FieldCondition(
+            key="base_sha256", match=models.MatchValue(value=base_sha256)
+        )]),
+        exact=True,
+    ).count) if base_sha256 else 0
     queries = [
         "прокладка кабеля в помещениях",
         "монтаж коробок электрических",
@@ -65,7 +79,7 @@ def main() -> int:
         and manifest.get("status") == "passed"
         and manifest.get("collection") == args.collection
         and expected > 0
-        and total == dense == sparse == compatible == expected
+        and total == dense == sparse == compatible == base_compatible == expected
         and live_ready
     )
     report = {
@@ -77,6 +91,8 @@ def main() -> int:
         "dense_points": dense,
         "sparse_points": sparse,
         "compatible_fingerprint_points": compatible,
+        "compatible_base_points": base_compatible,
+        "base_sha256": base_sha256,
         "live_rrf_ready": live_ready,
         "live_trace": trace,
         "query_card_counts": {query: len(cards.get(query) or []) for query in queries},

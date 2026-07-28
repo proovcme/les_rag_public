@@ -335,8 +335,10 @@ real target hardware:
 |---|---|
 | Regenerate icons | `uv run --with pillow python tools/build_icons.py` |
 | Offline gate | `make verify` |
+| Current-platform test + native build | `make platform-gate` |
 | Build Mac app + dmg | `tools/build_tauri_app.py --version X.Y.Z --bundles app,dmg` |
 | Stage/build Win installer | `tools/build_windows_installer.py --version X.Y.Z` |
+| Verified Mac + Legion Windows release | `make release-multiplatform MULTIPLATFORM_RELEASE_ARGS='--notes-file … --publish'` |
 | Set provider (first run) | `tools/onboard_provider.py [--provider …]` |
 | Pre-pull weights | `tools/onboard_models.py [--skip-if-cloud]` |
 | Logs (Mac) | `~/Library/Logs/LES/bootstrap.log` |

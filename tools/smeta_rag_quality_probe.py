@@ -181,6 +181,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--collection", required=True)
     parser.add_argument("--base-path", type=Path, required=True)
+    parser.add_argument("--manifest-path", type=Path)
     parser.add_argument("--report-path", type=Path, required=True)
     parser.add_argument("--query", action="append", default=[])
     parser.add_argument("--limit", type=int, default=10)
@@ -189,6 +190,8 @@ def main() -> int:
     parser.add_argument("--embed-model", default=os.getenv("LES_SMETA_NORM_EMBED_MODEL", "qwen3-embedding-0.6b"))
     args = parser.parse_args()
     os.environ["LES_SMETA_NORM_RAG_COLLECTION"] = args.collection
+    if args.manifest_path:
+        os.environ["LES_SMETA_NORM_RAG_MANIFEST"] = str(args.manifest_path)
     report = run_probe(
         collection=args.collection,
         base_path=args.base_path,
