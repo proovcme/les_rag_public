@@ -332,8 +332,8 @@ def build_mail() -> None:
             refs["status"] = status_panel
         with ui.row().classes("sov-mail-search"):
             refs["search"] = text_field(
-                label="Поиск по теме и участникам",
-                placeholder="Тема, отправитель или получатель",
+                placeholder="Поиск по теме, отправителю или получателю",
+                aria_label="Поиск по теме и участникам",
                 clearable=True,
                 classes="sov-mail-search__field",
             )

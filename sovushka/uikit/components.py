@@ -68,6 +68,7 @@ def text_field(
     *,
     label: str = "",
     placeholder: str = "",
+    aria_label: str = "",
     clearable: bool = False,
     classes: str = "",
 ) -> Any:
@@ -75,6 +76,9 @@ def text_field(
     props = ["outlined"]
     if clearable:
         props.append("clearable")
+    accessible_name = aria_label or label or placeholder
+    if accessible_name:
+        props.append(f'aria-label="{accessible_name}"')
     return ui.input(label=label or None, placeholder=placeholder).props(
         " ".join(props)
     ).classes(" ".join(["sov-ui-input", classes]).strip())

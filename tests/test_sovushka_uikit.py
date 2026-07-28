@@ -287,6 +287,9 @@ def test_mail_surfaces_use_uikit_and_keep_host_names_out_of_product_copy():
     assert "render_feedback_state(" in mail
     assert "Legion" not in mail
     assert "легион" not in mail.casefold()
+    assert 'placeholder="Поиск по теме, отправителю или получателю"' in mail
+    assert 'aria_label="Поиск по теме и участникам"' in mail
+    assert '\n                label="Поиск по теме и участникам"' not in mail
 
     for contract in (
         ".sov-mail-workbench",

@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.14 (Sovushka mail + connected tools)
-номер сборки:              487     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.487 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.15 (Sovushka mail search alignment)
+номер сборки:              488     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.488 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; mail UI + connected prompt registry
-задеплоено на рантайм:     Mac 0.25.14 / build 487 target; Legion не затрагивался
+dev implementation:       codex/sovushka-ui-kit; mail search optical alignment
+задеплоено на рантайм:     Mac 0.25.15 / build 488 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.14 / build 487 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.15 / build 488 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.15 / build 488 — оптическое выравнивание поиска в почте
+>
+> Дата: 2026-07-29
+> Статус: target внутреннего web-only обновления Mac. Browser-smoke установленной
+> 0.25.14 выявил наложение плавающей подписи на placeholder в строке поиска
+> писем. Поле теперь имеет один видимый placeholder и отдельное доступное имя
+> через UI KIT. Почтовые данные, индексы, Tauri/DMG, Legion и public не
+> затрагиваются.
+>
 > 0.25.14 / build 487 — почта и подключённые инструменты
 >
 > Дата: 2026-07-29
