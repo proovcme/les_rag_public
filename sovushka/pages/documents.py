@@ -15,7 +15,7 @@ from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
 from sovushka.state import api_get, api_get_bytes, api_patch, api_post, api_post_file, add_log, last_api_error_text
-from sovushka.uikit.components import acronym_identity
+from sovushka.uikit.components import acronym_identity, action_button, text_field
 
 DATASET_KIND_OPTIONS = {
     "": "Все типы",
@@ -3698,8 +3698,10 @@ def build_documents(*, surface: str = "documents") -> None:
                 _label(surface_subtitle, size="11.5px", color="var(--dim)").classes(
                     "sov-docs-subtitle"
                 )
-            q_input = ui.input(placeholder="Найти файл, шифр, раздел или текст…").props("outlined clearable").classes(
-                "sov-docs-search sov-ui-input"
+            q_input = text_field(
+                placeholder="Найти файл, шифр, раздел или текст…",
+                clearable=True,
+                classes="sov-docs-search",
             )
             with q_input.add_slot("prepend"):
                 ui.icon("o_search")
@@ -3707,9 +3709,16 @@ def build_documents(*, surface: str = "documents") -> None:
             q_input.on("keydown.enter", lambda _e: _schedule(_search("dataset" if state["selected_dataset"] else "all")))
             with ui.row().classes("items-center").style("gap:5px;flex-wrap:wrap;") as readiness_summary:
                 refs["readiness_summary"] = readiness_summary
-            search_button = ui.button("Найти", icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
-                'flat no-caps aria-label="Искать"'
-            ).classes("sov-docs-search-btn sov-ui-button")
+            search_button = action_button(
+                "Найти",
+                icon="o_search",
+                on_click=lambda: _schedule(
+                    _search("dataset" if state["selected_dataset"] else "all")
+                ),
+                variant="primary",
+                aria_label="Искать",
+                classes="sov-docs-search-btn",
+            )
             if surface == "cad_bim":
                 q_input.set_visibility(False)
                 readiness_summary.set_visibility(False)

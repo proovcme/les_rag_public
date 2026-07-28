@@ -8,6 +8,10 @@
   `desktop/tauri/src-tauri/src/lib.rs` — проверка компонентов, winget-действия, сохранение выбранного
   Ollama-тега и повторный запуск; `installers/windows/app/bootstrap.ps1` — bundled Python/uv и
   неблокирующий `setup_required` без скрытого скачивания Ollama-моделей.
+- **Sovushka UI system:** `sovushka/uikit/{tokens,components,states}.py` —
+  токены, семь общих NiceGUI-примитивов, состояния и единая icon-column;
+  `docs/modules/sovushka-uikit.md` — component registry и миграционный
+  контракт; `skills/sovushka-ui/SKILL.md` — обязательный workflow UI/UX-правок.
 
 ## Алгоритм-доки (детерминированные ядра, 0 LLM)
 

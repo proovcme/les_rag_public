@@ -28,6 +28,7 @@ from sovushka.state import (
     refresh_samovar,
     state,
 )
+from sovushka.uikit import action_button
 
 
 async def _copy_text(text: str) -> None:
@@ -500,9 +501,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with history_drawer:
             with ui.row().classes("w-full items-center justify-between"):
                 _html('<div class="sov-panel-title">История</div>')
-                ui.button(icon="o_close", on_click=lambda: history_drawer.set_visibility(False)).props(
-                    'flat round dense aria-label="Закрыть историю"'
-                ).classes("sov-icon-btn")
+                action_button(
+                    icon="o_close",
+                    on_click=lambda: history_drawer.set_visibility(False),
+                    variant="quiet",
+                    icon_only=True,
+                    aria_label="Закрыть историю",
+                    classes="sov-icon-btn",
+                )
             sessions_col = ui.column().classes("w-full gap-2 sov-history-list")
 
         # «Задачи и объёмы» убраны из чата (Олег): ввод — командами, просмотр — в админ-вкладках.
@@ -513,9 +519,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with files_drawer:
             with ui.row().classes("w-full items-center justify-between"):
                 _html('<div class="sov-panel-title">Файлы</div>')
-                ui.button(icon="o_close", on_click=lambda: files_drawer.set_visibility(False)).props(
-                    'flat round dense aria-label="Закрыть"'
-                ).classes("sov-icon-btn")
+                action_button(
+                    icon="o_close",
+                    on_click=lambda: files_drawer.set_visibility(False),
+                    variant="quiet",
+                    icon_only=True,
+                    aria_label="Закрыть",
+                    classes="sov-icon-btn",
+                )
             files_tree_box = ui.column().classes("w-full gap-0").style("max-height:38%;overflow:auto;")
             ui.separator().style("border-color:var(--border);margin:6px 0;")
             files_view_box = ui.column().classes("w-full gap-1 sov-history-list")
@@ -525,9 +536,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with ui.element("main").classes("sov-chat-main"):
             with ui.row().classes("sov-chat-topbar"):
                 with ui.row().classes("items-center gap-2"):
-                    ui.button(icon="o_history", on_click=lambda: _toggle_history()).props(
-                        'flat round dense aria-label="История чата"'
-                    ).classes("sov-icon-btn")
+                    action_button(
+                        icon="o_history",
+                        on_click=lambda: _toggle_history(),
+                        variant="quiet",
+                        icon_only=True,
+                        aria_label="История чата",
+                        classes="sov-icon-btn",
+                    )
                     with ui.column().classes("sov-chat-heading"):
                         _html(
                             '<div class="sov-chat-identity" title="Система Обработки и Выдачи: '
@@ -555,27 +571,36 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         )
                 with ui.row().classes("items-center gap-2"):
                     if tabs is not None and tab_documents is not None:
-                        ui.button(
+                        action_button(
                             "Документы",
                             icon="o_folder_open",
                             on_click=lambda: tabs.set_value(tab_documents),
-                        ).props('flat dense no-caps aria-label="Документы"').classes(
-                            "sov-artifacts-open-btn sov-topbar-icon-action"
+                            variant="quiet",
+                            icon_only=True,
+                            aria_label="Документы",
+                            classes="sov-artifacts-open-btn sov-topbar-icon-action",
                         ).tooltip("Открыть документы датасетов")
-                    ui.button(
+                    action_button(
                         "Артефакты",
                         icon="o_view_sidebar",
                         on_click=lambda: _open_artifacts(),
-                    ).props('flat dense no-caps aria-label="Открыть артефакты"').classes(
-                        "sov-artifacts-open-btn sov-topbar-icon-action"
+                        variant="quiet",
+                        icon_only=True,
+                        aria_label="Открыть артефакты",
+                        classes="sov-artifacts-open-btn sov-topbar-icon-action",
                     ).tooltip("Открыть панель результатов и файлов")
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
                     scope_state = {"scope_type": "all", "project_ids": [], "dataset_ids": [], "label": "Все источники"}
                     scope_opts_cache: dict = {"data": None}
 
-                    scope_btn = ui.button("Все источники", icon="o_travel_explore").props(
-                        "flat dense no-caps").classes("sov-scope-btn").tooltip(
+                    scope_btn = action_button(
+                        "Все источники",
+                        icon="o_travel_explore",
+                        variant="secondary",
+                        compact=True,
+                        classes="sov-scope-btn",
+                    ).tooltip(
                         "Область поиска: в каких проектах и датасетах ЛЕС будет искать источники.")
 
                     def _scope_label() -> str:
@@ -793,10 +818,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         validation_chip = ui.label("CRAG ON").classes("sov-chip")
                         model_chip = ui.label("MODEL -").classes("sov-chip sov-model-chip")
                     technical_status.set_visibility(False)
-                    ui.button("Новый чат", icon="o_add_comment", on_click=lambda: _clear_chat()).props(
-                        'flat dense no-caps aria-label="Новый чат"'
-                    ).classes(
-                        "sov-new-chat-btn sov-topbar-icon-action"
+                    action_button(
+                        "Новый чат",
+                        icon="o_add_comment",
+                        on_click=lambda: _clear_chat(),
+                        variant="quiet",
+                        icon_only=True,
+                        aria_label="Новый чат",
+                        classes="sov-new-chat-btn sov-topbar-icon-action",
                     ).tooltip("Новая сессия без памяти прошлого диалога")
 
             scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
@@ -1003,11 +1032,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
                 with ui.element("div").classes("sov-composer-footer"):
                     with ui.row().classes("sov-composer-actions"):
-                        ui.button(
+                        action_button(
                             icon="o_attach_file",
                             on_click=lambda: attach_dialog.open(),
-                        ).props('no-caps flat round aria-label="Прикрепить файл"').classes(
-                            "sov-composer-action sov-attach-btn"
+                            variant="secondary",
+                            icon_only=True,
+                            aria_label="Прикрепить файл",
+                            classes="sov-composer-action sov-attach-btn",
                         ).tooltip("Прикрепить файл")
                         response_settings_btn = ui.button(
                             "Настройки ответа", icon="o_tune"
@@ -1035,12 +1066,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             "sov-stop-dialog-btn"
                         ).tooltip("Остановить текущий ответ; история диалога сохранится")
                         stop_dialog_btn.set_visibility(False)
-                        send_btn = ui.button(
+                        send_btn = action_button(
                             "Отправить",
-                            color=None,
                             icon="o_send",
                             on_click=lambda: asyncio.create_task(send_chat()),
-                        ).props("no-caps").classes("sov-send-btn")
+                            variant="primary",
+                            classes="sov-send-btn",
+                        )
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
         artifact_divider = ui.element("div").classes("sov-resize-divider")

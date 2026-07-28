@@ -7,17 +7,31 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.9 (Sovushka navigation UX)
-номер сборки:              482     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.482 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.10 (Sovushka canonical UI kit)
+номер сборки:              483     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.483 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/audit-rag
-dev implementation:       codex/audit-rag; grouped, left-aligned navigation UX
-задеплоено на рантайм:     Mac 0.25.9 / build 482 target; Legion не затрагивался
+dev implementation:       codex/audit-rag; shared primitives + unified icon alignment
+задеплоено на рантайм:     Mac 0.25.10 / build 483 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.9 / build 482 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.10 / build 483 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.10 / build 483 — канонический UI KIT и единая геометрия controls
+>
+> Дата: 2026-07-28
+> Статус: внутреннее web-only обновление Mac. UI kit превращён из набора
+> локальных классов в проверяемый component registry: action button, field,
+> panel, section heading, status, feedback state и acronym identity. Чат и
+> документы используют общие controls. Иконки навигации и служебных действий
+> занимают фиксированную колонку 20 px с единым gap 8 px. «Чат», «Студия» и
+> «Конфигурация» стали равными строками одного списка: одинаковые height,
+> padding, font и left edge; активность отмечается тихим зелёным состоянием.
+> Контракт документирован в `docs/modules/sovushka-uikit.md`, а обязательный
+> workflow закреплён проектным skill `skills/sovushka-ui/SKILL.md`. Tauri/DMG,
+> Rust, Legion, public, RAG и пользовательские данные не затрагиваются.
+>
 > 0.25.9 / build 482 — читаемая иерархия и служебная зона rail
 >
 > Дата: 2026-07-28

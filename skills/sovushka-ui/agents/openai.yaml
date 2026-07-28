@@ -1,0 +1,5 @@
+interface:
+  display_name: "Совушка UI"
+  short_description: "Единый UI KIT и UX-контракт ЛЕС"
+  brand_color: "#176B42"
+  default_prompt: "Use $sovushka-ui to design or review a Sovushka interface using the canonical UI kit."

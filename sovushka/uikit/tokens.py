@@ -1,7 +1,7 @@
-"""Design tokens and scoped component styles for the Sovushka P0 UI kit."""
+"""Design tokens and component styles for the canonical Sovushka UI kit."""
 
 UIKIT_CSS = """
-<style id="sovushka-uikit-p0">
+<style id="sovushka-uikit">
 :root {
   --sov-ui-font-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", Inter, system-ui, sans-serif;
@@ -17,13 +17,15 @@ UIKIT_CSS = """
   --sov-ui-space-3: 12px;
   --sov-ui-space-4: 16px;
   --sov-ui-space-6: 24px;
+  --sov-ui-border: 1px solid var(--border);
   --sov-ui-radius-control: 8px;
-  --sov-ui-radius-card: 10px;
+  --sov-ui-radius-card: 8px;
   --sov-ui-hit: 40px;
+  --sov-ui-icon-column: 20px;
+  --sov-ui-icon-gap: 8px;
   --sov-ui-shadow-card:
-    0 0 0 1px color-mix(in srgb, var(--border) 54%, transparent),
-    0 1px 2px rgba(20, 52, 34, .04),
-    0 8px 24px rgba(20, 52, 34, .045);
+    0 1px 2px rgba(20, 52, 34, .05),
+    0 5px 16px rgba(20, 52, 34, .035);
   --sov-ui-shadow-focus: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
@@ -42,6 +44,53 @@ html {
   line-height: var(--sov-ui-line-body);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+}
+
+.sov-ui-panel,
+.sov-ui-card,
+.sov-ui-evidence-card {
+  min-width: 0;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-card);
+  background: var(--card-bg);
+}
+
+.sov-ui-panel {
+  padding: var(--sov-ui-space-4);
+}
+
+.sov-ui-panel--plain {
+  box-shadow: none;
+}
+
+.sov-ui-panel--raised,
+.sov-ui-card,
+.sov-ui-evidence-card {
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-ui-panel--inset {
+  background: var(--bg-mod);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 28%, transparent);
+}
+
+.sov-ui-section-heading {
+  min-width: 0;
+  gap: var(--sov-ui-space-1) !important;
+}
+
+.sov-ui-section-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.sov-ui-section-detail {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 400;
+  line-height: 1.45;
 }
 
 .sov-ui-shell .q-btn__content,
@@ -244,14 +293,6 @@ html {
   background: var(--bg-panel);
 }
 
-.sov-ui-card,
-.sov-ui-evidence-card {
-  border: 1px solid var(--border);
-  border-radius: var(--sov-ui-radius-card);
-  background: var(--card-bg);
-  box-shadow: var(--sov-ui-shadow-card);
-}
-
 .sov-ui-button,
 .sov-ui-input .q-field__control,
 .sov-ui-source-chip {
@@ -263,6 +304,109 @@ html {
 .sov-ui-source-chip {
   transition: background-color .16s ease, border-color .16s ease,
     box-shadow .16s ease, color .16s ease, transform .12s ease;
+}
+
+.sov-ui-button {
+  min-width: 40px;
+  padding: 0 13px !important;
+  border: var(--sov-ui-border) !important;
+  color: var(--text) !important;
+  background: var(--bg-panel) !important;
+  box-shadow: none !important;
+}
+
+.sov-ui-button .q-btn__content {
+  gap: var(--sov-ui-icon-gap);
+  justify-content: flex-start;
+}
+
+.sov-ui-button .q-icon {
+  width: var(--sov-ui-icon-column);
+  min-width: var(--sov-ui-icon-column);
+  margin: 0 !important;
+  flex: 0 0 var(--sov-ui-icon-column);
+  font-size: 20px;
+  text-align: center;
+}
+
+.sov-ui-button--primary {
+  border-color: var(--accent) !important;
+  color: #ffffff !important;
+  background: var(--accent) !important;
+}
+
+.sov-ui-button--secondary {
+  border-color: color-mix(in srgb, var(--accent) 34%, var(--border)) !important;
+  color: var(--accent) !important;
+}
+
+.sov-ui-button--quiet {
+  border-color: transparent !important;
+  color: var(--dim) !important;
+  background: transparent !important;
+}
+
+.sov-ui-button--danger {
+  border-color: color-mix(in srgb, var(--err) 52%, var(--border)) !important;
+  color: var(--err) !important;
+  background: color-mix(in srgb, var(--err) 5%, var(--bg-panel)) !important;
+}
+
+.sov-ui-button--compact {
+  min-height: 34px;
+  padding-inline: 10px !important;
+}
+
+.sov-ui-button--icon {
+  width: var(--sov-ui-hit);
+  min-width: var(--sov-ui-hit) !important;
+  height: var(--sov-ui-hit);
+  padding: 0 !important;
+}
+
+.sov-ui-button--icon .q-btn__content {
+  gap: 0;
+  justify-content: center;
+}
+
+.sov-ui-button--icon .q-icon {
+  width: auto;
+  min-width: 0;
+  flex-basis: auto;
+}
+
+.sov-ui-button--primary .q-btn__content,
+.sov-ui-button--primary .q-icon {
+  color: #ffffff !important;
+}
+
+.sov-ui-button:hover {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border)) !important;
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-panel)) !important;
+}
+
+.sov-ui-button--primary:hover {
+  background: color-mix(in srgb, var(--accent) 90%, #000000) !important;
+}
+
+.sov-ui-button--danger:hover {
+  border-color: var(--err) !important;
+  background: color-mix(in srgb, var(--err) 9%, var(--bg-panel)) !important;
+}
+
+.sov-ui-input .q-field__control {
+  min-height: var(--sov-ui-hit);
+  color: var(--text);
+  background: var(--input-bg);
+}
+
+.sov-ui-input .q-field__control::before {
+  border-color: var(--border) !important;
+}
+
+.sov-ui-input .q-field__control:hover::before,
+.sov-ui-input.q-field--focused .q-field__control::before {
+  border-color: var(--accent) !important;
 }
 
 .sov-ui-button:active:not(:disabled),
@@ -326,23 +470,22 @@ html {
   display: flex;
   align-items: center;
   flex-wrap: nowrap;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--card-bg) 82%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--border) 78%, transparent),
-    0 5px 16px rgba(15, 23, 42, .07);
+  gap: 2px;
+  padding: 0;
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
 }
 
 .sov-nav-switch {
   min-height: var(--sov-ui-hit) !important;
-  padding: 0 12px !important;
+  padding: 0 8px !important;
+  border: 1px solid transparent !important;
   border-radius: 7px !important;
   font-family: var(--sov-ui-font-prose) !important;
-  font-size: .72rem !important;
-  font-weight: 850 !important;
-  letter-spacing: .01em;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0;
   white-space: nowrap;
   color: var(--dim) !important;
   background: transparent !important;
@@ -352,14 +495,15 @@ html {
 }
 
 .sov-nav-switch--active {
-  color: #ffffff !important;
-  background: var(--accent) !important;
-  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 24%, var(--border)) !important;
+  color: var(--accent) !important;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel)) !important;
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .sov-nav-switch--active .q-btn__content,
 .sov-nav-switch--active .q-icon {
-  color: #ffffff !important;
+  color: var(--accent) !important;
 }
 
 .sov-nav-switch:active {
@@ -718,28 +862,29 @@ html {
 
   .sov-primary-nav {
     width: 100%;
-    padding: 4px;
     gap: 2px;
     flex-direction: column;
     align-items: stretch;
-    border-radius: 10px;
-    background: color-mix(in srgb, var(--bg-mod) 72%, var(--bg-panel));
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 72%, transparent);
+    border-radius: 8px;
+    background: transparent;
+    box-shadow: none;
   }
 
   .sov-nav-switch {
     width: 100%;
     min-height: 36px !important;
-    padding: 3px 6px !important;
+    height: 36px !important;
+    padding: 0 8px !important;
     justify-content: flex-start !important;
     text-align: left !important;
-    font-size: 13px !important;
+    font-size: 12.5px !important;
+    font-weight: 700 !important;
     line-height: 1.2 !important;
   }
 
   .sov-nav-switch .q-btn__content {
     width: 100%;
-    gap: 6px;
+    gap: var(--sov-ui-icon-gap);
     flex-wrap: nowrap !important;
     flex-direction: row;
     justify-content: flex-start !important;
@@ -747,12 +892,13 @@ html {
   }
 
   .sov-nav-switch .q-icon {
+    width: var(--sov-ui-icon-column);
+    min-width: var(--sov-ui-icon-column);
+    margin: 0 !important;
+    flex: 0 0 var(--sov-ui-icon-column);
     font-size: 18px;
     line-height: 1;
-  }
-
-  .sov-nav-switch--config .q-btn__content {
-    font-size: 12px;
+    text-align: center;
   }
 
   .sov-sidebar-caption {
@@ -795,7 +941,7 @@ html {
     height: 36px !important;
     min-height: 36px !important;
     margin: 1px 0;
-    padding: 0 6px;
+    padding: 0 8px;
     border-radius: 7px;
     justify-content: flex-start !important;
     text-align: left !important;
@@ -816,7 +962,7 @@ html {
     width: 100%;
     height: 36px !important;
     min-height: 36px !important;
-    gap: 6px;
+    gap: var(--sov-ui-icon-gap);
     align-items: center;
     flex-direction: row;
     justify-content: flex-start !important;
@@ -824,8 +970,13 @@ html {
   }
 
   .les-top-tabs .q-icon {
-    font-size: 20px;
+    width: var(--sov-ui-icon-column);
+    min-width: var(--sov-ui-icon-column);
+    margin: 0 !important;
+    flex: 0 0 var(--sov-ui-icon-column);
+    font-size: 18px;
     line-height: 1;
+    text-align: center;
   }
 
   .les-top-tabs .q-tab__label {
@@ -866,7 +1017,7 @@ html {
     width: 100%;
     min-height: 36px;
     margin: 0 !important;
-    padding: 0 10px !important;
+    padding: 0 8px !important;
     border-radius: 8px;
     color: var(--text) !important;
     font-family: var(--sov-ui-font-prose) !important;
@@ -878,7 +1029,7 @@ html {
   }
 
   .sov-runtime-state {
-    gap: 8px;
+    gap: var(--sov-ui-icon-gap);
     align-items: center;
     flex-wrap: nowrap;
     background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel));
@@ -908,7 +1059,7 @@ html {
   .sov-ui-header-secondary,
   .sov-ui-header-action .q-btn__content {
     width: 100%;
-    gap: 8px;
+    gap: var(--sov-ui-icon-gap);
     flex-wrap: nowrap !important;
     justify-content: flex-start !important;
     text-align: left !important;
@@ -918,8 +1069,12 @@ html {
   .sov-ui-header-utility .q-icon,
   .sov-ui-header-secondary .q-icon,
   .sov-ui-header-action .q-icon {
-    flex: 0 0 auto;
+    width: var(--sov-ui-icon-column);
+    min-width: var(--sov-ui-icon-column);
+    margin: 0 !important;
+    flex: 0 0 var(--sov-ui-icon-column);
     font-size: 18px;
+    text-align: center;
   }
 
   .sov-ui-header-secondary {

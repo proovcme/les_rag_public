@@ -131,7 +131,7 @@ def test_chat_exposes_documents_navigation():
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
 
     assert "tab_documents=None" in chat
-    assert 'aria-label="Документы"' in chat
+    assert 'aria_label="Документы"' in chat
     assert "Открыть документы датасетов" in chat
     assert 'f"Источники · {len(srcs)}"' in chat
     assert 'value=False' in chat

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
+from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS
 from sovushka.uikit.states import feedback_state
 from sovushka.uikit.tokens import UIKIT_CSS
 
@@ -45,6 +46,39 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert ".sov-mobile-sections-button" in UIKIT_CSS
     assert ".sov-mobile-sections-menu" in UIKIT_CSS
     assert ".sov-app-content .nicegui-tab-panel" in UIKIT_CSS
+    assert "--sov-ui-icon-column: 20px" in UIKIT_CSS
+    assert "--sov-ui-icon-gap: 8px" in UIKIT_CSS
+    assert ".sov-ui-button--primary" in UIKIT_CSS
+    assert ".sov-ui-button--danger" in UIKIT_CSS
+    assert ".sov-ui-panel--inset" in UIKIT_CSS
+
+
+def test_component_registry_stays_small_and_explicit():
+    assert BUTTON_VARIANTS == {"primary", "secondary", "quiet", "danger"}
+    assert PANEL_VARIANTS == {"plain", "raised", "inset"}
+
+    components = Path("sovushka/uikit/components.py").read_text(encoding="utf-8")
+    for primitive in (
+        "action_button",
+        "text_field",
+        "panel",
+        "section_heading",
+        "status_badge",
+        "render_feedback_state",
+        "acronym_identity",
+    ):
+        assert f"def {primitive}(" in components
+
+
+def test_navigation_has_one_icon_column_and_equal_primary_rows():
+    assert ".sov-nav-switch--config .q-btn__content" not in UIKIT_CSS
+    assert "height: 36px !important" in UIKIT_CSS
+    assert "gap: var(--sov-ui-icon-gap)" in UIKIT_CSS
+    assert "flex: 0 0 var(--sov-ui-icon-column)" in UIKIT_CSS
+
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    assert 'with ui.row().classes("sov-primary-nav")' in header
+    assert header.count("_primary_button(") == 4
 
 
 def _contrast_ratio(foreground: str, background: str) -> float:
@@ -104,6 +138,22 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert "sov-attach-btn" in chat
     assert 'render_feedback_state(' in chat
     assert '"blocker": blocker' in chat
+    assert "action_button(" in chat
+    assert "text_field(" in documents
+
+
+def test_project_ui_skill_is_complete_and_points_to_canonical_contract():
+    skill = Path("skills/sovushka-ui/SKILL.md").read_text(encoding="utf-8")
+    reference = Path(
+        "skills/sovushka-ui/references/review-checklist.md"
+    ).read_text(encoding="utf-8")
+    module_doc = Path("docs/modules/sovushka-uikit.md").read_text(encoding="utf-8")
+
+    assert "TODO" not in skill
+    assert "docs/modules/sovushka-uikit.md" in skill
+    assert "icon-to-label gap at 8 px" in skill
+    assert "No page-level horizontal overflow at 390 px" in reference
+    assert "## Реестр компонентов" in module_doc
 
 
 def test_acronym_identity_is_shared_and_user_can_hide_expansions():
