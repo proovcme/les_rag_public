@@ -49,7 +49,9 @@ def build_header(
 
         # ── Бейдж версии (v0.19): что реально запущено — версия+commit+runtime-divergence ──
         _ver_state: dict = {"info": None}
-        ver_badge = ui.button("· · ·").props("flat dense no-caps").style(
+        ver_badge = ui.button("· · ·").props("flat dense no-caps").classes(
+            "sov-ui-version-badge"
+        ).style(
             "color:var(--dim);font-family:var(--font);font-size:.58rem;font-weight:700;"
             "margin-right:14px;padding:2px 7px;border:1px solid var(--border);border-radius:5px;"
             "min-height:0;line-height:1.2;"
@@ -150,7 +152,9 @@ def build_header(
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
 
         # ── Контролы (справа) ─────────────────────────────────────────────────
-        with ui.row().classes("items-center gap-1").style("flex-shrink:0;margin-left:8px;"):
+        with ui.row().classes("items-center gap-1 sov-ui-header-controls").style(
+            "flex-shrink:0;margin-left:8px;"
+        ):
 
             # W5.3: индикатор доступности proxy (зелёный — на связи, красный — нет)
             proxy_dot = ui.icon("circle").style("font-size:.6rem;color:#10b981;margin:0 2px;")
@@ -200,16 +204,20 @@ def build_header(
                 if chat_link:
                     ui.button("ЧАТ", on_click=lambda: ui.navigate.to("/")).props(
                         "flat no-caps dense"
-                    ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
+                    ).classes("sov-ui-header-secondary").style(
+                        "color:var(--accent);font-size:.62rem;font-family:var(--font);"
+                    )
 
                 if admin_link:
                     ui.button("КОНФИГУРАЦИЯ", on_click=lambda: ui.navigate.to("/les")).props(
                         "flat no-caps dense"
-                    ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
+                    ).classes("sov-ui-header-secondary").style(
+                        "color:var(--accent);font-size:.62rem;font-family:var(--font);"
+                    )
 
                 if visualizer_url:
                     ui.link("КВАДРАНТ ↗", target=visualizer_url, new_tab=True).classes(
-                        "no-underline"
+                        "no-underline sov-ui-header-secondary"
                     ).style(
                         "color:var(--accent);font-size:.62rem;font-family:var(--font);"
                         "font-weight:700;white-space:nowrap;padding:4px 6px;"
@@ -598,12 +606,12 @@ def build_header(
 
                 ui.button("Настройки", icon="o_settings", on_click=lambda: settings_dialog.open()).props(
                     'flat dense no-caps aria-label="Настройки"'
-                ).style("color:var(--dim);font-size:.62rem;")
+                ).classes("sov-ui-header-action").style("color:var(--dim);font-size:.62rem;")
 
             # Пользователь / выход
             ui.button(auth_holder or auth_role, icon=("o_shield" if is_admin else "o_person"),
                       on_click=lambda: (logout(), ui.navigate.to("/login"))
-            ).props("flat no-caps dense").style(
+            ).props("flat no-caps dense").classes("sov-ui-header-action").style(
                 "color:var(--ok);font-size:.62rem;font-family:var(--font);max-width:120px;"
                 "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
             )

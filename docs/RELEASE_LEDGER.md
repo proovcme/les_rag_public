@@ -7,16 +7,33 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.2 (dev, P0.2)
-номер сборки:              475     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.475 (dev)
+версия продукта (SemVer):  0.25.3 (internal rollout target, P0.3)
+номер сборки:              476     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.476 (internal)
 ветка выпуска:             codex/audit-rag
-dev implementation:       codex/audit-rag; P0.2 Sovushka UI kit
-задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
+dev implementation:       codex/audit-rag; P0.3 prepare-once/apply-fast updater
+задеплоено на рантайм:     Mac 0.25.0 / build 469; Legion 0.25.0 / build 473
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          внутренний Mac+Legion после P0.3; без публикации
-рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
+следующий выпуск:          prepare updater → отдельная приёмка → Legion; без публикации
+рантайм /api/version:      Mac 0.25.0 / build 469; Legion 0.25.0 / build 473
 ```
+
+> 0.25.3 / build 476 — P0.3 prepare-once/apply-fast internal updater
+>
+> Дата: 2026-07-28
+> Статус: updater реализуется и проверяется без установки на Legion; обе машины
+> возвращены на 0.25.0. Тяжёлый `make prepare-audit-rag` выполняет gates/build
+> один раз на SHA. `make prepare-audit-rag-legion` отдельно кэширует baseline по
+> checksum и готовит Windows installer с isolated smoke, не меняя production.
+> `make deploy-audit-rag` только применяет уже подготовленные артефакты и
+> отказывается повторять pytest/Rust build/baseline transfer.
+> При ошибке code/app откатывается; user data, индексы и секреты не меняются.
+> Команда не принимает publish, не создаёт tags/GitHub Release/public feed.
+> Pre-commit gate: `make verify` — `2767 collected`; `make test` —
+> `2758 passed, 9 skipped`; RAG core — `183 passed`; изолированный
+> desktop/mobile browser-smoke — `6/6`. Первый реальный dual-run остановлен:
+> updater переработан после выявления безусловной повторной передачи 54-МБ
+> baseline, повторных build/gates и Windows lifecycle drift.
 
 > 0.25.2 / build 475 — P0.2 Sovushka UI kit
 >

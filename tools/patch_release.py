@@ -61,6 +61,16 @@ def output(command: Iterable[str], *, cwd: Path = ROOT) -> str:
     return run(command, cwd=cwd, capture=True).stdout.strip()
 
 
+def commits_match(actual: str, expected: str) -> bool:
+    actual = str(actual or "").strip()
+    expected = str(expected or "").strip()
+    return (
+        len(actual) >= 7
+        and len(expected) >= 7
+        and (actual == expected or actual.startswith(expected) or expected.startswith(actual))
+    )
+
+
 def require_tools(names: Iterable[str]) -> None:
     missing = [name for name in names if shutil.which(name) is None]
     if missing:
@@ -155,15 +165,13 @@ def remote_build(
         f"$repo='{repo_root}'; $branch='{branch}'; $commit='{commit}'; "
         "$dirty=(& git -C $repo status --porcelain)-join \"`n\"; "
         "if($dirty){throw \"Legion checkout is dirty before release: $dirty\"}; "
-        "& git -C $repo fetch origin \"${branch}:refs/remotes/origin/${branch}\"; "
+        "& git -C $repo fetch origin \"+${branch}:refs/remotes/origin/${branch}\"; "
         "if($LASTEXITCODE -ne 0){throw 'git fetch failed'}; "
-        "& git -C $repo show-ref --verify --quiet \"refs/heads/$branch\"; "
-        "if($LASTEXITCODE -eq 0){"
-        "& git -C $repo checkout $branch"
-        "}else{"
-        "& git -C $repo checkout -b $branch \"refs/remotes/origin/$branch\""
-        "}; if($LASTEXITCODE -ne 0){throw 'git checkout failed'}; "
-        "& git -C $repo pull --ff-only origin $branch; if($LASTEXITCODE -ne 0){throw 'git pull failed'}; "
+        # A clean deployment checkout may still point at the previous amended
+        # audit commit. Reset only this dedicated branch to its fetched origin
+        # ref so the host installs the caller-verified exact SHA.
+        "& git -C $repo checkout -B $branch \"refs/remotes/origin/$branch\"; "
+        "if($LASTEXITCODE -ne 0){throw 'git checkout failed'}; "
         "$head=(& git -C $repo rev-parse HEAD).Trim(); "
         "if($head -ne $commit){throw \"Legion HEAD $head does not match $commit\"}; "
         "$dist=Join-Path $repo 'dist'; New-Item -ItemType Directory -Force -Path $dist | Out-Null; "
@@ -195,20 +203,197 @@ def fetch_remote_artifacts(*, host: str, repo_root: str) -> None:
 
 
 def _last_json_object(text: str) -> dict[str, Any]:
-    for line in reversed(text.splitlines()):
-        candidate = line.strip()
-        if not candidate.startswith("{"):
-            continue
+    decoder = json.JSONDecoder()
+    objects: list[dict[str, Any]] = []
+    offset = 0
+    while offset < len(text):
+        start = text.find("{", offset)
+        if start < 0:
+            break
         try:
-            payload = json.loads(candidate)
+            payload, end = decoder.raw_decode(text[start:])
         except (ValueError, TypeError):
+            offset = start + 1
             continue
         if isinstance(payload, dict):
-            return payload
+            objects.append(payload)
+        offset = start + max(end, 1)
+    if objects:
+        return objects[-1]
     raise ValueError("no JSON object in output")
 
 
-def verify_remote_production_persistence(*, host: str, expected_version: str) -> dict[str, Any]:
+def _prepare_remote_update_checkout(
+    *, host: str, repo_root: str, branch: str, commit: str
+) -> None:
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$repo='{repo_root}'; $branch='{branch}'; $commit='{commit}'; "
+        "$dirty=(& git -C $repo status --porcelain)-join \"`n\"; "
+        "if($dirty){throw \"Legion checkout is dirty: $dirty\"}; "
+        "& git -C $repo fetch origin \"+${branch}:refs/remotes/origin/${branch}\"; "
+        "if($LASTEXITCODE -ne 0){throw 'git fetch failed'}; "
+        "& git -C $repo checkout -B $branch \"refs/remotes/origin/$branch\"; "
+        "if($LASTEXITCODE -ne 0){throw 'git checkout failed'}; "
+        "$head=(& git -C $repo rev-parse HEAD).Trim(); "
+        "if($head -ne $commit){throw \"Legion HEAD $head does not match $commit\"}; "
+        "[ordered]@{ok=$true;head=$head}|ConvertTo-Json -Compress"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    result = _last_json_object(
+        output(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded])
+    )
+    if result.get("head") != commit:
+        raise RuntimeError("Legion prepared checkout does not match requested commit")
+
+
+def _ensure_remote_baseline_cache(
+    *,
+    host: str,
+    archive: Path,
+    expected_sha256: str,
+) -> dict[str, Any]:
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$sha='{expected_sha256}'; "
+        "$root=Join-Path $env:LOCALAPPDATA 'LES\\update-cache\\baselines'; "
+        "New-Item -ItemType Directory -Force -Path $root|Out-Null; "
+        "$path=Join-Path $root ($sha+'.zip'); "
+        "$cached=$false; "
+        "if(Test-Path -LiteralPath $path){"
+        "$actual=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant();"
+        "$cached=($actual -eq $sha)}; "
+        "[ordered]@{cached=$cached;path=$path;sha256=$sha}|ConvertTo-Json -Compress"
+    )
+    encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
+    probe = _last_json_object(
+        output(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded])
+    )
+    if not probe.get("cached"):
+        remote_path = str(probe["path"]).replace("\\", "/")
+        run(["scp", str(archive), f"{host}:{remote_path}"])
+        verify = _last_json_object(
+            output(["ssh", host, "powershell", "-NoProfile", "-EncodedCommand", encoded])
+        )
+        if not verify.get("cached"):
+            raise RuntimeError("Legion baseline cache checksum did not converge")
+        probe = verify
+        probe["transferred"] = True
+    else:
+        probe["transferred"] = False
+    return probe
+
+
+def remote_prepare_update(
+    *,
+    host: str,
+    repo_root: str,
+    branch: str,
+    version: str,
+    build_number: int,
+    commit: str,
+    smeta_baseline_archive: Path,
+    smeta_baseline_sha256: str,
+) -> dict[str, Any]:
+    _prepare_remote_update_checkout(
+        host=host,
+        repo_root=repo_root,
+        branch=branch,
+        commit=commit,
+    )
+    baseline = _ensure_remote_baseline_cache(
+        host=host,
+        archive=smeta_baseline_archive,
+        expected_sha256=smeta_baseline_sha256,
+    )
+    script = f"{repo_root.rstrip(chr(92))}\\tools\\windows_prepare_update.ps1"
+    prepared = _last_json_object(
+        output(
+            [
+                "ssh",
+                host,
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script,
+                "-Version",
+                version,
+                "-BuildNumber",
+                str(build_number),
+                "-BuildCommit",
+                commit,
+                "-RepoRoot",
+                repo_root,
+                "-SmetaBaselineArchive",
+                str(baseline["path"]),
+            ]
+        )
+    )
+    if prepared.get("status") != "prepared" or prepared.get("commit") != commit:
+        raise RuntimeError("Legion update preparation is not valid")
+    return {
+        "status": "prepared",
+        "commit": commit,
+        "cache_hit": bool(prepared.get("cache_hit")),
+        "installer": prepared.get("installer"),
+        "installer_sha256": prepared.get("sha256"),
+        "baseline_sha256": baseline.get("sha256"),
+        "baseline_transferred": bool(baseline.get("transferred")),
+        "smoke": prepared.get("smoke"),
+    }
+
+
+def remote_apply_prepared_update(
+    *,
+    host: str,
+    repo_root: str,
+    version: str,
+    build_number: int,
+    commit: str,
+) -> dict[str, Any]:
+    script = f"{repo_root.rstrip(chr(92))}\\tools\\windows_apply_prepared_update.ps1"
+    applied = _last_json_object(
+        output(
+            [
+                "ssh",
+                host,
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                script,
+                "-Version",
+                version,
+                "-BuildNumber",
+                str(build_number),
+                "-BuildCommit",
+                commit,
+                "-RepoRoot",
+                repo_root,
+            ]
+        )
+    )
+    if applied.get("status") != "applied" or applied.get("commit") != commit:
+        raise RuntimeError("Legion prepared update did not apply")
+    applied["independent_persistence"] = verify_remote_production_persistence(
+        host=host,
+        expected_version=version,
+        expected_build_number=build_number,
+        expected_commit=commit,
+    )
+    return applied
+
+
+def verify_remote_production_persistence(
+    *,
+    host: str,
+    expected_version: str,
+    expected_build_number: int | None = None,
+    expected_commit: str = "",
+) -> dict[str, Any]:
     """Probe production from a fresh SSH session after the build/deploy session has closed."""
     time.sleep(5)
     script = (
@@ -218,6 +403,7 @@ def verify_remote_production_persistence(*, host: str, expected_version: str) ->
         "$desktop=@(Get-Process -Name 'les-desktop' -ErrorAction SilentlyContinue).Count; "
         "[ordered]@{product_version=[string]$version.product_version;"
         "build_number=[int]$version.build_number;ui_status=[int]$ui.StatusCode;"
+        "commit=[string]$(if($version.deployed_commit){$version.deployed_commit}else{$version.git_commit});"
         "desktop_processes=[int]$desktop}|ConvertTo-Json -Compress"
     )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
@@ -228,6 +414,14 @@ def verify_remote_production_persistence(*, host: str, expected_version: str) ->
             payload = _last_json_object(raw)
             if (
                 payload.get("product_version") == expected_version
+                and (
+                    expected_build_number is None
+                    or int(payload.get("build_number") or 0) == expected_build_number
+                )
+                and (
+                    not expected_commit
+                    or commits_match(str(payload.get("commit") or ""), expected_commit)
+                )
                 and int(payload.get("ui_status") or 0) == 200
                 and int(payload.get("desktop_processes") or 0) >= 1
             ):
@@ -266,6 +460,7 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
     smeta = smoke.get("smeta_baseline") or {}
     production_rag = production.get("rag") or {}
     production_mail = production.get("mail") or {}
+    production_rollback = production.get("rollback") or {}
     if summary.get("build_commit") != commit or not smoke.get("ok"):
         raise RuntimeError("remote build commit or live smoke is not verified")
     if not smeta.get("ok") or int(smeta.get("norm_count") or 0) < 40_000:
@@ -279,6 +474,8 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
         or production_mail.get("schedule") != "manual"
         or int(production_mail.get("trigger_count") or 0) != 0
         or production_mail.get("outlook_probe") != "ok"
+        or production_rollback.get("available") is not True
+        or production_rollback.get("data_untouched") is not True
     ):
         raise RuntimeError("production Legion deploy was not verified")
     return summary

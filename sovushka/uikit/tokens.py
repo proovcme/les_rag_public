@@ -135,6 +135,31 @@ html {
   .sov-ui-evidence-card {
     border-radius: 12px;
   }
+  .sov-ui-header {
+    padding-inline: 6px !important;
+  }
+  .sov-ui-version-badge,
+  .sov-ui-header-secondary {
+    display: none !important;
+  }
+  .sov-ui-header-controls {
+    flex-wrap: nowrap !important;
+    gap: 0 !important;
+    margin-left: 2px !important;
+  }
+  .sov-ui-header-action {
+    width: var(--sov-ui-hit);
+    min-width: var(--sov-ui-hit);
+    max-width: var(--sov-ui-hit) !important;
+    padding-inline: 0 !important;
+  }
+  .sov-ui-header-action .q-btn__content {
+    font-size: 0;
+    gap: 0;
+  }
+  .sov-ui-header-action .q-icon {
+    font-size: 20px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

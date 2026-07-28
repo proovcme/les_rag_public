@@ -1,8 +1,8 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
 Гейт: `make verify` (офлайн, синтаксис+сбор канонической LES-коллекции). Основная сюита:
-`make test`. На 2026-07-28 она собирает **2752 теста** и даёт
-**2743 passed / 9 skipped**. Прямой
+`make test`. На 2026-07-28 она собирает **2767 тестов** и даёт
+**2758 passed / 9 skipped**. Прямой
 `uv run pytest` использует тот же default из `pytest.ini`. Физический total включает также
 архивные и отдельные продуктовые профили;
 архивный Unified запускается только через `make test-legacy`, а ARTEL — в отдельном продукте.
@@ -32,7 +32,7 @@
 - `make smoke-basic-release` — живой HTTP/UI/product smoke. Эти проверки не подменяются зелёным pytest.
 - `platform-gate` — одинаковый на Mac и Windows переносимый набор поведенческих unit/integration
   проверок, фактическая проверка комплектной сметной базы и нативная Tauri-сборка; отдельно
-  добавляет проверки установщика соответствующей ОС. Полный набор из 2752 тестов остаётся обязательным
+  добавляет проверки установщика соответствующей ОС. Полный набор из 2767 тестов остаётся обязательным
   локальным release-гейтом, а не многократно прогоняются на hosted Windows без живого окружения;
 
 RAG-ядро имеет отдельный обязательный профиль `make test-rag-core`; offline defaults задаются в
@@ -98,6 +98,7 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_activate_qdrant_generation.py` | focused | stable alias activation requires green structural+FTS+live-RRF report; Qdrant/SQLite alias rollback clears or restores lexical projection; direct activation reconciles supervisor state |
 | `tests/test_rag_readiness_service.py` | focused | GUI readiness reports honest ready/degraded/building/awaiting-activation states from contract, dense, sparse, fingerprint, FTS and alias coverage |
 | `tests/test_deploy_to_runtime.py` | focused | service restart routing, clean-release scope from `deploy_stamp.deployed_commit..HEAD`, and safe distinction between a file matching the deployed commit and true runtime-only drift |
+| `tests/test_internal_dual_deploy.py`; `tools/browser_layout_smoke.py` | focused + live browser | prepare-once/apply-fast exact `codex/audit-rag`: checksum-valid local bundle cache, unchanged baseline transfer skipped, separate Windows prepare/apply, no pytest/build on apply, no publish path, Mac atomic replace/rollback and Legion application rollback without user state; `/`, `/classic`, `/les/classic` on desktop/mobile without overflow, clipped actions or hidden focus |
 | `tests/test_smeta_rag_quality_probe.py` | 2 | smeta diagnostic probe preserves norm identity and technology evidence while keeping professional applicability outside machine scoring |
 | `tests/test_system_dataset_service.py` | 3 | module-owned RAG identity: SMETA_SERVICE/GESN projections are typed `system/smeta`, project tables stay user-owned, MetaDB and module lookup persist the boundary |
 | `tests/test_smart_index.py` | focused | общий пользовательский RAG не регистрирует module-owned generated projections; ФГИС-смета остаётся в typed smeta contour |

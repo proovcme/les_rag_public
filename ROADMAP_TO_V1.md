@@ -1292,11 +1292,11 @@ CAD inventory points to projection and chat target_file without manual path copy
 
 Цель: улучшить качество источников и доверие к ответу.
 
-Текущее состояние 0.25.2: P0 fail-closed retrieval contract и первый слой UI
+Текущее состояние 0.25.3: P0 fail-closed retrieval contract и первый слой UI
 закреплены в `codex/audit-rag`. Native RRF/rerank/scope не имеют скрытого
 legacy fallback; Совушка показывает источники и `BLOCKED/MISSING` отдельными
-компонентами. Следующий шаг этой ветки — внутренний транзакционный выпуск на
-Mac + Legion без публикации.
+компонентами. Внутренний транзакционный выпуск Mac + Legion автоматизирован
+командой `make deploy-audit-rag`; публикация, tags и public feed исключены.
 
 ### Сделать
 

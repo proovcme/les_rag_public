@@ -28,6 +28,19 @@ def test_release_command_tolerates_non_utf8_windows_diagnostics():
     assert "\ufffd" in completed.stderr
 
 
+def test_windows_json_parser_accepts_multiline_payload_with_clixml_noise():
+    payload = patch_release._last_json_object(
+        "remote preface\n"
+        "{\n"
+        '  "status": "prepared",\n'
+        '  "smoke": {"ok": true}\n'
+        "}\n"
+        '<Objs Version="1.1.0.1" />'
+    )
+
+    assert payload == {"status": "prepared", "smoke": {"ok": True}}
+
+
 def test_patch_release_contract_separates_product_and_build(tmp_path):
     contract = tmp_path / "version.json"
     contract.write_text(
@@ -42,6 +55,38 @@ def test_patch_release_contract_separates_product_and_build(tmp_path):
     )
 
     assert patch_release.load_contract(contract)["product_version"] == "1.2.3"
+
+
+def test_commit_identity_accepts_runtime_abbreviation_only():
+    assert patch_release.commits_match("86879040", "86879040abcdef")
+    assert not patch_release.commits_match("8687904", "deadbeef1234")
+
+
+def test_remote_baseline_cache_skips_unchanged_transfer(monkeypatch, tmp_path):
+    archive = tmp_path / "baseline.zip"
+    archive.write_bytes(b"same")
+    monkeypatch.setattr(
+        patch_release,
+        "output",
+        lambda _command, **_kwargs: (
+            '{"cached":true,"path":"C:\\\\cache\\\\same.zip","sha256":"abc"}'
+        ),
+    )
+    monkeypatch.setattr(
+        patch_release,
+        "run",
+        lambda _command, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("unchanged baseline transferred")
+        ),
+    )
+
+    result = patch_release._ensure_remote_baseline_cache(
+        host="legion",
+        archive=archive,
+        expected_sha256="abc",
+    )
+
+    assert result["transferred"] is False
 
 
 def test_release_requires_successful_platform_gate_for_exact_commit(monkeypatch):
@@ -135,8 +180,9 @@ def test_remote_build_bootstraps_branch_before_versioned_script(monkeypatch):
     assert len(calls) == 3
     assert calls[0][-2] == "-EncodedCommand"
     decoded = base64.b64decode(calls[0][-1]).decode("utf-16le")
-    assert 'fetch origin "${branch}:refs/remotes/origin/${branch}"' in decoded
-    assert 'checkout -b $branch "refs/remotes/origin/$branch"' in decoded
+    assert 'fetch origin "+${branch}:refs/remotes/origin/${branch}"' in decoded
+    assert 'checkout -B $branch "refs/remotes/origin/$branch"' in decoded
+    assert "pull --ff-only origin $branch" not in decoded
     assert calls[1][0] == "scp"
     assert calls[1][1] == "baseline.zip"
     assert calls[2][6] == "-File"
@@ -171,7 +217,7 @@ def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     assert 'production_mail.get("schedule") != "manual"' in source
     assert '"--resume-verified-commit"' in source
     assert '"merge-base", "--is-ancestor"' in source
-    assert "windows_production_deploy.ps1" in windows
+    assert "windows_transactional_production_deploy.ps1" in windows
     assert "production = $production" in windows
     assert "Heavy PDF polygon" not in production
     assert "LES production PDF smoke" not in production
@@ -179,7 +225,7 @@ def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     assert '"RAG_COLLECTION_NAME" $newCollection' in production
     assert "previous_index_contract_incompatible" in production
     assert "old_collection_preserved = $true" in production
-    assert "Production index contract is not compatible after bootstrap" in production
+    assert "Production index contract is not compatible after fast start" in production
     assert 'retrieval_proof = "isolated_clean_install_smoke"' in production
     assert "Start-InteractiveLesDesktop" in production
     assert 'Join-Path $InstallRoot "les-desktop.exe"' in production
@@ -188,6 +234,12 @@ def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     assert "collector must be manual" in production
     assert 'schedule = "manual"' in production
     assert "trigger_count = 0" in production
+    assert "@(8050, 8051, 8052, 8053)" in production
+    assert "$previousRunTime = $previousInfo.LastRunTime" in production
+    assert "$probeInfo.LastRunTime -gt $previousRunTime" in production
+    assert 'outlook_probe = $outlookProbe' in production
+    assert "Outlook probe skipped:" in production
+    assert "service_fallback_used = $fallbackStarted" in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):

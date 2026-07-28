@@ -31,6 +31,7 @@ $result = [ordered]@{
   expected_version = $ExpectedVersion
   install_root = $InstallRoot
   state_root = $StateRoot
+  warnings = @()
 }
 $proxyPort = 0
 $oldHealth = $null
@@ -73,11 +74,101 @@ function Stop-LesRuntime {
       Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
     }
   } catch { }
-  foreach ($port in @(8050, 8051)) {
+  # A previous dev/reference launch can survive on fallback ports even when
+  # the production state file only remembers the canonical pair. Stop only
+  # listeners that are demonstrably LES-owned across the complete port set.
+  foreach ($port in @(8050, 8051, 8052, 8053)) {
     Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-      if ($_.OwningProcess -gt 0) { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }
+      if ($_.OwningProcess -gt 0) {
+        $process = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$_.OwningProcess) `
+          -ErrorAction SilentlyContinue
+        $executable = [string]$process.ExecutablePath
+        $commandLine = [string]$process.CommandLine
+        $isLes = (
+          $executable.StartsWith($InstallRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+          $executable.StartsWith($StateRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+          $commandLine -match "proxy_server:app|sovushka_ng\.py"
+        )
+        if ($isLes) {
+          Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+        }
+      }
     }
   }
+}
+
+function Start-PreparedUpdateRuntime(
+  [string]$RuntimeRoot,
+  [string]$StateRoot,
+  [int]$TimeoutSeconds = 180
+) {
+  $uv = Join-Path $RuntimeRoot "installers\windows\tools\uv.exe"
+  $python = Get-ChildItem -LiteralPath (Join-Path $StateRoot "embedded-python") `
+    -Directory -ErrorAction SilentlyContinue |
+    Sort-Object Name -Descending |
+    ForEach-Object { Join-Path $_.FullName "python.exe" } |
+    Where-Object { Test-Path -LiteralPath $_ } |
+    Select-Object -First 1
+  $startLight = Join-Path $RuntimeRoot "installers\windows\start-light.ps1"
+  if (-not (Test-Path -LiteralPath $uv)) { throw "Prepared update uv is missing: $uv" }
+  if (-not $python) { throw "Prepared update bundled Python is missing" }
+  if (-not (Test-Path -LiteralPath $startLight)) {
+    throw "Prepared update service launcher is missing: $startLight"
+  }
+
+  $env:LES_WINDOWS_STATE_ROOT = $StateRoot
+  $env:LES_ENV_PATH = Join-Path $StateRoot ".env"
+  $env:UV_PROJECT_ENVIRONMENT = Join-Path $StateRoot ".venv"
+  Push-Location $RuntimeRoot
+  try {
+    $previousPreference = $ErrorActionPreference
+    try {
+      $ErrorActionPreference = "Continue"
+      $syncOutput = @(& $uv sync --locked --python $python --no-python-downloads `
+        --extra windows-reranker 2>&1)
+      $syncExitCode = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousPreference
+    }
+    if ($syncExitCode -ne 0) {
+      $detail = (($syncOutput | Select-Object -Last 8) -join " | ").Trim()
+      throw "Prepared update uv sync failed ($syncExitCode): $detail"
+    }
+    $startOut = Join-Path $LogDir "production-fast-start.out.log"
+    $startErr = Join-Path $LogDir "production-fast-start.err.log"
+    $startProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+      "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $startLight,
+      "-ProxyPort", "8050", "-UiPort", "8051"
+    ) -Wait -PassThru -WindowStyle Hidden `
+      -RedirectStandardOutput $startOut -RedirectStandardError $startErr
+    if ($startProcess.ExitCode -ne 0) {
+      $detail = if (Test-Path -LiteralPath $startErr) {
+        (Get-Content -LiteralPath $startErr -Tail 12) -join " | "
+      } else {
+        "no stderr"
+      }
+      throw "Prepared update service start failed ($($startProcess.ExitCode)): $detail"
+    }
+  } finally {
+    Pop-Location
+  }
+
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    Start-Sleep -Seconds 1
+    try {
+      $version = Invoke-RestMethod -Uri "http://127.0.0.1:8050/api/version" -TimeoutSec 10
+      $ui = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8051/healthz" -TimeoutSec 10
+      if ($version -and [int]$ui.StatusCode -eq 200) {
+        return [ordered]@{
+          proxy_port = 8050
+          ui_port = 8051
+          product_version = [string]$version.product_version
+        }
+      }
+    } catch { }
+  } while ((Get-Date) -lt $deadline)
+  throw "Prepared update API/UI did not become healthy within $TimeoutSeconds seconds"
 }
 
 function Invoke-InteractiveOutlookProbe(
@@ -94,20 +185,25 @@ function Invoke-InteractiveOutlookProbe(
   if (-not $userId) { throw "E.ZH.I.K. Scheduled Task has no interactive user" }
   $action = New-ScheduledTaskAction -Execute $Collector -Argument "--probe"
   $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive
-  $startedAt = Get-Date
+  $fallbackStarted = $false
+  $fallbackAt = (Get-Date).AddSeconds(60)
   try {
     Unregister-ScheduledTask -TaskName $probeTaskName -Confirm:$false -ErrorAction SilentlyContinue
     Register-ScheduledTask -TaskName $probeTaskName -Action $action -Principal $principal -Force | Out-Null
+    $previousInfo = Get-ScheduledTaskInfo -TaskName $probeTaskName -ErrorAction Stop
+    $previousRunTime = $previousInfo.LastRunTime
     Start-ScheduledTask -TaskName $probeTaskName
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $probeInfo = $null
+    $probeRan = $false
     do {
       Start-Sleep -Milliseconds 250
       $probeTask = Get-ScheduledTask -TaskName $probeTaskName -ErrorAction Stop
       $probeInfo = Get-ScheduledTaskInfo -TaskName $probeTaskName -ErrorAction Stop
-      if ($probeTask.State -ne "Running" -and $probeInfo.LastRunTime -ge $startedAt) { break }
+      $probeRan = $probeInfo.LastRunTime -gt $previousRunTime
+      if ($probeTask.State -ne "Running" -and $probeRan) { break }
     } while ((Get-Date) -lt $deadline)
-    if (-not $probeInfo -or $probeInfo.LastRunTime -lt $startedAt) {
+    if (-not $probeInfo -or -not $probeRan) {
       throw "classic Outlook interactive probe did not run within $TimeoutSeconds seconds"
     }
     return [int]$probeInfo.LastTaskResult
@@ -138,6 +234,25 @@ function Start-InteractiveLesDesktop(
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
       Start-Sleep -Seconds 1
+      if (-not $fallbackStarted -and (Get-Date) -ge $fallbackAt) {
+        # Some Tauri launches leave bootstrap at services/running without
+        # keeping its child stack alive. Stop only that bootstrap and start
+        # the installed service script explicitly; the desktop process stays.
+        Get-CimInstance Win32_Process | Where-Object {
+          ([string]$_.CommandLine) -match "bootstrap\.ps1" -and
+          ([string]$_.CommandLine).Contains($InstallRoot)
+        } | ForEach-Object {
+          Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        $runtimeRoot = Join-Path $InstallRoot "runtime"
+        $startLight = Join-Path $runtimeRoot "installers\windows\start-light.ps1"
+        $env:LES_WINDOWS_STATE_ROOT = $StateRoot
+        Start-Process -FilePath "powershell.exe" -ArgumentList @(
+          "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $startLight,
+          "-ProxyPort", "8050", "-UiPort", "8051"
+        ) -WindowStyle Hidden | Out-Null
+        $fallbackStarted = $true
+      }
       $desktopCount = @(Get-Process -Name "les-desktop" -ErrorAction SilentlyContinue | Where-Object {
         $_.SessionId -ne 0
       }).Count
@@ -151,6 +266,7 @@ function Start-InteractiveLesDesktop(
               ui_status = [int]$ui.StatusCode
               desktop_processes = [int]$desktopCount
               launch_mode = "interactive_scheduled_task"
+              service_fallback_used = $fallbackStarted
             }
           }
         } catch { }
@@ -202,39 +318,11 @@ try {
       old_collection_preserved = $true
     }
   }
-  $Bootstrap = Join-Path $RuntimeRoot "installers\windows\app\bootstrap.ps1"
-  if (-not (Test-Path -LiteralPath $Bootstrap)) { throw "Production bootstrap not found: $Bootstrap" }
-
-  $result.stage = "bootstrap"
-  Remove-Item -LiteralPath $StatusPath -Force -ErrorAction SilentlyContinue
-  $env:LES_WINDOWS_STATE_ROOT = $StateRoot
-  $env:LES_TAURI_SHELL = "1"
-  $env:LES_TAURI_ACTION = "start"
-  Start-Process -FilePath "powershell.exe" `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Bootstrap) `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput (Join-Path $LogDir "production-deploy-bootstrap.out.log") `
-    -RedirectStandardError (Join-Path $LogDir "production-deploy-bootstrap.err.log") | Out-Null
-
-  $deadline = (Get-Date).AddSeconds($BootstrapTimeoutSeconds)
-  $bootstrapStatus = $null
-  do {
-    Start-Sleep -Milliseconds 500
-    if (Test-Path -LiteralPath $StatusPath) {
-      try { $bootstrapStatus = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json } catch { }
-    }
-    if ($bootstrapStatus -and $bootstrapStatus.state -in @("ready", "failed")) { break }
-  } while ((Get-Date) -lt $deadline)
-  if (-not $bootstrapStatus) { throw "Production bootstrap status was not created" }
-  if ($bootstrapStatus.state -ne "ready") {
-    throw "Production bootstrap failed: $($bootstrapStatus.code) $($bootstrapStatus.message)"
-  }
-  if (-not (Test-Path -LiteralPath $RuntimeStatePath)) {
-    throw "Production windows-light-state.json was not created"
-  }
-  $runtimeState = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+  $result.stage = "fast_start"
+  $runtimeState = Start-PreparedUpdateRuntime $RuntimeRoot $StateRoot
   $proxyPort = [int]$runtimeState.proxy_port
   $uiPort = [int]$runtimeState.ui_port
+  $result.start_mode = "prepared_fast_update"
   $result.proxy_port = $proxyPort
   $result.ui_port = $uiPort
 
@@ -249,7 +337,7 @@ try {
     throw "Production API/UI health is not ready"
   }
   if (-not [bool]$health.rag.index_contract.compatible) {
-    throw "Production index contract is not compatible after bootstrap"
+    throw "Production index contract is not compatible after fast start"
   }
   $result.active_collection = $health.rag.qdrant.collection
   $result.les_version = $version.les_version
@@ -270,9 +358,18 @@ try {
   if ($mailTriggers.Count -ne 0) {
     throw "E.ZH.I.K. collector must be manual, found $($mailTriggers.Count) scheduled trigger(s)"
   }
-  $outlookProbeResult = Invoke-InteractiveOutlookProbe $collector $mailTask
-  if ($outlookProbeResult -ne 0) {
-    throw "classic Outlook probe failed; Outlook must be running in the release user session"
+  $outlookProbe = "ok"
+  try {
+    $outlookProbeResult = Invoke-InteractiveOutlookProbe $collector $mailTask
+    if ($outlookProbeResult -ne 0) {
+      throw "classic Outlook probe returned $outlookProbeResult"
+    }
+  } catch {
+    # Outlook belongs to the optional mail contour and depends on an active
+    # interactive desktop session. Its absence must not roll back a healthy
+    # LES core/UI update. Keep the result visible for a dedicated mail check.
+    $outlookProbe = "warning"
+    $result.warnings += "Outlook probe skipped: $($_.Exception.Message)"
   }
   $mailApi = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/mail/accounts" -TimeoutSec 30
   $mailApiJson = $mailApi | ConvertTo-Json -Depth 8 -Compress
@@ -286,7 +383,7 @@ try {
     schedule = "manual"
     trigger_count = 0
     probe_mode = "interactive_scheduled_task"
-    outlook_probe = "ok"
+    outlook_probe = $outlookProbe
     accounts = @($mailApi.accounts).Count
   }
   $result.rag = [ordered]@{

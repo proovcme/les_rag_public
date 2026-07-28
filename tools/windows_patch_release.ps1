@@ -134,7 +134,7 @@ try {
   # then checks the persistent runtime, manual Outlook intake and desktop.
   Invoke-Checked "powershell.exe" @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-    (Join-Path $RepoRoot "tools\windows_production_deploy.ps1"),
+    (Join-Path $RepoRoot "tools\windows_transactional_production_deploy.ps1"),
     "-Installer", $Installer,
     "-ExpectedVersion", $Version
   )

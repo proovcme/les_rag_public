@@ -66,6 +66,8 @@ def test_windows_bootstrap_installs_bounded_manual_interactive_task():
     assert "Invoke-InteractiveOutlookProbe" in production
     assert "New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive" in production
     assert 'probe_mode = "interactive_scheduled_task"' in production
+    assert 'outlook_probe = $outlookProbe' in production
+    assert "Outlook probe skipped:" in production
     assert "Unregister-ScheduledTask -TaskName $probeTaskName" in production
     assert "/api/mail/accounts" in production
     assert "password" in production
