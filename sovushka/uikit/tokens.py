@@ -7,6 +7,11 @@ UIKIT_CSS = """
     "Helvetica Neue", Inter, system-ui, sans-serif;
   --sov-ui-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
+  --sov-ui-font-size-body: 14px;
+  --sov-ui-font-size-control: 13px;
+  --sov-ui-font-size-meta: 12px;
+  --sov-ui-line-body: 1.5;
+  --sov-ui-line-control: 1.25;
   --sov-ui-space-1: 4px;
   --sov-ui-space-2: 8px;
   --sov-ui-space-3: 12px;
@@ -32,11 +37,44 @@ html {
   color: var(--text);
   background: var(--bg);
   font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-body);
+  font-weight: 400;
+  line-height: var(--sov-ui-line-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+.sov-ui-shell .q-btn__content,
+.sov-ui-shell .q-tab__label,
+.sov-ui-shell .q-field__native,
+.sov-ui-shell .q-field__label,
+.sov-ui-shell .q-item__label,
+.sov-ui-shell .q-chip__content,
+.sov-ui-shell .q-tooltip {
+  font-family: var(--sov-ui-font-prose);
+}
+
+.sov-ui-shell .q-btn__content,
+.sov-ui-shell .q-tab__label {
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 650;
+  line-height: var(--sov-ui-line-control);
+}
+
+.sov-ui-shell code,
+.sov-ui-shell pre,
+.sov-ui-shell kbd,
+.sov-ui-shell samp,
+.sov-ui-shell .sov-ui-status,
+.sov-ui-shell .sov-ui-source-chip {
+  font-family: var(--sov-ui-font-code);
 }
 
 .sov-ui-shell h1,
 .sov-ui-shell h2,
 .sov-ui-shell h3 {
+  line-height: 1.2;
+  letter-spacing: -.015em;
   text-wrap: balance;
 }
 
@@ -164,6 +202,11 @@ html {
   box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
+.sov-nav-switch--active .q-btn__content,
+.sov-nav-switch--active .q-icon {
+  color: #ffffff !important;
+}
+
 .sov-nav-switch:active {
   transform: scale(.96);
 }
@@ -230,6 +273,13 @@ html {
 .sov-app-content .sov-send-btn {
   color: #ffffff !important;
   background: var(--accent) !important;
+}
+
+.sov-app-content .sov-composer-actions .q-btn:last-child .q-btn__content,
+.sov-app-content .sov-composer-actions .q-btn:last-child .q-icon,
+.sov-app-content .sov-send-btn .q-btn__content,
+.sov-app-content .sov-send-btn .q-icon {
+  color: #ffffff !important;
 }
 
 .sov-app-content .sov-mode-guide,
@@ -331,7 +381,7 @@ html {
 @media (min-width: 901px) {
   .sov-app-shell {
     display: grid !important;
-    grid-template-columns: 96px minmax(0, 1fr);
+    grid-template-columns: 160px minmax(0, 1fr);
     grid-template-rows: 100vh;
     align-items: stretch;
     overflow: hidden;
@@ -341,7 +391,7 @@ html {
     grid-column: 1;
     grid-row: 1;
     display: flex !important;
-    width: 96px !important;
+    width: 160px !important;
     height: 100vh !important;
     min-height: 0;
     padding: 12px 8px 10px !important;
@@ -364,13 +414,14 @@ html {
   .sov-brand-block {
     min-height: 36px;
     margin: 0 !important;
-    padding: 2px 0;
-    justify-content: center;
+    padding: 2px 7px;
+    justify-content: flex-start;
   }
 
   .sov-brand-block .les-brand {
-    font-size: 13px !important;
-    letter-spacing: -.01em;
+    font-size: 15px !important;
+    line-height: 1 !important;
+    letter-spacing: 0;
   }
 
   .sov-ui-version-badge {
@@ -378,8 +429,10 @@ html {
     width: 100%;
     margin: 0 0 5px !important;
     padding-inline: 3px !important;
-    justify-content: center;
-    font-size: 8px !important;
+    justify-content: flex-start;
+    font-size: 10px !important;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.2 !important;
     color: var(--dim) !important;
     background: var(--bg) !important;
     border-color: var(--border) !important;
@@ -397,29 +450,34 @@ html {
 
   .sov-nav-switch {
     width: 100%;
-    min-height: 52px !important;
-    padding: 4px 2px !important;
-    justify-content: center;
-    font-size: 9px !important;
+    min-height: 44px !important;
+    padding: 4px 10px !important;
+    justify-content: flex-start;
+    font-size: 12px !important;
+    line-height: 1.2 !important;
   }
 
   .sov-nav-switch .q-btn__content {
     width: 100%;
-    gap: 2px;
-    flex-direction: column;
-    justify-content: center;
+    gap: 8px;
+    flex-direction: row;
+    justify-content: flex-start;
   }
 
   .sov-nav-switch .q-icon {
     font-size: 18px;
+    line-height: 1;
   }
 
   .sov-sidebar-caption {
     display: block;
-    margin: 10px 2px 2px;
+    margin: 11px 10px 3px;
     overflow: hidden;
-    font-size: 8px;
-    text-align: center;
+    font-size: 10px;
+    font-weight: 750;
+    line-height: 1.2;
+    letter-spacing: .04em;
+    text-align: left;
     white-space: nowrap;
   }
 
@@ -444,7 +502,7 @@ html {
     height: 44px !important;
     min-height: 44px !important;
     margin: 1px 0;
-    padding: 0 4px;
+    padding: 0 10px;
     border-radius: 7px;
     justify-content: flex-start;
   }
@@ -454,18 +512,25 @@ html {
     width: 100%;
     height: 44px !important;
     min-height: 44px !important;
-    gap: 4px;
+    gap: 8px;
     align-items: center;
     flex-direction: row;
     justify-content: flex-start;
   }
 
+  .les-top-tabs .q-icon {
+    font-size: 20px;
+    line-height: 1;
+  }
+
   .les-top-tabs .q-tab__label {
-    min-width: 0;
+    display: block;
     overflow: hidden;
-    font-size: 9px;
+    font-size: 12px;
+    line-height: 1.2;
     text-align: left;
-    text-overflow: ellipsis;
+    text-overflow: clip;
+    white-space: nowrap;
   }
 
   .les-top-tabs .q-tab__indicator {

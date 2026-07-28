@@ -179,7 +179,7 @@ def build_header(
                 )
             tab_refs["_primary_nav"] = nav_buttons
 
-        ui.label("РАБОЧИЕ РАЗДЕЛЫ").classes("sov-sidebar-caption")
+        ui.label("РАЗДЕЛЫ").classes("sov-sidebar-caption")
 
         # ── Вторичные рабочие разделы ─────────────────────────────────────────
         with ui.tabs().classes("les-top-tabs").props("dense no-caps").style(
@@ -211,6 +211,21 @@ def build_header(
                 if include_mail and "mail" not in tab_refs:
                     tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
+
+        for key, label in {
+            "diag": "Состояние",
+            "samovar": "Датасеты",
+            "documents": "Документы",
+            "cad_bim": "CAD/BIM",
+            "mail": "Почта",
+            "history": "История",
+            "mail_settings": "Настройка почты",
+            "instrumenty": "Инструменты",
+            "qdrant_viz": "Визуализация Qdrant",
+            "volk": "Доступ",
+        }.items():
+            if key in tab_refs:
+                tab_refs[key].tooltip(label)
 
         # ── Контролы (справа) ─────────────────────────────────────────────────
         with ui.row().classes("items-center gap-1 sov-ui-header-controls").style(

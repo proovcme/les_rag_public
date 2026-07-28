@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from sovushka.styles import _DARK_THEME, _LIGHT_THEME
 from sovushka.uikit.states import feedback_state
 from sovushka.uikit.tokens import UIKIT_CSS
 
@@ -30,8 +31,46 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert "font-variant-numeric: tabular-nums" in UIKIT_CSS
     assert "text-wrap: balance" in UIKIT_CSS
     assert "text-wrap: pretty" in UIKIT_CSS
-    assert "grid-template-columns: 96px minmax(0, 1fr)" in UIKIT_CSS
+    assert "grid-template-columns: 160px minmax(0, 1fr)" in UIKIT_CSS
     assert "@media (max-width: 900px)" in UIKIT_CSS
+    assert "--sov-ui-font-size-body: 14px" in UIKIT_CSS
+    assert "--sov-ui-font-size-control: 13px" in UIKIT_CSS
+    assert "font-synthesis: none" in UIKIT_CSS
+    assert ".sov-nav-switch--active .q-btn__content" in UIKIT_CSS
+
+
+def _contrast_ratio(foreground: str, background: str) -> float:
+    def luminance(hex_color: str) -> float:
+        channels = [
+            int(hex_color[index:index + 2], 16) / 255
+            for index in (1, 3, 5)
+        ]
+        linear = [
+            channel / 12.92
+            if channel <= 0.04045
+            else ((channel + 0.055) / 1.055) ** 2.4
+            for channel in channels
+        ]
+        return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+
+    lighter, darker = sorted(
+        (luminance(foreground), luminance(background)),
+        reverse=True,
+    )
+    return (lighter + 0.05) / (darker + 0.05)
+
+
+@pytest.mark.parametrize("theme", [_LIGHT_THEME, _DARK_THEME])
+def test_theme_text_contrast_meets_wcag_aa(theme):
+    surface = theme["--bg-panel"]
+    assert _contrast_ratio(theme["--text"], surface) >= 4.5
+    assert _contrast_ratio(theme["--dim"], surface) >= 4.5
+    assert _contrast_ratio(theme["--warn"], surface) >= 4.5
+    assert _contrast_ratio(theme["--err"], surface) >= 4.5
+
+
+def test_primary_green_action_contrast_meets_wcag_aa():
+    assert _contrast_ratio("#ffffff", _LIGHT_THEME["--accent"]) >= 4.5
 
 
 def test_critical_surfaces_use_uikit_and_blocked_state():
@@ -74,6 +113,7 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
         assert f'"{label}",' in header
         assert f'"{icon}",' in header
     assert "sov-primary-nav" in header
+    assert 'tab_refs[key].tooltip(label)' in header
     assert 'f"sov-nav-switch sov-nav-switch--{key}"' in header
     assert "sov-nav-switch--active" in header
     assert "/classic?tab=studio" in header
