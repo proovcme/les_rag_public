@@ -920,7 +920,7 @@ html {
     height: auto !important;
     min-height: 0;
     flex: 1 1 0 !important;
-    padding: 4px;
+    padding: 0;
     border-radius: 10px;
     background: color-mix(in srgb, var(--bg-panel) 82%, var(--bg-mod));
     box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 68%, transparent);
@@ -962,7 +962,7 @@ html {
     width: 100%;
     height: 36px !important;
     min-height: 36px !important;
-    gap: var(--sov-ui-icon-gap);
+    gap: var(--sov-ui-icon-gap) !important;
     align-items: center;
     flex-direction: row;
     justify-content: flex-start !important;
@@ -1092,7 +1092,7 @@ html {
 
   .sov-ui-header-account .q-btn__content {
     min-width: 0;
-    gap: 6px;
+    gap: var(--sov-ui-icon-gap) !important;
     overflow: hidden;
     font-size: 12px;
   }
