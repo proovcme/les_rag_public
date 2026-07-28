@@ -4,9 +4,15 @@ import subprocess
 import os
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 RESTORE = ROOT / "tools" / "restore_runtime.sh"
+pytestmark = pytest.mark.skipif(
+    os.name == "nt",
+    reason="restore_runtime.sh is the macOS launchd recovery path",
+)
 
 
 def _write_archive(path: Path, *, corrupt: bool = False) -> None:
