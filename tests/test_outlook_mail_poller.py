@@ -1,5 +1,10 @@
 from pathlib import Path
 
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -19,11 +24,14 @@ def test_outlook_sidecar_is_read_only_resumable_and_uploads_unicode_msg():
     assert "NewestEntryIds" in source
     assert "OldestEntryIds" in source
     assert "BackfillComplete" in source
-    assert "if (cursor.BackfillComplete || registered >= BatchLimit) return;" in source
+    assert "cursor.BackfillComplete || registered >= BatchLimit || RunBudgetExceeded()" in source
     assert "cursor.BackfillComplete = true;" in source
     assert '--self-test-cursor' in source
     assert "CursorSelfTest()" in source
     assert "duration_ms=" in source
+    assert "private const int BatchLimit = 10;" in source
+    assert "RunBudgetMilliseconds = 12000" in source
+    assert "RunBudgetExceeded()" in source
     assert "if (!Register(" in source
     assert "GetItemFromID(entryId, storeId)" in source
     assert "item.Delete(" not in source
@@ -80,3 +88,51 @@ def test_mail_ui_is_read_only_and_scopes_chat_to_the_mailbox_dataset():
     assert "scope=ds:{account['dataset_id']}" in page
     assert "Ответить" not in page
     assert "Переслать" not in page
+
+
+@pytest.mark.asyncio
+async def test_outlook_snapshot_upload_is_queued_without_waiting_for_rag(monkeypatch, tmp_path):
+    from proxy.routers import mail
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    marks: list[tuple[str, str, str]] = []
+    parses: list[tuple[str, str]] = []
+
+    class Backend:
+        async def upload_file(self, dataset_id, raw_path, *, relative_path):
+            started.set()
+            await release.wait()
+            return "rag-doc"
+
+    class Registry:
+        def mark_indexed(self, message_id, *, rag_doc_id="", status="registered"):
+            marks.append((message_id, rag_doc_id, status))
+
+    monkeypatch.setattr(mail, "get_dataset_state", lambda: SimpleNamespace(backend=Backend()))
+    monkeypatch.setattr(mail, "get_mail_registry", lambda: Registry())
+    monkeypatch.setattr(
+        mail,
+        "_schedule_mailbox_parse",
+        lambda account_id, dataset_id: parses.append((account_id, dataset_id)),
+    )
+    mail._outlook_upload_queues.clear()
+    mail._outlook_upload_tasks.clear()
+
+    queue_depth, worker = mail._queue_outlook_upload(
+        account_id="account",
+        dataset_id="dataset",
+        message_id="message",
+        raw_path=tmp_path / "message.msg",
+        relative_path="outlook/message.msg",
+    )
+
+    assert queue_depth == 1
+    await asyncio.wait_for(started.wait(), timeout=1)
+    assert not worker.done()
+    assert marks == []
+
+    release.set()
+    await asyncio.wait_for(worker, timeout=1)
+    assert marks == [("message", "rag-doc", "registered")]
+    assert parses == [("account", "dataset")]

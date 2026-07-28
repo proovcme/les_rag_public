@@ -23,11 +23,14 @@ reindex и без удаления legacy-источника.
 Для каждого `MailItem` sidecar:
 
 1. сохраняет Unicode `.msg` через `SaveAs(..., olMSGUnicode)` вместе с вложениями;
-2. передаёт multipart на loopback `POST /api/mail/collector/import`;
+2. передаёт multipart на loopback `POST /api/mail/collector/import`, который подтверждает
+   долговечное сохранение снимка, не дожидаясь его загрузки и разбора в RAG;
 3. передаёт `StoreID`, `EntryID`, `PR_INTERNET_MESSAGE_ID`, folder id/path и received time;
 4. двигает per-store/per-folder newest+oldest cursor только после HTTP 2xx.
 
-Backfill идёт возобновляемыми порциями до 200 писем за запуск. Per-folder cursor отдельно фиксирует
+Backfill идёт возобновляемыми порциями не более 10 писем и с общим бюджетом прохода 12 секунд.
+Один уже начатый `SaveAs` не прерывается, но после исчерпания бюджета sidecar не открывает следующий
+`MailItem`. Per-folder cursor отдельно фиксирует
 `backfill_complete`: после достижения старейшего письма последующие запуски вообще не перечисляют
 старую часть `Items`, а проверяют только новые письма. Старые cursor-файлы без этого флага проходят
 один завершающий backfill и автоматически обновляются. Task Scheduler запускает sidecar каждые
@@ -62,6 +65,12 @@ special-use flags, а не по локализованным именам.
 не удаляются.
 
 ## Индексация
+
+Loopback intake сначала атомарно сохраняет raw message и регистрирует его exact provenance. Загрузка
+в dataset выполняется отдельной последовательной очередью на ящик; HTTP-вызов sidecar не ждёт RAG.
+Parser запускается после опустошения очереди, поэтому не конкурирует с очередной регистрацией за
+файлы/SQLite и не удерживает Outlook во время тяжёлого разбора. Ошибка фоновой регистрации видна как
+`index_status=error` и не откатывает сохранённый evidence-снимок.
 
 Каждый raw message загружается только в датасет своего аккаунта. Общий parser создаёт:
 
