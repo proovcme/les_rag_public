@@ -23,6 +23,11 @@ def test_single_product_version_contract_is_consistent():
     assert f'"version": "{contract["product_version"]}"' in (
         ROOT / "desktop/tauri/package.json"
     ).read_text()
+    package_lock = json.loads(
+        (ROOT / "desktop/tauri/package-lock.json").read_text(encoding="utf-8")
+    )
+    assert package_lock["version"] == contract["product_version"]
+    assert package_lock["packages"][""]["version"] == contract["product_version"]
     assert f'version = "{contract["desktop_version"]}"' in (
         ROOT / "desktop/tauri/src-tauri/Cargo.toml"
     ).read_text()

@@ -52,6 +52,15 @@ def desired_surfaces(contract: dict[str, object] | None = None) -> dict[Path, st
     payload["version"] = product
     updates[package] = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
+    package_lock = ROOT / "desktop" / "tauri" / "package-lock.json"
+    lock_payload = json.loads(package_lock.read_text(encoding="utf-8"))
+    lock_payload["version"] = product
+    root_package = lock_payload.get("packages", {}).get("")
+    if not isinstance(root_package, dict):
+        raise RuntimeError("version surface not found: package-lock root package")
+    root_package["version"] = product
+    updates[package_lock] = json.dumps(lock_payload, ensure_ascii=False, indent=2) + "\n"
+
     cargo = ROOT / "desktop" / "tauri" / "src-tauri" / "Cargo.toml"
     updates[cargo] = _replace(
         r'^(version = ")[^"]+("\s*)$', rf"\g<1>{desktop}\g<2>",
