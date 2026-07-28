@@ -32,6 +32,7 @@ REQUIRED_FILES = (
     PurePosixPath("data/smeta_base/les_smeta_base_integrity.json"),
     PurePosixPath("data/smeta_base/fsem_2022.sqlite"),
     PurePosixPath("data/smeta_base/fsem_2022_manifest.json"),
+    PurePosixPath("data/price_base/sankt-peterburg_2kv2026.parquet"),
 )
 REQUIRED_ZERO_CHECKS = (
     "cross_family_contamination",
@@ -44,6 +45,15 @@ REQUIRED_ZERO_CHECKS = (
 )
 DEFAULT_MINIMUM_NORMS = 40_000
 DEFAULT_MINIMUM_FSEM_ROWS = 1_500
+DEFAULT_MINIMUM_PRICE_ROWS = 200_000
+REQUIRED_PRICE_COLUMNS = {
+    "code",
+    "name",
+    "unit",
+    "price_current_eff",
+    "region",
+    "quarter",
+}
 
 
 class BaselineError(RuntimeError):
@@ -80,6 +90,16 @@ def _sqlite_count(path: Path, table: str) -> int:
             conn.close()
 
 
+def _parquet_shape(path: Path) -> tuple[int, set[str]]:
+    try:
+        import pyarrow.parquet as pq
+
+        parquet = pq.ParquetFile(path)
+        return int(parquet.metadata.num_rows), set(parquet.schema_arrow.names)
+    except Exception as exc:  # noqa: BLE001 - reject any unreadable release payload
+        raise BaselineError(f"cannot read pricebook parquet {path}: {exc}") from exc
+
+
 def _failures(value: Any) -> int:
     raw = value.get("failures") if isinstance(value, dict) else value
     try:
@@ -93,6 +113,7 @@ def validate_root(
     *,
     minimum_norms: int = DEFAULT_MINIMUM_NORMS,
     minimum_fsem_rows: int = DEFAULT_MINIMUM_FSEM_ROWS,
+    minimum_price_rows: int = DEFAULT_MINIMUM_PRICE_ROWS,
 ) -> dict[str, Any]:
     root = root.resolve()
     paths = {str(rel): root / Path(*rel.parts) for rel in REQUIRED_FILES}
@@ -107,6 +128,7 @@ def validate_root(
     integrity = _json(integrity_path)
     fsem = paths["data/smeta_base/fsem_2022.sqlite"]
     fsem_manifest = _json(paths["data/smeta_base/fsem_2022_manifest.json"])
+    pricebook = paths["data/price_base/sankt-peterburg_2kv2026.parquet"]
 
     if manifest.get("schema") != "les_smeta_base_v2":
         raise BaselineError("unsupported structured-base manifest schema")
@@ -148,6 +170,15 @@ def validate_root(
     if _sha256(fsem) != str(fsem_output.get("sha256") or ""):
         raise BaselineError("FSEM SQLite does not match manifest")
 
+    price_rows, price_columns = _parquet_shape(pricebook)
+    missing_price_columns = sorted(REQUIRED_PRICE_COLUMNS - price_columns)
+    if missing_price_columns:
+        raise BaselineError("pricebook misses columns: " + ", ".join(missing_price_columns))
+    if price_rows < minimum_price_rows:
+        raise BaselineError(
+            f"default pricebook is incomplete: {price_rows} < {minimum_price_rows} rows"
+        )
+
     return {
         "schema": "les.smeta.release-baseline.validation.v1",
         "ok": True,
@@ -157,6 +188,9 @@ def validate_root(
         "minimum_norms": minimum_norms,
         "fsem_rows": fsem_count,
         "minimum_fsem_rows": minimum_fsem_rows,
+        "pricebook_rows": price_rows,
+        "minimum_pricebook_rows": minimum_price_rows,
+        "pricebook_sha256": _sha256(pricebook),
         "base_sha256": base_sha,
         "source_sha256": source_sha,
     }
@@ -168,11 +202,13 @@ def create_archive(
     *,
     minimum_norms: int = DEFAULT_MINIMUM_NORMS,
     minimum_fsem_rows: int = DEFAULT_MINIMUM_FSEM_ROWS,
+    minimum_price_rows: int = DEFAULT_MINIMUM_PRICE_ROWS,
 ) -> dict[str, Any]:
     validation = validate_root(
         source_root,
         minimum_norms=minimum_norms,
         minimum_fsem_rows=minimum_fsem_rows,
+        minimum_price_rows=minimum_price_rows,
     )
     source_root = source_root.resolve()
     archive.parent.mkdir(parents=True, exist_ok=True)
@@ -211,6 +247,8 @@ def create_archive(
             "minimum_norms": minimum_norms,
             "fsem_rows": validation["fsem_rows"],
             "minimum_fsem_rows": minimum_fsem_rows,
+            "pricebook_rows": validation["pricebook_rows"],
+            "minimum_pricebook_rows": minimum_price_rows,
             "files": entries,
         }
         bundle.writestr(ARCHIVE_MANIFEST, json.dumps(manifest, ensure_ascii=False, indent=2) + "\n")
@@ -244,10 +282,13 @@ def verify_archive(archive: Path) -> dict[str, Any]:
         raise BaselineError(f"invalid smeta baseline archive: {exc}") from exc
     minimum_norms = int(manifest.get("minimum_norms") or 0)
     minimum_fsem_rows = int(manifest.get("minimum_fsem_rows") or 0)
+    minimum_price_rows = int(manifest.get("minimum_pricebook_rows") or 0)
     if int(manifest.get("norm_count") or 0) < minimum_norms:
         raise BaselineError("smeta baseline archive norm floor is not satisfied")
     if int(manifest.get("fsem_rows") or 0) < minimum_fsem_rows:
         raise BaselineError("smeta baseline archive FSEM floor is not satisfied")
+    if int(manifest.get("pricebook_rows") or 0) < minimum_price_rows:
+        raise BaselineError("smeta baseline archive pricebook floor is not satisfied")
     with tempfile.TemporaryDirectory(prefix="les-smeta-baseline-verify-") as temporary:
         staging = Path(temporary)
         with zipfile.ZipFile(archive) as bundle:
@@ -261,11 +302,13 @@ def verify_archive(archive: Path) -> dict[str, Any]:
             staging,
             minimum_norms=minimum_norms,
             minimum_fsem_rows=minimum_fsem_rows,
+            minimum_price_rows=minimum_price_rows,
         )
     expected_counts = {
         "norm_count": validation["norm_count"],
         "resource_count": validation["resource_count"],
         "fsem_rows": validation["fsem_rows"],
+        "pricebook_rows": validation["pricebook_rows"],
     }
     mismatched = [
         name for name, actual in expected_counts.items() if int(manifest.get(name) or -1) != actual
@@ -287,6 +330,7 @@ def provision_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             state_root,
             minimum_norms=int(archive_status["minimum_norms"]),
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
+            minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
         return {**validation, "action": "kept_existing"}
 
@@ -304,6 +348,7 @@ def provision_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             staging,
             minimum_norms=int(archive_status["minimum_norms"]),
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
+            minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
         for relative in REQUIRED_FILES:
             source = staging / Path(*relative.parts)
@@ -326,6 +371,7 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             state_root,
             minimum_norms=int(archive_status["minimum_norms"]),
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
+            minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
         return {**current, "action": "kept_valid"}
     except (BaselineError, OSError) as current_error:
@@ -357,6 +403,7 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             staging,
             minimum_norms=int(archive_status["minimum_norms"]),
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
+            minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
         for relative in REQUIRED_FILES:
             source = staging / Path(*relative.parts)
@@ -379,11 +426,13 @@ def main(argv: list[str] | None = None) -> int:
     create.add_argument("--source-root", type=Path, default=ROOT)
     create.add_argument("--archive", type=Path, default=DEFAULT_ARCHIVE)
     create.add_argument("--minimum-norms", type=int, default=DEFAULT_MINIMUM_NORMS)
+    create.add_argument("--minimum-price-rows", type=int, default=DEFAULT_MINIMUM_PRICE_ROWS)
     verify = subparsers.add_parser("verify")
     verify.add_argument("--archive", type=Path, required=True)
     verify_root = subparsers.add_parser("verify-root")
     verify_root.add_argument("--root", type=Path, required=True)
     verify_root.add_argument("--minimum-norms", type=int, default=DEFAULT_MINIMUM_NORMS)
+    verify_root.add_argument("--minimum-price-rows", type=int, default=DEFAULT_MINIMUM_PRICE_ROWS)
     provision = subparsers.add_parser("provision")
     provision.add_argument("--archive", type=Path, required=True)
     provision.add_argument("--state-root", type=Path, required=True)
@@ -392,11 +441,20 @@ def main(argv: list[str] | None = None) -> int:
     repair.add_argument("--state-root", type=Path, required=True)
     args = parser.parse_args(argv)
     if args.command == "create":
-        result = create_archive(args.source_root, args.archive, minimum_norms=args.minimum_norms)
+        result = create_archive(
+            args.source_root,
+            args.archive,
+            minimum_norms=args.minimum_norms,
+            minimum_price_rows=args.minimum_price_rows,
+        )
     elif args.command == "verify":
         result = verify_archive(args.archive)
     elif args.command == "verify-root":
-        result = validate_root(args.root, minimum_norms=args.minimum_norms)
+        result = validate_root(
+            args.root,
+            minimum_norms=args.minimum_norms,
+            minimum_price_rows=args.minimum_price_rows,
+        )
     elif args.command == "provision":
         result = provision_archive(args.archive, args.state_root)
     else:

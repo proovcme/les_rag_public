@@ -7,6 +7,8 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from tools import smeta_release_baseline as baseline
 
@@ -19,8 +21,10 @@ def _fixture_root(root: Path, *, norms: int = 2, fsem_rows: int = 2) -> Path:
     source = root / "data/gesn_base/gesn2022_unified.parquet"
     base = root / "data/smeta_base/les_smeta_base.sqlite"
     fsem = root / "data/smeta_base/fsem_2022.sqlite"
+    pricebook = root / "data/price_base/sankt-peterburg_2kv2026.parquet"
     source.parent.mkdir(parents=True)
     base.parent.mkdir(parents=True)
+    pricebook.parent.mkdir(parents=True)
     source.write_bytes(b"typed-parquet-fixture")
     with sqlite3.connect(base) as conn:
         conn.executescript("CREATE TABLE norms(norm_key TEXT); CREATE TABLE resources(norm_key TEXT);")
@@ -29,6 +33,19 @@ def _fixture_root(root: Path, *, norms: int = 2, fsem_rows: int = 2) -> Path:
     with sqlite3.connect(fsem) as conn:
         conn.execute("CREATE TABLE machines(machine_code TEXT)")
         conn.executemany("INSERT INTO machines VALUES(?)", [(str(i),) for i in range(fsem_rows)])
+    pq.write_table(
+        pa.table(
+            {
+                "code": ["1-100-10", "4-100-040"],
+                "name": ["Рабочие", "Машинисты"],
+                "unit": ["чел.-ч", "чел.-ч"],
+                "price_current_eff": [500.0, 600.0],
+                "region": ["Санкт-Петербург", "Санкт-Петербург"],
+                "quarter": ["2 квартал 2026 г.", "2 квартал 2026 г."],
+            }
+        ),
+        pricebook,
+    )
     manifest = {
         "schema": "les_smeta_base_v2",
         "source": {"sha256": _sha(source)},
@@ -56,7 +73,9 @@ def test_release_baseline_roundtrip_provisions_clean_state(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"
 
-    created = baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    created = baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
     verified = baseline.verify_archive(archive)
     installed = baseline.provision_archive(archive, tmp_path / "state")
 
@@ -64,6 +83,8 @@ def test_release_baseline_roundtrip_provisions_clean_state(tmp_path: Path):
     assert verified["schema"] == "les.smeta.release-baseline.v1"
     assert installed["action"] == "installed"
     assert installed["norm_count"] == 2
+    assert installed["pricebook_rows"] == 2
+    assert (tmp_path / "state/data/price_base/sankt-peterburg_2kv2026.parquet").is_file()
     packaged_integrity = json.loads(
         (tmp_path / "state/data/smeta_base/les_smeta_base_integrity.json").read_text(encoding="utf-8")
     )
@@ -100,7 +121,9 @@ def test_sqlite_count_releases_file_handle(monkeypatch, tmp_path: Path):
 def test_release_baseline_keeps_complete_existing_state(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"
-    baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
     state = tmp_path / "state"
     baseline.provision_archive(archive, state)
 
@@ -110,7 +133,9 @@ def test_release_baseline_keeps_complete_existing_state(tmp_path: Path):
 def test_release_baseline_refuses_partial_existing_state(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"
-    baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
     state = tmp_path / "state"
     partial = state / "data/smeta_base/les_smeta_base.sqlite"
     partial.parent.mkdir(parents=True)
@@ -124,7 +149,9 @@ def test_release_baseline_refuses_partial_existing_state(tmp_path: Path):
 def test_release_baseline_repair_backs_up_partial_state_and_restores_complete_set(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"
-    baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
     state = tmp_path / "state"
     partial = state / "data/smeta_base/les_smeta_base.sqlite"
     partial.parent.mkdir(parents=True)
@@ -136,20 +163,30 @@ def test_release_baseline_repair_backs_up_partial_state_and_restores_complete_se
     assert repaired["norm_count"] == 2
     backup = Path(repaired["backup"]) / "data/smeta_base/les_smeta_base.sqlite"
     assert backup.read_bytes() == b"broken-user-state"
-    assert baseline.validate_root(state, minimum_norms=2, minimum_fsem_rows=2)["ok"] is True
+    assert baseline.validate_root(
+        state, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )["ok"] is True
 
 
 def test_release_baseline_rejects_norm_count_regression(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source", norms=1)
 
     with pytest.raises(baseline.BaselineError, match="1 < 2 norms"):
-        baseline.create_archive(source_root, tmp_path / "baseline.zip", minimum_norms=2, minimum_fsem_rows=2)
+        baseline.create_archive(
+            source_root,
+            tmp_path / "baseline.zip",
+            minimum_norms=2,
+            minimum_fsem_rows=2,
+            minimum_price_rows=2,
+        )
 
 
 def test_release_baseline_rejects_corrupt_archive(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"
-    baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
     raw = bytearray(archive.read_bytes())
     raw[len(raw) // 2] ^= 0xFF
     archive.write_bytes(raw)
@@ -161,7 +198,9 @@ def test_release_baseline_rejects_corrupt_archive(tmp_path: Path):
 def test_release_baseline_rejects_self_consistent_manifest_with_false_counts(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source")
     archive = tmp_path / "baseline.zip"
-    baseline.create_archive(source_root, archive, minimum_norms=2, minimum_fsem_rows=2)
+    baseline.create_archive(
+        source_root, archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
     rewritten = tmp_path / "rewritten.zip"
     with zipfile.ZipFile(archive) as source, zipfile.ZipFile(rewritten, "w") as target:
         for info in source.infolist():

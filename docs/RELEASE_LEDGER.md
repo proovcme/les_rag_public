@@ -56,9 +56,12 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > Первый clean GitHub run `30339455936` выявил две скрытые зависимости локального контура:
 > suite ожидала ignored smeta/FSEM data, а Windows collect импортировал POSIX-only `fcntl`.
 > Для CI опубликован private immutable baseline prerelease
-> `ci-smeta-baseline-20260728` (archive SHA `11829581…2dd`), который workflow сначала
-> верифицирует/provision-ит; CoreML file lock теперь условен только на Windows, где сам CoreML
-> backend не запускается. Никакие тесты ради зелёного не исключены.
+> `ci-smeta-baseline-20260728`. Второй clean run обнаружил, что шести файлов норм/ФСЭМ
+> недостаточно для воспроизводимого РИМ: после детализации машинистов отсутствовала тарифная
+> книга. Контракт baseline теперь также требует default SPb 2 кв. 2026 pricebook
+> (`281 223` строк, SHA `4d30e8a7…ad78`); архив SHA `72ad28af…a748d`. Workflow сначала
+> верифицирует/provision-ит весь связанный набор. CoreML file lock условен только на Windows,
+> где сам CoreML backend не запускается. Никакие тесты ради зелёного не исключены.
 
 > 0.24.47 / build 468 — truthful test layers, safe smeta base and rerank/table contracts
 >

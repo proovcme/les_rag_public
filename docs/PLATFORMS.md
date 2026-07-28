@@ -104,7 +104,8 @@ are junctions to that root; Qdrant uses `les-qdrant-data`.
 push to `main`. Clean runners download the private immutable prerelease fixture
 `ci-smeta-baseline-20260728`, verify its manifest/SHA/counts through
 `tools.smeta_release_baseline` and provision only linked ФГИС/ФСНБ/FSEM files
-before pytest. This is not user RAG or production state. CoreML cache helpers
+plus the verified default Saint Petersburg resource pricebook before pytest.
+This is not user RAG or production state. CoreML cache helpers
 remain importable on Windows without POSIX `fcntl`; CoreML inference itself
 stays macOS-only. This proves both native shells compile without pretending
 that a hosted runner has installed Ollama/Qdrant.
@@ -113,7 +114,10 @@ The production workflow is intentionally separate:
 `.github/workflows/release.yml` runs on the approved self-hosted Mac release
 runner. `tools/multiplatform_release.py` builds and verifies `LES.app`/`LES.dmg`,
 then uses the existing SSH Legion contour to build/install/smoke the real NSIS
-package. GitHub release creation receives the verified Mac and Windows assets
+package. The boxed smeta baseline includes its default verified regional
+pricebook because FSEM-derived machinist rows cannot be priced reproducibly
+without it; additional regional books remain an FGIS update concern. GitHub
+release creation receives the verified Mac and Windows assets
 in one command; either platform failing blocks publication. The Windows bundle
 gets only the verified immutable FGIS/FSNB smeta baseline. User RAG data is
 never bundled. Release environment secret `LES_RELEASE_TOKEN` needs Actions
