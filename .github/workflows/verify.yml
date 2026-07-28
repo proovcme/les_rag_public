@@ -60,7 +60,7 @@ jobs:
       - name: Verify version, imports and test collection
         run: uv run python tools/platform_release_gate.py verify
 
-      - name: Run canonical LES tests
+      - name: Run portable behavior and artifact tests
         run: uv run python tools/platform_release_gate.py test
 
       - name: Build native Tauri shell

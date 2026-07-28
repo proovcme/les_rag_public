@@ -23,6 +23,50 @@ PYTHON_PACKAGES = (
     "mlx_host.py",
 )
 
+PORTABLE_BEHAVIOR_TESTS = (
+    "tests/test_answer_contract_service.py",
+    "tests/test_candidate_selection_service.py",
+    "tests/test_evidence_contract.py",
+    "tests/test_numeric_provenance.py",
+    "tests/test_publication_check.py",
+    "tests/test_query_router.py",
+    "tests/test_smeta_resource_normalizer.py",
+    "tests/test_smeta_structured_base.py",
+    "tests/test_smeta_norm_browser.py",
+    "tests/test_smeta_rerank_ab_probe.py",
+    "tests/test_fgis_full_update.py",
+    "tests/test_smeta_release_baseline.py",
+    "tests/test_qdrant_collection_layout.py",
+    "tests/test_datasets_router.py",
+    "tests/test_rag_config.py",
+    "tests/test_document_explorer_service.py",
+    "tests/test_process_status.py",
+    "tests/test_basic_function_smoke.py",
+    "tests/test_static_assets.py",
+    "tests/test_file_viewer_service.py",
+    "tests/test_list_office_service.py",
+    "tests/test_list_office_agent_service.py",
+    "tests/test_pdf_contour_service.py",
+    "tests/test_chat_mail_query.py",
+    "tests/test_mail_ingest.py",
+    "tests/test_mail_registry_service.py",
+    "tests/test_outlook_mail_poller.py",
+    "tests/test_asbuilt_intake.py",
+    "tests/test_software_versions.py",
+    "tests/test_test_profiles.py",
+    "tests/test_tauri_desktop.py",
+)
+WINDOWS_BEHAVIOR_TESTS = (
+    "tests/test_installer_windows.py",
+    "tests/test_install_profile_env.py",
+    "tests/test_parse_admission_windows.py",
+)
+MACOS_BEHAVIOR_TESTS = (
+    "tests/test_installer_macos.py",
+    "tests/test_runtime_plist_drift.py",
+    "tests/test_les_runtime_control.py",
+)
+
 
 def run(command: list[str], *, cwd: Path = ROOT) -> None:
     subprocess.run(command, cwd=cwd, check=True)
@@ -73,7 +117,24 @@ def verify() -> None:
 
 
 def test() -> None:
-    run(["uv", "run", "python", "-m", "pytest", "-q", "--durations=20"])
+    platform_tests = (
+        WINDOWS_BEHAVIOR_TESTS
+        if sys.platform.startswith("win")
+        else MACOS_BEHAVIOR_TESTS
+    )
+    run(
+        [
+            "uv", "run", "python", "-m", "pytest", "-q", "--durations=20",
+            *PORTABLE_BEHAVIOR_TESTS,
+            *platform_tests,
+        ]
+    )
+    run(
+        [
+            "uv", "run", "python", "-m", "tools.smeta_release_baseline",
+            "verify-root", "--root", ".",
+        ]
+    )
 
 
 def build() -> None:

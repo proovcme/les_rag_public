@@ -3,6 +3,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+from tools import platform_release_gate
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -67,3 +69,18 @@ def test_raw_pytest_defaults_to_current_les_collection() -> None:
     assert "--ignore=tests/test_construction_harness.py" in config
     assert "--ignore=tests/test_unified_real_v11.py" in config
     assert "--ignore-glob=tests/test_artel*.py" in config
+
+
+def test_platform_gate_is_behavioral_and_platform_specific() -> None:
+    portable = set(platform_release_gate.PORTABLE_BEHAVIOR_TESTS)
+    windows = set(platform_release_gate.WINDOWS_BEHAVIOR_TESTS)
+    macos = set(platform_release_gate.MACOS_BEHAVIOR_TESTS)
+
+    assert "tests/test_evidence_contract.py" in portable
+    assert "tests/test_smeta_release_baseline.py" in portable
+    assert "tests/test_basic_function_smoke.py" in portable
+    assert "tests/test_static_assets.py" in portable
+    assert "tests/test_installer_windows.py" in windows
+    assert "tests/test_parse_admission_windows.py" in windows
+    assert "tests/test_installer_macos.py" in macos
+    assert windows.isdisjoint(macos)

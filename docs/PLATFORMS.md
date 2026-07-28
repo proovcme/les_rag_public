@@ -99,9 +99,12 @@ are junctions to that root; Qdrant uses `les-qdrant-data`.
 
 ## Automated platform gates and release
 
-`.github/workflows/verify.yml` runs the canonical Python suite and a real
+`.github/workflows/verify.yml` runs the portable behavior/integration profile,
+verifies the real packaged smeta baseline, and performs a real
 `tauri build --no-bundle` on `macos-14` and `windows-2022` for every PR and
-push to `main`. Clean runners download the private immutable prerelease fixture
+push to `main`. The platform profile contains shared evidence/RAG/UI tests plus
+installer-specific checks for the current OS; the complete canonical suite remains
+the local release gate. Clean runners download the private immutable prerelease fixture
 `ci-smeta-baseline-20260728`, verify its manifest/SHA/counts through
 `tools.smeta_release_baseline` and provision only linked ФГИС/ФСНБ/FSEM files
 plus the verified default Saint Petersburg resource pricebook before pytest.

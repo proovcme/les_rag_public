@@ -181,6 +181,9 @@ def test_is_asbuilt_query(q, hit):
 def test_extract_path_quoted_and_bare():
     assert chat.extract_path('вытащи объём из «/Users/ovc/RAG/АУПС»') == "/Users/ovc/RAG/АУПС"
     assert chat.extract_path("прогни сканы из /tmp/ид сейчас") == "/tmp/ид"
+    assert chat.extract_path(r'вытащи объём из «C:\Проекты\ИД»') == r"C:\Проекты\ИД"
+    assert chat.extract_path(r"прогни сканы из C:\Проекты\ИД сейчас") == r"C:\Проекты\ИД"
+    assert chat.extract_path(r'вытащи объём из «\\server\share\ИД»') == r"\\server\share\ИД"
     assert chat.extract_path("без пути вовсе") == ""
 
 

@@ -38,10 +38,14 @@ def is_asbuilt_query(question: str) -> bool:
     return has_verb and has_obj and has_ctx
 
 
-# путь: в кавычках «…»/"…" или после «из/папк/файл/каталог»
-# пути с пробелами — только в кавычках «…»/"…"; bare-путь берём до первого пробела
-_PATH_QUOTED = re.compile(r"[«\"']([/~][^»\"'\n]+)[»\"']")
-_PATH_BARE = re.compile(r"(?:из|папк\w*|файл\w*|каталог\w*)\s+([/~][^\s«»\"']+)")
+# путь: в кавычках «…»/"…" или после «из/папк/файл/каталог».
+# Поддерживаем абсолютные POSIX, Windows drive/UNC и домашние пути.
+# Пути с пробелами — только в кавычках; bare-путь берём до первого пробела.
+_PATH_START = r"(?:[A-Za-z]:[\\/]|\\\\|[\\/~])"
+_PATH_QUOTED = re.compile(rf"[«\"']({_PATH_START}[^»\"'\n]*)[»\"']")
+_PATH_BARE = re.compile(
+    rf"(?:из|папк\w*|файл\w*|каталог\w*)\s+({_PATH_START}[^\s«»\"']*)"
+)
 
 
 def extract_path(question: str) -> str:
