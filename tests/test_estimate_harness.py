@@ -46,6 +46,20 @@ def _model_complete(plan: dict):
     return complete
 
 
+def _trusted_active_base(monkeypatch):
+    from proxy.smeta_core import integrity
+
+    monkeypatch.setattr(
+        integrity,
+        "normative_base_integrity",
+        lambda **_kwargs: {
+            "status": "trusted",
+            "trusted_for_navigation": True,
+            "trusted_for_pricing": True,
+        },
+    )
+
+
 def test_search_norm_no_match_is_honest(monkeypatch):
     # Unit contract must not depend on live Qdrant/manifest state or suite order.
     # Native RRF quality is covered by the norm-browser integration/golden tests.
@@ -145,7 +159,8 @@ def test_work_item_hints_do_not_silently_rewrite_model_fields():
     assert any("work_family=wood" in hint for hint in h._work_item_intent_hints(normalized))
 
 
-def test_add_position_accepts_only_existing_typed_norm_and_converts_quantity():
+def test_add_position_accepts_only_existing_typed_norm_and_converts_quantity(monkeypatch):
+    _trusted_active_base(monkeypatch)
     state = _state(slots={"piece_count": 2})
     result = h._add_position(
         {
@@ -162,7 +177,7 @@ def test_add_position_accepts_only_existing_typed_norm_and_converts_quantity():
     assert result["phys_qty"] == 2.0
     assert result["quantity_for_estimate"] == 2.0
     assert state["positions"][0]["norm_source_integrity"]["trusted_for_navigation"] is True
-    assert state["positions"][0]["norm_source_integrity"]["trusted_for_pricing"] is False
+    assert state["positions"][0]["norm_source_integrity"]["trusted_for_pricing"] is True
 
 
 def test_add_position_rejects_unknown_norm_without_fallback():
@@ -181,7 +196,8 @@ def test_add_position_rejects_unknown_norm_without_fallback():
     assert state["positions"][0]["status"] == "rejected_norm"
 
 
-def test_batch_plan_requires_model_choice_then_calculates_code():
+def test_batch_plan_requires_model_choice_then_calculates_code(monkeypatch):
+    _trusted_active_base(monkeypatch)
     plan = {
         "object": {"object_type": "electrical", "area_total_m2": None, "floors": 1},
         "works": [
@@ -203,7 +219,7 @@ def test_batch_plan_requires_model_choice_then_calculates_code():
     assert result["computed"][0]["code"] == "ГЭСНм08-03-575-01"
     assert result["computed"][0]["qty"] == 2.0
     assert any(item["tool"] == "model_norm_choice" and item["status"] == "selected" for item in result["trace"])
-    assert result["calculation_status"] == "unsafe_source"
+    assert result["calculation_status"] == "partial"
 
 
 def test_extract_json_from_markdown_wrapped_response():

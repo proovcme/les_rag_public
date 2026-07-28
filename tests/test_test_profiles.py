@@ -35,6 +35,32 @@ def test_historical_harness_has_explicit_opt_in_profile() -> None:
     assert "-o addopts=" in command
 
 
+def test_unit_and_integration_profiles_are_explicit_and_behavioral() -> None:
+    unit = _dry_make("test-unit")
+    integration = _dry_make("test-integration")
+
+    assert "tests/test_candidate_selection_service.py" in unit
+    assert "tests/test_numeric_provenance.py" in unit
+    assert "tests/test_smeta_resource_normalizer.py" in unit
+    assert "tests/test_smeta_structured_base.py" in integration
+    assert "tests/test_smeta_release_baseline.py" in integration
+
+
+def test_release_profile_requires_real_active_artifact_smoke() -> None:
+    command = _dry_make("test-release")
+
+    assert "tools.smeta_release_baseline verify-root --root ." in command
+    assert "uv run python -m pytest --durations=20" in command
+
+
+def test_ship_profiles_require_active_artifact_and_live_runtime_smokes() -> None:
+    for target in ("ship-check", "ship-full-check"):
+        command = _dry_make(target)
+        assert "tools.smeta_release_baseline verify-root --root ." in command
+        assert "tools.smeta_rerank_ab_probe --require-ok" in command
+        assert "tools/basic_function_smoke.py --release" in command
+
+
 def test_raw_pytest_defaults_to_current_les_collection() -> None:
     config = (ROOT / "pytest.ini").read_text(encoding="utf-8")
 

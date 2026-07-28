@@ -6,25 +6,31 @@ contains no object-specific boosts, family guesses or applicability decisions.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import hashlib
+import logging
 import os
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 from time import perf_counter
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-import httpx
 from qdrant_client import QdrantClient, models
 
 from backend.inference.bm25_sparse import SPARSE_VECTOR_NAME, encode_bm25
 from backend.qdrant_adapter import EmbedClient
 from backend.rag_config import prepare_query_for_embedding
+from backend.reranker import select_reranker_cls
 
 from proxy.services.smeta_norm_store import SmetaNormRow, get_smeta_norm_store
 from proxy.smeta_core.integrity import normative_base_integrity
+
+
+logger = logging.getLogger("les.smeta.norm_browser")
 
 
 _FULL_CODE_RE = re.compile(
@@ -396,40 +402,79 @@ def _coverage_merge(*rankings: list[dict[str, Any]], limit: int) -> list[dict[st
     return output
 
 
-def _rerank_cards(query: str, cards: list[dict[str, Any]], *, limit: int) -> tuple[list[dict[str, Any]], bool]:
-    if len(cards) <= 3 or os.getenv("LES_SMETA_NORM_RERANK", "true").strip().casefold() not in {
+def _run_blocking(coro: Any) -> Any:
+    """Await the configured async reranker from the synchronous browser."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
+def _rerank_cards(
+    query: str,
+    cards: list[dict[str, Any]],
+    *,
+    limit: int,
+) -> tuple[list[dict[str, Any]], bool, str]:
+    """Rerank evidence candidates and expose transport failure to the model."""
+    if os.getenv("LES_SMETA_NORM_RERANK", "true").strip().casefold() not in {
         "1", "true", "yes", "on",
     }:
-        return cards[:limit], False
-    documents = [
-        "\n".join(filter(None, [
-            str(card.get("title") or ""),
-            f"Измеритель: {card.get('measure_unit') or ''}",
-            f"Состав: {'; '.join(str(step) for step in (card.get('work_steps') or [])[:8])}",
-            "Ресурсы для проверки технологии: " + "; ".join(
-                str(item.get("name") or "")
-                for item in (card.get("resource_preview") or [])[:12]
-                if isinstance(item, dict) and str(item.get("name") or "").strip()
-            ),
-        ]))[:1600]
-        for card in cards
+        return cards[:limit], False, "disabled"
+    if len(cards) <= 3:
+        return cards[:limit], False, "pool_too_small"
+    chunks = [
+        {
+            "text": "\n".join(filter(None, [
+                str(card.get("title") or ""),
+                f"Измеритель: {card.get('measure_unit') or ''}",
+                f"Состав: {'; '.join(str(step) for step in (card.get('work_steps') or [])[:8])}",
+                "Ресурсы для проверки технологии: " + "; ".join(
+                    str(item.get("name") or "")
+                    for item in (card.get("resource_preview") or [])[:12]
+                    if isinstance(item, dict) and str(item.get("name") or "").strip()
+                ),
+            ]))[:1600],
+            "metadata": {"index": index},
+            "score": 0.0,
+        }
+        for index, card in enumerate(cards)
     ]
+    reranker_cls = select_reranker_cls()
     try:
-        response = httpx.post(
-            f"{os.getenv('MLX_URL', 'http://127.0.0.1:8080').rstrip('/')}/v1/rerank",
-            json={"query": query, "documents": documents, "top_k": min(limit, len(cards))},
-            timeout=45.0,
+        ranked = _run_blocking(
+            reranker_cls(
+                mlx_url=(
+                    os.getenv("MLX_URL", "").strip()
+                    or "http://127.0.0.1:8080"
+                )
+            ).rerank(
+                query,
+                chunks,
+                top_k=min(limit, len(cards)),
+            )
         )
-        response.raise_for_status()
-        order = [int(item.get("index", -1)) for item in response.json().get("results") or []]
+        order = [
+            int((getattr(item, "metadata", None) or {}).get("index", -1))
+            for item in ranked
+        ]
         valid_order = list(dict.fromkeys(index for index in order if 0 <= index < len(cards)))
-        ranked = [cards[index] for index in valid_order]
-        # A partial/malformed reranker response must not shrink the candidate menu.
-        used = set(valid_order)
-        ranked.extend(card for index, card in enumerate(cards) if index not in used)
-        return ranked[:limit], bool(valid_order)
-    except Exception:
-        return cards[:limit], False
+        if not valid_order:
+            raise RuntimeError("reranker returned no usable candidate order")
+    except Exception as error:
+        logger.warning(
+            "[SMETA_RERANK] %s failed for %r; preserving raw RRF order: %s",
+            reranker_cls.__name__,
+            query[:80],
+            error,
+        )
+        return cards[:limit], False, f"error:{type(error).__name__}"
+    reordered = [cards[index] for index in valid_order]
+    used = set(valid_order)
+    reordered.extend(card for index, card in enumerate(cards) if index not in used)
+    return reordered[:limit], True, "ok"
 
 
 def _fts_prefix(term: str) -> str:
@@ -600,6 +645,46 @@ def browse_norms(query: str, *, limit: int = 8, base_path: str | Path | None = N
     return browse_norms_many([query], limit=limit, base_path=base_path, rerank=True)[str(query)]
 
 
+def _table_listing(
+    table_codes: tuple[str, ...],
+    *,
+    base_path: Path,
+    base_types: tuple[str, ...] = (),
+) -> list[dict[str, Any]] | None:
+    """Return the complete official table menu in published code order."""
+    if not base_path.exists() or not table_codes:
+        return None
+    conn = _connect_base_readonly(base_path)
+    conn.row_factory = sqlite3.Row
+    try:
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            )
+        }
+        if "norms" not in tables:
+            return None
+        placeholders = ",".join("?" for _ in table_codes)
+        family_filter = ""
+        params: list[Any] = list(table_codes)
+        if base_types:
+            family_filter = (
+                " AND base_type IN ("
+                + ",".join("?" for _ in base_types)
+                + ")"
+            )
+            params.extend(base_types)
+        rows = conn.execute(
+            f"SELECT * FROM norms WHERE substr(bare_code,1,9) IN ({placeholders}) "
+            f"{family_filter} ORDER BY base_type, bare_code",
+            params,
+        ).fetchall()
+        return [_card(conn, row) for row in rows]
+    finally:
+        conn.close()
+
+
 def browse_norms_many(
     queries: list[str],
     *,
@@ -607,6 +692,7 @@ def browse_norms_many(
     base_path: str | Path | None = None,
     base_types: list[str] | tuple[str, ...] | None = None,
     collections: list[str] | tuple[str, ...] | None = None,
+    table_codes: list[str] | tuple[str, ...] | None = None,
     rerank: bool | None = None,
 ) -> dict[str, dict[str, Any]]:
     tool_started = perf_counter()
@@ -619,15 +705,56 @@ def browse_norms_many(
     clean_collections = tuple(dict.fromkeys(
         re.sub(r"\D", "", str(value))[:2] for value in (collections or ()) if re.sub(r"\D", "", str(value))
     ))
-    # A large first-pass triage is already batch-embedded and hybrid-fused. The
-    # local reranker endpoint is single-query and would serialize dozens of
-    # independent 4-7 second calls. Defer it to later narrow searches where it
-    # materially reduces a small candidate set; the model still opens cards.
-    # The endpoint is single-query. A model may request rerank, but a mass
-    # batch stays RRF-only; the model can issue a later disputed shortlist of
-    # at most four queries and receive the reranker there. This changes no
-    # candidate decision and prevents serialized multi-minute execution.
-    rerank_enabled = (bool(rerank) if rerank is not None else True) and len(clean_queries) <= 4
+    clean_table_codes = tuple(dict.fromkeys(
+        code
+        for value in (table_codes or ())
+        if (code := re.sub(r"[^0-9-]", "", str(value)).strip("-")[:9])
+    ))[:20]
+    if clean_table_codes:
+        listing = _table_listing(
+            clean_table_codes,
+            base_path=path,
+            base_types=clean_base_types,
+        )
+        return {
+            query: {
+                "schema": "smeta_norm_browse_v1",
+                "query": query,
+                "backend": (
+                    "official_table_listing"
+                    if listing is not None
+                    else "structured_base_unavailable"
+                ),
+                "selection_owner": "model_or_user",
+                "selected_code": "",
+                "source_integrity": integrity,
+                "cards": list(listing or []),
+                "retrieval_trace": {
+                    "lexical_candidates": len(listing or []),
+                    "rag_candidates": 0,
+                    "fusion_candidates": len(listing or []),
+                    "returned_candidates": len(listing or []),
+                    "rerank_deferred": False,
+                    "reranked": False,
+                    "rerank_status": "not_needed_table_listing",
+                    "complete_table": listing is not None,
+                    "truncated": False,
+                    "filters": {
+                        "base_types": list(clean_base_types),
+                        "collections": list(clean_collections),
+                        "table_codes": list(clean_table_codes),
+                    },
+                    "query_variants": [query] if query else [],
+                    "tool_total_ms": round((perf_counter() - tool_started) * 1000, 2),
+                    "queries_count": len(queries),
+                    "unique_queries_count": len(clean_queries),
+                },
+            }
+            for query in (clean_queries or [""])
+        }
+    # The configured cross-encoder owns batching. A document with many rows
+    # must receive the same retrieval contract as a one-row query.
+    rerank_enabled = bool(rerank) if rerank is not None else True
     variants_by_query = {query: _query_variants(query) for query in clean_queries}
     all_variants = list(dict.fromkeys(
         variant for query in clean_queries for variant in variants_by_query.get(query) or [query]
@@ -679,15 +806,23 @@ def browse_norms_many(
         fused = _rrf_cards(lexical, rag_cards, limit=pool_limit) if rag_cards else lexical
         cards = fused[:bounded_limit]
         reranked = False
+        rerank_status = "not_attempted"
         if rag_cards:
             backend = f"{backend}+smeta_norm_qdrant_hybrid"
             if rerank_enabled:
                 rerank_started = perf_counter()
-                cards, reranked = _rerank_cards(query, fused, limit=bounded_limit)
+                cards, reranked, rerank_status = _rerank_cards(
+                    query,
+                    fused,
+                    limit=bounded_limit,
+                )
                 rerank_ms += (perf_counter() - rerank_started) * 1000
                 if reranked:
                     backend = f"{backend}+bge_rerank"
+                else:
+                    backend = f"{backend}+rerank_{rerank_status}"
             else:
+                rerank_status = "disabled_by_caller"
                 backend = f"{backend}+rerank_deferred"
         out[query] = {
             "schema": "smeta_norm_browse_v1",
@@ -703,6 +838,7 @@ def browse_norms_many(
                 "returned_candidates": len(cards),
                 "rerank_deferred": bool(rag_cards and not rerank_enabled),
                 "reranked": reranked,
+                "rerank_status": rerank_status,
                 "rag": dict(rag_trace),
                 "filters": {"base_types": list(clean_base_types), "collections": list(clean_collections)},
                 "query_variants": query_variants,

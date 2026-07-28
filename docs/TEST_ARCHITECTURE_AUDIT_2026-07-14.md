@@ -18,6 +18,27 @@
 только при явном обходе default; поддерживаемый архивный вход — `make test-legacy`, ARTEL запускается
 в отдельном продукте.
 
+## Второй проход 2026-07-28
+
+Полная серия 0.24.46 была зелёной (`2712 passed / 9 skipped`), но не заметила два реальных дефекта:
+active smeta-base содержала 180 080 строк без provenance, а smeta Qdrant-кандидаты не доходили до
+reranker. Причина была в профиле доказательств: тесты создавали собственные SQLite/mock-ответы,
+два harness-теста зависели от случайного состояния локальной active-базы, а тест batch retrieval
+прямо требовал `rerank_deferred` при пяти и более запросах.
+
+В 0.24.47 введены разные уровни:
+
+- `make test-unit` — быстрые hermetic контракты;
+- `make test-integration` — временные базы и поведенческие границы, включая отказ builder заменить
+  canonical SQLite при missing provenance, batch rerank и полный selected-table menu;
+- `make smoke-active-artifacts` — фактические active SHA/count/provenance;
+- `make smoke-smeta-rerank` — живой A/B model-visible порядка с обязательным `rerank_status=ok`;
+- `make smoke-basic-release` — живой HTTP/UI/product path.
+
+Первый живой rerank smoke честно упал: `rag.reason=base_revision_mismatch`, а в Qdrant отсутствует
+сконфигурированная `les_smeta_norm_cards`; поэтому `rerank_status=not_attempted`. Это отдельный
+runtime/index repair, который нельзя скрывать зелёным unit-тестом или чинить подменой manifest.
+
 ## Вердикт
 
 В исходном срезе собирались **2926 тестов из 303 файлов**. После release-bootstrap и

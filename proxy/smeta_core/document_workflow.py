@@ -552,7 +552,7 @@ class SmetaNormToolSession:
         self.started_at = perf_counter()
         self.evidence_usage = {"search_calls": 0, "read_calls": 0, "opened_cards": 0}
         self.catalog_trace: list[dict[str, Any]] = []
-        self.catalog_seen: set[tuple[str, str, str]] = set()
+        self.catalog_seen: set[tuple[str, str, str, str]] = set()
         self.candidates: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
@@ -643,16 +643,22 @@ class SmetaNormToolSession:
                 continue
             family = str(item.get("family") or "").strip()
             collection = str(item.get("collection") or "").strip()
-            catalog_key = (work_id, family.casefold(), re.sub(r"\D", "", collection)[:2])
+            table = re.sub(r"[^0-9-]", "", str(item.get("table") or "")).strip("-")[:9]
+            catalog_key = (
+                work_id,
+                family.casefold(),
+                re.sub(r"\D", "", collection)[:2],
+                table,
+            )
             if catalog_key in self.catalog_seen:
                 row = {
                     "work_id": work_id,
                     "ok": True,
                     "level": "already_seen",
-                    "filters": {"family": family, "collection": collection},
+                    "filters": {"family": family, "collection": collection, "table": table},
                     "items": [],
                     "repeated": True,
-                    "next_action": "call search_norms_batch with the chosen family and collection",
+                    "next_action": "choose a table or call search_norms_batch with the selected scope",
                 }
                 rows_out.append(row)
                 self.catalog_trace.append({
@@ -662,14 +668,21 @@ class SmetaNormToolSession:
                 })
                 continue
             self.catalog_seen.add(catalog_key)
-            if family and collection:
+            if family and collection and table:
                 row = {
                     "work_id": work_id,
                     "ok": True,
-                    "level": "scope_selected",
-                    "filters": {"family": family, "collection": re.sub(r"\D", "", collection)[:2]},
+                    "level": "table_selected",
+                    "filters": {
+                        "family": family,
+                        "collection": re.sub(r"\D", "", collection)[:2],
+                        "table": table,
+                    },
                     "items": [],
-                    "next_action": "call search_norms_batch; use read_norms_batch for full norm cards",
+                    "next_action": (
+                        "call search_norms_batch with this table in table_codes; "
+                        "the tool returns its complete official row menu"
+                    ),
                 }
                 rows_out.append(row)
                 self.catalog_trace.append({
@@ -680,12 +693,9 @@ class SmetaNormToolSession:
                 continue
             payload = browse_norm_catalog(
                 family=family,
-                collection="",
+                collection=collection,
                 table="",
-                # Families and collections are finite menus. The model does not
-                # need table/norm catalog dumps: ranked search and typed reads own
-                # those stages and keep the context bounded.
-                limit=100,
+                limit=1000,
             )
             compact_items = []
             for entry in payload.get("items") or []:
@@ -711,8 +721,8 @@ class SmetaNormToolSession:
                 "filters": payload.get("filters") or {},
                 "items": compact_items,
                 "next_action": (
-                    "choose a family and collection, then call search_norms_batch; "
-                    "do not browse individual norms through the catalog"
+                    "choose a family, collection and official table; then call "
+                    "search_norms_batch with table_codes to receive every row of that table"
                 ),
             }
             rows_out.append(row)
@@ -750,8 +760,15 @@ class SmetaNormToolSession:
         batch_page = args.get("page")
         default_base_types = _tool_string_list(args.get("base_types"))
         default_collections = _tool_string_list(args.get("collections"))
-        grouped_queries: dict[tuple[tuple[str, ...], tuple[str, ...]], list[str]] = {}
-        item_filters: dict[int, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+        default_table_codes = _tool_string_list(args.get("table_codes"))
+        grouped_queries: dict[
+            tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+            list[str],
+        ] = {}
+        item_filters: dict[
+            int,
+            tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]],
+        ] = {}
         scope_plans: dict[int, ModelScopePlan] = {}
         scope_errors: dict[int, str] = {}
         for index, item in enumerate(items):
@@ -760,6 +777,13 @@ class SmetaNormToolSession:
             ))
             collections = tuple(dict.fromkeys(
                 _tool_string_list(item.get("collections")) or default_collections
+            ))
+            table_codes = tuple(dict.fromkeys(
+                re.sub(r"[^0-9-]", "", value).strip("-")[:9]
+                for value in (
+                    _tool_string_list(item.get("table_codes")) or default_table_codes
+                )
+                if re.sub(r"[^0-9-]", "", value).strip("-")
             ))
             queries = tuple(_normalize_search_queries_transport(item))
             raw_scope_mode = str(item.get("scope_mode") or "").strip()
@@ -779,7 +803,7 @@ class SmetaNormToolSession:
             except ValueError as error:
                 scope_errors[index] = str(error)
                 continue
-            filter_key = (base_types, collections)
+            filter_key = (base_types, collections, table_codes)
             item_filters[index] = filter_key
             grouped_queries.setdefault(filter_key, [])
             grouped_queries[filter_key].extend(queries)
@@ -789,7 +813,8 @@ class SmetaNormToolSession:
                 limit=100,
                 base_types=list(filter_key[0]),
                 collections=list(filter_key[1]),
-                rerank=bool(args.get("rerank", False)),
+                table_codes=list(filter_key[2]),
+                rerank=_tool_bool(args.get("rerank"), True),
             )
             for filter_key, queries in grouped_queries.items()
             if queries
@@ -813,16 +838,35 @@ class SmetaNormToolSession:
             # A model may copy the catalog's finite-menu limit=100 into ranked
             # evidence search. Keep one page bounded; the model still owns
             # navigation and can request the next page explicitly.
-            limit = min(requested_limit, self.candidate_limit)
+            table_codes = item_filters[index][2]
+            if table_codes:
+                requested_limit = max(
+                    requested_limit,
+                    max(
+                        (
+                            len(result.get("cards") or [])
+                            for result in (
+                                search_results_by_filter.get(item_filters[index]) or {}
+                            ).values()
+                        ),
+                        default=0,
+                    ),
+                )
+            limit = (
+                requested_limit
+                if table_codes
+                else min(requested_limit, self.candidate_limit)
+            )
             page = max(0, int(item.get("page") if item.get("page") is not None else batch_page or 0))
             payload = _candidate_payload(
                 self.by_id[work_id], queries, limit=limit, page=page,
                 search_results=search_results_by_filter.get(item_filters[index]) or {},
             )
-            base_types, collections = item_filters[index]
+            base_types, collections, table_codes = item_filters[index]
             payload["filters"] = {
                 "base_types": list(base_types),
                 "collections": list(collections),
+                "table_codes": list(table_codes),
             }
             self.browse_trace[work_id].append(payload)
             compact = []
@@ -1894,9 +1938,9 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "function": {
                 "name": "browse_norm_catalog",
                 "description": (
-                    "Browse the compact typed normative menu before searching: first families, then "
-                    "collections for one family. After choosing a collection call search_norms_batch. "
-                    "Catalog navigation is not norm evidence and never returns individual norm cards."
+                    "Browse the typed normative menu before searching: families, collections, then "
+                    "official tables. After choosing a table call search_norms_batch with table_codes. "
+                    "Catalog navigation never chooses a professional norm."
                 ),
                 "parameters": {
                     "type": "object",
@@ -1904,7 +1948,8 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                         "items": {"type": "array", "items": {"type": "object", "properties": {
                             "work_id": {"type": "string"},
                             "family": {"type": "string", "description": "Norm family such as ГЭСН, ГЭСНм, ГЭСНр. Empty returns families."},
-                            "collection": {"type": "string", "description": "Two-digit collection selected by the model. Empty returns the compact collection menu; a value confirms scope and points to search."},
+                            "collection": {"type": "string", "description": "Two-digit collection selected by the model. Empty returns collections."},
+                            "table": {"type": "string", "description": "Official table code selected by the model, such as 08-02-001."},
                         }, "required": ["work_id"]}},
                     },
                     "required": ["items"],
@@ -1940,6 +1985,7 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                             },
                             "base_types": {"type": "array", "items": {"type": "string"}, "description": "Families chosen by the model after catalog browse."},
                             "collections": {"type": "array", "items": {"type": "string"}, "description": "Collection numbers chosen by the model after catalog browse."},
+                            "table_codes": {"type": "array", "items": {"type": "string"}, "description": "Official table codes shown by browse_norm_catalog. Selecting a table returns its complete row menu without ranking."},
                             "limit": {"type": "integer", "minimum": 1}, "page": {"type": "integer", "minimum": 0},
                         }, "required": ["work_id", "query", "search_intent", "scope_mode"]}},
                         "rerank": {"type": "boolean"},

@@ -147,6 +147,46 @@ def test_structured_base_refuses_to_replace_canonical_output_below_floor(tmp_pat
     assert out.read_bytes() == b"existing-canonical-base"
 
 
+def test_structured_base_refuses_to_replace_canonical_output_with_missing_provenance(
+    tmp_path: Path,
+):
+    source = tmp_path / "source.parquet"
+    out = tmp_path / "base.sqlite"
+    manifest = tmp_path / "manifest.json"
+    integrity = tmp_path / "integrity.json"
+    out.write_bytes(b"existing-trusted-base")
+    pd.DataFrame(
+        [
+            _row(
+                norm_code="ГЭСН08-01-001-01",
+                norm_key="ГЭСН:08-01-001-01",
+                base_type="ГЭСН",
+                norm_name="Монтаж оборудования",
+                norm_unit="шт",
+                kind="labor",
+                resource_name="Рабочий",
+                per_unit=1,
+                source_doc=None,
+                source_guid=None,
+            )
+        ],
+        columns=list(RESOURCE_FIELDS),
+    ).to_parquet(source, index=False)
+
+    with pytest.raises(RuntimeError, match="missing provenance"):
+        build_structured_base(
+            source=source,
+            out=out,
+            manifest_out=manifest,
+            integrity_out=integrity,
+        )
+
+    assert out.read_bytes() == b"existing-trusted-base"
+    assert not manifest.exists()
+    assert not integrity.exists()
+    assert not out.with_suffix(".sqlite.tmp").exists()
+
+
 def test_gesn_service_prefers_structured_base(tmp_path: Path, monkeypatch):
     from proxy.services import gesn_service as gs
 

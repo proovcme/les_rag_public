@@ -1,7 +1,8 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
 Гейт: `make verify` (офлайн, синтаксис+сбор канонической LES-коллекции). Основная сюита:
-`make test`. На 2026-07-18 она собирает **2695 тестов** и даёт **2686 passed / 9 skipped**. Прямой
+`make test`. На 2026-07-28 она собирает **2730 тестов** и даёт
+**2721 passed / 9 skipped**. Прямой
 `uv run pytest` использует тот же default из `pytest.ini`. Физический total включает также
 архивные и отдельные продуктовые профили;
 архивный Unified запускается только через `make test-legacy`, а ARTEL — в отдельном продукте.
@@ -12,17 +13,20 @@
 
 - `make test` / `make test-release` — канонический LES-профиль без 11 файлов выключенного
   Unified/Construction Harness и без `test_artel*`;
+- `make test-unit` — 35 быстрых hermetic проверок чистых контрактов/вычислений;
+- `make test-integration` — 120 поведенческих проверок временных SQLite/API/release-артефактов,
+  включая atomic smeta rebuild, batch rerank и полный table listing;
 - `make test-architecture` — совместимый псевдоним того же профиля;
 - `make test-legacy` — только явный opt-in запуск 288 исторических проверок; не release-доказательство;
 - `make test-mail` — 61 offline/static проверка Е.Ж.И.К.: отдельный dataset на ящик,
   IMAP/registry/cursors/dedup, mail projection/API/UI и Windows-sidecar source contract;
 - `make test-mail-release` — `test-mail` плюс Rust compile-check Tauri. Он обязателен в
   `make patch-release`, но не подменяет установленный Outlook COM/task/index/open smoke на Legion;
-- `make test-release-critical` — узкие unit/code-проверки ФСНБ, clean-install baseline,
-  index-contract и жизненного цикла датасетов; это локальный gate Windows-выпуска;
+- `make test-release-critical` — совместимый псевдоним `make test-integration`;
 - `make test-rag-core` — короткий обязательный RAG integrity-профиль;
-- живые Qdrant/модель/Windows release-smoke запускаются отдельными инструментами и не подменяются
-  зелёным offline pytest.
+- `make smoke-active-artifacts` проверяет фактические active base/FSEM, SHA/count/provenance;
+- `make smoke-smeta-rerank` — fail-closed A/B живой цепочки active base → Qdrant/RRF → reranker;
+- `make smoke-basic-release` — живой HTTP/UI/product smoke. Эти проверки не подменяются зелёным pytest.
 
 RAG-ядро имеет отдельный обязательный профиль `make test-rag-core`; offline defaults задаются в
 `tests/conftest.py`. Аудит достоверности гейтов: [RAG_TEST_PROGRAM_AUDIT.md](RAG_TEST_PROGRAM_AUDIT.md).
@@ -63,7 +67,8 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_prices_router_batch.py`, `tests/test_fgis_price_service.py`, `tests/test_les_mcp_server.py` | focused | пакетный exact lookup ФГИС: одна загрузка книги, сохранение missing, дедупликация кодов и наличие `les_price_lookup_batch` в MCP-каталоге |
 | `tests/test_kac_web_service.py` | 2 | fail-closed web-KAC: strong exact-product identifier and three distinct suppliers with VAT normalization |
 | `tests/test_smeta_norm_store.py` | 7 | typed SQLite-light smeta norm projection over existing GESN/FSM/TER sources: schema payload, FTS/LIKE candidate search, norm-card profiles with hints/resources/condition_hints/provenance/model_card/navigation, nearby norms, worker-thread cached reads, no heavy row leak in trace |
-| `tests/test_smeta_structured_base.py` | focused | canonical smeta machine base: typed SQLite, quarantine, resource dedupe and pre-replace `minimum_norms` floor that preserves the existing canonical file on regression |
+| `tests/test_smeta_structured_base.py` | focused | canonical smeta machine base: typed SQLite, quarantine, resource dedupe and pre-replace `minimum_norms` + provenance gates that preserve the existing canonical file byte-for-byte on regression |
+| `tests/test_smeta_norm_browser.py`, `tests/test_smeta_rerank_ab_probe.py`; live `make smoke-smeta-rerank` | integration + live | document batch не обходит cross-encoder, transport failure виден в trace, selected official table возвращается полностью и по коду; живой A/B падает, если Qdrant/RRF не довёл кандидатов до reranker |
 | `tests/test_smeta_release_baseline.py` | focused | immutable Windows smeta payload: source/base/FSEM SHA and counts, archive verification, clean-state provisioning, keep-valid-existing, fail-closed partial-state protection и repair с резервной копией повреждённого состояния |
 | `tests/test_gesn_update_pipeline.py` | 2 | smeta base update pipeline: FGIS download/unify now continues into structured SQLite and generated `SMETA_SERVICE` cards, with explicit skip flags for generated layers |
 | `tests/test_smetnoedelo_rag_import.py` | 5 | Smetnoedelo API v2.0 → smeta RAG importer: section/code payload normalization, markdown card rendering, request-budget stop, manifest output, and token-free cache/card behavior |

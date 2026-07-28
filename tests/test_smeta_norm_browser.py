@@ -164,7 +164,7 @@ def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
 
     def rerank(_query, cards, *, limit):
         seen["input"] = len(cards)
-        return list(reversed(cards))[:limit], True
+        return list(reversed(cards))[:limit], True, "ok"
 
     monkeypatch.setattr(norm_browser, "_rerank_cards", rerank)
     monkeypatch.setattr(
@@ -180,12 +180,13 @@ def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
     assert result["retrieval_trace"]["reranked"] is True
 
 
-def test_mass_triage_defers_single_query_reranker(monkeypatch, tmp_path):
+def test_mass_triage_runs_reranker_for_every_document_row(monkeypatch, tmp_path):
     from proxy.smeta_core import norm_browser
 
     queries = [f"query {index}" for index in range(5)]
     lexical = [{"norm_key": "l:1", "norm_code": "L-1", "title": "lex"}]
     semantic = [{"norm_key": "s:1", "norm_code": "S-1", "title": "sem"}]
+    seen = []
     monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
     monkeypatch.setattr(
         norm_browser, "_rag_cards_many",
@@ -193,7 +194,7 @@ def test_mass_triage_defers_single_query_reranker(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         norm_browser, "_rerank_cards",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("reranker must be deferred")),
+        lambda query, cards, **_kwargs: (seen.append(query) or cards, True, "ok"),
     )
     monkeypatch.setattr(
         norm_browser, "normative_base_integrity",
@@ -203,16 +204,18 @@ def test_mass_triage_defers_single_query_reranker(monkeypatch, tmp_path):
     results = norm_browser.browse_norms_many(queries, limit=5, base_path=tmp_path / "base.sqlite")
 
     assert set(results) == set(queries)
-    assert all(item["retrieval_trace"]["rerank_deferred"] for item in results.values())
-    assert all("rerank_deferred" in item["backend"] for item in results.values())
+    assert seen == queries
+    assert all(item["retrieval_trace"]["reranked"] for item in results.values())
+    assert all(item["retrieval_trace"]["rerank_status"] == "ok" for item in results.values())
 
 
-def test_mass_triage_defers_even_explicit_rerank_request(monkeypatch, tmp_path):
+def test_mass_triage_honors_explicit_rerank_request(monkeypatch, tmp_path):
     from proxy.smeta_core import norm_browser
 
     queries = [f"query {index}" for index in range(5)]
     lexical = [{"norm_key": "l:1", "norm_code": "L-1", "title": "lex"}]
     semantic = [{"norm_key": "s:1", "norm_code": "S-1", "title": "sem"}]
+    seen = []
     monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
     monkeypatch.setattr(
         norm_browser, "_rag_cards_many",
@@ -220,7 +223,7 @@ def test_mass_triage_defers_even_explicit_rerank_request(monkeypatch, tmp_path):
     )
     monkeypatch.setattr(
         norm_browser, "_rerank_cards",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("mass reranker must be deferred")),
+        lambda query, cards, **_kwargs: (seen.append(query) or cards, True, "ok"),
     )
     monkeypatch.setattr(
         norm_browser, "normative_base_integrity",
@@ -231,7 +234,8 @@ def test_mass_triage_defers_even_explicit_rerank_request(monkeypatch, tmp_path):
         queries, limit=5, base_path=tmp_path / "base.sqlite", rerank=True,
     )
 
-    assert all(item["retrieval_trace"]["rerank_deferred"] for item in results.values())
+    assert seen == queries
+    assert all(item["retrieval_trace"]["reranked"] for item in results.values())
 
 
 def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_path):
@@ -259,6 +263,7 @@ def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_p
 
     assert result["retrieval_trace"]["reranked"] is False
     assert result["retrieval_trace"]["rerank_deferred"] is True
+    assert result["retrieval_trace"]["rerank_status"] == "disabled_by_caller"
 
 
 def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
@@ -266,19 +271,81 @@ def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
 
     cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
 
-    class Response:
-        def raise_for_status(self):
-            return None
+    class Result:
+        def __init__(self, index):
+            self.metadata = {"index": index}
 
-        def json(self):
-            return {"results": [{"index": 4}, {"index": 4}, {"index": 999}]}
+    class Reranker:
+        def __init__(self, *_args, **_kwargs):
+            pass
 
-    monkeypatch.setattr(norm_browser.httpx, "post", lambda *_args, **_kwargs: Response())
+        async def rerank(self, *_args, **_kwargs):
+            return [Result(4), Result(4), Result(999)]
 
-    ranked, used = norm_browser._rerank_cards("query", cards, limit=4)
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", lambda: Reranker)
+
+    ranked, used, status = norm_browser._rerank_cards("query", cards, limit=4)
 
     assert used is True
+    assert status == "ok"
     assert [item["norm_code"] for item in ranked] == ["N-4", "N-0", "N-1", "N-2"]
+
+
+def test_reranker_failure_is_visible_and_preserves_raw_order(monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
+
+    class BrokenReranker:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def rerank(self, *_args, **_kwargs):
+            raise TimeoutError("offline")
+
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", lambda: BrokenReranker)
+
+    ranked, used, status = norm_browser._rerank_cards("query", cards, limit=4)
+
+    assert used is False
+    assert status == "error:TimeoutError"
+    assert ranked == cards[:4]
+
+
+def test_selected_official_table_returns_every_row_in_code_order(tmp_path, monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(conn, key="ГЭСНм:08-02-001-03", name="Третий вариант")
+    _insert_norm(conn, key="ГЭСНм:08-02-001-01", name="Первый вариант")
+    _insert_norm(conn, key="ГЭСНм:08-02-001-02", name="Второй вариант")
+    _insert_norm(conn, key="ГЭСНм:08-02-002-01", name="Другая таблица")
+    _insert_norm(conn, key="ГЭСН:08-02-001-01", name="Другое семейство")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(
+        norm_browser,
+        "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    result = norm_browser.browse_norms_many(
+        ["выбранная моделью таблица"],
+        limit=1,
+        base_path=path,
+        base_types=["ГЭСНм"],
+        table_codes=["08-02-001"],
+    )["выбранная моделью таблица"]
+
+    assert result["backend"] == "official_table_listing"
+    assert [card["norm_code"] for card in result["cards"]] == [
+        "ГЭСНм08-02-001-01",
+        "ГЭСНм08-02-001-02",
+        "ГЭСНм08-02-001-03",
+    ]
+    assert result["retrieval_trace"]["complete_table"] is True
+    assert result["retrieval_trace"]["rerank_status"] == "not_needed_table_listing"
 
 
 def test_rrf_uses_typed_norm_identity_not_display_code():

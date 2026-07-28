@@ -4,7 +4,7 @@
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
 
-> **Статус 2026-07-27: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
+> **Статус 2026-07-28: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
 > model-owned evidence loop, immutable построчный mapping, обязательная глобальная модельная ревизия,
 > автoчерновик и отдельный пользовательский lock перед финальным расчётом.
 > Архитектурное решение и судьба экспериментальных веток зафиксированы в
@@ -17,9 +17,9 @@
   → source_intake: строки, количества, единицы, координаты
   → SmetaAgentRunner: native | Qwen-Agent | Google ADK
   → модель + skills/smeta/references/document-mapping-agent.md
-  → browse_norm_catalog: компактная typed-карта семейство → сборник
+  → browse_norm_catalog: typed-карта семейство → сборник → официальная таблица
   → smeta_scope_plan_v1: scoped(base_types/collections) | global, всегда выбран моделью
-  → search_norms_batch: код буквально исполняет ScopePlan → RRF/FTS-кандидаты
+  → search_norms_batch: ScopePlan → RRF/FTS + rerank либо полный listing выбранной таблицы
   → read_norms_batch: фактические карточки Typed SQLite
   → submit_lsr_mapping: завершённое решение той же модели по активной строке/пакету
   → smeta_row: готовая строка сразу появляется в живой таблице чата
@@ -124,7 +124,8 @@ immutable lock-ревизию и только затем отдельный фи
   получает blocker, а остальные строки продолжают считаться.
 - `proxy.smeta_core.norm_browser.browse_norm_catalog` — актуальная typed-навигация по семействам,
   сборникам и таблицам без статического списка в prompt.
-- `proxy.smeta_core.norm_browser.browse_norms_many` — пакетный scoped RRF/FTS-поиск.
+- `proxy.smeta_core.norm_browser.browse_norms_many` — пакетный scoped RRF/FTS + configured reranker;
+  выбранные моделью `table_codes` возвращаются полным официальным меню без ranking.
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.
 - `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
@@ -140,16 +141,17 @@ model-visible candidate list.
 
 ### `browse_norm_catalog`
 
-Возвращает компактную текущую карту семейств и сборников typed-каталога. После выбора сборника
-инструмент подтверждает scope и отправляет модель в `search_norms_batch`; таблицы и нормы через
-каталог не выгружаются. Повтор одной страницы возвращает короткий `already_seen`, поэтому локальная
-модель не может раздувать контекст одинаковым каталогом. Каталог является навигацией, а не evidence
-нормы.
+Возвращает текущую карту `family → collection → table` typed-каталога. Семейство, сборник и таблицу
+выбирает модель. Повтор одной страницы возвращает короткий `already_seen`. Каталог является
+навигацией, а не решением о применимости нормы.
 
 ### `search_norms_batch`
 
 Принимает любое число независимых `work_id`, поисковые формулировки с обязательным `search_intent`
-и выбранные моделью `base_types`/`collections`. Кандидат сразу показывает `source_ref` и краткий
+и выбранные моделью `base_types`/`collections`/`table_codes`. Обычный shortlist проходит configured
+cross-encoder даже в batch из пяти и более строк; transport failure виден как `rerank_status`.
+Выбранная таблица возвращается полностью по коду, без top-k и rerank: код не скрывает selector-range
+и не выбирает строку. Кандидат сразу показывает `source_ref` и краткий
 состав работ, а также `norm_key`, редакцию, семейство/сборник, совместимость измерителя, количество и
 виды ресурсов, ресурсный preview и `matched_query`. Поля объясняют происхождение кандидата, но не
 содержат code-side решения о применимости.
@@ -273,8 +275,10 @@ heartbeat, текущий регион/период или сборник/отд
 
 Гейты:
 
-- `tests/test_smeta_core.py` — три инструмента, model-owned выбор, полный technology/resource evidence,
+- `tests/test_smeta_core.py` — catalog/table/search/read, model-owned выбор, полный technology/resource evidence,
   50 строк, единицы и один расчёт.
+- `tests/test_smeta_norm_browser.py`, `tests/test_smeta_rerank_ab_probe.py` — batch rerank,
+  явный transport status, полный table listing и контракт живого A/B smoke.
 - `tests/test_rim_trace_xlsx.py` — форма РИМ, официальное наименование и пустая missing price.
 - `tests/test_smeta_prompt_freedom.py` — отсутствие объектных якорей и скрытого selector.
 - `tests/test_prompt_registry_service.py` — загрузка полного canonical skill и prompt registry.
@@ -283,7 +287,9 @@ heartbeat, текущий регион/период или сборник/отд
 - `tests/test_installer_windows.py` — baseline в bootstrap и обязательная Windows-smoke проверка.
 - `tools/smeta_document_live_smoke.py` — реальная ВОР, выбранная модель, отключённый fallback и
   обязательный ненулевой XLSX; `--only-row` оставлен для диагностики tool-контракта.
-- `make verify` и `make test` — релизный офлайн-гейт.
+- `make verify`, `make test-unit`, `make test-integration` и `make test` — офлайн-гейты;
+  `make smoke-active-artifacts` проверяет active base, `make smoke-smeta-rerank` — живую
+  цепочку active base → Qdrant/RRF → cross-encoder.
 
 ## Открытые долги
 

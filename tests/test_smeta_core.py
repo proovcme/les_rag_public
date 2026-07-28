@@ -291,8 +291,10 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
         "browse_norm_catalog", "search_norms_batch", "read_norms_batch", "submit_lsr_mapping",
     ]
     catalog_item = tools[0]["function"]["parameters"]["properties"]["items"]["items"]
-    assert "table" not in catalog_item["properties"]
+    assert "table" in catalog_item["properties"]
     assert "limit" not in catalog_item["properties"]
+    search_item = tools[1]["function"]["parameters"]["properties"]["items"]["items"]
+    assert "table_codes" in search_item["properties"]
     assert not {"search_norms", "read_norm", "bind_norm", "finish_norm_selection"}.intersection(names)
     submit = tools[-1]["function"]["parameters"]["properties"]["rows"]["items"]
     assert "quantity_multiplier" not in submit["properties"]
@@ -345,17 +347,28 @@ def test_catalog_tool_exposes_current_typed_collection_scope(monkeypatch):
         "source_example": "Сборник 15. Отделочные работы / Раздел 4",
     }]
     assert session.catalog_trace[0]["work_id"] == "w1"
-    assert seen["limit"] == 100
+    assert seen["limit"] == 1000
 
 
-def test_catalog_stops_at_collection_scope_and_suppresses_repeated_page(monkeypatch):
+def test_catalog_reaches_official_table_scope_and_suppresses_repeated_page(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
     calls = 0
 
-    def catalog(**_kwargs):
+    def catalog(**kwargs):
         nonlocal calls
         calls += 1
+        if kwargs.get("family") and kwargs.get("collection"):
+            return {
+                "level": "table",
+                "filters": {"family": "ГЭСН", "collection": "15", "table": ""},
+                "items": [{
+                    "key": "15-04-001",
+                    "norm_count": 7,
+                    "resource_count": 30,
+                    "source_example": "Таблица ГЭСН 15-04-001",
+                }],
+            }
         return {
             "level": "family", "filters": {},
             "items": [{"key": "ГЭСН", "norm_count": 100, "resource_count": 200}],
@@ -379,17 +392,25 @@ def test_catalog_stops_at_collection_scope_and_suppresses_repeated_page(monkeypa
         turn=3,
     )
 
-    assert calls == 1
+    assert calls == 2
     assert first["rows"][0]["level"] == "family"
     assert repeated["rows"][0]["level"] == "already_seen"
     assert repeated["rows"][0]["items"] == []
     assert selected["rows"][0] == {
         "work_id": "w1",
         "ok": True,
-        "level": "scope_selected",
-        "filters": {"family": "ГЭСН", "collection": "15"},
-        "items": [],
-        "next_action": "call search_norms_batch; use read_norms_batch for full norm cards",
+        "level": "table",
+        "filters": {"family": "ГЭСН", "collection": "15", "table": ""},
+        "items": [{
+            "key": "15-04-001",
+            "norm_count": 7,
+            "resource_count": 30,
+            "source_example": "Таблица ГЭСН 15-04-001",
+        }],
+        "next_action": (
+            "choose a family, collection and official table; then call "
+            "search_norms_batch with table_codes to receive every row of that table"
+        ),
     }
 
 
@@ -463,9 +484,72 @@ def test_search_uses_model_selected_collection_and_shows_scope(monkeypatch):
     assert result["rows"][0]["filters"]["collections"] == ["15"]
     assert result["rows"][0]["retrieval_backend"] == "typed_sqlite_fts"
     assert session.query_trace[0]["filters"] == {
-        "base_types": ["ГЭСН"], "collections": ["15"],
+        "base_types": ["ГЭСН"], "collections": ["15"], "table_codes": [],
     }
     assert session.query_trace[0]["candidate_codes"] == ["ГЭСН15-04-001-01"]
+
+
+def test_search_selected_table_returns_complete_menu_and_reranks_other_batches_by_default(
+    monkeypatch,
+):
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = []
+    cards = [
+        {
+            "norm_code": f"ГЭСНм08-02-001-{index:02d}",
+            "norm_key": f"ГЭСНм:08-02-001-{index:02d}",
+            "base_type": "ГЭСНм",
+            "bare_code": f"08-02-001-{index:02d}",
+            "title": f"Вариант {index}",
+            "measure_unit": "шт",
+        }
+        for index in range(1, 7)
+    ]
+
+    def browse(queries, **kwargs):
+        calls.append({"queries": queries, **kwargs})
+        return {
+            query: {
+                "backend": "official_table_listing",
+                "cards": cards,
+                "retrieval_trace": {
+                    "complete_table": True,
+                    "rerank_status": "not_needed_table_listing",
+                },
+            }
+            for query in queries
+        }
+
+    monkeypatch.setattr(workflow, "browse_norms_many", browse)
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж блока", "unit": "шт", "quantity": 1}],
+        candidate_limit=2,
+    )
+
+    result = session.execute(
+        "search_norms_batch",
+        {"items": [{
+            "work_id": "w1",
+            "query": "варианты выбранной таблицы",
+            "search_intent": "fsnb_technology",
+            "scope_mode": "scoped",
+            "base_types": ["ГЭСНм"],
+            "collections": ["08"],
+            "table_codes": ["08-02-001"],
+        }]},
+        turn=2,
+    )
+
+    assert calls[0]["table_codes"] == ["08-02-001"]
+    assert calls[0]["rerank"] is True
+    assert [item["norm_code"] for item in result["rows"][0]["candidates"]] == [
+        card["norm_code"] for card in cards
+    ]
+    assert result["rows"][0]["page_size"] == len(cards)
+    assert result["rows"][0]["has_more"] is False
+    assert result["rows"][0]["filters"]["table_codes"] == ["08-02-001"]
 
 
 def test_explicit_scope_plan_rejects_contradictory_transport_without_search(monkeypatch):
@@ -2128,7 +2212,11 @@ def test_norm_browser_fuses_typed_and_dedicated_rag_candidates(monkeypatch, tmp_
         "_rag_cards_many",
         lambda queries, **_kwargs: {query: semantic for query in queries},
     )
-    monkeypatch.setattr(norm_browser, "_rerank_cards", lambda _query, cards, limit: (cards[:limit], False))
+    monkeypatch.setattr(
+        norm_browser,
+        "_rerank_cards",
+        lambda _query, cards, limit: (cards[:limit], False, "pool_too_small"),
+    )
     monkeypatch.setattr(
         norm_browser,
         "normative_base_integrity",

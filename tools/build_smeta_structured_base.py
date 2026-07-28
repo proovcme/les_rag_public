@@ -148,6 +148,18 @@ def _create_schema(conn: sqlite3.Connection) -> None:
     )
 
 
+def _missing_provenance_count(conn: sqlite3.Connection) -> int:
+    return int(
+        conn.execute(
+            "SELECT count(*) FROM norms WHERE source_doc = '' OR source_guid = ''"
+        ).fetchone()[0]
+    ) + int(
+        conn.execute(
+            "SELECT count(*) FROM resources WHERE source_doc = '' OR source_guid = ''"
+        ).fetchone()[0]
+    )
+
+
 def build_structured_base(
     *,
     source: Path = DEFAULT_SOURCE,
@@ -333,10 +345,17 @@ def build_structured_base(
         conn.close()
     with sqlite3.connect(tmp_out) as preflight_conn:
         preflight_norm_count = int(preflight_conn.execute("SELECT count(*) FROM norms").fetchone()[0])
+        preflight_missing_provenance = _missing_provenance_count(preflight_conn)
     if preflight_norm_count < int(minimum_norms):
         tmp_out.unlink(missing_ok=True)
         raise RuntimeError(
             f"refusing to replace structured base: {preflight_norm_count} < {minimum_norms} norms"
+        )
+    if preflight_missing_provenance:
+        tmp_out.unlink(missing_ok=True)
+        raise RuntimeError(
+            "refusing to replace structured base: "
+            f"{preflight_missing_provenance} norm/resource rows have missing provenance"
         )
     tmp_out.replace(out)
 
@@ -373,15 +392,7 @@ def build_structured_base(
             ).fetchone()[0]
         )
         machine_norm_count = int(check_conn.execute("SELECT count(*) FROM norms").fetchone()[0])
-        missing_provenance = int(
-            check_conn.execute(
-                "SELECT count(*) FROM norms WHERE source_doc = '' OR source_guid = ''"
-            ).fetchone()[0]
-        ) + int(
-            check_conn.execute(
-                "SELECT count(*) FROM resources WHERE source_doc = '' OR source_guid = ''"
-            ).fetchone()[0]
-        )
+        missing_provenance = _missing_provenance_count(check_conn)
         fts_coverage = abs(
             machine_norm_count - int(check_conn.execute("SELECT count(*) FROM norms_fts").fetchone()[0])
         )

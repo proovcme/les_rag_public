@@ -4,19 +4,40 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-27)
+## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.24.46 (published, 2026-07-27)
-номер сборки:              467     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.467 (Windows isolated + production smoke ✅)
+версия продукта (SemVer):  0.24.47 (dev; 0.24.46 published)
+номер сборки:              468     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.468 (dev; Windows не выпускался)
 ветка выпуска:             main
-dev implementation:       main; release build 56f7f7eb, release orchestration fix 137ba762
+dev implementation:       main; 0.24.47 test/retrieval repair
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.24.46
-следующий выпуск:          не назначен
+следующий выпуск:          0.24.47 после восстановления smeta Qdrant/RRF/rerank smoke
 рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.24.46 / build 467
 ```
+
+> 0.24.47 / build 468 — truthful test layers, safe smeta base and rerank/table contracts
+>
+> Дата: 2026-07-28
+> Статус: dev; runtime, Legion и публикации не менялись.
+> Повреждённая локальная active smeta-base (`missing_provenance=180080`) восстановлена из
+> проверенного immutable `dist/LES-smeta-baseline.zip`; прежние шесть файлов сохранены в
+> `storage/recovery/smeta_baseline_20260728T052146Z`. Active smoke подтверждает 49 756 норм,
+> 504 259 ресурсов и 1 576 ФСЭМ. Builder теперь проверяет missing provenance во временной SQLite
+> до atomic replace и оставляет предыдущую canonical базу байт-в-байт неизменной при провале.
+> Гейты разделены на `test-unit`, `test-integration`, `smoke-active-artifacts`,
+> `smoke-smeta-rerank` и `smoke-basic-release`.
+> Пакет из пяти и более сметных запросов больше не обходит configured cross-encoder; ошибка
+> reranker видна в trace. После model-selected table code выдаётся вся официальная таблица по
+> порядку кодов, без top-k/rerank и без code-side выбора нормы.
+> Проверки на текущем этапе: unit `35 passed`; integration `120 passed`; focused smeta
+> `82 passed`; `make verify` — 2730 collected; `make test` — 2721 passed / 9 skipped;
+> active-artifact smoke green; basic release smoke `pass=6/warn=3/fail=0`.
+> Live rerank A/B намеренно красный: восстановленная base имеет другой SHA, manifest ссылается
+> на старую base, а в локальном Qdrant отсутствует collection `les_smeta_norm_cards`;
+> `rerank_status=not_attempted`. Полный reindex автоматически не запускался.
 
 > 0.24.46 / build 467 — repeatable local Qwen transport и durable chat session
 >
