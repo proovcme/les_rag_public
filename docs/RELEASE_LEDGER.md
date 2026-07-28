@@ -7,17 +7,28 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.11 (Sovushka configuration home)
-номер сборки:              484     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.484 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.12 (Sovushka configuration home)
+номер сборки:              485     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.485 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; configuration passport + disclosures
-задеплоено на рантайм:     Mac 0.25.11 / build 484 target; Legion не затрагивался
+задеплоено на рантайм:     Mac 0.25.12 / build 485 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.11 / build 484 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.12 / build 485 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.12 / build 485 — UI-ветка устанавливается штатным Mac updater
+>
+> Дата: 2026-07-28
+> Статус: внутреннее web-only обновление Mac. Малый updater больше не
+> зашит исключительно на `codex/audit-rag`: разрешённая ветка задаётся явно
+> через `LES_MAC_UPDATE_BRANCH`, должна иметь безопасный префикс `codex/` и
+> по-прежнему обязана быть чистой и совпадать с origin. Старый безопасный
+> default сохранён. Это позволяет транзакционно установить отдельную
+> `codex/sovushka-ui-kit` без ручного копирования файлов. Публикация,
+> Tauri/DMG, Legion и пользовательские данные не затрагиваются.
+>
 > 0.25.11 / build 484 — рабочая конфигурация без dashboard и синего legacy UI
 >
 > Дата: 2026-07-28

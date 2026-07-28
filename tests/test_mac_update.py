@@ -124,6 +124,15 @@ def test_mac_builder_excludes_repo_docs_desktop_and_user_state():
             mac_update.normalize_path(path)
 
 
+def test_mac_update_branch_is_explicit_and_rejects_git_ref_syntax():
+    assert mac_update._configured_branch("codex/sovushka-ui-kit") == (
+        "codex/sovushka-ui-kit"
+    )
+    for branch in ("main", "codex/../main", "codex/ui//next", "codex/ui^"):
+        with pytest.raises(RuntimeError, match=r"safe codex/\* branch"):
+            mac_update._configured_branch(branch)
+
+
 def test_stale_one_time_reconciliation_does_not_block_later_file_update(
     tmp_path, monkeypatch
 ):

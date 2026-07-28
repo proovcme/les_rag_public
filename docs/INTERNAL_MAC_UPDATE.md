@@ -3,8 +3,10 @@
 ## Что получает оператор
 
 `make prepare-mac-update` создаёт небольшой локальный ZIP только из изменённых runtime-файлов
-между deploy stamp установленной версии и точным commit `codex/audit-rag`. Сборка приложения,
-полная pytest-сюита, smeta baseline, пользовательские документы и индексы в пакет не входят.
+между deploy stamp установленной версии и точным commit разрешённой ветки. По умолчанию это
+`codex/audit-rag`; отдельная UI-ветка задаётся явно через
+`MAC_UPDATE_BRANCH=codex/sovushka-ui-kit`. Сборка приложения, полная pytest-сюита, smeta
+baseline, пользовательские документы и индексы в пакет не входят.
 
 После подготовки один и тот же механизм доступен:
 
@@ -24,14 +26,24 @@ make apply-mac-update
 make status-mac-update
 ```
 
+Для отдельной UI-ветки один и тот же параметр передаётся prepare/inspect/apply/status:
+
+```bash
+make prepare-mac-update MAC_UPDATE_BRANCH=codex/sovushka-ui-kit
+make inspect-mac-update MAC_UPDATE_BRANCH=codex/sovushka-ui-kit
+make apply-mac-update MAC_UPDATE_BRANCH=codex/sovushka-ui-kit
+make status-mac-update MAC_UPDATE_BRANCH=codex/sovushka-ui-kit
+```
+
 `prepare-audit-rag`, `inspect-audit-rag-update`, `deploy-audit-rag-mac` и
 `deploy-audit-rag` временно оставлены совместимыми Mac-only псевдонимами. Подготовка и
 установка Legion этим контуром отключены до отдельной приёмки Mac updater.
 
 ## Инварианты
 
-- подготовка разрешена только из чистой `codex/audit-rag`, где `HEAD` совпадает с
-  `origin/codex/audit-rag`;
+- подготовка разрешена только из чистой явно названной `codex/*` ветки, где `HEAD`
+  совпадает с тем же `origin/<branch>`; синтаксис git refs и выход за `codex/`
+  отклоняются;
 - архив и detached helper проверяются независимыми SHA-256;
 - архив содержит только объявленные в manifest файлы из runtime allowlist;
 - `.env`, `data/`, `storage/`, `RAG_Content/`, индексы, секреты, desktop/installer и baseline

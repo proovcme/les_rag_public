@@ -5,6 +5,7 @@
 PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
 AUDIT_RAG_UPDATE_ARGS ?=
+MAC_UPDATE_BRANCH ?= codex/audit-rag
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
@@ -185,16 +186,16 @@ release-multiplatform:
 	uv run python tools/multiplatform_release.py $(MULTIPLATFORM_RELEASE_ARGS)
 
 prepare-mac-update:
-	uv run python tools/mac_update.py prepare $(AUDIT_RAG_UPDATE_ARGS)
+	LES_MAC_UPDATE_BRANCH="$(MAC_UPDATE_BRANCH)" uv run python tools/mac_update.py prepare $(AUDIT_RAG_UPDATE_ARGS)
 
 inspect-mac-update:
-	uv run python tools/mac_update.py inspect $(AUDIT_RAG_UPDATE_ARGS)
+	LES_MAC_UPDATE_BRANCH="$(MAC_UPDATE_BRANCH)" uv run python tools/mac_update.py inspect $(AUDIT_RAG_UPDATE_ARGS)
 
 apply-mac-update:
-	uv run python tools/mac_update.py apply $(AUDIT_RAG_UPDATE_ARGS)
+	LES_MAC_UPDATE_BRANCH="$(MAC_UPDATE_BRANCH)" uv run python tools/mac_update.py apply $(AUDIT_RAG_UPDATE_ARGS)
 
 status-mac-update:
-	uv run python tools/mac_update.py status $(AUDIT_RAG_UPDATE_ARGS)
+	LES_MAC_UPDATE_BRANCH="$(MAC_UPDATE_BRANCH)" uv run python tools/mac_update.py status $(AUDIT_RAG_UPDATE_ARGS)
 
 preflight-audit-rag-update inspect-audit-rag-update: inspect-mac-update
 

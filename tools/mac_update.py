@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import zipfile
@@ -22,7 +23,7 @@ RUNTIME = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES")).resolve()
 UPDATE_ROOT = Path(
     os.getenv("LES_MAC_UPDATE_ROOT", str(RUNTIME.parent / "LES_update_cache" / "mac"))
 ).resolve()
-BRANCH = "codex/audit-rag"
+DEFAULT_BRANCH = "codex/audit-rag"
 SCHEMA = "les.mac-update.v1"
 FEED_SCHEMA = "les.mac-update-feed.v1"
 RECONCILIATION_SCHEMA = "les.mac-runtime-reconciliation.v1"
@@ -42,6 +43,25 @@ DENIED_PARTS = {
 ALLOWED_ROOTS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "skills/")
 ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
 ALLOWED_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
+
+
+def _configured_branch(value: str | None = None) -> str:
+    """Resolve one explicit pushed Codex branch without accepting git ref syntax."""
+    branch = (value if value is not None else os.getenv(
+        "LES_MAC_UPDATE_BRANCH", DEFAULT_BRANCH
+    )).strip()
+    if (
+        not re.fullmatch(r"codex/[A-Za-z0-9._/-]+", branch)
+        or ".." in branch
+        or "//" in branch
+    ):
+        raise RuntimeError(
+            "LES_MAC_UPDATE_BRANCH must name one safe codex/* branch"
+        )
+    return branch
+
+
+BRANCH = _configured_branch()
 
 
 def sha256_bytes(data: bytes) -> str:
