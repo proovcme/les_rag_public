@@ -3663,7 +3663,7 @@ def build_documents(*, surface: str = "documents") -> None:
         "cad_bim": "Модели и проекции — отдельно от документов",
     }[surface]
 
-    with ui.column().classes("w-full h-full gap-0 sov-docs-shell"):
+    with ui.column().classes("w-full h-full gap-0 sov-docs-shell sov-ui-shell sov-ui-documents"):
         with ui.row().classes("items-center w-full sov-docs-topbar"):
             with ui.column().classes("sov-docs-heading"):
                 _label(surface_title, size="16px", weight=900).classes("sov-docs-title")
@@ -3671,7 +3671,7 @@ def build_documents(*, surface: str = "documents") -> None:
                     "sov-docs-subtitle"
                 )
             q_input = ui.input(placeholder="Найти файл, шифр, раздел или текст…").props("outlined clearable").classes(
-                "sov-docs-search"
+                "sov-docs-search sov-ui-input"
             )
             with q_input.add_slot("prepend"):
                 ui.icon("o_search")
@@ -3681,7 +3681,7 @@ def build_documents(*, surface: str = "documents") -> None:
                 refs["readiness_summary"] = readiness_summary
             search_button = ui.button("Найти", icon="o_search", on_click=lambda: _schedule(_search("dataset" if state["selected_dataset"] else "all"))).props(
                 'flat no-caps aria-label="Искать"'
-            ).classes("sov-docs-search-btn")
+            ).classes("sov-docs-search-btn sov-ui-button")
             if surface == "cad_bim":
                 q_input.set_visibility(False)
                 readiness_summary.set_visibility(False)

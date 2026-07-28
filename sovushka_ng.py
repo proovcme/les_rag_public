@@ -15,6 +15,7 @@ from starlette.responses import HTMLResponse, RedirectResponse
 from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
+from sovushka.uikit import UIKIT_CSS
 from sovushka.auth import register_login_page, get_auth
 from sovushka.provider_setup import register_provider_setup_page
 from sovushka.lite_bridge import register_lite_bridge_routes
@@ -188,6 +189,7 @@ def _apply_theme() -> None:
     _dark = app.storage.user.get("dark_theme", False)
     ui.add_head_html(CUSTOM_CSS)
     ui.add_head_html(theme_vars_css(_dark))
+    ui.add_head_html(UIKIT_CSS)
     # WCAG 3.1.1 Language of Page: интерфейс и контент русские — помечаем
     # документ lang=ru, иначе скринридеры читают кириллицу как английский.
     ui.add_head_html("<script>document.documentElement.lang='ru'</script>")
@@ -229,7 +231,7 @@ async def classic_chat_page(request: Request):
     # Chat shell: chat/history plus the no-AI Documents explorer.
     # Documents are a reader UI, not an admin-only console; API permissions still
     # stay on the backend routes.
-    with ui.column().classes("w-full h-screen no-wrap gap-0"):
+    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell"):
         tabs, tr = build_header(
             is_admin,
             role,
@@ -313,7 +315,7 @@ async def classic_admin_page(request: Request):
     _apply_theme()
 
     # Layout: Header (со встроенными табами) + Content + Footer
-    with ui.column().classes("w-full h-screen no-wrap gap-0"):
+    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell"):
         # Граф знаний: canvas-2D со своей физикой + тумблер «связи НТД» (Олегу зашёл больше cosmos).
         # /graph-cosmos (3d-force-graph) оставлен как альтернатива.
         visualizer_url = "/graph"

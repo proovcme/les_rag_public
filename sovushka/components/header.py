@@ -37,7 +37,7 @@ def build_header(
     show_admin_tabs = is_admin if admin_tabs is None else admin_tabs
     is_windows = sys.platform.startswith("win")
 
-    with ui.element("header").classes("w-full").style(
+    with ui.element("header").classes("w-full sov-ui-header").style(
         "position:sticky;top:0;z-index:999;"
         "background:var(--bg-panel);border-bottom:1px solid var(--border);"
         "display:flex;align-items:center;padding:0 16px;height:56px;gap:0;"

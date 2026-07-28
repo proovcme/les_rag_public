@@ -491,7 +491,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     </script>
     """)
 
-    with ui.element("div").classes("sov-chat-shell sov-artifacts-collapsed") as chat_shell:
+    with ui.element("div").classes(
+        "sov-chat-shell sov-artifacts-collapsed sov-ui-shell"
+    ) as chat_shell:
         history_drawer = ui.element("aside").classes("sov-history-drawer")
         history_drawer.set_visibility(False)
 
@@ -1836,26 +1838,32 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
                         lbl = f"{i} · {_source_label(source)}"
-                        with ui.row().classes("sov-source-row"):
+                        with ui.row().classes("sov-source-row sov-ui-evidence-card"):
                             if item.get("viewer_url"):
                                 primary = ui.button(
                                     lbl,
                                     on_click=lambda s=source, n=i: _show_source_drawer(s, n),
-                                ).props("flat dense no-caps").classes("sov-source-primary")
+                                ).props("flat dense no-caps").classes(
+                                    "sov-source-primary sov-ui-source-chip"
+                                )
                                 primary.tooltip("Открыть внутри Л.И.С.Т." + (f" · {c['locator']}" if c["locator"] else ""))
                             elif item.get("open_url"):
                                 primary = ui.link(lbl, str(item["open_url"])).props(
                                     "target=_blank"
-                                ).classes("sov-source-primary")
+                                ).classes("sov-source-primary sov-ui-source-chip")
                                 primary.tooltip("Открыть документ" + (f" · {c['locator']}" if c["locator"] else ""))
                             elif c["has_ref"]:
                                 primary = ui.button(
                                     lbl,
                                     on_click=lambda s=source, n=i: _show_source_drawer(s, n),
-                                ).props("flat dense no-caps").classes("sov-source-primary")
+                                ).props("flat dense no-caps").classes(
+                                    "sov-source-primary sov-ui-source-chip"
+                                )
                                 primary.tooltip("Показать ссылку и найденный фрагмент")
                             else:
-                                primary = ui.label(lbl).classes("sov-source-primary sov-source-unavailable")
+                                primary = ui.label(lbl).classes(
+                                    "sov-source-primary sov-source-unavailable sov-ui-source-chip"
+                                )
                                 primary.tooltip("У источника нет точной ссылки")
                             if c["kind"]:
                                 ui.label(c["kind"]).classes(
@@ -2760,13 +2768,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if not meta:
             return
         from sovushka.answer_render import header_summary, trace_summary
+        from sovushka.uikit import render_feedback_state, status_badge
         h = header_summary(meta.get("query_route"), meta.get("evidence_summary"),
                            len(srcs or []), meta.get("total_status"))
         if not h["has_evidence"]:
             return
         with ui.row().classes("sov-ev-header"):
             st = h["status"]
-            ui.label(st["label"]).classes(f"sov-ev-status sov-ev-{st['tone']}")
+            ui_tone = {"ok": "ok", "warn": "warn", "err": "error"}.get(
+                st["tone"], "muted"
+            )
+            status_badge(st["label"], ui_tone).classes(
+                f"sov-ev-status sov-ev-{st['tone']}"
+            )
             for b in h["badges"]:
                 ui.label(f"{b['type']} {b['count']}").classes(f"sov-ev-badge sov-ev-{b['tone']}")
             if h["sources_count"]:
@@ -2777,6 +2791,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if ts:
             with ui.expansion("подробнее (trace)").classes("sov-ev-trace"):
                 ui.label(ts).classes("sov-ev-trace-text")
+        retrieval_trace = (
+            meta.get("retrieval_trace")
+            if isinstance(meta.get("retrieval_trace"), dict)
+            else {}
+        )
+        blocker = meta.get("blocker") if isinstance(meta.get("blocker"), dict) else {}
+        if retrieval_trace.get("status") == "blocked" or meta.get("total_status") == "blocked":
+            render_feedback_state(
+                "blocked",
+                error_code=str(
+                    blocker.get("code") or retrieval_trace.get("error_code") or ""
+                ),
+                detail=str(blocker.get("action") or ""),
+            )
 
     def _model_label(provider: str = "", model: str = "") -> str:
         provider = str(provider or "").strip()
@@ -3391,12 +3419,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             ans = d.get("answer", d.get("response", "Нет ответа"))
             srcs = d.get("sources", [])
             crag = d.get("crag_status", "")
+            retrieval_trace = d.get("retrieval_trace") or {}
+            blocker = d.get("blocker") or {}
+            total_status = d.get("total_status") or ""
+            if not total_status and (
+                str(crag).upper() == "BLOCKED"
+                or retrieval_trace.get("status") == "blocked"
+            ):
+                total_status = "blocked"
             meta = {
                 "query_route": d.get("query_route") or {},
-                "retrieval_trace": d.get("retrieval_trace") or {},
-                "unified_trace": d.get("unified_trace") or d.get("retrieval_trace") or {},
+                "retrieval_trace": retrieval_trace,
+                "unified_trace": d.get("unified_trace") or retrieval_trace,
                 "evidence_summary": d.get("evidence_summary") or {},
-                "total_status": d.get("total_status") or "",
+                "total_status": total_status,
+                "blocker": blocker,
                 "cache": d.get("cache", "miss"),
                 "validation": d.get("validation") or {"enabled": True},
                 "history_id": d.get("history_id"),

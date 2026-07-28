@@ -7,16 +7,29 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.1 (dev, P0.1)
-номер сборки:              474     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.474 (dev)
+версия продукта (SemVer):  0.25.2 (dev, P0.2)
+номер сборки:              475     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.475 (dev)
 ветка выпуска:             codex/audit-rag
-dev implementation:       codex/audit-rag; P0.1 fail-closed RAG contract
+dev implementation:       codex/audit-rag; P0.2 Sovushka UI kit
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          внутренний Mac+Legion после P0.3; без публикации
 рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
 ```
+
+> 0.25.2 / build 475 — P0.2 Sovushka UI kit
+>
+> Дата: 2026-07-28
+> Статус: dev в `codex/audit-rag`; Mac/Legion пока не менялись.
+> Добавлен минимальный `sovushka/uikit/` с общими токенами, AppShell/Header,
+> controls, StatusBadge, evidence/source cards и состояниями
+> Loading/Empty/Error/Blocked. На kit переведены критические поверхности
+> `/classic`: чат, источники и документы. `BLOCKED/MISSING` отделены от
+> модельного ответа и показывают действие оператора; trace остаётся свёрнут.
+> Keyword-only контракт `build_documents(surface=...)` закреплён тестом.
+> Focused UI gate: `61 passed`; canonical `make test`:
+> `2754 passed, 9 skipped`.
 
 > 0.25.1 / build 474 — P0.1 fail-closed retrieval contract
 >
