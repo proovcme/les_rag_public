@@ -373,7 +373,20 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
             minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
-        return {**current, "action": "kept_valid"}
+        behind = [
+            f"{label}={int(current.get(current_key) or 0)}"
+            f"<{int(archive_status.get(archive_key) or 0)}"
+            for label, current_key, archive_key in (
+                ("norms", "norm_count", "norm_count"),
+                ("resources", "resource_count", "resource_count"),
+                ("FSEM", "fsem_rows", "fsem_rows"),
+                ("pricebook", "pricebook_rows", "pricebook_rows"),
+            )
+            if int(current.get(current_key) or 0) < int(archive_status.get(archive_key) or 0)
+        ]
+        if not behind:
+            return {**current, "action": "kept_valid"}
+        reason = "persistent smeta baseline is older than release payload: " + ", ".join(behind)
     except (BaselineError, OSError) as current_error:
         reason = str(current_error)
 

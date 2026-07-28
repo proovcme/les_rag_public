@@ -116,7 +116,9 @@ runner. `tools/multiplatform_release.py` builds and verifies `LES.app`/`LES.dmg`
 then uses the existing SSH Legion contour to build/install/smoke the real NSIS
 package. The boxed smeta baseline includes its default verified regional
 pricebook because FSEM-derived machinist rows cannot be priced reproducibly
-without it; additional regional books remain an FGIS update concern. GitHub
+without it. Update repair keeps a valid operator base only when it is at least
+as complete as the release payload; an older valid linked set is backed up and
+upgraded atomically. Additional regional books remain an FGIS update concern. GitHub
 release creation receives the verified Mac and Windows assets
 in one command; either platform failing blocks publication. The Windows bundle
 gets only the verified immutable FGIS/FSNB smeta baseline. User RAG data is

@@ -60,7 +60,9 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > недостаточно для воспроизводимого РИМ: после детализации машинистов отсутствовала тарифная
 > книга. Контракт baseline теперь также требует default SPb 2 кв. 2026 pricebook
 > (`281 223` строк, SHA `4d30e8a7…ad78`); архив SHA `72ad28af…a748d`. Workflow сначала
-> верифицирует/provision-ит весь связанный набор. CoreML file lock условен только на Windows,
+> верифицирует/provision-ит весь связанный набор. Bootstrap сохраняет operator state, если он
+> не беднее release payload; валидную, но более старую базу резервирует и атомарно обновляет.
+> CoreML file lock условен только на Windows,
 > где сам CoreML backend не запускается. Никакие тесты ради зелёного не исключены.
 
 > 0.24.47 / build 468 — truthful test layers, safe smeta base and rerank/table contracts

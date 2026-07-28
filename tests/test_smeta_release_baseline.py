@@ -168,6 +168,28 @@ def test_release_baseline_repair_backs_up_partial_state_and_restores_complete_se
     )["ok"] is True
 
 
+def test_release_baseline_repair_upgrades_valid_but_older_state(tmp_path: Path):
+    old_root = _fixture_root(tmp_path / "old", norms=2)
+    release_root = _fixture_root(tmp_path / "release", norms=3)
+    old_archive = tmp_path / "old.zip"
+    release_archive = tmp_path / "release.zip"
+    baseline.create_archive(
+        old_root, old_archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
+    baseline.create_archive(
+        release_root, release_archive, minimum_norms=2, minimum_fsem_rows=2, minimum_price_rows=2
+    )
+    state = tmp_path / "state"
+    baseline.provision_archive(old_archive, state)
+
+    repaired = baseline.repair_archive(release_archive, state)
+
+    assert repaired["action"] == "repaired"
+    assert repaired["norm_count"] == 3
+    assert "norms=2<3" in repaired["reason"]
+    assert Path(repaired["backup"]).is_dir()
+
+
 def test_release_baseline_rejects_norm_count_regression(tmp_path: Path):
     source_root = _fixture_root(tmp_path / "source", norms=1)
 
