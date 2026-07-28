@@ -77,8 +77,12 @@ def evaluate_retrieval_quality(
 
 
 def expanded_quality_query(question: str, kot: KotDecision) -> str:
-    additions = [*kot.matched_terms, *kot.norm_refs]
-    unique = [item for item in dict.fromkeys(additions) if item and item not in question.casefold()]
-    if not unique:
-        return question
-    return question + "\n" + " ".join(unique[:12])
+    """Return the normalized user query without domain-hint injection.
+
+    ``matched_terms`` and ``norm_refs`` remain useful trace/filter hints, but
+    appending them to the dense query changes its semantic meaning and can pull
+    retrieval away from the user's wording. Weak-query retries may widen the
+    candidate pool; they must keep this text contract unchanged.
+    """
+    del kot
+    return " ".join(str(question or "").split())

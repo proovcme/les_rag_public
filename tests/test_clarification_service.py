@@ -257,6 +257,9 @@ async def test_chat_returns_effective_dataset_filter_on_no_data(monkeypatch):
         async def retrieve(self, *args, **kwargs):
             return []
 
+        async def retrieve_native_hybrid(self, *args, **kwargs):
+            return []
+
     class FakeDispatcher:
         def __init__(self, **kwargs):
             pass

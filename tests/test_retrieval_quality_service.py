@@ -2,7 +2,7 @@ from types import SimpleNamespace as N
 
 from proxy.services.kot_service import KotDecision
 from proxy.services.lexical_index_service import RetrievalTrace
-from proxy.services.retrieval_quality_service import evaluate_retrieval_quality
+from proxy.services.retrieval_quality_service import evaluate_retrieval_quality, expanded_quality_query
 
 
 def _kot() -> KotDecision:
@@ -64,3 +64,16 @@ def test_high_score_hybrid_sources_remain_good():
 
     assert result.status == "good"
     assert result.detail == "hybrid_evidence"
+
+
+def test_weak_retry_query_never_injects_kot_terms_or_norm_refs():
+    kot = KotDecision(
+        dataset_filter="NTD_FIRE",
+        matched_domains=("fire",),
+        matched_terms=("дымоудаление",),
+        norm_refs=("СП 7.13130",),
+        confidence=0.9,
+        reason="test",
+    )
+
+    assert expanded_quality_query("  исходный   вопрос  ", kot) == "исходный вопрос"

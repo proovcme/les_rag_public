@@ -96,6 +96,9 @@ class FakeBackend:
             )
         ][:top_k]
 
+    async def retrieve_native_hybrid(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        return await self.retrieve(question, dataset_ids=dataset_ids, top_k=top_k, doc_filter=doc_filter)
+
 
 class FakeJobService:
     def create(self, *args, **kwargs):
@@ -354,6 +357,7 @@ def test_metadb_requeues_existing_pdf_with_systemic_mojibake(tmp_path):
 
 @pytest.mark.asyncio
 async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset_state):
+    dataset_state.datasets[0].name = "NTD_FIRE_Index"
     result = await datasets.retrieve_debug(
         datasets.RetrievalDebugRequest(question="ширина путей эвакуации"),
         _user=object(),
@@ -382,6 +386,8 @@ async def test_retrieve_debug_never_injects_expected_terms(
     content,
     forbidden,
 ):
+    dataset_state.datasets[0].name = "NTD_FIRE_Index"
+
     async def retrieve(question, dataset_ids=None, top_k=5, doc_filter=None):
         return [
             Chunk(
@@ -409,6 +415,7 @@ async def test_retrieve_debug_never_injects_expected_terms(
 
 @pytest.mark.asyncio
 async def test_search_returns_ranked_chunks_without_generation(dataset_state):
+    dataset_state.datasets[0].name = "NTD_FIRE_Index"
     result = await datasets.search(
         datasets.SearchRequest(query="ширина путей эвакуации", top_k=3, include_trace=True),
         _user=object(),
@@ -429,6 +436,7 @@ async def test_search_returns_ranked_chunks_without_generation(dataset_state):
 
 @pytest.mark.asyncio
 async def test_search_accepts_question_alias(dataset_state):
+    dataset_state.datasets[0].name = "NTD_FIRE_Index"
     result = await datasets.search(
         datasets.SearchRequest(question="ширина путей эвакуации", top_k=3),
         _user=object(),

@@ -49,6 +49,9 @@ class FakeBackend:
         self.doc_filters.append(doc_filter)
         return [Chunk(f"text-{i}", f"doc-{i}", 1.0 - i * 0.01) for i in range(top_k)]
 
+    async def retrieve_native_hybrid(self, question, dataset_ids=None, top_k=5, doc_filter=None):
+        return await self.retrieve(question, dataset_ids=dataset_ids, top_k=top_k, doc_filter=doc_filter)
+
 
 class EmptyBackend:
     def __init__(self):
@@ -102,6 +105,11 @@ class NativeHybridBackend(FakeBackend):
             {"question": question, "dataset_ids": dataset_ids, "top_k": top_k, "doc_filter": doc_filter}
         )
         return [Chunk("native text", "native.docx", 0.99)]
+
+
+class FailingNativeBackend(FakeBackend):
+    async def retrieve_native_hybrid(self, question, dataset_ids=None, top_k=8, doc_filter=None):
+        raise RuntimeError("qdrant unavailable")
 
 
 class ExactSourceBackend(FakeBackend):
@@ -309,6 +317,29 @@ async def test_resolve_dataset_ids_returns_empty_scope_when_no_datasets():
 
 
 @pytest.mark.asyncio
+async def test_resolve_dataset_ids_does_not_broaden_missing_inferred_scope():
+    backend = FakeBackend()
+    resolution = {}
+
+    resolved = await resolve_dataset_ids(
+        backend,
+        None,
+        "NTD_HVAC",
+        SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        resolution_trace=resolution,
+        scope_source="inferred_filter",
+    )
+
+    assert resolved == []
+    assert resolution == {
+        "status": "blocked",
+        "error_code": "dataset_scope_not_found",
+        "resolved_dataset_ids": [],
+        "scope_source": "inferred_filter",
+    }
+
+
+@pytest.mark.asyncio
 async def test_retrieve_chat_chunks_returns_empty_without_backend_call():
     backend = EmptyBackend()
 
@@ -325,16 +356,18 @@ async def test_retrieve_chat_chunks_returns_empty_without_backend_call():
     )
 
     assert result.chunks == []
-    assert result.trace.mode == "empty"
+    assert result.trace.mode == "blocked"
+    assert result.trace.status == "blocked"
+    assert result.trace.error_code == "no_datasets"
     assert result.trace.fallback_reason == "no_datasets"
     assert backend.calls == []
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_uses_plain_retrieval_when_reranker_disabled():
+async def test_retrieve_chat_chunks_blocks_when_required_reranker_is_disabled():
     backend = FakeBackend()
 
-    chunks = await retrieve_chat_chunks(
+    result = await retrieve_chat_chunks(
         question="q",
         dataset_ids=["ds-1"],
         rag_backend=backend,
@@ -343,10 +376,13 @@ async def test_retrieve_chat_chunks_uses_plain_retrieval_when_reranker_disabled(
         reranker_cls=FakeReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
     )
 
-    assert len(chunks) == 256
-    assert backend.calls == [{"question": "q", "dataset_ids": ["ds-1"], "top_k": 256}]
+    assert result.chunks == []
+    assert result.trace.status == "blocked"
+    assert result.trace.error_code == "reranker_disabled"
+    assert backend.calls[0] == {"question": "q", "dataset_ids": ["ds-1"], "top_k": 256}
 
 
 @pytest.mark.asyncio
@@ -357,9 +393,9 @@ async def test_retrieve_chat_chunks_passes_doc_filter_to_qdrant_backend():
         question="что в файле 02_Состав проекта.docx",
         dataset_ids=["ds-1"],
         rag_backend=backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
@@ -403,6 +439,31 @@ def test_qdrant_native_rrf_is_the_default_hybrid_backend(monkeypatch):
     monkeypatch.delenv("RAG_HYBRID_BACKEND", raising=False)
 
     assert hybrid_backend() == "qdrant_native"
+
+
+@pytest.mark.asyncio
+async def test_native_rrf_failure_is_blocked_without_legacy_retrieval():
+    backend = FailingNativeBackend()
+
+    result = await retrieve_chat_chunks(
+        question="q",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+        scope_source="explicit_dataset_ids",
+    )
+
+    assert result.chunks == []
+    assert result.trace.status == "blocked"
+    assert result.trace.error_code == "native_rrf_failed"
+    assert result.trace.resolved_dataset_ids == ["ds-1"]
+    assert result.trace.scope_source == "explicit_dataset_ids"
+    assert backend.calls == []
 
 
 def test_legacy_hybrid_backend_env_cannot_change_native_rrf(monkeypatch):
@@ -489,7 +550,7 @@ async def test_retrieve_chat_chunks_reranker_receives_full_visible_pool():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_uses_lexical_only_on_embedding_contract_mismatch(monkeypatch, tmp_path):
+async def test_retrieve_chat_chunks_blocks_on_embedding_contract_mismatch(monkeypatch, tmp_path):
     db_path = tmp_path / "lex.db"
     monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))
     monkeypatch.setenv("RAG_HYBRID_BACKEND", "lexical")
@@ -520,12 +581,14 @@ async def test_retrieve_chat_chunks_uses_lexical_only_on_embedding_contract_mism
         return_trace=True,
     )
 
-    assert result.chunks[0].doc_name == "СП 1.13130.docx"
-    assert result.trace.mode == "lexical_only"
+    assert result.chunks == []
+    assert result.trace.mode == "blocked"
+    assert result.trace.status == "blocked"
+    assert result.trace.error_code == "embedding_contract_mismatch"
     assert result.trace.fallback_reason == "embedding_contract_mismatch"
     assert "expected=qwen3-embedding-0.6b" in result.trace.embedding_contract
     assert result.trace.query_embedding == "raw-v1"
-    assert result.quality.status == "degraded"
+    assert result.quality.status == "blocked"
 
 
 @pytest.mark.asyncio
@@ -598,10 +661,10 @@ async def test_retrieve_chat_chunks_runs_reranker_inside_llm_budget():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_keeps_hybrid_order_on_reranker_error():
+async def test_retrieve_chat_chunks_blocks_on_reranker_error():
     backend = FakeBackend()
 
-    chunks = await retrieve_chat_chunks(
+    result = await retrieve_chat_chunks(
         question="q",
         dataset_ids=None,
         rag_backend=backend,
@@ -610,10 +673,12 @@ async def test_retrieve_chat_chunks_keeps_hybrid_order_on_reranker_error():
         reranker_cls=FailingReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
     )
 
-    # W2.3: сбой реранкера → исходный гибридный порядок без усечения.
-    assert [chunk.content for chunk in chunks] == [f"text-{i}" for i in range(64)]
+    assert result.chunks == []
+    assert result.trace.status == "blocked"
+    assert result.trace.error_code == "reranker_failed"
 
 
 @pytest.mark.asyncio
@@ -669,9 +734,9 @@ async def test_retrieve_chat_chunks_promotes_explicit_norm_document_over_citatio
         question="Найди пункт 7.3 в СП 7.13130",
         dataset_ids=["ds-1"],
         rag_backend=backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
@@ -733,9 +798,9 @@ async def test_retrieve_chat_chunks_promotes_earliest_first_positions_with_doc_f
         question="назови первые три позиции спецификации",
         dataset_ids=["ds-1"],
         rag_backend=backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
@@ -775,15 +840,15 @@ async def test_retrieve_chat_chunks_returns_hybrid_trace(monkeypatch, tmp_path):
         question="ширина путей эвакуации по СП 1.13130",
         dataset_ids=["ds-1"],
         rag_backend=backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
     )
 
-    assert result.trace.mode.startswith("hybrid")
+    assert result.trace.mode.startswith("qdrant_native_hybrid")
     assert result.trace.lexical_count == 1
     assert result.payload()["quality"]["status"] == "good"
     assert any(chunk.doc_name == "СП 1.13130.docx" for chunk in result.chunks)
@@ -812,14 +877,14 @@ async def test_retrieve_chat_chunks_uses_lexical_with_minor_stale_drift(monkeypa
         question="проезды пожарных автомобилей по СП 4.13130",
         dataset_ids=["ds-1"],
         rag_backend=backend,
-        reranker_enabled=False,
-        reranker_available=False,
-        reranker_cls=None,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
         mlx_url="http://mlx",
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
     )
 
-    assert result.trace.mode.startswith("hybrid")
+    assert result.trace.mode.startswith("qdrant_native_hybrid")
     assert result.trace.lexical_count >= 1
     assert any(chunk.doc_name == "СП 4.13130.docx" for chunk in result.chunks)

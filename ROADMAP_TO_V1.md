@@ -142,7 +142,7 @@ v0.24  — SPDS Documentation Normcontrol: ГОСТ Р 21.101-2026   ✅ baselin
 v0.24D — Transparent Smeta Document Intake                    📋 next
 v0.24E — PDF/XLS Reader Tools + System Table Layer            🟡 PDF source-map + ES/EOM/ОВ/ВК/rooms done; next exact XLS/PDF reader APIs
 v0.24F — CAD/DWG Table Hardening                              📋 next
-v0.25  — Retrieval and Citation Quality                       📋
+v0.25  — Retrieval and Citation Quality                       🚧
 v0.26  — Estimate Workflow Hardening                          🟡 Phase 0/1 started; [TODO](docs/TODO_SMETA_CORE.md)
 v0.90  — Release Candidate                                    📋
 v1.0   — Local Evidence Assistant                             📋

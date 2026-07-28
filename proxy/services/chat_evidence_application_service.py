@@ -10,7 +10,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
@@ -76,6 +76,7 @@ class EvidenceRequestContext:
     route: Any
     table_result: Any
     request_started_at: float
+    scope_resolution: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,7 @@ async def run_chat_evidence_application(
 ):
     return await _execute_chat_evidence_application(
         _dataset_ids=request.dataset_ids,
+        scope_resolution=request.scope_resolution,
         class_suggestions=request.class_suggestions,
         dataset_name_by_id=request.dataset_name_by_id,
         effective_dataset_filter=request.effective_dataset_filter,
@@ -318,6 +320,7 @@ async def _execute_chat_evidence_application(
     retrieval=None,
     source_dataset_ids=None,
     source_dataset_names=None,
+    scope_resolution=None,
     sources_list=None,
     status=None,
     table_result=None
@@ -352,6 +355,8 @@ async def _execute_chat_evidence_application(
             llm_semaphore=state.llm_semaphore,
             return_trace=True,
             doc_filter=target_doc_filter or None,
+            scope_source=str((scope_resolution or {}).get("scope_source") or "unspecified"),
+            scope_error_code=str((scope_resolution or {}).get("error_code") or ""),
         )
         chunks = [*topic_chunks, *retrieval.chunks] if topic_chunks else retrieval.chunks
     except Exception as e:
@@ -362,7 +367,84 @@ async def _execute_chat_evidence_application(
         raise HTTPException(500, f"Поиск по датасету не удался: {type(e).__name__}: {e}")
     t_search = time.time() - t_search_start
     retrieval_trace = retrieval.payload()
+    retrieval_trace["scope_resolution"] = dict(scope_resolution or {})
     retrieval_trace["reranker_policy"] = retrieval_trace_policy
+    retrieval_trace_object = getattr(retrieval, "trace", None)
+    retrieval_status = str(
+        getattr(retrieval_trace_object, "status", "") or retrieval_trace.get("status") or "ok"
+    )
+    if retrieval_status == "blocked":
+        error_code = str(
+            getattr(retrieval_trace_object, "error_code", "")
+            or retrieval_trace.get("error_code")
+            or "retrieval_blocked"
+        )
+        if error_code in {"dataset_scope_not_found", "no_datasets", "corpus_empty"}:
+            blocked_answer = (
+                "Нужный набор данных не найден или пока пуст. "
+                "Выберите доступный проект/датасет либо добавьте источники — "
+                "поиск по другим документам автоматически не выполнялся."
+            )
+            action = "Выбрать доступный датасет или загрузить источники."
+        elif error_code in {"reranker_disabled", "reranker_unavailable", "reranker_failed"}:
+            blocked_answer = (
+                "Поиск остановлен: обязательный реранкер недоступен. "
+                "Я не формирую ответ по непроверенному порядку фрагментов."
+            )
+            action = "Восстановить реранкер и повторить запрос."
+        else:
+            blocked_answer = (
+                "Поиск остановлен: обязательный native RRF-контур недоступен. "
+                "Старый или широкий поиск вместо него не запускался."
+            )
+            action = "Проверить индекс-контракт и native RRF, затем повторить запрос."
+        retrieval_trace["blocker"] = {
+            "schema": "retrieval_blocker_v1",
+            "code": error_code,
+            "action": action,
+        }
+        state.crag_stats["no_data"] += 1
+        state.chat_metrics["retrieval_weak"] = state.chat_metrics.get("retrieval_weak", 0) + 1
+        state.chat_metrics["latency_search"].append(t_search)
+        state.chat_metrics["latency_gen"].append(0.0)
+        state.chat_metrics["tokens"].append(0)
+        state.chat_metrics["crag_fail"] += 1
+        for key_name in ("latency_search", "latency_gen", "tokens"):
+            state.chat_metrics[key_name] = state.chat_metrics[key_name][-100:]
+        history_id = None
+        try:
+            history_id = save_chat_history(
+                question=req.question,
+                answer=blocked_answer,
+                sources=[],
+                crag_status="BLOCKED",
+                latency_sec=t_search,
+                tokens=0,
+                session_id=req.session_id,
+                requested_dataset_filter=req.dataset_filter,
+                effective_dataset_filter=effective_dataset_filter,
+                resolved_dataset_ids=_dataset_ids,
+                resolved_dataset_names=resolved_dataset_names,
+                query_route=query_route_payload,
+                retrieval_trace=retrieval_trace,
+                cache_type=cache_marker,
+                validation_enabled=False,
+                success=0,
+            )
+        except Exception as db_err:
+            logger.warning("[CHAT] History save error: %s", db_err)
+        return {
+            "answer": blocked_answer,
+            "crag_status": "BLOCKED",
+            "sources": [],
+            "effective_dataset_filter": effective_dataset_filter,
+            "query_route": query_route_payload,
+            "retrieval_trace": retrieval_trace,
+            "blocker": retrieval_trace["blocker"],
+            "cache": cache_marker,
+            "validation": {"enabled": False, "reason": error_code},
+            "history_id": history_id,
+        }
     if topic_retrieval_plan:
         found_topic_docs = {str(getattr(chunk, "doc_name", "") or "") for chunk in topic_chunks}
         retrieval_trace["topic_guided_retrieval"] = {

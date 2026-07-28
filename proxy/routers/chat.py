@@ -3870,8 +3870,25 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # (retrieval_trace тут ещё не инициализирован — пишем класс-метки в трейс ниже, после retrieve.)
     class_suggestions = build_class_suggestions(req.question, primary_filter=effective_dataset_filter)
 
+    if req.dataset_ids:
+        scope_source = "explicit_dataset_ids"
+    elif req.dataset_filter:
+        scope_source = "explicit_dataset_filter"
+    elif req.project_id:
+        scope_source = "explicit_project"
+    elif effective_dataset_filter:
+        scope_source = "inferred_filter"
+    else:
+        scope_source = "all_corpus"
+    scope_resolution: dict[str, Any] = {}
     _dataset_ids = await resolve_dataset_ids(
-        rag_backend, effective_dataset_ids, effective_dataset_filter, logger, question=req.question
+        rag_backend,
+        effective_dataset_ids,
+        effective_dataset_filter,
+        logger,
+        question=req.question,
+        resolution_trace=scope_resolution,
+        scope_source=scope_source,
     )
     dataset_name_by_id = await _dataset_name_map(rag_backend)
     resolved_dataset_names = _names_for_dataset_ids(_dataset_ids, dataset_name_by_id)
@@ -4410,6 +4427,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     evidence_request = EvidenceRequestContext(
         req=req,
         dataset_ids=_dataset_ids,
+        scope_resolution=scope_resolution,
         effective_dataset_filter=effective_dataset_filter,
         resolved_dataset_names=resolved_dataset_names,
         dataset_name_by_id=dataset_name_by_id,

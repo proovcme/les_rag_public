@@ -7,16 +7,32 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.0 (published)
-номер сборки:              473     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.473 (published)
-ветка выпуска:             main
-dev implementation:       main; 0.25.0 product/RAG boundary release
+версия продукта (SemVer):  0.25.1 (dev, P0.1)
+номер сборки:              474     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.474 (dev)
+ветка выпуска:             codex/audit-rag
+dev implementation:       codex/audit-rag; P0.1 fail-closed RAG contract
 задеплоено на рантайм:     Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          не назначен
+следующий выпуск:          внутренний Mac+Legion после P0.3; без публикации
 рантайм /api/version:      Mac 0.24.44 / build 465; Legion 0.25.0 / build 473
 ```
+
+> 0.25.1 / build 474 — P0.1 fail-closed retrieval contract
+>
+> Дата: 2026-07-28
+> Статус: dev в `codex/audit-rag`; Mac/Legion пока не менялись.
+> Общий production RAG больше не заменяет ошибку обязательного native
+> `dense + bm25_sparse → RRF` старым dense/FTS-путём. Ошибка native RRF,
+> embedding-contract или обязательного reranker возвращает `BLOCKED` с
+> машинным `error_code` и действием для оператора, без вызова модели.
+> Явный scope сохраняется буквально; отсутствующий inferred `NTD_*` не
+> расширяется на весь нормативный или общий корпус. Weak retry повторяет
+> нормализованный пользовательский запрос и расширяет только candidate pool.
+> `retrieval_trace` аддитивно получил `status`, `error_code`,
+> `resolved_dataset_ids`, `scope_source`; документация выровнена на
+> `les.rag.index-contract.v2`. Focused gate: `102 passed`; canonical
+> `make test`: `2746 passed, 9 skipped`.
 
 > 0.25.0 / build 473 — продуктовые экраны, отдельный ФГИС-сметный RAG и user-owned общий корпус
 >

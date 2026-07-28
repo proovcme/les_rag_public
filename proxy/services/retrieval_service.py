@@ -521,7 +521,27 @@ async def resolve_dataset_ids(
     dataset_filter: Optional[str],
     logger: logging.Logger,
     question: str = "",
+    *,
+    resolution_trace: dict[str, Any] | None = None,
+    scope_source: str = "",
 ) -> Optional[list[str]]:
+    def record(status: str, ids: list[str] | None, error_code: str = "") -> None:
+        if resolution_trace is None:
+            return
+        resolution_trace.update(
+            {
+                "status": status,
+                "error_code": error_code,
+                "resolved_dataset_ids": list(ids or []),
+                "scope_source": scope_source or "unspecified",
+            }
+        )
+
+    if dataset_ids:
+        resolved = [str(dataset_id) for dataset_id in dataset_ids if str(dataset_id).strip()]
+        record("ok", resolved)
+        return resolved
+
     effective_filter = dataset_filter
     ds_list = None
     if not effective_filter and not dataset_ids:
@@ -541,6 +561,7 @@ async def resolve_dataset_ids(
             if exact_matches:
                 ids = [dataset.id for dataset in exact_matches]
                 logger.info("[CHAT] dataset_filter='%s' exact -> ids=%s", effective_filter, ids)
+                record("ok", ids)
                 return ids
             candidates = _dataset_name_candidates(effective_filter)
             matches = [dataset for dataset in ds_list if dataset.name in candidates]
@@ -548,28 +569,30 @@ async def resolve_dataset_ids(
                 # СНАЧАЛА конкретный датасет по ПРЕФИКСУ (NTD_FIRE → NTD_FIRE_Index) — быстро+релевантно
                 # (один датасет, малый контекст). Имена в рантайме: NTD_FIRE_Index/GENERAL/CONSTRUCTION/…
                 matches = [d for d in ds_list if str(d.name).startswith(effective_filter)]
-                if not matches:
-                    # конкретного нет (напр. NTD_HVAC отсутствует) → ВЕСЬ нормативный корпус (все NTD_*),
-                    # чтобы вопрос всё равно достал документ (медленнее, но не пусто). RAG-first.
-                    matches = [d for d in ds_list if str(d.name).startswith("NTD_")]
             if matches:
                 ids = [dataset.id for dataset in matches]
                 logger.info("[CHAT] dataset_filter='%s' -> ids=%s", effective_filter, ids)
+                record("ok", ids)
                 return ids
-            # RAG-first: keyword-scope не нашёл датасет по имени → НЕ загоняем в пустой scope
-            # («нет данных»), а ищем ШИРОКО по всему корпусу (None) — семантика+реранк разберутся.
-            logger.warning("[CHAT] dataset_filter='%s' не найден → broad RAG по всему корпусу", effective_filter)
-            return None
+            logger.warning("[CHAT] dataset_filter='%s' не найден → blocked scope", effective_filter)
+            record("blocked", [], "dataset_scope_not_found")
+            return []
         except Exception as e:
             logger.warning("[CHAT] dataset_filter resolve error: %s", e)
+            record("blocked", [], "dataset_catalog_unavailable")
+            return []
     if dataset_ids is None and ds_list is None:
         try:
             ds_list = await rag_backend.list_datasets()
             if not ds_list:
                 logger.info("[CHAT] no datasets available for retrieval")
+                record("blocked", [], "corpus_empty")
                 return []
         except Exception as e:
             logger.warning("[CHAT] dataset list error: %s", e)
+            record("blocked", [], "dataset_catalog_unavailable")
+            return []
+    record("ok", dataset_ids)
     return dataset_ids
 
 
@@ -586,18 +609,43 @@ async def retrieve_chat_chunks(
     llm_semaphore: Any | None = None,
     return_trace: bool = False,
     doc_filter: Optional[list[str]] = None,
+    scope_source: str = "unspecified",
+    scope_error_code: str = "",
 ):
     kot = analyze_question(question)
     retrieval_query = expand_retrieval_query(question)
-    if dataset_ids == []:
-        trace = RetrievalTrace(mode="empty", fallback_reason="no_datasets")
-        trace.query_embedding = query_embedding_instruction_id()
-        quality = evaluate_retrieval_quality(question=question, chunks=[], trace=trace, kot=kot)
-        trace.quality_status = quality.status
-        trace.quality_detail = quality.detail
+    log_error = getattr(logger, "error", logger.warning)
+
+    def blocked_result(
+        error_code: str,
+        *,
+        detail: str = "",
+        embedding_contract: str = "",
+    ):
+        trace = RetrievalTrace(
+            status="blocked",
+            error_code=error_code,
+            resolved_dataset_ids=list(dataset_ids or []),
+            scope_source=scope_source,
+            mode="blocked",
+            fallback_reason=error_code,
+            quality_status="blocked",
+            quality_detail=detail or error_code,
+            embedding_contract=embedding_contract,
+            query_embedding=query_embedding_instruction_id(),
+            retrieval_channels=[],
+            fusion="none",
+        )
+        quality = RetrievalQuality("blocked", detail or error_code, 0.0, 0, 0.0, "unknown")
         if return_trace:
             return RetrievalResult([], trace, kot, quality)
         return []
+
+    if dataset_ids == []:
+        return blocked_result(
+            scope_error_code or "no_datasets",
+            detail=scope_error_code or "no_datasets",
+        )
     # W2.3 (ADR-3): ранней реранк-ветки больше нет — реранкер работает ПОВЕРХ
     # гибридного пула (vector + lexical → RRF → rerank), а не вместо него.
 
@@ -612,7 +660,6 @@ async def retrieve_chat_chunks(
         
     has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
     pool_k = max(RERANK_POOL_K, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
-    vector_top_k = pool_k if return_trace and lexical_enabled() else merged_top_k
     # ADR-12 стадия-1: для технических/правовых классов сначала маршрутизируем запрос
     # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет
     # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
@@ -631,81 +678,51 @@ async def retrieve_chat_chunks(
             logger.warning("[DOC_ROUTER] fallback на плоский поиск: %s", _route_err)
             effective_doc_filter = effective_doc_filter or []
         _rt["route"] = round(time.monotonic() - _s, 3)
-    used_native_hybrid = False
-    embedding_contract_error = ""
-    if hybrid_backend() == "qdrant_native" and hasattr(rag_backend, "retrieve_native_hybrid"):
-        _s = time.monotonic()
-        try:
-            native_chunks = await rag_backend.retrieve_native_hybrid(
-                retrieval_query,
-                dataset_ids=dataset_ids,
-                top_k=merged_top_k,
-                doc_filter=effective_doc_filter or None,
-            )
-            _rt["native"] = round(time.monotonic() - _s, 3)
-            trace = RetrievalTrace(
-                mode="qdrant_native_hybrid",
-                vector_count=len(native_chunks),
-                lexical_count=0,
-                merged_count=len(native_chunks),
-                score_kind="qdrant_rrf",
-                retrieval_channels=["dense", "qdrant_sparse"],
-                fusion="rrf",
-            )
-            if effective_doc_filter:
-                trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
-            chunks = native_chunks
-            try:
-                merged_chunks, merged_trace = _hybrid_merge(
-                    question,
-                    native_chunks,
-                    dataset_ids,
-                    rag_backend,
-                    logger,
-                    retrieval_query=retrieval_query,
-                    pool_k=pool_k,
-                    limit=merged_top_k,
-                    doc_filter=effective_doc_filter or None,
-                )
-                if merged_trace.lexical_count:
-                    chunks = merged_chunks
-                    trace = merged_trace
-                    trace.mode = f"qdrant_native_{merged_trace.mode}"
-                    trace.vector_count = len(native_chunks)
-                    trace.retrieval_channels = ["dense", "qdrant_sparse", "lexical"]
-                    trace.fusion = "qdrant_rrf+lexical_safety_rrf"
-                    if effective_doc_filter:
-                        trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
-                    _rt["native_lexical"] = merged_trace.lexical_count
-            except Exception as native_merge_error:  # noqa: BLE001
-                logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
-            used_native_hybrid = True
-        except EmbeddingContractError as native_contract_error:
-            embedding_contract_error = str(native_contract_error)
-            logger.error("[RETR] dense retrieval disabled: %s", embedding_contract_error)
-        except Exception as native_error:  # noqa: BLE001
-            logger.warning("[HYBRID] qdrant_native fallback to legacy hybrid: %s", native_error)
-    if not used_native_hybrid:
-        vector_chunks: list[Any] = []
-        if not embedding_contract_error:
-            _s = time.monotonic()
-            try:
-                vector_chunks = await rag_backend.retrieve(
-                    retrieval_query,
-                    dataset_ids=dataset_ids,
-                    top_k=vector_top_k,
-                    doc_filter=effective_doc_filter or None,
-                )
-                _rt["vec"] = round(time.monotonic() - _s, 3)
-            except EmbeddingContractError as contract_error:
-                embedding_contract_error = str(contract_error)
-                _rt["vec"] = round(time.monotonic() - _s, 3)
-                logger.error("[RETR] dense retrieval disabled: %s", embedding_contract_error)
-
-        _s = time.monotonic()
-        chunks, trace = _hybrid_merge(
+    if hybrid_backend() != "qdrant_native" or not hasattr(rag_backend, "retrieve_native_hybrid"):
+        log_error("[RETR] required native RRF backend is unavailable")
+        return blocked_result("native_rrf_unavailable")
+    _s = time.monotonic()
+    try:
+        native_chunks = await rag_backend.retrieve_native_hybrid(
+            retrieval_query,
+            dataset_ids=dataset_ids,
+            top_k=merged_top_k,
+            doc_filter=effective_doc_filter or None,
+        )
+    except EmbeddingContractError as native_contract_error:
+        embedding_contract_error = str(native_contract_error)
+        log_error("[RETR] native RRF blocked by embedding contract: %s", embedding_contract_error)
+        return blocked_result(
+            "embedding_contract_mismatch",
+            detail="native_rrf_embedding_contract_mismatch",
+            embedding_contract=embedding_contract_error,
+        )
+    except Exception as native_error:  # noqa: BLE001
+        log_error("[RETR] native RRF failed closed: %s", native_error)
+        return blocked_result(
+            "native_rrf_failed",
+            detail=f"{type(native_error).__name__}: {native_error}",
+        )
+    _rt["native"] = round(time.monotonic() - _s, 3)
+    trace = RetrievalTrace(
+        status="ok",
+        resolved_dataset_ids=list(dataset_ids or []),
+        scope_source=scope_source,
+        mode="qdrant_native_hybrid",
+        vector_count=len(native_chunks),
+        lexical_count=0,
+        merged_count=len(native_chunks),
+        score_kind="qdrant_rrf",
+        retrieval_channels=["dense", "qdrant_sparse"],
+        fusion="rrf",
+    )
+    if effective_doc_filter:
+        trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
+    chunks = native_chunks
+    try:
+        merged_chunks, merged_trace = _hybrid_merge(
             question,
-            vector_chunks,
+            native_chunks,
             dataset_ids,
             rag_backend,
             logger,
@@ -714,13 +731,21 @@ async def retrieve_chat_chunks(
             limit=merged_top_k,
             doc_filter=effective_doc_filter or None,
         )
-        if embedding_contract_error:
-            trace.mode = "lexical_only"
-            trace.fallback_reason = "embedding_contract_mismatch"
-            trace.embedding_contract = embedding_contract_error
-        if effective_doc_filter:
-            trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
-        _rt["merge"] = round(time.monotonic() - _s, 3)
+        if merged_trace.lexical_count:
+            chunks = merged_chunks
+            trace = merged_trace
+            trace.status = "ok"
+            trace.resolved_dataset_ids = list(dataset_ids or [])
+            trace.scope_source = scope_source
+            trace.mode = f"qdrant_native_{merged_trace.mode}"
+            trace.vector_count = len(native_chunks)
+            trace.retrieval_channels = ["dense", "qdrant_sparse", "lexical"]
+            trace.fusion = "qdrant_rrf+lexical_safety_rrf"
+            if effective_doc_filter:
+                trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
+            _rt["native_lexical"] = merged_trace.lexical_count
+    except Exception as native_merge_error:  # noqa: BLE001
+        logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
     logger.info("[RETR] подфазы=%s", _rt)
     trace.query_embedding = query_embedding_instruction_id()
     chunks, exact_terms = _promote_exact_source_matches(chunks, question)
@@ -773,25 +798,26 @@ async def retrieve_chat_chunks(
     # (tools/ingestion_quality_report). Кросс-датасетные дубли — задача ingestion QA, не рантайма.
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
-    if return_trace and quality.status == "weak" and not embedding_contract_error:
+    if return_trace and quality.status == "weak":
         retry_query = expanded_quality_query(question, kot)
-        if retry_query != question:
-            if used_native_hybrid:
+        retry_top_k = max(pool_k, merged_top_k)
+        if retry_top_k > merged_top_k:
+            try:
                 retry_native = await rag_backend.retrieve_native_hybrid(
                     retry_query,
                     dataset_ids=dataset_ids,
-                    top_k=merged_top_k,
+                    top_k=retry_top_k,
                     doc_filter=effective_doc_filter or None,
                 )
                 retry_chunks, retry_trace = _hybrid_merge(
-                    retry_query,
+                    question,
                     retry_native,
                     dataset_ids,
                     rag_backend,
                     logger,
                     retrieval_query=retry_query,
                     pool_k=pool_k,
-                    limit=merged_top_k,
+                    limit=retry_top_k,
                     doc_filter=effective_doc_filter or None,
                 )
                 retry_trace.mode = (
@@ -811,39 +837,50 @@ async def retrieve_chat_chunks(
                     if retry_trace.lexical_count
                     else "rrf"
                 )
-            else:
-                retry_vector = await rag_backend.retrieve(
-                    retry_query,
-                    dataset_ids=dataset_ids,
-                    top_k=vector_top_k,
-                    doc_filter=effective_doc_filter or None,
+                retry_trace.status = "ok"
+                retry_trace.resolved_dataset_ids = list(dataset_ids or [])
+                retry_trace.scope_source = scope_source
+                if effective_doc_filter:
+                    retry_trace.exact_refs.extend(
+                        f"file:{name}"
+                        for name in effective_doc_filter
+                        if f"file:{name}" not in retry_trace.exact_refs
+                    )
+                retry_trace.retry_count = 1
+                retry_trace.retry = {
+                    "reason": quality.detail,
+                    "query_changed": retry_query != retrieval_query,
+                    "backend_preserved": True,
+                    "mode_before": trace.mode,
+                    "mode_after": retry_trace.mode,
+                    "top_k_before": merged_top_k,
+                    "top_k_after": retry_top_k,
+                }
+                retry_quality = evaluate_retrieval_quality(
+                    question=question,
+                    chunks=retry_chunks,
+                    trace=retry_trace,
+                    kot=kot,
                 )
-                retry_chunks, retry_trace = _hybrid_merge(
-                    retry_query,
-                    retry_vector,
-                    dataset_ids,
-                    rag_backend,
-                    logger,
-                    retrieval_query=retry_query,
-                    pool_k=pool_k,
-                    limit=merged_top_k,
-                    doc_filter=effective_doc_filter or None,
-                )
-            retry_trace.retry_count = 1
-            retry_trace.retry = {
-                "reason": quality.detail,
-                "query_changed": True,
-                "backend_preserved": True,
-                "mode_before": trace.mode,
-                "mode_after": retry_trace.mode,
-            }
-            retry_quality = evaluate_retrieval_quality(question=question, chunks=retry_chunks, trace=retry_trace, kot=kot)
-            if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
-                chunks, trace, quality = retry_chunks, retry_trace, retry_quality
+                if retry_quality.status != "weak" or len(retry_chunks) >= len(chunks):
+                    chunks, trace, quality = retry_chunks, retry_trace, retry_quality
+            except Exception as retry_error:  # noqa: BLE001
+                logger.warning("[RETR] weak-query native retry skipped: %s", retry_error)
+                trace.retry = {
+                    "status": "error",
+                    "reason": quality.detail,
+                    "query_changed": False,
+                    "error": type(retry_error).__name__,
+                }
 
     # W2.3: cross-encoder реранк гибридного пула — переупорядочивает, не режет
     # (downstream-фокусировка сама сузит). Сопоставление по индексу через
     # metadata._idx (не по тексту). Сбой → исходный гибридный порядок.
+    if len(chunks) > 1 and (not reranker_enabled or not reranker_available or reranker_cls is None):
+        log_error("[RERANKER] required reranker is unavailable")
+        return blocked_result(
+            "reranker_unavailable" if reranker_enabled else "reranker_disabled",
+        )
     if reranker_available and reranker_enabled and len(chunks) > 1:
         try:
             reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
@@ -921,9 +958,11 @@ async def retrieve_chat_chunks(
             trace.score_kind = "rerank_logit"
             logger.info("[RERANK-CE] гибридный пул %s переупорядочен", len(chunks))
         except Exception as rerank_error:
-            logger.warning("[RERANKER] Ошибка, гибридный порядок без реранка: %s", rerank_error)
-            trace.fallback_reason = trace.fallback_reason or "rerank_error"
-            trace.rerank = {"status": "error", "model": reranker_cls.__name__, "error": type(rerank_error).__name__}
+            log_error("[RERANKER] required rerank failed closed: %s", rerank_error)
+            return blocked_result(
+                "reranker_failed",
+                detail=f"{type(rerank_error).__name__}: {rerank_error}",
+            )
 
     # ADR-12 (Ц9): после реранка гарантируем табличным приложениям места в видимом
     # окне ответа — иначе cross-encoder топит сырой текст таблицы под прозой и
@@ -955,6 +994,9 @@ async def retrieve_chat_chunks(
     trace.query_embedding = query_embedding_instruction_id()
     trace.quality_status = quality.status
     trace.quality_detail = quality.detail
+    trace.status = "ok" if quality.status == "good" else "degraded"
+    trace.resolved_dataset_ids = list(dataset_ids or [])
+    trace.scope_source = scope_source
     if return_trace:
         return RetrievalResult(chunks, trace, kot, quality)
     return chunks

@@ -189,15 +189,17 @@ Dense chunks подходят для поиска. Для профессиона
 
 ```text
 expected Qwen + actual Qwen -> dense/hybrid search allowed
-expected Qwen + actual BGE  -> dense disabled, lexical-only, status=degraded
-missing actual model         -> dense disabled, status=degraded
+expected Qwen + actual BGE  -> retrieval blocked, error_code=embedding_contract_mismatch
+missing actual model         -> retrieval blocked, error_code=native_rrf_unavailable
 ```
 
 Нельзя сравнивать вектора разных embedding-моделей только потому, что у них одинаковая
-размерность. Режим `lexical_only` — честный временный ответ, а не `quality=good`; восстановление
-dense требует выравнивания runtime-конфига и целевого reindex, а не скрытого fallback.
+размерность. Production retrieval не заменяет обязательный native RRF старым dense/FTS или
+`lexical_only`: trace получает `status=blocked` и машинный `error_code`, а UI показывает
+действие по восстановлению контура. SQLite FTS остаётся только дополнительным exact-word/file
+safety-каналом после успешного `dense + bm25_sparse` RRF.
 
-С 0.24.0.350 совместимость фиксирует `les.rag.index-contract.v1`: collection, модель/vector size,
+Совместимость фиксирует `les.rag.index-contract.v2`: collection, модель/vector size,
 raw document mode, tokenizer budget, chunker и sparse revision. Missing/mismatch manifest также
 запрещает dense. Совпадение количества SQLite chunks и Qdrant points не доказывает совместимость.
 
@@ -205,12 +207,16 @@ raw document mode, tokenizer budget, chunker и sparse revision. Missing/mismatc
 budget, mixed base64/data URI удалены, координаты и parent/child provenance сохранены. PDF/table/mail
 не могут иметь отдельный обход этого инварианта.
 
-### 6b. Reranker обязан получать меньший top-k, чем входной пул
+### 6b. Reranker обязан реально переупорядочивать RRF-пул
 
-Reranker полезен только если переупорядочивает широкий пул до видимого окна. Передавать ему
-`top_k=len(pool)` — фактически no-op для cross-encoder и нельзя отмечать это как успешный rerank.
-Хвост может сохраниться для downstream-readers, но первые позиции должны быть реальным top-k
-reranker-а, а trace обязан отражать применённый режим.
+Размер возвращаемого top-k сам по себе не доказывает no-op: cross-encoder может переупорядочить
+весь видимый пул. Контракт проверяет фактическое изменение головы, `input_count`,
+`returned_count`, исходный и итоговый rank. Недоступный или упавший обязательный reranker
+блокирует production RAG-ответ, а не оставляет пользователю непроверенный RRF-порядок.
+
+Weak-query retry не дописывает в embedding-запрос доменные термины, ссылки на нормы или текст,
+которого не было у пользователя. Разрешено повторить тот же нормализованный запрос с более
+широким candidate pool; `retry.query_changed` при этом остаётся `false`.
 
 Явно названная норма (`СП 7.13130`, `ГОСТ Р 21.101`) имеет ещё одно общее правило: файл самой
 нормы приоритетнее документов, которые только ссылаются на неё. Это reorder уже найденного пула,

@@ -31,6 +31,10 @@ CONTEXT_COLUMNS = {
 
 @dataclass
 class RetrievalTrace:
+    status: str = "ok"
+    error_code: str = ""
+    resolved_dataset_ids: list[str] = field(default_factory=list)
+    scope_source: str = "unspecified"
     mode: str = "vector"
     vector_count: int = 0
     lexical_count: int = 0
@@ -50,6 +54,10 @@ class RetrievalTrace:
 
     def payload(self) -> dict[str, Any]:
         return {
+            "status": self.status,
+            "error_code": self.error_code,
+            "resolved_dataset_ids": self.resolved_dataset_ids,
+            "scope_source": self.scope_source,
             "mode": self.mode,
             "vector_count": self.vector_count,
             "lexical_count": self.lexical_count,
