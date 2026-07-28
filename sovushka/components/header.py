@@ -12,6 +12,7 @@ from backend.auth import logout
 from sovushka.components.charts import _html
 from sovushka.state import api_get, last_api_error_text, proxy_online
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
+from sovushka.uikit.components import acronym_identity
 
 
 def build_header(
@@ -47,8 +48,12 @@ def build_header(
         with ui.row().classes("items-center sov-brand-block").style(
             "gap:6px;margin-right:12px;white-space:nowrap;flex-wrap:nowrap;"
         ):
-            ui.icon("o_forest").style("font-size:21px;color:var(--accent);")
-            ui.label("Л.Е.С.").classes("les-brand")
+            acronym_identity(
+                "Л.Е.С.",
+                "Локальная Единая Система",
+                icon="o_forest",
+                compact=True,
+            )
 
         # ── Бейдж версии (v0.19): что реально запущено — версия+commit+runtime-divergence ──
         _ver_state: dict = {"info": None}
@@ -179,7 +184,7 @@ def build_header(
                 )
             tab_refs["_primary_nav"] = nav_buttons
 
-        ui.label("РАЗДЕЛЫ").classes("sov-sidebar-caption")
+        ui.label("Рабочие разделы").classes("sov-sidebar-caption")
 
         # ── Вторичные рабочие разделы ─────────────────────────────────────────
         with ui.tabs().classes("les-top-tabs").props("dense no-caps").style(
@@ -192,7 +197,7 @@ def build_header(
                 # иначе оператор не видит служебные источники, ВОР и нормоконтроль.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
-                tab_refs["mail_settings"] = ui.tab("Настройка почты", icon="o_mark_email_read")
+                tab_refs["mail_settings"] = ui.tab("Почта", icon="o_mark_email_read")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
@@ -227,29 +232,56 @@ def build_header(
             if key in tab_refs:
                 tab_refs[key].tooltip(label)
 
-        # ── Контролы (справа) ─────────────────────────────────────────────────
-        with ui.row().classes("items-center gap-1 sov-ui-header-controls").style(
+        mobile_sections = (
+            ("diag", "Состояние"),
+            ("samovar", "Датасеты"),
+            ("documents", "Документы"),
+            ("cad_bim", "CAD/BIM"),
+            ("mail", "Почта"),
+            ("history", "История"),
+            ("mail_settings", "Настройка почты"),
+            ("instrumenty", "Инструменты"),
+            ("qdrant_viz", "Визуал"),
+            ("volk", "Доступ"),
+        )
+        with ui.button("Разделы", icon="o_apps").props(
+            'flat dense no-caps aria-label="Рабочие разделы"'
+        ).classes("sov-mobile-sections-button"):
+            with ui.menu().classes("sov-mobile-sections-menu"):
+                for key, label in mobile_sections:
+                    if key in tab_refs:
+                        ui.menu_item(
+                            label,
+                            on_click=lambda tab=tab_refs[key]: tabs.set_value(tab),
+                        )
+
+        # ── Служебная зона: статус и действия собраны в один ровный блок ─────
+        with ui.column().classes("sov-ui-header-controls").style(
             "flex-shrink:0;margin-left:8px;"
         ):
 
             # W5.3: индикатор доступности proxy (зелёный — на связи, красный — нет)
-            proxy_dot = ui.icon("circle").classes("sov-ui-header-utility").style(
-                "font-size:.6rem;color:#10b981;margin:0 2px;"
-            )
-            proxy_dot.tooltip("связь с proxy")
+            with ui.row().classes("sov-runtime-state"):
+                proxy_dot = ui.icon("circle").classes("sov-runtime-dot").style(
+                    "font-size:.6rem;color:#10b981;"
+                )
+                proxy_label = ui.label("ЛЕС на связи").classes("sov-runtime-label")
+            proxy_dot.tooltip("Связь с proxy")
 
             def _upd_proxy_dot():
+                online = proxy_online()
                 proxy_dot.style(
-                    f"font-size:.6rem;color:{'#10b981' if proxy_online() else '#ef4444'};margin:0 2px;"
+                    f"font-size:.6rem;color:{'#10b981' if online else '#ef4444'};"
                 )
+                proxy_label.set_text("ЛЕС на связи" if online else "Нет связи с ЛЕС")
 
             ui.timer(3.0, _upd_proxy_dot)
 
             # Обновить
-            ui.button(icon="o_refresh", on_click=lambda: asyncio.create_task(_full_refresh())
-            ).props('flat dense round aria-label="Обновить данные"').classes(
+            ui.button("Обновить", icon="o_refresh", on_click=lambda: asyncio.create_task(_full_refresh())
+            ).props('flat dense no-caps aria-label="Обновить данные"').classes(
                 "sov-ui-header-utility"
-            ).style("color:var(--dim);")
+            )
 
             # Тема
             if app.storage.user.get("theme_default_migrated") != "0.24-light-2":
@@ -274,29 +306,55 @@ def build_header(
                 theme_btn.props(f'icon={"o_dark_mode" if d else "o_light_mode"}')
 
             theme_btn = ui.button(
-                icon=("o_dark_mode" if _dark_init else "o_light_mode"), on_click=_toggle_theme
-            ).props('flat dense round aria-label="Переключить тему"').classes(
+                "Тема",
+                icon=("o_dark_mode" if _dark_init else "o_light_mode"),
+                on_click=_toggle_theme,
+            ).props('flat dense no-caps aria-label="Переключить тему"').classes(
                 "sov-ui-header-utility"
-            ).style("color:var(--dim);")
+            )
 
             if not _dark_init:
                 ui.run_javascript("if(window.Quasar){Quasar.Dark.set(false);}")
 
             if is_admin:
                 if visualizer_url:
-                    ui.link("КВАДРАНТ ↗", target=visualizer_url, new_tab=True).classes(
-                        "no-underline sov-ui-header-secondary"
-                    ).style(
-                        "color:var(--accent);font-size:.62rem;font-family:var(--font);"
-                        "font-weight:700;white-space:nowrap;padding:4px 6px;"
-                    )
+                    with ui.link(
+                        target=visualizer_url,
+                        new_tab=True,
+                    ).classes("no-underline sov-ui-header-secondary"):
+                        ui.icon("o_scatter_plot")
+                        ui.label("Qdrant")
 
                 # Настройки
                 with ui.dialog() as settings_dialog, ui.card().style(
                     "background:var(--bg-panel);border:1px solid var(--border);min-width:640px;padding:24px;"
                 ):
-                    ui.label("НАСТРОЙКИ Л.Е.С.").style(
-                        "font-size:.95rem;font-weight:900;margin-bottom:8px;"
+                    acronym_identity(
+                        "Л.Е.С.",
+                        "Локальная Единая Система",
+                        icon="o_forest",
+                    )
+                    ui.label("Настройки").style(
+                        "font-size:.95rem;font-weight:800;margin:2px 0 8px;"
+                    )
+
+                    def _set_acronym_expansions(event) -> None:
+                        visible = bool(event.value)
+                        app.storage.user["show_acronym_expansions"] = visible
+                        ui.run_javascript(
+                            "document.body.classList.toggle("
+                            "'sov-hide-acronym-expansions', "
+                            f"{str(not visible).lower()})"
+                        )
+
+                    ui.switch(
+                        "Показывать расшифровки акронимов",
+                        value=bool(app.storage.user.get("show_acronym_expansions", True)),
+                        on_change=_set_acronym_expansions,
+                    ).props("dense color=positive").classes(
+                        "sov-acronym-preference"
+                    ).tooltip(
+                        "Акронимы остаются; скрываются только поясняющие строки"
                     )
                     # Однозначный ответ «какая модель отвечает» — всегда наверху диалога.
                     answering_label = ui.label("СЕЙЧАС ОТВЕЧАЕТ: …").style(
@@ -689,12 +747,14 @@ def build_header(
                 ).classes("sov-ui-header-action").style("color:var(--dim);font-size:.62rem;")
 
             # Пользователь / выход
-            ui.button(auth_holder or auth_role, icon=("o_shield" if is_admin else "o_person"),
-                      on_click=lambda: (logout(), ui.navigate.to("/login"))
-            ).props("flat no-caps dense").classes("sov-ui-header-action").style(
-                "color:var(--ok);font-size:.62rem;font-family:var(--font);max-width:120px;"
-                "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-            )
+            account_detail = auth_holder or auth_role
+            ui.button(
+                "Профиль",
+                icon=("o_shield" if is_admin else "o_person"),
+                on_click=lambda: (logout(), ui.navigate.to("/login")),
+            ).props("flat no-caps dense").classes(
+                "sov-ui-header-action sov-ui-header-account"
+            ).tooltip(f"Сеанс: {account_detail}. Нажмите, чтобы выйти")
 
     return tabs, tab_refs
 

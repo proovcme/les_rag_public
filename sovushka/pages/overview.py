@@ -5,14 +5,18 @@ from __future__ import annotations
 
 from nicegui import ui
 from sovushka.components.charts import _html, dot_html
+from sovushka.uikit.components import acronym_identity
 
 
 def build_overview(tabs, is_admin: bool):
     """Строит содержимое вкладки ОБЗОР. Вызывать внутри with ui.tab_panel(tab_overview)."""
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
-        ui.label("Л.Е.С. // АРХИТЕКТУРА").style(
-            "font-size:1rem;font-weight:900;letter-spacing:1px;color:var(--text);"
+        acronym_identity(
+            "Л.Е.С.",
+            "Локальная Единая Система",
+            icon="o_forest",
         )
+        ui.label("Архитектура").classes("sov-surface-heading")
 
         # Модули системы — (name, tag, desc, status, tab_key)
         # tab_key — строка, потому что вкладки создаются в main_page, передаём через tabs

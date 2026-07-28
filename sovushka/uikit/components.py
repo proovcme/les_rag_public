@@ -20,6 +20,25 @@ def status_badge(label: str, tone: str = "muted") -> Any:
     return ui.label(label).classes(f"sov-ui-status sov-ui-status--{safe_tone}")
 
 
+def acronym_identity(
+    acronym: str,
+    expansion: str,
+    *,
+    icon: str = "",
+    compact: bool = False,
+) -> Any:
+    """Render one consistent product/module identity with optional expansion."""
+    modifier = " sov-acronym-identity--compact" if compact else ""
+    with ui.row().classes(f"sov-acronym-identity{modifier}") as container:
+        if icon:
+            ui.icon(icon).classes("sov-acronym-mark").props("aria-hidden=true")
+        with ui.column().classes("sov-acronym-copy"):
+            ui.label(acronym).classes("sov-acronym-title")
+            ui.label(expansion).classes("sov-acronym-expansion")
+    container.tooltip(expansion)
+    return container
+
+
 def render_feedback_state(
     kind: str,
     *,

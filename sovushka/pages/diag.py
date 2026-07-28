@@ -10,6 +10,7 @@ from nicegui import ui
 from sovushka.state import state, api_get, api_post, add_log, active_llm_provider
 from sovushka.config import MLX_URL
 from sovushka.components.charts import _html, esc
+from sovushka.uikit.components import acronym_identity
 
 
 def _build_diag_map_html(results: list) -> str:
@@ -174,11 +175,10 @@ def build_diag():
         # ── Заголовок и кнопка ──────────────────
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-0"):
-                ui.label("Д.И.А.Г.Н.О.З.").style(
-                    "font-size:1rem;font-weight:900;letter-spacing:1px;"
-                )
-                ui.label("Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья").style(
-                    "font-size:.62rem;color:var(--dim);"
+                acronym_identity(
+                    "Д.И.А.Г.Н.О.З.",
+                    "Диспетчер Инфраструктурного Анализа Готовности, Нагрузки, Ошибок и Здоровья",
+                    icon="o_health_and_safety",
                 )
                 diag_ts_lbl = ui.label("Последний прогон: —").style(
                     "font-size:.6rem;color:var(--dim);"

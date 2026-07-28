@@ -54,11 +54,97 @@ html {
   font-family: var(--sov-ui-font-prose);
 }
 
+.sov-ui-shell .q-field__native::placeholder {
+  color: var(--dim);
+  opacity: .9;
+}
+
 .sov-ui-shell .q-btn__content,
 .sov-ui-shell .q-tab__label {
   font-size: var(--sov-ui-font-size-control);
   font-weight: 650;
   line-height: var(--sov-ui-line-control);
+}
+
+.sov-acronym-identity {
+  display: flex;
+  min-width: 0;
+  gap: 9px;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.sov-acronym-mark {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 22px;
+}
+
+.sov-acronym-copy {
+  min-width: 0;
+  gap: 0 !important;
+}
+
+.sov-acronym-title {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--accent);
+  font-family: var(--sov-ui-font-prose);
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: .015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sov-acronym-expansion {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--dim);
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 400;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sov-acronym-identity--compact {
+  gap: 6px;
+}
+
+.sov-acronym-identity--compact .sov-acronym-mark {
+  font-size: 20px;
+}
+
+.sov-acronym-identity--compact .sov-acronym-expansion {
+  font-size: 11px;
+}
+
+.sov-surface-heading {
+  color: var(--text);
+  font-family: var(--sov-ui-font-prose);
+  font-size: 13px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.sov-acronym-preference {
+  width: 100%;
+  min-height: 40px;
+  margin-bottom: 10px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-mod) 72%, transparent);
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-control);
+}
+
+.sov-hide-acronym-expansions .sov-acronym-expansion,
+.sov-hide-acronym-expansions .sov-chat-subtitle {
+  display: none !important;
 }
 
 .sov-ui-shell code,
@@ -84,6 +170,7 @@ html {
 
 .sov-ui-shell .sov-chat-identity {
   display: flex;
+  max-width: min(320px, 36vw);
   align-items: center;
   gap: 9px;
 }
@@ -91,6 +178,7 @@ html {
 .sov-ui-shell .sov-chat-identity-copy {
   display: flex;
   min-width: 0;
+  max-width: 100%;
   flex-direction: column;
   justify-content: center;
 }
@@ -129,18 +217,24 @@ html {
 }
 
 .sov-ui-shell .sov-chat-title {
+  color: var(--accent);
   font-family: var(--sov-ui-font-prose);
   font-size: 14px;
-  font-weight: 750;
+  font-weight: 800;
   line-height: 1.25;
   letter-spacing: 0;
 }
 
 .sov-ui-shell .sov-chat-subtitle {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
   font-family: var(--sov-ui-font-prose);
   font-size: var(--sov-ui-font-size-meta);
   font-weight: 400;
   line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .sov-ui-header {
@@ -282,10 +376,32 @@ html {
 
 .sov-sidebar-caption {
   display: none;
-  color: var(--dim);
-  font-size: 10px;
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
   font-weight: 850;
-  letter-spacing: .08em;
+  letter-spacing: 0;
+}
+
+.sov-mobile-sections-button {
+  display: none !important;
+}
+
+.sov-mobile-sections-menu {
+  min-width: 210px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  background: var(--bg-panel) !important;
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-mobile-sections-menu .q-item {
+  min-height: 40px;
+  border-radius: 7px;
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 650;
 }
 
 .sov-app-content {
@@ -328,6 +444,57 @@ html {
   box-shadow:
     0 0 0 1px color-mix(in srgb, var(--border) 36%, transparent),
     0 10px 28px rgba(20, 52, 34, .09) !important;
+}
+
+.sov-topbar-icon-action {
+  width: 36px;
+  min-width: 36px !important;
+  height: 36px;
+  min-height: 36px !important;
+  padding: 0 !important;
+}
+
+.sov-topbar-icon-action .q-btn__content {
+  gap: 0 !important;
+  font-size: 0 !important;
+}
+
+.sov-topbar-icon-action .q-icon {
+  font-size: 20px;
+}
+
+.sov-composer-prompt-head {
+  width: 100%;
+  margin-bottom: 4px;
+  padding-inline: 3px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.sov-composer-prompt-label {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.sov-composer-key-hint {
+  color: var(--dim);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.sov-app-content .sov-composer-input {
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border)) !important;
+  background: var(--bg-panel) !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent),
+    inset 0 1px 2px rgba(20, 52, 34, .035);
+}
+
+.sov-app-content .sov-composer-input:focus-within {
+  border-color: var(--accent) !important;
+  box-shadow: var(--sov-ui-shadow-focus);
 }
 
 .sov-app-content .sov-composer-actions .q-btn:last-child,
@@ -488,7 +655,7 @@ html {
     height: 100vh !important;
     min-height: 0;
     padding: 12px 8px 10px !important;
-    gap: 5px !important;
+    gap: 6px !important;
     align-items: stretch !important;
     flex-direction: column;
     border-right: 1px solid var(--border);
@@ -505,16 +672,34 @@ html {
   }
 
   .sov-brand-block {
-    min-height: 36px;
+    min-height: 46px;
     margin: 0 !important;
     padding: 2px 7px;
     justify-content: flex-start;
   }
 
-  .sov-brand-block .les-brand {
+  .sov-brand-block > .sov-acronym-identity {
+    width: 100%;
+  }
+
+  .sov-brand-block .sov-acronym-copy {
+    max-width: 105px;
+  }
+
+  .sov-brand-block .sov-acronym-title {
     font-size: 15px !important;
     line-height: 1 !important;
     letter-spacing: 0;
+  }
+
+  .sov-brand-block .sov-acronym-expansion {
+    display: -webkit-box;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.15;
+    white-space: normal;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
   }
 
   .sov-ui-version-badge {
@@ -523,7 +708,7 @@ html {
     margin: 0 0 5px !important;
     padding-inline: 3px !important;
     justify-content: flex-start;
-    font-size: 10px !important;
+    font-size: 11px !important;
     font-variant-numeric: tabular-nums;
     line-height: 1.2 !important;
     color: var(--dim) !important;
@@ -533,28 +718,32 @@ html {
 
   .sov-primary-nav {
     width: 100%;
-    padding: 0;
-    gap: 4px;
+    padding: 4px;
+    gap: 2px;
     flex-direction: column;
     align-items: stretch;
-    background: transparent;
-    box-shadow: none;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-mod) 72%, var(--bg-panel));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 72%, transparent);
   }
 
   .sov-nav-switch {
     width: 100%;
-    min-height: 44px !important;
-    padding: 4px 10px !important;
-    justify-content: flex-start;
-    font-size: 12px !important;
+    min-height: 36px !important;
+    padding: 3px 6px !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    font-size: 13px !important;
     line-height: 1.2 !important;
   }
 
   .sov-nav-switch .q-btn__content {
     width: 100%;
-    gap: 8px;
+    gap: 6px;
+    flex-wrap: nowrap !important;
     flex-direction: row;
-    justify-content: flex-start;
+    justify-content: flex-start !important;
+    text-align: left !important;
   }
 
   .sov-nav-switch .q-icon {
@@ -562,14 +751,20 @@ html {
     line-height: 1;
   }
 
+  .sov-nav-switch--config .q-btn__content {
+    font-size: 12px;
+  }
+
   .sov-sidebar-caption {
     display: block;
-    margin: 11px 10px 3px;
+    margin: 10px 8px 2px;
+    padding-top: 10px;
     overflow: hidden;
-    font-size: 10px;
-    font-weight: 750;
-    line-height: 1.2;
-    letter-spacing: .04em;
+    border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.25;
+    letter-spacing: 0;
     text-align: left;
     white-space: nowrap;
   }
@@ -578,6 +773,11 @@ html {
     width: 100%;
     height: auto !important;
     min-height: 0;
+    flex: 1 1 0 !important;
+    padding: 4px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-panel) 82%, var(--bg-mod));
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--border) 68%, transparent);
   }
 
   .les-top-tabs .q-tabs__content {
@@ -590,25 +790,37 @@ html {
   }
 
   .les-top-tabs .q-tab {
-    flex: 0 0 44px !important;
+    flex: 0 0 36px !important;
     width: 100%;
-    height: 44px !important;
-    min-height: 44px !important;
+    height: 36px !important;
+    min-height: 36px !important;
     margin: 1px 0;
-    padding: 0 10px;
+    padding: 0 6px;
     border-radius: 7px;
-    justify-content: flex-start;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    color: var(--text);
+  }
+
+  .les-top-tabs .q-tab:hover {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+
+  .les-top-tabs .q-tab--active {
+    color: var(--accent) !important;
+    background: color-mix(in srgb, var(--accent) 10%, var(--bg-panel));
   }
 
   .les-top-tabs .q-tab__content {
     min-width: 0;
     width: 100%;
-    height: 44px !important;
-    min-height: 44px !important;
-    gap: 8px;
+    height: 36px !important;
+    min-height: 36px !important;
+    gap: 6px;
     align-items: center;
     flex-direction: row;
-    justify-content: flex-start;
+    justify-content: flex-start !important;
+    text-align: left !important;
   }
 
   .les-top-tabs .q-icon {
@@ -619,7 +831,8 @@ html {
   .les-top-tabs .q-tab__label {
     display: block;
     overflow: hidden;
-    font-size: 12px;
+    font-size: 13px;
+    font-weight: 650;
     line-height: 1.2;
     text-align: left;
     text-overflow: clip;
@@ -639,29 +852,101 @@ html {
   .sov-ui-header-controls {
     width: 100%;
     margin: auto 0 0 !important;
-    padding-top: 9px;
-    gap: 0 !important;
-    align-items: center;
+    padding-top: 10px;
+    gap: 3px !important;
+    align-items: stretch;
     justify-content: flex-start;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   }
 
+  .sov-runtime-state,
+  .sov-ui-header-utility,
   .sov-ui-header-secondary,
   .sov-ui-header-action {
     width: 100%;
-    min-height: 38px;
-    justify-content: center;
+    min-height: 36px;
+    margin: 0 !important;
+    padding: 0 10px !important;
+    border-radius: 8px;
+    color: var(--text) !important;
+    font-family: var(--sov-ui-font-prose) !important;
+    font-size: 12px !important;
+    font-weight: 650 !important;
+    line-height: 1.25;
+    justify-content: flex-start !important;
+    text-align: left !important;
   }
 
+  .sov-runtime-state {
+    gap: 8px;
+    align-items: center;
+    flex-wrap: nowrap;
+    background: color-mix(in srgb, var(--ok) 8%, var(--bg-panel));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ok) 18%, transparent);
+  }
+
+  .sov-runtime-dot {
+    flex: 0 0 auto;
+  }
+
+  .sov-runtime-label {
+    min-width: 0;
+    color: var(--text);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.25;
+    white-space: nowrap;
+  }
+
+  .sov-ui-header-utility:hover,
+  .sov-ui-header-secondary:hover,
+  .sov-ui-header-action:hover {
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+
+  .sov-ui-header-utility .q-btn__content,
+  .sov-ui-header-secondary,
   .sov-ui-header-action .q-btn__content {
     width: 100%;
-    gap: 0;
-    justify-content: center;
+    gap: 8px;
+    flex-wrap: nowrap !important;
+    justify-content: flex-start !important;
+    text-align: left !important;
+    white-space: nowrap !important;
   }
 
-  .sov-ui-header-action .q-btn__content > :not(.q-icon),
+  .sov-ui-header-utility .q-icon,
+  .sov-ui-header-secondary .q-icon,
+  .sov-ui-header-action .q-icon {
+    flex: 0 0 auto;
+    font-size: 18px;
+  }
+
   .sov-ui-header-secondary {
-    font-size: 0 !important;
+    display: flex;
+    align-items: center;
+    white-space: nowrap;
+  }
+
+  .sov-ui-header-account {
+    margin-top: 3px !important;
+    padding-inline: 8px !important;
+    color: var(--ok) !important;
+    background: color-mix(in srgb, var(--bg-mod) 72%, transparent);
+  }
+
+  .sov-ui-header-account .q-btn__content {
+    min-width: 0;
+    gap: 6px;
+    overflow: hidden;
+    font-size: 12px;
+  }
+
+  .sov-ui-header-account .q-btn__content > :not(.q-icon) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .sov-app-content .sov-chat-shell {
@@ -686,6 +971,9 @@ html {
     display: flex !important;
     flex-direction: column;
   }
+  .sov-ui-shell .sov-chat-identity {
+    max-width: min(420px, 72vw);
+  }
   .sov-ui-card,
   .sov-ui-evidence-card {
     border-radius: 9px;
@@ -709,17 +997,30 @@ html {
   .sov-brand-block {
     margin-right: 2px !important;
   }
+  .sov-brand-block .sov-acronym-expansion {
+    display: none !important;
+  }
   .les-top-tabs {
-    height: 62px !important;
-    overflow: hidden;
+    display: none !important;
   }
-  .les-top-tabs .q-tabs__content {
-    justify-content: flex-start;
+  .sov-mobile-sections-button {
+    display: inline-flex !important;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0 9px !important;
+    color: var(--text) !important;
+    font-size: 12px !important;
+    font-weight: 700 !important;
   }
-  .les-top-tabs .q-tab {
-    min-width: 44px;
-    min-height: 62px;
-    padding-inline: 7px;
+  .sov-topbar-icon-action {
+    width: var(--sov-ui-hit);
+    min-width: var(--sov-ui-hit) !important;
+    height: var(--sov-ui-hit);
+    min-height: var(--sov-ui-hit) !important;
+  }
+  .sov-mobile-sections-button .q-btn__content {
+    gap: 5px;
+    flex-wrap: nowrap;
   }
   .sov-ui-header-controls {
     display: none !important;
@@ -763,10 +1064,14 @@ html {
   .sov-app-content {
     height: calc(100vh - 62px);
   }
+  .sov-app-content > .q-panel-parent > .q-tab-panel,
+  .sov-app-content .nicegui-tab-panel {
+    padding: 0 !important;
+  }
   .sov-app-content .sov-chat-shell {
     height: calc(100vh - 62px);
     min-height: 0;
-    padding: 8px;
+    padding: 4px;
   }
   .sov-docs-sticky-ask { align-items: stretch; flex-direction: column; }
   .sov-docs-sticky-ask-button { width: 100%; }
@@ -777,7 +1082,8 @@ html {
 }
 
 @media (max-width: 520px) {
-  .sov-brand-block .les-brand {
+  .sov-brand-block .sov-acronym-title,
+  .sov-brand-block .sov-acronym-expansion {
     display: none;
   }
   .les-top-tabs .q-tab__label {
@@ -785,6 +1091,9 @@ html {
   }
   .les-top-tabs .q-tab {
     width: 44px;
+  }
+  .sov-composer-key-hint {
+    display: none;
   }
 }
 

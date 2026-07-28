@@ -143,18 +143,23 @@ def _committed_reconciliation(
         path = normalize_path(str(entry.get("path") or ""))
         accepted_hash = str(entry.get("accepted_sha256") or "").lower()
         target_hash = str(entry.get("target_sha256") or "").lower()
+        if len(accepted_hash) != 64:
+            raise RuntimeError(f"invalid committed reconciliation entry: {path}")
+        current = runtime / Path(*PurePosixPath(path).parts)
+        # Reconciliation is a one-time bridge from one exact historical runtime
+        # hash. Once that hash is no longer installed, a later Git change to the
+        # same path must not be blocked by the stale bridge metadata.
+        if not current.is_file() or sha256_file(current) != accepted_hash:
+            continue
         target_bytes = git_bytes(target, path)
         if (
-            len(accepted_hash) != 64
-            or len(target_hash) != 64
+            len(target_hash) != 64
             or target_bytes is None
             or sha256_bytes(target_bytes) != target_hash
         ):
             raise RuntimeError(f"invalid committed reconciliation entry: {path}")
-        current = runtime / Path(*PurePosixPath(path).parts)
-        if current.is_file() and sha256_file(current) == accepted_hash:
-            accepted[path] = accepted_hash
-            forced.add(path)
+        accepted[path] = accepted_hash
+        forced.add(path)
     return accepted, forced
 
 

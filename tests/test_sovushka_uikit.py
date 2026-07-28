@@ -37,6 +37,14 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert "--sov-ui-font-size-control: 13px" in UIKIT_CSS
     assert "font-synthesis: none" in UIKIT_CSS
     assert ".sov-nav-switch--active .q-btn__content" in UIKIT_CSS
+    assert ".sov-ui-shell .sov-chat-title" in UIKIT_CSS
+    assert "color: var(--accent)" in UIKIT_CSS
+    assert "justify-content: flex-start !important" in UIKIT_CSS
+    assert ".sov-runtime-state" in UIKIT_CSS
+    assert ".sov-ui-header-account" in UIKIT_CSS
+    assert ".sov-mobile-sections-button" in UIKIT_CSS
+    assert ".sov-mobile-sections-menu" in UIKIT_CSS
+    assert ".sov-app-content .nicegui-tab-panel" in UIKIT_CSS
 
 
 def _contrast_ratio(foreground: str, background: str) -> float:
@@ -86,14 +94,34 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert "sov-ui-header" in header
     assert "sov-ui-documents" in documents
     assert "sov-ui-evidence-card" in chat
-    assert "С.О.В.А. · Чат" in chat
-    assert "Система обработки и выдачи ответов" in chat
+    assert '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>' in chat
+    assert "С.О.В.У.Ш.К.А. · Чат" not in chat
+    assert "Умная, Шаблонизированная, " in chat
+    assert "Классифицированная, Автоматизированная" in chat
     assert 'class="sov-owl-mark"' in chat
-    assert 'aria-label="С.О.В.А. — Система обработки и выдачи ответов"' in chat
+    assert 'aria-label="С.О.В.У.Ш.К.А. — Система Обработки и Выдачи: ' in chat
     assert 'aria-label="Выбрать область"' not in chat
     assert "sov-attach-btn" in chat
     assert 'render_feedback_state(' in chat
     assert '"blocker": blocker' in chat
+
+
+def test_acronym_identity_is_shared_and_user_can_hide_expansions():
+    components = Path("sovushka/uikit/components.py").read_text(encoding="utf-8")
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    assert "def acronym_identity(" in components
+    assert "sov-acronym-title" in components
+    assert "sov-acronym-expansion" in components
+    assert "Показывать расшифровки акронимов" in header
+    assert 'app.storage.user["show_acronym_expansions"]' in header
+    assert "sov-hide-acronym-expansions" in shell
+    assert ".sov-hide-acronym-expansions .sov-acronym-expansion" in UIKIT_CSS
+
+    for page in ("diag.py", "volk.py", "prorab.py", "overview.py", "samovar.py", "mail.py", "documents.py"):
+        source = Path("sovushka/pages", page).read_text(encoding="utf-8")
+        assert "acronym_identity(" in source
 
 
 def test_documents_surface_contract_is_keyword_only_and_complete():
@@ -119,6 +147,16 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
         assert f'"{label}",' in header
         assert f'"{icon}",' in header
     assert "sov-primary-nav" in header
+    assert "Рабочие разделы" in header
+    assert "sov-runtime-state" in header
+    assert "ЛЕС на связи" in header
+    assert 'ui.button("Обновить", icon="o_refresh"' in header
+    assert '"Тема",' in header
+    assert 'ui.label("Qdrant")' in header
+    assert '"Профиль",' in header
+    assert "Сеанс: {account_detail}" in header
+    assert 'ui.button("Разделы", icon="o_apps")' in header
+    assert "ui.menu_item(" in header
     assert 'tab_refs[key].tooltip(label)' in header
     assert 'f"sov-nav-switch sov-nav-switch--{key}"' in header
     assert "sov-nav-switch--active" in header

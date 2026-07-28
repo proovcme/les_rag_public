@@ -124,6 +124,66 @@ def test_mac_builder_excludes_repo_docs_desktop_and_user_state():
             mac_update.normalize_path(path)
 
 
+def test_stale_one_time_reconciliation_does_not_block_later_file_update(
+    tmp_path, monkeypatch
+):
+    runtime = tmp_path / "runtime"
+    runtime_file = runtime / "sovushka" / "styles.py"
+    runtime_file.parent.mkdir(parents=True)
+    runtime_file.write_bytes(b"already-reconciled\n")
+    accepted_hash = _sha(b"historical-drift\n")
+    stale_target_hash = _sha(b"old-target\n")
+    payload = {
+        "schema": mac_update.RECONCILIATION_SCHEMA,
+        "entries": [{
+            "path": "sovushka/styles.py",
+            "accepted_sha256": accepted_hash,
+            "target_sha256": stale_target_hash,
+        }],
+    }
+
+    def fake_git_bytes(_target: str, path: str):
+        if path == mac_update.RECONCILIATION_PATH:
+            return json.dumps(payload).encode()
+        if path == "sovushka/styles.py":
+            return b"new-target\n"
+        return None
+
+    monkeypatch.setattr(mac_update, "git_bytes", fake_git_bytes)
+
+    accepted, forced = mac_update._committed_reconciliation(runtime, "target")
+
+    assert accepted == {}
+    assert forced == set()
+
+
+def test_active_reconciliation_still_validates_exact_target(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    runtime_file = runtime / "sovushka" / "styles.py"
+    runtime_file.parent.mkdir(parents=True)
+    runtime_file.write_bytes(b"historical-drift\n")
+    payload = {
+        "schema": mac_update.RECONCILIATION_SCHEMA,
+        "entries": [{
+            "path": "sovushka/styles.py",
+            "accepted_sha256": _sha(b"historical-drift\n"),
+            "target_sha256": _sha(b"old-target\n"),
+        }],
+    }
+
+    def fake_git_bytes(_target: str, path: str):
+        if path == mac_update.RECONCILIATION_PATH:
+            return json.dumps(payload).encode()
+        if path == "sovushka/styles.py":
+            return b"new-target\n"
+        return None
+
+    monkeypatch.setattr(mac_update, "git_bytes", fake_git_bytes)
+
+    with pytest.raises(RuntimeError, match="invalid committed reconciliation"):
+        mac_update._committed_reconciliation(runtime, "target")
+
+
 def test_mac_stamp_keeps_untouched_owned_hashes_and_updates_changed_file(tmp_path):
     runtime = tmp_path / "runtime"
     changed = runtime / "proxy" / "example.py"

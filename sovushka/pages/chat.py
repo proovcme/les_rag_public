@@ -530,8 +530,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ).classes("sov-icon-btn")
                     with ui.column().classes("sov-chat-heading"):
                         _html(
-                            '<div class="sov-chat-identity" '
-                            'aria-label="С.О.В.А. — Система обработки и выдачи ответов">'
+                            '<div class="sov-chat-identity" title="Система Обработки и Выдачи: '
+                            'Умная, Шаблонизированная, Классифицированная, Автоматизированная" '
+                            'aria-label="С.О.В.У.Ш.К.А. — Система Обработки и Выдачи: '
+                            'Умная, Шаблонизированная, Классифицированная, Автоматизированная">'
                             '<span class="sov-owl-mark" aria-hidden="true">'
                             '<svg viewBox="0 0 32 32" focusable="false">'
                             '<path d="M7 10 10 5l6 4 6-4 3 5v9c0 6-4 10-9 10S7 25 7 19Z"/>'
@@ -543,9 +545,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             '</svg>'
                             '</span>'
                             '<span class="sov-chat-identity-copy">'
-                            '<span class="sov-chat-title">С.О.В.А. · Чат</span>'
-                            '<span class="sov-chat-subtitle">'
-                            'Система обработки и выдачи ответов'
+                            '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>'
+                            '<span class="sov-chat-subtitle sov-acronym-expansion">'
+                            'Система Обработки и Выдачи: Умная, Шаблонизированная, '
+                            'Классифицированная, Автоматизированная'
                             '</span>'
                             '</span>'
                             '</div>'
@@ -557,14 +560,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             icon="o_folder_open",
                             on_click=lambda: tabs.set_value(tab_documents),
                         ).props('flat dense no-caps aria-label="Документы"').classes(
-                            "sov-artifacts-open-btn"
+                            "sov-artifacts-open-btn sov-topbar-icon-action"
                         ).tooltip("Открыть документы датасетов")
                     ui.button(
                         "Артефакты",
                         icon="o_view_sidebar",
                         on_click=lambda: _open_artifacts(),
                     ).props('flat dense no-caps aria-label="Открыть артефакты"').classes(
-                        "sov-artifacts-open-btn"
+                        "sov-artifacts-open-btn sov-topbar-icon-action"
                     ).tooltip("Открыть панель результатов и файлов")
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
@@ -792,7 +795,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     technical_status.set_visibility(False)
                     ui.button("Новый чат", icon="o_add_comment", on_click=lambda: _clear_chat()).props(
                         'flat dense no-caps aria-label="Новый чат"'
-                    ).classes("sov-new-chat-btn").tooltip("Новая сессия без памяти прошлого диалога")
+                    ).classes(
+                        "sov-new-chat-btn sov-topbar-icon-action"
+                    ).tooltip("Новая сессия без памяти прошлого диалога")
 
             scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
             scope_files_panel.set_visibility(False)
@@ -920,8 +925,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.notify("Вложение снято", type="info")
 
             with ui.element("div").classes("sov-composer") as composer_box:
+                with ui.row().classes("sov-composer-prompt-head"):
+                    ui.label("Ваш запрос").classes("sov-composer-prompt-label")
+                    ui.label("Enter — отправить · Shift+Enter — новая строка").classes(
+                        "sov-composer-key-hint"
+                    )
                 chat_input = ui.textarea(
-                    placeholder="Спросить по нормативам, проекту или базе знаний..."
+                    placeholder="Напишите вопрос или задачу для Л.Е.С…"
                 ).classes("sov-composer-input").props("rows=1 autogrow borderless")
                 try:
                     preset_question = (context.client.request.query_params.get("question") or "").strip()
@@ -2688,8 +2698,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
         result = await api_post(lock_url, {
             "review_note": (
-                "Проверено пользователем в интерфейсе С.О.В.А.; конфликты приняты явно"
-                if accepted_conflict_ids else "Проверено пользователем в интерфейсе С.О.В.А."
+                "Проверено пользователем в интерфейсе С.О.В.У.Ш.К.А.; конфликты приняты явно"
+                if accepted_conflict_ids else "Проверено пользователем в интерфейсе С.О.В.У.Ш.К.А."
             ),
             "accepted_conflict_ids": accepted_conflict_ids,
         })

@@ -42,7 +42,8 @@ make status-mac-update
   drift продолжает блокировать установку;
 - одноразовый исторический drift допускается только через committed
   `config/mac_runtime_reconciliation.json` с точными current/target SHA; после замены runtime
-  снова обязан совпасть с Git;
+  снова обязан совпасть с Git. Запись активна только пока runtime имеет её exact
+  `accepted_sha256`; после успешного выравнивания она не блокирует следующие изменения того же файла;
 - пакет content-addressed и локальный: updater не публикует feed, tag, GitHub Release и не
   обращается к Legion;
 - повторная установка уже применённого пакета возвращает «Mac уже обновлён».

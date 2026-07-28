@@ -15,6 +15,7 @@ from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
 from sovushka.state import api_get, api_get_bytes, api_patch, api_post, api_post_file, add_log, last_api_error_text
+from sovushka.uikit.components import acronym_identity
 
 DATASET_KIND_OPTIONS = {
     "": "Все типы",
@@ -3261,9 +3262,14 @@ def build_documents(*, surface: str = "documents") -> None:
             "background:var(--bg-panel);"
         ):
             with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
-                ui.icon("o_edit_document").style("font-size:22px;color:var(--accent);")
                 with ui.column().classes("gap-0").style("flex:1;min-width:230px;"):
-                    _label("Л.И.С.Т. · Студия документов", size="14px", weight=900)
+                    acronym_identity(
+                        "Л.И.С.Т.",
+                        "Локальный индекс структуры томов",
+                        icon="o_edit_document",
+                        compact=True,
+                    )
+                    _label("Студия документов", size="13px", weight=800)
                     _label(
                         "Оригиналы остаются неизменными. Каждый выпуск — отдельная draft-ревизия с SHA-256.",
                         size="11px",

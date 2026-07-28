@@ -7,6 +7,7 @@ import asyncio
 from nicegui import context, ui
 from sovushka.state import state, last_api_error_text
 from sovushka.components.charts import _html, pct_bar_html, format_bytes, esc
+from sovushka.uikit.components import acronym_identity
 from tools import les_runtime_control
 
 
@@ -14,8 +15,10 @@ def build_prorab():
     """Строит содержимое вкладки П.Р.О.Р.А.Б. Вызывать внутри with ui.tab_panel(tab_prorab)."""
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
         with ui.row().classes("items-center justify-between w-full"):
-            ui.label("П.Р.О.Р.А.Б. // ДИАГНОСТИКА").style(
-                "font-size:1rem;font-weight:900;letter-spacing:1px;"
+            acronym_identity(
+                "П.Р.О.Р.А.Б.",
+                "Программа Регулярной Оценки Работы Автономной Базы",
+                icon="o_monitor_heart",
             )
             ui.label("/api/metrics · /api/status · MLX :8080  [5–15s]").style(
                 "font-size:.6rem;color:var(--dim);"

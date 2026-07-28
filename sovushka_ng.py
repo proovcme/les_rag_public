@@ -193,7 +193,12 @@ def _apply_theme() -> None:
     # WCAG 3.1.1 Language of Page: интерфейс и контент русские — помечаем
     # документ lang=ru, иначе скринридеры читают кириллицу как английский.
     ui.add_head_html("<script>document.documentElement.lang='ru'</script>")
-    ui.query("body").style("background:var(--bg);color:var(--text);margin:0;")
+    body = ui.query("body")
+    body.style("background:var(--bg);color:var(--text);margin:0;")
+    if app.storage.user.get("show_acronym_expansions", True):
+        body.classes(remove="sov-hide-acronym-expansions")
+    else:
+        body.classes("sov-hide-acronym-expansions")
     ui.query(".nicegui-content").classes("p-0 m-0 w-full").style("max-width:none;")
 
 

@@ -144,8 +144,10 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     source = inspect.getsource(chat_page.build_chat)
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
 
-    assert '<span class="sov-chat-title">С.О.В.А. · Чат</span>' in source
-    assert "Система обработки и выдачи ответов" in source
+    assert '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>' in source
+    assert "С.О.В.У.Ш.К.А. · Чат" not in source
+    assert "Умная, Шаблонизированная, " in source
+    assert "Классифицированная, Автоматизированная" in source
     assert 'class="sov-owl-mark"' in source
     assert "technical_status.set_visibility(False)" in source
     assert 'classes("sov-mode-guide")' in source

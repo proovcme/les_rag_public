@@ -37,7 +37,8 @@ def test_work_surfaces_are_mounted_outside_configurator():
     admin_shell = app_shell.split("async def classic_admin_page", 1)[1]
     assert "build_documents" not in admin_shell
     assert "build_mail()" not in admin_shell
-    assert 'ui.tab("Настройка почты"' in header
+    assert 'tab_refs["mail_settings"] = ui.tab("Почта"' in header
+    assert '"mail_settings": "Настройка почты"' in header
     assert "build_mail_settings()" in admin_shell
 
 

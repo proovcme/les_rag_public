@@ -9,6 +9,7 @@ from urllib.parse import quote, urlencode
 from nicegui import ui
 
 from sovushka.state import api_get, api_post, last_api_error_text
+from sovushka.uikit.components import acronym_identity
 
 
 def build_mail() -> None:
@@ -269,6 +270,11 @@ def build_mail() -> None:
                 ui.label(f"Папка: {location.get('folder_path')}").style("font-size:.6rem;color:var(--dim);")
 
     with ui.column().classes("w-full h-full gap-0").style("padding:14px;background:var(--bg);"):
+        acronym_identity(
+            "Е.Ж.И.К.",
+            "Единый Журнал Импорта Корреспонденции",
+            icon="o_mark_email_read",
+        )
         with ui.column().classes("w-full") as status_panel:
             refs["status"] = status_panel
         with ui.row().classes("items-center w-full gap-2").style("margin-bottom:10px;"):

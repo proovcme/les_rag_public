@@ -11,6 +11,7 @@ from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
 from sovushka.config import UI_PORT
+from sovushka.uikit.components import acronym_identity
 from sovushka.state import (
     state,
     api_get,
@@ -922,7 +923,11 @@ def build_samovar():
 
     with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-3"):
         with ui.row().classes("items-center w-full").style("gap:12px;flex-wrap:nowrap;"):
-            ui.label("Датасеты").style("font-size:20px;font-weight:500;")
+            acronym_identity(
+                "С.А.М.О.В.А.Р.",
+                "Система Автономная Машинной Обработки Внутренних Архивов РАГ",
+                icon="o_inventory_2",
+            )
             ui.element("div").style("flex:1;")
             with ui.row().classes("items-center").style("border:1px solid var(--border);border-radius:8px;overflow:hidden;"):
                 _refs["tbtn"] = ui.button("Таблица", icon="o_table_rows",

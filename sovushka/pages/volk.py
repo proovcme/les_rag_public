@@ -6,6 +6,7 @@ from __future__ import annotations
 from nicegui import app, ui
 
 from sovushka.state import api_get, api_post, last_api_error_text
+from sovushka.uikit.components import acronym_identity
 
 
 def build_volk():
@@ -21,9 +22,12 @@ def build_volk():
     with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-4"):
         with ui.row().classes("items-center justify-between w-full"):
             with ui.column().classes("gap-0"):
-                ui.label("В.О.Л.К. // УПРАВЛЕНИЕ ДОСТУПОМ").style(
-                    "font-size:1rem;font-weight:900;letter-spacing:1px;"
+                acronym_identity(
+                    "В.О.Л.К.",
+                    "Внутренний Охранный Локальный Контур",
+                    icon="o_vpn_key",
                 )
+                ui.label("Управление доступом").classes("sov-surface-heading")
                 ui.label("Ключи хранятся в les_meta.db · cookie: les_key · 30 дней").style(
                     "font-size:.6rem;color:var(--dim);"
                 )

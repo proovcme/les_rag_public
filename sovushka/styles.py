@@ -30,7 +30,7 @@ _LIGHT_THEME = {
     "--bg-panel": "#ffffff",
     "--bg-mod":   "#edf3ee",
     "--text":     "#17231c",
-    "--dim":      "#58685e",
+    "--dim":      "#405247",
     "--border":   "#d5dfd7",
     "--accent":   "#176b42",
     "--ok":       "#176b42",
