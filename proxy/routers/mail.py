@@ -125,6 +125,9 @@ class MailLegacyMigrationRequest(BaseModel):
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
 
 
+OUTLOOK_COLLECTOR_TASK = "LES E.ZH.I.K. Outlook Collector"
+
+
 async def _mail_dataset_id(state: Any) -> tuple[str, bool]:
     """Legacy shared dataset retained only for backward-compatible routes."""
     datasets = await state.backend.list_datasets()
@@ -828,6 +831,26 @@ async def import_outlook_message(
         "index_status": "queued",
         "queue_depth": queue_depth,
     }
+
+
+@router.post("/collector/run")
+async def run_outlook_collector(
+    request: Request,
+    _admin=Depends(require_admin),
+):
+    _require_loopback(request)
+    if not sys.platform.startswith("win"):
+        raise HTTPException(status_code=501, detail="manual Outlook collection is available on Windows")
+    result = subprocess.run(
+        ["schtasks", "/run", "/tn", OUTLOOK_COLLECTOR_TASK],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=503, detail="could not start Outlook collector task")
+    return {"status": "started", "mode": "manual", "hard_limit_seconds": 15}
 
 
 @router.post("/messages/{message_id}/open")

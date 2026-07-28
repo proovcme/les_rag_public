@@ -1,4 +1,4 @@
-name: Проверка исходного кода
+name: Проверка macOS и Windows
 
 on:
   pull_request:
@@ -6,10 +6,29 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: public-platform-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  verify:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  test-and-native-check:
+    name: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macOS-arm64
+            runner: macos-14
+          - platform: windows-x64
+            runner: windows-2022
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: "1"
+      UV_FROZEN: "1"
     steps:
       - uses: actions/checkout@v4
 
@@ -19,11 +38,29 @@ jobs:
           enable-cache: true
           python-version: "3.12"
 
-      - name: Восстановить закреплённое окружение
+      - name: Восстановить кеш Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/tauri/src-tauri
+
+      - name: Развернуть зафиксированное окружение
         run: uv sync --frozen
 
-      - name: Проверить версии, синтаксис и сбор тестов
-        run: make verify
+      - name: Проверить версии и импорт
+        run: uv run python tools/sync_version_contract.py --check
 
-      - name: Выполнить быстрые модульные тесты
-        run: make test-unit
+      - name: Выполнить переносимые модульные и выпускные тесты
+        run: >-
+          uv run python -m pytest -q
+          tests/test_answer_contract_service.py
+          tests/test_candidate_selection_service.py
+          tests/test_evidence_contract.py
+          tests/test_numeric_provenance.py
+          tests/test_publication_check.py
+          tests/test_outlook_mail_poller.py
+          tests/test_installer_windows.py
+          tests/test_tauri_desktop.py
+
+      - name: Проверить нативную оболочку
+        working-directory: desktop/tauri/src-tauri
+        run: cargo check --locked

@@ -103,7 +103,8 @@ def test_mail_settings_are_configurator_only():
     assert "def build_mail_settings()" in mail
     assert "Настройка почтовой сборки" in mail
     assert "Classic Outlook на Legion" in mail
-    assert "опрос раз в 10 минут" in mail
+    assert "запускается только вручную" in mail
+    assert "Забрать новые письма" in mail
     assert ".sov-mail-settings-page" in styles
     admin_shell = app_shell.split("async def classic_admin_page", 1)[1]
     assert "build_mail_settings()" in admin_shell

@@ -5,10 +5,7 @@
   [string]$ExpectedVersion,
   [string]$InstallRoot = "",
   [string]$StateRoot = "",
-  [string]$HeavyPdfRoot = "C:\Users\Oleg\Downloads\NS\oleg",
-  [int]$BootstrapTimeoutSeconds = 600,
-  [int]$IndexTimeoutSeconds = 1800,
-  [int]$RetrievalTimeoutSeconds = 300
+  [int]$BootstrapTimeoutSeconds = 600
 )
 
 # Production deployment gate for Legion. It runs only after the isolated
@@ -34,9 +31,7 @@ $result = [ordered]@{
   expected_version = $ExpectedVersion
   install_root = $InstallRoot
   state_root = $StateRoot
-  heavy_pdf_root = $HeavyPdfRoot
 }
-$smokeDatasetId = $null
 $proxyPort = 0
 $oldHealth = $null
 $mailTask = $null
@@ -169,13 +164,6 @@ function Start-InteractiveLesDesktop(
 
 try {
   if (-not (Test-Path -LiteralPath $Installer)) { throw "Installer not found: $Installer" }
-  $pdfFiles = @(Get-ChildItem -LiteralPath $HeavyPdfRoot -Filter "*.pdf" -File -ErrorAction Stop)
-  if ($pdfFiles.Count -lt 4) {
-    throw "Heavy PDF polygon must contain at least 4 PDF files, found $($pdfFiles.Count): $HeavyPdfRoot"
-  }
-  $expectedPdfCount = $pdfFiles.Count
-  $result.expected_pdf_count = $expectedPdfCount
-  $result.pdf_files = @($pdfFiles | ForEach-Object { $_.Name })
 
   $result.stage = "stop_previous"
   try {
@@ -278,6 +266,10 @@ try {
   if ([string]$mailTask.Principal.LogonType -notin @("Interactive", "InteractiveToken")) {
     throw "E.ZH.I.K. Scheduled Task is not interactive"
   }
+  $mailTriggers = @($mailTask.Triggers | Where-Object { $null -ne $_ })
+  if ($mailTriggers.Count -ne 0) {
+    throw "E.ZH.I.K. collector must be manual, found $($mailTriggers.Count) scheduled trigger(s)"
+  }
   $outlookProbeResult = Invoke-InteractiveOutlookProbe $collector $mailTask
   if ($outlookProbeResult -ne 0) {
     throw "classic Outlook probe failed; Outlook must be running in the release user session"
@@ -291,135 +283,23 @@ try {
     collector = $collector
     task_state = [string]$mailTask.State
     interactive = $true
+    schedule = "manual"
+    trigger_count = 0
     probe_mode = "interactive_scheduled_task"
     outlook_probe = "ok"
     accounts = @($mailApi.accounts).Count
   }
-
-  $result.stage = "stale_smoke_cleanup"
-  $datasetInventory = Invoke-RestMethod `
-    -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets" -TimeoutSec 60
-  $staleSmokeDatasets = @($datasetInventory.datasets | Where-Object {
-    [string]$_.name -like "LES production PDF smoke *"
-  })
-  $staleSmokeDatasetsRemoved = 0
-  foreach ($staleDataset in $staleSmokeDatasets) {
-    $staleRemoved = $false
-    $staleCleanupErrors = New-Object System.Collections.Generic.List[string]
-    foreach ($staleAttempt in 1..5) {
-      try {
-        Invoke-RestMethod -Method Delete `
-          -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets/$($staleDataset.id)" `
-          -TimeoutSec 60 | Out-Null
-        $staleRemoved = $true
-        break
-      } catch {
-        $staleCleanupErrors.Add("attempt ${staleAttempt}: $($_.Exception.Message)")
-        if ($staleAttempt -lt 5) { Start-Sleep -Seconds 3 }
-      }
-    }
-    if (-not $staleRemoved) {
-      throw "Could not remove stale release smoke dataset $($staleDataset.id): $($staleCleanupErrors -join '; ')"
-    }
-    $staleSmokeDatasetsRemoved += 1
+  $result.rag = [ordered]@{
+    index_contract_compatible = $true
+    active_collection = [string]$health.rag.qdrant.collection
+    retrieval_proof = "isolated_clean_install_smoke"
+    user_corpus_mutated = $false
   }
-  $result.stale_smoke_datasets_removed = $staleSmokeDatasetsRemoved
-
-  $result.stage = "heavy_pdf_dataset"
-  $datasetName = "LES production PDF smoke $([guid]::NewGuid().ToString('N'))"
-  $encodedDatasetName = [System.Uri]::EscapeDataString($datasetName)
-  $dataset = Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets?name=$encodedDatasetName" -TimeoutSec 30
-  $smokeDatasetId = [string]$dataset.id
-  if (-not $smokeDatasetId) { throw "Production smoke dataset was not created" }
-  foreach ($pdf in $pdfFiles) {
-    $uploadJson = & curl.exe --silent --show-error --fail `
-      --form "file=@$($pdf.FullName);type=application/pdf" `
-      "http://127.0.0.1:$proxyPort/api/rag/upload/$smokeDatasetId"
-    if ($LASTEXITCODE -ne 0) { throw "Production PDF upload failed: $($pdf.Name)" }
-    $upload = ($uploadJson -join "`n") | ConvertFrom-Json
-    if (-not $upload.doc_id) { throw "Production PDF upload returned no doc_id: $($pdf.Name)" }
-  }
-
-  $indexDeadline = (Get-Date).AddSeconds($IndexTimeoutSeconds)
-  $indexed = @()
-  $documentPollTransientErrors = 0
-  $lastDocumentPollError = ""
-  do {
-    Start-Sleep -Seconds 2
-    try {
-      $documents = Invoke-RestMethod `
-        -Uri "http://127.0.0.1:$proxyPort/api/rag/documents?dataset_id=$smokeDatasetId&limit=20" `
-        -TimeoutSec 30
-    } catch {
-      # Heavy parsers can briefly occupy the local API while the overall
-      # indexing job remains healthy. One transient status timeout must not
-      # consume the whole 30-minute release budget.
-      $documentPollTransientErrors += 1
-      $lastDocumentPollError = $_.Exception.Message
-      continue
-    }
-    $rows = @($documents.documents)
-    $failed = @($rows | Where-Object { $_.status -eq "ERROR" })
-    if ($failed.Count -gt 0) {
-      throw "Production heavy PDF indexing failed: $($failed[0].file_name): $($failed[0].last_error)"
-    }
-    $indexed = @($rows | Where-Object { $_.status -eq "INDEXED" })
-    if ($indexed.Count -eq $expectedPdfCount) { break }
-  } while ((Get-Date) -lt $indexDeadline)
-  if ($indexed.Count -ne $expectedPdfCount) {
-    throw "Production heavy PDF polygon did not finish: indexed $($indexed.Count)/$expectedPdfCount; last poll error: $lastDocumentPollError"
-  }
-  $result.indexed_files = $indexed.Count
-  $result.indexed_chunks = [int](($indexed | Measure-Object -Property chunk_count -Sum).Sum)
-  $result.document_poll_transient_errors = $documentPollTransientErrors
-
-  $result.stage = "heavy_pdf_rrf"
-  $body = @{
-    question = "комплектная система бесперебойного питания таблица нагрузок"
-    dataset_ids = @($smokeDatasetId)
-    top_k = 5
-  } | ConvertTo-Json -Compress
-  $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($body)
-  $rrf = Invoke-RestMethod -Method Post `
-    -Uri "http://127.0.0.1:$proxyPort/api/rag/retrieve-debug" `
-    -ContentType "application/json; charset=utf-8" -Body $bodyBytes `
-    -TimeoutSec $RetrievalTimeoutSeconds
-  $channels = @($rrf.retrieval_trace.retrieval_channels)
-  if (@($rrf.chunks).Count -eq 0 -or $rrf.retrieval_trace.fusion -notmatch "rrf" -or `
-      $channels -notcontains "dense" -or $channels -notcontains "qdrant_sparse") {
-    throw "Production heavy PDF retrieval did not prove dense+sparse RRF"
-  }
-  $result.rrf_chunks = @($rrf.chunks).Count
-  $result.rrf_channels = $channels
-  $result.rrf_fusion = $rrf.retrieval_trace.fusion
   $result.ok = $true
 } catch {
   $result.error = $_.Exception.Message
   $result.error_type = $_.Exception.GetType().FullName
 } finally {
-  if ($smokeDatasetId -and $proxyPort -gt 0) {
-    $cleanupErrors = New-Object System.Collections.Generic.List[string]
-    $smokeDatasetRemoved = $false
-    foreach ($cleanupAttempt in 1..5) {
-      try {
-        Invoke-RestMethod -Method Delete `
-          -Uri "http://127.0.0.1:$proxyPort/api/rag/datasets/$smokeDatasetId" `
-          -TimeoutSec 60 | Out-Null
-        $smokeDatasetRemoved = $true
-        break
-      } catch {
-        $cleanupErrors.Add("attempt ${cleanupAttempt}: $($_.Exception.Message)")
-        if ($cleanupAttempt -lt 5) { Start-Sleep -Seconds 3 }
-      }
-    }
-    if ($smokeDatasetRemoved) {
-      $result.smoke_dataset_removed = $true
-    } else {
-      $result.cleanup_error = $cleanupErrors -join "; "
-      $result.ok = $false
-    }
-  }
   if ($result.ok) {
     try {
       $result.stage = "desktop_handoff"

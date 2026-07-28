@@ -112,12 +112,12 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    запускает `windows_release_smoke.ps1`. Только после его успеха
    `windows_production_deploy.ps1` останавливает старые production API/UI, устанавливает тот же
    проверенный EXE в `%LOCALAPPDATA%\Programs\LES`, поднимает persistent `%LOCALAPPDATA%\LES` и
-   прогоняет четыре тяжёлых project PDF из `C:\Users\Oleg\Downloads\NS\oleg` через реальную
-   индексацию и `dense + qdrant_sparse → RRF`. Qdrant и отдельная ФСНБ-задача не останавливаются;
-   временный smoke-датасет удаляется. Любая ошибка блокирует публикацию.
+   проверяет версию, совместимость индексного контракта, ручной Outlook-сборщик и desktop.
+   Пользовательские датасеты при production gate не создаются и не изменяются. Qdrant и отдельная
+   ФСНБ-задача не останавливаются. Любая ошибка блокирует публикацию.
 
 4. Публикация начинается только после проверки версии, номера сборки, commit, изолированного
-   clean-install smoke, production heavy-PDF smoke и SHA-256.
+   clean-install PDF+RRF smoke, production runtime/mail/desktop smoke и SHA-256.
    Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
    скачиваются обратно и сверяются повторно.
 

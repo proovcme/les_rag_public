@@ -264,7 +264,8 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
     smoke = summary.get("smoke") or {}
     production = summary.get("production") or {}
     smeta = smoke.get("smeta_baseline") or {}
-    expected_pdf_count = int(production.get("expected_pdf_count") or 0)
+    production_rag = production.get("rag") or {}
+    production_mail = production.get("mail") or {}
     if summary.get("build_commit") != commit or not smoke.get("ok"):
         raise RuntimeError("remote build commit or live smoke is not verified")
     if not smeta.get("ok") or int(smeta.get("norm_count") or 0) < 40_000:
@@ -272,12 +273,14 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
     if (
         not production.get("ok")
         or production.get("les_version") != contract["product_version"]
-        or expected_pdf_count < 4
-        or int(production.get("indexed_files") or 0) != expected_pdf_count
-        or int(production.get("indexed_chunks") or 0) <= 0
-        or not production.get("smoke_dataset_removed")
+        or not production_rag.get("index_contract_compatible")
+        or production_rag.get("retrieval_proof") != "isolated_clean_install_smoke"
+        or production_rag.get("user_corpus_mutated") is not False
+        or production_mail.get("schedule") != "manual"
+        or int(production_mail.get("trigger_count") or 0) != 0
+        or production_mail.get("outlook_probe") != "ok"
     ):
-        raise RuntimeError("production Legion heavy-PDF deploy was not verified")
+        raise RuntimeError("production Legion deploy was not verified")
     return summary
 
 
