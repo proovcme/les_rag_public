@@ -102,9 +102,11 @@ def test_mail_settings_are_configurator_only():
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
 
     assert "def build_mail_settings()" in mail
-    assert "Настройка почтовой сборки" in mail
-    assert "Classic Outlook на Legion" in mail
-    assert "запускается только вручную" in mail
+    assert "Единый Журнал Импорта Корреспонденции" in mail
+    assert 'ui.label("Classic Outlook")' in mail
+    assert "Legion" not in mail
+    assert "легион" not in mail.casefold()
+    assert "Локальный ручной сборщик" in mail
     assert "Забрать новые письма" in mail
     assert ".sov-mail-settings-page" in styles
     admin_shell = app_shell.split("async def classic_admin_page", 1)[1]

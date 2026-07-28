@@ -273,3 +273,46 @@ def test_dataset_registry_uses_uikit_and_keeps_operator_controls_secondary():
         ".sov-dataset-disclosure",
     ):
         assert contract in UIKIT_CSS
+
+
+def test_mail_surfaces_use_uikit_and_keep_host_names_out_of_product_copy():
+    mail = Path("sovushka/pages/mail.py").read_text(encoding="utf-8")
+
+    assert "sov-mail-page" in mail
+    assert "sov-mail-workbench" in mail
+    assert "sov-mail-settings-hero" in mail
+    assert '"Спросить в чате"' in mail
+    assert "action_button(" in mail
+    assert "text_field(" in mail
+    assert "render_feedback_state(" in mail
+    assert "Legion" not in mail
+    assert "легион" not in mail.casefold()
+
+    for contract in (
+        ".sov-mail-workbench",
+        ".sov-mail-account--active",
+        ".sov-mail-message",
+        ".sov-mail-settings-section",
+    ):
+        assert contract in UIKIT_CSS
+
+
+def test_tools_surface_separates_sources_from_connected_prompt_editor():
+    tools = Path("sovushka/pages/instrumenty.py").read_text(encoding="utf-8")
+
+    assert "sov-tools-page" in tools
+    assert '"Источники данных"' in tools
+    assert '"Системные промпты"' in tools
+    assert '"Подключён"' in tools
+    assert "лишних: {extra}" in tools
+    assert "_render_prompt_block" not in tools
+    assert "action_button(" in tools
+    assert "panel(" in tools
+
+    for contract in (
+        ".sov-tools-hero",
+        ".sov-tools-source",
+        ".sov-tools-prompt",
+        ".sov-tools-layer",
+    ):
+        assert contract in UIKIT_CSS

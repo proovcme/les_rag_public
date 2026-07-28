@@ -49,13 +49,6 @@ LES_TONE_PROMPT = (
 )
 
 MODE_PROMPTS: dict[str, str] = {
-    "auto": (
-        "Режим Auto: сначала пойми намерение и область данных, затем выбери самый узкий честный "
-        "маршрут. Если запрос похож на поиск по документам — иди в RAG; если нужна смета — в smeta; "
-        "если проверка документации — в normcontrol; если файл приложен — считай файл главным "
-        "контекстом. Не подменяй широкие вопросы скрытыми реестрами или готовыми командами, когда "
-        "оператор ждёт модельный синтез."
-    ),
     "rag": (
         "# Роль\n"
         "Ты — опытный инженер-строитель и проектировщик, который читает выбранный корпус как проект, "
@@ -97,13 +90,6 @@ MODE_PROMPTS: dict[str, str] = {
         "- Если данных действительно нет в найденных источниках и карте корпуса, назови пробел и "
         "следующий разумный поиск: конкретный файл, раздел, таблицу, шифр, лист или запрос."
     ),
-    "smeta": (
-        "Ты — сметный агент ЛЕС. Получи ЛСР из исходника. Если ВОР нет, создай её из "
-        "спецификации, ТЗ или другого документа. Сам выбирай работы, поисковые запросы, нормы, "
-        "аналоги, покрытия и источники цен; вызывай доступные инструменты итеративно. Код исполняет "
-        "инструменты, проверяет структуру и единицы, считает и экспортирует. Сохраняй происхождение "
-        "денег и все строки исходника; незакрытые строки не должны скрывать рассчитанную часть."
-    ),
     "smeta_direct": (
         "Ты — сметный агент ЛЕС. Получи ЛСР из исходника, самостоятельно используя RAG и "
         "инструменты. Если ВОР отсутствует, создай её из переданного документа. Модель выбирает "
@@ -114,12 +100,6 @@ MODE_PROMPTS: dict[str, str] = {
         "Получить ЛСР из исходника. Модель сама решает, какие работы выделить и какие инструменты "
         "поиска норм и цен вызвать. Код исполняет выбранный ход и возвращает расчётную трассу."
     ),
-    "normcontrol": (
-        "Режим Нормоконтроль: проверяй проектную документацию по правилам, чек-листам, PDF/layout "
-        "и найденным требованиям. Замечание должно иметь объект проверки, правило/источник, суть "
-        "нарушения, риск и действие. Не превращай проверку в философию: если нет проектного PDF, "
-        "папки или датасета для layout/СПДС, прямо скажи, что проверить нельзя."
-    ),
     "review": (
         "Режим Review: смотри на документ как инженер-рецензент. Сначала фактические замечания и "
         "риски, затем вопросы, потом итог по масштабу запроса. Не украшай пустоту: если файл виден, но в нём нет "
@@ -129,35 +109,43 @@ MODE_PROMPTS: dict[str, str] = {
         "Свободный режим: можно рассуждать из общих знаний и говорить живее, но явно помечай, что "
         "база документов не использовалась. Не выдавай общие знания за проверенный факт ЛЕСа."
     ),
-    "kp": (
-        "Режим КП: готовь структуру коммерческого предложения на основе подтверждённых позиций, "
-        "условий, объёмов и источников цен. Если генератор КП ещё не собрал данные, не изображай "
-        "коммерческий отдел из воздуха: покажи каркас, пробелы и что нужно добрать."
-    ),
 }
 
 MODE_TOOL_CONTRACTS: dict[str, list[str]] = {
-    "auto": ["intent_router", "scope_resolver", "context_memory", "rag", "mode_handoff"],
     "rag": ["notebook_context", "retrieval", "rerank", "source_map", "validation", "artifact"],
-    "smeta": ["attachment", "scoped_rag", "vor_builder_reasoning", "price_gap_summary"],
     "smeta_direct": ["attachment", "scoped_rag", "vor_builder_reasoning", "price_gap_summary"],
     "smeta_harness": ["attachment", "scoped_rag", "vor_builder_reasoning", "price_gap_summary"],
-    "normcontrol": ["checklists", "pdf_layout", "doc_review", "source_map", "defense_contract"],
     "review": ["attachment_reader", "doc_review", "source_map", "remarks"],
     "free": ["llm_only", "session_memory"],
-    "kp": ["positions", "price_sources", "kp_artifact"],
 }
 
 MODE_LABELS: dict[str, str] = {
-    "auto": "Авто",
-    "rag": "Поиск / RAG",
-    "smeta": "Смета",
-    "smeta_direct": "Смета direct",
-    "smeta_harness": "Смета",
-    "normcontrol": "Нормоконтроль",
-    "review": "Review",
-    "free": "Свободный",
-    "kp": "КП",
+    "rag": "Поиск по источникам",
+    "smeta_direct": "Видимый ответ по смете",
+    "smeta_harness": "Сметный расчёт",
+    "review": "Чтение вложения",
+    "free": "Свободный ответ",
+}
+
+# Only prompts with a verified production call-site belong in the editable
+# registry. UI modes may route to these generators, but they do not own another
+# hidden system prompt.
+PROMPT_RUNTIME_USES: dict[str, list[str]] = {
+    "rag": [
+        "proxy.services.chat_evidence_application_service: grounded answer and strict retry",
+    ],
+    "smeta_direct": [
+        "proxy.routers.chat:_smeta_model_first_answer",
+    ],
+    "smeta_harness": [
+        "proxy.services.estimate_harness_service: batch planning and execution",
+    ],
+    "review": [
+        "proxy.routers.chat:_run_attachment_mode",
+    ],
+    "free": [
+        "proxy.routers.chat:_run_free_mode",
+    ],
 }
 
 
@@ -484,6 +472,8 @@ def _editable_prompt_entries() -> list[dict[str, Any]]:
             "default": defaults["common"],
             "value": _effective_prompt_value("common", defaults["common"]),
             "overridden": "common" in overrides,
+            "runtime_uses": ["all active model generators"],
+            "connected": True,
         },
         {
             "key": "tone",
@@ -492,6 +482,8 @@ def _editable_prompt_entries() -> list[dict[str, Any]]:
             "default": defaults["tone"],
             "value": _effective_prompt_value("tone", defaults["tone"]),
             "overridden": "tone" in overrides,
+            "runtime_uses": ["all active model generators"],
+            "connected": True,
         },
     ]
     for mode_id in MODE_PROMPTS:
@@ -504,6 +496,8 @@ def _editable_prompt_entries() -> list[dict[str, Any]]:
             "default": defaults[key],
             "value": _effective_prompt_value(key, defaults[key]),
             "overridden": key in overrides,
+            "runtime_uses": PROMPT_RUNTIME_USES[mode_id],
+            "connected": True,
         })
     return entries
 
@@ -545,6 +539,8 @@ def prompt_registry_snapshot() -> dict[str, Any]:
                 "label": MODE_LABELS.get(key, key),
                 "prompt": mode_prompt(key),
                 "tools": mode_tools(key),
+                "runtime_uses": PROMPT_RUNTIME_USES[key],
+                "connected": True,
             }
             for key in MODE_PROMPTS
         },

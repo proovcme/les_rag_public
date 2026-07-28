@@ -4,6 +4,8 @@ from pathlib import Path
 from proxy.services.prompt_registry_service import (
     build_mode_system_prompt,
     build_smeta_batch_system_prompt,
+    MODE_PROMPTS,
+    PROMPT_RUNTIME_USES,
     mode_tools,
     normcontrol_role_pack,
     prompt_registry_snapshot,
@@ -33,14 +35,38 @@ def test_prompt_registry_exposes_common_tone_modes_and_tools():
     assert "модель связывает" in snap["common"].lower()
     assert "skills/smeta/SKILL.md" in snap["common"]
     assert "ирони" in snap["tone"].lower()
-    assert "smeta" in snap["modes"]
-    assert "price_gap_summary" in snap["modes"]["smeta"]["tools"]
+    assert "smeta_harness" in snap["modes"]
+    assert "price_gap_summary" in snap["modes"]["smeta_harness"]["tools"]
     assert "retrieval" in snap["modes"]["rag"]["tools"]
     assert snap["role_packs"]["smeta_harness"]["id"] == "smeta_agent_v2"
     assert snap["role_packs"]["smeta_harness"]["planning_output_contract"]["schema"] == "smeta_mapping_plan_v1"
     assert snap["role_packs"]["smeta_harness"]["execution_result_contract"]["schema"] == "smeta_execution_result_v1"
     assert snap["role_packs"]["rag_search"]["id"] == "rag_search_researcher_v1"
     assert snap["role_packs"]["normcontrol"]["id"] == "normcontrol_reviewer_v1"
+
+
+def test_prompt_registry_exposes_only_verified_runtime_prompts():
+    snap = prompt_registry_snapshot()
+    expected = {"rag", "smeta_direct", "smeta_harness", "review", "free"}
+
+    assert set(MODE_PROMPTS) == expected
+    assert set(PROMPT_RUNTIME_USES) == expected
+    assert set(snap["modes"]) == expected
+    assert {"auto", "smeta", "normcontrol", "kp"}.isdisjoint(snap["modes"])
+    assert all(item["connected"] and item["runtime_uses"] for item in snap["editable"])
+    assert all(item["connected"] and item["runtime_uses"] for item in snap["modes"].values())
+
+
+def test_each_editable_mode_prompt_has_a_real_runtime_callsite():
+    chat = Path("proxy/routers/chat.py").read_text(encoding="utf-8")
+    evidence = Path("proxy/services/chat_evidence_application_service.py").read_text(encoding="utf-8")
+    harness = Path("proxy/services/estimate_harness_service.py").read_text(encoding="utf-8")
+
+    assert 'build_mode_system_prompt("free")' in chat
+    assert '"review",' in chat.split("build_mode_system_prompt(", 2)[2]
+    assert '"smeta_direct",' in chat
+    assert '"rag",' in evidence.split("build_mode_system_prompt(", 1)[1]
+    assert "build_smeta_batch_system_prompt(" in harness
 
 
 def test_mode_system_prompt_includes_mode_tone_without_tool_contracts():

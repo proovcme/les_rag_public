@@ -183,13 +183,13 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
 
 def test_instrumenty_has_editable_prompt_controls():
     source = inspect.getsource(instrumenty_page.build_instrumenty)
-    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+    styles = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
 
     assert "_render_prompt_editor" in source
     assert "api_patch(f\"/api/prompts/" in source
     assert "api_delete(f\"/api/prompts/" in source
-    assert "sov-prompt-editor" in source
-    assert ".sov-prompt-editor" in styles
+    assert "sov-tools-prompt" in source
+    assert ".sov-tools-prompt" in styles
 
 
 def test_instrumenty_refresh_buttons_bind_after_handlers_exist():

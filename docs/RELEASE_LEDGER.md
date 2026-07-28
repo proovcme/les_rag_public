@@ -4,20 +4,34 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-28)
+## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.13 (Sovushka dataset registry)
-номер сборки:              486     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.486 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.14 (Sovushka mail + connected tools)
+номер сборки:              487     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.487 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; dataset registry + corpus passport
-задеплоено на рантайм:     Mac 0.25.13 / build 486 target; Legion не затрагивался
+dev implementation:       codex/sovushka-ui-kit; mail UI + connected prompt registry
+задеплоено на рантайм:     Mac 0.25.14 / build 487 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.13 / build 486 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.14 / build 487 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.14 / build 487 — почта и подключённые инструменты
+>
+> Дата: 2026-07-29
+> Статус: target внутреннего web-only обновления Mac. Рабочая «Почта» получила
+> единый поток `ящик → цепочка → письмо → exact source в чат`, читаемый
+> provenance и адаптивные колонки. Настройка Е.Ж.И.К. использует UI KIT и больше
+> не называет конкретный компьютер: Classic Outlook показан как локальный
+> ручной read-only сборщик. «Инструменты» разделяют источники, ФГИС и вторичный
+> редактор промптов. Аудит runtime call-sites оставил пять реально вызываемых
+> режимных промптов (`rag`, `smeta_harness`, `smeta_direct`, `review`, `free`);
+> витринные дубли `auto`, `smeta`, `normcontrol`, `kp` удалены из editable
+> registry без изменения маршрутизации. API, RAG, почтовые данные и индексы не
+> изменяются; Tauri/DMG, Legion и public не затрагиваются.
+>
 > 0.25.13 / build 486 — реестр датасетов вместо технического dashboard
 >
 > Дата: 2026-07-28

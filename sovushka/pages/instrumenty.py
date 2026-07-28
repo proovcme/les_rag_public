@@ -12,12 +12,23 @@ from urllib.parse import quote
 from nicegui import ui
 
 from sovushka.state import add_log, api_delete, api_get, api_patch, api_post, last_api_error_text
+from sovushka.uikit.components import (
+    action_button,
+    panel,
+    section_heading,
+    status_badge,
+)
 
 _ROOT = Path(__file__).resolve().parents[2]
 _SRC_STATUS = {
     "ok": ("Готово", "var(--ok)"),
     "missing_degraded": ("Нужно добавить", "#d6a400"),
     "missing_blocking": ("Блокирует", "var(--err)"),
+}
+_SRC_TONES = {
+    "ok": "ok",
+    "missing_degraded": "warn",
+    "missing_blocking": "blocked",
 }
 
 
@@ -98,13 +109,6 @@ def _required_docs_text(item: dict) -> str:
         f"частично {summary.get('partial', 0)} · "
         f"нет {int(summary.get('missing_blocking') or 0) + int(summary.get('missing_degraded') or 0)}"
     )
-
-
-def _prompt_text(value: object, *, limit: int = 2200) -> str:
-    text = str(value or "").strip()
-    if len(text) > limit:
-        return text[: limit - 1].rstrip() + "…"
-    return text
 
 
 def _format_duration(value: object) -> str:
@@ -217,60 +221,70 @@ def build_instrumenty():
 
         return _handler
 
-    with ui.column().classes("w-full max-w-6xl mx-auto p-4 gap-4"):
-        with ui.row().classes("w-full items-end justify-between gap-3"):
-            with ui.column().classes("gap-1"):
-                ui.label("ИСТОЧНИКИ ДАННЫХ").style(
-                    "font-size:1.08rem;font-weight:900;letter-spacing:1px;"
+    with ui.column().classes("w-full sov-tools-page"):
+        with panel(variant="raised", classes="sov-tools-hero"):
+            with ui.row().classes("sov-tools-hero__row"):
+                section_heading(
+                    "Инструменты",
+                    "Рабочие источники ЛЕС и только те системные промпты, которые подключены к генерации.",
                 )
-                ui.label(
-                    "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию."
-                ).style("font-size:.72rem;color:var(--dim);")
-            with ui.row().classes("items-center gap-2"):
-                fgis_update_btn = ui.button("СКАЧАТЬ / ОБНОВИТЬ ФСНБ", icon="cloud_download").props(
-                    "dense no-caps"
-                ).style("min-height:40px;")
-                refresh_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
-
-        with ui.card().classes("card-les w-full"):
-            summary = ui.label("Загрузка источников…").style("font-size:.74rem;color:var(--dim);")
-            with ui.row().classes("w-full items-center gap-2"):
-                fgis_state_icon = ui.icon("o_schedule").style("font-size:20px;color:var(--dim);")
-                fgis_status = ui.label(
-                    "ФГИС ЦС: проверка состояния общего обновления…"
-                ).style("font-size:.78rem;font-weight:800;flex:1;font-variant-numeric:tabular-nums;")
-            fgis_progress = ui.linear_progress(value=0).props("rounded size=6px").classes("w-full")
-            fgis_progress.set_visibility(False)
-            fgis_detail = ui.label("").style(
-                "font-size:.66rem;color:var(--dim);font-variant-numeric:tabular-nums;text-wrap:pretty;"
-            )
-            with ui.row().classes("w-full gap-2").style("flex-wrap:wrap;"):
-                fgis_stage = ui.label("Этап: —").classes("sov-status-pill")
-                fgis_counter = ui.label("Готово: —").classes("sov-status-pill")
-                fgis_volume = ui.label("Скачано: —").classes("sov-status-pill")
-                fgis_eta = ui.label("Осталось: —").classes("sov-status-pill")
-            fgis_layers = ui.column().classes("w-full gap-1")
-            with ui.expansion("ЖУРНАЛ ОБНОВЛЕНИЯ", icon="o_terminal").classes("w-full").props("dense"):
-                fgis_log = ui.log(max_lines=40).classes("w-full").style(
-                    "height:180px;background:#111827;color:#d1fae5;border-radius:8px;"
-                    "padding:8px;font-size:11px;font-variant-numeric:tabular-nums;"
-                )
-                fgis_log.push("Ожидаем запуск обновления…")
-            fgis_log_state = {"seen": set(), "started": False}
-            cards = ui.column().classes("w-full gap-2")
-
-        with ui.card().classes("card-les w-full"):
-            with ui.row().classes("w-full items-end justify-between gap-3"):
-                with ui.column().classes("gap-1"):
-                    ui.label("СИСТЕМНЫЕ ПРОМТЫ").style(
-                        "font-size:1.02rem;font-weight:900;letter-spacing:1px;"
+                with ui.row().classes("sov-tools-actions"):
+                    refresh_btn = action_button(
+                        "Обновить",
+                        icon="o_refresh",
+                        compact=True,
+                        variant="secondary",
                     )
-                ui.label(
-                    "Общий характер ЛЕСа и режимные рамки. Это поведение модели, не evidence."
-                ).style("font-size:.72rem;color:var(--dim);")
-                refresh_prompts_btn = ui.button("ОБНОВИТЬ").props("dense no-caps")
-            prompt_summary = ui.label("Загрузка промтов…").style("font-size:.74rem;color:var(--dim);")
-            prompts_box = ui.column().classes("w-full gap-2")
+                    fgis_update_btn = action_button(
+                        "Обновить ФСНБ",
+                        icon="o_cloud_download",
+                        compact=True,
+                        variant="primary",
+                    )
+
+        with panel(variant="plain", classes="sov-tools-section"):
+            section_heading(
+                "Источники данных",
+                "Папки и датасеты, на которых ЛЕС считает сметы и проверяет документацию.",
+            )
+            summary = ui.label("Загрузка источников…").classes("sov-tools-summary")
+            with panel(variant="inset", classes="sov-tools-fgis"):
+                with ui.row().classes("sov-tools-fgis__head"):
+                    fgis_state_icon = ui.icon("o_schedule").classes("sov-tools-state-icon")
+                    fgis_status = ui.label(
+                        "ФГИС ЦС: проверка состояния общего обновления…"
+                    ).classes("sov-tools-fgis__title")
+                fgis_progress = ui.linear_progress(value=0).props("rounded size=6px").classes("w-full")
+                fgis_progress.set_visibility(False)
+                fgis_detail = ui.label("").classes("sov-tools-detail")
+                with ui.row().classes("sov-tools-metrics"):
+                    fgis_stage = ui.label("Этап: —").classes("sov-status-pill")
+                    fgis_counter = ui.label("Готово: —").classes("sov-status-pill")
+                    fgis_volume = ui.label("Скачано: —").classes("sov-status-pill")
+                    fgis_eta = ui.label("Осталось: —").classes("sov-status-pill")
+                fgis_layers = ui.column().classes("w-full gap-1")
+                with ui.expansion("Технический журнал", icon="o_terminal").classes(
+                    "w-full sov-tools-disclosure"
+                ).props("dense"):
+                    fgis_log = ui.log(max_lines=40).classes("w-full sov-tools-log")
+                    fgis_log.push("Ожидаем запуск обновления…")
+                fgis_log_state = {"seen": set(), "started": False}
+            cards = ui.column().classes("w-full sov-tools-source-list")
+
+        with panel(variant="plain", classes="sov-tools-section sov-tools-prompts"):
+            with ui.row().classes("sov-tools-section__head"):
+                section_heading(
+                    "Системные промпты",
+                    "Редактируются только пять реальных генераторов плюс общий характер и тон.",
+                )
+                refresh_prompts_btn = action_button(
+                    "Обновить",
+                    icon="o_refresh",
+                    compact=True,
+                    variant="quiet",
+                )
+            prompt_summary = ui.label("Проверяю подключения…").classes("sov-tools-summary")
+            prompts_box = ui.column().classes("w-full sov-tools-prompt-list")
 
         async def _process_source(source_id: str) -> None:
             d = await api_post(f"/api/service-sources/{source_id}/process", {})
@@ -313,100 +327,118 @@ def build_instrumenty():
             await _refresh_fgis_status()
 
         def _render_source(item: dict) -> None:
-            label, color = _SRC_STATUS.get(item.get("status"), (str(item.get("status") or "?"), "var(--dim)"))
+            source_status = str(item.get("status") or "")
+            label, _color = _SRC_STATUS.get(source_status, (source_status or "Неизвестно", "var(--dim)"))
             folders = [f for f in item.get("folders") or [] if f.get("path")]
             needed = "; ".join(item.get("needed_for") or []) or "служебная работа ЛЕС"
             accepted = ", ".join(item.get("accepted_files") or []) or "поддерживаемые файлы источника"
             required_docs = ((item.get("required_documents") or {}).get("items") or [])
-            with ui.card().classes("w-full").style("border-radius:8px;box-shadow:none;border:1px solid var(--line);"):
-                with ui.row().classes("w-full items-start justify-between gap-3"):
-                    with ui.column().classes("gap-1").style("min-width:0;"):
-                        with ui.row().classes("items-center gap-2"):
-                            ui.label(label).style(f"font-size:.72rem;font-weight:900;color:{color};")
-                            ui.label(str(item.get("domain") or "")).style("font-size:.68rem;color:var(--dim);")
-                        ui.label(str(item.get("label") or item.get("id") or "Источник")).style(
-                            "font-size:.92rem;font-weight:800;"
+            with panel(variant="inset", classes="sov-tools-source"):
+                with ui.row().classes("sov-tools-source__row"):
+                    ui.icon("o_folder_copy").classes("sov-tools-source__icon")
+                    with ui.column().classes("sov-tools-source__copy"):
+                        with ui.row().classes("sov-tools-source__identity"):
+                            ui.label(str(item.get("label") or item.get("id") or "Источник")).classes(
+                                "sov-tools-source__title"
+                            )
+                            status_badge(label, _SRC_TONES.get(source_status, "muted"))
+                        ui.label(str(item.get("domain") or "Служебный источник")).classes(
+                            "sov-tools-source__domain"
                         )
-                        ui.label(f"Папка: {_folder_text(item)}").style("font-size:.72rem;color:var(--fg);")
-                        ui.label(f"Класть сюда: {accepted}").style("font-size:.68rem;color:var(--dim);")
-                        ui.label(f"Нужно для: {needed}").style("font-size:.68rem;color:var(--dim);")
+                        ui.label(f"Папка: {_folder_text(item)}").classes("sov-tools-source__line")
+                        ui.label(f"Принимает: {accepted}").classes("sov-tools-source__meta")
+                        ui.label(f"Нужен для: {needed}").classes("sov-tools-source__meta")
                         action = str(item.get("operator_action") or "").strip()
                         if action:
-                            ui.label(action).style("font-size:.68rem;color:var(--fg);")
-                        ui.label(_facts_text(item)).style("font-size:.68rem;color:var(--dim);")
+                            ui.label(action).classes("sov-tools-source__line")
+                        ui.label(_facts_text(item)).classes("sov-tools-source__meta")
                         req_text = _required_docs_text(item)
                         if req_text:
-                            ui.label(req_text).style("font-size:.68rem;color:var(--dim);font-weight:700;")
-                    with ui.row().classes("items-center gap-1"):
+                            ui.label(req_text).classes("sov-tools-source__meta sov-tools-source__meta--strong")
+                    with ui.row().classes("sov-tools-source__actions"):
                         if folders:
-                            ui.button(icon="folder_open", on_click=_ui_handler(_open_folder, folders[0]["path"])).props(
-                                "dense flat round"
+                            action_button(
+                                icon="o_folder_open",
+                                on_click=_ui_handler(_open_folder, folders[0]["path"]),
+                                variant="quiet",
+                                compact=True,
+                                icon_only=True,
+                                aria_label="Открыть папку источника",
                             ).tooltip("Открыть папку источника")
-                        ui.button(icon="play_arrow", on_click=_ui_handler(_process_source, str(item.get("id")))).props(
-                            "dense flat round"
+                        action_button(
+                            icon="o_play_arrow",
+                            on_click=_ui_handler(_process_source, str(item.get("id"))),
+                            variant="secondary",
+                            compact=True,
+                            icon_only=True,
+                            aria_label=item.get("process_label") or "Проверить источник",
                         ).tooltip(item.get("process_label") or "Проверить источник")
                         if str(item.get("id") or "") == "gesn_base":
-                            ui.button(icon="cloud_download", on_click=_ui_handler(_update_gesn_from_fgis)).props(
-                                "dense flat round"
+                            action_button(
+                                icon="o_cloud_download",
+                                on_click=_ui_handler(_update_gesn_from_fgis),
+                                variant="secondary",
+                                compact=True,
+                                icon_only=True,
+                                aria_label="Обновить базу ГЭСН",
                             ).tooltip("Скачать/обновить базу ГЭСН из ФГИС ЦС")
                 if required_docs:
-                    with ui.expansion("Какие документы нужны", icon="inventory_2").classes("w-full").props("dense"):
+                    with ui.expansion("Какие документы нужны", icon="o_inventory_2").classes(
+                        "w-full sov-tools-disclosure"
+                    ).props("dense"):
                         for req in required_docs:
-                            req_label, req_color = _SRC_STATUS.get(
+                            req_label, _req_color = _SRC_STATUS.get(
                                 req.get("status"),
                                 (str(req.get("status") or "?"), "var(--dim)"),
                             )
                             preferred = ", ".join(req.get("preferred_files") or []) or "не задано"
                             accepted_raw = ", ".join(req.get("accepted_files") or []) or "не задано"
                             found = int(req.get("found_preferred_count") or 0) + int(req.get("found_raw_count") or 0)
-                            with ui.element("div").classes("w-full").style(
-                                "border-top:1px solid var(--line);padding:6px 0;"
-                            ):
-                                with ui.row().classes("w-full items-start justify-between gap-2"):
-                                    with ui.column().classes("gap-0").style("min-width:0;"):
-                                        ui.label(str(req.get("label") or req.get("id") or "Документ")).style(
-                                            "font-size:.76rem;font-weight:800;"
+                            with ui.element("div").classes("sov-tools-required-doc"):
+                                with ui.row().classes("sov-tools-required-doc__row"):
+                                    with ui.column().classes("sov-tools-required-doc__copy"):
+                                        ui.label(str(req.get("label") or req.get("id") or "Документ")).classes(
+                                            "sov-tools-required-doc__title"
                                         )
-                                        ui.label(f"preferred: {preferred}").style(
-                                            "font-size:.66rem;color:var(--dim);"
+                                        ui.label(f"Предпочтительно: {preferred}").classes(
+                                            "sov-tools-source__meta"
                                         )
-                                        ui.label(f"raw accepted: {accepted_raw}").style(
-                                            "font-size:.66rem;color:var(--dim);"
+                                        ui.label(f"Принимается: {accepted_raw}").classes(
+                                            "sov-tools-source__meta"
                                         )
                                         if req.get("needed_for"):
-                                            ui.label("нужно для: " + "; ".join(req.get("needed_for") or [])).style(
-                                                "font-size:.66rem;color:var(--fg);"
+                                            ui.label("Нужно для: " + "; ".join(req.get("needed_for") or [])).classes(
+                                                "sov-tools-source__line"
                                             )
-                                    with ui.column().classes("items-end gap-0"):
-                                        ui.label(req_label).style(
-                                            f"font-size:.68rem;font-weight:900;color:{req_color};"
+                                    with ui.column().classes("items-end gap-1"):
+                                        status_badge(
+                                            req_label,
+                                            _SRC_TONES.get(str(req.get("status") or ""), "muted"),
                                         )
-                                        ui.label(f"найдено: {found}").style("font-size:.64rem;color:var(--dim);")
-
-        def _render_prompt_block(title: str, text: str, *, tools: list[str] | None = None) -> None:
-            with ui.expansion(title, icon="article").classes("w-full").props("dense"):
-                if tools:
-                    ui.label("Карта режима: " + ", ".join(tools)).style(
-                        "font-size:.68rem;color:var(--dim);margin-bottom:6px;"
-                    )
-                ui.markdown("```text\n" + _prompt_text(text).replace("```", "'''") + "\n```").classes(
-                    "w-full sov-prompt-preview sov-prompt-registry"
-                ).style(
-                    "font-size:.72rem;line-height:1.45;"
-                )
+                                        ui.label(f"Найдено: {found}").classes("sov-tools-source__meta")
 
         def _render_prompt_editor(item: dict) -> None:
             key = str(item.get("key") or "")
             title = str(item.get("label") or key)
             overridden = bool(item.get("overridden"))
-            with ui.element("div").classes("sov-prompt-editor"):
-                with ui.row().classes("w-full items-center justify-between gap-2"):
-                    with ui.column().classes("gap-0").style("min-width:0;"):
-                        ui.label(title).style("font-size:.82rem;font-weight:900;")
-                        ui.label("изменён" if overridden else "по умолчанию").style(
-                            "font-size:.66rem;color:var(--dim);"
-                        )
-                    with ui.row().classes("items-center gap-1"):
+            runtime_uses = [str(value) for value in item.get("runtime_uses") or []]
+            with ui.expansion(title, icon="o_tune").classes(
+                "w-full sov-tools-prompt"
+            ).props("dense"):
+                with ui.row().classes("sov-tools-prompt__meta"):
+                    status_badge("Подключён", "ok")
+                    ui.label("изменён оператором" if overridden else "встроенный").classes(
+                        "sov-tools-source__meta"
+                    )
+                if runtime_uses:
+                    ui.label("Используется: " + " · ".join(runtime_uses)).classes(
+                        "sov-tools-prompt__runtime"
+                    )
+                with ui.column().classes("w-full sov-tools-prompt__editor"):
+                    editor = ui.textarea(value=str(item.get("value") or "")).props(
+                        "outlined dense autogrow"
+                    ).classes("w-full sov-prompt-textarea")
+                    with ui.row().classes("sov-tools-prompt__actions"):
                         async def _save_prompt() -> None:
                             d = await api_patch(f"/api/prompts/{quote(key, safe='')}", {"value": editor.value or ""})
                             if isinstance(d, dict):
@@ -423,43 +455,40 @@ def build_instrumenty():
                             else:
                                 ui.notify(last_api_error_text("Промт не сброшен"), type="negative")
 
-                        ui.button("Сохранить", icon="o_save", on_click=_save_prompt).props(
-                            "dense no-caps"
+                        action_button(
+                            "Сохранить",
+                            icon="o_save",
+                            on_click=_save_prompt,
+                            compact=True,
+                            variant="primary",
                         )
-                        ui.button(icon="o_restart_alt", on_click=_reset_prompt).props(
-                            'flat round dense aria-label="Сбросить промт"'
-                        ).tooltip("Сбросить к встроенному промту")
-                editor = ui.textarea(value=str(item.get("value") or "")).props(
-                    "outlined dense autogrow"
-                ).classes("w-full sov-prompt-textarea")
+                        reset = action_button(
+                            "Сбросить",
+                            icon="o_restart_alt",
+                            on_click=_reset_prompt,
+                            compact=True,
+                            variant="quiet",
+                        )
+                        if not overridden:
+                            reset.props("disable")
 
         async def _refresh_prompts() -> None:
             d = await api_get("/api/prompts")
             if not isinstance(d, dict):
                 ui.notify(last_api_error_text("Промты недоступны"), type="negative")
                 return
-            modes = d.get("modes") or {}
             editable = [item for item in d.get("editable") or [] if isinstance(item, dict)]
+            connected = [item for item in editable if item.get("connected")]
             changed = sum(1 for item in editable if item.get("overridden"))
+            extra = len(editable) - len(connected)
             prompt_summary.text = (
-                f"Registry: {d.get('schema', '?')} · редактируемых: {len(editable)} · "
-                f"изменённых: {changed} · файл: {d.get('overrides_path') or '—'}"
+                f"Подключено: {len(connected)} · лишних: {extra} · изменений: {changed}. "
+                "Правка применяется к следующему вызову модели."
             )
             prompts_box.clear()
             with prompts_box:
-                for item in editable:
+                for item in connected:
                     _render_prompt_editor(item)
-                ui.separator()
-                for mode_id, item in modes.items():
-                    if isinstance(item, dict):
-                        label = str(item.get("label") or mode_id)
-                        prompt = str(item.get("prompt") or "")
-                        tools = [str(t) for t in item.get("tools") or []]
-                    else:
-                        label = str(mode_id)
-                        prompt = str(item or "")
-                        tools = []
-                    _render_prompt_block(f"{label} · {mode_id}", prompt, tools=tools)
 
         async def _refresh() -> None:
             d = await api_get("/api/service-sources")
@@ -498,18 +527,22 @@ def build_instrumenty():
             fgis_status.text = status_text
             fgis_detail.text = detail_text
             state = str(progress.get("state") or "idle")
+            state_tone = "muted"
             if running:
                 fgis_state_icon.name = "o_cloud_download"
-                fgis_state_icon.style("color:var(--accent);")
+                state_tone = "accent"
             elif state in {"done", "partial"}:
                 fgis_state_icon.name = "o_check_circle"
-                fgis_state_icon.style("color:var(--ok);")
+                state_tone = "ok"
             elif state in {"failed", "interrupted"}:
                 fgis_state_icon.name = "o_error"
-                fgis_state_icon.style("color:var(--err);")
+                state_tone = "error"
             else:
                 fgis_state_icon.name = "o_schedule"
-                fgis_state_icon.style("color:var(--dim);")
+            fgis_state_icon.classes(
+                remove="sov-tools-state-icon--accent sov-tools-state-icon--ok sov-tools-state-icon--error sov-tools-state-icon--muted",
+                add=f"sov-tools-state-icon--{state_tone}",
+            )
             fgis_stage.text = f"Этап: {progress.get('stage_label') or 'ожидание'}"
             completed = progress.get("completed")
             total = progress.get("total")
@@ -526,23 +559,19 @@ def build_instrumenty():
             with fgis_layers:
                 for layer in d.get("layers") or []:
                     layer_state = str(layer.get("state") or "pending")
-                    icon_name, icon_color, state_label = {
-                        "done": ("o_check_circle", "var(--ok)", "готово"),
-                        "running": ("o_downloading", "var(--accent)", "выполняется"),
-                        "warning": ("o_warning", "var(--warn)", "нужен повтор"),
-                        "error": ("o_error", "var(--err)", "остановлено"),
-                    }.get(layer_state, ("o_schedule", "var(--dim)", "ожидает"))
-                    with ui.row().classes("w-full items-center gap-2").style(
-                        "padding:5px 7px;border:1px solid var(--line);border-radius:7px;"
-                    ):
-                        ui.icon(icon_name).style(f"font-size:16px;color:{icon_color};")
-                        ui.label(str(layer.get("label") or "Слой")).style(
-                            "font-size:.7rem;font-weight:750;flex:1;"
-                        )
+                    icon_name, layer_tone, state_label = {
+                        "done": ("o_check_circle", "ok", "готово"),
+                        "running": ("o_downloading", "accent", "выполняется"),
+                        "warning": ("o_warning", "warn", "нужен повтор"),
+                        "error": ("o_error", "error", "остановлено"),
+                    }.get(layer_state, ("o_schedule", "muted", "ожидает"))
+                    with ui.row().classes(f"sov-tools-layer sov-tools-layer--{layer_tone}"):
+                        ui.icon(icon_name).classes("sov-tools-layer__icon")
+                        ui.label(str(layer.get("label") or "Слой")).classes("sov-tools-layer__title")
                         detail = str(layer.get("detail") or "").strip()
                         if detail:
-                            ui.label(detail).style("font-size:.64rem;color:var(--dim);")
-                        ui.label(state_label).style(f"font-size:.64rem;font-weight:800;color:{icon_color};")
+                            ui.label(detail).classes("sov-tools-layer__detail")
+                        ui.label(state_label).classes("sov-tools-layer__state")
             raw_lines = [str(line) for line in d.get("log_tail") or []]
             current = progress.get("current") or {}
             current_name = " · ".join(
