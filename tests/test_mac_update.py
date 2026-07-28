@@ -124,9 +124,39 @@ def test_mac_builder_excludes_repo_docs_desktop_and_user_state():
             mac_update.normalize_path(path)
 
 
+def test_mac_stamp_keeps_untouched_owned_hashes_and_updates_changed_file(tmp_path):
+    runtime = tmp_path / "runtime"
+    changed = runtime / "proxy" / "example.py"
+    changed.parent.mkdir(parents=True)
+    changed.write_bytes(b"new\n")
+    manifest = {
+        "update_id": "unit",
+        "branch": "codex/audit-rag",
+        "target_commit": "b" * 40,
+        "product_version": "0.25.4",
+        "build_number": 477,
+        "files": [{"path": "proxy/example.py", "operation": "replace"}],
+    }
+    previous = {
+        "file_hash_bundle": {
+            "sovushka/styles.py": "d8c9c495140ecd28",
+            "proxy/example.py": "old",
+        }
+    }
+
+    stamp = mac_update_apply._stamp(manifest, runtime, previous)
+
+    assert stamp["file_hash_bundle"]["sovushka/styles.py"] == "d8c9c495140ecd28"
+    assert stamp["file_hash_bundle"]["proxy/example.py"] == _sha(b"new\n")[:16]
+
+
 def test_mac_helper_applies_atomically_and_keeps_recovery_copy(tmp_path, monkeypatch):
     runtime, update_root, feed = _prepared_update(
         tmp_path, current=b"old\n", target=b"new\n"
+    )
+    (runtime / ".les_deploy_stamp.json").write_text(
+        json.dumps({"file_hash_bundle": {"sovushka/styles.py": "owned-prefix"}}),
+        encoding="utf-8",
     )
     monkeypatch.setattr(mac_update_apply, "_restart", lambda _services: None)
     monkeypatch.setattr(mac_update_apply, "_wait_ready", lambda _manifest: None)
@@ -139,6 +169,11 @@ def test_mac_helper_applies_atomically_and_keeps_recovery_copy(tmp_path, monkeyp
     assert status["state"] == "ready"
     backup = Path(status["backup_root"])
     assert (backup / "files" / "proxy" / "example.py").read_bytes() == b"old\n"
+    assert (backup / "previous_deploy_stamp.json").is_file()
+    installed_stamp = json.loads(
+        (runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8")
+    )
+    assert installed_stamp["file_hash_bundle"]["sovushka/styles.py"] == "owned-prefix"
 
 
 def test_mac_helper_rolls_back_when_smoke_fails(tmp_path, monkeypatch):

@@ -35,7 +35,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > backup→atomic replace→restart→version/health/index-contract smoke; ошибка
 > возвращает предыдущие файлы и deploy stamp. Публикации/tag/GitHub Release нет.
 > Профильный gate: `178 passed`, повторный критический subset `82 passed`;
-> `make verify`: `2785 collected`. Полная release-suite намеренно не запускалась:
+> `make verify`: `2788 collected`. Полная release-suite намеренно не запускалась:
 > этот внутренний Mac code-update не является app/Windows/public release.
 
 > 0.25.3 / build 476 — P0.3 prepare-once/apply-fast internal updater

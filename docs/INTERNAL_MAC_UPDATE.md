@@ -40,12 +40,17 @@ make status-mac-update
 - частично восстановленный старый runtime принимается только когда его полный текущий SHA
   подтверждён сохранённым `file_hash_bundle` прежнего deploy stamp для того же пути; произвольный
   drift продолжает блокировать установку;
+- одноразовый исторический drift допускается только через committed
+  `config/mac_runtime_reconciliation.json` с точными current/target SHA; после замены runtime
+  снова обязан совпасть с Git;
 - пакет content-addressed и локальный: updater не публикует feed, tag, GitHub Release и не
   обращается к Legion;
 - повторная установка уже применённого пакета возвращает «Mac уже обновлён».
 
 Кэш: `/Users/ovc/LES_update_cache/mac`. Точки отката:
 `/Users/ovc/LES_recovery/mac-updates/<update_id>`.
+Каждая recovery-точка хранит также `previous_deploy_stamp.json`, а новый stamp наследует SHA
+нетронутых файлов и обновляет только фактически заменённые пути.
 
 ## Проверка
 

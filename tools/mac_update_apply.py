@@ -170,12 +170,24 @@ def _wait_ready(manifest: dict[str, Any], timeout: int = 90) -> None:
     raise RuntimeError(f"Mac update smoke did not converge: {last}")
 
 
-def _stamp(manifest: dict[str, Any], runtime: Path) -> dict[str, Any]:
+def _stamp(
+    manifest: dict[str, Any],
+    runtime: Path,
+    previous: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     bundle = {
         str(entry["path"]): _current_hash(runtime / Path(*safe_relative_path(entry["path"]).parts))
         for entry in manifest["files"]
         if entry.get("operation") != "delete"
     }
+    previous_bundle = (previous or {}).get("file_hash_bundle")
+    merged_bundle = dict(previous_bundle) if isinstance(previous_bundle, dict) else {}
+    for entry in manifest["files"]:
+        path = str(entry["path"])
+        if entry.get("operation") == "delete":
+            merged_bundle.pop(path, None)
+        elif bundle.get(path):
+            merged_bundle[path] = str(bundle[path])[:16]
     return {
         "product_version": manifest["product_version"],
         "build_number": int(manifest["build_number"]),
@@ -188,7 +200,7 @@ def _stamp(manifest: dict[str, Any], runtime: Path) -> dict[str, Any]:
         "deployed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "deployed_by": "local",
         "deploy_method": "mac_update_bundle",
-        "file_hash_bundle": {key: value[:16] for key, value in bundle.items() if value},
+        "file_hash_bundle": merged_bundle,
         "notes": [
             f"transactional Mac update {manifest['update_id']}",
             f"{len(manifest['files'])} code files; user data untouched",
@@ -208,6 +220,7 @@ def apply_job(job_path: Path) -> int:
     backup: Path | None = None
     manifest: dict[str, Any] = {}
     previous_stamp: bytes | None = None
+    previous_stamp_payload: dict[str, Any] = {}
     changed: list[tuple[Path, bool]] = []
     try:
         lock_fd = _acquire_lock(lock_path)
@@ -238,10 +251,16 @@ def apply_job(job_path: Path) -> int:
             stamp_path = runtime / ".les_deploy_stamp.json"
             if stamp_path.is_file():
                 previous_stamp = stamp_path.read_bytes()
+                try:
+                    previous_stamp_payload = json.loads(previous_stamp)
+                except (ValueError, TypeError):
+                    previous_stamp_payload = {}
             (backup / "manifest.json").write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
                 encoding="utf-8",
             )
+            if previous_stamp is not None:
+                (backup / "previous_deploy_stamp.json").write_bytes(previous_stamp)
             with tempfile.TemporaryDirectory(prefix="les-mac-update-") as stage_dir:
                 stage = Path(stage_dir)
                 for entry in manifest["files"]:
@@ -281,7 +300,12 @@ def apply_job(job_path: Path) -> int:
 
         stamp_tmp = runtime / ".les_deploy_stamp.json.tmp"
         stamp_tmp.write_text(
-            json.dumps(_stamp(manifest, runtime), ensure_ascii=False, indent=2) + "\n",
+            json.dumps(
+                _stamp(manifest, runtime, previous_stamp_payload),
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
             encoding="utf-8",
         )
         os.replace(stamp_tmp, runtime / ".les_deploy_stamp.json")

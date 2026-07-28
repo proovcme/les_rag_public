@@ -25,6 +25,8 @@ UPDATE_ROOT = Path(
 BRANCH = "codex/audit-rag"
 SCHEMA = "les.mac-update.v1"
 FEED_SCHEMA = "les.mac-update-feed.v1"
+RECONCILIATION_SCHEMA = "les.mac-runtime-reconciliation.v1"
+RECONCILIATION_PATH = "config/mac_runtime_reconciliation.json"
 DENIED_PARTS = {
     ".env",
     ".git",
@@ -124,6 +126,38 @@ def _stamped_runtime_hashes(runtime: Path, stamp: dict[str, Any]) -> dict[str, s
     return accepted
 
 
+def _committed_reconciliation(
+    runtime: Path,
+    target: str,
+) -> tuple[dict[str, str], set[str]]:
+    """Resolve explicit one-time runtime drift authorized in committed Git."""
+    raw = git_bytes(target, RECONCILIATION_PATH)
+    if raw is None:
+        return {}, set()
+    payload = json.loads(raw)
+    if payload.get("schema") != RECONCILIATION_SCHEMA:
+        raise RuntimeError("unsupported Mac runtime reconciliation schema")
+    accepted: dict[str, str] = {}
+    forced: set[str] = set()
+    for entry in payload.get("entries") or []:
+        path = normalize_path(str(entry.get("path") or ""))
+        accepted_hash = str(entry.get("accepted_sha256") or "").lower()
+        target_hash = str(entry.get("target_sha256") or "").lower()
+        target_bytes = git_bytes(target, path)
+        if (
+            len(accepted_hash) != 64
+            or len(target_hash) != 64
+            or target_bytes is None
+            or sha256_bytes(target_bytes) != target_hash
+        ):
+            raise RuntimeError(f"invalid committed reconciliation entry: {path}")
+        current = runtime / Path(*PurePosixPath(path).parts)
+        if current.is_file() and sha256_file(current) == accepted_hash:
+            accepted[path] = accepted_hash
+            forced.add(path)
+    return accepted, forced
+
+
 def _changed_entries(base: str, target: str) -> list[tuple[str, str]]:
     subprocess.run(
         ["git", "merge-base", "--is-ancestor", base, target],
@@ -161,12 +195,20 @@ def build_update(
     output: Path = UPDATE_ROOT,
     contract: dict[str, Any] | None = None,
     accepted_runtime_hashes: dict[str, str] | None = None,
+    extra_replace_paths: set[str] | None = None,
 ) -> dict[str, Any]:
     base_commit = _resolve_commit(base)
     target_commit = _resolve_commit(target)
     contract = contract or patch_release.load_contract()
     accepted_runtime_hashes = accepted_runtime_hashes or {}
-    changes = _changed_entries(base_commit, target_commit)
+    extra_replace_paths = {
+        normalize_path(path) for path in (extra_replace_paths or set())
+    }
+    changes = sorted(
+        set(_changed_entries(base_commit, target_commit))
+        | {("replace", path) for path in extra_replace_paths},
+        key=lambda item: item[1],
+    )
     if not changes:
         raise ValueError("Mac update has no deployable changes")
 
@@ -181,7 +223,7 @@ def build_update(
                 continue
         elif after is None:
             raise ValueError(f"target file is missing from Git: {path}")
-        if before == after:
+        if before == after and path not in extra_replace_paths:
             continue
         entry = {
             "operation": operation,
@@ -268,10 +310,14 @@ def prepare() -> dict[str, Any]:
     target = patch_release.require_clean_pushed_branch(BRANCH)
     stamp = _runtime_stamp(RUNTIME)
     base = _runtime_base_commit(RUNTIME)
+    accepted_hashes = _stamped_runtime_hashes(RUNTIME, stamp)
+    reconciliation_hashes, forced_paths = _committed_reconciliation(RUNTIME, target)
+    accepted_hashes.update(reconciliation_hashes)
     return build_update(
         base=base,
         target=target,
-        accepted_runtime_hashes=_stamped_runtime_hashes(RUNTIME, stamp),
+        accepted_runtime_hashes=accepted_hashes,
+        extra_replace_paths=forced_paths,
     )
 
 
