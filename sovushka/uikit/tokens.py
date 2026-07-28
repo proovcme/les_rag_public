@@ -941,7 +941,7 @@ html {
     height: 36px !important;
     min-height: 36px !important;
     margin: 1px 0;
-    padding: 0 8px;
+    padding: 0 8px !important;
     border-radius: 7px;
     justify-content: flex-start !important;
     text-align: left !important;

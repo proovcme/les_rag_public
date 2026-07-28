@@ -73,6 +73,7 @@ def test_component_registry_stays_small_and_explicit():
 def test_navigation_has_one_icon_column_and_equal_primary_rows():
     assert ".sov-nav-switch--config .q-btn__content" not in UIKIT_CSS
     assert "height: 36px !important" in UIKIT_CSS
+    assert "padding: 0 8px !important" in UIKIT_CSS
     assert "gap: var(--sov-ui-icon-gap)" in UIKIT_CSS
     assert "flex: 0 0 var(--sov-ui-icon-column)" in UIKIT_CSS
 
