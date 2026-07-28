@@ -298,6 +298,13 @@ def deploy_stamp() -> dict[str, Any]:
     return st
 
 
+def public_deploy_stamp() -> dict[str, Any]:
+    """Operator-safe deploy state without the internal ownership hash bundle."""
+    stamp = dict(deploy_stamp())
+    stamp.pop("file_hash_bundle", None)
+    return stamp
+
+
 def version_info() -> dict[str, Any]:
     """Полный version-объект для /api/version и version-drawer. Без секретов."""
     gi = git_info()
@@ -307,7 +314,7 @@ def version_info() -> dict[str, Any]:
     except Exception:  # noqa: BLE001
         extractor = EXTRACTION_SCHEMA_VERSION
     align = runtime_alignment()
-    ds = deploy_stamp()
+    ds = public_deploy_stamp()
     import sys
     return {
         "product_version": PRODUCT_VERSION,

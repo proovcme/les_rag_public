@@ -1014,6 +1014,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         stop_dialog_btn.set_visibility(False)
                         send_btn = ui.button(
                             "Отправить",
+                            color=None,
                             icon="o_send",
                             on_click=lambda: asyncio.create_task(send_chat()),
                         ).props("no-caps").classes("sov-send-btn")

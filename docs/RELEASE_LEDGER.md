@@ -7,16 +7,32 @@
 ## Текущее состояние (2026-07-28)
 
 ```
-версия продукта (SemVer):  0.25.4 (internal Mac target, audit stages 3–6)
-номер сборки:              477     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.477 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.5 (internal Mac UI correction)
+номер сборки:              478     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.478 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/audit-rag
-dev implementation:       codex/audit-rag; Evidence/Documents/Mail/golden + Mac updater
-задеплоено на рантайм:     Mac 0.25.0 / build 469; Legion 0.25.0 / build 473
+dev implementation:       codex/audit-rag; primary Chat/Studio/Config navigation
+задеплоено на рантайм:     Mac 0.25.5 / build 478; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          малый Mac code package → отдельная приёмка; Legion отключён
-рантайм /api/version:      Mac 0.25.0 / build 469; Legion 0.25.0 / build 473
+следующий выпуск:          Legion только после отдельной команды и приёмки
+рантайм /api/version:      Mac 0.25.5 / build 478; runtime alignment обязан быть aligned
 ```
+
+> 0.25.5 / build 478 — классическая зелёная Совушка в структуре Locia
+>
+> Дата: 2026-07-28
+> Статус: внутреннее code-обновление Mac; Legion, public, app bundle и
+> пользовательские данные не затрагиваются. В шапке всех операторских экранов
+> постоянно видны три равноправные кнопки с иконками: «Чат», «Студия»,
+> «Конфигурация». Desktop получил Locia-like левый rail 224 px, вертикальные
+> рабочие разделы и широкую рабочую область; mobile сохраняет компактную
+> верхнюю навигацию. Холодный серо-синий фон заменён тёплым нейтральным,
+> активные действия — классическим зелёным; панели используют тихие границы и
+> малую глубину вместо стеклянных градиентов. Активная поверхность выделена,
+> на mobile остаются три 40×40 иконки; дублирующие Chat/Studio убраны из
+> вторичного ряда вкладок.
+> Версионный бейдж сокращён до product/build, полный commit остаётся в его
+> диагностическом диалоге. Переход `?tab=studio` закреплён как явный маршрут.
 
 > 0.25.4 / build 477 — stages 3–6 + архитектурный Mac updater
 >

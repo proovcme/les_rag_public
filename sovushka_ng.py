@@ -231,7 +231,7 @@ async def classic_chat_page(request: Request):
     # Chat shell: chat/history plus the no-AI Documents explorer.
     # Documents are a reader UI, not an admin-only console; API permissions still
     # stay on the backend routes.
-    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell"):
+    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell"):
         tabs, tr = build_header(
             is_admin,
             role,
@@ -240,6 +240,11 @@ async def classic_chat_page(request: Request):
             include_datasets=is_admin,
             include_documents=True,
             admin_link=is_admin,
+            active_primary=(
+                "studio"
+                if (request.query_params.get("tab") or "").strip().casefold() == "studio"
+                else "chat"
+            ),
         )
 
         tab_chat = tr["chat"]
@@ -255,12 +260,20 @@ async def classic_chat_page(request: Request):
                 val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
                 if val:
                     app.storage.user["last_chat_tab"] = str(val)
+                    primary = {"AI ЧАТ": "chat", "Студия": "studio"}.get(str(val))
+                    for key, button in (tr.get("_primary_nav") or {}).items():
+                        if key == primary:
+                            button.classes(add="sov-nav-switch--active")
+                            button.props(add='aria-current="page"')
+                        else:
+                            button.classes(remove="sov-nav-switch--active")
+                            button.props(remove="aria-current")
             except Exception:
                 pass
 
         tabs.on("update:model-value", _save_chat_tab)
 
-        with ui.tab_panels(tabs, value=tab_chat).classes("w-full flex-1").style(
+        with ui.tab_panels(tabs, value=tab_chat).classes("w-full flex-1 sov-app-content").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
             with ui.tab_panel(tab_chat):
@@ -283,10 +296,14 @@ async def classic_chat_page(request: Request):
             with ui.tab_panel(tab_history):
                 build_history(tabs, tab_chat)
 
-    _forced_chat_tab = bool((request.query_params.get("question") or "").strip()) or (
-        (request.query_params.get("tab") or "").strip().casefold() == "chat"
+    _requested_tab = (request.query_params.get("tab") or "").strip().casefold()
+    _forced_chat_tab = bool((request.query_params.get("question") or "").strip())
+    _query_tab = {"chat": "AI ЧАТ", "studio": "Студия"}.get(_requested_tab)
+    _last_tab = (
+        "AI ЧАТ"
+        if _forced_chat_tab
+        else (_query_tab or app.storage.user.get("last_chat_tab", "AI ЧАТ"))
     )
-    _last_tab = "AI ЧАТ" if _forced_chat_tab else app.storage.user.get("last_chat_tab", "AI ЧАТ")
     _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents,
                "Студия": tab_studio, "CAD/BIM": tab_cad_bim,
                "Почта": tab_mail, "ИСТОРИЯ": tab_history}.get(_last_tab)
@@ -315,7 +332,7 @@ async def classic_admin_page(request: Request):
     _apply_theme()
 
     # Layout: Header (со встроенными табами) + Content + Footer
-    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell"):
+    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell"):
         # Граф знаний: canvas-2D со своей физикой + тумблер «связи НТД» (Олегу зашёл больше cosmos).
         # /graph-cosmos (3d-force-graph) оставлен как альтернатива.
         visualizer_url = "/graph"
@@ -327,6 +344,7 @@ async def classic_admin_page(request: Request):
             holder,
             include_chat=False,
             chat_link=True,
+            active_primary="config",
             visualizer_url=visualizer_url,
         )
 
@@ -349,7 +367,7 @@ async def classic_admin_page(request: Request):
 
         # Контент — Состояние (landing) / Датасеты / Визуал
         _default_tab = tab_diag
-        with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1").style(
+        with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1 sov-app-content").style(
             "background:var(--bg);overflow-y:auto;padding:0;"
         ):
             with ui.tab_panel(tab_diag):

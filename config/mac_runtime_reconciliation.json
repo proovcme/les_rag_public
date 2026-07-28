@@ -4,7 +4,7 @@
     {
       "path": "sovushka/styles.py",
       "accepted_sha256": "d8c9c495140ecd28ece932862f91ec4cae35311ae4c78d33723276721f3cd79a",
-      "target_sha256": "0e7ffe45536e2a32dacfac08595d4aeb98aeee209537433150a49c8099289e47",
+      "target_sha256": "279bca4825e2de43cc11e260a9cc15a4ae1dc536c49547618d3f869cc97bed5e",
       "reason": "Exact file hash recorded by the pre-0.25.4 cancelled-rollout deploy stamp."
     }
   ]

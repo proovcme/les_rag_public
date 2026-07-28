@@ -26,6 +26,7 @@ def build_header(
     include_mail: bool = True,
     admin_link: bool = False,
     chat_link: bool = False,
+    active_primary: str = "",
     visualizer_url: str | None = None,
 ):
     """
@@ -43,7 +44,9 @@ def build_header(
         "display:flex;align-items:center;padding:0 16px;height:56px;gap:0;"
     ):
         # ── Лого ──────────────────────────────────────────────────────────────
-        with ui.row().classes("items-center").style("gap:6px;margin-right:12px;white-space:nowrap;flex-wrap:nowrap;"):
+        with ui.row().classes("items-center sov-brand-block").style(
+            "gap:6px;margin-right:12px;white-space:nowrap;flex-wrap:nowrap;"
+        ):
             ui.icon("o_forest").style("font-size:21px;color:var(--accent);")
             ui.label("Л.Е.С.").classes("les-brand")
 
@@ -110,11 +113,11 @@ def build_header(
             info = await api_get("/api/version")
             if isinstance(info, dict):
                 _ver_state["info"] = info
-                # бейдж ведёт с DEPLOYED commit (что реально запущено), git рантайма отстаёт при cp-деплое
-                c = info.get("deployed_commit") or info.get("git_commit", "")
-                h = info.get("harness_version", "")
-                ver_badge.set_text(f"{info.get('app_version','?')}" + (f" · h{h}" if h else "")
-                                   + (f" · {c}" if c and c != "unknown" else ""))
+                # В шапке оставляем читаемую версию; commit и contract доступны
+                # в диалоге по клику, а не съедают место основной навигации.
+                product = info.get("product_version") or info.get("app_version", "?")
+                build = info.get("build_number")
+                ver_badge.set_text(f"{product}" + (f" · {build}" if build is not None else ""))
                 al = (info.get("runtime_alignment") or {}).get("status")
                 ds = (info.get("deploy_stamp") or {}).get("status")
                 if al == "divergent" or ds in ("stale", "deploy_stamp_missing"):
@@ -124,7 +127,61 @@ def build_header(
 
         ui.timer(0.4, _load_version, once=True)
 
-        # ── Табы (по центру, растягиваются) ───────────────────────────────────
+        # ── Первичные поверхности: одинаковы в чате, Студии и конфигурации ───
+        if is_admin and (chat_link or admin_link):
+            nav_buttons: dict[str, object] = {}
+
+            def _primary_button(
+                key: str,
+                label: str,
+                icon: str,
+                target: str,
+                tooltip: str,
+            ):
+                active = key == active_primary
+                classes = (
+                    f"sov-nav-switch sov-nav-switch--{key}"
+                    + (" sov-nav-switch--active" if active else "")
+                )
+                button = ui.button(
+                    label,
+                    color=None,
+                    icon=icon,
+                    on_click=lambda target=target: ui.navigate.to(target),
+                ).props(
+                    f'flat no-caps aria-label="{label}"'
+                    + (' aria-current="page"' if active else "")
+                ).classes(classes).tooltip(tooltip)
+                nav_buttons[key] = button
+                return button
+
+            with ui.row().classes("sov-primary-nav"):
+                _primary_button(
+                    "chat",
+                    "Чат",
+                    "o_forum",
+                    "/classic?tab=chat",
+                    "Перейти в рабочий чат",
+                )
+                _primary_button(
+                    "studio",
+                    "Студия",
+                    "o_edit_note",
+                    "/classic?tab=studio",
+                    "Открыть Студию документов",
+                )
+                _primary_button(
+                    "config",
+                    "Конфигурация",
+                    "o_tune",
+                    "/les/classic",
+                    "Открыть состояние и настройки ЛЕС",
+                )
+            tab_refs["_primary_nav"] = nav_buttons
+
+        ui.label("РАБОЧИЕ РАЗДЕЛЫ").classes("sov-sidebar-caption")
+
+        # ── Вторичные рабочие разделы ─────────────────────────────────────────
         with ui.tabs().classes("les-top-tabs").props("dense no-caps").style(
             "flex:1;min-width:0;background:transparent;border:none;"
             "font-family:var(--font);font-size:.65rem;font-weight:700;"
@@ -140,12 +197,16 @@ def build_header(
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
-                tab_refs["chat"]     = ui.tab("AI ЧАТ",         icon="o_forum")
+                tab_refs["chat"] = ui.tab("AI ЧАТ", icon="o_forum").classes(
+                    "sov-primary-tab-mirrored"
+                )
                 if include_datasets and "samovar" not in tab_refs:
                     tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
                 if include_documents and "documents" not in tab_refs:
                     tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
-                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_document")
+                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_note").classes(
+                        "sov-primary-tab-mirrored"
+                    )
                     tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
                 if include_mail and "mail" not in tab_refs:
                     tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
@@ -157,7 +218,9 @@ def build_header(
         ):
 
             # W5.3: индикатор доступности proxy (зелёный — на связи, красный — нет)
-            proxy_dot = ui.icon("circle").style("font-size:.6rem;color:#10b981;margin:0 2px;")
+            proxy_dot = ui.icon("circle").classes("sov-ui-header-utility").style(
+                "font-size:.6rem;color:#10b981;margin:0 2px;"
+            )
             proxy_dot.tooltip("связь с proxy")
 
             def _upd_proxy_dot():
@@ -169,7 +232,9 @@ def build_header(
 
             # Обновить
             ui.button(icon="o_refresh", on_click=lambda: asyncio.create_task(_full_refresh())
-            ).props('flat dense round aria-label="Обновить данные"').style("color:var(--dim);")
+            ).props('flat dense round aria-label="Обновить данные"').classes(
+                "sov-ui-header-utility"
+            ).style("color:var(--dim);")
 
             # Тема
             if app.storage.user.get("theme_default_migrated") != "0.24-light-2":
@@ -195,30 +260,14 @@ def build_header(
 
             theme_btn = ui.button(
                 icon=("o_dark_mode" if _dark_init else "o_light_mode"), on_click=_toggle_theme
-            ).props('flat dense round aria-label="Переключить тему"').style("color:var(--dim);")
+            ).props('flat dense round aria-label="Переключить тему"').classes(
+                "sov-ui-header-utility"
+            ).style("color:var(--dim);")
 
             if not _dark_init:
                 ui.run_javascript("if(window.Quasar){Quasar.Dark.set(false);}")
 
             if is_admin:
-                if chat_link:
-                    ui.button(
-                        "Чат",
-                        icon="o_forum",
-                        on_click=lambda: ui.navigate.to("/classic"),
-                    ).props("unelevated no-caps").classes(
-                        "sov-nav-switch sov-nav-switch--chat"
-                    ).tooltip("Перейти в рабочий чат")
-
-                if admin_link:
-                    ui.button(
-                        "Конфигурация",
-                        icon="o_tune",
-                        on_click=lambda: ui.navigate.to("/les/classic"),
-                    ).props("unelevated no-caps").classes(
-                        "sov-nav-switch sov-nav-switch--config"
-                    ).tooltip("Открыть состояние и настройки ЛЕС")
-
                 if visualizer_url:
                     ui.link("КВАДРАНТ ↗", target=visualizer_url, new_tab=True).classes(
                         "no-underline sov-ui-header-secondary"

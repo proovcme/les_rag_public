@@ -12,10 +12,13 @@ UIKIT_CSS = """
   --sov-ui-space-3: 12px;
   --sov-ui-space-4: 16px;
   --sov-ui-space-6: 24px;
-  --sov-ui-radius-control: 10px;
-  --sov-ui-radius-card: 14px;
+  --sov-ui-radius-control: 8px;
+  --sov-ui-radius-card: 10px;
   --sov-ui-hit: 40px;
-  --sov-ui-shadow-card: 0 10px 30px rgba(5, 12, 20, .10);
+  --sov-ui-shadow-card:
+    0 0 0 1px color-mix(in srgb, var(--border) 54%, transparent),
+    0 1px 2px rgba(20, 52, 34, .04),
+    0 8px 24px rgba(20, 52, 34, .045);
   --sov-ui-shadow-focus: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
@@ -45,7 +48,7 @@ html {
   position: relative;
   z-index: 20;
   border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--bg) 94%, transparent);
+  background: var(--bg-panel);
 }
 
 .sov-ui-card,
@@ -126,33 +129,113 @@ html {
   line-height: 1.45;
 }
 
+.sov-primary-nav {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--card-bg) 82%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border) 78%, transparent),
+    0 5px 16px rgba(15, 23, 42, .07);
+}
+
 .sov-nav-switch {
   min-height: var(--sov-ui-hit) !important;
-  padding: 0 15px !important;
-  border-radius: 11px !important;
+  padding: 0 12px !important;
+  border-radius: 7px !important;
   font-family: var(--sov-ui-font-prose) !important;
-  font-size: .76rem !important;
+  font-size: .72rem !important;
   font-weight: 850 !important;
   letter-spacing: .01em;
   white-space: nowrap;
-  box-shadow: 0 5px 16px rgba(15, 23, 42, .10);
+  color: var(--dim) !important;
+  background: transparent !important;
+  box-shadow: none;
+  transition: background-color .16s ease, box-shadow .16s ease,
+    color .16s ease, transform .12s ease, filter .16s ease;
 }
 
-.sov-nav-switch--chat {
-  color: #052e24 !important;
+.sov-nav-switch--active {
+  color: #ffffff !important;
   background: var(--accent) !important;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-.sov-nav-switch--config {
-  color: var(--text) !important;
-  background: var(--card-bg) !important;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--accent) 58%, var(--border)),
-    0 5px 16px rgba(15, 23, 42, .08);
+.sov-nav-switch:active {
+  transform: scale(.96);
 }
 
 .sov-nav-switch:hover {
   filter: brightness(1.04);
+}
+
+.les-top-tabs .sov-primary-tab-mirrored {
+  display: none !important;
+}
+
+.sov-sidebar-caption {
+  display: none;
+  color: var(--dim);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .08em;
+}
+
+.sov-app-content {
+  min-width: 0;
+  background: var(--bg) !important;
+}
+
+.sov-app-content .sov-chat-shell {
+  background: var(--bg);
+}
+
+.sov-app-content .sov-chat-main,
+.sov-app-content .sov-artifacts-panel,
+.sov-app-content .sov-history-drawer {
+  border-color: var(--border);
+  border-radius: var(--sov-ui-radius-card);
+  background: var(--bg-panel);
+  box-shadow: var(--sov-ui-shadow-card);
+  backdrop-filter: none;
+}
+
+.sov-app-content .sov-chat-topbar {
+  background: var(--bg-panel);
+  border-bottom-color: var(--border);
+}
+
+.sov-app-content .sov-chat-scroll {
+  background: color-mix(in srgb, var(--bg) 70%, var(--bg-panel));
+}
+
+.sov-app-content .sov-chat-empty {
+  border-radius: var(--sov-ui-radius-card);
+  background: var(--bg-panel);
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-app-content .sov-composer {
+  border: 1px solid var(--border) !important;
+  border-radius: 12px !important;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--border) 36%, transparent),
+    0 10px 28px rgba(20, 52, 34, .09) !important;
+}
+
+.sov-app-content .sov-composer-actions .q-btn:last-child,
+.sov-app-content .sov-send-btn {
+  color: #ffffff !important;
+  background: var(--accent) !important;
+}
+
+.sov-app-content .sov-mode-guide,
+.sov-app-content .sov-mode-example {
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  box-shadow: 0 2px 10px rgba(20, 52, 34, .05);
 }
 
 .sov-source-usage {
@@ -245,26 +328,229 @@ html {
   font-weight: 850 !important;
 }
 
-@media (max-width: 720px) {
+@media (min-width: 901px) {
+  .sov-app-shell {
+    display: grid !important;
+    grid-template-columns: 224px minmax(0, 1fr);
+    grid-template-rows: 100vh;
+    align-items: stretch;
+    overflow: hidden;
+  }
+
+  .sov-app-shell > .sov-ui-header {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex !important;
+    width: 224px !important;
+    height: 100vh !important;
+    min-height: 0;
+    padding: 16px 12px 12px !important;
+    gap: 8px !important;
+    align-items: stretch !important;
+    flex-direction: column;
+    border-right: 1px solid var(--border);
+    border-bottom: 0;
+    box-shadow: 2px 0 18px rgba(20, 52, 34, .035);
+  }
+
+  .sov-app-shell > .sov-app-content {
+    grid-column: 2;
+    grid-row: 1;
+    width: 100%;
+    height: 100vh;
+    min-height: 0;
+  }
+
+  .sov-brand-block {
+    min-height: 40px;
+    margin: 0 !important;
+    padding: 4px 8px;
+  }
+
+  .sov-brand-block .les-brand {
+    font-size: 17px !important;
+    letter-spacing: -.01em;
+  }
+
+  .sov-ui-version-badge {
+    align-self: stretch;
+    width: 100%;
+    margin: 0 0 8px !important;
+    justify-content: flex-start;
+    color: var(--dim) !important;
+    background: var(--bg) !important;
+    border-color: var(--border) !important;
+  }
+
+  .sov-primary-nav {
+    width: 100%;
+    padding: 0;
+    gap: 4px;
+    flex-direction: column;
+    align-items: stretch;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .sov-nav-switch {
+    width: 100%;
+    min-height: 42px !important;
+    justify-content: flex-start;
+  }
+
+  .sov-nav-switch .q-btn__content {
+    width: 100%;
+    gap: 10px;
+    justify-content: flex-start;
+  }
+
+  .sov-nav-switch .q-icon {
+    font-size: 19px;
+  }
+
+  .sov-sidebar-caption {
+    display: block;
+    margin: 14px 10px 2px;
+  }
+
+  .les-top-tabs {
+    width: 100%;
+    height: auto !important;
+    min-height: 0;
+  }
+
+  .les-top-tabs .q-tabs__content {
+    width: 100%;
+    height: 100% !important;
+    align-items: stretch;
+    flex-direction: column;
+    overflow-x: hidden !important;
+    overflow-y: auto !important;
+  }
+
+  .les-top-tabs .q-tab {
+    flex: 0 0 44px !important;
+    width: 100%;
+    height: 44px !important;
+    min-height: 44px !important;
+    margin: 1px 0;
+    padding: 0 12px;
+    border-radius: 7px;
+    justify-content: flex-start;
+  }
+
+  .les-top-tabs .q-tab__content {
+    min-width: 0;
+    width: 100%;
+    height: 44px !important;
+    min-height: 44px !important;
+    gap: 10px;
+    align-items: center;
+    flex-direction: row;
+    justify-content: flex-start;
+  }
+
+  .les-top-tabs .q-tab__label {
+    text-align: left;
+  }
+
+  .les-top-tabs .q-tab__indicator {
+    top: 7px;
+    right: auto;
+    bottom: 7px;
+    left: 0;
+    width: 3px;
+    height: auto;
+    border-radius: 0 3px 3px 0;
+  }
+
+  .sov-ui-header-controls {
+    width: 100%;
+    margin: auto 0 0 !important;
+    padding-top: 9px;
+    gap: 2px !important;
+    align-items: center;
+    justify-content: flex-start;
+    border-top: 1px solid var(--border);
+  }
+
+  .sov-ui-header-secondary,
+  .sov-ui-header-action {
+    width: 100%;
+    min-height: 38px;
+    justify-content: flex-start;
+  }
+
+  .sov-ui-header-action .q-btn__content {
+    width: 100%;
+    gap: 8px;
+    justify-content: flex-start;
+  }
+
+  .sov-app-content .sov-chat-shell {
+    height: 100vh;
+    min-height: 0;
+    padding: 16px 18px;
+  }
+}
+
+@media (max-width: 900px) {
   .sov-ui-shell {
     max-width: 100vw;
     overflow-x: clip;
   }
+  .sov-app-shell {
+    display: flex !important;
+    flex-direction: column;
+  }
   .sov-ui-card,
   .sov-ui-evidence-card {
-    border-radius: 12px;
+    border-radius: 9px;
   }
-  .sov-ui-header {
+  .sov-app-shell > .sov-ui-header {
+    width: 100% !important;
+    height: 62px !important;
+    min-height: 62px;
     padding-inline: 6px !important;
+    gap: 2px !important;
+    flex-direction: row;
+    align-items: center !important;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
   }
   .sov-ui-version-badge,
-  .sov-ui-header-secondary {
+  .sov-ui-header-secondary,
+  .sov-sidebar-caption {
     display: none !important;
   }
+  .sov-brand-block {
+    margin-right: 2px !important;
+  }
+  .les-top-tabs {
+    height: 62px !important;
+    overflow: hidden;
+  }
+  .les-top-tabs .q-tabs__content {
+    justify-content: flex-start;
+  }
+  .les-top-tabs .q-tab {
+    min-width: 44px;
+    min-height: 62px;
+    padding-inline: 7px;
+  }
   .sov-ui-header-controls {
-    flex-wrap: nowrap !important;
-    gap: 0 !important;
-    margin-left: 2px !important;
+    display: none !important;
+  }
+  .sov-ui-header-utility,
+  .sov-ui-header-action {
+    display: none !important;
+  }
+  .sov-primary-nav {
+    flex: 0 0 auto;
+    gap: 2px;
+    padding: 1px;
+    background: transparent;
+    box-shadow: none;
   }
   .sov-ui-header-action {
     width: var(--sov-ui-hit);
@@ -291,12 +577,32 @@ html {
   .sov-nav-switch .q-icon {
     font-size: 20px;
   }
+  .sov-app-content {
+    height: calc(100vh - 62px);
+  }
+  .sov-app-content .sov-chat-shell {
+    height: calc(100vh - 62px);
+    min-height: 0;
+    padding: 8px;
+  }
   .sov-docs-sticky-ask { align-items: stretch; flex-direction: column; }
   .sov-docs-sticky-ask-button { width: 100%; }
   .sov-mail-status-strip { align-items: stretch; flex-wrap: wrap; }
   .sov-mail-status-copy { width: 100%; flex-basis: 100%; }
   .sov-mail-status-metric { flex: 1; }
   .sov-mail-collect-button { width: 100%; }
+}
+
+@media (max-width: 520px) {
+  .sov-brand-block .les-brand {
+    display: none;
+  }
+  .les-top-tabs .q-tab__label {
+    display: none;
+  }
+  .les-top-tabs .q-tab {
+    width: 44px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

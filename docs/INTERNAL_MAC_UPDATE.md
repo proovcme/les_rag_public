@@ -46,6 +46,8 @@ make status-mac-update
 - пакет content-addressed и локальный: updater не публикует feed, tag, GitHub Release и не
   обращается к Legion;
 - повторная установка уже применённого пакета возвращает «Mac уже обновлён».
+- публичный `/api/version` показывает статус и несовпавшие пути, но не раскрывает
+  внутренний `file_hash_bundle`; updater проверяет ownership по локальному stamp.
 
 Кэш: `/Users/ovc/LES_update_cache/mac`. Точки отката:
 `/Users/ovc/LES_recovery/mac-updates/<update_id>`.

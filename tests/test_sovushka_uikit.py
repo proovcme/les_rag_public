@@ -30,6 +30,8 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert "font-variant-numeric: tabular-nums" in UIKIT_CSS
     assert "text-wrap: balance" in UIKIT_CSS
     assert "text-wrap: pretty" in UIKIT_CSS
+    assert "grid-template-columns: 224px minmax(0, 1fr)" in UIKIT_CSS
+    assert "@media (max-width: 900px)" in UIKIT_CSS
 
 
 def test_critical_surfaces_use_uikit_and_blocked_state():
@@ -40,6 +42,8 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
 
     assert "ui.add_head_html(UIKIT_CSS)" in shell
     assert shell.count("sov-ui-shell") >= 2
+    assert shell.count("sov-app-shell") == 2
+    assert shell.count("sov-app-content") == 2
     assert "sov-ui-header" in header
     assert "sov-ui-documents" in documents
     assert "sov-ui-evidence-card" in chat
@@ -61,10 +65,19 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     documents = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
     mail = Path("sovushka/pages/mail.py").read_text(encoding="utf-8")
 
-    assert '"Чат",' in header and 'icon="o_forum"' in header
-    assert '"Конфигурация",' in header and 'icon="o_tune"' in header
-    assert "sov-nav-switch--chat" in header
-    assert "sov-nav-switch--config" in header
+    for key, label, icon in (
+        ("chat", "Чат", "o_forum"),
+        ("studio", "Студия", "o_edit_note"),
+        ("config", "Конфигурация", "o_tune"),
+    ):
+        assert f'"{key}",' in header
+        assert f'"{label}",' in header
+        assert f'"{icon}",' in header
+    assert "sov-primary-nav" in header
+    assert 'f"sov-nav-switch sov-nav-switch--{key}"' in header
+    assert "sov-nav-switch--active" in header
+    assert "/classic?tab=studio" in header
+    assert 'active_primary="config"' in Path("sovushka_ng.py").read_text(encoding="utf-8")
     assert "sov-docs-sticky-ask" in documents
     assert '"Спросить в чате"' in documents
     assert '"Забрать ещё"' in mail

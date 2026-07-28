@@ -30,7 +30,9 @@ def test_version_feature_flags_safe():
     assert all(isinstance(v, bool) for v in fl.values())   # только булевы, без значений
 
 def test_version_no_secrets():
-    blob = json.dumps(vs.version_info()).lower()
+    info = vs.version_info()
+    assert "file_hash_bundle" not in info["deploy_stamp"]
+    blob = json.dumps(info).lower()
     for marker in ("password", "secret", "token", "api_key", "apikey", "openrouter", "sk-"):
         assert marker not in blob
 
