@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import os
+import subprocess
 import tarfile
 import zipfile
 from pathlib import Path
@@ -73,11 +74,16 @@ def should_exclude(path: Path) -> bool:
 
 
 def iter_files() -> list[Path]:
+    tracked = subprocess.run(
+        ["git", "-C", str(ROOT), "ls-files", "-z"],
+        check=True,
+        capture_output=True,
+    ).stdout
     files: list[Path] = []
-    for path in ROOT.rglob("*"):
-        if should_exclude(path):
-            if path.is_dir():
-                continue
+    for raw_relative in tracked.split(b"\0"):
+        if not raw_relative:
+            continue
+        path = ROOT / os.fsdecode(raw_relative)
         if path.is_file() and not should_exclude(path):
             files.append(path)
     return files

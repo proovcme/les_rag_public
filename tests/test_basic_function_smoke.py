@@ -1,7 +1,10 @@
 """Юнит-тест критериев basic_function_smoke: парсинг результатов + exit-логика (P0/P1/warn)."""
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
 
 from tools.basic_function_smoke import (
     DEFAULT_CHAT_TIMEOUT,
@@ -150,6 +153,7 @@ def test_project_noscope_smoke_rejects_glossary_hijack():
     assert result["status"] == "fail"
 
 
+@pytest.mark.skipif(shutil.which("make") is None, reason="Makefile contract is checked on Unix runners")
 def test_ship_paths_escalate_smoke_p1_to_release():
     root = Path(__file__).resolve().parents[1]
     for target in ("ship-check", "ship-full-check"):
