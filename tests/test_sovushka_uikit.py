@@ -233,6 +233,13 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert "text_field(" in documents
 
 
+def test_chat_ui_cannot_disable_required_reranker():
+    chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+
+    assert 'ui.switch("Реранкер"' not in chat
+    assert '"reranker_enabled":' not in chat
+
+
 def test_project_ui_skill_is_complete_and_points_to_canonical_contract():
     skill = Path("skills/sovushka-ui/SKILL.md").read_text(encoding="utf-8")
     reference = Path(

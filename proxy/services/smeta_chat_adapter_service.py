@@ -15,7 +15,11 @@ from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
 from proxy.services.project_summary_service import resolve_inventory_file_reference
 from proxy.services.query_router import route_query
-from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
+from proxy.services.retrieval_service import (
+    required_reranker_policy,
+    resolve_dataset_ids,
+    retrieve_chat_chunks,
+)
 from proxy.services.saferag_service import build_context, concentrate_sources, rank_chunks_for_question, source_map_for_context, source_names
 logger = logging.getLogger(__name__)
 DEFAULT_OPENAI_MODEL = "gpt-5.4"
@@ -612,10 +616,8 @@ async def _smeta_direct_rag_context(
         trace["target_file_error"] = f"{type(file_err).__name__}: {file_err}"
 
     try:
-        reranker_on = (
-            req.reranker_enabled
-            if req.reranker_enabled is not None
-            else os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+        reranker_on, _reranker_policy = required_reranker_policy(
+            getattr(req, "reranker_enabled", None)
         )
         retrieval = await retrieve_chat_chunks(
             question=req.question,

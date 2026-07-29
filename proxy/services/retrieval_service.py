@@ -69,6 +69,30 @@ _SOURCE_NAME_STOPWORDS = {
     "покажи",
     "план",
 }
+
+
+def required_reranker_policy(requested: Optional[bool] = None) -> tuple[bool, dict[str, Any]]:
+    """Resolve the production reranker from runtime policy, never from a client toggle.
+
+    ``reranker_enabled`` remains accepted by the chat API for backward compatibility,
+    but production retrieval cannot be weakened by an old UI or API client. Operators
+    can still fail the contour closed through ``RERANKER_ENABLED=false``.
+    """
+    runtime_enabled = os.getenv("RERANKER_ENABLED", "true").strip().casefold() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    return runtime_enabled, {
+        "enabled": runtime_enabled,
+        "reason": "mandatory_runtime_contract",
+        "explicit_override": requested is not None,
+        "legacy_request_ignored": requested is not None,
+        "legacy_request_value": requested,
+    }
+
+
 _FIRST_ORDINAL_QUERY_RE = re.compile(r"(?iu)(?:\bfirst\b|перв\w*|начал\w*)")
 _TABLE_ROW_QUERY_RE = re.compile(r"(?iu)(?:позици\w*|строк\w*|\brows?\b|\bitems?\b)")
 _CAD_POSITION_RE = re.compile(r"(?iu)(?:\bposition\s+|\bпозиция\s+)(\d{1,5})")

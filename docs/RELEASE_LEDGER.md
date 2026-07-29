@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.25 (lazy surfaces with restored native motion)
-номер сборки:              498     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.498 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.26 (mandatory reranker cannot be disabled by UI/client)
+номер сборки:              499     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.499 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; runtime code at c0cca4b4, ledger-only HEAD may be newer
+dev implementation:       codex/sovushka-ui-kit; 0.25.26 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.25.26 / build 499 — UI больше не выключает обязательный reranker
+>
+> Дата: 2026-07-29
+> Статус: candidate для малого Legion-обновления; без Tauri build, tag,
+> GitHub Release, public feed и VPS. Удалён исторический switch «Реранкер»,
+> который по умолчанию отправлял `reranker_enabled=false` и тем самым
+> блокировал новый обязательный production-контур. Chat и smeta application
+> boundaries теперь берут политику только из runtime env; legacy поле запроса
+> принимается, но не может ослабить `RRF → rerank → context`.
+>
 > 0.25.25 / build 498 — возвращена прежняя плавность вкладок
 >
 > Дата: 2026-07-29

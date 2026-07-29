@@ -208,6 +208,8 @@ class ChatRequest(BaseModel):
     question: str
     dataset_ids: Optional[List[str]] = None
     dataset_filter: Optional[str] = None
+    # Legacy-compatible input only. Production RAG always follows the mandatory
+    # runtime reranker policy and ignores client attempts to disable it.
     reranker_enabled: Optional[bool] = None
     semantic_cache_enabled: Optional[bool] = None
     validation_enabled: Optional[bool] = None

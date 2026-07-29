@@ -1219,7 +1219,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             value="Русский (технический)",
                             label="Стиль",
                         ).classes("w-full")
-                        reranker_sw = ui.switch("Реранкер", value=False)
                         detail_extra = ui.textarea(label="Дополнительные требования").props("rows=3").classes("w-full")
 
                     with ui.card().classes("sov-control-card"):
@@ -3419,7 +3418,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         payload = {
             "question": payload_question,
             "output_directive": extra_prompt or None,
-            "reranker_enabled": reranker_sw.value,
             "validation_enabled": True,
             "session_id": state.get("session_id"),
             "response_length": str(response_length_select.value or "standard"),

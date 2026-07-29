@@ -41,7 +41,7 @@ from proxy.services.project_summary_service import (
     format_project_inventory_prompt,
 )
 from proxy.services.prompt_registry_service import build_mode_system_prompt
-from proxy.services.retrieval_service import retrieve_chat_chunks
+from proxy.services.retrieval_service import required_reranker_policy, retrieve_chat_chunks
 from proxy.services.runtime_admission import generation_semaphore
 from proxy.services.saferag_service import (
     build_validation_context,
@@ -332,16 +332,9 @@ async def _execute_chat_evidence_application(
 
     t_search_start = time.time()
     try:
-        _reranker_on = (
-            req.reranker_enabled
-            if req.reranker_enabled is not None
-            else os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+        _reranker_on, retrieval_trace_policy = required_reranker_policy(
+            getattr(req, "reranker_enabled", None)
         )
-        retrieval_trace_policy = {
-            "enabled": bool(_reranker_on),
-            "reason": "request_or_default",
-            "explicit_override": req.reranker_enabled is not None,
-        }
         topic_chunks: list[Any] = []
         retrieval = await retrieve_chat_chunks(
             question=req.question,

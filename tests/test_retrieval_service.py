@@ -8,6 +8,7 @@ from proxy.services.retrieval_service import (
     expand_retrieval_query,
     infer_dataset_filter,
     hybrid_backend,
+    required_reranker_policy,
     resolve_dataset_ids,
     retrieve_chat_chunks,
 )
@@ -110,6 +111,37 @@ class NativeHybridBackend(FakeBackend):
 class FailingNativeBackend(FakeBackend):
     async def retrieve_native_hybrid(self, question, dataset_ids=None, top_k=8, doc_filter=None):
         raise RuntimeError("qdrant unavailable")
+
+
+@pytest.mark.parametrize(
+    ("runtime_value", "requested", "expected"),
+    [
+        (None, False, True),
+        ("true", False, True),
+        ("false", True, False),
+    ],
+)
+def test_required_reranker_policy_ignores_legacy_client_override(
+    monkeypatch,
+    runtime_value,
+    requested,
+    expected,
+):
+    if runtime_value is None:
+        monkeypatch.delenv("RERANKER_ENABLED", raising=False)
+    else:
+        monkeypatch.setenv("RERANKER_ENABLED", runtime_value)
+
+    enabled, trace = required_reranker_policy(requested)
+
+    assert enabled is expected
+    assert trace == {
+        "enabled": expected,
+        "reason": "mandatory_runtime_contract",
+        "explicit_override": True,
+        "legacy_request_ignored": True,
+        "legacy_request_value": requested,
+    }
 
 
 class ExactSourceBackend(FakeBackend):
