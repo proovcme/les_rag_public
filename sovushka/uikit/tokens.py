@@ -3061,6 +3061,11 @@ html {
   gap: var(--sov-ui-space-2);
 }
 
+.sov-rim-session-select {
+  width: min(100%, 420px);
+  margin-top: var(--sov-ui-space-3);
+}
+
 .sov-rim-status-strip {
   width: 100%;
   min-width: 0;

@@ -38,11 +38,54 @@ _TOOLS: dict[str, dict[str, Any]] = {
         },
     },
     "draft_work_schedule": {
-        "description": "Submit a model-authored VOR draft with source refs and quantity origins.",
+        "description": (
+            "Submit a source-linked VOR work draft. This is not norm mapping: do not return "
+            "norm decisions, unbound rows or search strategy."
+        ),
         "arguments": {
             "type": "object",
-            "properties": {"rows": {"type": "array", "items": {"type": "object"}}},
+            "properties": {
+                "rows": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "work_id": {"type": "string", "minLength": 1},
+                            "section_name": {"type": "string", "minLength": 1},
+                            "work_name": {"type": "string", "minLength": 1},
+                            "unit": {"type": "string", "minLength": 1},
+                            "quantity": {"type": "number", "minimum": 0},
+                            "note": {"type": "string"},
+                            "quantity_origin": {
+                                "type": "string",
+                                "enum": [
+                                    "source_explicit",
+                                    "source_calculated",
+                                    "user_provided",
+                                    "inferred",
+                                    "missing",
+                                ],
+                            },
+                            "quantity_formula": {"type": "string"},
+                            "source_ref": {"type": "string", "minLength": 1},
+                        },
+                        "required": [
+                            "work_id",
+                            "section_name",
+                            "work_name",
+                            "unit",
+                            "quantity",
+                            "quantity_origin",
+                            "source_ref",
+                        ],
+                        "additionalProperties": False,
+                    },
+                }
+            },
             "required": ["rows"],
+            "additionalProperties": False,
         },
     },
     "validate_vor": {

@@ -19,6 +19,7 @@ from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
 
 Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
+_INTAKE_WORK_ITEM_BATCH_SIZE = 5
 
 
 def _arguments(tool_call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -293,24 +294,57 @@ def run_rim_agent_turn(
         }
 
     if session.get("phase") == "intake":
-        intake = _current_payload(
+        intake_revision = _current_payload(
             store,
             session,
             str(session.get("head_revision_id") or ""),
             owner_id=owner_id,
             allow_admin=allow_admin,
         )
+        intake = (
+            dict(intake_revision.get("intake") or {})
+            if isinstance(intake_revision.get("intake"), dict)
+            else dict(intake_revision)
+        )
+        declared_source_kind = str(
+            intake_revision.get("source_kind")
+            or intake.get("source_kind")
+            or "auto"
+        )
+        work_items = list(intake.get("work_items") or [])
+        visible_work_items = work_items[:_INTAKE_WORK_ITEM_BATCH_SIZE]
+        intake_actions = (
+            {"draft_work_schedule"}
+            if declared_source_kind == "specification"
+            else None
+        )
         action, model_message = _single_action(
             session=session,
             context={
                 "intake": {
-                    "source_kind": intake.get("source_kind"),
-                    "work_items": list(intake.get("work_items") or [])[:30],
+                    "source_kind": declared_source_kind,
+                    "work_item_count": len(work_items),
+                    "work_items": visible_work_items,
+                    "remaining_work_item_count": max(
+                        0, len(work_items) - len(visible_work_items)
+                    ),
                     "issues": list(intake.get("issues") or [])[:20],
-                }
+                },
+                "instruction": (
+                    "The workbook was already inspected by code. Do not request inspect_file. "
+                    "Every uploaded source row is in scope by default. Never ask whether to include "
+                    "all rows, whether to process the remaining rows later, or whether exact versus "
+                    "analog norms should be preferred: norm-search strategy belongs to the model. "
+                    "For a specification, the first required action is a source-linked VOR draft "
+                    "for the visible items. Preserve unresolved technical facts in row notes or "
+                    "assumptions; the harness will request one question only after saving the draft. "
+                    "This is not norm mapping: do not mark rows unbound, claim a norm was not found, "
+                    "or propose search families. Use only actual source work_ids."
+                ),
             },
             user_message=user_message,
             exchange=exchange,
+            only_actions=intake_actions,
         )
         if action["action"] == "ask_user":
             result = store.open_question(
@@ -342,11 +376,45 @@ def run_rim_agent_turn(
             change_note="Черновик ВОР из спецификации",
             allow_admin=allow_admin,
         )
+        question_action, question_message = _single_action(
+            session=result.session,
+            context={
+                "vor_draft": {
+                    "row_count": len(action["arguments"].get("rows") or []),
+                    "rows": list(action["arguments"].get("rows") or [])[:30],
+                    "source_work_item_count": len(work_items),
+                },
+                "instruction": (
+                    "Ask one highest-value unresolved question for this VOR draft. "
+                    "State the known fact, why it affects the work or norm, give practical "
+                    "answer options and keep the question bound to the relevant work_ids. "
+                    "Ask only for a missing physical installation or project condition. "
+                    "Do not ask the user to prioritize norm searches, choose collections, "
+                    "approve unbound rows or decide the model's retrieval strategy."
+                ),
+            },
+            user_message=user_message,
+            exchange=exchange,
+            only_actions={"ask_user"},
+        )
+        question_revision = store.open_question(
+            session_id,
+            owner_id=owner_id,
+            question=question_action["arguments"],
+            expected_parent_revision_id=result.revision_id,
+            allow_admin=allow_admin,
+        )
         return {
-            **result.as_dict(),
+            **question_revision.as_dict(),
+            "vor_revision_id": result.revision_id,
             "agent_action": action,
-            "model": model_message.get("_les_model") or "",
-            "message": "Сформирован черновик ВОР; проверьте строки и источники.",
+            "question_action": question_action,
+            "model": (
+                question_message.get("_les_model")
+                or model_message.get("_les_model")
+                or ""
+            ),
+            "message": question_action["arguments"]["text"],
         }
 
     if session.get("phase") == "vor" and session.get("mapping_status") == "not_started":

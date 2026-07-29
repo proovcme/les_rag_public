@@ -7,17 +7,38 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.26.0 (conversational RIM session)
-номер сборки:              508     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.508 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.1 (conversational RIM intake question)
+номер сборки:              509     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.509 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.0 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.1 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.26.1 / build 509 — Qwen видит строки спецификации и задаёт технический вопрос в UI
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Исправлено чтение вложенного `source_intake`: Qwen получает тип источника,
+> число позиций и bounded пакет из 5 actual rows, а уже разобранная
+> спецификация больше не
+> предлагает бессмысленный `inspect_file`. Административные вопросы о включении
+> всех строк и предпочтении прямых/аналоговых норм запрещены; модель спрашивает
+> один недостающий технический факт только после source-linked ВОР. Строгая
+> draft-schema требует `work_name`, `unit`, `quantity`, `quantity_origin` и
+> `source_ref`, поэтому преждевременный `unbound`/mapping-объект не сохраняется.
+> UI показывает owner-scoped сохранённые
+> сессии, восстанавливает актуальную вместо устаревшего ID и рендерит варианты
+> ответа кнопками. На реальной `СКС.xlsx` (70 позиций, 3 раздела) Mac Qwen 3.5
+> 9B сохранил первые 5 полных source-linked строк и спросил, входят ли монтаж и
+> подключение в ВОР или спецификация означает только поставку; desktop и 390 px
+> browser smoke прошли. Полная legacy/основная suite по решению владельца не
+> запускалась; использованы профильные тесты и `make verify`.
+>
 > 0.26.0 / build 508 — диалоговая РИМ-сессия с двумя пользовательскими lock
 >
 > Дата: 2026-07-29

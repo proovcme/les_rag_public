@@ -242,6 +242,9 @@ def test_rim_surface_uses_uikit_and_exposes_auditable_workflow():
     assert "build_rim" in shell
     assert "sov-rim-question__choices" in rim
     assert "await send_message()" in rim
+    assert "Сохранённая сессия" in rim
+    assert 'api_get("/api/rim/sessions?limit=100")' in rim
+    assert "if session_id not in session_options:" in rim
     for primitive in (
         "action_button(",
         "panel(",

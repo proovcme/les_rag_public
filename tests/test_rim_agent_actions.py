@@ -107,6 +107,31 @@ def test_action_arguments_are_schema_validated_before_execution():
         )
 
 
+def test_vor_draft_rejects_mapping_decisions_and_missing_work_fields():
+    session = _session(
+        phase="intake",
+        mapping_status="not_started",
+        display_state="intake_classified",
+    )
+    with pytest.raises(ValueError, match="arguments are invalid"):
+        validate_model_action(
+            session,
+            {
+                "action": "draft_work_schedule",
+                "arguments": {
+                    "rows": [
+                        {
+                            "work_id": "vor-001",
+                            "decision": "unbound",
+                            "reason": "Норма не найдена",
+                        }
+                    ]
+                },
+                "user_visible_intent": "Готовлю ВОР.",
+            },
+        )
+
+
 def test_rim_search_rejects_global_or_incomplete_model_scope():
     with pytest.raises(ValueError, match="RIM search scope is invalid"):
         validate_model_action(

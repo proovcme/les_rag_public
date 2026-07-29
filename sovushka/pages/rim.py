@@ -101,6 +101,12 @@ def build_rim() -> None:
                         compact=True,
                         variant="primary",
                     )
+            session_select = select_field(
+                {},
+                label="Сохранённая сессия",
+                aria_label="Открыть сохранённую РИМ-сессию",
+                classes="sov-rim-session-select",
+            )
             with ui.row().classes("sov-rim-status-strip"):
                 state_badges = ui.row().classes("sov-rim-status-strip__badges")
                 session_meta = ui.label("Сессия ещё не создана").classes(
@@ -604,7 +610,31 @@ def build_rim() -> None:
             await refresh()
 
         async def refresh() -> None:
+            sessions_payload = await api_get("/api/rim/sessions?limit=100")
+            sessions = (
+                list(sessions_payload.get("sessions") or [])
+                if isinstance(sessions_payload, dict)
+                else []
+            )
+            session_options = {
+                str(item.get("session_id") or ""): (
+                    f"{item.get('project_id') or 'Без проекта'} · "
+                    f"{_STATUS_LABELS.get(str(item.get('display_state') or ''), item.get('display_state') or 'новая')} · "
+                    f"{str(item.get('session_id') or '')[:8]}"
+                )
+                for item in sessions
+                if str(item.get("session_id") or "")
+            }
+            session_select.options = session_options
+            session_select.update()
             session_id = str(app.storage.user.get(_SESSION_KEY) or "").strip()
+            if session_id not in session_options:
+                session_id = ""
+            if session_options and not session_id:
+                session_id = next(iter(session_options))
+                app.storage.user[_SESSION_KEY] = session_id
+            session_select.value = session_id or None
+            session_select.update()
             if not session_id:
                 state_badges.clear()
                 with state_badges:
@@ -722,8 +752,18 @@ def build_rim() -> None:
                 else "Сначала закройте mapping, расчёт и блокирующие requirements."
             )
 
+        async def switch_session(event) -> None:
+            session_id = str(event.value or "").strip()
+            if not session_id or session_id == str(
+                app.storage.user.get(_SESSION_KEY) or ""
+            ).strip():
+                return
+            app.storage.user[_SESSION_KEY] = session_id
+            await refresh()
+
         new_button.on_click(create_session)
         refresh_button.on_click(refresh)
+        session_select.on_value_change(switch_session)
         send_button.on_click(send_message)
         save_mapping_button.on_click(save_mapping_edit)
         review_button.on_click(run_review)
