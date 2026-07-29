@@ -1,6 +1,6 @@
 """ProfileResolver — контракт маршрутизации (Codex §10.1A)."""
 
-import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -149,8 +149,6 @@ def test_refine_explicit_confidence_override():
 def _mock_chat_state(chat_router):
     """Мокнутый ChatRouterState: ретрив падает с AssertionError → доказывает, что
     детерминированный канал ответил ДО ретрива."""
-    from types import SimpleNamespace
-
     class _Backend:
         async def list_datasets(self):
             raise AssertionError("retrieval must not run for a deterministic channel")
@@ -191,38 +189,26 @@ async def test_query_route_carries_profile_for_explicit_mode(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
+async def test_auto_work_estimate_reaches_model_owned_smeta_boundary(monkeypatch):
     from proxy.routers import chat as chat_router
     _mock_chat_state(chat_router)
-    plan = {
-        "object": {"object_type": "work_item"},
-        "works": [
-            ["Разработка траншеи вручную", "разработка грунта траншеи вручную",
-             "earthworks", "excavation", "разработка", "м3", {}],
-        ],
-    }
-    def complete(messages):
-        if messages and "search_norm вернул список норм" in messages[-1]["content"]:
-            payload = json.loads(messages[-2]["content"])
-            shortlist = payload["search_norm"]["shortlist"]
-            candidate = next(
-                (
-                    c for c in shortlist
-                    if c.get("applicability_status") == "accepted"
-                    and c.get("unit_compatible") is not False
-                ),
-                shortlist[0],
-            )
-            return json.dumps({
-                "selected_code": candidate["norm_code"],
-                "selection_kind": "exact",
-                "analog_limitations": [],
-                "reason": "выбрано моделью из shortlist",
-                "ask_user": "",
-            }, ensure_ascii=False)
-        return json.dumps(plan, ensure_ascii=False)
 
-    monkeypatch.setattr(chat_router, "_harness_complete", complete)
+    async def fake_model_owned_smeta(**kwargs):
+        assert kwargs["auto_estimate_work"] is True
+        return SimpleNamespace(
+            answer="Ответ сформулирован моделью по результатам сметных инструментов.",
+            operation="estimate_harness_auto_work",
+            channel="harness_mode",
+            crag="PRELIMINARY",
+            extra={"sources": [], "total_status": "partial"},
+        )
+
+    monkeypatch.setattr(chat_router, "run_smeta_direct_application", fake_model_owned_smeta)
+    monkeypatch.setattr(
+        chat_router,
+        "_harness_complete",
+        lambda *_a, **_k: pytest.fail("legacy harness final must not run"),
+    )
 
     resp = await chat_router.chat(
         chat_router.ChatRequest(
@@ -241,17 +227,4 @@ async def test_auto_work_estimate_goes_to_harness_not_retrieval(monkeypatch):
     assert prof["operation"] == "estimate_harness_auto_work"
     assert resp["query_route"]["operation"] == "estimate_harness_auto_work"
     assert resp["total_status"] == "partial"
-    assert resp.get("final_total") is None
-    answer = resp["answer"]
-    assert "Расчётный протокол" in answer
-    # Routing must preserve partial/finality and surface whatever unresolved
-    # conditions the model-selected norm actually carries.  The route test must
-    # not prescribe a professional checklist independently of that norm card.
-    assert any(
-        marker in answer
-        for marker in (
-            "Проверить по выбранным нормам",
-            "Нужно выбрать норму или уточнить параметры",
-            "нормы, параметры и ценовые источники",
-        )
-    )
+    assert resp["answer"].startswith("Ответ сформулирован моделью")
