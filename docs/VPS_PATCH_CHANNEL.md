@@ -25,7 +25,9 @@ persistent venv. `tools/windows_runtime.py` напрямую запускает 
 переименовывается в sibling recovery point; silent NSIS создаёт новое дерево,
 `state.ps1` восстанавливает junctions на `%LOCALAPPDATA%\LES`. Успех требует
 exact commit/version/build, API/UI, доступного Qdrant, совместимого index contract и прямого
-Python process contract. При провале новое дерево удаляется, старое возвращается
+Python process contract. Проверка сначала подтверждает дешёвые identity/API/UI и
+живые exact PID, затем запрашивает глубокий RAG/Qdrant health; успех требует двух
+последовательных стабильных проб. При провале новое дерево удаляется, старое возвращается
 одним rename и перезапускается.
 
 PowerShell допустим только как bounded single-purpose launcher для state,
@@ -129,11 +131,12 @@ manifest раньше полного архива.
 make test-updater
 
 powershell -NoProfile -File tools/windows_updater_smoke.ps1 \
-  -ExpectedVersion 0.25.20 -ExpectedBuild 493 -ExpectedCommit <sha>
+  -ExpectedVersion 0.25.22 -ExpectedBuild 495 -ExpectedCommit <sha>
 ```
 
 Offline-профиль поведенчески применяет и откатывает runtime + desktop на временных деревьях,
-проверяет отказ до остановки и сохранность user state. Windows smoke длится не более 90 секунд и
+проверяет отказ до остановки и сохранность user state. Windows smoke использует
+bounded поэтапные пробы (не более трёх минут при реальном отказе) и
 проверяет только установленное обновление, identity, API/UI/index contract и process hygiene.
 Он не строит приложение, не создаёт baseline, не вызывает модель/RAG и не запускает общую suite.
 

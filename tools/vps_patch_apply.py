@@ -390,7 +390,7 @@ def _process_hygiene(state: Path) -> dict[str, Any]:
     return evaluate_process_hygiene(runtime_state, snapshot)
 
 
-def _wait_ready(manifest: dict[str, Any], state: Path, timeout: int = 90) -> dict[str, Any]:
+def _wait_ready(manifest: dict[str, Any], state: Path, timeout: int = 180) -> dict[str, Any]:
     return windows_update_engine.wait_ready(
         expected_commit=str(manifest["target_commit"]),
         expected_version=str(manifest["product_version"]),

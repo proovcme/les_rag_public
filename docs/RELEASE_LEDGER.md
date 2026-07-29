@@ -7,17 +7,30 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.21 (bounded Windows runtime + platform diagnostics)
-номер сборки:              494     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.494 (internal identity; soft-update target)
+версия продукта (SemVer):  0.25.22 (console-free installed runtime + stable updater smoke)
+номер сборки:              495     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.495 (internal identity; soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; hard + soft updater on one Python lifecycle
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion acceptance target 0.25.21 / 494
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion acceptance target 0.25.22 / 495
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion exact live result is written by updater report
 ```
 
+> 0.25.22 / build 495 — installed runtime без консольных окон и устойчивый smoke
+>
+> Дата: 2026-07-29
+> Статус: internal acceptance target для Legion; без tag, GitHub Release,
+> public feed и VPS. Установленный runtime без `.git` больше не запускает четыре
+> обречённых Git-процесса на каждый `/api/version`: это убирает до 16 секунд
+> задержки шапки и вспышки консольных окон при переходах. Разрешённый Git-probe
+> в dev на Windows всегда получает `CREATE_NO_WINDOW`. Updater сначала проверяет
+> дешёвые identity/API/UI и живые exact PID, только затем глубокий RAG/Qdrant
+> health; успех подтверждается двумя последовательными пробами. Общий
+> fail-closed срок ограничен тремя минутами, ошибки указывают точную стадию,
+> а не общий `timed out`.
+>
 > 0.25.21 / build 494 — bounded Windows runtime и платформенная диагностика
 >
 > Дата: 2026-07-29

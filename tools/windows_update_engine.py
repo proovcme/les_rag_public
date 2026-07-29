@@ -405,69 +405,138 @@ def _json_url(url: str, timeout: float = 5) -> dict[str, Any]:
         return json.load(response)
 
 
+def _pid_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        return _working_set_bytes(pid) > 0
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _ready_snapshot(
+    *,
+    expected_commit: str,
+    expected_version: str,
+    expected_build: int,
+    state: Path,
+    health_timeout: float,
+) -> tuple[dict[str, Any] | None, str]:
+    """Probe cheap liveness first, then the deeper RAG contract once."""
+    try:
+        version = _json_url("http://127.0.0.1:8050/api/version", timeout=3)
+    except Exception as exc:  # noqa: BLE001
+        return None, f"api_version={type(exc).__name__}: {exc}"
+    try:
+        with urllib.request.urlopen(  # noqa: S310
+            "http://127.0.0.1:8051/healthz", timeout=3
+        ) as response:
+            ui_ok = response.status == 200
+    except Exception as exc:  # noqa: BLE001
+        return None, f"ui_health={type(exc).__name__}: {exc}"
+    try:
+        runtime_state = json.loads(
+            (state / "logs" / "windows-light-state.json").read_text(
+                encoding="utf-8-sig"
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"runtime_state={type(exc).__name__}: {exc}"
+
+    proxy_pid = int(runtime_state.get("proxy_pid") or 0)
+    ui_pid = int(runtime_state.get("ui_pid") or 0)
+    direct = (
+        runtime_state.get("process_contract")
+        in {"direct_python_no_console_v1", "direct_python_no_console_v2"}
+        and _pid_running(proxy_pid)
+        and _pid_running(ui_pid)
+    )
+    actual_commit = str(version.get("deployed_commit") or "")
+    same_commit = len(actual_commit) >= 8 and (
+        expected_commit.startswith(actual_commit)
+        or actual_commit.startswith(expected_commit[:8])
+    )
+    identity_ok = (
+        str(version.get("product_version") or "") == expected_version
+        and int(version.get("build_number") or 0) == expected_build
+        and same_commit
+    )
+    if not (identity_ok and ui_ok and direct):
+        return (
+            None,
+            f"identity={identity_ok}, commit={actual_commit}, ui={ui_ok}, "
+            f"direct={direct}, proxy_pid={proxy_pid}, ui_pid={ui_pid}",
+        )
+
+    try:
+        health = _json_url(
+            "http://127.0.0.1:8050/api/health",
+            timeout=health_timeout,
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"rag_health={type(exc).__name__}: {exc}"
+    contract = ((health.get("rag") or {}).get("index_contract") or {})
+    qdrant = ((health.get("rag") or {}).get("qdrant") or {})
+    if contract.get("compatible") is not True or qdrant.get("ok") is not True:
+        return (
+            None,
+            f"contract={contract.get('status')}, qdrant={qdrant.get('ok')}",
+        )
+    return (
+        {
+            "product_version": expected_version,
+            "build_number": expected_build,
+            "deployed_commit": actual_commit,
+            "index_contract_compatible": True,
+            "qdrant_ready": True,
+            "process_contract": str(runtime_state.get("process_contract")),
+            "proxy_pid": proxy_pid,
+            "ui_pid": ui_pid,
+        },
+        "",
+    )
+
+
 def wait_ready(
     *,
     expected_commit: str,
     expected_version: str,
     expected_build: int,
     state: Path,
-    timeout: int = 90,
+    timeout: int = 180,
 ) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     last = "services did not answer"
+    consecutive = 0
+    attempts = 0
     while time.monotonic() < deadline:
-        try:
-            version = _json_url("http://127.0.0.1:8050/api/version")
-            health = _json_url("http://127.0.0.1:8050/api/health", timeout=20)
-            with urllib.request.urlopen(  # noqa: S310
-                "http://127.0.0.1:8051/healthz", timeout=5
-            ) as response:
-                ui_ok = response.status == 200
-            actual_commit = str(version.get("deployed_commit") or "")
-            same_commit = len(actual_commit) >= 8 and (
-                expected_commit.startswith(actual_commit)
-                or actual_commit.startswith(expected_commit[:8])
-            )
-            contract = ((health.get("rag") or {}).get("index_contract") or {})
-            qdrant = ((health.get("rag") or {}).get("qdrant") or {})
-            runtime_state = json.loads(
-                (state / "logs" / "windows-light-state.json").read_text(
-                    encoding="utf-8-sig"
-                )
-            )
-            direct = (
-                runtime_state.get("process_contract")
-                in {"direct_python_no_console_v1", "direct_python_no_console_v2"}
-                and int(runtime_state.get("proxy_pid") or 0) > 0
-                and int(runtime_state.get("ui_pid") or 0) > 0
-            )
-            if (
-                str(version.get("product_version") or "") == expected_version
-                and int(version.get("build_number") or 0) == expected_build
-                and same_commit
-                and ui_ok
-                and contract.get("compatible") is True
-                and qdrant.get("ok") is True
-                and direct
-            ):
+        attempts += 1
+        remaining = max(1.0, deadline - time.monotonic())
+        snapshot, failure = _ready_snapshot(
+            expected_commit=expected_commit,
+            expected_version=expected_version,
+            expected_build=expected_build,
+            state=state,
+            health_timeout=min(15.0, remaining),
+        )
+        if snapshot is not None:
+            consecutive += 1
+            if consecutive >= 2:
                 return {
-                    "product_version": expected_version,
-                    "build_number": expected_build,
-                    "deployed_commit": actual_commit,
-                    "index_contract_compatible": True,
-                    "qdrant_ready": True,
-                    "process_contract": str(runtime_state.get("process_contract")),
+                    **snapshot,
+                    "stability_checks": consecutive,
+                    "attempts": attempts,
                 }
-            last = (
-                f"version={version.get('product_version')}/{version.get('build_number')}, "
-                f"commit={actual_commit}, ui={ui_ok}, "
-                f"contract={contract.get('status')}, qdrant={qdrant.get('ok')}, "
-                f"direct={direct}"
-            )
-        except Exception as exc:  # noqa: BLE001
-            last = str(exc)
-        time.sleep(1)
-    raise RuntimeError(f"Windows update smoke did not converge: {last}")
+        else:
+            consecutive = 0
+            last = failure
+        time.sleep(2)
+    raise RuntimeError(
+        f"Windows update smoke did not converge after {attempts} bounded probes: {last}"
+    )
 
 
 def _detach_state_junctions(runtime: Path) -> None:

@@ -42,6 +42,27 @@ def test_version_git_unavailable_safe(monkeypatch):
     assert gi["git_commit"] == "unknown" and gi["git_branch"] == "unknown"
     assert isinstance(vs.version_info(), dict)              # не падает
 
+
+def test_installed_runtime_does_not_spawn_git(tmp_path, monkeypatch):
+    runtime = tmp_path / "LES" / "runtime"
+    runtime.mkdir(parents=True)
+    monkeypatch.setattr(vs, "_code_root", lambda: runtime)
+    monkeypatch.setattr(
+        vs.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("installed runtime must not spawn git")
+        ),
+    )
+
+    assert vs.git_info() == {
+        "git_commit": "unknown",
+        "git_commit_full": "unknown",
+        "git_branch": "unknown",
+        "repo_dirty": False,
+    }
+
+
 def test_version_brief_format():
     b = vs.version_brief()
     assert b.startswith("Л.Е.С.") and vs.PRODUCT_VERSION in b and f"сборка {vs.BUILD_NUMBER}" in b

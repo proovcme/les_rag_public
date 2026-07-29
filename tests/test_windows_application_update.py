@@ -537,3 +537,73 @@ def test_windows_runtime_rejects_oversized_env_before_reading_it(tmp_path):
 
     with pytest.raises(RuntimeError, match="LES_ENV_OVERSIZED"):
         windows_runtime.runtime_environment(runtime, state)
+
+
+def test_windows_update_ready_snapshot_checks_live_direct_pids(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "LES"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "process_contract": "direct_python_no_console_v2",
+                "proxy_pid": 101,
+                "ui_pid": 202,
+            }
+        ),
+        encoding="utf-8",
+    )
+    responses = {
+        "http://127.0.0.1:8050/api/version": {
+            "product_version": "0.25.22",
+            "build_number": 495,
+            "deployed_commit": "c" * 40,
+        },
+        "http://127.0.0.1:8050/api/health": {
+            "rag": {
+                "index_contract": {"compatible": True, "status": "compatible"},
+                "qdrant": {"ok": True},
+            }
+        },
+    }
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        windows_update_engine,
+        "_json_url",
+        lambda url, timeout=5: responses[url],
+    )
+    monkeypatch.setattr(
+        windows_update_engine.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: HealthyUi(),
+    )
+    monkeypatch.setattr(
+        windows_update_engine,
+        "_pid_running",
+        lambda pid: pid in {101, 202},
+    )
+
+    snapshot, failure = windows_update_engine._ready_snapshot(
+        expected_commit="c" * 40,
+        expected_version="0.25.22",
+        expected_build=495,
+        state=state,
+        health_timeout=15,
+    )
+
+    assert failure == ""
+    assert snapshot is not None
+    assert snapshot["process_contract"] == "direct_python_no_console_v2"
+    assert snapshot["proxy_pid"] == 101
+    assert snapshot["ui_pid"] == 202

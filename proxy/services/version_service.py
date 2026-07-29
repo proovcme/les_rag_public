@@ -34,6 +34,7 @@ RESOURCE_CALC_VERSION = "0.6"
 # корни для проверки divergence (можно переопределить env'ом)
 _REPO_ROOT = Path(os.getenv("LES_REPO_ROOT", "/Users/ovc/Projects/LES_v2"))
 _RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
+CREATE_NO_WINDOW = 0x08000000
 
 # критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).
 # v0.22: + GUI-файлы (sovushka) — иначе deploy stamp слеп к фронт-правкам и не флипается в stale.
@@ -165,8 +166,21 @@ def _code_root() -> Path:
 
 
 def _git(args: list[str], cwd: Path) -> str:
+    # An installed runtime is an immutable application tree, not a checkout.
+    # Avoid four doomed 4-second probes and visible console flashes per header
+    # refresh when the installed tree has no `.git`.
+    if not (cwd / ".git").exists():
+        return ""
     try:
-        out = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, timeout=4)
+        out = subprocess.run(
+            ["git", *args],
+            cwd=str(cwd),
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=4,
+            creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
         return out.stdout.strip() if out.returncode == 0 else ""
     except Exception:  # noqa: BLE001
         return ""
