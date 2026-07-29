@@ -31,7 +31,7 @@ VPS_PATCH_MANIFEST_URL = os.getenv(
     "LES_VPS_PATCH_MANIFEST_URL", "https://les.ovc.me/updates/latest.json"
 ).strip()
 VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
-VPS_PATCH_SCHEMA = "les.vps-patch.v1"
+VPS_PATCH_SCHEMA = "les.vps-patch.v2"
 VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
 MAC_UPDATE_FEED_SCHEMA = "les.mac-update-feed.v1"
 MAC_UPDATE_SCHEMA = "les.mac-update.v1"
@@ -73,9 +73,13 @@ VPS_PATCH_ALLOWED_FILES = {
     "proxy_server.py",
     "tools/vps_patch_apply.py",
     "config/version.json",
+    "installers/windows/start-light.ps1",
+    "installers/windows/stop-light.ps1",
+    "installers/windows/state.ps1",
+    "installers/windows/app/bootstrap.ps1",
 }
-VPS_PATCH_DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "installers", "desktop"}
-VPS_PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"}
+VPS_PATCH_DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "desktop"}
+VPS_PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html", ".ps1"}
 _SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
 
 
@@ -252,11 +256,15 @@ def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, st
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", patch_id)[:32] or "update"
     task_name = f"LES-Patch-{safe_id}"
     arguments = f'"{helper}" --job "{job}"'
+    python_executable = Path(sys.executable)
+    pythonw = python_executable.with_name("pythonw.exe")
+    if pythonw.is_file():
+        python_executable = pythonw
     script = (
         "$ErrorActionPreference='Stop'; "
         f"$name={_ps_literal(task_name)}; "
         "Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue; "
-        f"$action=New-ScheduledTaskAction -Execute {_ps_literal(str(sys.executable))} "
+        f"$action=New-ScheduledTaskAction -Execute {_ps_literal(str(python_executable))} "
         f"-Argument {_ps_literal(arguments)}; "
         "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
         "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
@@ -273,6 +281,19 @@ def _validate_patch_feed(payload: dict) -> dict:
     patch = payload.get("patch")
     if not isinstance(patch, dict) or patch.get("schema") != VPS_PATCH_SCHEMA:
         raise UpdateError("Манифест быстрого обновления повреждён")
+    product_version = str(patch.get("product_version") or "")
+    build_number = int(patch.get("build_number") or 0)
+    target_commit = str(patch.get("target_commit") or "")
+    base_commit = str(patch.get("base_commit") or "")
+    patch_id = str(patch.get("patch_id") or "")
+    if (
+        not product_version
+        or build_number <= 0
+        or not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", patch_id)
+        or not re.fullmatch(r"[0-9a-f]{40}", base_commit)
+        or not re.fullmatch(r"[0-9a-f]{40}", target_commit)
+    ):
+        raise UpdateError("В быстром обновлении отсутствует безопасный id, версия, сборка или commit")
     archive_url = str(payload.get("archive_url") or "")
     archive_sha256 = str(payload.get("archive_sha256") or "").lower()
     if not _trusted_patch_url(archive_url) or not re.fullmatch(r"[0-9a-f]{64}", archive_sha256):
@@ -283,26 +304,62 @@ def _validate_patch_feed(payload: dict) -> dict:
     root = runtime_root()
     target_matches = 0
     compatible_files = 0
+    total_bytes = 0
+    seen: set[str] = set()
     for entry in files:
         if not isinstance(entry, dict):
             raise UpdateError("Некорректная запись файла в обновлении")
+        scope = str(entry.get("scope") or "runtime")
         rel = PurePosixPath(str(entry.get("path") or ""))
         if rel.is_absolute() or ".." in rel.parts or not rel.parts:
             raise UpdateError("Обновление содержит небезопасный путь")
         normalized = rel.as_posix()
-        if any(part in VPS_PATCH_DENIED_PARTS for part in rel.parts):
-            raise UpdateError("Обновление пытается изменить запрещённую часть приложения")
-        if not (normalized in VPS_PATCH_ALLOWED_FILES or normalized.startswith(VPS_PATCH_ALLOWED_ROOTS)):
-            raise UpdateError("Обновление пытается выйти за список заменяемых файлов")
-        if Path(normalized).suffix.lower() not in VPS_PATCH_SUFFIXES:
-            raise UpdateError("Обновление содержит неподдерживаемый тип файла")
-        target = root / Path(*rel.parts)
+        identity = f"{scope}:{normalized}"
+        if identity in seen:
+            raise UpdateError("Обновление содержит повторяющийся файл")
+        seen.add(identity)
+        if scope == "app":
+            if normalized != "les-desktop.exe":
+                raise UpdateError("Обновление пытается заменить неизвестный файл оболочки")
+            target = root.parent / "les-desktop.exe"
+        elif scope == "runtime":
+            if any(part in VPS_PATCH_DENIED_PARTS for part in rel.parts):
+                raise UpdateError("Обновление пытается изменить запрещённую часть приложения")
+            if not (normalized in VPS_PATCH_ALLOWED_FILES or normalized.startswith(VPS_PATCH_ALLOWED_ROOTS)):
+                raise UpdateError("Обновление пытается выйти за список заменяемых файлов")
+            if Path(normalized).suffix.lower() not in VPS_PATCH_SUFFIXES:
+                raise UpdateError("Обновление содержит неподдерживаемый тип файла")
+            target = root / Path(*rel.parts)
+        else:
+            raise UpdateError("Обновление содержит неизвестную область назначения")
         current = sha256_file(target) if target.is_file() else None
-        target_hash = str(entry.get("sha256") or "")
+        target_hash = str(entry.get("sha256") or "").lower()
+        base_hash_value = entry.get("base_sha256")
+        accepted_values = entry.get("accepted_sha256") or []
+        size = entry.get("bytes")
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", target_hash)
+            or (
+                base_hash_value is not None
+                and not re.fullmatch(r"[0-9a-fA-F]{64}", str(base_hash_value))
+            )
+            or not isinstance(accepted_values, list)
+            or any(
+                not isinstance(value, str)
+                or not re.fullmatch(r"[0-9a-fA-F]{64}", value)
+                for value in accepted_values
+            )
+            or not isinstance(size, int)
+            or isinstance(size, bool)
+            or size < 0
+        ):
+            raise UpdateError("Обновление содержит некорректный SHA-256 или размер файла")
+        total_bytes += size
+        if total_bytes > 128 * 1024 * 1024:
+            raise UpdateError("Распакованный размер обновления превышает допустимый")
         accepted_hashes = {
             str(value).lower()
-            for value in (entry.get("accepted_sha256") or [])
-            if re.fullmatch(r"[0-9a-fA-F]{64}", str(value))
+            for value in accepted_values
         }
         accepted_hashes.update(
             str(value).lower()
@@ -319,10 +376,13 @@ def _validate_patch_feed(payload: dict) -> dict:
     available = target_matches != len(files)
     compatible = compatible_files == len(files)
     return {
-        "patch_id": str(patch.get("patch_id") or ""),
-        "base_commit": str(patch.get("base_commit") or ""),
-        "target_commit": str(patch.get("target_commit") or ""),
+        "patch_id": patch_id,
+        "base_commit": base_commit,
+        "target_commit": target_commit,
+        "product_version": product_version,
+        "build_number": build_number,
         "files": len(files),
+        "bytes": int(payload.get("archive_bytes") or 0),
         "available": available,
         "compatible": compatible,
         "message": (
@@ -404,7 +464,15 @@ async def download_and_launch_vps_patch() -> dict:
             if bundled != info["patch"]:
                 raise UpdateError("Манифест внутри архива не совпадает с опубликованным")
             names = set(bundle.namelist())
-            expected = {"manifest.json", *(f"payload/{entry['path']}" for entry in bundled["files"])}
+            expected = {
+                "manifest.json",
+                *(
+                    f"payload/@app/{entry['path']}"
+                    if str(entry.get("scope") or "runtime") == "app"
+                    else f"payload/{entry['path']}"
+                    for entry in bundled["files"]
+                ),
+            }
             if names != expected:
                 raise UpdateError("Архив быстрого обновления содержит лишние или отсутствующие файлы")
     except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
@@ -420,6 +488,7 @@ async def download_and_launch_vps_patch() -> dict:
                 "runtime_root": str(runtime_root()),
                 "state_root": str(state_root),
                 "archive": str(archive),
+                "archive_sha256": actual,
                 "status_path": str(status),
                 "patch_id": info["patch_id"],
                 "helper_task_name": "",
@@ -435,12 +504,13 @@ async def download_and_launch_vps_patch() -> dict:
     job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
     status.write_text(json.dumps({"schema": "les.vps-patch-status.v1", "state": "starting", "stage": "downloaded", "patch_id": info["patch_id"], "message": "Обновление проверено, начинаю установку"}, ensure_ascii=False, indent=2), encoding="utf-8")
     launched = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-EncodedCommand", encoded_command],
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_command],
         cwd=str(root),
         capture_output=True,
         text=True,
         timeout=30,
         check=False,
+        creationflags=0x08000000,
     )
     if launched.returncode != 0:
         raise UpdateError("Windows не смог запустить независимую задачу обновления")

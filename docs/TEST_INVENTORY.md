@@ -1,12 +1,18 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
-Гейт: `make verify` (офлайн, синтаксис+сбор канонической LES-коллекции). Основная сюита:
-`make test`. На 2026-07-29 она собирает **2808 тестов** и даёт
+Общая диагностическая suite сохранена как `make test`. На 2026-07-29 она собирает
+**2808 тестов** и даёт
 **2799 passed / 9 skipped**. Прямой
 `uv run pytest` использует тот же default из `pytest.ini`. Физический total включает также
 архивные и отдельные продуктовые профили;
 архивный Unified запускается только через `make test-legacy`, а ARTEL — в отдельном продукте.
 `make test-mail` отдельно содержит **61 тест**.
+
+Для updater общая suite **запрещена**: prepare/apply не вызывают `make test`, `make verify`,
+Tauri build или baseline. Единственный offline-гейт этого слоя — `make test-updater`; нативная
+Windows-приёмка после ручной установки — `tools/windows_updater_smoke.ps1`, максимум 90 секунд.
+`make test` пока остаётся только явной диагностикой других модулей до отдельной переработки
+архитектуры тестов.
 
 Архитектурный разбор и список исторического долга:
 [TEST_ARCHITECTURE_AUDIT_2026-07-14.md](TEST_ARCHITECTURE_AUDIT_2026-07-14.md).
@@ -25,15 +31,18 @@
   IMAP/registry/cursors/dedup, mail projection/API/UI и Windows-sidecar source contract;
 - `make test-mail-release` — `test-mail` плюс Rust compile-check Tauri. Он обязателен в
   `make patch-release`, но не подменяет установленный Outlook COM/task/index/open smoke на Legion;
+- `make test-updater` — короткий hermetic behavior-профиль Mac/Windows: shell build-attestation, внешний и внутренний
+  manifest, base/target SHA, атомарная замена runtime и `les-desktop.exe`, backup, полный rollback,
+  сохранность user state и fail-closed process hygiene. Никаких build/baseline/общей suite;
 - `make test-release-critical` — совместимый псевдоним `make test-integration`;
 - `make test-rag-core` — короткий обязательный RAG integrity-профиль;
 - `make smoke-active-artifacts` проверяет фактические active base/FSEM, SHA/count/provenance;
 - `make smoke-smeta-rerank` — fail-closed A/B живой цепочки active base → Qdrant/RRF → reranker;
 - `make smoke-basic-release` — живой HTTP/UI/product smoke. Эти проверки не подменяются зелёным pytest.
-- `platform-gate` — одинаковый на Mac и Windows переносимый набор поведенческих unit/integration
+- `platform-gate` — исторический полный release-контур, не гейт application updater: одинаковый на Mac и Windows переносимый набор поведенческих unit/integration
   проверок, фактическая проверка комплектной сметной базы и нативная Tauri-сборка; отдельно
-  добавляет проверки установщика соответствующей ОС. Полный набор из 2767 тестов остаётся обязательным
-  локальным release-гейтом, а не многократно прогоняются на hosted Windows без живого окружения;
+  добавляет проверки установщика соответствующей ОС. До переработки тестовой архитектуры этот
+  тяжёлый контур не запускается updater-командами;
 
 RAG-ядро имеет отдельный обязательный профиль `make test-rag-core`; offline defaults задаются в
 `tests/conftest.py`. Аудит достоверности гейтов: [RAG_TEST_PROGRAM_AUDIT.md](RAG_TEST_PROGRAM_AUDIT.md).
@@ -44,13 +53,13 @@ RAG-ядро имеет отдельный обязательный профил
 | Файл | Тестов | Покрывает |
 |---|---:|---|
 | `tests/test_dataset_integrity.py`, integrity cases in `tests/test_datasets_router.py` | focused + live dataset | Полная связность одного датасета: исходные файлы/fingerprint, MetaDB status, exact Qdrant point ids, named dense+sparse, lexical rows/FTS, PDF page coverage и index contract; repair переочередит только повреждённые документы и не трогает здоровые |
-| `tests/test_vps_patch.py` | focused | Общий для всех совместимых Windows-установок канал VPS-патчей: allowlist, запрет traversal/лишних файлов, base/target SHA, точное содержимое архива и доверенный HTTPS-origin `les.ovc.me/updates/` |
+| `tests/test_vps_patch.py`, `tests/test_windows_application_update.py`, `tests/test_windows_update_shell.py` | `make test-updater` | Windows application updater v2: Cargo-shell attestation exact commit/version/build без NSIS/baseline, доверенный HTTPS-origin, runtime allowlist, один exact `les-desktop.exe`, lifecycle scripts, base/target/archive SHA, pythonw helper, атомарная замена, rollback нового и существующего файлов, повторная попытка с новой recovery-точкой, user-state boundary и прямые Python PID без `cmd.exe` |
 | `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_onboard_reranker.py`, `tests/test_software_versions.py`, `tests/test_patch_release.py`; `.github/workflows/{verify,release}.yml`; live `tools/windows_{release_smoke,production_deploy}.ps1` | macOS + Windows CI, behavior/artifact + Windows live | hosted macOS/Windows прогоняет переносимые unit/integration проверки, реальный smeta-baseline и native Tauri build; production workflow требует approved self-hosted Mac, собирает/проверяет DMG, затем Legion NSIS install+live smoke и публикует обе платформы атомарно. Изолированный Windows-smoke проверяет portable CPython/uv, immutable smeta baseline, контрольный PDF и `dense + qdrant_sparse → RRF`; production gate не трогает пользовательский RAG и проверяет установленную версию, совместимость индексного контракта, ручной Outlook-сборщик и desktop |
 | `tests/test_chat_mail_query.py`, `tests/test_converter_email.py`, `tests/test_ezhik_imap_smoke.py`, `tests/test_mail_*.py`, `tests/test_outlook_mail_poller.py` | `make test-mail`: 63 | Е.Ж.И.К.: один IMAP/Outlook ящик = отдельный dataset; secret-vault boundary; Message-ID/native/SHA dedup; multiple locations и snapshot retention; UIDVALIDITY reset; read-only `BODY.PEEK[]`; cursor после каждого registered UID; failure mid-batch; inline CID exclusion; attachment SHA-256/20-MB MISSING; account API, legacy compatibility, UI и Windows packaging contract |
 | `tests/test_outlook_mail_poller.py`; cross-platform `platform_release_gate`; Windows live gate | unit/static + native Windows compile/self-test + live | Classic Outlook sidecar recursively visits stores/folders, excludes Deleted/Drafts/Junk by identifiers, saves Unicode MSG и opens exact original. Per-folder cursor persists `backfill_complete`; каждый ручной проход ограничен 10 снимками/12 секундами и независимым hard-stop 15 секунд. Unit с заблокированным backend и отдельный intake unit доказывают, что HTTP подтверждает durable raw+manifest до exact registry/RAG; spool возобновляется после рестарта. Windows CI компилирует реальный C# source и выполняет cursor self-test. У production task нет расписания, она запускается кнопкой. Static/self-test не заменяют COM probe, idempotent repeat, INDEXED, фактическую duration и original-opening smoke на Legion |
 | `tests/test_local_inference_benchmark.py` | 8 | офлайн-контракт direct OpenAI benchmark и OptiQ probe: p50/p95, usage/cache normalization, MTP summary, tool/prefix profiles, sampler forwarding и чтение per-request telemetry JSONL; live model-series запускаются отдельно через `tools/local_inference_benchmark.py` + `tools/optiq_mtp_probe_server.py` |
 | `tests/test_answer_render_v16.py` | focused | render-хелперы Совушки: strip markdown из ячеек, source-chips и usage `used/found/weak`, громкий degraded/blocked notice, evidence-секции, citation/conflict-блоки, citation drawer payload, PDF page/bbox и DOCX/XLSX locator deep-links, compact trace и `answer_copy_text` |
-| `tests/test_mac_update.py`, `tests/test_manual_update_ui.py` | focused | Mac-only internal updater: archive/helper SHA-256, runtime allowlist, base compatibility, атомарная замена, recovery copy, обязательный rollback при провале smoke и platform-native ручная кнопка без build/test |
+| `tests/test_mac_update.py` | `make test-updater` | Mac-only internal updater: archive/helper SHA-256, runtime allowlist, base compatibility, атомарная замена, recovery copy и обязательный rollback при провале smoke без build/test |
 | `tests/test_files_router_w181.py`, `tests/test_file_viewer_service.py` | 15 + 11 | allowlisted read-only file routes и `list.file_viewer.v1`: prefixed `RAG_Content` refs, PDF info/preview/bbox, unified PDF/DOCX/XLSX viewer, Office locator/order, HTML escaping, PPTX slide text, EML plain body, legacy DOC/XLS honesty |
 | `tests/test_sidecar_ops_v16.py` | 32 | sidecar-операции: инвентарь датасетов, heading-классификатор, extraction-state, lexical `extracted_fts`, OCR-детект, `run_extraction`/`extract_body_op` (gate env+confirm), originals read-only, legacy `.xls`; агрегатные вызовы v0.3–v0.15 удалены |
 | `tests/test_route_and_runtime_v17.py` | 20 | runtime alignment (extract-эндпоинты зарегистрированы), route-fix «реестр документации» ≠ глобальный реестр, doc_type_classifier, honest `.xls`; цепочка повторных `test_vNN_*` удалена |

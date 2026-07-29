@@ -6,8 +6,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_settings_exposes_platform_native_manual_update_flow_with_status():
     source = (ROOT / "sovushka" / "components" / "header.py").read_text(encoding="utf-8")
-    section = source[source.index('ui.label("Быстрое обновление ЛЕС")') : source.index('ui.label("⚠ Опасная зона")')]
-    assert '"Проверить патч"' in section
+    section = source[source.index('ui.label("Обновление ЛЕС")') : source.index('ui.label("⚠ Опасная зона")')]
+    assert '"Проверить обновление"' in section
     assert '"Установить"' in section
     assert '"/api/update/patch/check" if is_windows' in section
     assert '"/api/update/patch/install" if is_windows' in section

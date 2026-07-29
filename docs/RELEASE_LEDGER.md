@@ -7,17 +7,36 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.17 (console-free Windows lifecycle + updater handoff)
-номер сборки:              490     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.490 (internal identity; Windows installer ещё не собран)
+версия продукта (SemVer):  0.25.18 (transactional Windows application updater v2)
+номер сборки:              491     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.491 (internal identity; Windows installer ещё не собран)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; quiet/idempotent Windows lifecycle
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          Windows 0.25.17 / build 490 только после отдельной команды и live smoke
-рантайм /api/version:      Mac 0.25.16 / build 489; dev-версия 0.25.17 ещё не установлена
+следующий выпуск:          один bootstrap installer 0.25.18 / build 491 после отдельной команды; затем только application update
+рантайм /api/version:      Mac 0.25.16 / build 489; dev-версия 0.25.18 ещё не установлена
 ```
 
+> 0.25.18 / build 491 — корректный application updater и короткий тестовый контракт
+>
+> Дата: 2026-07-29
+> Статус: dev; Mac runtime, Legion, public feed, tags и release assets не изменяются.
+> Windows updater v2 транзакционно доставляет bounded runtime-файлы, четыре exact
+> lifecycle-скрипта и опционально один `les-desktop.exe`. Отдельный Windows shell-builder
+> делает только Cargo release без NSIS/baseline и attestation exact commit/version/build
+> + base/target SHA; package builder отвергает произвольный или чужой EXE. Зависимости,
+> baseline, user state и произвольные installer/native paths остаются запрещены. Detached
+> helper запускается через `pythonw.exe`, скрывает PowerShell/taskkill, до остановки
+> повторно проверяет archive/manifest/file SHA и exact ZIP contents, а затем выполняет
+> backup→stop→atomic replace→точечный py_compile→deploy stamp→restart. Success требует
+> exact commit/product/build, API/UI/index contract, direct Python PID и ноль LES-owned
+> `cmd.exe`; при провале восстанавливаются существующие файлы/stamp и удаляются новые.
+> Общая LES suite запрещена в updater-контуре. Единственный offline-гейт —
+> `make test-updater`; Windows live smoke ограничен 90 секундами и не запускает build,
+> baseline, модель или RAG. Для перехода с установленного v1 helper нужен один последний
+> полный installer; Legion до отдельной команды не затрагивается.
+>
 > 0.25.17 / build 490 — тихий и идемпотентный Windows lifecycle
 >
 > Дата: 2026-07-29

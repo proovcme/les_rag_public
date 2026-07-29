@@ -72,9 +72,9 @@ make status-mac-update MAC_UPDATE_BRANCH=codex/sovushka-ui-kit
 ## Проверка
 
 ```bash
-uv run pytest -q tests/test_mac_update.py tests/test_manual_update_ui.py
-make verify
+make test-updater
 ```
 
 `tests/test_mac_update.py` отдельно доказывает успешную атомарную замену и возврат исходного файла
-при провале smoke на временном runtime.
+при провале smoke на временном runtime. Общая LES suite и `make verify` в updater-контуре
+запрещены и не запускаются ни prepare, ни apply.

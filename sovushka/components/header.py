@@ -591,7 +591,7 @@ def build_header(
 
                     asyncio.create_task(_load_settings())
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
-                    ui.label("Быстрое обновление ЛЕС").style(
+                    ui.label("Обновление ЛЕС").style(
                         "color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;"
                     )
                     update_check_path = (
@@ -653,14 +653,14 @@ def build_header(
                                     if state.get("state") == "ready":
                                         ui.notify("ЛЕС обновлён", type="positive")
                                     else:
-                                        ui.notify("Патч отменён, предыдущая версия восстановлена", type="negative")
+                                        ui.notify("Обновление отменено, предыдущая версия восстановлена", type="negative")
                                     return
 
                         asyncio.create_task(_watch_patch())
 
                     with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
                         ui.button(
-                            "Проверить патч",
+                            "Проверить обновление",
                             icon="o_system_update_alt",
                             on_click=_check_application_update,
                         ).props("no-caps flat").style(

@@ -1,11 +1,13 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
+.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
 
 PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
 AUDIT_RAG_UPDATE_ARGS ?=
 MAC_UPDATE_BRANCH ?= codex/audit-rag
+WINDOWS_UPDATE_ARGS ?=
+WINDOWS_SHELL_ARGS ?=
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
@@ -20,6 +22,7 @@ ARCHITECTURE_EXCLUDED_TESTS := $(LEGACY_ARCHITECTURE_TESTS) $(ARTEL_TESTS)
 ARCHITECTURE_IGNORE_ARGS := $(foreach test,$(ARCHITECTURE_EXCLUDED_TESTS),--ignore=$(test))
 LES_RELEASE_IGNORE_ARGS := $(ARCHITECTURE_IGNORE_ARGS)
 MAIL_TESTS ?= tests/test_chat_mail_query.py tests/test_converter_email.py tests/test_ezhik_imap_smoke.py tests/test_mail_ingest.py tests/test_mail_profile.py tests/test_mail_push_service.py tests/test_mail_query_service.py tests/test_mail_registry_service.py tests/test_mail_router.py tests/test_mail_threads.py tests/test_outlook_mail_poller.py
+UPDATER_TESTS ?= tests/test_vps_patch.py tests/test_windows_application_update.py tests/test_windows_update_shell.py tests/test_mac_update.py
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
 SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
@@ -37,6 +40,9 @@ help:
 	@echo "make test-rag-core — обязательный offline integrity-гейт RAG-ядра"
 	@echo "make test-mail      — обязательный offline профиль Е.Ж.И.К. (IMAP/registry/RAG/API/UI/Windows static)"
 	@echo "make test-mail-release — test-mail + Rust compile-check Tauri; live Outlook проверяется на Windows"
+	@echo "make test-updater — короткий behavior-гейт updater: validate/apply/rollback/data/process, без общей suite/build/baseline"
+	@echo "make prepare-windows-update — после короткого gate собрать bounded runtime/app ZIP; параметры через WINDOWS_UPDATE_ARGS"
+	@echo "make build-windows-update-shell — Windows-only cargo build одного attested les-desktop.exe, без installer/baseline"
 	@echo "make test-tauri    — Rust compile-check Tauri desktop shell"
 	@echo "make platform-gate — portable verify → full tests → native Tauri build на текущей ОС"
 	@echo "make smeta-base   — пересобрать checked unified parquet → structured SQLite → SMETA_SERVICE cards без скачивания"
@@ -101,6 +107,12 @@ test-mail:
 
 test-mail-release: test-mail test-tauri
 	@echo "OK — offline/static mail gate зелёный. Следующий обязательный гейт: installed Legion + classic Outlook."
+
+test-updater:
+	uv run python tools/sync_version_contract.py --check
+	uv run python -m py_compile tools/vps_patch.py tools/vps_patch_apply.py tools/windows_update_shell.py tools/mac_update.py tools/mac_update_apply.py proxy/services/update_service.py sovushka/components/header.py
+	uv run python -m pytest -q $(UPDATER_TESTS)
+	@echo "OK — updater behavior-гейт зелёный; build, baseline и общая LES suite не запускались."
 
 test-tauri:
 	$(HOME)/.cargo/bin/cargo check --manifest-path desktop/tauri/src-tauri/Cargo.toml
@@ -184,6 +196,12 @@ patch-release:
 
 release-multiplatform:
 	uv run python tools/multiplatform_release.py $(MULTIPLATFORM_RELEASE_ARGS)
+
+build-windows-update-shell: test-updater
+	uv run python tools/windows_update_shell.py $(WINDOWS_SHELL_ARGS)
+
+prepare-windows-update: test-updater
+	uv run python tools/vps_patch.py build $(WINDOWS_UPDATE_ARGS)
 
 prepare-mac-update:
 	LES_MAC_UPDATE_BRANCH="$(MAC_UPDATE_BRANCH)" uv run python tools/mac_update.py prepare $(AUDIT_RAG_UPDATE_ARGS)

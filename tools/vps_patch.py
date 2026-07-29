@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
 import zipfile
@@ -14,17 +15,22 @@ from pathlib import Path, PurePosixPath
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCHEMA = "les.vps-patch.v1"
+SCHEMA = "les.vps-patch.v2"
 FEED_SCHEMA = "les.vps-patch-feed.v1"
 DEFAULT_ORIGIN = "https://les.ovc.me/updates"
+DESKTOP_MANIFEST_SCHEMA = "les.windows-update-shell.v1"
 ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
 ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
     "tools/vps_patch_apply.py",
     "config/version.json",
+    "installers/windows/start-light.ps1",
+    "installers/windows/stop-light.ps1",
+    "installers/windows/state.ps1",
+    "installers/windows/app/bootstrap.ps1",
 }
-DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "installers", "desktop"}
+DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "desktop"}
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -54,7 +60,7 @@ def normalize_path(value: str) -> str:
         raise ValueError(f"denied patch path: {value}")
     if not (normalized in ALLOWED_FILES or normalized.startswith(ALLOWED_ROOTS)):
         raise ValueError(f"path is outside patch allowlist: {value}")
-    if Path(normalized).suffix.lower() not in {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"}:
+    if Path(normalized).suffix.lower() not in {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html", ".ps1"}:
         raise ValueError(f"unsupported patch file type: {value}")
     return normalized
 
@@ -64,6 +70,72 @@ def git_bytes(commit: str, path: str) -> bytes | None:
         ["git", "show", f"{commit}:{path}"], cwd=ROOT, capture_output=True, check=False
     )
     return result.stdout if result.returncode == 0 else None
+
+
+def version_contract(commit: str) -> dict:
+    raw = git_bytes(commit, "config/version.json")
+    if raw is None:
+        raise ValueError("target commit has no config/version.json")
+    try:
+        contract = json.loads(raw)
+    except (ValueError, TypeError) as exc:
+        raise ValueError("target config/version.json is invalid") from exc
+    product_version = str(contract.get("product_version") or "")
+    build_number = int(contract.get("build_number") or 0)
+    if contract.get("schema") != "les.version.v1" or not product_version or build_number <= 0:
+        raise ValueError("target version contract is incomplete")
+    return contract
+
+
+def desktop_payload(
+    manifest_path: Path,
+    *,
+    target_commit: str,
+    contract: dict,
+) -> tuple[dict, bytes]:
+    manifest_path = Path(manifest_path).resolve()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError("desktop build manifest is unreadable") from exc
+    if manifest.get("schema") != DESKTOP_MANIFEST_SCHEMA:
+        raise ValueError("desktop build manifest schema is unsupported")
+    if (
+        str(manifest.get("target_commit") or "") != target_commit
+        or str(manifest.get("product_version") or "") != str(contract["product_version"])
+        or int(manifest.get("build_number") or 0) != int(contract["build_number"])
+        or str(manifest.get("desktop_version") or "") != str(contract.get("desktop_version") or "")
+    ):
+        raise ValueError("desktop build does not match target commit/version/build")
+    binary_name = str(manifest.get("binary") or "")
+    if binary_name != "les-desktop.exe":
+        raise ValueError("desktop build manifest names an unexpected binary")
+    binary_path = manifest_path.parent / binary_name
+    if not binary_path.is_file():
+        raise ValueError("attested les-desktop.exe is missing")
+    binary = binary_path.read_bytes()
+    if len(binary) > 64 * 1024 * 1024:
+        raise ValueError("attested les-desktop.exe exceeds the updater size limit")
+    target_hash = sha256_bytes(binary)
+    base_hash = str(manifest.get("base_binary_sha256") or "").lower()
+    if (
+        target_hash != str(manifest.get("binary_sha256") or "").lower()
+        or len(binary) != int(manifest.get("binary_bytes") or -1)
+        or not re.fullmatch(r"[0-9a-f]{64}", base_hash)
+    ):
+        raise ValueError("desktop build SHA-256, size, or base identity is invalid")
+    return (
+        {
+            "scope": "app",
+            "path": "les-desktop.exe",
+            "base_sha256": base_hash,
+            "accepted_sha256": sorted({base_hash, target_hash}),
+            "accepted_missing": False,
+            "sha256": target_hash,
+            "bytes": len(binary),
+        },
+        binary,
+    )
 
 
 def accepted_file_hashes(base_commit: str, target_commit: str, path: str) -> tuple[list[str], bool]:
@@ -90,9 +162,18 @@ def accepted_file_hashes(base_commit: str, target_commit: str, path: str) -> tup
     return sorted(hashes), missing
 
 
-def build_patch(*, base: str, target: str, files: list[str], output: Path, origin: str) -> dict:
+def build_patch(
+    *,
+    base: str,
+    target: str,
+    files: list[str],
+    output: Path,
+    origin: str,
+    desktop_manifest: Path | None = None,
+) -> dict:
     base_commit = subprocess.check_output(["git", "rev-parse", base], cwd=ROOT, text=True).strip()
     target_commit = subprocess.check_output(["git", "rev-parse", target], cwd=ROOT, text=True).strip()
+    contract = version_contract(target_commit)
     normalized = sorted({normalize_path(path) for path in files})
     if not normalized:
         raise ValueError("patch file list is empty")
@@ -109,6 +190,7 @@ def build_patch(*, base: str, target: str, files: list[str], output: Path, origi
         accepted_hashes, accepted_missing = accepted_file_hashes(base_commit, target_commit, path)
         entries.append(
             {
+                "scope": "runtime",
                 "path": path,
                 "base_sha256": sha256_bytes(windows_runtime_bytes(before)) if before is not None else None,
                 "accepted_sha256": accepted_hashes,
@@ -117,6 +199,14 @@ def build_patch(*, base: str, target: str, files: list[str], output: Path, origi
                 "bytes": len(after),
             }
         )
+    if desktop_manifest is not None:
+        desktop_entry, binary = desktop_payload(
+            desktop_manifest,
+            target_commit=target_commit,
+            contract=contract,
+        )
+        payload["@app/les-desktop.exe"] = binary
+        entries.append(desktop_entry)
     if not entries:
         raise ValueError("selected files have no changes")
     patch_id = f"{target_commit[:12]}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
@@ -125,6 +215,9 @@ def build_patch(*, base: str, target: str, files: list[str], output: Path, origi
         "patch_id": patch_id,
         "base_commit": base_commit,
         "target_commit": target_commit,
+        "product_version": contract["product_version"],
+        "build_number": int(contract["build_number"]),
+        "desktop_version": str(contract.get("desktop_version") or ""),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "files": entries,
     }
@@ -176,13 +269,27 @@ def main() -> int:
     build.add_argument("--file", action="append", dest="files", required=True)
     build.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
     build.add_argument("--origin", default=DEFAULT_ORIGIN)
+    build.add_argument("--desktop-manifest", type=Path)
     publish_cmd = sub.add_parser("publish")
     publish_cmd.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
     publish_cmd.add_argument("--host", default="root@185.185.71.196")
     publish_cmd.add_argument("--remote-root", default="/var/www/les-updates")
     args = parser.parse_args()
     if args.command == "build":
-        print(json.dumps(build_patch(base=args.base, target=args.target, files=args.files, output=args.output, origin=args.origin), ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                build_patch(
+                    base=args.base,
+                    target=args.target,
+                    files=args.files,
+                    output=args.output,
+                    origin=args.origin,
+                    desktop_manifest=args.desktop_manifest,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         publish(args.output, args.host, args.remote_root)
         print(json.dumps({"ok": True, "published": True}, ensure_ascii=False))
