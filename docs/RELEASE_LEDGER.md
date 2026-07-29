@@ -11,22 +11,24 @@
 номер сборки:              497     (отдельно от версии продукта)
 версия Tauri/NSIS:         5.1.497 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; hard + soft updater on one Python lifecycle
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.23 / 496, next target 0.25.24 / 497
+dev implementation:       codex/sovushka-ui-kit; runtime code at f1242840, ledger-only HEAD may be newer
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.24 / 497 at f12428403380
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion exact live result is written by updater report
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.24 / 497, f12428403380
 ```
 
 > 0.25.24 / build 497 — вкладка строится один раз, а не весь интерфейс сразу
 >
 > Дата: 2026-07-29
-> Статус: internal Legion soft-update target; без Tauri build, tag, GitHub
-> Release, public feed и VPS. Общий UI-kit primitive `cached_tab_panels`
+> Статус: установлен и принят на Legion, exact commit `f12428403380`; без
+> Tauri build, tag, GitHub Release, public feed и VPS. Общий UI-kit primitive `cached_tab_panels`
 > создаёт только активную рабочую панель. Документы, Студия, почта, история и
 > административные разделы строятся по первому открытию и затем остаются в
 > `keep_alive`. Переход Чат/Студия не меняет route; вход в Чат или Конфигурацию
 > больше не ждёт eager-render всех скрытых вкладок.
+> Живой updater-report: `ready/done`, 3 файла, 2 readiness-пробы,
+> `direct_python_no_console_v2`, Qdrant и index contract зелёные, user data untouched.
 >
 > 0.25.23 / build 496 — без вспышек при работе с чатом
 >
