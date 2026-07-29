@@ -3,7 +3,7 @@
 Хаб, к которому ходят морда (Electron) и Revit-плагин. Несёт готовое детерминированное
 ядро (`artel_datasheet_extractor`, `artel_family_action_plan`) и держит локальный store:
 спецификации (draft→approved) и очередь заданий на генерацию. Плагин поллит `next_job`,
-исполняет план в Revit, шлёт отчёт обратно. См. дизайн: products/artel/docs/family-factory-package.md
+исполняет план в Revit, шлёт отчёт обратно. Канонический дизайн: products/artel/docs/ARCHITECTURE.md
 
 Автономно: SQLite в `ARTEL_DB_PATH`; ФОП из `ARTEL_SHARED_PARAMS_FILE` (опц.). Облако/ЛЕС —
 поверх, здесь не требуются.

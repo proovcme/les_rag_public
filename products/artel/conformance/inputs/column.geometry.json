@@ -1,6 +1,0 @@
-{
-  "schema_version": "artel.family_geometry.v1",
-  "archetype": "cylinder_revolve",
-  "bindings": {"diameter": "Диаметр", "height": "Высота"},
-  "source": {"kind": "drawing", "confidence": 0.95}
-}

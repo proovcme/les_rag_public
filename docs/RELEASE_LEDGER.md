@@ -7,17 +7,28 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.31 (resumable smeta mapping + read-only ETM)
-номер сборки:              504     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.504 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.32 (standalone ARTEL boundary)
+номер сборки:              505     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.505 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/recover-forgotten-branches
-dev implementation:       codex/recover-forgotten-branches; 0.25.31 candidate
+dev implementation:       codex/recover-forgotten-branches; 0.25.32 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.25.32 / build 505 — ARTEL отделён от LES без потери интеграционного контура
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Вторая LES-owned копия исходников заменена pinned git-submodule
+> `proovcme/Agnostis` на commit `0ecccf54362870a75ecaf96f99fb6129dfe3a0fa`.
+> LES сохраняет ARTEL Index/BIM-export интеграцию и contract-тесты, но больше
+> не содержит собственного ARTEL release builder и не определяет архитектуру
+> или выпуск самостоятельного Revit-продукта.
+>
 > 0.25.31 / build 504 — восстановлены resumable mapping и read-only ETM
 >
 > Дата: 2026-07-29

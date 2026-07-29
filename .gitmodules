@@ -1,0 +1,3 @@
+[submodule "products/artel"]
+	path = products/artel
+	url = git@github.com:proovcme/Agnostis.git

@@ -8,6 +8,11 @@
 архивный Unified запускается только через `make test-legacy`, а ARTEL — в отдельном продукте.
 `make test-mail` отдельно содержит **61 тест**.
 
+`tests/test_artel_packaging.py` проверяет только границу продуктов: pinned
+Agnostis submodule, отсутствие tracked build outputs и LES↔ARTEL integration
+contracts. Это не release-gate самостоятельного ARTEL и не переносит его
+сборочную ответственность обратно в LES.
+
 Для updater общая suite **запрещена**: prepare/apply не вызывают `make test`, `make verify`,
 Tauri build или baseline. Единственный offline-гейт этого слоя — `make test-updater`; нативная
 Windows-приёмка после ручной установки — `tools/windows_updater_smoke.ps1`, максимум 90 секунд.
