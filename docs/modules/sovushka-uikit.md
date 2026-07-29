@@ -29,7 +29,7 @@
 | Роль | Python/CSS-контракт | Варианты |
 |---|---|---|
 | Действие | `action_button`, `.sov-ui-button` | `primary`, `secondary`, `quiet`, `danger`; `compact`, `icon_only` |
-| Поле | `text_field`, `select_field`, `.sov-ui-input`, `.sov-ui-select` | text/select, label, placeholder, clearable; label+placeholder не перекрываются |
+| Поле | `text_field`, `select_field`, `.sov-ui-input`, `.sov-ui-select` | text/select, label, placeholder, clearable, multiple; label+placeholder не перекрываются |
 | Секция | `panel`, `.sov-ui-panel` | `plain`, `raised`, `inset` |
 | Заголовок секции | `section_heading` | title + optional detail |
 | Статус | `status_badge` | `ok`, `warn`, `error`, `blocked`, `muted` |
@@ -72,7 +72,8 @@ desktop и mobile smoke, keyboard/focus проверки и записи в `MOD
 `build_documents(surface=...)`, рабочая и конфигурационная почта, история
 диалогов, управление доступом В.О.Л.К., встроенный Qdrant visualizer, главная
 поверхность «Конфигурация → Состояние» и реестр
-«Конфигурация → Датасеты». В Header
+«Конфигурация → Датасеты», а также операторская проверка ПД/РД по чек-листу
+в «Инструментах». В Header
 на всех операторских экранах есть постоянный переключатель «Чат · Студия ·
 Конфигурация» с иконками, активным состоянием и самостоятельным mobile
 контрактом. Эти три первичные поверхности не дублируются в ряду вторичных

@@ -1,0 +1,3 @@
+{
+  "_comment": "Ручные правки классификации kind поверх эвристики _classify_kind (T1.4/T7.1) для РД-шаблона glorax_rd_2026. Формат: {item_id: {kind, comment}}. Применяется ПОСЛЕ эвристики (proxy/services/checklist_template_importer.py::import_checklist_template, параметр overrides). Использование: tools/build_checklist_template.py --overrides config/checklists/glorax_rd_2026_overrides.json. На момент T7.1 (2026-07-04) построчная сверка счётчиков (692/692, по всем 26 листам) и выборочная проверка kind-распределения расхождений не выявили — каркас пуст, файл создан для единообразия с glorax_pd_2026_overrides.json и на случай будущих точечных находок."
+}

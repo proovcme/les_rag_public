@@ -1012,13 +1012,12 @@ service sources: оператор видит, какие базы/датасет
 public-ready:    README/LICENSE/SECURITY/PUBLICATION_CHECKLIST + make public-check.
 ```
 
-Не закрыто и вынесено в v0.24+:
+Не закрыто и вынесено дальше:
 
 ```text
-ПП РФ №87 composition profile
-импорт чек-листа БУП/ГИП как template
 DOCX/PDF renderer отчёта
 deeper layout-tool для заполнения всех граф основной надписи
+background checkpoint/progress для полного прогона 335/692 пунктов
 ```
 
 ---
@@ -1049,6 +1048,14 @@ API, UI, report, проверки, tests, acceptance, 5-фазный roadmap). �
 исходные XLSX/PDF оператора не коммитить (только нормализованный template/config). Для v1 — XLSX/JSON/
 HTML отчёт; importer достаточно универсален, чтобы позже принять РД workbook (28 листов, ~793 пункта)
 без переписывания архитектуры. Зависит от v0.24 (общий Doc Review / ГОСТ Р 21.101-2026 review-map).
+
+### Состояние 2026-07-29
+
+В `codex/recover-forgotten-branches` восстановлены нормализованные шаблоны ПД/РД,
+импортёр, семь классов критериев, параметрические правила, ПП РФ №87,
+evidence-guard, API, решения инженера, UI KIT-поверхность и XLSX/HTML/JSON.
+Исторический checklist-chat не перенесён: он формировал отдельный code-owned
+ответ и конфликтовал с текущей границей model-owned reasoning.
 
 ---
 

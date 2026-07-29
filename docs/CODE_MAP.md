@@ -22,6 +22,10 @@
 Канон логики, которую LLM не трогает (числа/преобразования считает код, ADR-11). Читать
 перед правкой соответствующего сервиса:
 - **[ALGO-rag-best-practices.md](ALGO-rag-best-practices.md)** — рабочий стандарт LES для RAG/NotebookLM-подхода: датасет как source guide, navigation != evidence, model reader-pass, tool-loop, source refs, missing/blockers и golden checks на НС.
+- **[ALGO-glorax-checklist-review.md](ALGO-glorax-checklist-review.md)** —
+  checklist-led evidence review ПД/РД: `checklist_review_service` собирает
+  формальные статусы и `source_ref`, router хранит immutable run и отдельные
+  решения инженера, а UI находится в «Инструментах». Checklist-chat не подключён.
 - **[ALGO-table-query.md](ALGO-table-query.md)** — счёт по ячейкам таблиц (суммы/кол-ва): типизация в Parquet → детерминированная агрегация по полному набору строк. Сервис `proxy/services/table_query_service.py`.
 - **[ALGO-spec-to-bor.md](ALGO-spec-to-bor.md)** — спецификация (форма 9, ГОСТ 21.110) → ВОР работ (глагол по словарю). Сервис `proxy/services/spec_to_bor_service.py`.
 - **[ALGO-asbuilt-intake.md](ALGO-asbuilt-intake.md)** — приёмка смонтированного объёма из исполнительных схем/чек-листов (сканов): рендер → авто-поворот → locate-then-read (vision-OCR — единственный LLM-шаг) → строки → журнал объёмов (status=pending). Сервисы `proxy/services/asbuilt_intake_service.py` (+ `asbuilt_ocr.py`), чат-канал `asbuilt_chat_service.py` (Совушка вызывает сама: «вытащи смонтированный объём из «<путь>»»), эндпоинт `POST /api/field/extract-asbuilt`, CLI `tools/asbuilt_extract.py`. Выбор vision-модели — бенч `tools/asbuilt_ocr_bench.py` (recall по якорям + латентность).

@@ -13,6 +13,11 @@ Agnostis submodule, отсутствие tracked build outputs и LES↔ARTEL in
 contracts. Это не release-gate самостоятельного ARTEL и не переносит его
 сборочную ответственность обратно в LES.
 
+`tests/test_checklist_*.py` и `tests/test_pp87_composition.py` проверяют импорт
+ПД/РД, evidence-guard, параметры, API/persist/report и UI-view checklist-review.
+Исторический checklist-chat не входит в активный контур и не может вернуть
+готовый ответ за модель.
+
 Для updater общая suite **запрещена**: prepare/apply не вызывают `make test`, `make verify`,
 Tauri build или baseline. Единственный offline-гейт этого слоя — `make test-updater`; нативная
 Windows-приёмка после ручной установки — `tools/windows_updater_smoke.ps1`, максимум 90 секунд.

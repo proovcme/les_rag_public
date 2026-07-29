@@ -11,6 +11,7 @@ from urllib.parse import quote
 
 from nicegui import ui
 
+from sovushka.checklist_review_panel import build_checklist_review_card
 from sovushka.state import add_log, api_delete, api_get, api_patch, api_post, last_api_error_text
 from sovushka.uikit.components import (
     action_button,
@@ -241,6 +242,8 @@ def build_instrumenty():
                         compact=True,
                         variant="primary",
                     )
+
+        build_checklist_review_card()
 
         with panel(variant="plain", classes="sov-tools-section"):
             section_heading(

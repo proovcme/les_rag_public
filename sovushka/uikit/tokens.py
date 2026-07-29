@@ -1438,6 +1438,144 @@ html {
   line-height: 1.5;
 }
 
+/* Checklist review: dense engineering workbench, not a dashboard.
+   Existing surfaces and controls carry the hierarchy; accent is reserved for
+   the one primary action and semantic states. */
+.sov-checklist {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sov-ui-space-4);
+}
+
+.sov-checklist__head,
+.sov-checklist__run,
+.sov-checklist__reports,
+.sov-checklist-dialog__actions {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sov-ui-space-2);
+}
+
+.sov-checklist__head {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.sov-checklist__setup {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-checklist__field,
+.sov-checklist-dialog__input {
+  width: 100%;
+  min-width: 0;
+}
+
+.sov-checklist__run {
+  flex-wrap: wrap;
+}
+
+.sov-checklist__status,
+.sov-checklist__reports-label,
+.sov-checklist-dialog__meta,
+.sov-checklist-dialog__note {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.45;
+}
+
+.sov-checklist__summary {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sov-ui-space-2);
+  flex-wrap: wrap;
+}
+
+.sov-checklist__reports {
+  flex-wrap: wrap;
+}
+
+.sov-checklist__table {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-control);
+}
+
+.sov-checklist__table .q-table th {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 700;
+}
+
+.sov-checklist__table .q-table td {
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  vertical-align: top;
+}
+
+.sov-checklist__table .q-table tbody tr {
+  cursor: pointer;
+}
+
+.sov-checklist__table .q-table tbody tr:focus-within,
+.sov-checklist__table .q-table tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
+}
+
+.sov-checklist-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(86vh, 820px);
+  overflow-y: auto;
+  gap: var(--sov-ui-space-3) !important;
+}
+
+.sov-checklist-dialog__title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.sov-checklist-dialog__evidence {
+  width: 100%;
+  min-width: 0;
+  gap: var(--sov-ui-space-2) !important;
+}
+
+.sov-checklist-dialog__source {
+  width: 100%;
+  padding: var(--sov-ui-space-2) var(--sov-ui-space-3);
+  overflow-wrap: anywhere;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-control);
+  background: var(--bg-mod);
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.5;
+}
+
+.sov-checklist-dialog__details {
+  width: 100%;
+  color: var(--text);
+}
+
+.sov-checklist-dialog__actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* Configuration home: one readiness passport, then readable working contours.
    Secondary and risky tools stay in disclosures instead of competing with status. */
 .sov-config-page {
@@ -2895,12 +3033,34 @@ html {
 }
 
 @media (max-width: 1100px) {
+  .sov-checklist__setup {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .sov-mail-workbench {
     grid-template-columns: minmax(190px, .7fr) minmax(260px, .9fr) minmax(300px, 1.35fr);
   }
 }
 
 @media (max-width: 900px) {
+  .sov-checklist__setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sov-checklist__head,
+  .sov-checklist__run {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-checklist__head .sov-ui-button--icon {
+    align-self: flex-end;
+  }
+  .sov-checklist__run .sov-ui-button,
+  .sov-checklist-dialog__actions .sov-ui-button {
+    width: 100%;
+  }
+  .sov-checklist-dialog__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
   .sov-ui-shell {
     max-width: 100vw;
     overflow-x: clip;

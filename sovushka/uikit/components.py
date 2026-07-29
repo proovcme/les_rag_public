@@ -104,10 +104,16 @@ def select_field(
     value: Any = None,
     label: str = "",
     aria_label: str = "",
+    clearable: bool = False,
+    multiple: bool = False,
     classes: str = "",
 ) -> Any:
     """Render the canonical NiceGUI select with the same control contract as inputs."""
     props = ["outlined", "options-dense"]
+    if clearable:
+        props.append("clearable")
+    if multiple:
+        props.extend(["multiple", "use-chips"])
     accessible_name = aria_label or label
     if accessible_name:
         props.append(f'aria-label="{accessible_name}"')
