@@ -582,6 +582,50 @@ async def test_retrieve_chat_chunks_reranker_receives_full_visible_pool():
 
 
 @pytest.mark.asyncio
+async def test_retrieve_chat_chunks_bounds_cross_encoder_shortlist_but_keeps_rrf_tail(
+    monkeypatch,
+):
+    from proxy.services import retrieval_service
+
+    monkeypatch.setattr(retrieval_service, "RERANK_CANDIDATE_K", 16)
+    seen = {}
+
+    class BoundedReranker:
+        def __init__(self, mlx_url, mode):
+            pass
+
+        async def rerank(self, question, chunks, top_k=5):
+            seen["input_count"] = len(chunks)
+            seen["top_k"] = top_k
+            return [
+                SimpleNamespace(
+                    text=chunks[-1]["text"],
+                    metadata=chunks[-1]["metadata"],
+                    score=2.0,
+                )
+            ]
+
+    result = await retrieve_chat_chunks(
+        question="расскажи состав и все разделы проекта",
+        dataset_ids=["ds-1"],
+        rag_backend=FakeBackend(),
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=BoundedReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert seen == {"input_count": 16, "top_k": 16}
+    assert len(result.chunks) > 16
+    assert result.chunks[0].content == "text-15"
+    assert result.trace.rerank["pool_count"] == len(result.chunks)
+    assert result.trace.rerank["candidate_limit"] == 16
+    assert result.trace.rerank["input_count"] == 16
+
+
+@pytest.mark.asyncio
 async def test_retrieve_chat_chunks_blocks_on_embedding_contract_mismatch(monkeypatch, tmp_path):
     db_path = tmp_path / "lex.db"
     monkeypatch.setenv("RAG_LEXICAL_DB_PATH", str(db_path))

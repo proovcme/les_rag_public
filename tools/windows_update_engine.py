@@ -413,6 +413,21 @@ def _json_url(url: str, timeout: float = 5) -> dict[str, Any]:
         return json.load(response)
 
 
+def _post_json_url(
+    url: str,
+    payload: dict[str, Any],
+    timeout: float = 60,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        return json.load(response)
+
+
 def _pid_running(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -493,6 +508,31 @@ def _ready_snapshot(
             None,
             f"contract={contract.get('status')}, qdrant={qdrant.get('ok')}",
         )
+    try:
+        rerank = _post_json_url(
+            "http://127.0.0.1:8050/api/rerank",
+            {
+                "query": "обновление ЛЕС",
+                "chunks": [
+                    {
+                        "text": "ЛЕС обновлён и готов к работе",
+                        "score": 1.0,
+                        "metadata": {"probe": "relevant"},
+                    },
+                    {
+                        "text": "нерелевантный контрольный фрагмент",
+                        "score": 0.0,
+                        "metadata": {"probe": "control"},
+                    },
+                ],
+                "top_k": 1,
+            },
+            timeout=max(30.0, health_timeout),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"reranker={type(exc).__name__}: {exc}"
+    if not rerank.get("ranked"):
+        return None, "reranker=empty_result"
     return (
         {
             "product_version": expected_version,
@@ -500,6 +540,7 @@ def _ready_snapshot(
             "deployed_commit": actual_commit,
             "index_contract_compatible": True,
             "qdrant_ready": True,
+            "reranker_ready": True,
             "process_contract": str(runtime_state.get("process_contract")),
             "proxy_pid": proxy_pid,
             "ui_pid": ui_pid,

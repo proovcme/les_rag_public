@@ -25,6 +25,9 @@ from proxy.services.retrieval_quality_service import (
 CHAT_TOP_K = int(os.getenv("RAG_CHAT_TOP_K", "64"))
 RERANK_POOL_K = int(os.getenv("RAG_CHAT_RERANK_POOL_K", "128"))
 RERANK_TOP_K = int(os.getenv("RAG_CHAT_RERANK_TOP_K", "64"))
+RERANK_CANDIDATE_K = int(
+    os.getenv("RAG_CHAT_RERANK_CANDIDATE_K", str(RERANK_TOP_K))
+)
 _SOURCE_EXACT_RE = re.compile(
     r"(?iu)(?:"
     r"[\w./\\:-]+\.(?:md|json|jsonl|dwg|dxf|rvt|rfa|ifc|ifczip|pdf|xlsx?|docx?)"
@@ -908,24 +911,37 @@ async def retrieve_chat_chunks(
     if reranker_available and reranker_enabled and len(chunks) > 1:
         try:
             reranker = reranker_cls(mlx_url=mlx_url, mode="batch")
+            # Native RRF may keep a wide pool for recall (up to 256 technical
+            # fragments). A local CPU cross-encoder must receive a bounded
+            # shortlist, otherwise one broad project question can occupy it
+            # for minutes. The untouched RRF tail remains available below.
+            rerank_candidate_count = min(
+                max(RERANK_CANDIDATE_K, 1),
+                len(chunks),
+            )
+            rerank_candidates = chunks[:rerank_candidate_count]
             rerank_input = [
                 {
                     "text": _rerank_evidence_text(chunk, question),
                     "metadata": {"doc_name": chunk.doc_name, "_idx": idx},
                     "score": getattr(chunk, "score", 0.0),
                 }
-                for idx, chunk in enumerate(chunks)
+                for idx, chunk in enumerate(rerank_candidates)
             ]
             # Семафор нужен только LLM-реранкеру (держит Metal); cross-encoder — нет.
             needs_semaphore = llm_semaphore is not None and reranker_cls.__name__ == "Reranker"
             if needs_semaphore:
                 async with llm_semaphore:
                     ranked = await reranker.rerank(
-                        question, rerank_input, top_k=min(max(RERANK_TOP_K, 1), len(chunks))
+                        question,
+                        rerank_input,
+                        top_k=min(max(RERANK_TOP_K, 1), len(rerank_input)),
                     )
             else:
                 ranked = await reranker.rerank(
-                    question, rerank_input, top_k=min(max(RERANK_TOP_K, 1), len(chunks))
+                    question,
+                    rerank_input,
+                    top_k=min(max(RERANK_TOP_K, 1), len(rerank_input)),
                 )
             reordered = []
             seen = set()
@@ -975,6 +991,8 @@ async def retrieve_chat_chunks(
             trace.rerank = {
                 "status": "applied",
                 "model": reranker_cls.__name__,
+                "pool_count": len(chunks),
+                "candidate_limit": max(RERANK_CANDIDATE_K, 1),
                 "input_count": len(rerank_input),
                 "returned_count": len(ranked),
                 "items": rerank_items,

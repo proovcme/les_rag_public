@@ -357,9 +357,9 @@ async def startup():
         raise
 
 async def _warmup_models():
-    """№2 латентность: прогрев эмбеддера (Core ML) и реранкера (MLX) на старте.
+    """№2 латентность: прогрев эмбеддера и фактического production-реранкера.
+
     Первый запрос лениво грузил обе модели → 25-30с. Фоном, не блокирует старт."""
-    import httpx
 
     await asyncio.sleep(3)  # дать бэкенду/MLX-хосту подняться
     try:
@@ -376,18 +376,27 @@ async def _warmup_models():
     except Exception as exc:
         logger.warning("[WARMUP] embed: %s", exc)
     try:
+        reranker_cls = _select_reranker_cls()
         mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-        async with httpx.AsyncClient(timeout=120) as client:
-            await client.post(
-                f"{mlx}/v1/rerank",
-                json={"query": "прогрев", "documents": ["прогрев первый документ", "прогрев второй документ"], "top_k": 1},
-            )
-        logger.info("[WARMUP] реранкер прогрет")
+        reranker = reranker_cls(mlx_url=mlx, mode="batch")
+        ranked = await reranker.rerank(
+            "прогрев",
+            [
+                {"text": "прогрев первый документ", "score": 1.0, "metadata": {}},
+                {"text": "прогрев второй документ", "score": 0.5, "metadata": {}},
+            ],
+            top_k=1,
+        )
+        if not ranked:
+            raise RuntimeError("reranker warmup returned no ranked fragments")
+        logger.info("[WARMUP] production reranker %s прогрет", reranker_cls.__name__)
     except Exception as exc:
         logger.warning("[WARMUP] rerank: %s", exc)
     try:
         # Прогрев основной LLM: грузит main-движок на старте, иначе первый реальный
         # запрос после рестарта платил холодную загрузку модели (~100-120с).
+        import httpx
+
         mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         model = os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)
         async with httpx.AsyncClient(timeout=180) as client:

@@ -7,16 +7,28 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.26 (mandatory reranker cannot be disabled by UI/client)
-номер сборки:              499     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.499 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.27 (bounded Windows reranker and real updater warmup)
+номер сборки:              500     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.500 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; 0.25.26 candidate
+dev implementation:       codex/sovushka-ui-kit; 0.25.27 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
+
+> 0.25.27 / build 500 — bounded Windows reranker и настоящий updater-smoke
+>
+> Дата: 2026-07-29
+> Статус: candidate для малого Legion-обновления; без Tauri build, tag,
+> GitHub Release, public feed и VPS. Native RRF сохраняет широкий recall-пул,
+> но Windows CPU cross-encoder получает bounded shortlist из 16 фрагментов
+> (до 1200 символов каждый), а непрошедший хвост не удаляется. Trace различает
+> `pool_count`, `candidate_limit` и фактический `input_count`. Startup и
+> Windows updater прогревают именно configured production reranker реальным
+> двухфрагментным ранжированием; ошибочный POST в отсутствующий Ollama
+> `/v1/rerank`, который считался успешным даже после 404, удалён.
 
 > 0.25.26 / build 499 — UI больше не выключает обязательный reranker
 >

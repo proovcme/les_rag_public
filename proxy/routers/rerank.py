@@ -12,11 +12,11 @@ from proxy.security import require_admin
 from proxy.services.resource_governor import chat_generation_allowed
 
 try:
-    from backend.reranker import Reranker
+    from backend.reranker import select_reranker_cls
 
     RERANKER_AVAILABLE = True
 except ImportError:
-    Reranker = None
+    select_reranker_cls = None
     RERANKER_AVAILABLE = False
 
 router = APIRouter(prefix="/api", tags=["rerank"])
@@ -59,7 +59,8 @@ async def rerank_direct(request: Request, _admin=Depends(require_admin)):
             raise HTTPException(status_code=409, detail=resource_reason)
 
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-    reranker = Reranker(mlx_url=mlx_url)
+    reranker_cls = select_reranker_cls()
+    reranker = reranker_cls(mlx_url=mlx_url)
     if state is None:
         ranked = await reranker.rerank(query, chunks, top_k=top_k)
     else:

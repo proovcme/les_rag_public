@@ -162,6 +162,16 @@ def runtime_environment(
                 "RERANKER_BACKEND": "sentence_transformers",
                 "RERANK_MODEL": environment.get("RERANK_MODEL", "").strip()
                 or "BAAI/bge-reranker-v2-m3",
+                # Windows runs the cross-encoder locally on CPU. Keep the
+                # native RRF pool broad, but bound the expensive second stage.
+                "RAG_CHAT_RERANK_CANDIDATE_K": environment.get(
+                    "RAG_CHAT_RERANK_CANDIDATE_K", ""
+                ).strip()
+                or "16",
+                "RERANK_MAX_TEXT_CHARS": environment.get(
+                    "RERANK_MAX_TEXT_CHARS", ""
+                ).strip()
+                or "1200",
             }
         )
     elif provider == "openrouter":

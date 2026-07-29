@@ -55,7 +55,7 @@ async def test_rerank_direct_uses_llm_budget(monkeypatch, rerank_state):
             ]
 
     monkeypatch.setattr(rerank, "RERANKER_AVAILABLE", True)
-    monkeypatch.setattr(rerank, "Reranker", FakeReranker)
+    monkeypatch.setattr(rerank, "select_reranker_cls", lambda: FakeReranker)
     rerank.set_rerank_state(rerank.RerankRouterState(llm_semaphore=budget, current_mode={"mode": "chat"}))
 
     response = await rerank.rerank_direct(FakeRequest(), _admin=object())

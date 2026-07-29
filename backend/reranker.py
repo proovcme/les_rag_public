@@ -409,7 +409,10 @@ class SentenceTransformerReranker:
         del mlx_url, mode, timeout
         self.model = model or os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3").strip()
         self.device = os.getenv("RERANK_DEVICE", "").strip()
-        self.max_chunk_len = max_chunk_len
+        configured_chunk_len = int(
+            os.getenv("RERANK_MAX_TEXT_CHARS", str(max_chunk_len))
+        )
+        self.max_chunk_len = max(128, configured_chunk_len)
         self.batch_size = max(1, int(os.getenv("RERANK_BATCH_SIZE", "8")))
 
     @classmethod

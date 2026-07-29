@@ -552,6 +552,8 @@ def test_windows_runtime_environment_keeps_ollama_embedding_contract(tmp_path):
     assert environment["MLX_URL"] == "http://127.0.0.1:11434"
     assert environment["EMBED_MODEL"] == "bge-m3:latest"
     assert environment["RERANKER_BACKEND"] == "sentence_transformers"
+    assert environment["RAG_CHAT_RERANK_CANDIDATE_K"] == "16"
+    assert environment["RERANK_MAX_TEXT_CHARS"] == "1200"
 
 
 def test_windows_runtime_rejects_oversized_env_before_reading_it(tmp_path):
@@ -612,6 +614,13 @@ def test_windows_update_ready_snapshot_checks_live_direct_pids(
         lambda url, timeout=5: responses[url],
     )
     monkeypatch.setattr(
+        windows_update_engine,
+        "_post_json_url",
+        lambda url, payload, timeout=60: {
+            "ranked": [{"rank": 1, "metadata": {"probe": "relevant"}}]
+        },
+    )
+    monkeypatch.setattr(
         windows_update_engine.urllib.request,
         "urlopen",
         lambda *_args, **_kwargs: HealthyUi(),
@@ -635,3 +644,4 @@ def test_windows_update_ready_snapshot_checks_live_direct_pids(
     assert snapshot["process_contract"] == "direct_python_no_console_v2"
     assert snapshot["proxy_pid"] == 101
     assert snapshot["ui_pid"] == 202
+    assert snapshot["reranker_ready"] is True
