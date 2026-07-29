@@ -11,24 +11,26 @@
 номер сборки:              498     (отдельно от версии продукта)
 версия Tauri/NSIS:         5.1.498 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; runtime code at f1242840, ledger-only HEAD may be newer
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.24 / 497, next target 0.25.25 / 498
+dev implementation:       codex/sovushka-ui-kit; runtime code at c0cca4b4, ledger-only HEAD may be newer
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.24 / 497, f12428403380
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
 > 0.25.25 / build 498 — возвращена прежняя плавность вкладок
 >
 > Дата: 2026-07-29
-> Статус: internal Legion soft-update target; без Tauri build, tag, GitHub
-> Release, public feed и VPS. Регрессия находилась в общем
+> Статус: установлен и принят на Legion, exact commit `c0cca4b481a8`; без
+> Tauri build, tag, GitHub Release, public feed и VPS. Регрессия находилась в общем
 > `lazy_tab_panels`: при переходе на lazy mount штатная Quasar-анимация была
 > ошибочно отключена через `animated=False`. Возвращён прежний `animated=True`;
 > нативный Quasar `keep_alive` и быстрое переключение сохранены. Для смены
 > same-origin маршрута Чат↔Конфигурация добавлен короткий `@view-transition`.
 > Системный
 > `prefers-reduced-motion` по-прежнему отключает движение адресно.
+> Живой updater-report: `ready/done`, 4 файла, 2 readiness-пробы,
+> `direct_python_no_console_v2`, Qdrant и index contract зелёные, user data untouched.
 >
 > 0.25.24 / build 497 — вкладка строится один раз, а не весь интерфейс сразу
 >
