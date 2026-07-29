@@ -16,6 +16,7 @@ from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.uikit import UIKIT_CSS
+from sovushka.uikit.components import action_button, panel, section_heading
 from sovushka.auth import register_login_page, get_auth
 from sovushka.provider_setup import register_provider_setup_page
 from sovushka.lite_bridge import register_lite_bridge_routes
@@ -157,20 +158,23 @@ async def cosmos_graph_page():
 
 
 def _build_qdrant_visualizer_panel(visualizer_url: str) -> None:
-    with ui.column().classes("w-full h-full gap-0").style("background:var(--bg);"):
-        with ui.row().classes("items-center justify-between w-full px-4 py-2").style(
-            "border-bottom:1px solid var(--border);background:var(--bg-panel);"
-        ):
-            ui.label("Граф знаний ЛЕС").style(
-                "font-size:14px;font-weight:500;color:var(--text);"
-            )
-            ui.button("ОТКРЫТЬ В ОТДЕЛЬНОЙ ВКЛАДКЕ", on_click=lambda: ui.navigate.to(visualizer_url, new_tab=True)).props(
-                "flat no-caps dense"
-            ).style("color:var(--accent);font-size:.62rem;font-family:var(--font);")
-
-        ui.element("iframe").props(f'src="{visualizer_url}"').classes("w-full flex-1").style(
-            "border:0;background:#060913;min-height:calc(100vh - 88px);"
-        )
+    with ui.column().classes("sov-visual-page"):
+        with panel(variant="raised", classes="sov-visual-hero"):
+            with ui.row().classes("sov-visual-hero__row"):
+                section_heading(
+                    "Граф знаний ЛЕС",
+                    "Проекты, датасеты, документы и связи НТД на одной рабочей карте.",
+                )
+                action_button(
+                    "Открыть отдельно",
+                    icon="o_open_in_new",
+                    on_click=lambda: ui.navigate.to(visualizer_url, new_tab=True),
+                    variant="secondary",
+                )
+        with panel(variant="plain", classes="sov-visual-frame"):
+            ui.element("iframe").props(
+                f'src="{visualizer_url}" title="Граф знаний ЛЕС"'
+            ).classes("sov-visual-iframe")
 
 
 _LIGHT_THEME_MIGRATION = "0.24-light-2"

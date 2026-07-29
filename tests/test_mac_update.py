@@ -124,6 +124,17 @@ def test_mac_builder_excludes_repo_docs_desktop_and_user_state():
             mac_update.normalize_path(path)
 
 
+def test_mac_update_carries_qdrant_visualizer_static_runtime_only():
+    visualizer = "qdrant_visualizer/index.html"
+
+    assert mac_update.normalize_path(visualizer) == visualizer
+    assert mac_update_apply.safe_relative_path(visualizer).as_posix() == visualizer
+    assert "qdrant_visualizer/" in update_service.MAC_UPDATE_ALLOWED_ROOTS
+    assert {".html", ".css", ".js"} <= mac_update.ALLOWED_SUFFIXES
+    assert {".html", ".css", ".js"} <= mac_update_apply.ALLOWED_SUFFIXES
+    assert {".html", ".css", ".js"} <= update_service.MAC_UPDATE_ALLOWED_SUFFIXES
+
+
 def test_mac_update_branch_is_explicit_and_rejects_git_ref_syntax():
     assert mac_update._configured_branch("codex/sovushka-ui-kit") == (
         "codex/sovushka-ui-kit"

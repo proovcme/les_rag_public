@@ -22,11 +22,17 @@ reindex и без удаления legacy-источника.
 
 Для каждого `MailItem` sidecar:
 
-1. сохраняет Unicode `.msg` через `SaveAs(..., olMSGUnicode)` вместе с вложениями;
-2. передаёт multipart на loopback `POST /api/mail/collector/import`, который подтверждает
+1. перед началом обхода best-effort регистрирует видимый Outlook store через loopback
+   `POST /api/mail/collector/register-store`; пустой ящик получает собственный account/dataset
+   ещё до появления первого письма;
+2. сохраняет Unicode `.msg` через `SaveAs(..., olMSGUnicode)` вместе с вложениями;
+3. передаёт multipart на loopback `POST /api/mail/collector/import`, который подтверждает
    долговечное сохранение снимка, не дожидаясь его загрузки и разбора в RAG;
-3. передаёт `StoreID`, `EntryID`, `PR_INTERNET_MESSAGE_ID`, folder id/path и received time;
-4. двигает per-store/per-folder newest+oldest cursor только после HTTP 2xx.
+4. передаёт `StoreID`, `EntryID`, `PR_INTERNET_MESSAGE_ID`, folder id/path и received time;
+5. двигает per-store/per-folder newest+oldest cursor только после HTTP 2xx.
+
+Ошибка регистрации store пишется в sidecar-log, но не останавливает read-only обход: последующий
+`collector/import` повторно выполняет тот же идемпотентный `_ensure_outlook_store_account`.
 
 Backfill идёт возобновляемыми порциями не более 10 писем и с общим бюджетом прохода 12 секунд.
 Один уже начатый `SaveAs` не прерывается, но после исчерпания бюджета sidecar не открывает следующий
@@ -92,6 +98,7 @@ message-node каждого письма сохраняет собственну
 - `POST /api/mail/accounts/{id}/test`;
 - `POST /api/mail/accounts/{id}/sync` (`full|incremental`);
 - `POST /api/mail/accounts/{id}/migrate-legacy` — только выбранная папка → выбранный mailbox dataset;
+- `POST /api/mail/collector/register-store` — loopback-регистрация видимого Outlook store до писем;
 - `POST /api/mail/collector/import` — loopback multipart intake Outlook-sidecar;
 - `GET /api/mail/messages` с account/folder/participant/date/index-status filters;
 - `GET /api/mail/messages/{id}`, `POST /api/mail/messages/{id}/open`.

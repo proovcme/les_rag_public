@@ -295,6 +295,7 @@ html {
 
 .sov-ui-button,
 .sov-ui-input .q-field__control,
+.sov-ui-select .q-field__control,
 .sov-ui-source-chip {
   min-height: var(--sov-ui-hit);
   border-radius: var(--sov-ui-radius-control);
@@ -394,18 +395,22 @@ html {
   background: color-mix(in srgb, var(--err) 9%, var(--bg-panel)) !important;
 }
 
-.sov-ui-input .q-field__control {
+.sov-ui-input .q-field__control,
+.sov-ui-select .q-field__control {
   min-height: var(--sov-ui-hit);
   color: var(--text);
   background: var(--input-bg);
 }
 
-.sov-ui-input .q-field__control::before {
+.sov-ui-input .q-field__control::before,
+.sov-ui-select .q-field__control::before {
   border-color: var(--border) !important;
 }
 
 .sov-ui-input .q-field__control:hover::before,
-.sov-ui-input.q-field--focused .q-field__control::before {
+.sov-ui-input.q-field--focused .q-field__control::before,
+.sov-ui-select .q-field__control:hover::before,
+.sov-ui-select.q-field--focused .q-field__control::before {
   border-color: var(--accent) !important;
 }
 
@@ -2196,6 +2201,261 @@ html {
   margin-top: 8px;
 }
 
+/* History: one readable list, no nested interactive cards. */
+.sov-history-page,
+.sov-access-page {
+  box-sizing: border-box;
+  width: min(100%, 1120px);
+  min-width: 0;
+  margin: 0 auto;
+  padding: 18px;
+  gap: 12px !important;
+  overflow-x: clip;
+}
+
+.sov-history-hero,
+.sov-access-hero {
+  width: 100%;
+  min-width: 0;
+  padding: 16px 18px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--card-bg));
+}
+
+.sov-history-hero__row,
+.sov-history-list-head,
+.sov-access-hero__row,
+.sov-access-registry__head {
+  width: 100%;
+  min-width: 0;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.sov-history-hero__row .sov-ui-section-heading,
+.sov-history-list-head .sov-ui-section-heading,
+.sov-access-registry__head .sov-ui-section-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.sov-history-list-panel,
+.sov-access-create,
+.sov-access-registry {
+  width: 100%;
+  min-width: 0;
+  padding: 16px;
+}
+
+.sov-history-list,
+.sov-access-key-list {
+  width: 100%;
+  min-width: 0;
+  margin-top: 12px;
+  gap: 8px !important;
+}
+
+.sov-history-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  gap: 16px;
+  align-items: center;
+}
+
+.sov-history-row__copy {
+  min-width: 0;
+  flex: 1;
+  gap: 4px !important;
+}
+
+.sov-history-row__title {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 750;
+  line-height: 1.35;
+  text-wrap: pretty;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.sov-history-row__meta,
+.sov-access-key-row__meta {
+  min-width: 0;
+  gap: 10px;
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  flex-wrap: wrap;
+}
+
+.sov-history-row__open {
+  flex: 0 0 auto;
+}
+
+/* Access: creation is primary, destructive key actions remain secondary. */
+.sov-access-hero__copy {
+  min-width: 0;
+  max-width: 760px;
+  flex: 1;
+  gap: 6px !important;
+}
+
+.sov-access-intro {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.45;
+  text-wrap: pretty;
+}
+
+.sov-access-form {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  margin-top: 14px;
+  grid-template-columns: minmax(240px, 1.5fr) minmax(180px, 1fr) minmax(150px, .7fr) minmax(150px, .7fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.sov-access-form > * {
+  min-width: 0;
+  width: 100%;
+}
+
+.sov-access-form__actions {
+  width: 100%;
+  margin-top: 10px;
+  gap: 8px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.sov-access-key-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
+  gap: 14px;
+  align-items: center;
+}
+
+.sov-access-key-row__main {
+  min-width: 0;
+  flex: 1;
+  gap: var(--sov-ui-icon-gap);
+  align-items: flex-start;
+  flex-wrap: nowrap;
+}
+
+.sov-access-key-row__icon {
+  width: var(--sov-ui-icon-column);
+  flex: 0 0 var(--sov-ui-icon-column);
+  color: var(--accent);
+  font-size: 20px;
+}
+
+.sov-access-key-row__copy {
+  min-width: 0;
+  flex: 1;
+  gap: 3px !important;
+}
+
+.sov-access-key-row__identity {
+  width: 100%;
+  min-width: 0;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.sov-access-key-row__holder {
+  min-width: 0;
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 780;
+  overflow-wrap: anywhere;
+}
+
+.sov-access-key-row__key {
+  color: var(--text);
+  font-family: var(--sov-ui-font-code);
+  font-size: var(--sov-ui-font-size-meta);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.sov-access-key-row__actions {
+  flex: 0 0 auto;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.sov-access-key-row__protected {
+  flex: 0 0 auto;
+  color: var(--ok);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 750;
+}
+
+/* Visual: the embedded map remains the focal working surface. */
+.sov-visual-page {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 14px;
+  gap: 10px !important;
+  overflow: hidden;
+}
+
+.sov-visual-hero {
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  flex: 0 0 auto;
+}
+
+.sov-visual-hero__row {
+  width: 100%;
+  min-width: 0;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.sov-visual-hero__row .sov-ui-section-heading {
+  min-width: 0;
+  flex: 1;
+}
+
+.sov-visual-frame {
+  width: 100%;
+  min-width: 0;
+  min-height: 420px;
+  padding: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.sov-visual-iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  border: 0;
+  background: var(--bg);
+}
+
 @media (min-width: 901px) {
   .sov-app-shell {
     display: grid !important;
@@ -2807,6 +3067,44 @@ html {
   .sov-dataset-settings__grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+  .sov-history-page,
+  .sov-access-page {
+    width: 100%;
+    padding: 12px;
+  }
+  .sov-history-hero__row,
+  .sov-history-list-head,
+  .sov-access-hero__row,
+  .sov-access-registry__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-history-row,
+  .sov-access-key-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-history-row__open {
+    width: 100%;
+  }
+  .sov-access-form {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .sov-access-form__actions,
+  .sov-access-key-row__actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .sov-visual-page {
+    padding: 8px;
+  }
+  .sov-visual-hero__row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-visual-hero__row .sov-ui-button {
+    width: 100%;
+  }
 }
 
 @media (max-width: 520px) {
@@ -2884,6 +3182,17 @@ html {
   .sov-dataset-settings__switches {
     align-items: stretch;
     flex-direction: column;
+  }
+  .sov-access-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sov-access-form__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-access-form__actions .sov-ui-button,
+  .sov-access-key-row__actions .sov-ui-button {
+    width: 100%;
   }
 }
 

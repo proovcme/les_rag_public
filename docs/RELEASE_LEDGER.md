@@ -7,17 +7,33 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.15 (Sovushka mail search alignment)
-номер сборки:              488     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.488 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.16 (mail discovery + remaining Sovushka surfaces)
+номер сборки:              489     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.489 (internal identity; app bundle не пересобирается)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; mail search optical alignment
-задеплоено на рантайм:     Mac 0.25.15 / build 488 target; Legion не затрагивался
+dev implementation:       codex/sovushka-ui-kit; mail discovery + remaining surfaces
+задеплоено на рантайм:     Mac 0.25.16 / build 489 target; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.15 / build 488 target; runtime alignment обязан быть aligned
+рантайм /api/version:      Mac 0.25.16 / build 489 target; runtime alignment обязан быть aligned
 ```
 
+> 0.25.16 / build 489 — обнаружение Outlook-ящиков и оставшиеся операторские экраны
+>
+> Дата: 2026-07-29
+> Статус: target внутреннего web-only обновления Mac. Classic Outlook sidecar
+> регистрирует каждый видимый store до обхода писем, поэтому новый или пустой
+> ящик сразу появляется в Л.Е.С. со своим приватным dataset; ошибка discovery
+> не блокирует последующий read-only import. «История», В.О.Л.К. и оболочка
+> Qdrant visualizer переведены на общий UI KIT. История стала читаемым списком,
+> доступ — адаптивным реестром ключей вместо таблицы, visualizer — тёплой
+> светлой зелёно-графитовой поверхностью вместо чёрно-зелёного neon-экрана.
+> Добавлен общий `select_field`, focus/reduced-motion/mobile-контракты сохранены.
+> Малый Mac-updater теперь переносит статические HTML/CSS/JS только из
+> `qdrant_visualizer/` через тот же тройной allowlist builder/API/helper, поэтому
+> визуальная правка не остаётся только в Git.
+> Почтовые сообщения, индексы, Tauri/DMG, Legion и public не затрагиваются.
+>
 > 0.25.15 / build 488 — оптическое выравнивание поиска в почте
 >
 > Дата: 2026-07-29

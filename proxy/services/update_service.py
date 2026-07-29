@@ -54,9 +54,20 @@ MAC_UPDATE_ALLOWED_ROOTS = (
     "tools/",
     "config/",
     "skills/",
+    "qdrant_visualizer/",
 )
 MAC_UPDATE_ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
-MAC_UPDATE_ALLOWED_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
+MAC_UPDATE_ALLOWED_SUFFIXES = {
+    ".py",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".md",
+    ".txt",
+    ".html",
+    ".css",
+    ".js",
+}
 VPS_PATCH_ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",

@@ -45,7 +45,9 @@ make status-mac-update MAC_UPDATE_BRANCH=codex/sovushka-ui-kit
   совпадает с тем же `origin/<branch>`; синтаксис git refs и выход за `codex/`
   отклоняются;
 - архив и detached helper проверяются независимыми SHA-256;
-- архив содержит только объявленные в manifest файлы из runtime allowlist;
+- архив содержит только объявленные в manifest файлы из runtime allowlist; web-runtime включает
+  Python/YAML/JSON/Markdown и статические HTML/CSS/JS только из
+  `qdrant_visualizer/`, чтобы встроенный граф обновлялся тем же транзакционным пакетом;
 - `.env`, `data/`, `storage/`, `RAG_Content/`, индексы, секреты, desktop/installer и baseline
   запрещены на уровнях builder, API validator и detached helper;
 - перед заменой каждый установленный файл обязан совпасть с base или target SHA;

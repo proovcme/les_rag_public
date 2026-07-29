@@ -38,9 +38,20 @@ ALLOWED_ROOTS = (
     "tools/",
     "config/",
     "skills/",
+    "qdrant_visualizer/",
 )
 ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
-ALLOWED_SUFFIXES = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
+ALLOWED_SUFFIXES = {
+    ".py",
+    ".yaml",
+    ".yml",
+    ".json",
+    ".md",
+    ".txt",
+    ".html",
+    ".css",
+    ".js",
+}
 
 
 def sha256_file(path: Path) -> str:

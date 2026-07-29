@@ -74,6 +74,8 @@ def text_field(
 ) -> Any:
     """Render the canonical text field; page code owns only data and width."""
     props = ["outlined"]
+    if label and placeholder:
+        props.append("stack-label")
     if clearable:
         props.append("clearable")
     accessible_name = aria_label or label or placeholder
@@ -82,6 +84,24 @@ def text_field(
     return ui.input(label=label or None, placeholder=placeholder).props(
         " ".join(props)
     ).classes(" ".join(["sov-ui-input", classes]).strip())
+
+
+def select_field(
+    options: Any,
+    *,
+    value: Any = None,
+    label: str = "",
+    aria_label: str = "",
+    classes: str = "",
+) -> Any:
+    """Render the canonical NiceGUI select with the same control contract as inputs."""
+    props = ["outlined", "options-dense"]
+    accessible_name = aria_label or label
+    if accessible_name:
+        props.append(f'aria-label="{accessible_name}"')
+    return ui.select(options, value=value, label=label or None).props(
+        " ".join(props)
+    ).classes(" ".join(["sov-ui-select", classes]).strip())
 
 
 def panel(*, variant: str = "plain", classes: str = "") -> Any:

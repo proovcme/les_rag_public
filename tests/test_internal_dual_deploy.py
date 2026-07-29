@@ -48,10 +48,11 @@ def test_dual_deploy_has_fixed_branch_and_no_publish_path():
     assert '"published": False' in source
     assert 'SCHEMA = "les.internal_update_bundle.v1"' in source
     assert "prepare-audit-rag:" in makefile
-    assert "preflight-audit-rag-update:" in makefile
+    assert "preflight-audit-rag-update inspect-audit-rag-update: inspect-mac-update" in makefile
     assert "prepare-audit-rag-legion:" in makefile
-    assert "deploy-audit-rag:" in makefile
-    assert "tools/internal_update.py apply --hosts mac,legion" in makefile
+    assert 'echo "Legion отключён: сначала принимаем Mac updater."' in makefile
+    assert "deploy-audit-rag-mac deploy-audit-rag: apply-mac-update" in makefile
+    assert "tools/internal_update.py apply --hosts mac,legion" not in makefile
     assert "tools/internal_dual_deploy.py" not in makefile
 
 

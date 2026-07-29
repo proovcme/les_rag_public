@@ -833,6 +833,24 @@ async def import_outlook_message(
     }
 
 
+@router.post("/collector/register-store")
+async def register_outlook_store(
+    request: Request,
+    store_id: str = Form(...),
+    store_label: str = Form(default="Outlook"),
+    _internal=Depends(require_internal),
+):
+    """Register one visible Outlook store before the first message arrives."""
+    _require_loopback(request)
+    account = await _ensure_outlook_store_account(store_id, store_label)
+    return {
+        "status": "ready",
+        "account_id": account["id"],
+        "dataset_id": account["dataset_id"],
+        "dataset_name": account["dataset_name"],
+    }
+
+
 @router.post("/collector/run")
 async def run_outlook_collector(
     request: Request,

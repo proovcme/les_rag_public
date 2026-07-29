@@ -22,6 +22,11 @@ def test_outlook_sidecar_is_read_only_resumable_and_uploads_unicode_msg():
     assert "InternetMessageIdSchema" in source
     assert 'fields["store_id"]' in source
     assert 'fields["entry_id"]' in source
+    assert "RegisterStore(storeId, storeLabel);" in source
+    assert '"/collector/register-store"' in source
+    assert source.index("RegisterStore(storeId, storeLabel);") < source.index(
+        "ScanFolder(root, storeId, storeLabel"
+    )
     assert "SaveCursor(storeId, folderId, cursor)" in source
     assert "incremental.Count - 1" in source
     assert "if (!RegisterItemAt(" in source
@@ -103,6 +108,40 @@ def test_mail_ui_is_read_only_and_scopes_chat_to_the_mailbox_dataset():
     assert "Переслать" not in page
     assert "Забрать новые письма" in page
     assert "/api/mail/collector/run" in page
+    assert "появятся автоматически" in page
+
+
+@pytest.mark.asyncio
+async def test_outlook_store_discovery_creates_mailbox_before_first_message(monkeypatch):
+    from proxy.routers import mail
+
+    calls: list[tuple[str, str]] = []
+
+    async def ensure(store_id: str, store_label: str):
+        calls.append((store_id, store_label))
+        return {
+            "id": "account",
+            "dataset_id": "dataset",
+            "dataset_name": "MAIL_Engineering_deadbeef_Index",
+        }
+
+    monkeypatch.setattr(mail, "_ensure_outlook_store_account", ensure)
+    request = Request({"type": "http", "client": ("127.0.0.1", 50000), "headers": []})
+
+    result = await mail.register_outlook_store(
+        request=request,
+        store_id="store",
+        store_label="Engineering",
+        _internal=object(),
+    )
+
+    assert calls == [("store", "Engineering")]
+    assert result == {
+        "status": "ready",
+        "account_id": "account",
+        "dataset_id": "dataset",
+        "dataset_name": "MAIL_Engineering_deadbeef_Index",
+    }
 
 
 @pytest.mark.asyncio

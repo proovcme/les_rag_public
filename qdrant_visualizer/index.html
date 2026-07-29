@@ -6,49 +6,72 @@
 <title>Л.Е.С. — граф знаний</title>
 <style>
   :root {
-    --bg: #0a0d13; --panel: rgba(15,19,28,.86); --border: #1d2533;
-    --text: #cdd6e4; --dim: #5d6b80; --accent: #34d399;
+    --bg: #f2f4f0; --panel: rgba(255,255,255,.94); --border: #c8d2ca;
+    --text: #183126; --dim: #52675c; --accent: #1d6b4b;
+    --focus: rgba(29,107,75,.24);
   }
   * { box-sizing: border-box; margin: 0; }
   html, body { height: 100%; overflow: hidden; background: var(--bg); }
-  body { font-family: "JetBrains Mono", ui-monospace, Menlo, monospace; color: var(--text); }
+  body { color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   #graph { position: fixed; inset: 0; cursor: grab; }
   #graph.dragging { cursor: grabbing; }
 
   .hud { position: fixed; z-index: 5; }
-  #topbar { top: 14px; left: 14px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 28px); }
-  #topbar .brand { font-size: 13px; font-weight: 800; letter-spacing: 1.5px; color: var(--text);
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; backdrop-filter: blur(6px); }
+  #topbar { top: 12px; left: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; max-width: calc(100vw - 24px); }
+  #topbar .brand { min-height: 40px; display: inline-flex; align-items: center; font-size: 13px;
+    font-weight: 800; letter-spacing: .04em; color: var(--accent); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+    box-shadow: 0 1px 2px rgba(20,52,34,.06), 0 5px 16px rgba(20,52,34,.04); }
   #search { background: var(--panel); border: 1px solid var(--border); color: var(--text); border-radius: 8px;
-    padding: 8px 12px; font: inherit; font-size: 12px; width: 220px; outline: none; backdrop-filter: blur(6px); }
-  #search:focus { border-color: var(--accent); }
+    min-height: 40px; padding: 8px 12px; font: inherit; font-size: 13px; width: 260px; outline: none; }
+  #search::placeholder { color: var(--dim); opacity: .9; }
+  #search:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus); }
   .btn { background: var(--panel); border: 1px solid var(--border); color: var(--dim); border-radius: 8px;
-    padding: 8px 11px; font: inherit; font-size: 11px; cursor: pointer; text-decoration: none; backdrop-filter: blur(6px); }
-  .btn:hover { color: var(--text); border-color: var(--accent); }
-  .btn.on { color: var(--accent); border-color: var(--accent); }
-  .seg { display: flex; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; backdrop-filter: blur(6px); }
-  .seg button { background: transparent; border: 0; color: var(--dim); font: inherit; font-size: 11px; padding: 8px 10px; cursor: pointer; }
-  .seg button.on { color: var(--bg); background: var(--accent); font-weight: 700; }
-  .seg .lbl { color: var(--dim); font-size: 10px; padding: 8px 4px 8px 9px; align-self: center; }
+    min-height: 40px; padding: 8px 11px; font: inherit; font-size: 12px; font-weight: 650;
+    cursor: pointer; text-decoration: none; transition: color .16s ease, border-color .16s ease,
+    background-color .16s ease, transform .12s ease; }
+  .btn:hover { color: var(--accent); border-color: var(--accent); background: #f8fbf8; }
+  .btn:active, .seg button:active { transform: scale(.96); }
+  .btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.on { color: var(--accent); border-color: var(--accent); background: #edf6f0; }
+  .seg { display: flex; min-height: 40px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden; }
+  .seg button { min-height: 40px; background: transparent; border: 0; color: var(--dim);
+    font: inherit; font-size: 12px; padding: 8px 10px; cursor: pointer;
+    transition: color .16s ease, background-color .16s ease, transform .12s ease; }
+  .seg button.on { color: #fff; background: var(--accent); font-weight: 700; }
+  .seg .lbl { color: var(--dim); font-size: 11px; padding: 12px 4px 8px 10px; align-self: center; }
 
-  #status { bottom: 14px; left: 14px; font-size: 11px; color: var(--dim);
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 7px 11px; backdrop-filter: blur(6px); }
-  #legend { top: 56px; right: 14px; max-width: 250px; max-height: 64vh; overflow: auto;
+  #status { bottom: 12px; left: 12px; font-size: 12px; color: var(--dim);
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 8px 11px;
+    font-variant-numeric: tabular-nums; box-shadow: 0 1px 2px rgba(20,52,34,.06); }
+  #legend { top: 64px; right: 12px; max-width: 250px; max-height: 64vh; overflow: auto;
     background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;
-    font-size: 11px; backdrop-filter: blur(6px); }
-  #legend .ttl { color: var(--dim); font-size: 10px; letter-spacing: .5px; margin-bottom: 6px; text-transform: uppercase; }
-  #legend .item { display: flex; gap: 7px; align-items: center; padding: 2.5px 0; cursor: pointer; opacity: .9; }
+    font-size: 12px; box-shadow: 0 1px 2px rgba(20,52,34,.06), 0 5px 16px rgba(20,52,34,.04); }
+  #legend .ttl { color: var(--dim); font-size: 11px; font-weight: 750; letter-spacing: .04em; margin-bottom: 6px; text-transform: uppercase; }
+  #legend .item { display: flex; min-height: 32px; gap: 8px; align-items: center; padding: 4px 0; cursor: pointer; opacity: .9; }
   #legend .item:hover { opacity: 1; }
   #legend .item.off { opacity: .3; }
-  #legend .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; box-shadow: 0 0 6px currentColor; }
-  #legend .n { color: var(--dim); margin-left: auto; font-size: 10px; }
+  #legend .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  #legend .n { color: var(--dim); margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; }
 
   #tip { position: fixed; z-index: 9; pointer-events: none; display: none; max-width: 360px;
-    background: rgba(10,13,19,.96); border: 1px solid var(--border); border-left: 3px solid var(--accent);
-    border-radius: 8px; padding: 9px 12px; font-size: 11px; line-height: 1.55; }
+    background: rgba(255,255,255,.98); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+    border-radius: 8px; padding: 9px 12px; font-size: 12px; line-height: 1.55;
+    box-shadow: 0 8px 24px rgba(20,52,34,.12); }
   #tip .t-name { color: var(--text); font-weight: 700; word-break: break-all; }
   #tip .t-meta { color: var(--dim); margin-top: 3px; }
   #tip .t-hint { color: var(--accent); margin-top: 5px; font-size: 10px; }
+  @media (max-width: 720px) {
+    #topbar { align-items: stretch; }
+    #search { width: min(100%, 320px); flex: 1 1 220px; }
+    .seg { max-width: 100%; overflow-x: auto; }
+    #legend { top: auto; right: 12px; bottom: 52px; max-height: 34vh; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .btn, .seg button { transition-duration: .001ms; }
+  }
 </style>
 </head>
 <body>
@@ -103,11 +126,11 @@ let showDocs = true;
 const hiddenCats = new Set();                     // скрытые категории текущей раскраски
 let stats = {};
 
-// палитра: золотое сечение по тону
+// Палитра: различимые категории на тёплой светлой рабочей поверхности.
 const _palCache = new Map();
-function paletteColor(i) { return `hsl(${(i * 137.508 + 150) % 360} 70% 62%)`; }
+function paletteColor(i) { return `hsl(${(i * 137.508 + 145) % 360} 48% 42%)`; }
 function catColor(key) {
-  if (key == null || key === "—") return "#5d6b80";
+  if (key == null || key === "—") return "#64756b";
   if (!_palCache.has(key)) _palCache.set(key, paletteColor(_palCache.size));
   return _palCache.get(key);
 }
@@ -302,9 +325,8 @@ function draw() {
   const W = canvas.width / DPR, H = canvas.height / DPR;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.clearRect(0, 0, W, H);
-  const g = ctx.createRadialGradient(W / 2, H / 2, 80, W / 2, H / 2, Math.max(W, H) * 0.75);
-  g.addColorStop(0, "#0d1119"); g.addColorStop(1, "#070a0f");
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = "#f2f4f0";
+  ctx.fillRect(0, 0, W, H);
 
   ctx.translate(view.x, view.y); ctx.scale(view.scale, view.scale);
   const sel = focus || hover;
@@ -320,7 +342,7 @@ function draw() {
       if (!visible(e.a) || !visible(e.b)) continue;
       if (!showRefEdges && sel && e.a !== sel && e.b !== sel) continue;
       const lit = sel && (e.a === sel || e.b === sel);
-      ctx.strokeStyle = lit ? "#e8c66a" : "rgba(160,170,200,0.10)";
+      ctx.strokeStyle = lit ? "#a66d12" : "rgba(66,91,77,0.13)";
       ctx.globalAlpha = Math.min(1, 0.25 + e.w * 0.05) * (lit ? 1 : 0.7);
       ctx.lineWidth = (lit ? 1.3 : 0.6) / view.scale;
       const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2 - 24 / view.scale;
@@ -333,7 +355,7 @@ function draw() {
   for (const e of edges) {
     if (!visible(e.b) || !visible(e.a)) continue;
     const lit = hood ? (hood.has(e.a) && hood.has(e.b)) : false;
-    ctx.strokeStyle = lit ? colorOf(e.a) : "rgba(110,130,165,0.10)";
+    ctx.strokeStyle = lit ? colorOf(e.a) : "rgba(66,91,77,0.13)";
     ctx.globalAlpha = lit ? 0.6 : (hood || query ? 0.3 : (e.lvl === 1 ? 0.5 : 0.85));
     ctx.lineWidth = (lit ? 1.2 : (e.lvl === 1 ? 0.9 : 0.45)) / view.scale;
     ctx.beginPath(); ctx.moveTo(e.a.x, e.a.y); ctx.lineTo(e.b.x, e.b.y); ctx.stroke();
@@ -347,28 +369,28 @@ function draw() {
     const ragBoost = ragScores && ragScores.get(n);
     const r = n.r * (n === sel ? 1.35 : 1) * (ragBoost ? 1 + ragBoost * 0.8 : 1);
     ctx.globalAlpha = dim ? 0.16 : 1;
-    ctx.shadowColor = ragBoost ? "#ffd166" : col;
-    ctx.shadowBlur = dim ? 0 : ((n.kind === "project" ? 28 : n.kind === "dataset" ? 18 : 10) + (ragBoost ? ragBoost * 30 : 0)) * view.scale;
+    ctx.shadowColor = ragBoost ? "#a66d12" : col;
+    ctx.shadowBlur = dim ? 0 : ((n.kind === "project" ? 12 : n.kind === "dataset" ? 8 : 4) + (ragBoost ? ragBoost * 14 : 0)) * view.scale;
     ctx.fillStyle = col;
     ctx.beginPath(); ctx.arc(n.x, n.y, r, 0, Math.PI * 2); ctx.fill();
     ctx.shadowBlur = 0;
     if (n.kind === "project") {     // кольцо у проектов
-      ctx.strokeStyle = "rgba(255,255,255,.5)"; ctx.lineWidth = 1.2 / view.scale;
+      ctx.strokeStyle = "rgba(255,255,255,.86)"; ctx.lineWidth = 1.2 / view.scale;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 2.5 / view.scale, 0, Math.PI * 2); ctx.stroke();
     }
     if (!dim && n.status === "ERROR") {
-      ctx.strokeStyle = "#ff5560"; ctx.lineWidth = 1.6 / view.scale;
+      ctx.strokeStyle = "#b4232f"; ctx.lineWidth = 1.6 / view.scale;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2); ctx.stroke();
     } else if (!dim && n.status === "PENDING") {
-      ctx.strokeStyle = "#f5b54a"; ctx.lineWidth = 1.2 / view.scale;
+      ctx.strokeStyle = "#a66d12"; ctx.lineWidth = 1.2 / view.scale;
       ctx.beginPath(); ctx.arc(n.x, n.y, r + 3 / view.scale, 0, Math.PI * 2); ctx.stroke();
     }
     const showLabel = n.kind === "project" || n === sel || matchesQuery(n) ||
       (n.kind === "dataset" && view.scale > 0.9) || view.scale > 2.4;
     if (showLabel && !dim) {
       const fs = (n.kind === "project" ? 13 : n.kind === "dataset" ? 11 : 10) / view.scale;
-      ctx.font = `${n.kind === "project" ? "700 " : ""}${fs}px ui-monospace, monospace`;
-      ctx.fillStyle = n.kind === "document" ? "rgba(205,214,228,0.85)" : "#dfe7f3";
+      ctx.font = `${n.kind === "project" ? "700 " : ""}${fs}px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+      ctx.fillStyle = n.kind === "document" ? "rgba(42,65,53,0.86)" : "#183126";
       ctx.textAlign = "center";
       const label = n.label.length > 42 ? n.label.slice(0, 40) + "…" : n.label;
       ctx.fillText(label, n.x, n.y - r - 6 / view.scale);

@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "les-desktop"
-version = "5.1.488"
+version = "5.1.489"
 dependencies = [
  "serde_json",
  "tauri",

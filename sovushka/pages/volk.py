@@ -1,213 +1,255 @@
-"""
-С.О.В.У.Ш.К.А. v5.0 — Вкладка В.О.Л.К. (RBAC / ключи)
-"""
+"""V.O.L.K. access-management surface."""
+
 from __future__ import annotations
+
+import secrets
+from typing import Any
 
 from nicegui import app, ui
 
 from sovushka.state import api_get, api_post, last_api_error_text
-from sovushka.uikit.components import acronym_identity
+from sovushka.uikit.components import (
+    acronym_identity,
+    action_button,
+    panel,
+    render_feedback_state,
+    section_heading,
+    select_field,
+    status_badge,
+    text_field,
+)
 
 
 def build_volk():
-    """Строит содержимое вкладки В.О.Л.К. Вызывать внутри with ui.tab_panel(tab_volk)."""
-    raw_key = app.storage.user.get("key", "")
+    """Render access keys as readable operator rows instead of a technical grid."""
 
-    def _grid_handler(coro_func):
-        async def _handler(event):
-            await coro_func(event.args)
+    raw_key = str(app.storage.user.get("key", ""))
+    state: dict[str, Any] = {"loading": True, "error": "", "rows": []}
+    refs: dict[str, Any] = {}
 
-        return _handler
+    def key_preview(value: str) -> str:
+        if len(value) <= 14:
+            return value
+        return f"{value[:8]}…{value[-4:]}"
 
-    with ui.column().classes("w-full max-w-4xl mx-auto p-4 gap-4"):
-        with ui.row().classes("items-center justify-between w-full"):
-            with ui.column().classes("gap-0"):
-                acronym_identity(
-                    "В.О.Л.К.",
-                    "Внутренний Охранный Локальный Контур",
-                    icon="o_vpn_key",
-                )
-                ui.label("Управление доступом").classes("sov-surface-heading")
-                ui.label("Ключи хранятся в les_meta.db · cookie: les_key · 30 дней").style(
-                    "font-size:.6rem;color:var(--dim);"
-                )
-            refresh_btn = ui.button(
-                "↻ ОБНОВИТЬ",
-            ).props("no-caps outline").style(
-                "border-color:var(--accent);color:var(--accent);font-size:.7rem;"
-            )
-
-        # ── Форма создания ключа ────────────────
-        with ui.card().classes("card-les w-full"):
-            ui.label("НОВЫЙ КЛЮЧ").classes("section-title mb-3")
-            with ui.row().classes("w-full gap-2 items-end"):
-                inp_key = ui.input("Ключ").classes("flex-1").style(
-                    "background:var(--bg);border:1px solid var(--border);"
-                    "color:var(--text);font-family:var(--font);"
-                    "border-radius:4px;padding:6px 10px;font-size:.75rem;"
-                )
-                inp_holder = ui.input("Имя").style(
-                    "background:var(--bg);border:1px solid var(--border);"
-                    "color:var(--text);font-family:var(--font);"
-                    "border-radius:4px;padding:6px 10px;font-size:.75rem;width:160px;"
-                )
-                inp_role = ui.select(["user", "admin"], value="user", label="Роль").style(
-                    "font-size:.72rem;width:100px;"
-                )
-                inp_type = ui.select(
-                    {"permanent": "∞ Постоянный", "1": "⏱ 1 день"},
-                    value="permanent", label="Срок"
-                ).style("font-size:.72rem;width:130px;")
-
-            with ui.row().classes("gap-2 mt-2"):
-                def _gen():
-                    import secrets
-                    prefix = "les-admin-" if inp_role.value == "admin" else "les_"
-                    size = 12 if inp_role.value == "admin" else 8
-                    inp_key.set_value(prefix + secrets.token_hex(size))
-
-                ui.button("🎲 Сгенерировать", on_click=_gen).props("no-caps flat").style(
-                    "font-size:.7rem;color:var(--dim);"
-                )
-                create_btn = ui.button(
-                    "✚ СОЗДАТЬ",
-                ).props("no-caps").style(
-                    "border:1px solid var(--ok);color:var(--ok);"
-                    "background:transparent;font-size:.7rem;"
-                )
-
-        # ── Таблица ключей ──────────────────────
-        with ui.card().classes("card-les w-full"):
-            ui.label("КЛЮЧИ ДОСТУПА").classes("section-title mb-3")
-            volk_cols = [
-                {"name": "holder_name",  "label": "Кто",       "field": "holder_name",  "align": "left",   "sortable": True},
-                {"name": "role",         "label": "Роль",      "field": "role",         "align": "center"},
-                {"name": "protected_admin", "label": "Root",   "field": "protected_admin", "align": "center"},
-                {"name": "key_value",    "label": "Ключ",      "field": "key_value",    "align": "left"},
-                {"name": "is_active",    "label": "Статус",    "field": "is_active",    "align": "center"},
-                {"name": "device_bound", "label": "Устройство","field": "device_bound", "align": "center"},
-                {"name": "expires_at",   "label": "Истекает",  "field": "expires_at",   "align": "left"},
-                {"name": "created_at",   "label": "Создан",    "field": "created_at",   "align": "left",   "sortable": True},
-                {"name": "actions",      "label": "",           "field": "key_value",    "align": "center"},
-            ]
-            volk_tbl = ui.table(columns=volk_cols, rows=[], row_key="key_value").classes("w-full").style(
-                "background:var(--bg-panel);color:var(--text);font-family:var(--font);"
-            )
-            volk_tbl.add_slot("body-cell-is_active", """
-                <q-td :props="props">
-                  <span :style="{color:props.value?'#10b981':'#ef4444',fontWeight:'700'}">
-                    {{ props.value ? 'ON' : 'OFF' }}
-                  </span>
-                </q-td>""")
-            volk_tbl.add_slot("body-cell-expires_at", """
-                <q-td :props="props">
-                  <span :style="{color:props.value?'#f59e0b':'#94a3b8',fontSize:'.65rem'}">
-                    {{ props.value ? props.value.substring(0,10) : '∞' }}
-                  </span>
-                </q-td>""")
-            volk_tbl.add_slot("body-cell-role", """
-                <q-td :props="props">
-                  <span :style="{color:props.value==='admin'?'#8b5cf6':'#94a3b8',fontWeight:'700',fontSize:'.65rem'}">
-                    {{ props.value.toUpperCase() }}
-                  </span>
-                </q-td>""")
-            volk_tbl.add_slot("body-cell-protected_admin", """
-                <q-td :props="props" auto-width>
-                  <span v-if="props.value" style="color:#10b981;font-size:.62rem;font-weight:900;">
-                    ZERO / les-admin
-                  </span>
-                  <span v-else style="color:#64748b;font-size:.62rem;">—</span>
-                </q-td>""")
-            volk_tbl.add_slot("body-cell-device_bound", """
-                <q-td :props="props" auto-width>
-                  <span v-if="props.row.protected_admin" style="color:#10b981;font-size:.65rem;font-weight:700;">
-                    root · без привязки
-                  </span>
-                  <span v-else :style="{color:props.value?'#f59e0b':'#94a3b8',fontSize:'.65rem',fontWeight:'700'}">
-                    {{ props.value ? '📱 привязан' : '🔓 свободен' }}
-                  </span>
-                </q-td>""")
-            volk_tbl.add_slot("body-cell-actions", """
-                <q-td :props="props" auto-width>
-                  <span v-if="props.row.protected_admin" style="color:#10b981;font-size:.6rem;font-weight:900;">
-                    ZERO ONLY
-                  </span>
-                  <q-btn v-else flat dense size="xs" color="warning"
-                         @click="$parent.$emit('toggle', props.row)"
-                         style="font-size:.6rem;margin-right:4px;">
-                    {{ props.row.is_active ? 'OFF' : 'ON' }}
-                  </q-btn>
-                  <q-btn v-if="props.row.device_bound" flat dense size="xs" color="info"
-                         @click="$parent.$emit('reset_device', props.row)"
-                         style="font-size:.6rem;margin-right:4px;">📱✕</q-btn>
-                  <q-btn v-if="!props.row.protected_admin" flat dense size="xs" color="negative"
-                         @click="$parent.$emit('delete', props.row)"
-                         style="font-size:.6rem;">DEL</q-btn>
-                </q-td>""")
-        # ── Логика ──────────────────────────────
-
-        async def _volk_load():
-            rows = await api_get("/api/auth/keys")
-            if rows is not None:
-                volk_tbl.rows = rows
-                volk_tbl.update()
-
-        async def _volk_create():
-            k  = inp_key.value.strip()
-            h  = inp_holder.value.strip()
-            ro = inp_role.value
-            tp = inp_type.value
-            if not k:
-                ui.notify("Введите или сгенерируйте ключ", type="warning")
+    def render_keys() -> None:
+        container = refs.get("keys")
+        if container is None:
+            return
+        container.clear()
+        with container:
+            if state["loading"]:
+                render_feedback_state("loading", detail="Читаю ключи доступа.")
                 return
-            expires_days = 0 if tp == "permanent" else int(tp)
-            d = await api_post("/api/auth/keys", {
-                "key_value": k, "holder_name": h,
-                "role": ro, "expires_days": expires_days
-            })
-            if d:
-                kind = "∞ постоянный" if expires_days == 0 else f"⏱ {expires_days}д"
-                ui.notify(f"✓ Создан: {h or k} [{ro}] {kind}", type="positive")
-                inp_key.set_value("")
-                inp_holder.set_value("")
-                await _volk_load()
-            else:
-                ui.notify(last_api_error_text("Ошибка создания ключа"), type="negative")
-
-        async def _volk_toggle(row):
-            k   = row.get("key_value", "") if isinstance(row, dict) else str(row)
-            cur = row.get("is_active", 1)  if isinstance(row, dict) else 1
-            d = await api_post("/api/auth/keys/toggle", {"key_value": k, "is_active": 0 if cur else 1})
-            if d:
-                await _volk_load()
-            else:
-                ui.notify(last_api_error_text("Ошибка переключения ключа"), type="negative")
-
-        async def _volk_reset_device(row):
-            k = row.get("key_value", "") if isinstance(row, dict) else str(row)
-            h = row.get("holder_name", k) if isinstance(row, dict) else k
-            d = await api_post("/api/auth/keys/reset-device", {"key_value": k, "is_active": 1})
-            if d:
-                ui.notify(f"📱 Устройство отвязано: {h}", type="info")
-                await _volk_load()
-            else:
-                ui.notify(last_api_error_text("Ошибка отвязки устройства"), type="negative")
-
-        async def _volk_delete(row):
-            k = row.get("key_value", "") if isinstance(row, dict) else str(row)
-            if k == raw_key:
-                ui.notify("Нельзя удалить свой ключ", type="warning")
+            if state["error"]:
+                render_feedback_state("error", detail=state["error"])
                 return
-            d = await api_post("/api/auth/keys/delete", {"key_value": k})
-            if d:
-                ui.notify(f"Удалён: {k[:16]}…", type="warning")
-                await _volk_load()
-            else:
-                ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
+            if not state["rows"]:
+                render_feedback_state(
+                    "empty",
+                    detail="Дополнительных ключей пока нет. Создайте первый ключ выше.",
+                )
+                return
+            for row in state["rows"]:
+                protected = bool(row.get("protected_admin"))
+                active = bool(row.get("is_active"))
+                holder = str(row.get("holder_name") or "Без имени")
+                role = str(row.get("role") or "user")
+                expires = str(row.get("expires_at") or "")
+                created = str(row.get("created_at") or "")[:10]
+                device_bound = bool(row.get("device_bound"))
+                with panel(variant="plain", classes="sov-access-key-row"):
+                    with ui.row().classes("sov-access-key-row__main"):
+                        ui.icon("o_admin_panel_settings" if role == "admin" else "o_key").classes(
+                            "sov-access-key-row__icon"
+                        )
+                        with ui.column().classes("sov-access-key-row__copy"):
+                            with ui.row().classes("sov-access-key-row__identity"):
+                                ui.label(holder).classes("sov-access-key-row__holder")
+                                status_badge("root" if protected else role, "ok" if active else "muted")
+                                status_badge("активен" if active else "выключен", "ok" if active else "warn")
+                            ui.label(
+                                "Системный ключ без привязки"
+                                if protected
+                                else key_preview(str(row.get("key_value") or ""))
+                            ).classes("sov-access-key-row__key")
+                            with ui.row().classes("sov-access-key-row__meta"):
+                                ui.label(f"создан {created or '—'}")
+                                ui.label(f"истекает {expires[:10] if expires else 'никогда'}")
+                                ui.label("устройство привязано" if device_bound else "без устройства")
+                    if protected:
+                        ui.label("Защищён").classes("sov-access-key-row__protected")
+                    else:
+                        with ui.row().classes("sov-access-key-row__actions"):
+                            action_button(
+                                "Выключить" if active else "Включить",
+                                icon="o_toggle_off" if active else "o_toggle_on",
+                                on_click=lambda _event, item=row: toggle_key(item),
+                                variant="secondary",
+                                compact=True,
+                            )
+                            if device_bound:
+                                action_button(
+                                    "Отвязать",
+                                    icon="o_phonelink_erase",
+                                    on_click=lambda _event, item=row: reset_device(item),
+                                    variant="quiet",
+                                    compact=True,
+                                )
+                            action_button(
+                                "Удалить",
+                                icon="o_delete_outline",
+                                on_click=lambda _event, item=row: delete_key(item),
+                                variant="danger",
+                                compact=True,
+                            )
 
-        refresh_btn.on("click", _volk_load)
-        create_btn.on("click", _volk_create)
-        volk_tbl.on("toggle", _grid_handler(_volk_toggle))
-        volk_tbl.on("reset_device", _grid_handler(_volk_reset_device))
-        volk_tbl.on("delete", _grid_handler(_volk_delete))
-        ui.timer(0.1, _volk_load, once=True)
+    async def load_keys() -> None:
+        state["loading"] = True
+        state["error"] = ""
+        render_keys()
+        rows = await api_get("/api/auth/keys")
+        if rows is None:
+            state["rows"] = []
+            state["error"] = "Ключи сейчас недоступны. Проверьте соединение с ЛЕС и повторите."
+        else:
+            state["rows"] = rows if isinstance(rows, list) else []
+        state["loading"] = False
+        render_keys()
+
+    async def create_key() -> None:
+        value = str(refs["key"].value or "").strip()
+        holder = str(refs["holder"].value or "").strip()
+        role = str(refs["role"].value or "user")
+        duration = str(refs["duration"].value or "permanent")
+        if not value:
+            ui.notify("Введите или сгенерируйте ключ", type="warning")
+            return
+        expires_days = 0 if duration == "permanent" else int(duration)
+        result = await api_post(
+            "/api/auth/keys",
+            {
+                "key_value": value,
+                "holder_name": holder,
+                "role": role,
+                "expires_days": expires_days,
+            },
+        )
+        if not result:
+            ui.notify(last_api_error_text("Ошибка создания ключа"), type="negative")
+            return
+        refs["key"].set_value("")
+        refs["holder"].set_value("")
+        ui.notify("Ключ создан", type="positive")
+        await load_keys()
+
+    def generate_key() -> None:
+        role = str(refs["role"].value or "user")
+        prefix = "les-admin-" if role == "admin" else "les_"
+        refs["key"].set_value(prefix + secrets.token_hex(12 if role == "admin" else 8))
+
+    async def toggle_key(row: dict[str, Any]) -> None:
+        value = str(row.get("key_value") or "")
+        active = bool(row.get("is_active"))
+        result = await api_post(
+            "/api/auth/keys/toggle",
+            {"key_value": value, "is_active": 0 if active else 1},
+        )
+        if result:
+            await load_keys()
+        else:
+            ui.notify(last_api_error_text("Ошибка переключения ключа"), type="negative")
+
+    async def reset_device(row: dict[str, Any]) -> None:
+        value = str(row.get("key_value") or "")
+        result = await api_post(
+            "/api/auth/keys/reset-device",
+            {"key_value": value, "is_active": 1},
+        )
+        if result:
+            ui.notify("Устройство отвязано", type="positive")
+            await load_keys()
+        else:
+            ui.notify(last_api_error_text("Ошибка отвязки устройства"), type="negative")
+
+    async def delete_key(row: dict[str, Any]) -> None:
+        value = str(row.get("key_value") or "")
+        if value == raw_key:
+            ui.notify("Нельзя удалить свой ключ", type="warning")
+            return
+        result = await api_post("/api/auth/keys/delete", {"key_value": value})
+        if result:
+            ui.notify("Ключ удалён", type="warning")
+            await load_keys()
+        else:
+            ui.notify(last_api_error_text("Ошибка удаления ключа"), type="negative")
+
+    with ui.column().classes("sov-access-page"):
+        with panel(variant="raised", classes="sov-access-hero"):
+            with ui.row().classes("sov-access-hero__row"):
+                with ui.column().classes("sov-access-hero__copy"):
+                    acronym_identity(
+                        "В.О.Л.К.",
+                        "Внутренний Охранный Локальный Контур",
+                        icon="o_vpn_key",
+                    )
+                    ui.label(
+                        "Выдавайте минимально необходимый доступ и сразу видьте активность, срок и привязку."
+                    ).classes("sov-access-intro")
+                action_button(
+                    "Обновить",
+                    icon="o_refresh",
+                    on_click=load_keys,
+                    variant="secondary",
+                )
+        with panel(variant="plain", classes="sov-access-create"):
+            section_heading(
+                "Новый ключ",
+                "Секрет показывается только в форме создания; в реестре остаётся короткий безопасный preview.",
+            )
+            with ui.element("section").classes("sov-access-form"):
+                refs["key"] = text_field(
+                    label="Ключ",
+                    placeholder="Введите или сгенерируйте",
+                    classes="sov-access-form__key",
+                )
+                refs["holder"] = text_field(
+                    label="Кому",
+                    placeholder="Имя пользователя",
+                    classes="sov-access-form__holder",
+                )
+                refs["role"] = select_field(
+                    {"user": "Пользователь", "admin": "Администратор"},
+                    value="user",
+                    label="Роль",
+                    classes="sov-access-form__role",
+                )
+                refs["duration"] = select_field(
+                    {"permanent": "Без срока", "1": "1 день"},
+                    value="permanent",
+                    label="Срок",
+                    classes="sov-access-form__duration",
+                )
+            with ui.row().classes("sov-access-form__actions"):
+                action_button(
+                    "Сгенерировать",
+                    icon="o_casino",
+                    on_click=generate_key,
+                    variant="quiet",
+                )
+                action_button(
+                    "Создать ключ",
+                    icon="o_add",
+                    on_click=create_key,
+                    variant="primary",
+                )
+        with panel(variant="plain", classes="sov-access-registry"):
+            with ui.row().classes("sov-access-registry__head"):
+                section_heading(
+                    "Ключи доступа",
+                    "Root-ключ защищён; остальные можно выключить, отвязать или удалить.",
+                )
+                status_badge("локальный контур", "muted")
+            refs["keys"] = ui.column().classes("sov-access-key-list")
+
+    ui.timer(0.1, load_keys, once=True)

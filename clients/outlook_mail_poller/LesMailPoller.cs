@@ -122,6 +122,16 @@ namespace LesMailPoller
                     dynamic store = session.Stores[storeIndex];
                     string storeId = Safe(delegate { return (string)store.StoreID; });
                     string storeLabel = Safe(delegate { return (string)store.DisplayName; });
+                    try
+                    {
+                        RegisterStore(storeId, storeLabel);
+                    }
+                    catch (Exception error)
+                    {
+                        // Message intake keeps the same idempotent ensure path,
+                        // so discovery failure must not block read-only collection.
+                        Log("store discovery failed (" + storeLabel + "): " + error.Message);
+                    }
                     var excluded = ExcludedFolderIds(store);
                     dynamic root = store.GetRootFolder();
                     ScanFolder(root, storeId, storeLabel, excluded, ref scanned, ref registered);
@@ -453,6 +463,28 @@ namespace LesMailPoller
                 using (FileStream file = File.OpenRead(filePath)) file.CopyTo(stream);
                 WriteUtf8(stream, "\r\n--" + boundary + "--\r\n");
             }
+            using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
+            {
+                if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)
+                    throw new WebException("LES returned HTTP " + (int)response.StatusCode);
+            }
+        }
+
+        private static void RegisterStore(string storeId, string storeLabel)
+        {
+            string endpoint = CollectorUrl().Replace(
+                "/collector/import",
+                "/collector/register-store");
+            string payload = "store_id=" + Uri.EscapeDataString(storeId ?? "") +
+                "&store_label=" + Uri.EscapeDataString(storeLabel ?? "Outlook");
+            byte[] bytes = Encoding.UTF8.GetBytes(payload);
+            HttpWebRequest request = (HttpWebRequest)WebRequest.Create(endpoint);
+            request.Method = "POST";
+            request.ContentType = "application/x-www-form-urlencoded; charset=utf-8";
+            request.ContentLength = bytes.Length;
+            request.Timeout = 5000;
+            using (Stream stream = request.GetRequestStream())
+                stream.Write(bytes, 0, bytes.Length);
             using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
             {
                 if ((int)response.StatusCode < 200 || (int)response.StatusCode >= 300)

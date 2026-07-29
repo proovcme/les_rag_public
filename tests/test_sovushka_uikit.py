@@ -312,6 +312,52 @@ def test_tools_surface_separates_sources_from_connected_prompt_editor():
     assert "action_button(" in tools
     assert "panel(" in tools
 
+
+def test_remaining_operator_surfaces_use_uikit_without_page_local_visual_styles():
+    history = Path("sovushka/pages/history.py").read_text(encoding="utf-8")
+    access = Path("sovushka/pages/volk.py").read_text(encoding="utf-8")
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    assert "sov-history-page" in history
+    assert "render_feedback_state(" in history
+    assert "action_button(" in history
+    assert "ui.card(" not in history
+    assert "_html(" not in history
+    assert ".style(" not in history
+
+    assert "sov-access-page" in access
+    assert "select_field(" in access
+    assert "sov-access-key-row" in access
+    assert "ui.table(" not in access
+    assert ".style(" not in access
+
+    visual = shell[shell.index("def _build_qdrant_visualizer_panel"):shell.index(
+        "_LIGHT_THEME_MIGRATION"
+    )]
+    assert "sov-visual-page" in visual
+    assert "action_button(" in visual
+    assert 'title="Граф знаний ЛЕС"' in visual
+    assert ".style(" not in visual
+
+    for contract in (
+        ".sov-history-page",
+        ".sov-history-row",
+        ".sov-access-page",
+        ".sov-access-key-row",
+        ".sov-visual-page",
+        ".sov-visual-iframe",
+    ):
+        assert contract in UIKIT_CSS
+
+
+def test_uikit_registry_exposes_select_with_shared_control_contract():
+    components = Path("sovushka/uikit/components.py").read_text(encoding="utf-8")
+
+    assert "def select_field(" in components
+    assert '"sov-ui-select"' in components
+    assert 'props.append("stack-label")' in components
+    assert ".sov-ui-select .q-field__control" in UIKIT_CSS
+
     for contract in (
         ".sov-tools-hero",
         ".sov-tools-source",

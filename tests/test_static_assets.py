@@ -160,6 +160,12 @@ def test_deploy_allows_sovushka_shell():
 
 def test_qdrant_visualizer_is_mounted_as_static_same_origin():
     app_shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    visualizer = Path("qdrant_visualizer/index.html").read_text(encoding="utf-8")
 
     assert 'app.add_static_files("/qdrant-visualizer"' in app_shell
     assert 'RedirectResponse("/qdrant-visualizer/index.html")' in app_shell
+    assert "--bg: #f2f4f0" in visualizer
+    assert "--accent: #1d6b4b" in visualizer
+    assert "-apple-system, BlinkMacSystemFont" in visualizer
+    assert "prefers-reduced-motion: reduce" in visualizer
+    assert 'title="Граф знаний ЛЕС"' in app_shell

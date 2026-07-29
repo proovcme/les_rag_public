@@ -116,9 +116,9 @@ def test_full_fgis_update_is_wired_to_operator_api_and_gui():
 
     assert '@router.post("/fgis/update")' in routes
     assert "fgis_update_service.start(include_gesn=True, all_periods=False)" in routes
-    assert "СКАЧАТЬ / ОБНОВИТЬ ФСНБ" in ui
+    assert '"Обновить ФСНБ"' in ui
     assert 'api_post("/api/service-sources/fgis/update", {})' in ui
-    assert "ЖУРНАЛ ОБНОВЛЕНИЯ" in ui
+    assert '"Технический журнал"' in ui
     assert 'd.get("message") or d.get("reason")' in ui
 
 

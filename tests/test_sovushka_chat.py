@@ -204,11 +204,14 @@ def test_instrumenty_refresh_buttons_bind_after_handlers_exist():
 def test_volk_buttons_and_grid_events_bind_after_handlers_exist():
     source = inspect.getsource(volk_page.build_volk)
 
-    assert "on_click=_volk_load" not in source
-    assert "on_click=_volk_create" not in source
-    assert source.index("async def _volk_load") < source.index("refresh_btn.on(\"click\", _volk_load)")
-    assert source.index("async def _volk_create") < source.index("create_btn.on(\"click\", _volk_create)")
-    assert source.index("async def _volk_toggle") < source.index("volk_tbl.on(\"toggle\", _grid_handler(_volk_toggle))")
+    assert "async def load_keys" in source
+    assert "async def create_key" in source
+    assert "async def toggle_key" in source
+    assert "on_click=load_keys" in source
+    assert "on_click=create_key" in source
+    assert "sov-access-key-row" in source
+    assert "ui.table(" not in source
+    assert ".style(" not in source
 
 
 def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():

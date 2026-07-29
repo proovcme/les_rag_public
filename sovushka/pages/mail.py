@@ -496,7 +496,7 @@ def build_mail_settings() -> None:
                     with ui.column().classes("sov-mail-collector-card__copy"):
                         ui.label("Classic Outlook").classes("sov-mail-settings-card-title")
                         ui.label(
-                            "Локальный ручной сборщик · read-only · жёсткий предел одного прохода 15 секунд."
+                            "Локальный ручной сборщик · read-only · при первом запуске сам зарегистрирует видимые ящики."
                         ).classes("sov-mail-settings-note")
                     action_button(
                         "Забрать новые письма",
@@ -518,7 +518,7 @@ def build_mail_settings() -> None:
                 if not state["accounts"]:
                     render_feedback_state(
                         "empty",
-                        detail="IMAP-ящики пока не подключены. Classic Outlook можно собирать вручную выше.",
+                        detail="IMAP-ящики пока не подключены. Запустите сбор Classic Outlook — найденные ящики появятся автоматически.",
                     )
                     return
                 for account in state["accounts"]:

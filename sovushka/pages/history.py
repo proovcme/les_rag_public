@@ -1,94 +1,120 @@
-"""
-С.О.В.У.Ш.К.А. v5.0 — Вкладка ИСТОРИЯ ЧАТОВ
-"""
+"""Conversation history surface for Sovushka."""
+
 from __future__ import annotations
 
 import asyncio
-from nicegui import ui, app
+from typing import Any
 
-from sovushka.state import state, api_get, add_log
-from sovushka.components.charts import _html
+from nicegui import ui
+
+from sovushka.state import add_log, api_get
+from sovushka.uikit.components import (
+    action_button,
+    panel,
+    render_feedback_state,
+    section_heading,
+    status_badge,
+)
 
 
 def build_history(tabs=None, tab_chat=None):
-    """Строит содержимое вкладки ИСТОРИЯ. Вызывать внутри with ui.tab_panel(...)."""
+    """Render saved conversations and restore one into the active chat."""
 
-    with ui.column().classes("w-full h-full gap-3 p-4"):
+    state: dict[str, Any] = {"loading": True, "error": "", "sessions": []}
+    refs: dict[str, Any] = {}
 
-        # Заголовок
-        with ui.row().classes("w-full items-center gap-3"):
-            _html('<div style="font-size:1rem;font-weight:700;color:var(--accent);letter-spacing:.1em;">ИСТОРИЯ ЧАТОВ</div>')
-            refresh_btn = ui.button("↺ ОБНОВИТЬ", icon="o_refresh").props("flat dense").classes("text-xs")
-            refresh_btn.style("color:var(--dim);font-size:.7rem;")
+    async def open_session(session_id: str) -> None:
+        add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}…")
+        messages = await api_get(f"/api/chat/history?session_id={session_id}")
+        if messages is None:
+            add_log("[ИСТОРИЯ] Ошибка загрузки сессии")
+            ui.notify("Не удалось открыть диалог", type="negative")
+            return
+        from sovushka.state import state as app_state
 
-        sessions_col = ui.column().classes("w-full gap-2")
+        app_state["chat_history"] = messages
+        app_state["load_session_id"] = session_id
+        add_log(f"[ИСТОРИЯ] Загружено {len(messages) // 2} сообщений")
+        if tabs and tab_chat:
+            tabs.set_value(tab_chat)
+        reload_hook = app_state.get("chat_reload_hook")
+        if callable(reload_hook):
+            try:
+                reload_hook()
+            except Exception as error:
+                add_log(f"[ИСТОРИЯ] Хук перерисовки чата: {error}")
 
-        async def _load_sessions():
-            sessions_col.clear()
-            data = await api_get("/api/chat/sessions?limit=50")
-            if not data:
-                with sessions_col:
-                    _html('<div style="color:var(--dim);font-size:.8rem;padding:16px;">Нет сохранённых сессий</div>')
+    def render_sessions() -> None:
+        container = refs.get("sessions")
+        if container is None:
+            return
+        container.clear()
+        with container:
+            if state["loading"]:
+                render_feedback_state("loading", detail="Читаю сохранённые диалоги.")
                 return
-            with sessions_col:
-                for s in data:
-                    _render_session_card(s)
-
-        def _render_session_card(s: dict):
-            sid        = s["session_id"]
-            first_q    = s["first_question"] or "—"
-            msg_count  = s["msg_count"]
-            started_at = (s["started_at"] or "")[:16].replace("T", " ")
-            last_at    = (s["last_at"]    or "")[:16].replace("T", " ")
-
-            with ui.card().classes("w-full cursor-pointer").style(
-                "background:var(--bg-panel);border:1px solid var(--border);"
-                "border-radius:6px;padding:12px 16px;transition:border-color .15s;"
-            ) as card:
-                card.style("cursor:pointer;")
-                with ui.row().classes("w-full items-start justify-between gap-2"):
-                    with ui.column().classes("flex-1 gap-1"):
-                        ui.label(f'{first_q[:100]}{"…" if len(first_q)>100 else ""}').style(
-                            "font-size:.8rem;color:var(--text);font-weight:600;"
-                        )
-                        meta = f"{started_at} · {msg_count} сообщ."
-                        if last_at != started_at:
-                            meta += f" · последнее {last_at}"
-                        ui.label(meta).style(
-                            "font-size:.68rem;color:var(--dim);"
-                        )
-                    open_btn = ui.button("Открыть →").props("flat dense").classes("text-xs self-center")
-                    open_btn.style("color:var(--accent);font-size:.68rem;")
-
-                async def _open(session_id=sid):
-                    await _open_session(session_id)
-
-                card.on("click", _open)
-                open_btn.on("click", _open)
-
-        async def _open_session(session_id: str):
-            """Загружает сессию в state и переключает на вкладку чата."""
-            add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}…")
-            msgs = await api_get(f"/api/chat/history?session_id={session_id}")
-            if msgs is None:
-                add_log("[ИСТОРИЯ] Ошибка загрузки сессии")
+            if state["error"]:
+                render_feedback_state("error", detail=state["error"])
                 return
-            # Сохраняем в state — вкладка чата подхватит при следующем рендере
-            state["chat_history"] = msgs
-            state["load_session_id"] = session_id
-            add_log(f"[ИСТОРИЯ] Загружено {len(msgs)//2} сообщений")
-            # Переключаем на вкладку чата и просим её перерисоваться СЕЙЧАС
-            if tabs and tab_chat:
-                tabs.set_value(tab_chat)
-            reload_hook = state.get("chat_reload_hook")
-            if callable(reload_hook):
-                try:
-                    reload_hook()
-                except Exception as hook_err:
-                    add_log(f"[ИСТОРИЯ] Хук перерисовки чата: {hook_err}")
+            sessions = state["sessions"]
+            if not sessions:
+                render_feedback_state(
+                    "empty",
+                    detail="Сохранённых диалогов пока нет. Новый разговор появится здесь автоматически.",
+                )
+                return
+            for session in sessions:
+                session_id = str(session.get("session_id") or "")
+                first_question = str(session.get("first_question") or "Диалог без заголовка")
+                message_count = int(session.get("msg_count") or 0)
+                started_at = str(session.get("started_at") or "")[:16].replace("T", " ")
+                last_at = str(session.get("last_at") or "")[:16].replace("T", " ")
+                with panel(variant="plain", classes="sov-history-row"):
+                    with ui.column().classes("sov-history-row__copy"):
+                        ui.label(first_question).classes("sov-history-row__title")
+                        with ui.row().classes("sov-history-row__meta"):
+                            ui.label(started_at or "Дата не указана")
+                            ui.label(f"{message_count} сообщ.")
+                            if last_at and last_at != started_at:
+                                ui.label(f"последнее {last_at}")
+                    action_button(
+                        "Открыть",
+                        icon="o_arrow_forward",
+                        on_click=lambda _event, value=session_id: open_session(value),
+                        variant="secondary",
+                        classes="sov-history-row__open",
+                    )
 
-        refresh_btn.on("click", lambda: asyncio.create_task(_load_sessions()))
+    async def load_sessions() -> None:
+        state["loading"] = True
+        state["error"] = ""
+        render_sessions()
+        payload = await api_get("/api/chat/sessions?limit=50")
+        if payload is None:
+            state["sessions"] = []
+            state["error"] = "История сейчас недоступна. Проверьте соединение с ЛЕС и повторите."
+        else:
+            state["sessions"] = payload if isinstance(payload, list) else []
+        state["loading"] = False
+        render_sessions()
 
-        # Загружаем сессии при открытии вкладки без NiceGUI timer: одноразовые
-        # timers могут сработать после пересборки tab panel.
-        asyncio.create_task(_load_sessions())
+    with ui.column().classes("sov-history-page"):
+        with panel(variant="raised", classes="sov-history-hero"):
+            with ui.row().classes("sov-history-hero__row"):
+                section_heading(
+                    "История диалогов",
+                    "Возвращайтесь к сохранённому разговору без поиска по техническим идентификаторам.",
+                )
+                action_button(
+                    "Обновить",
+                    icon="o_refresh",
+                    on_click=load_sessions,
+                    variant="secondary",
+                )
+        with panel(variant="plain", classes="sov-history-list-panel"):
+            with ui.row().classes("sov-history-list-head"):
+                section_heading("Сохранённые диалоги", "Сначала показаны последние 50 сессий.")
+                status_badge("read-only", "muted")
+            refs["sessions"] = ui.column().classes("sov-history-list")
+
+    asyncio.create_task(load_sessions())
