@@ -29,7 +29,9 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > дешёвые identity/API/UI и живые exact PID, только затем глубокий RAG/Qdrant
 > health; успех подтверждается двумя последовательными пробами. Общий
 > fail-closed срок ограничен тремя минутами, ошибки указывают точную стадию,
-> а не общий `timed out`.
+> а не общий `timed out`. Атомарная публикация update status выдерживает
+> краткий Windows reader-lock: одновременное чтение UI/оператором не превращается
+> в ложный rollback после уже выполненной замены приложения.
 >
 > 0.25.21 / build 494 — bounded Windows runtime и платформенная диагностика
 >

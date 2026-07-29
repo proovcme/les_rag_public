@@ -80,7 +80,10 @@ Helper запускается через `pythonw.exe` независимой и
 повторно валидирует archive SHA, exact manifest, отсутствие лишних ZIP entries, allowlist, base SHA,
 размер и target SHA всех staged payload. Затем создаёт backup, останавливает LES, закрывает один
 desktop, атомарно заменяет runtime и/или `les-desktop.exe`; компилируются только изменённые `.py`
-файлы. Новый deploy stamp записывается перед стартом.
+файлы. Новый deploy stamp записывается перед стартом. Status публикуется через
+same-directory temporary file и bounded retry атомарного replace: Windows-reader,
+который в этот момент читает предыдущий JSON, не является ошибкой приложения и
+не запускает rollback.
 
 Успех требует точного commit/product version/build, HTTP proxy/UI, доступного Qdrant,
 совместимого index contract, прямых `python.exe/pythonw.exe` PID и

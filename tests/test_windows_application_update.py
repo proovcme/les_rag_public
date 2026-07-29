@@ -230,6 +230,33 @@ def test_windows_atomic_replace_retries_transient_permission_error(
     assert target.read_bytes() == b"new"
 
 
+def test_status_publish_retries_concurrent_windows_reader(tmp_path, monkeypatch):
+    status = tmp_path / "status.json"
+    actual_replace = vps_patch_apply.os.replace
+    attempts = 0
+
+    def reader_lock(left, right):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("status reader still holds destination")
+        actual_replace(left, right)
+
+    monkeypatch.setattr(vps_patch_apply.os, "replace", reader_lock)
+    monkeypatch.setattr(vps_patch_apply.time, "sleep", lambda _seconds: None)
+
+    vps_patch_apply.write_status(
+        status,
+        state="applying",
+        stage="smoke",
+        message="Проверяю",
+    )
+
+    payload = json.loads(status.read_text(encoding="utf-8"))
+    assert payload["stage"] == "smoke"
+    assert attempts == 3
+
+
 def test_windows_updater_rolls_back_all_files_when_smoke_fails(tmp_path, monkeypatch):
     runtime, state, job = _prepared_job(tmp_path)
     previous_stamp = (runtime / ".les_deploy_stamp.json").read_bytes()

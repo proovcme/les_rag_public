@@ -81,7 +81,7 @@ def write_status(path: Path, **values: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temporary, path)
+    _replace_with_retry(temporary, path, timeout=5)
 
 
 def _creation_flags() -> int:
