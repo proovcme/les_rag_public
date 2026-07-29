@@ -7,17 +7,30 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.30 (bounded local smeta transport recovery)
-номер сборки:              503     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.503 (internal identity; code-only soft-update target)
-ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; 0.25.30 candidate
+версия продукта (SemVer):  0.25.31 (resumable smeta mapping + read-only ETM)
+номер сборки:              504     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.504 (internal identity; code-only soft-update target)
+ветка выпуска:             codex/recover-forgotten-branches
+dev implementation:       codex/recover-forgotten-branches; 0.25.31 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.25.31 / build 504 — восстановлены resumable mapping и read-only ETM
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Document→ЛСР атомарно checkpoint'ит принятые строки по SHA-256 вложения,
+> повторный запуск продолжает только оставшиеся `work_id`, structured JSON
+> сериализуется пакетами до 8 строк, а timeout не повторяет идентичный payload.
+> `tools/smeta_document_local_run.py` исполняет тот же контракт локально.
+> ETM adapter читает цены только по заданным кодам, переиспользует session,
+> соблюдает пакет 50 кодов/rate limit и возвращает provenance-bearing quotes;
+> выбор материалов остаётся за моделью или пользователем.
+>
 > 0.25.30 / build 503 — полезное ядро PR #8 без обхода model-owned контракта
 >
 > Дата: 2026-07-29

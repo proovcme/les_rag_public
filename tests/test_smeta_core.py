@@ -124,6 +124,70 @@ def test_sequential_row_tasks_receive_completed_model_decisions():
     assert result["agent_trace"]["task_mode"] == "sequential_rows"
 
 
+def test_sequential_row_mapping_resumes_checkpoint_without_repeating_completed_rows():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Первая работа", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Вторая работа", "unit": "м", "quantity": 2},
+        {"work_id": "w3", "title": "Третья работа", "unit": "м2", "quantity": 3},
+    ]
+    resumed_selection = {
+        "norm_code": "",
+        "reason": "решение w1",
+        "review_status": "model_batch_unbound",
+    }
+    received_work_ids = []
+    checkpoints = []
+
+    def runner(work_rows, **_kwargs):
+        work_id = str(work_rows[0]["work_id"])
+        received_work_ids.append(work_id)
+        return {
+            "selections": {
+                work_id: {
+                    "norm_code": "",
+                    "reason": f"решение {work_id}",
+                    "review_status": "model_batch_unbound",
+                },
+            },
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [],
+            "valid_model_rows": 1,
+            "agent_trace": {"engine": "qwen_agent", "model_turns": 1},
+        }
+
+    result = workflow._run_native_norm_agent(
+        rows,
+        lambda _messages, _tools: {},
+        candidate_limit=8,
+        max_turns=6,
+        batch_size=1,
+        batch_runner=runner,
+        accumulate_task_state=True,
+        resume_result={
+            "selections": {"w1": resumed_selection},
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [],
+        },
+        checkpoint=checkpoints.append,
+    )
+
+    assert received_work_ids == ["w2", "w3"]
+    assert len(checkpoints) == 2
+    assert set(checkpoints[0]["selections"]) == {"w1", "w2"}
+    assert checkpoints[0]["remaining_work_ids"] == ["w3"]
+    assert result["selections"]["w1"] == resumed_selection
+    assert set(result["selections"]) == {"w1", "w2", "w3"}
+    assert result["incomplete"] is False
+
+
 def test_terminal_mapping_emits_only_completed_row_payload():
     from proxy.smeta_core import document_workflow as workflow
 
@@ -1337,6 +1401,109 @@ def test_forced_mapping_gets_one_bounded_schema_repair(monkeypatch):
         result["model_trace"],
         ensure_ascii=False,
     )
+
+
+def test_forced_mapping_serializes_large_result_in_transport_chunks(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MAPPING_CHUNK", "8")
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    rows = [
+        {"work_id": f"w{index}", "title": f"Работа {index}", "unit": "шт", "quantity": 1}
+        for index in range(1, 10)
+    ]
+
+    def exchange(_messages, _tools):
+        return {"tool_calls": [_native_call(
+            "search",
+            "search_norms_batch",
+            items=[
+                {
+                    "work_id": row["work_id"],
+                    "queries": [
+                        f"{row['title']} буквально",
+                        f"{row['title']} нормативно",
+                    ],
+                }
+                for row in rows
+            ],
+        )]}
+
+    mapping_batches = []
+
+    def mapping_exchange(_messages, schema):
+        work_ids = schema["properties"]["rows"]["items"]["properties"]["work_id"]["enum"]
+        mapping_batches.append(list(work_ids))
+        return {"rows": [
+            {
+                "work_id": work_id,
+                "decision": "unbound",
+                "reason": "модель не выбрала норму",
+                "unbound_evidence": _unbound_evidence(
+                    queries=[
+                        f"Работа {work_id[1:]} буквально",
+                        f"Работа {work_id[1:]} нормативно",
+                    ],
+                ),
+            }
+            for work_id in work_ids
+        ]}
+
+    result = workflow._run_native_norm_agent(
+        rows,
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+    )
+
+    assert mapping_batches == [
+        [f"w{index}" for index in range(1, 9)],
+        ["w9"],
+    ]
+    assert set(result["selections"]) == {f"w{index}" for index in range(1, 10)}
+
+
+def test_mapping_timeout_stops_without_identical_retry_and_saves_checkpoint(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    mapping_calls = 0
+    checkpoints = []
+
+    def exchange(_messages, _tools):
+        return {"tool_calls": [_native_call(
+            "search",
+            "search_norms_batch",
+            items=[{
+                "work_id": "w1",
+                "queries": ["буквальный поиск", "нормативный поиск"],
+            }],
+        )]}
+
+    def mapping_exchange(_messages, _schema):
+        nonlocal mapping_calls
+        mapping_calls += 1
+        raise TimeoutError("structured mapping timed out")
+
+    with pytest.raises(workflow.MappingTransportTimeout):
+        workflow._run_native_norm_agent(
+            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=5,
+            max_turns=1,
+            checkpoint=checkpoints.append,
+        )
+
+    assert mapping_calls == 1
+    assert checkpoints
+    assert checkpoints[-1]["incomplete"] is True
+    assert checkpoints[-1]["incomplete_blocker"]["code"] == "structured_mapping_timeout"
 
 
 def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(monkeypatch):

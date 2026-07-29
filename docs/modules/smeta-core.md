@@ -4,7 +4,7 @@
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
 
-> **Статус 2026-07-28: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
+> **Статус 2026-07-29: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
 > model-owned evidence loop, immutable построчный mapping, обязательная глобальная модельная ревизия,
 > автoчерновик и отдельный пользовательский lock перед финальным расчётом.
 > Архитектурное решение и судьба экспериментальных веток зафиксированы в
@@ -64,6 +64,12 @@ tool-loop с точным validation feedback, сама выбирает evidenc
 поиска дублей; Python его не редактирует и не выбирает решение. После успешного
 `submit_lsr_mapping` session публикует `row_ready`, application переводит его в SSE `smeta_row`, а
 Совушка обновляет таблицу внутри текущего сообщения. Черновые кандидаты в таблицу не выводятся.
+После каждого принятого transport-пакета application атомарно сохраняет checkpoint, привязанный к
+SHA-256 исходного вложения. Повторный запуск продолжает только оставшиеся `work_id`; готовые
+модельные решения не генерируются заново. Structured mapping сериализуется порциями до
+`LES_SMETA_DOCUMENT_MAPPING_CHUNK` строк (default 8). Timeout останавливает идентичный
+детерминированный запрос после первой попытки и сохраняет уже принятые строки. Для локальной
+диагностики тот же контракт доступен через `tools/smeta_document_local_run.py`.
 
 Отдельных обязательных resource-review, impact-review, dominant-review и `finish_norm_selection` нет.
 После построчного mapping обязательна одна глобальная модельная ревизия всей таблицы. Её расчёт имеет
@@ -128,6 +134,9 @@ immutable lock-ревизию и только затем отдельный фи
   выбранные моделью `table_codes` возвращаются полным официальным меню без ranking.
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.
+- `proxy.services.etm_price_service` и `/api/prices/etm/*` — read-only источник текущих
+  поставщицких цен для КАЦ: session reuse, пакеты до 50 кодов, rate limit и provenance.
+  Код товара/материал выбирает модель или пользователь; ETM adapter только читает заданные коды.
 - `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
 
 `estimate_harness_service` временно исполняет старый tool-loop только за

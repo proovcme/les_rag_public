@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import ast
+import copy
 import json
+import math
+import os
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -34,6 +37,123 @@ Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 Progress = Callable[[dict[str, Any]], None]
 AgentBatchRunner = Callable[..., dict[str, Any]]
+Checkpoint = Callable[[dict[str, Any]], None]
+
+_COMPRESSIBLE_TOOL_RESULTS = frozenset({
+    "browse_norm_catalog",
+    "search_norms_batch",
+    "read_norms_batch",
+})
+
+
+class MappingTransportTimeout(RuntimeError):
+    """Structured mapping timed out; the identical payload must not be retried."""
+
+
+def _mapping_chunk_size() -> int:
+    """Bound only the JSON transport; the model still owns every decision."""
+    raw = os.getenv("LES_SMETA_DOCUMENT_MAPPING_CHUNK", "8").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 8
+
+
+def _is_timeout_error(error: BaseException) -> bool:
+    text = f"{type(error).__name__}: {error}".casefold()
+    return "readtimeout" in text or "timed out" in text or "timeout" in text
+
+
+def _compress_tool_result(name: str, payload: Any) -> Any:
+    """Keep traceable navigation facts while dropping stale bulky payloads."""
+    if not isinstance(payload, dict):
+        return {"compressed": True, "tool": name}
+    if name == "browse_norm_catalog":
+        rows = []
+        for item in payload.get("rows") or payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            rows.append({
+                key: item.get(key)
+                for key in (
+                    "work_id", "ok", "level", "family", "collection", "table",
+                    "families", "collections", "tables", "error",
+                )
+                if item.get(key) not in (None, "", [])
+            })
+        return {"compressed": True, "tool": name, "rows": rows}
+    if name == "search_norms_batch":
+        rows = []
+        for item in payload.get("rows") or payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            candidates = item.get("candidates") or []
+            rows.append({
+                "work_id": item.get("work_id"),
+                "ok": item.get("ok"),
+                "candidate_codes": [
+                    str(card.get("norm_code") or "")
+                    for card in candidates
+                    if isinstance(card, dict) and card.get("norm_code")
+                ],
+                "page": item.get("page"),
+                "has_more": item.get("has_more"),
+                "error": item.get("error"),
+            })
+        return {"compressed": True, "tool": name, "rows": rows}
+    if name == "read_norms_batch":
+        rows = []
+        for item in payload.get("rows") or []:
+            if not isinstance(item, dict):
+                continue
+            rows.append({
+                "work_id": item.get("work_id"),
+                "ok": item.get("ok"),
+                "norm_codes": [
+                    str(card.get("norm_code") or "")
+                    for card in (item.get("norms") or [])
+                    if isinstance(card, dict) and card.get("norm_code")
+                ],
+                "error": item.get("error"),
+            })
+        return {"compressed": True, "tool": name, "rows": rows}
+    return {"compressed": True, "tool": name}
+
+
+def _prune_stale_tool_evidence(
+    conversation: list[dict[str, Any]], *, keep_recent: int = 1,
+) -> None:
+    """Compact old tool payloads and thinking without changing model decisions."""
+    by_name: dict[str, list[int]] = {}
+    for index, message in enumerate(conversation):
+        if str(message.get("role") or "") != "tool":
+            continue
+        name = str(message.get("name") or "")
+        if name in _COMPRESSIBLE_TOOL_RESULTS:
+            by_name.setdefault(name, []).append(index)
+    keep: set[int] = set()
+    for indices in by_name.values():
+        keep.update(indices[-max(1, keep_recent):])
+    for name, indices in by_name.items():
+        for index in indices:
+            if index in keep:
+                continue
+            message = conversation[index]
+            if message.get("_les_compressed"):
+                continue
+            try:
+                payload = json.loads(str(message.get("content") or "") or "{}")
+            except json.JSONDecodeError:
+                payload = {"raw": str(message.get("content") or "")[:200]}
+            message["content"] = json.dumps(
+                _compress_tool_result(name, payload),
+                ensure_ascii=False,
+                default=str,
+            )
+            message["_les_compressed"] = True
+    for message in conversation[:-2]:
+        if str(message.get("role") or "") == "assistant":
+            message.pop("thinking", None)
 
 
 def _decision_name(selection: dict[str, Any]) -> str:
@@ -1271,8 +1391,10 @@ class SmetaNormToolSession:
         *,
         model_trace: list[dict[str, Any]],
         agent_trace: dict[str, Any],
+        allow_incomplete: bool = False,
+        incomplete_blocker: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if not self.complete:
+        if not self.complete and not allow_incomplete:
             raise RuntimeError(
                 "smeta agent ended without terminal mapping for: "
                 + ",".join(self.remaining_work_ids)
@@ -1284,6 +1406,9 @@ class SmetaNormToolSession:
             "catalog_trace": self.catalog_trace,
             "model_trace": model_trace,
             "valid_model_rows": len(self.accepted_rows),
+            "incomplete": not self.complete,
+            "remaining_work_ids": self.remaining_work_ids,
+            "incomplete_blocker": dict(incomplete_blocker or {}),
             "opened_cards": {
                 work_id: list({str(card.get("norm_code") or key): card for key, card in cards.items()}.values())
                 for work_id, cards in self.opened.items()
@@ -1309,12 +1434,38 @@ def _run_native_norm_agent(
     user_request: str = "",
     batch_runner: AgentBatchRunner | None = None,
     accumulate_task_state: bool = False,
+    resume_result: dict[str, Any] | None = None,
+    checkpoint: Checkpoint | None = None,
 ) -> dict[str, Any]:
     """Give the model the source rows and merge its untouched decisions."""
     requested_size = int(batch_size)
     size = len(work_rows) if requested_size <= 0 else max(1, requested_size)
-    batches = [work_rows[index:index + size] for index in range(0, len(work_rows), size)]
-    if len(batches) <= 1:
+    resumed = dict(resume_result or {})
+    resumed_selections = dict(resumed.get("selections") or {})
+    ordered_work_ids = [str(row["work_id"]) for row in work_rows]
+    known_work_ids = set(ordered_work_ids)
+    unknown_resumed = sorted(set(resumed_selections) - known_work_ids)
+    if unknown_resumed:
+        raise RuntimeError(
+            f"resume checkpoint contains unknown work_ids: {unknown_resumed}"
+        )
+    pending_rows = [
+        row for row in work_rows
+        if str(row["work_id"]) not in resumed_selections
+    ]
+    if not pending_rows:
+        return {
+            **resumed,
+            "valid_model_rows": len(resumed_selections),
+            "incomplete": False,
+            "remaining_work_ids": [],
+            "incomplete_blocker": {},
+        }
+    batches = [
+        pending_rows[index:index + size]
+        for index in range(0, len(pending_rows), size)
+    ]
+    if len(batches) <= 1 and not resumed_selections and checkpoint is None:
         task_rows = work_rows
         if accumulate_task_state:
             task_rows = [
@@ -1349,15 +1500,22 @@ def _run_native_norm_agent(
         )
 
     merged = {
-        "selections": {},
-        "opened_cards": {},
-        "browse_trace": {},
-        "query_trace": [],
-        "catalog_trace": [],
-        "model_trace": [],
-        "valid_model_rows": 0,
+        "selections": dict(resumed_selections),
+        "opened_cards": dict(resumed.get("opened_cards") or {}),
+        "browse_trace": dict(resumed.get("browse_trace") or {}),
+        "query_trace": list(resumed.get("query_trace") or []),
+        "catalog_trace": list(resumed.get("catalog_trace") or []),
+        "model_trace": list(resumed.get("model_trace") or []),
+        "valid_model_rows": len(resumed_selections),
+        "incomplete": True,
+        "remaining_work_ids": [
+            str(row["work_id"]) for row in pending_rows
+        ],
+        "incomplete_blocker": {},
     }
-    batch_traces: list[dict[str, Any]] = []
+    batch_traces: list[dict[str, Any]] = list(
+        ((resumed.get("agent_trace") or {}).get("batch_traces") or [])
+    )
     batches_started = perf_counter()
     source_by_id = {str(row["work_id"]): row for row in work_rows}
     for batch_index, rows in enumerate(batches, 1):
@@ -1400,24 +1558,95 @@ def _run_native_norm_agent(
                 ),
             }
             task_rows = [{**row, "task_state": task_state} for row in rows]
-        if batch_runner is not None:
-            result = batch_runner(
-                task_rows,
-                candidate_limit=candidate_limit,
-                max_turns=max_turns,
-                progress=progress,
-                user_request=user_request,
-            )
-        else:
-            result = _run_batch_norm_agent(
-                task_rows,
-                exchange,
-                mapping_exchange=mapping_exchange,
-                candidate_limit=candidate_limit,
-                max_turns=max_turns,
-                progress=progress,
-                user_request=user_request,
-            )
+        try:
+            if batch_runner is not None:
+                result = batch_runner(
+                    task_rows,
+                    candidate_limit=candidate_limit,
+                    max_turns=max_turns,
+                    progress=progress,
+                    user_request=user_request,
+                )
+            else:
+                def batch_checkpoint(partial: dict[str, Any]) -> None:
+                    if checkpoint is None:
+                        return
+                    checkpoint(copy.deepcopy({
+                        **merged,
+                        "selections": {
+                            **merged["selections"],
+                            **dict(partial.get("selections") or {}),
+                        },
+                        "opened_cards": {
+                            **merged["opened_cards"],
+                            **dict(partial.get("opened_cards") or {}),
+                        },
+                        "browse_trace": {
+                            **merged["browse_trace"],
+                            **dict(partial.get("browse_trace") or {}),
+                        },
+                        "query_trace": [
+                            *merged["query_trace"],
+                            *list(partial.get("query_trace") or []),
+                        ],
+                        "catalog_trace": [
+                            *merged["catalog_trace"],
+                            *list(partial.get("catalog_trace") or []),
+                        ],
+                        "model_trace": [
+                            *merged["model_trace"],
+                            *[
+                                {**item, "source_batch": batch_index}
+                                for item in (partial.get("model_trace") or [])
+                            ],
+                        ],
+                        "valid_model_rows": (
+                            len(merged["selections"])
+                            + len(partial.get("selections") or {})
+                        ),
+                        "incomplete": True,
+                        "remaining_work_ids": [
+                            work_id
+                            for work_id in ordered_work_ids
+                            if work_id not in merged["selections"]
+                            and work_id not in (partial.get("selections") or {})
+                        ],
+                        "incomplete_blocker": dict(
+                            partial.get("incomplete_blocker") or {}
+                        ),
+                    }))
+
+                result = _run_batch_norm_agent(
+                    task_rows,
+                    exchange,
+                    mapping_exchange=mapping_exchange,
+                    candidate_limit=candidate_limit,
+                    max_turns=max_turns,
+                    progress=progress,
+                    user_request=user_request,
+                    checkpoint=batch_checkpoint if checkpoint is not None else None,
+                )
+        except Exception as error:
+            if checkpoint is not None:
+                checkpoint(copy.deepcopy({
+                    **merged,
+                    "incomplete": True,
+                    "remaining_work_ids": [
+                        work_id
+                        for work_id in ordered_work_ids
+                        if work_id not in merged["selections"]
+                    ],
+                    "incomplete_blocker": {
+                        "code": (
+                            "structured_mapping_timeout"
+                            if isinstance(error, MappingTransportTimeout)
+                            or _is_timeout_error(error)
+                            else "batch_failed"
+                        ),
+                        "reason": str(error),
+                    },
+                }))
+            raise
         merged["selections"].update(result["selections"])
         merged["opened_cards"].update(result.get("opened_cards") or {})
         merged["browse_trace"].update(result["browse_trace"])
@@ -1426,8 +1655,16 @@ def _run_native_norm_agent(
         merged["model_trace"].extend(
             {**item, "source_batch": batch_index} for item in result["model_trace"]
         )
-        merged["valid_model_rows"] += int(result.get("valid_model_rows") or 0)
+        merged["valid_model_rows"] = len(merged["selections"])
+        merged["remaining_work_ids"] = [
+            work_id for work_id in ordered_work_ids
+            if work_id not in merged["selections"]
+        ]
+        merged["incomplete"] = bool(merged["remaining_work_ids"])
+        merged["incomplete_blocker"] = {}
         batch_traces.append(result.get("agent_trace") or {})
+        if checkpoint is not None:
+            checkpoint(copy.deepcopy(merged))
         if progress:
             elapsed_sec = max(0.0, perf_counter() - batches_started)
             eta_sec = round((elapsed_sec / batch_index) * (len(batches) - batch_index))
@@ -1451,6 +1688,8 @@ def _run_native_norm_agent(
     missing = [str(row["work_id"]) for row in work_rows if str(row["work_id"]) not in merged["selections"]]
     if missing:
         raise RuntimeError(f"model batches did not cover source rows: {missing}")
+    merged["incomplete"] = False
+    merged["remaining_work_ids"] = []
     merged["agent_trace"] = {
         "mode": "model_bounded_batch_rag_tools",
         "engine": str((batch_traces[0] if batch_traces else {}).get("engine") or "native"),
@@ -1614,6 +1853,7 @@ def _run_batch_norm_agent(
     max_turns: int = 64,
     progress: Progress | None = None,
     user_request: str = "",
+    checkpoint: Checkpoint | None = None,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
     session = SmetaNormToolSession(
@@ -1653,6 +1893,24 @@ def _run_batch_norm_agent(
     previous_call_signature = ""
     duplicate_feedback_signature = ""
     structured_mapping_attempts = 0
+    mapping_chunk = _mapping_chunk_size()
+
+    def emit_checkpoint(
+        *, incomplete_blocker: dict[str, Any] | None = None,
+    ) -> None:
+        if checkpoint is None:
+            return
+        checkpoint(session.result(
+            model_trace=model_trace,
+            agent_trace={
+                "mode": "model_batch_rag_tools",
+                "turns": len(model_trace),
+                "context_metrics": context_metrics,
+                "status": "turn_checkpoint",
+            },
+            allow_incomplete=True,
+            incomplete_blocker=incomplete_blocker,
+        ))
 
     def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
         nonlocal structured_mapping_attempts
@@ -1664,14 +1922,25 @@ def _run_batch_norm_agent(
             )
         structured_mapping_attempts += 1
         remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
-        schema = _mapping_output_schema(remaining)
+        serialize_ids = (
+            remaining[:mapping_chunk]
+            if mapping_chunk > 0
+            else list(remaining)
+        )
+        schema = _mapping_output_schema(serialize_ids)
         request = {
             "transport_request": (
-                "Serialize your own current professional decisions for every remaining_work_id. "
-                "Do not delegate, revise or let code choose a decision. If the evidence you inspected "
-                "is insufficient, record your own unbound decision. Return only the required JSON."
+                "Serialize your own current professional decisions for every remaining_work_id "
+                "listed below. Do not decide deferred_work_ids yet; LES will request those after "
+                "this chunk is accepted. Do not delegate, revise or let code choose a decision. "
+                "If the evidence you inspected is insufficient, record your own unbound decision. "
+                "Return only the required JSON."
             ),
-            "remaining_work_ids": remaining,
+            "remaining_work_ids": serialize_ids,
+            "deferred_work_ids": [
+                work_id for work_id in remaining
+                if work_id not in serialize_ids
+            ],
             # Ollama explicitly recommends grounding a structured-output call
             # with the same schema in the prompt as well as in `format`.
             "output_schema": schema,
@@ -1681,7 +1950,28 @@ def _run_batch_norm_agent(
             "content": json.dumps(request, ensure_ascii=False),
         })
         started = perf_counter()
-        payload = mapping_exchange(conversation, schema) or {}
+        try:
+            payload = mapping_exchange(conversation, schema) or {}
+        except Exception as error:
+            wait_ms = round((perf_counter() - started) * 1000, 2)
+            model_trace.append({
+                "turn": turn,
+                "assistant": None,
+                "model_wait_ms": wait_ms,
+                "transport": "structured_mapping_error",
+                "trigger": reason,
+                "serialize_work_ids": serialize_ids,
+                "error": str(error),
+            })
+            if _is_timeout_error(error):
+                blocker = {
+                    "code": "structured_mapping_timeout",
+                    "reason": str(error),
+                    "serialize_work_ids": serialize_ids,
+                }
+                emit_checkpoint(incomplete_blocker=blocker)
+                raise MappingTransportTimeout(str(error)) from error
+            raise
         wait_ms = round((perf_counter() - started) * 1000, 2)
         rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
         if not rows:
@@ -1706,6 +1996,7 @@ def _run_batch_norm_agent(
             "model_wait_ms": wait_ms,
             "transport": "structured_mapping",
             "trigger": reason,
+            "serialize_work_ids": serialize_ids,
             "seed": payload.get("_les_seed"),
         })
         return {
@@ -1715,7 +2006,13 @@ def _run_batch_norm_agent(
         }
 
     last_submit_result: dict[str, Any] | None = None
-    finalization_turns = 2 if mapping_exchange is not None else 0
+    mapping_rows_per_call = (
+        mapping_chunk if mapping_chunk > 0 else max(1, len(by_id))
+    )
+    finalization_turns = (
+        math.ceil(max(1, len(by_id)) / mapping_rows_per_call) + 1
+        if mapping_exchange is not None else 0
+    )
     for turn in range(1, max_turns + finalization_turns + 1):
         started = perf_counter()
         forced_mapping = turn > max_turns
@@ -1742,6 +2039,7 @@ def _run_batch_norm_agent(
             )]
             model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
         else:
+            _prune_stale_tool_evidence(conversation)
             assistant = exchange(conversation, tools) or {}
             model_wait_ms = round((perf_counter() - started) * 1000, 2)
             calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
@@ -1838,6 +2136,7 @@ def _run_batch_norm_agent(
         previous_call_signature = call_signature
 
         submitted: dict[str, dict[str, Any]] | None = None
+        accepted_before_turn = len(accepted_rows)
         for call_index, call in enumerate(calls, 1):
             call_id = str(call.get("id") or f"batch-{turn}-{call_index}")
             name = str(((call.get("function") or {}).get("name") or ""))
@@ -1851,6 +2150,9 @@ def _run_batch_norm_agent(
             if name == "submit_lsr_mapping" and isinstance(result, dict):
                 last_submit_result = result
             submitted = dict(session.accepted_rows) if session.complete else None
+        if len(accepted_rows) > accepted_before_turn:
+            structured_mapping_attempts = 0
+            emit_checkpoint()
         if submitted is not None:
             return session.result(
                 model_trace=model_trace,
@@ -2290,6 +2592,8 @@ def run_vor_document_workflow(
     agent_batch_runner: AgentBatchRunner | None = None,
     accumulate_task_state: bool = False,
     require_global_review: bool = True,
+    resume_agent_result: dict[str, Any] | None = None,
+    batch_checkpoint: Checkpoint | None = None,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     intake = intake_vor_document(path)
@@ -2322,6 +2626,8 @@ def run_vor_document_workflow(
         batch_size=batch_size,
         batch_runner=agent_batch_runner,
         accumulate_task_state=accumulate_task_state,
+        resume_result=resume_agent_result,
+        checkpoint=batch_checkpoint,
     )
     mapping_run_id = uuid4().hex
     from proxy.smeta_core.revision_store import DEFAULT_ROOT

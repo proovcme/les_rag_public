@@ -134,10 +134,21 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
         {"original_name": "source.pdf", "sha256": "sha"},
     ))
     monkeypatch.setattr(service, "consume_read_attachment", consumed.append)
+    partial = {
+        "selections": {"w1": {"norm_code": "", "reason": "решение модели"}},
+        "remaining_work_ids": ["w2"],
+        "incomplete": True,
+    }
+
+    def fail_after_checkpoint(*_args, **kwargs):
+        assert kwargs["resume_agent_result"] is None
+        kwargs["batch_checkpoint"](partial)
+        raise RuntimeError("provider down")
+
     monkeypatch.setattr(
         service,
         "run_vor_document_workflow",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider down")),
+        fail_after_checkpoint,
     )
 
     result = await service.run_smeta_document_application(
@@ -155,6 +166,14 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
     assert result.crag == "ERROR"
     assert "Вложение сохранено" in result.answer
     assert consumed == []
+    checkpoint_path = (
+        tmp_path / "artifacts" / ".checkpoints" / "read_0123456789ab.json"
+    )
+    assert checkpoint_path.exists()
+    assert service._load_document_checkpoint(
+        checkpoint_path,
+        source_fingerprint=service._source_fingerprint(source),
+    ) == partial
 
 
 @pytest.mark.asyncio
