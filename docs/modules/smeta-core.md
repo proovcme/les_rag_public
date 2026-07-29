@@ -4,9 +4,13 @@
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
 
-> **Статус 2026-07-28: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
-> model-owned evidence loop, immutable построчный mapping, обязательная глобальная модельная ревизия,
+> **Статус 2026-07-29: ✅ код и документ синхронизированы (0.25.1).** Канонический PDF→ЛСР путь —
+> model-owned evidence loop, immutable построчный mapping, optional global-review на local Ollama,
 > автoчерновик и отдельный пользовательский lock перед финальным расчётом.
+> На local Ollama/Qwen incomplete `unbound`/`bind` evidence по умолчанию принимается как
+> `precalculation_blockers` (поведение 0.24.48), чтобы ЛСР доходил до XLSX; cloud остаётся
+> hard-reject. Env: `LES_SMETA_DOCUMENT_SOFT_ACCEPT`, `LES_SMETA_DOCUMENT_GLOBAL_REVIEW`,
+> `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS`, `LES_SMETA_DOCUMENT_BATCH_SIZE`.
 > Архитектурное решение и судьба экспериментальных веток зафиксированы в
 > [ADR-13](../ADR-13-smeta-session-workflow.md).
 

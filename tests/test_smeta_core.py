@@ -1490,6 +1490,347 @@ def test_batch_agent_has_configurable_transport_turn_budget():
     assert calls == 2
 
 
+def test_batch_agent_surfaces_failed_forced_mapping_validation(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        str(query): [] for query in queries
+    })
+
+    mapping_calls = {"n": 0}
+
+    def exchange(_messages, _tools):
+        return {"tool_calls": [_native_call(
+            "search",
+            "search_norms_batch",
+            items=[{"work_id": "w1", "queries": ["первый", "второй"]}],
+        )]}
+
+    def mapping_exchange(_messages, _schema):
+        mapping_calls["n"] += 1
+        return {
+            "rows": [{
+                "work_id": "w1",
+                "decision": "bind",
+                "norm_code": "ГЭСН26-01-001-01",
+                "selection_kind": "exact",
+                "reason": "модель назвала код без открытой карточки",
+            }],
+        }
+
+    with pytest.raises(RuntimeError, match="failed validation|incomplete bind evidence"):
+        workflow._run_native_norm_agent(
+            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=5,
+            max_turns=1,
+        )
+    assert mapping_calls["n"] >= 2
+
+
+def test_batch_agent_opens_cards_before_forced_mapping_when_candidates_exist(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН34-02-015-01",
+            "title": "Демонтаж кабеля",
+            "measure_unit": "100 м",
+            "work_steps": ["Демонтаж кабеля"],
+            "resource_preview": [],
+        }]} for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": "Демонтаж кабеля",
+        "unit": "100 м",
+        "work_steps": ["Демонтаж кабеля"],
+        "resources": [],
+    })
+
+    events = []
+    exchanges = {"n": 0}
+    mapping_calls = {"n": 0}
+
+    def exchange(messages, _tools):
+        exchanges["n"] += 1
+        if exchanges["n"] == 1:
+            return {"tool_calls": [_native_call(
+                "search",
+                "search_norms_batch",
+                items=[{
+                    "work_id": "w1",
+                    "query": "демонтаж кабеля",
+                    "search_intent": "source_literal",
+                    "scope_mode": "global",
+                }, {
+                    "work_id": "w1",
+                    "query": "демонтаж кабельных линий",
+                    "search_intent": "fsnb_technology",
+                    "scope_mode": "global",
+                }],
+            )]}
+        assert any(
+            "read_norms_batch" in str(message.get("content") or "")
+            for message in messages
+            if message.get("role") == "user"
+        )
+        return {"tool_calls": [_native_call(
+            "read",
+            "read_norms_batch",
+            items=[{"work_id": "w1", "norm_code": "ГЭСН34-02-015-01"}],
+        )]}
+
+    def mapping_exchange(_messages, _schema):
+        mapping_calls["n"] += 1
+        return {
+            "rows": [{
+                "work_id": "w1",
+                "decision": "unbound",
+                "reason": "открытая карточка не покрывает работу",
+                "unbound_evidence": {
+                    "queries_used": ["демонтаж кабеля", "демонтаж кабельных линий"],
+                    "opened_norm_codes": ["ГЭСН34-02-015-01"],
+                    "rejection_reasons": ["состав работ другой"],
+                    "coverage_checked": "соседние строки не покрывают",
+                },
+            }],
+        }
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Демонтаж кабеля", "unit": "м", "quantity": 10}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+        progress=events.append,
+    )
+
+    assert exchanges["n"] >= 2
+    assert mapping_calls["n"] >= 1
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
+    assert any(
+        event.get("label") == "Смета: модель открывает карточки"
+        for event in events
+    )
+
+
+def test_batch_agent_searches_before_forced_mapping_when_catalog_only(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    monkeypatch.setattr(workflow, "browse_norm_catalog", lambda **_kwargs: {
+        "level": "family",
+        "filters": {},
+        "items": [{"key": "ГЭСН", "title": "ГЭСН", "norm_count": 1}],
+    })
+
+    events = []
+    exchanges = {"n": 0}
+    mapping_calls = {"n": 0}
+
+    def exchange(_messages, _tools):
+        exchanges["n"] += 1
+        if exchanges["n"] == 1:
+            return {"tool_calls": [_native_call(
+                "catalog",
+                "browse_norm_catalog",
+                items=[{"work_id": "w1"}],
+            )]}
+        # Search preflight: model fails to call search_norms_batch → harness fallback.
+        return {"content": "каталог просмотрен"}
+
+    def mapping_exchange(_messages, _schema):
+        mapping_calls["n"] += 1
+        return {
+            "rows": [{
+                "work_id": "w1",
+                "decision": "unbound",
+                "reason": "в каталоге нет подходящей нормы",
+                "unbound_evidence": {
+                    "queries_used": [
+                        "просмотр каталога с пустыми фильтрами (уровень family)",
+                        "просмотр уровня collection=гэсн",
+                    ],
+                    "opened_norm_codes": [],
+                    "rejection_reasons": ["нет подходящей таблицы"],
+                    "coverage_checked": "покрытие соседними не применимо",
+                },
+            }],
+        }
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Временные здания", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+        progress=events.append,
+    )
+
+    assert mapping_calls["n"] >= 1
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
+    evidence = result["selections"]["w1"]["unbound_evidence"]
+    assert "Временные здания" in evidence["queries_used"]
+    assert any("ФСНБ" in query for query in evidence["queries_used"])
+    assert any(
+        event.get("label") == "Смета: модель выполняет обязательный поиск"
+        for event in events
+    )
+    assert any(
+        item.get("transport") == "search_preflight_harness"
+        for item in result["model_trace"]
+    )
+
+
+def test_unbound_aligns_invented_queries_to_search_trace(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        candidate_limit=5,
+    )
+    session.execute(
+        "search_norms_batch",
+        {"items": [
+            {"work_id": "w1", "query": "работа исходно", "search_intent": "source_literal", "scope_mode": "global"},
+            {"work_id": "w1", "query": "работа ФСНБ", "search_intent": "fsnb_technology", "scope_mode": "global"},
+        ]},
+        turn=1,
+    )
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "нормы нет",
+            "unbound_evidence": {
+                "queries_used": [
+                    "просмотр каталога family",
+                    "просмотр сборника 21",
+                ],
+                "opened_norm_codes": [],
+                "rejection_reasons": ["нет покрытия"],
+                "coverage_checked": "соседи не покрывают",
+            },
+        }]},
+        turn=2,
+    )
+    assert result.get("ok") is True
+    evidence = session.accepted_rows["w1"]["unbound_evidence"]
+    assert set(evidence["queries_used"]) == {"работа исходно", "работа ФСНБ"}
+    assert len(evidence["queries_used"]) == 2
+
+
+def test_unbound_fills_opened_codes_and_truncated_fields(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН25-10-026-01",
+            "title": "Укрытие",
+            "measure_unit": "м2",
+            "work_steps": ["Укрытие"],
+            "resource_preview": [],
+        }]} for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": "Укрытие",
+        "unit": "м2",
+        "work_steps": ["Укрытие"],
+        "resources": [],
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=5,
+    )
+    session.execute(
+        "search_norms_batch",
+        {"items": [
+            {"work_id": "w1", "query": "Защитное укрытие", "search_intent": "source_literal", "scope_mode": "global"},
+            {"work_id": "w1", "query": "Защитное укрытие ФСНБ", "search_intent": "fsnb_technology", "scope_mode": "global"},
+        ]},
+        turn=1,
+    )
+    session.execute(
+        "read_norms_batch",
+        {"items": [{"work_id": "w1", "norm_code": "ГЭСН25-10-026-01"}]},
+        turn=2,
+    )
+    # Truncated structured mapping: missing opened_norm_codes / rejection / coverage.
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "открытые карточки не покрывают защитное укрытие",
+            "unbound_evidence": {
+                "queries_used": ["Защитное укрытие", "Защитное укрытие ФСНБ"],
+            },
+        }]},
+        turn=3,
+    )
+    assert result.get("ok") is True, result
+    evidence = session.accepted_rows["w1"]["unbound_evidence"]
+    assert "ГЭСН25-10-026-01" in evidence["opened_norm_codes"]
+    assert evidence["rejection_reasons"]
+    assert evidence["coverage_checked"]
+
+
+def test_soft_accept_keeps_truncated_unbound_like_024(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": [{
+            "norm_code": "ГЭСН25-10-026-01",
+            "title": "Укрытие",
+            "measure_unit": "м2",
+            "work_steps": ["Укрытие"],
+            "resource_preview": [],
+        }]} for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda code, **_kwargs: {
+        "name": "Укрытие", "unit": "м2", "work_steps": ["Укрытие"], "resources": [],
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=5,
+        soft_accept=True,
+    )
+    session.execute(
+        "search_norms_batch",
+        {"items": [
+            {"work_id": "w1", "query": "Защитное укрытие", "search_intent": "source_literal", "scope_mode": "global"},
+            {"work_id": "w1", "query": "Защитное укрытие ФСНБ", "search_intent": "fsnb_technology", "scope_mode": "global"},
+        ]},
+        turn=1,
+    )
+    # No read_norms_batch, incomplete unbound payload — hard mode would reject.
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "нет подходящей нормы",
+            "unbound_evidence": {"queries_used": ["Защитное укрытие"]},
+        }]},
+        turn=2,
+    )
+    assert result.get("ok") is True, result
+    assert "w1" in session.accepted_rows
+    blockers = session.accepted_rows["w1"]["precalculation_blockers"]
+    assert blockers
+    assert any(b.get("code") == "invalid_unbound_evidence" for b in blockers)
+
+
 def test_batch_agent_stops_on_identical_deterministic_tool_call():
     from proxy.smeta_core import document_workflow as workflow
 

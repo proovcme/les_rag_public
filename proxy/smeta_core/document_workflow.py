@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import ast
 import json
+import logging
+import os
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -29,11 +31,19 @@ from proxy.smeta_core.resource_normalizer import normalize_norm_resources
 from proxy.smeta_core.source_intake import intake_vor_document
 from proxy.smeta_core.application import calculate_visible_rows, calculate_visible_rows_revision
 
+logger = logging.getLogger(__name__)
 
 Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 Progress = Callable[[dict[str, Any]], None]
 AgentBatchRunner = Callable[..., dict[str, Any]]
+
+
+def _env_flag(name: str, *, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None or not str(raw).strip():
+        return bool(default)
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _decision_name(selection: dict[str, Any]) -> str:
@@ -544,11 +554,15 @@ class SmetaNormToolSession:
         candidate_limit: int,
         progress: Progress | None = None,
         evidence_budget: EvidenceBudget | None = None,
+        soft_accept: bool = False,
     ) -> None:
         self.by_id = {str(row["work_id"]): row for row in work_rows}
         self.candidate_limit = max(1, int(candidate_limit))
         self.progress = progress
         self.evidence_budget = evidence_budget or EvidenceBudget.from_environment()
+        # 0.24.48 behavior: incomplete evidence becomes precalculation_blockers,
+        # the row is still accepted so LSR/XLSX can finish on local small models.
+        self.soft_accept = bool(soft_accept)
         self.started_at = perf_counter()
         self.evidence_usage = {"search_calls": 0, "read_calls": 0, "opened_cards": 0}
         self.catalog_trace: list[dict[str, Any]] = []
@@ -962,13 +976,17 @@ class SmetaNormToolSession:
                 continue
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
-                evidence = dict(item.get("unbound_evidence") or {})
+                evidence = self._align_unbound_evidence_to_trace(
+                    work_id,
+                    dict(item.get("unbound_evidence") or {}),
+                    reason=reason,
+                )
                 evidence_errors = self._unbound_evidence_errors(
                     work_id,
                     reason=reason,
                     evidence=evidence,
                 )
-                if evidence_errors:
+                if evidence_errors and not self.soft_accept:
                     errors.append({
                         "work_id": work_id,
                         "error": "invalid unbound_evidence",
@@ -981,13 +999,25 @@ class SmetaNormToolSession:
                         ))[:12],
                     })
                     continue
+                if not reason and self.soft_accept:
+                    reason = "model unbound; evidence transport incomplete"
+                blockers = [
+                    {
+                        "code": "invalid_unbound_evidence",
+                        "work_id": work_id,
+                        "reason": detail,
+                    }
+                    for detail in evidence_errors
+                ] if evidence_errors else []
                 proposed[work_id] = {
                     "norm_code": "",
                     "selection_kind": str(item.get("selection_kind") or ""),
                     "analog_limitations": list(item.get("analog_limitations") or []),
                     "reason": reason,
                     "unbound_evidence": evidence,
-                    "review_status": "model_batch_unbound", "resource_bindings": [],
+                    "review_status": "model_batch_unbound",
+                    "resource_bindings": [],
+                    "precalculation_blockers": blockers,
                 }
                 continue
             if decision == "covered_by":
@@ -1016,7 +1046,7 @@ class SmetaNormToolSession:
             ))
             if not str(item.get("reason") or "").strip():
                 bind_errors.append("reason is required")
-            if bind_errors:
+            if bind_errors and not self.soft_accept:
                 errors.append({
                     "work_id": work_id,
                     "error": "incomplete bind evidence",
@@ -1031,7 +1061,14 @@ class SmetaNormToolSession:
             opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
             opened_card = opened_for_work.get(opened_code) if opened_code else None
             code = str((opened_card or {}).get("norm_code") or requested_code)
-            blockers = []
+            blockers = [
+                {
+                    "code": "incomplete_bind_evidence",
+                    "work_id": work_id,
+                    "reason": detail,
+                }
+                for detail in bind_errors
+            ] if bind_errors else []
             if code and opened_card is None:
                 blockers.append({
                     "code": "norm_card_not_opened", "work_id": work_id,
@@ -1056,7 +1093,9 @@ class SmetaNormToolSession:
                     str(value) for value in (item.get("analog_limitations") or []) if str(value).strip()
                 ],
                 "nr_sp_rule_id": str(item.get("nr_sp_rule_id") or ""),
-                "reason": str(item.get("reason") or ""),
+                "reason": str(item.get("reason") or "").strip() or (
+                    "model bind; evidence transport incomplete" if self.soft_accept else ""
+                ),
                 "review_status": "model_batch",
                 "resource_bindings": _model_resource_bindings(work_id, item, self.by_id[work_id]),
                 "precalculation_blockers": blockers,
@@ -1143,6 +1182,69 @@ class SmetaNormToolSession:
             "opened_norm_codes": opened_codes,
         }
 
+    def _align_unbound_evidence_to_trace(
+        self,
+        work_id: str,
+        evidence: dict[str, Any],
+        *,
+        reason: str = "",
+    ) -> dict[str, Any]:
+        """Repair provenance fields that Ollama/Qwen often drops on truncation.
+
+        Professional unbound decision stays the model's; queries/opened codes must
+        come from the tool trace. When structured JSON truncates mid-object,
+        copy the row ``reason`` into rejection_reasons and a minimal coverage note
+        so a completed evidence turn is not rejected for missing string fields.
+        """
+        allowed = self._allowed_unbound_evidence(work_id)
+        executed = list(allowed.get("queries_used") or [])
+        executed_set = {str(query).casefold() for query in executed}
+        submitted = [
+            str(value).strip()
+            for value in (evidence.get("queries_used") or [])
+            if str(value).strip()
+        ]
+        kept = [query for query in submitted if query.casefold() in executed_set]
+        unique_kept = list(dict.fromkeys(kept))
+        aligned = dict(evidence)
+        if len({query.casefold() for query in unique_kept}) >= 2:
+            aligned["queries_used"] = unique_kept
+        elif len({query.casefold() for query in executed}) >= 2:
+            aligned["queries_used"] = executed
+
+        opened_allowed = list(allowed.get("opened_norm_codes") or [])
+        opened_allowed_set = {str(code).strip() for code in opened_allowed if str(code).strip()}
+        submitted_opened = [
+            str(value).strip()
+            for value in (evidence.get("opened_norm_codes") or [])
+            if str(value).strip()
+        ]
+        kept_opened = [code for code in submitted_opened if code in opened_allowed_set]
+        if kept_opened:
+            aligned["opened_norm_codes"] = list(dict.fromkeys(kept_opened))
+        elif opened_allowed:
+            # Truncated unbound JSON often omits opened_norm_codes even though
+            # read_norms_batch already ran — reuse the real opened set.
+            aligned["opened_norm_codes"] = opened_allowed
+
+        rejection_reasons = [
+            str(value).strip()
+            for value in (aligned.get("rejection_reasons") or [])
+            if str(value).strip()
+        ]
+        if not rejection_reasons and str(reason or "").strip():
+            aligned["rejection_reasons"] = [str(reason).strip()]
+        if not str(aligned.get("coverage_checked") or "").strip():
+            if opened_allowed:
+                aligned["coverage_checked"] = (
+                    "opened candidate cards reviewed; model unbound after search"
+                )
+            elif executed:
+                aligned["coverage_checked"] = (
+                    "search evidence reviewed; model unbound without matching norm"
+                )
+        return aligned
+
     def _unbound_evidence_errors(
         self,
         work_id: str,
@@ -1186,9 +1288,19 @@ class SmetaNormToolSession:
             errors.append("reason is required")
         if len(unique_queries) < 2:
             errors.append("queries_used must contain at least two distinct searches")
+            if not executed_queries:
+                errors.append(
+                    "call search_norms_batch with at least two distinct queries before unbound; "
+                    "browse_norm_catalog navigation is not queries_used"
+                )
         missing_queries = sorted(value for value in unique_queries if value not in executed_queries)
         if missing_queries:
             errors.append("queries_used contains searches absent from the tool trace: " + ", ".join(missing_queries))
+            if not executed_queries:
+                errors.append(
+                    "call search_norms_batch with at least two distinct queries before unbound; "
+                    "browse_norm_catalog navigation is not queries_used"
+                )
         unopened_codes = sorted(code for code in opened_codes if code not in actually_opened)
         if unopened_codes:
             errors.append("opened_norm_codes contains cards not opened through tools: " + ", ".join(unopened_codes))
@@ -1250,6 +1362,7 @@ def _run_native_norm_agent(
     user_request: str = "",
     batch_runner: AgentBatchRunner | None = None,
     accumulate_task_state: bool = False,
+    soft_accept: bool = False,
 ) -> dict[str, Any]:
     """Give the model the source rows and merge its untouched decisions."""
     requested_size = int(batch_size)
@@ -1287,6 +1400,7 @@ def _run_native_norm_agent(
             max_turns=max_turns,
             progress=progress,
             user_request=user_request,
+            soft_accept=soft_accept,
         )
 
     merged = {
@@ -1358,6 +1472,7 @@ def _run_native_norm_agent(
                 max_turns=max_turns,
                 progress=progress,
                 user_request=user_request,
+                soft_accept=soft_accept,
             )
         merged["selections"].update(result["selections"])
         merged["opened_cards"].update(result.get("opened_cards") or {})
@@ -1427,6 +1542,7 @@ def _run_global_norm_review(
     progress: Progress | None,
     user_request: str,
     batch_runner: AgentBatchRunner | None,
+    soft_accept: bool = False,
 ) -> dict[str, Any]:
     """Run one model-owned cross-row revision; code only supplies conflicts."""
 
@@ -1491,6 +1607,7 @@ def _run_global_norm_review(
             max_turns=max_turns,
             progress=progress,
             user_request=review_request,
+            soft_accept=soft_accept,
         )
     after_opened = dict(opened_cards)
     for work_id, cards in (reviewed.get("opened_cards") or {}).items():
@@ -1555,10 +1672,14 @@ def _run_batch_norm_agent(
     max_turns: int = 64,
     progress: Progress | None = None,
     user_request: str = "",
+    soft_accept: bool = False,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
     session = SmetaNormToolSession(
-        work_rows, candidate_limit=candidate_limit, progress=progress,
+        work_rows,
+        candidate_limit=candidate_limit,
+        progress=progress,
+        soft_accept=soft_accept,
     )
     by_id = session.by_id
     browse_trace = session.browse_trace
@@ -1648,14 +1769,181 @@ def _run_batch_norm_agent(
             "function": {"name": "submit_lsr_mapping", "arguments": {"rows": rows}},
         }
 
-    finalization_turns = 1 if mapping_exchange is not None else 0
+    def works_needing_opened_cards() -> list[dict[str, Any]]:
+        needed: list[dict[str, Any]] = []
+        for work_id in session.remaining_work_ids:
+            candidates = session.candidates.get(work_id) or {}
+            opened = session.opened.get(work_id) or {}
+            if candidates and not opened:
+                needed.append({
+                    "work_id": work_id,
+                    "candidate_codes": list(candidates.keys())[:8],
+                })
+        return needed
+
+    def works_needing_search_evidence() -> list[dict[str, Any]]:
+        needed: list[dict[str, Any]] = []
+        for work_id in session.remaining_work_ids:
+            allowed = session._allowed_unbound_evidence(work_id)
+            queries = list(allowed.get("queries_used") or [])
+            if len({str(query).casefold() for query in queries}) >= 2:
+                continue
+            title = str((session.by_id.get(work_id) or {}).get("title") or "").strip()
+            suggested = []
+            if title:
+                suggested = [
+                    {
+                        "work_id": work_id,
+                        "query": title,
+                        "search_intent": "source_literal",
+                        "scope_mode": "global",
+                    },
+                    {
+                        "work_id": work_id,
+                        "query": f"{title} ФСНБ",
+                        "search_intent": "fsnb_technology",
+                        "scope_mode": "global",
+                    },
+                ]
+            needed.append({
+                "work_id": work_id,
+                "title": title,
+                "existing_queries": queries,
+                "suggested_search_items": suggested,
+            })
+        return needed
+
+    def submit_errors_require_opened_cards(submit_result: dict[str, Any] | None) -> bool:
+        if not isinstance(submit_result, dict):
+            return False
+        blob = json.dumps(submit_result.get("errors") or submit_result, ensure_ascii=False)
+        return "read_norms_batch" in blob or "not opened through tools" in blob
+
+    def submit_errors_require_search(submit_result: dict[str, Any] | None) -> bool:
+        if not isinstance(submit_result, dict):
+            return False
+        blob = json.dumps(submit_result.get("errors") or submit_result, ensure_ascii=False).casefold()
+        return (
+            "absent from the tool trace" in blob
+            or "at least two distinct searches" in blob
+            or "browse_norm_catalog navigation is not queries_used" in blob
+        )
+
+    def append_open_cards_request(*, reason: str, needed: list[dict[str, Any]], submit_errors: Any = None) -> None:
+        conversation.append({
+            "role": "user",
+            "content": json.dumps({
+                "transport_request": (
+                    "Before submit_lsr_mapping, call read_norms_batch and open at least one "
+                    "candidate card for every remaining work_id that still has search hits. "
+                    "Do not invent opened_norm_codes. After opening cards you may bind or unbound."
+                ),
+                "reason": reason,
+                "remaining_work_ids": list(session.remaining_work_ids),
+                "works_needing_opened_cards": needed,
+                "submit_errors": submit_errors or [],
+            }, ensure_ascii=False, default=str),
+        })
+
+    def append_search_request(*, reason: str, needed: list[dict[str, Any]], submit_errors: Any = None) -> None:
+        conversation.append({
+            "role": "user",
+            "content": json.dumps({
+                "transport_request": (
+                    "Before submit_lsr_mapping, call search_norms_batch with at least two "
+                    "distinct queries for every remaining work_id that still lacks search "
+                    "evidence. Do not put browse_norm_catalog navigation text into "
+                    "queries_used. Catalog browse is navigation only; searches must be real "
+                    "search_norms_batch tool calls."
+                ),
+                "reason": reason,
+                "remaining_work_ids": list(session.remaining_work_ids),
+                "works_needing_search_evidence": needed,
+                "submit_errors": submit_errors or [],
+            }, ensure_ascii=False, default=str),
+        })
+
+    def harness_search_call(*, needed: list[dict[str, Any]], turn: int) -> dict[str, Any] | None:
+        items: list[dict[str, Any]] = []
+        for work in needed:
+            items.extend(list(work.get("suggested_search_items") or []))
+        if not items:
+            return None
+        return {
+            "id": f"harness-search-{turn}",
+            "type": "function",
+            "function": {"name": "search_norms_batch", "arguments": {"items": items}},
+        }
+
+    # Evidence budget, then up to: search preflight, open-cards preflight, forced
+    # mapping, search/open repair, remapping. Structured remapping alone cannot
+    # create search_norms_batch / read_norms_batch provenance.
+    finalization_turns = 4 if mapping_exchange is not None else 0
+    last_submit_result: dict[str, Any] | None = None
+    search_preflight_done = False
+    search_repair_done = False
+    search_midloop_done = False
+    open_cards_preflight_done = False
+    open_cards_repair_done = False
     for turn in range(1, max_turns + finalization_turns + 1):
         started = perf_counter()
         forced_mapping = turn > max_turns
+        repair_mapping = turn > (max_turns + 1)
+        needed_searches = works_needing_search_evidence() if forced_mapping else []
+        needed_opens = works_needing_opened_cards() if forced_mapping else []
+        # Mid-loop: don't wait until finalization if the model only browsed catalog.
+        if (
+            not forced_mapping
+            and not search_midloop_done
+            and turn >= max(3, max_turns // 2)
+        ):
+            mid_needed = works_needing_search_evidence()
+            if mid_needed:
+                search_midloop_done = True
+                append_search_request(
+                    reason="evidence turns are half spent without search_norms_batch provenance",
+                    needed=mid_needed,
+                )
+        require_search_preflight = bool(needed_searches) and not search_preflight_done
+        require_search_repair = (
+            repair_mapping
+            and bool(needed_searches)
+            and search_preflight_done
+            and not search_repair_done
+            and (
+                submit_errors_require_search(last_submit_result)
+                or last_submit_result is None
+            )
+        )
+        require_open_preflight = (
+            bool(needed_opens)
+            and not open_cards_preflight_done
+            and not require_search_preflight
+            and not require_search_repair
+        )
+        require_open_repair = (
+            repair_mapping
+            and not open_cards_repair_done
+            and not require_search_preflight
+            and not require_search_repair
+            and submit_errors_require_opened_cards(last_submit_result)
+        )
+        tool_preflight = (
+            require_search_preflight
+            or require_search_repair
+            or require_open_preflight
+            or require_open_repair
+        )
         if progress:
             progress({
                 "phase": "model_wait", "status": "started",
                 "label": (
+                    "Смета: модель выполняет обязательный поиск"
+                    if forced_mapping and (require_search_preflight or require_search_repair) else
+                    "Смета: модель открывает карточки"
+                    if forced_mapping and (require_open_preflight or require_open_repair) else
+                    "Смета: модель исправляет mapping"
+                    if repair_mapping else
                     "Смета: модель фиксирует mapping"
                     if forced_mapping else f"Смета: модель выполняет ход {turn}"
                 ),
@@ -1663,11 +1951,146 @@ def _run_batch_norm_agent(
             })
         assistant: dict[str, Any] = {}
         if forced_mapping:
-            calls = [structured_mapping_call(
-                reason=f"smeta evidence tool budget exhausted after {max_turns} model turns",
-                turn=turn,
-            )]
-            model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
+            if tool_preflight and (require_search_preflight or require_search_repair):
+                if require_search_preflight:
+                    search_preflight_done = True
+                    append_search_request(
+                        reason="unbound/mapping requires search_norms_batch provenance; catalog browse is not enough",
+                        needed=needed_searches,
+                    )
+                else:
+                    search_repair_done = True
+                    append_search_request(
+                        reason="previous mapping failed because queries_used were absent from the search tool trace",
+                        needed=needed_searches,
+                        submit_errors=(last_submit_result or {}).get("errors") or [],
+                    )
+                assistant = exchange(conversation, tools) or {}
+                model_wait_ms = round((perf_counter() - started) * 1000, 2)
+                calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
+                assistant_message = {
+                    "role": "assistant",
+                    "content": str(assistant.get("content") or "").strip() or None,
+                    "tool_calls": calls,
+                }
+                if assistant.get("thinking"):
+                    assistant_message["thinking"] = str(assistant["thinking"])
+                if assistant.get("_les_model"):
+                    assistant_message["model"] = str(assistant["_les_model"])
+                if assistant.get("_les_provider"):
+                    assistant_message["provider"] = str(assistant["_les_provider"])
+                if assistant.get("_les_seed") is not None:
+                    assistant_message["seed"] = int(assistant["_les_seed"])
+                conversation.append(assistant_message)
+                model_trace.append({
+                    "turn": turn,
+                    "assistant": assistant_message,
+                    "model_wait_ms": model_wait_ms,
+                    "seed": assistant.get("_les_seed"),
+                    "transport": "search_preflight",
+                })
+                has_search = any(
+                    str(((call.get("function") or {}).get("name") or "")) == "search_norms_batch"
+                    for call in calls
+                )
+                if not has_search:
+                    fallback = harness_search_call(needed=needed_searches, turn=turn)
+                    if fallback is not None:
+                        calls = [fallback]
+                        conversation[-1] = {
+                            **assistant_message,
+                            "tool_calls": calls,
+                            "content": (
+                                str(assistant_message.get("content") or "").strip()
+                                or "harness search_norms_batch for unbound provenance"
+                            ),
+                        }
+                        model_trace[-1]["assistant"] = conversation[-1]
+                        model_trace[-1]["transport"] = "search_preflight_harness"
+                    else:
+                        calls = [structured_mapping_call(
+                            reason="search preflight produced no tool call and no title-based fallback",
+                            turn=turn,
+                        )]
+            elif tool_preflight:
+                if require_open_preflight:
+                    open_cards_preflight_done = True
+                    append_open_cards_request(
+                        reason="search returned candidates but no read_norms_batch cards were opened",
+                        needed=needed_opens,
+                    )
+                else:
+                    open_cards_repair_done = True
+                    append_open_cards_request(
+                        reason="previous mapping failed because cards were not opened through tools",
+                        needed=needed_opens or [
+                            {
+                                "work_id": work_id,
+                                "candidate_codes": list((session.candidates.get(work_id) or {}).keys())[:8],
+                            }
+                            for work_id in session.remaining_work_ids
+                            if session.candidates.get(work_id)
+                        ],
+                        submit_errors=(last_submit_result or {}).get("errors") or [],
+                    )
+                assistant = exchange(conversation, tools) or {}
+                model_wait_ms = round((perf_counter() - started) * 1000, 2)
+                calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
+                assistant_message = {
+                    "role": "assistant",
+                    "content": str(assistant.get("content") or "").strip() or None,
+                    "tool_calls": calls,
+                }
+                if assistant.get("thinking"):
+                    assistant_message["thinking"] = str(assistant["thinking"])
+                if assistant.get("_les_model"):
+                    assistant_message["model"] = str(assistant["_les_model"])
+                if assistant.get("_les_provider"):
+                    assistant_message["provider"] = str(assistant["_les_provider"])
+                if assistant.get("_les_seed") is not None:
+                    assistant_message["seed"] = int(assistant["_les_seed"])
+                conversation.append(assistant_message)
+                model_trace.append({
+                    "turn": turn,
+                    "assistant": assistant_message,
+                    "model_wait_ms": model_wait_ms,
+                    "seed": assistant.get("_les_seed"),
+                    "transport": "open_cards_preflight",
+                })
+                if not calls:
+                    calls = [structured_mapping_call(
+                        reason="open-cards preflight produced no tool call",
+                        turn=turn,
+                    )]
+            else:
+                reason = (
+                    "previous structured mapping failed validation; resubmit only remaining_work_ids"
+                    if repair_mapping else
+                    f"smeta evidence tool budget exhausted after {max_turns} model turns"
+                )
+                if repair_mapping and last_submit_result is not None:
+                    conversation.append({
+                        "role": "user",
+                        "content": json.dumps({
+                            "transport_request": (
+                                "Your previous structured mapping was rejected. Fix only the "
+                                "remaining_work_ids using the validation errors below. "
+                                "For unbound: copy queries_used and opened_norm_codes EXACTLY "
+                                "from allowed_evidence_by_work_id; never invent catalog prose; "
+                                "always include rejection_reasons (>=1) and coverage_checked. "
+                                "If search returned candidates, opened_norm_codes must list the "
+                                "real read_norms_batch cards already in the tool trace."
+                            ),
+                            "remaining_work_ids": list(session.remaining_work_ids),
+                            "submit_errors": last_submit_result.get("errors") or [],
+                            "allowed_evidence_by_work_id": {
+                                work_id: session._allowed_unbound_evidence(work_id)
+                                for work_id in session.remaining_work_ids
+                            },
+                        }, ensure_ascii=False, default=str),
+                    })
+                calls = [structured_mapping_call(reason=reason, turn=turn)]
+                model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
         else:
             assistant = exchange(conversation, tools) or {}
             model_wait_ms = round((perf_counter() - started) * 1000, 2)
@@ -1715,6 +2138,12 @@ def _run_batch_norm_agent(
             progress({
                 "phase": "model_wait", "status": "done",
                 "label": (
+                    "Смета: модель выполнила обязательный поиск"
+                    if forced_mapping and model_trace and str(model_trace[-1].get("transport") or "").startswith("search_preflight") else
+                    "Смета: модель открыла карточки"
+                    if forced_mapping and model_trace and model_trace[-1].get("transport") == "open_cards_preflight" else
+                    "Смета: модель исправила mapping"
+                    if repair_mapping else
                     "Смета: модель зафиксировала mapping"
                     if forced_mapping else f"Смета: модель завершила ход {turn}"
                 ),
@@ -1775,6 +2204,19 @@ def _run_batch_norm_agent(
                 "content": json.dumps(result, ensure_ascii=False, default=str),
             })
             model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+            if name == "submit_lsr_mapping":
+                last_submit_result = result if isinstance(result, dict) else None
+                if isinstance(result, dict) and not result.get("ok"):
+                    logger.warning(
+                        "[SMETA_DOCUMENT] submit_lsr_mapping rejected turn=%s remaining=%s errors=%s",
+                        turn,
+                        list(session.remaining_work_ids)[:20],
+                        json.dumps(
+                            (result.get("errors") or [result.get("error")])[:8],
+                            ensure_ascii=False,
+                            default=str,
+                        )[:800],
+                    )
             submitted = dict(session.accepted_rows) if session.complete else None
         if submitted is not None:
             return session.result(
@@ -1793,8 +2235,22 @@ def _run_batch_norm_agent(
                     ),
                 },
             )
-    raise RuntimeError(f"smeta model did not submit mapping within {max_turns} model turns")
-
+    remaining = list(session.remaining_work_ids)
+    submit_errors = []
+    if isinstance(last_submit_result, dict):
+        submit_errors = list(last_submit_result.get("errors") or [])
+        if last_submit_result.get("error"):
+            submit_errors.append({"error": last_submit_result.get("error")})
+    if submit_errors:
+        compact = json.dumps(submit_errors[:8], ensure_ascii=False, default=str)
+        raise RuntimeError(
+            "smeta model submitted mapping that failed validation after "
+            f"{max_turns} evidence turns; remaining={remaining}; errors={compact[:800]}"
+        )
+    raise RuntimeError(
+        f"smeta model did not submit mapping within {max_turns} model turns; "
+        f"remaining={remaining}"
+    )
 
 def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dict[str, Any]) -> list[dict[str, Any]]:
     return [
@@ -2205,8 +2661,11 @@ def run_vor_document_workflow(
     agent_batch_runner: AgentBatchRunner | None = None,
     accumulate_task_state: bool = False,
     require_global_review: bool = True,
+    soft_accept: bool | None = None,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
+    if soft_accept is None:
+        soft_accept = _env_flag("LES_SMETA_DOCUMENT_SOFT_ACCEPT", default=False)
     intake = intake_vor_document(path)
     work_rows = [dict(item) for item in intake.get("work_items") or []]
     if not work_rows:
@@ -2237,6 +2696,7 @@ def run_vor_document_workflow(
         batch_size=batch_size,
         batch_runner=agent_batch_runner,
         accumulate_task_state=accumulate_task_state,
+        soft_accept=bool(soft_accept),
     )
     mapping_run_id = uuid4().hex
     from proxy.smeta_core.revision_store import DEFAULT_ROOT
@@ -2278,6 +2738,7 @@ def run_vor_document_workflow(
             progress=progress,
             user_request=user_request,
             batch_runner=agent_batch_runner,
+            soft_accept=bool(soft_accept),
         )
         current_revision = MappingRevision(
             mapping_run_id=mapping_run_id,

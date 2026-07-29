@@ -566,12 +566,51 @@ async def run_smeta_document_application(
             document_batch_size = int(configured_batch_size)
         elif agent_engine == "qwen_agent":
             document_batch_size = 1
+        elif (
+            not cloud_provider
+            and str(model_provider or "").lower() == "ollama"
+            and "qwen" in str(model_name or "").lower()
+        ):
+            # Local Qwen + Ollama: 5-row packages leave too little room for
+            # read_norms_batch before forced mapping, then truncate multi-row JSON
+            # (done_reason=length). One row per package keeps evidence+serialize small.
+            document_batch_size = 1
         else:
             document_batch_size = 0 if cloud_provider else 5
         document_max_turns = int(os.getenv(
             "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
-            "64" if cloud_provider else "10",
+            "64" if cloud_provider else (
+                # Local Qwen often burns 10 turns on catalog browse; 6 + evidence
+                # preflight is enough once search/open repair exists.
+                "6"
+                if (
+                    str(model_provider or "").lower() == "ollama"
+                    and "qwen" in str(model_name or "").lower()
+                )
+                else "10"
+            ),
         ))
+        # Second full-document pass roughly doubles wall time on local 9B.
+        # Keep it for cloud; local default off unless explicitly enabled.
+        global_review_env = os.getenv("LES_SMETA_DOCUMENT_GLOBAL_REVIEW", "").strip().lower()
+        if global_review_env in {"1", "true", "yes", "on"}:
+            require_global_review = True
+        elif global_review_env in {"0", "false", "no", "off"}:
+            require_global_review = False
+        else:
+            require_global_review = bool(cloud_provider)
+        soft_accept_env = os.getenv("LES_SMETA_DOCUMENT_SOFT_ACCEPT", "").strip().lower()
+        if soft_accept_env in {"1", "true", "yes", "on"}:
+            soft_accept = True
+        elif soft_accept_env in {"0", "false", "no", "off"}:
+            soft_accept = False
+        else:
+            # Local Ollama/Qwen: restore 0.24.48 soft blockers so LSR reaches XLSX.
+            soft_accept = (
+                not cloud_provider
+                and str(model_provider or "").lower() == "ollama"
+                and "qwen" in str(model_name or "").lower()
+            )
         workflow_task = asyncio.create_task(asyncio.to_thread(
             run_vor_document_workflow, source_path,
             exchange=exchange,
@@ -584,7 +623,8 @@ async def run_smeta_document_application(
             max_agent_turns=document_max_turns,
             agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
             accumulate_task_state=(agent_engine == "qwen_agent" and document_batch_size == 1),
-            require_global_review=True,
+            require_global_review=require_global_review,
+            soft_accept=soft_accept,
         ))
         while True:
             try:
