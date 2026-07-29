@@ -92,6 +92,175 @@ def _json_list(value: Any) -> list[str]:
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
 
 
+@lru_cache(maxsize=1)
+def _normative_catalog_metadata() -> dict[str, Any]:
+    """Load model-visible base taxonomy; it explains scope but never selects it."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "config"
+        / "domain"
+        / "smeta_normative_catalog.json"
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _plain_source_text(value: Any) -> str:
+    text = re.sub(r"<br\s*/?>", "\n", str(value or ""), flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.replace("&nbsp;", " ").split())
+
+
+def _source_lines(value: Any) -> list[str]:
+    text = re.sub(r"<br\s*/?>", "\n", str(value or ""), flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return [
+        " ".join(line.replace("&nbsp;", " ").split()).strip()
+        for line in text.splitlines()
+        if " ".join(line.replace("&nbsp;", " ").split()).strip()
+    ]
+
+
+def _collection_title(source_doc: Any, collection: str) -> str:
+    """Extract the official collection heading from typed provenance."""
+    text = _plain_source_text(source_doc)
+    collection_number = str(int(collection)) if collection.isdigit() else collection
+    pattern = re.compile(
+        rf"(?:Государственные [^.]+?\.\s*)?Сборник\s+0*{re.escape(collection_number)}\.\s*"
+        r"(.+?)(?=\s+(?:Сборник|Отдел|Раздел|Подраздел|Таблица)\s+|\Z)",
+        re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    return " ".join(match.group(1).split()).strip(" .") if match else ""
+
+
+def _family_catalog_item(row: sqlite3.Row) -> dict[str, Any]:
+    family = str(row["key"] or "")
+    metadata = (
+        (_normative_catalog_metadata().get("families") or {}).get(family)
+        if family
+        else None
+    )
+    item = dict(row)
+    if isinstance(metadata, dict):
+        item.update({
+            "official_name": str(metadata.get("official_name") or ""),
+            "purpose": str(metadata.get("purpose") or ""),
+            "typical_scope": [
+                str(value)
+                for value in (metadata.get("typical_scope") or [])
+                if str(value).strip()
+            ],
+            "not_for": [
+                str(value)
+                for value in (metadata.get("not_for") or [])
+                if str(value).strip()
+            ],
+            "questions_to_ask": [
+                str(value)
+                for value in (metadata.get("questions_to_ask") or [])
+                if str(value).strip()
+            ],
+            "navigation_url": str(metadata.get("navigation_url") or ""),
+            "approval_basis": str(metadata.get("approval_basis") or ""),
+            "calculation_use": str(metadata.get("calculation_use") or ""),
+            "source_ref": str(metadata.get("source_ref") or ""),
+        })
+    return item
+
+
+def _collection_catalog_item(row: sqlite3.Row, *, family: str) -> dict[str, Any]:
+    item = dict(row)
+    key = str(row["key"] or "")
+    title = _collection_title(row["source_example"], key)
+    item.update({
+        "title": title,
+        "purpose": (
+            f"Официальный сборник {family} {key}: {title}"
+            if title
+            else f"Официальный сборник {family} {key}"
+        ),
+        "typical_scope": [title] if title else [],
+        "source_ref": (
+            f"ФСНБ-2022 · {family}, сборник {key}"
+            + (f" «{title}»" if title else "")
+        ),
+    })
+    return item
+
+
+def _collection_passport(
+    conn: sqlite3.Connection,
+    *,
+    family: str,
+    collection: str,
+) -> dict[str, Any]:
+    """Build one bounded navigation passport from the active typed edition."""
+    rows = conn.execute(
+        """
+        SELECT bare_code, norm_name, norm_unit, source_doc
+        FROM norms
+        WHERE base_type=? AND substr(bare_code,1,2)=?
+        ORDER BY bare_code
+        LIMIT 48
+        """,
+        (family, collection),
+    ).fetchall()
+    if not rows:
+        return {}
+    title = _collection_title(rows[0]["source_doc"], collection)
+    sections: list[str] = []
+    table_examples: list[str] = []
+    units: list[str] = []
+    for row in rows:
+        unit = " ".join(str(row["norm_unit"] or "").split()).strip()
+        if unit and unit not in units:
+            units.append(unit)
+        for line in _source_lines(row["source_doc"]):
+            if re.match(r"^(?:Отдел|Раздел|Подраздел)\s+", line, re.IGNORECASE):
+                if line not in sections:
+                    sections.append(line)
+            if line.casefold().startswith("таблица ") and line not in table_examples:
+                table_examples.append(line)
+    family_meta = (
+        (_normative_catalog_metadata().get("families") or {}).get(family)
+        or {}
+    )
+    return {
+        "schema": "smeta_norm_collection_passport_v1",
+        "family": family,
+        "collection": collection,
+        "title": title,
+        "purpose": (
+            f"Навигация по официальному сборнику {family} {collection}"
+            + (f" «{title}»" if title else "")
+        ),
+        "representative_sections": sections[:6],
+        "representative_tables": table_examples[:4],
+        "representative_units": units[:8],
+        "family_exclusions": [
+            str(value)
+            for value in (family_meta.get("not_for") or [])
+            if str(value).strip()
+        ][:4],
+        "scope_questions": [
+            str(value)
+            for value in (family_meta.get("questions_to_ask") or [])
+            if str(value).strip()
+        ][:4],
+        "source_ref": (
+            f"ФСНБ-2022 · {family}, сборник {collection}"
+            + (f" «{title}»" if title else "")
+        ),
+        "passport_role": "navigation_only",
+        "requires_scoped_search": True,
+        "requires_full_norm_read": True,
+    }
+
+
 def _card(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
     resources = conn.execute(
         """
@@ -596,6 +765,7 @@ def browse_norm_catalog(
     conn = _connect_base_readonly(path)
     conn.row_factory = sqlite3.Row
     try:
+        collection_passport: dict[str, Any] = {}
         if not family_value:
             level = "family"
             rows = conn.execute(
@@ -621,13 +791,34 @@ def browse_norm_catalog(
                 "GROUP BY substr(bare_code,1,9) ORDER BY key LIMIT ?",
                 (family_value, collection_value, bounded_limit),
             ).fetchall()
+            collection_passport = _collection_passport(
+                conn,
+                family=family_value,
+                collection=collection_value,
+            )
         else:
             level = "norm"
             normalized_table = table_value[:9]
+            if collection_value and not normalized_table.startswith(
+                f"{collection_value}-"
+            ):
+                return {
+                    "schema": "smeta_norm_catalog_v1",
+                    "level": level,
+                    "selection_owner": "model_or_user",
+                    "filters": {
+                        "family": family_value,
+                        "collection": collection_value,
+                        "table": normalized_table,
+                    },
+                    "source_integrity": integrity,
+                    "items": [],
+                }
             rows = conn.execute(
-                "SELECT * FROM norms WHERE base_type=? AND substr(bare_code,1,9)=? "
+                "SELECT * FROM norms WHERE base_type=? "
+                "AND substr(bare_code,1,2)=? AND substr(bare_code,1,9)=? "
                 "ORDER BY bare_code LIMIT ?",
-                (family_value, normalized_table, bounded_limit),
+                (family_value, collection_value, normalized_table, bounded_limit),
             ).fetchall()
             return {
                 "schema": "smeta_norm_catalog_v1",
@@ -637,14 +828,26 @@ def browse_norm_catalog(
                 "source_integrity": integrity,
                 "items": [_card(conn, row) for row in rows],
             }
-        return {
+        if level == "family":
+            items = [_family_catalog_item(row) for row in rows]
+        elif level == "collection":
+            items = [
+                _collection_catalog_item(row, family=family_value)
+                for row in rows
+            ]
+        else:
+            items = [dict(row) for row in rows]
+        result = {
             "schema": "smeta_norm_catalog_v1",
             "level": level,
             "selection_owner": "model_or_user",
             "filters": {"family": family_value, "collection": collection_value, "table": table_value},
             "source_integrity": integrity,
-            "items": [dict(row) for row in rows],
+            "items": items,
         }
+        if collection_passport:
+            result["collection_passport"] = collection_passport
+        return result
     finally:
         conn.close()
 

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
+from sovushka.pages.rim import _human_source_ref
 from sovushka.uikit import components as components_module
 from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS, tab_name
 from sovushka.uikit.states import feedback_state
@@ -497,3 +498,17 @@ def test_uikit_registry_exposes_select_with_shared_control_contract():
         ".sov-tools-layer",
     ):
         assert contract in UIKIT_CSS
+
+
+def test_rim_source_locator_is_human_readable_without_losing_table_position():
+    hashed_source = (
+        "/private/tmp/les-rim/"
+        "c876eec5ef71e7a3253a88f22efe68c05956bfc2918a974d6a18c18e89a9d236.xlsx"
+        "#sheet=СКС;table=1;row=6"
+    )
+
+    assert _human_source_ref(hashed_source) == "лист «СКС» · строка 6"
+    assert (
+        _human_source_ref("/tmp/spec.xlsx#sheet=Лист1;row=17")
+        == "spec.xlsx · лист «Лист1» · строка 17"
+    )

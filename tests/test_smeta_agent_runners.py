@@ -94,6 +94,24 @@ def test_common_tool_session_requires_opened_norm(norm_backend):
     ]
 
 
+def test_rim_tool_session_rejects_bind_before_scoped_search_and_typed_read(
+    norm_backend,
+):
+    session = workflow.SmetaNormToolSession(
+        [WORK],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+
+    premature = session.execute("submit_lsr_mapping", _mapping_args(), turn=1)
+
+    assert premature["ok"] is False
+    assert premature["errors"][0]["error"] == (
+        "RIM bind requires a typed card opened by read_norms_batch"
+    )
+    assert session.accepted_rows == {}
+
+
 def test_qwen_agent_adapter_uses_common_session(monkeypatch, norm_backend):
     import qwen_agent.agents
 

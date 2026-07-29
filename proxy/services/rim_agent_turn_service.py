@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from proxy.services.prompt_registry_service import smeta_native_skill_prompt
 from proxy.services.rim_agent_action_service import model_tool_specs, validate_model_action
+from proxy.services.rim_knowledge_service import model_reference_for_session
 from proxy.smeta_core.document_workflow import _run_batch_norm_agent
 from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
 
@@ -52,48 +53,73 @@ def _single_action(
             for tool in tools
             if str((tool.get("function") or {}).get("name") or "") in only_actions
         ]
-    message = exchange(
-        [
-            {
-                "role": "system",
-                "content": (
-                    smeta_native_skill_prompt()
-                    + "\n\nRIM DIALOG CONTRACT: use only the supplied state-scoped tools. "
-                    "The server owns session identity and state. Ask one highest-value question. "
-                    "Do not invent a norm, price, coefficient or calculation."
-                ),
-            },
-            {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "user_message": str(user_message or ""),
-                        "session_context": context,
-                        "required_result": (
-                            "Call exactly one supplied tool. Ordinary prose is not an action."
-                        ),
-                    },
-                    ensure_ascii=False,
-                    default=str,
-                ),
-            },
-        ],
-        tools,
-    )
-    calls = list(message.get("tool_calls") or [])
-    if len(calls) != 1:
-        raise ValueError("Qwen must return exactly one state-scoped tool call")
-    action, arguments = _arguments(calls[0])
-    intent = str(message.get("content") or "").strip() or f"Выполняю действие {action}."
-    validated = validate_model_action(
-        session,
-        {
-            "action": action,
-            "arguments": arguments,
-            "user_visible_intent": intent,
+    system_message = {
+        "role": "system",
+        "content": (
+            smeta_native_skill_prompt()
+            + "\n\nRIM DIALOG CONTRACT: use only the supplied state-scoped tools. "
+            "The server owns session identity and state. Ask one highest-value question. "
+            "Do not invent a norm, price, coefficient or calculation."
+        ),
+    }
+    request_payload: dict[str, Any] = {
+        "user_message": str(user_message or ""),
+        "session_context": {
+            **context,
+            "rim_reference": model_reference_for_session(session),
         },
-    )
-    return validated, message
+        "required_result": "Call exactly one supplied tool. Ordinary prose is not an action.",
+    }
+    last_error: ValueError | None = None
+    for attempt in range(2):
+        message = exchange(
+            [
+                system_message,
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        request_payload,
+                        ensure_ascii=False,
+                        default=str,
+                    ),
+                },
+            ],
+            tools,
+        )
+        try:
+            calls = list(message.get("tool_calls") or [])
+            if len(calls) != 1:
+                raise ValueError("Qwen must return exactly one state-scoped tool call")
+            action, arguments = _arguments(calls[0])
+            intent = (
+                str(message.get("content") or "").strip()
+                or f"Выполняю действие {action}."
+            )
+            validated = validate_model_action(
+                session,
+                {
+                    "action": action,
+                    "arguments": arguments,
+                    "user_visible_intent": intent,
+                },
+            )
+            return validated, message
+        except ValueError as error:
+            last_error = error
+            if attempt:
+                raise
+            request_payload = {
+                **request_payload,
+                "rejected_tool_call": {
+                    "error": str(error),
+                    "required_correction": (
+                        "Return one corrected call using the supplied JSON schema. "
+                        "Do not explain the error in prose and do not change the professional "
+                        "decision merely to satisfy validation."
+                    ),
+                },
+            }
+    raise last_error or ValueError("Qwen did not return a valid action")
 
 
 def _current_payload(
@@ -268,10 +294,11 @@ def run_rim_agent_turn(
         session_id, owner_id=owner_id, allow_admin=allow_admin
     )
     if session.get("pending_question_id"):
+        pending_question = dict(session.get("pending_question") or {})
         action, model_message = _single_action(
             session=session,
             context={
-                "pending_question": session.get("pending_question"),
+                "pending_question": pending_question,
                 "instruction": "Interpret the user message only as this pending answer.",
             },
             user_message=user_message,
@@ -286,6 +313,61 @@ def run_rim_agent_turn(
             expected_parent_revision_id=session["head_revision_id"],
             allow_admin=allow_admin,
         )
+        if (
+            str(session.get("phase") or "") == "vor"
+            and str(session.get("mapping_status") or "") == "not_started"
+        ):
+            vor = _current_payload(
+                store,
+                session,
+                str(session.get("current_vor_revision_id") or ""),
+                owner_id=owner_id,
+                allow_admin=allow_admin,
+            )
+            draft_action, draft_message = _single_action(
+                session=result.session,
+                context={
+                    "answered_question": pending_question,
+                    "answer": dict(action["arguments"].get("answer") or {}),
+                    "current_vor_draft": {
+                        "rows": list(vor.get("rows") or [])[:_INTAKE_WORK_ITEM_BATCH_SIZE],
+                    },
+                    "instruction": (
+                        "Revise the VOR draft using the confirmed answer. The rows must now name "
+                        "technological work operations, not repeat equipment supply descriptions. "
+                        "Preserve source quantities, units and source_ref unless the answer gives "
+                        "an explicit derivation. Do not select or discuss norms in this action."
+                    ),
+                },
+                user_message=user_message,
+                exchange=exchange,
+                only_actions={"draft_work_schedule"},
+            )
+            revised = store.save_vor_revision(
+                session_id,
+                owner_id=owner_id,
+                rows=list(draft_action["arguments"].get("rows") or []),
+                expected_parent_revision_id=result.revision_id,
+                created_by="model",
+                change_note="Уточнение черновика ВОР по ответу пользователя",
+                allow_admin=allow_admin,
+            )
+            return {
+                **revised.as_dict(),
+                "answer_revision_id": result.revision_id,
+                "vor_revision_id": revised.revision_id,
+                "agent_action": action,
+                "draft_action": draft_action,
+                "model": (
+                    draft_message.get("_les_model")
+                    or model_message.get("_les_model")
+                    or ""
+                ),
+                "message": (
+                    "Ответ сохранён; Qwen обновил пять строк ВОР как монтажные "
+                    "операции. Следующий шаг — подбор норм."
+                ),
+            }
         return {
             **result.as_dict(),
             "agent_action": action,

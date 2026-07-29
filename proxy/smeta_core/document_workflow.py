@@ -694,9 +694,24 @@ class SmetaNormToolSession:
         self.evidence_budget = evidence_budget or EvidenceBudget.from_environment()
         self.require_scoped_search = bool(require_scoped_search)
         self.started_at = perf_counter()
-        self.evidence_usage = {"search_calls": 0, "read_calls": 0, "opened_cards": 0}
+        self.evidence_usage = {
+            "search_calls": 0,
+            "read_calls": 0,
+            "opened_cards": 0,
+            "tool_elapsed_seconds": 0.0,
+        }
         self.catalog_trace: list[dict[str, Any]] = []
         self.catalog_seen: set[tuple[str, str, str, str]] = set()
+        self.family_catalog_seen: set[str] = set()
+        self.selected_base_types: dict[str, dict[str, dict[str, str]]] = {
+            work_id: {} for work_id in self.by_id
+        }
+        self.selected_collections: dict[str, set[tuple[str, str]]] = {
+            work_id: set() for work_id in self.by_id
+        }
+        self.selected_tables: dict[str, set[tuple[str, str, str]]] = {
+            work_id: set() for work_id in self.by_id
+        }
         self.candidates: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
@@ -744,12 +759,18 @@ class SmetaNormToolSession:
             result = self._submit(args)
         else:
             result = {"ok": False, "error": f"unknown tool: {name}"}
+        elapsed_seconds = max(0.0, perf_counter() - started)
+        if name != "submit_lsr_mapping":
+            self.evidence_usage["tool_elapsed_seconds"] = round(
+                float(self.evidence_usage["tool_elapsed_seconds"]) + elapsed_seconds,
+                4,
+            )
         self.tool_trajectory.append({
             "turn": turn,
             "tool": name,
             "arguments": args,
             "result": result,
-            "elapsed_ms": round((perf_counter() - started) * 1000, 2),
+            "elapsed_ms": round(elapsed_seconds * 1000, 2),
         })
         return result
 
@@ -758,9 +779,12 @@ class SmetaNormToolSession:
         # terminal decision after it has spent the available search/read time.
         if name == "submit_lsr_mapping":
             return ""
-        elapsed = perf_counter() - self.started_at
+        elapsed = float(self.evidence_usage["tool_elapsed_seconds"])
         if elapsed > self.evidence_budget.elapsed_seconds:
-            return f"task time budget exhausted after {elapsed:.1f}s; submit the model-owned decision"
+            return (
+                f"evidence tool time budget exhausted after {elapsed:.1f}s; "
+                "submit the model-owned decision"
+            )
         if name == "search_norms_batch":
             if self.evidence_usage["search_calls"] >= self.evidence_budget.search_calls:
                 return "search budget exhausted; use collected evidence and submit the model-owned decision"
@@ -779,19 +803,86 @@ class SmetaNormToolSession:
         return ""
 
     def _catalog(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
-        rows_out = []
+        rows_out: list[dict[str, Any]] = []
+        shared_catalog_owner: dict[tuple[str, str, str], str] = {}
+
+        def compact_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+            compacted = []
+            for entry in payload.get("items") or []:
+                if not isinstance(entry, dict):
+                    continue
+                compact = {
+                    "key": entry.get("key") or entry.get("norm_code"),
+                    "norm_count": entry.get("norm_count"),
+                    "resource_count": entry.get("resource_count"),
+                }
+                for key, bound in (
+                    ("official_name", 240),
+                    ("purpose", 320),
+                    ("title", 240),
+                    ("approval_basis", 240),
+                    ("calculation_use", 320),
+                    ("navigation_url", 240),
+                    ("source_ref", 240),
+                    ("source_example", 160),
+                ):
+                    value = str(entry.get(key) or "").strip()
+                    if value:
+                        compact[key] = value[:bound]
+                for key in ("typical_scope", "not_for", "questions_to_ask"):
+                    values = [
+                        str(value).strip()
+                        for value in (entry.get(key) or [])
+                        if str(value).strip()
+                    ]
+                    if values:
+                        compact[key] = values[:6]
+                if entry.get("measure_unit"):
+                    compact["measure_unit"] = entry.get("measure_unit")
+                compacted.append(compact)
+            return compacted
+
+        def reject(
+            *,
+            work_id: str,
+            error: str,
+            details: list[str],
+            filters: dict[str, str],
+        ) -> None:
+            rows_out.append({
+                "work_id": work_id,
+                "ok": False,
+                "error": error,
+                "details": details,
+                "filters": filters,
+                "items": [],
+            })
+            self.catalog_trace.append({
+                "phase": "catalog_browse",
+                "turn": turn,
+                "work_id": work_id,
+                "level": "rejected",
+                "filters": filters,
+                "error": error,
+                "details": details,
+                "item_count": 0,
+            })
+
         for item in _tool_array_argument(args, "items"):
             work_id = str(item.get("work_id") or "")
             if work_id not in self.by_id:
                 rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
                 continue
             family = str(item.get("family") or "").strip()
-            collection = str(item.get("collection") or "").strip()
+            collection = re.sub(r"\D", "", str(item.get("collection") or ""))[:2]
             table = re.sub(r"[^0-9-]", "", str(item.get("table") or "")).strip("-")[:9]
+            scope_reason = " ".join(str(item.get("scope_reason") or "").split()).strip()
+            confidence = str(item.get("confidence") or "").strip().casefold()
+            filters = {"family": family, "collection": collection, "table": table}
             catalog_key = (
                 work_id,
                 family.casefold(),
-                re.sub(r"\D", "", collection)[:2],
+                collection,
                 table,
             )
             if catalog_key in self.catalog_seen:
@@ -799,7 +890,7 @@ class SmetaNormToolSession:
                     "work_id": work_id,
                     "ok": True,
                     "level": "already_seen",
-                    "filters": {"family": family, "collection": collection, "table": table},
+                    "filters": filters,
                     "items": [],
                     "repeated": True,
                     "next_action": "choose a table or call search_norms_batch with the selected scope",
@@ -811,8 +902,128 @@ class SmetaNormToolSession:
                     "item_count": 0, "repeated": True,
                 })
                 continue
+
+            if self.require_scoped_search and not family:
+                self.family_catalog_seen.add(work_id)
+
+            if self.require_scoped_search and family and work_id not in self.family_catalog_seen:
+                reject(
+                    work_id=work_id,
+                    error="base type selection requires the family catalog",
+                    details=[
+                        "call browse_norm_catalog with only work_id first",
+                        "compare the model-visible family passports before choosing a base type",
+                    ],
+                    filters=filters,
+                )
+                continue
+
+            if self.require_scoped_search and family and not table:
+                if not scope_reason:
+                    reject(
+                        work_id=work_id,
+                        error="normative scope selection requires model reasoning",
+                        details=[
+                            (
+                                "scope_reason must explain why the selected base type "
+                                "or collection matches the work"
+                            ),
+                            "LES records the reasoning but does not choose the scope",
+                        ],
+                        filters=filters,
+                    )
+                    continue
+                if confidence not in {"low", "medium", "high"}:
+                    reject(
+                        work_id=work_id,
+                        error="normative scope selection requires confidence",
+                        details=["confidence must be one of: low, medium, high"],
+                        filters=filters,
+                    )
+                    continue
+
+            selected_family = family.casefold()
+            if self.require_scoped_search and family and collection:
+                if selected_family not in self.selected_base_types[work_id]:
+                    reject(
+                        work_id=work_id,
+                        error="collection selection requires an explicit base type selection",
+                        details=[
+                            (
+                                f"select {family!r} first with browse_norm_catalog using "
+                                "scope_reason and confidence"
+                            )
+                        ],
+                        filters=filters,
+                    )
+                    continue
+                if table and (selected_family, collection) not in self.selected_collections[work_id]:
+                    reject(
+                        work_id=work_id,
+                        error="table selection requires an explicit collection selection",
+                        details=[
+                            (
+                                f"select collection {family}:{collection} first, then choose "
+                                "or omit the optional table"
+                            )
+                        ],
+                        filters=filters,
+                    )
+                    continue
+
+            if table and collection and not table.startswith(f"{collection}-"):
+                reject(
+                    work_id=work_id,
+                    error="table does not belong to the selected collection",
+                    details=[
+                        (
+                            f"table {table!r} encodes collection {table[:2]!r}, "
+                            f"but selected scope is {family}:{collection}"
+                        )
+                    ],
+                    filters=filters,
+                )
+                continue
+
+            payload = browse_norm_catalog(
+                family=family,
+                collection=collection,
+                table=table if table else "",
+                limit=1000,
+            )
+            payload_items = [
+                entry for entry in (payload.get("items") or [])
+                if isinstance(entry, dict)
+            ]
+            if family and not payload_items:
+                reject(
+                    work_id=work_id,
+                    error="selected normative catalog scope does not exist",
+                    details=[
+                        (
+                            "the typed normative store contains no entries for "
+                            f"{family}:{collection or '*'}"
+                            + (f", table {table}" if table else "")
+                        ),
+                        "correct the base type, collection or table before searching",
+                    ],
+                    filters=filters,
+                )
+                continue
+
             self.catalog_seen.add(catalog_key)
-            if family and collection and table:
+            if self.require_scoped_search and family and not collection:
+                self.selected_base_types[work_id][selected_family] = {
+                    "family": family,
+                    "reason": scope_reason,
+                    "confidence": confidence,
+                }
+            if self.require_scoped_search and family and collection and not table:
+                self.selected_collections[work_id].add((selected_family, collection))
+            if self.require_scoped_search and family and collection and table:
+                self.selected_tables[work_id].add((selected_family, collection, table))
+
+            if self.require_scoped_search and family and collection and table:
                 row = {
                     "work_id": work_id,
                     "ok": True,
@@ -835,48 +1046,128 @@ class SmetaNormToolSession:
                     "item_count": 0, "repeated": False,
                 })
                 continue
-            payload = browse_norm_catalog(
-                family=family,
-                collection=collection,
-                table="",
-                limit=1000,
-            )
-            compact_items = []
-            for entry in payload.get("items") or []:
-                if not isinstance(entry, dict):
-                    continue
-                compact = {
-                    "key": entry.get("key") or entry.get("norm_code"),
-                    "norm_count": entry.get("norm_count"),
-                    "resource_count": entry.get("resource_count"),
+            if self.require_scoped_search and family and collection:
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "collection_selected",
+                    "filters": {
+                        "family": family,
+                        "collection": collection,
+                        "table": "",
+                    },
+                    "items": [],
+                    "collection_passport": dict(
+                        payload.get("collection_passport") or {}
+                    ),
+                    "scope_selection": {
+                        "family": family,
+                        "collection": collection,
+                        "reason": scope_reason,
+                        "confidence": confidence,
+                        "selection_owner": "model",
+                    },
+                    "next_action": (
+                        "call search_norms_batch now with scope_mode=scoped, this "
+                        "base_type and collection; table_codes are optional"
+                    ),
                 }
-                source_example = str(entry.get("source_example") or entry.get("source_ref") or "").strip()
-                if source_example:
-                    compact["source_example"] = source_example[:160]
-                if entry.get("title"):
-                    compact["title"] = str(entry.get("title"))[:240]
-                if entry.get("measure_unit"):
-                    compact["measure_unit"] = entry.get("measure_unit")
-                compact_items.append(compact)
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse",
+                    "turn": turn,
+                    "work_id": work_id,
+                    "level": "scope_selected",
+                    "filters": row["filters"],
+                    "scope_reason": scope_reason,
+                    "confidence": confidence,
+                    "passport_source_ref": str(
+                        row["collection_passport"].get("source_ref") or ""
+                    ),
+                    "item_count": 0,
+                    "repeated": False,
+                })
+                continue
+            shared_key = (
+                family.casefold(),
+                collection,
+                table,
+            )
+            if self.require_scoped_search and shared_key in shared_catalog_owner:
+                owner_work_id = shared_catalog_owner[shared_key]
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "shared_catalog",
+                    "filters": {
+                        "family": family,
+                        "collection": collection,
+                        "table": table,
+                    },
+                    "items": [],
+                    "shared_items_with_work_id": owner_work_id,
+                    "next_action": (
+                        "use the identical catalog menu returned for "
+                        f"{owner_work_id}; choose scope for this work_id"
+                    ),
+                }
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse",
+                    "turn": turn,
+                    "work_id": work_id,
+                    "level": "shared_catalog",
+                    "filters": row["filters"],
+                    "item_count": 0,
+                    "shared_items_with_work_id": owner_work_id,
+                    "repeated": False,
+                })
+                continue
+            shared_catalog_owner[shared_key] = work_id
+            compacted = compact_items(payload)
+            level = payload.get("level")
+            if self.require_scoped_search and family and not collection:
+                level = "base_type_selected"
             row = {
                 "work_id": work_id,
                 "ok": True,
-                "level": payload.get("level"),
+                "level": level,
                 "filters": payload.get("filters") or {},
-                "items": compact_items,
+                "items": compacted,
                 "next_action": (
-                    "choose a family, collection and official table; then call "
-                    "search_norms_batch with table_codes to receive every row of that table"
+                    (
+                        "choose one or more collections only inside this selected base type; "
+                        "then call browse_norm_catalog with family and collection"
+                    )
+                    if self.require_scoped_search and family
+                    else (
+                        "compare the family passports, then call browse_norm_catalog "
+                        "with family, scope_reason and confidence"
+                    )
+                    if self.require_scoped_search
+                    else (
+                        "choose a family, collection and official table; then call "
+                        "search_norms_batch with table_codes to receive every row of that table"
+                    )
                 ),
             }
+            if self.require_scoped_search and family:
+                row["scope_selection"] = {
+                    "family": family,
+                    "reason": scope_reason,
+                    "confidence": confidence,
+                    "selection_owner": "model",
+                }
             rows_out.append(row)
             self.catalog_trace.append({
                 "phase": "catalog_browse",
                 "turn": turn,
                 "work_id": work_id,
-                "level": payload.get("level"),
+                "level": level,
                 "filters": payload.get("filters") or {},
-                "item_count": len(compact_items),
+                "scope_reason": scope_reason,
+                "confidence": confidence,
+                "item_count": len(compacted),
                 "repeated": False,
             })
         result: dict[str, Any] = {"ok": bool(rows_out), "rows": rows_out}
@@ -954,26 +1245,57 @@ class SmetaNormToolSession:
                         "base_types and collections selected by the model"
                     )
                     continue
+                if len(base_types) != 1 or len(collections) != 1:
+                    scope_errors[index] = (
+                        "RIM search item must contain exactly one model-selected base_type "
+                        "and one collection; use another item for another scope"
+                    )
+                    continue
+                work_id = str(item.get("work_id") or "")
+                missing_base_selections = [
+                    base_type
+                    for base_type in base_types
+                    if base_type.casefold() not in self.selected_base_types.get(work_id, {})
+                ]
+                if missing_base_selections:
+                    scope_errors[index] = (
+                        "RIM scoped search requires an explicit model-owned base type "
+                        "selection with reason and confidence for: "
+                        + ", ".join(missing_base_selections)
+                    )
+                    continue
                 missing_catalog_scopes = [
                     f"{base_type}:{collection}"
                     for base_type in base_types
                     for collection in collections
-                    if not any(
-                        seen_work_id == str(item.get("work_id") or "")
-                        and seen_family == base_type.casefold()
-                        and seen_collection == re.sub(r"\D", "", collection)[:2]
-                        for (
-                            seen_work_id,
-                            seen_family,
-                            seen_collection,
-                            _seen_table,
-                        ) in self.catalog_seen
-                    )
+                    if (
+                        base_type.casefold(),
+                        re.sub(r"\D", "", collection)[:2],
+                    ) not in self.selected_collections.get(work_id, set())
                 ]
                 if missing_catalog_scopes:
                     scope_errors[index] = (
-                        "RIM scoped search requires browse_norm_catalog first for: "
+                        "RIM scoped search requires explicit collection selection "
+                        "through browse_norm_catalog first for: "
                         + ", ".join(missing_catalog_scopes)
+                    )
+                    continue
+                missing_tables = [
+                    f"{base_type}:{collection}:{table_code}"
+                    for base_type in base_types
+                    for collection in collections
+                    for table_code in table_codes
+                    if (
+                        base_type.casefold(),
+                        re.sub(r"\D", "", collection)[:2],
+                        table_code,
+                    ) not in self.selected_tables.get(work_id, set())
+                ]
+                if missing_tables:
+                    scope_errors[index] = (
+                        "RIM table search requires a table validated by "
+                        "browse_norm_catalog inside the selected scope first for: "
+                        + ", ".join(missing_tables)
                     )
                     continue
             filter_key = (base_types, collections, table_codes)
@@ -1208,6 +1530,27 @@ class SmetaNormToolSession:
             opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
             opened_card = opened_for_work.get(opened_code) if opened_code else None
             code = str((opened_card or {}).get("norm_code") or requested_code)
+            if self.require_scoped_search and opened_card is None:
+                errors.append({
+                    "work_id": work_id,
+                    "error": "RIM bind requires a typed card opened by read_norms_batch",
+                    "details": [
+                        (
+                            f"norm_code {requested_code!r} is not present in the opened "
+                            "structured cards for this work_id"
+                        ),
+                        (
+                            "call browse_norm_catalog, scoped search_norms_batch and "
+                            "read_norms_batch before resubmitting this bind"
+                        ),
+                    ],
+                    "comparison_candidate_codes": list(dict.fromkeys(
+                        str((card or {}).get("norm_code") or candidate_code)
+                        for candidate_code, card in self.candidates.get(work_id, {}).items()
+                        if str((card or {}).get("norm_code") or candidate_code).strip()
+                    ))[:12],
+                })
+                continue
             blockers = []
             if code and opened_card is None:
                 blockers.append({
@@ -1943,7 +2286,11 @@ def _run_batch_norm_agent(
                 "navigation for overlap/coverage; do not search or submit those neighboring work_ids here. "
                 + (
                     "RIM invariant: for every work_id call browse_norm_catalog, then search_norms_batch "
-                    "with scope_mode=scoped and explicit base_types plus collections selected by you, "
+                    "first compare the returned family passports. Select a family in a separate "
+                    "browse_norm_catalog call with your own scope_reason and confidence; then select "
+                    "one collection inside that family with its own scope_reason and confidence. "
+                    "Read the returned collection_passport before search. Call search_norms_batch with scope_mode=scoped "
+                    "and explicit base_types plus collections selected by you, "
                     "then read_norms_batch before any bind. RAG candidates are navigation only; only a "
                     "full typed card opened by read_norms_batch may support submit_lsr_mapping."
                     if require_scoped_search
@@ -2391,9 +2738,11 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "function": {
                 "name": "browse_norm_catalog",
                 "description": (
-                    "Browse the typed normative menu before searching: families, collections, then "
-                    "official tables. After choosing a table call search_norms_batch with table_codes. "
-                    "Catalog navigation never chooses a professional norm."
+                    "Browse the typed normative menu before searching. First call with only work_id "
+                    "and compare the authoritative family passports. Then select a family with "
+                    "scope_reason and confidence to receive only its collections. Select a collection "
+                    "in a later call; an official table is optional. Catalog navigation records the "
+                    "model's scope decision but never chooses a professional norm."
                 ),
                 "parameters": {
                     "type": "object",
@@ -2403,6 +2752,19 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                             "family": {"type": "string", "description": "Norm family such as ГЭСН, ГЭСНм, ГЭСНр. Empty returns families."},
                             "collection": {"type": "string", "description": "Two-digit collection selected by the model. Empty returns collections."},
                             "table": {"type": "string", "description": "Official table code selected by the model, such as 08-02-001."},
+                            "scope_reason": {
+                                "type": "string",
+                                "description": (
+                                    "Required when selecting family or collection: why this "
+                                    "normative scope matches the work. It must come from the model, "
+                                    "not LES code."
+                                ),
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high"],
+                                "description": "Required when selecting family or collection.",
+                            },
                         }, "required": ["work_id"]}},
                     },
                     "required": ["items"],
@@ -2436,8 +2798,8 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                                     "collections selected from the catalog; global requires both empty."
                                 ),
                             },
-                            "base_types": {"type": "array", "items": {"type": "string"}, "description": "Families chosen by the model after catalog browse."},
-                            "collections": {"type": "array", "items": {"type": "string"}, "description": "Collection numbers chosen by the model after catalog browse."},
+                            "base_types": {"type": "array", "items": {"type": "string"}, "description": "Families chosen by the model after catalog browse. RIM uses one family per item; repeat the item for another family."},
+                            "collections": {"type": "array", "items": {"type": "string"}, "description": "Collection numbers chosen by the model after catalog browse. RIM uses one collection per item; repeat the item for another collection."},
                             "table_codes": {"type": "array", "items": {"type": "string"}, "description": "Official table codes shown by browse_norm_catalog. Selecting a table returns its complete row menu without ranking."},
                             "limit": {"type": "integer", "minimum": 1}, "page": {"type": "integer", "minimum": 0},
                         }, "required": ["work_id", "query", "search_intent", "scope_mode"]}},

@@ -56,6 +56,7 @@ def test_specification_turn_reads_nested_intake_and_opens_question(monkeypatch, 
         calls.append((payload, tool_names))
         if len(calls) == 1:
             assert payload["session_context"]["intake"]["work_item_count"] == 1
+            assert payload["session_context"]["rim_reference"]["sources"] == []
             assert payload["session_context"]["intake"]["work_items"][0]["title"].startswith(
                 "Кабель U/UTP"
             )
@@ -168,6 +169,182 @@ def test_specification_intake_batch_is_bounded_to_five_rows(tmp_path):
         )
 
 
+def test_single_action_returns_structured_validation_error_for_one_repair():
+    session = {
+        "session_id": "session-1",
+        "phase": "vor",
+        "mapping_status": "not_started",
+        "pricing_status": "unpriced",
+        "display_state": "awaiting_vor_approval",
+        "head_revision_id": "revision-1",
+        "pending_question_id": "",
+    }
+    calls = []
+
+    def exchange(messages, tools):
+        payload = json.loads(messages[-1]["content"])
+        calls.append(payload)
+        assert [tool["function"]["name"] for tool in tools] == ["draft_work_schedule"]
+        if len(calls) == 1:
+            return {
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "draft_work_schedule",
+                            "arguments": {"rows": [{"work_id": "vor-001"}]},
+                        }
+                    }
+                ]
+            }
+        assert "arguments are invalid" in payload["rejected_tool_call"]["error"]
+        return {
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "draft_work_schedule",
+                        "arguments": {
+                            "rows": [
+                                {
+                                    "work_id": "vor-001",
+                                    "section_name": "Монтаж",
+                                    "work_name": "Установка шкафа",
+                                    "unit": "шт.",
+                                    "quantity": 2,
+                                    "quantity_origin": "source_explicit",
+                                    "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ]
+        }
+
+    action, _message = rim_agent_turn_service._single_action(
+        session=session,
+        context={"instruction": "Revise the VOR."},
+        user_message="Монтаж включён",
+        exchange=exchange,
+        only_actions={"draft_work_schedule"},
+    )
+
+    assert action["arguments"]["rows"][0]["work_name"] == "Установка шкафа"
+    assert len(calls) == 2
+
+
+def test_pending_vor_answer_creates_source_linked_work_revision(tmp_path):
+    store = RimSessionStore(tmp_path)
+    created = store.create_session(owner_id="tester")
+    vor = store.save_vor_revision(
+        created.session["session_id"],
+        owner_id="tester",
+        expected_parent_revision_id=created.revision_id,
+        rows=[
+            {
+                "work_id": "vor-001",
+                "section_name": "Оборудование СКС",
+                "work_name": "Шкаф телекоммуникационный 42U",
+                "unit": "шт.",
+                "quantity": 2,
+                "quantity_origin": "source_explicit",
+                "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+            }
+        ],
+    )
+    question = store.open_question(
+        created.session["session_id"],
+        owner_id="tester",
+        expected_parent_revision_id=vor.revision_id,
+        question={
+            "text": "Включать монтаж оборудования в ВОР?",
+            "reason": "Спецификация описывает поставку.",
+            "work_ids": ["vor-001"],
+            "options": [
+                "Монтаж и подключение оборудования включены в ВОР",
+                "Монтаж и подключение не включены, только поставка",
+            ],
+        },
+    )
+    calls = []
+
+    def exchange(messages, tools):
+        payload = json.loads(messages[-1]["content"])
+        tool_names = [tool["function"]["name"] for tool in tools]
+        calls.append(tool_names)
+        if len(calls) == 1:
+            assert tool_names == ["interpret_pending_answer"]
+            return {
+                "_les_model": "qwen3.5:9b",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "interpret_pending_answer",
+                            "arguments": {
+                                "answer": {
+                                    "selected_option": (
+                                        "Монтаж и подключение оборудования включены в ВОР"
+                                    )
+                                },
+                                "needs_clarification": False,
+                            },
+                        }
+                    }
+                ],
+            }
+        assert tool_names == ["draft_work_schedule"]
+        assert "technological work operations" in payload["session_context"]["instruction"]
+        assert payload["session_context"]["current_vor_draft"]["rows"][0][
+            "source_ref"
+        ] == "СКС.xlsx#sheet=СКС;row=6"
+        return {
+            "_les_model": "qwen3.5:9b",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "draft_work_schedule",
+                        "arguments": {
+                            "rows": [
+                                {
+                                    "work_id": "vor-001",
+                                    "section_name": "Монтаж оборудования СКС",
+                                    "work_name": (
+                                        "Сборка и установка напольного "
+                                        "телекоммуникационного шкафа 42U"
+                                    ),
+                                    "unit": "шт.",
+                                    "quantity": 2,
+                                    "quantity_origin": "source_explicit",
+                                    "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ],
+        }
+
+    result = rim_agent_turn_service.run_rim_agent_turn(
+        store,
+        created.session["session_id"],
+        owner_id="tester",
+        user_message="Монтаж и подключение оборудования включены в ВОР",
+        exchange=exchange,
+        mapping_exchange=lambda *_args: {},
+    )
+
+    assert result["answer_revision_id"] != question.revision_id
+    assert result["vor_revision_id"] != vor.revision_id
+    session = store.get_session(created.session["session_id"], owner_id="tester")
+    assert session["pending_question_id"] == ""
+    payload = store.revision_payload(
+        created.session["session_id"],
+        result["vor_revision_id"],
+        owner_id="tester",
+    )["payload"]
+    assert payload["rows"][0]["work_name"].startswith("Сборка и установка")
+    assert payload["rows"][0]["source_ref"] == "СКС.xlsx#sheet=СКС;row=6"
+
+
 def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_path):
     store = RimSessionStore(tmp_path)
     vor = _create_vor(store)
@@ -264,3 +441,36 @@ def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_pa
     assert mapping[0]["norm_key"] == "ГЭСНм:10-06-001-01"
     assert mapping[0]["card_opened"] is True
     assert mapping[0]["norm_source_ref"] == "fsnb.sqlite#guid=1"
+
+
+def test_rim_model_reference_is_phase_scoped_and_never_contains_numeric_rules():
+    from proxy.services.rim_knowledge_service import model_reference_for_session
+
+    mapping = model_reference_for_session(
+        {
+            "phase": "vor",
+            "mapping_status": "mapping_selected",
+            "pricing_status": "unpriced",
+        }
+    )
+    pricing = model_reference_for_session(
+        {
+            "phase": "pricing",
+            "mapping_status": "mapping_locked",
+            "pricing_status": "priced_partial",
+        }
+    )
+
+    assert {item["id"] for item in mapping["sources"]} == {
+        "collection_technical_part_coefficients"
+    }
+    pricing_ids = {item["id"] for item in pricing["sources"]}
+    assert {
+        "fgis_split_form",
+        "fsem_2022",
+        "kac",
+        "overhead",
+        "estimated_profit",
+    } <= pricing_ids
+    assert all("value" not in item for item in pricing["sources"])
+    assert pricing["role"] == "navigation_and_source_routing_only"

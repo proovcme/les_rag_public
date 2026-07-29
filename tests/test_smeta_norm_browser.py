@@ -118,6 +118,126 @@ def test_typed_search_can_be_filtered_by_model_selected_family_and_collection(tm
     assert [item["norm_code"] for item in cards] == ["ГЭСНм08-02-001-01"]
 
 
+def test_catalog_family_passports_distinguish_construction_from_equipment_installation(
+    tmp_path,
+):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСН:34-01-001-01",
+        name="Устройство опор",
+    )
+    _insert_norm(
+        conn,
+        key="ГЭСНм:10-01-001-01",
+        name="Монтаж оборудования связи",
+    )
+    conn.commit()
+    conn.close()
+
+    result = browse_norm_catalog(base_path=path)
+    by_family = {item["key"]: item for item in result["items"]}
+
+    assert "строительные работы" in by_family["ГЭСН"]["official_name"].casefold()
+    assert "монтаж оборудования" in by_family["ГЭСНм"]["official_name"].casefold()
+    assert "монтаж оборудования" in by_family["ГЭСНм"]["purpose"].casefold()
+    assert "пусконаладочные работы" in by_family["ГЭСН"]["not_for"]
+    assert by_family["ГЭСН"]["questions_to_ask"]
+    assert by_family["ГЭСНм"]["source_ref"].startswith("ФСНБ-2022")
+    assert by_family["ГЭСНм"]["approval_basis"].endswith("№ 1046/пр")
+    assert by_family["ГЭСНм"]["navigation_url"] == "https://fsnb2022.ru/gesnm/"
+
+
+def test_catalog_collection_has_compact_human_title_from_typed_source(tmp_path):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСНм:10-01-001-01",
+        name="Монтаж оборудования связи",
+    )
+    conn.execute(
+        """
+        UPDATE norms
+        SET source_doc=?
+        WHERE norm_key='ГЭСНм:10-01-001-01'
+        """,
+        (
+            "Государственные элементные сметные нормы на монтаж оборудования<br/>"
+            "Сборник 10. Оборудование связи<br/>"
+            "Отдел 1. Городская телефонная связь",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    result = browse_norm_catalog(
+        family="ГЭСНм",
+        base_path=path,
+    )
+
+    assert result["level"] == "collection"
+    assert result["items"][0]["title"] == "Оборудование связи"
+    assert result["items"][0]["purpose"] == (
+        "Официальный сборник ГЭСНм 10: Оборудование связи"
+    )
+    assert result["items"][0]["source_ref"] == (
+        "ФСНБ-2022 · ГЭСНм, сборник 10 «Оборудование связи»"
+    )
+
+    scoped = browse_norm_catalog(
+        family="ГЭСНм",
+        collection="10",
+        base_path=path,
+    )
+    passport = scoped["collection_passport"]
+    assert passport["schema"] == "smeta_norm_collection_passport_v1"
+    assert passport["title"] == "Оборудование связи"
+    assert passport["representative_sections"] == [
+        "Отдел 1. Городская телефонная связь"
+    ]
+    assert passport["representative_units"] == ["100 м"]
+    assert passport["passport_role"] == "navigation_only"
+    assert passport["requires_full_norm_read"] is True
+
+
+def test_catalog_table_identity_includes_family_and_collection(tmp_path):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСН:08-02-001-01",
+        name="Конструкция правильного сборника",
+    )
+    conn.commit()
+    conn.close()
+
+    wrong_collection = browse_norm_catalog(
+        family="ГЭСН",
+        collection="34",
+        table="08-02-001",
+        base_path=path,
+    )
+    correct_scope = browse_norm_catalog(
+        family="ГЭСН",
+        collection="08",
+        table="08-02-001",
+        base_path=path,
+    )
+
+    assert wrong_collection["items"] == []
+    assert [item["norm_key"] for item in correct_scope["items"]] == [
+        "ГЭСН:08-02-001-01"
+    ]
+
+
 def test_norm_card_exposes_resource_names_for_technology_audit(tmp_path):
     from proxy.smeta_core.norm_browser import _typed_cards
 

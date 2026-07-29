@@ -175,6 +175,7 @@ def allowed_model_actions(session: dict[str, Any]) -> list[str]:
         return ["inspect_file", "classify_file", "draft_work_schedule", "validate_vor", "ask_user"]
     if phase == "vor" and mapping == "not_started":
         return [
+            "draft_work_schedule",
             "browse_norm_catalog",
             "search_norms_batch",
             "read_norms_batch",
@@ -256,11 +257,39 @@ def validate_model_action(
                 scope_errors.append(f"items[{index}].scope_mode must be scoped")
             if not list(item.get("base_types") or []):
                 scope_errors.append(f"items[{index}].base_types is required")
+            elif len(list(item.get("base_types") or [])) != 1:
+                scope_errors.append(
+                    f"items[{index}].base_types must contain one selected family; "
+                    "use another item for another family"
+                )
             if not list(item.get("collections") or []):
                 scope_errors.append(f"items[{index}].collections is required")
+            elif len(list(item.get("collections") or [])) != 1:
+                scope_errors.append(
+                    f"items[{index}].collections must contain one selected collection; "
+                    "use another item for another collection"
+                )
         if scope_errors:
             raise ValueError(
                 "RIM search scope is invalid: " + "; ".join(scope_errors[:8])
+            )
+    if action == "browse_norm_catalog":
+        scope_errors = []
+        for index, item in enumerate(arguments.get("items") or []):
+            if not isinstance(item, dict):
+                continue
+            if item.get("family") and not item.get("table"):
+                if not str(item.get("scope_reason") or "").strip():
+                    scope_errors.append(
+                        f"items[{index}].scope_reason is required when selecting family or collection"
+                    )
+                if str(item.get("confidence") or "") not in {"low", "medium", "high"}:
+                    scope_errors.append(
+                        f"items[{index}].confidence must be low, medium or high"
+                    )
+        if scope_errors:
+            raise ValueError(
+                "RIM catalog scope is invalid: " + "; ".join(scope_errors[:8])
             )
     intent = str(payload.get("user_visible_intent") or "").strip()
     if not intent:

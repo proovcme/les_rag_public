@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import inspect
+import re
+from pathlib import Path
 from uuid import uuid4
 
 from nicegui import app, ui
@@ -40,6 +42,35 @@ _STATUS_LABELS = {
     "awaiting_final_lock": "Финальная проверка",
     "priced_final": "Финальная ЛСР",
 }
+
+
+def _human_source_ref(value: object) -> str:
+    """Render a compact source locator while preserving raw provenance in storage."""
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    path, separator, locator = raw.partition("#")
+    filename = Path(path).name
+    if re.fullmatch(r"[0-9a-fA-F]{32,}\.[A-Za-z0-9]+", filename):
+        filename = ""
+    fields: dict[str, str] = {}
+    if separator:
+        for item in locator.split(";"):
+            key, equals, field_value = item.partition("=")
+            if equals and key and field_value:
+                fields[key.strip().casefold()] = field_value.strip()
+    parts = []
+    if filename:
+        parts.append(filename)
+    if fields.get("sheet"):
+        parts.append(f"лист «{fields['sheet']}»")
+    if fields.get("row"):
+        parts.append(f"строка {fields['row']}")
+    elif fields.get("page"):
+        parts.append(f"страница {fields['page']}")
+    if parts:
+        return " · ".join(parts)
+    return filename or raw
 
 
 def _status_tone(status: str) -> str:
@@ -235,7 +266,11 @@ def build_rim() -> None:
                             {"name": "work_name", "label": "Работа", "field": "work_name"},
                             {"name": "unit", "label": "Ед.", "field": "unit"},
                             {"name": "quantity", "label": "Количество", "field": "quantity"},
-                            {"name": "source_ref", "label": "Источник", "field": "source_ref"},
+                            {
+                                "name": "source_display",
+                                "label": "Источник",
+                                "field": "source_display",
+                            },
                             {"name": "status", "label": "Статус", "field": "status"},
                         ],
                         rows=[],
@@ -257,7 +292,11 @@ def build_rim() -> None:
                             {"name": "norm_unit", "label": "Измеритель", "field": "norm_unit"},
                             {"name": "selection_status", "label": "Решение", "field": "selection_status"},
                             {"name": "reason", "label": "Причина", "field": "reason"},
-                            {"name": "norm_source_ref", "label": "Источник нормы", "field": "norm_source_ref"},
+                            {
+                                "name": "norm_source_display",
+                                "label": "Источник нормы",
+                                "field": "norm_source_display",
+                            },
                         ],
                         rows=[],
                         row_key="mapping_row_id",
@@ -705,8 +744,22 @@ def build_rim() -> None:
 
             vor = await api_get(f"/api/rim/sessions/{session_id}/vor") or {}
             mapping = await api_get(f"/api/rim/sessions/{session_id}/mapping") or {}
-            current["vor"] = list(vor.get("rows") or [])
-            current["mapping"] = list(mapping.get("mapping_rows") or [])
+            current["vor"] = [
+                {
+                    **row,
+                    "source_display": _human_source_ref(row.get("source_ref")),
+                }
+                for row in (vor.get("rows") or [])
+            ]
+            current["mapping"] = [
+                {
+                    **row,
+                    "norm_source_display": _human_source_ref(
+                        row.get("norm_source_ref")
+                    ),
+                }
+                for row in (mapping.get("mapping_rows") or [])
+            ]
             current["requirements"] = list(session.get("requirements") or [])
             vor_table.rows = current["vor"]
             vor_table.update()

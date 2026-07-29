@@ -356,6 +356,8 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     ]
     catalog_item = tools[0]["function"]["parameters"]["properties"]["items"]["items"]
     assert "table" in catalog_item["properties"]
+    assert "scope_reason" in catalog_item["properties"]
+    assert catalog_item["properties"]["confidence"]["enum"] == ["low", "medium", "high"]
     assert "limit" not in catalog_item["properties"]
     search_item = tools[1]["function"]["parameters"]["properties"]["items"]["items"]
     assert "table_codes" in search_item["properties"]
