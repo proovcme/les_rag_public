@@ -1,6 +1,17 @@
 from tools import les_runtime_control as runtime_control
 
 
+def test_windows_runtime_probes_are_console_free():
+    kwargs = runtime_control._subprocess_kwargs("nt")
+
+    assert kwargs["creationflags"] == runtime_control.CREATE_NO_WINDOW
+    assert kwargs["stdin"] is runtime_control.subprocess.DEVNULL
+
+
+def test_posix_runtime_probes_do_not_receive_windows_flags():
+    assert runtime_control._subprocess_kwargs("posix") == {}
+
+
 def test_service_ready_requires_health_ok_when_health_url_exists():
     service = runtime_control.ServiceDef(
         key="qdrant",

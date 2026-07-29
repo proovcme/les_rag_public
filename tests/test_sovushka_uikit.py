@@ -214,6 +214,8 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     assert 'f"sov-nav-switch sov-nav-switch--{key}"' in header
     assert "sov-nav-switch--active" in header
     assert "/classic?tab=studio" in header
+    assert "tabs.set_value(tab_refs[key])" in header
+    assert "window.history.replaceState" in header
     assert 'active_primary="config"' in Path("sovushka_ng.py").read_text(encoding="utf-8")
     assert "sov-docs-sticky-ask" in documents
     assert '"Спросить в чате"' in documents

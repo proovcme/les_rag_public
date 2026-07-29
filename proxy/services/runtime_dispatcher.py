@@ -109,7 +109,10 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _background_popen_kwargs() -> dict[str, Any]:
     if os.name == "nt":
-        creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        creationflags = (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+        )
         return {"creationflags": creationflags} if creationflags else {}
     return {"start_new_session": True, "close_fds": True}
 

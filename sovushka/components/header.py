@@ -136,6 +136,25 @@ def build_header(
         if is_admin and (chat_link or admin_link):
             nav_buttons: dict[str, object] = {}
 
+            def _open_primary(key: str, target: str) -> None:
+                # Chat and Studio are panels of the same /classic page. A full
+                # navigation rebuilt the 4k-line chat surface, repeated startup
+                # probes and made a local tab switch take tens of seconds.
+                if key in {"chat", "studio"} and key in tab_refs:
+                    tabs.set_value(tab_refs[key])
+                    ui.run_javascript(
+                        f"window.history.replaceState(null, '', {json.dumps(target)})"
+                    )
+                    for button_key, button in nav_buttons.items():
+                        if button_key == key:
+                            button.classes(add="sov-nav-switch--active")
+                            button.props('aria-current="page"')
+                        else:
+                            button.classes(remove="sov-nav-switch--active")
+                            button.props(remove="aria-current")
+                    return
+                ui.navigate.to(target)
+
             def _primary_button(
                 key: str,
                 label: str,
@@ -152,7 +171,7 @@ def build_header(
                     label,
                     color=None,
                     icon=icon,
-                    on_click=lambda target=target: ui.navigate.to(target),
+                    on_click=lambda key=key, target=target: _open_primary(key, target),
                 ).props(
                     f'flat no-caps aria-label="{label}"'
                     + (' aria-current="page"' if active else "")

@@ -31,6 +31,14 @@ def test_patch_allowlist_rejects_runtime_boundaries():
         vps_patch.normalize_path("../outside.py")
 
 
+def test_patch_allowlist_accepts_shared_console_free_runtime_launcher():
+    assert (
+        vps_patch.normalize_path("tools/les_runtime_control.py")
+        == "tools/les_runtime_control.py"
+    )
+    assert "tools/les_runtime_control.py" in vps_patch_apply.ALLOWED_FILES
+
+
 def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

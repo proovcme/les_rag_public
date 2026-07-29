@@ -117,6 +117,7 @@ def test_native_folder_picker_uses_windows_folder_dialog(monkeypatch, tmp_path):
 
     assert result == {"status": "selected", "path": "C:\\Data\\Project"}
     assert calls[0][0][:4] == ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy"]
+    assert calls[0][1]["creationflags"] == 0x08000000
     assert "FolderBrowserDialog" in calls[0][0][-1]
 
 

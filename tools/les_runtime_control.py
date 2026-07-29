@@ -173,10 +173,29 @@ PROTECTED_PROCESS_NAMES = {
     "cfprefsd",
 }
 
+CREATE_NO_WINDOW = 0x08000000
+
+
+def _subprocess_kwargs(platform_name: str | None = None) -> dict[str, object]:
+    """Keep operational probes invisible on Windows."""
+    active_platform = platform_name or os.name
+    if active_platform == "nt":
+        return {
+            "creationflags": CREATE_NO_WINDOW,
+            "stdin": subprocess.DEVNULL,
+        }
+    return {}
+
 
 def _run(args: list[str], timeout: int = 20) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        return subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            **_subprocess_kwargs(),
+        )
     except FileNotFoundError as exc:
         return subprocess.CompletedProcess(args=args, returncode=127, stdout="", stderr=str(exc))
 

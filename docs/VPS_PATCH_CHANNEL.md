@@ -30,6 +30,11 @@ Python process contract. Проверка сначала подтверждае�
 последовательных стабильных проб. При провале новое дерево удаляется, старое возвращается
 одним rename и перезапускается.
 
+Любая системная проверка, доступная из UI или периодического runtime status,
+запускает дочерние процессы Windows только с `CREATE_NO_WINDOW` и без stdin.
+Контракт распространяется не только на updater: `tasklist`, фоновые dispatcher
+jobs и нативный выбор папки не имеют права создавать console window.
+
 PowerShell допустим только как bounded single-purpose launcher для state,
 start/stop и интерактивной Scheduled Task. Он не хранит вывод дочернего процесса
 в памяти, не строит приложение, не опрашивает WMI/CIM и не управляет откатом.
@@ -43,6 +48,7 @@ PowerShell rollback закрыт.
 - корневые `proxy_server.py` и `sovushka_ng.py`;
 - собственные helpers `tools/{vps_patch_apply,windows_update_engine}.py` и паспорт
   `config/version.json`.
+- общий console-free operational launcher `tools/les_runtime_control.py`;
 - пять exact lifecycle-скриптов:
   `installers/windows/{start-light,stop-light,runtime-process,state}.ps1` и
   `installers/windows/app/bootstrap.ps1`;

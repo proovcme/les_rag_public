@@ -7,17 +7,28 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.22 (console-free installed runtime + stable updater smoke)
-номер сборки:              495     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.495 (internal identity; soft-update target)
+версия продукта (SemVer):  0.25.23 (console-free UI probes + in-page chat navigation)
+номер сборки:              496     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.496 (internal identity; soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; hard + soft updater on one Python lifecycle
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion acceptance target 0.25.22 / 495
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion hotfix target 0.25.23 / 496
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion exact live result is written by updater report
 ```
 
+> 0.25.23 / build 496 — без вспышек при работе с чатом
+>
+> Дата: 2026-07-29
+> Статус: internal Legion hotfix; без tag, GitHub Release, public feed и VPS.
+> Windows runtime probes (`tasklist` и другие команды общего operational
+> launcher), фоновые dispatcher jobs и нативный folder picker всегда получают
+> `CREATE_NO_WINDOW` и закрытый stdin. «Чат» и «Студия» больше не выполняют
+> полную навигацию `/classic`: уже построенные панели переключаются на месте, а
+> URL обновляется через History API. Это одновременно устраняет консольные
+> вспышки системных probes и многосекундную повторную сборку UI.
+>
 > 0.25.22 / build 495 — installed runtime без консольных окон и устойчивый smoke
 >
 > Дата: 2026-07-29

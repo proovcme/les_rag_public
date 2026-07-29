@@ -534,6 +534,7 @@ def test_windows_update_orchestration_is_python_owned_and_file_backed():
     assert "subprocess.Popen" in runtime_source
     assert "PROCESS_CONTRACT = \"direct_python_no_console_v2\"" in runtime_source
     assert "tools/windows_env_doctor.py" in vps_patch_apply.ALLOWED_FILES
+    assert "tools/les_runtime_control.py" in vps_patch_apply.ALLOWED_FILES
 
 
 def test_windows_runtime_environment_keeps_ollama_embedding_contract(tmp_path):

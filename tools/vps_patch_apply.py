@@ -35,6 +35,7 @@ ALLOWED_FILES = {
     "tools/windows_update_engine.py",
     "tools/windows_runtime.py",
     "tools/windows_env_doctor.py",
+    "tools/les_runtime_control.py",
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",

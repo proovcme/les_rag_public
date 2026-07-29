@@ -180,6 +180,7 @@ def _native_pick_folder(*, initial: str = "", title: str = "Выберите п�
             errors="replace",
             timeout=300,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000),
         )
         if result.returncode != 0:
             return {"status": "cancelled" if "cancel" in result.stderr.lower() else "error", "detail": result.stderr.strip()}

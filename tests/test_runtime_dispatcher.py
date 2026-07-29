@@ -102,6 +102,7 @@ def test_background_popen_kwargs_are_platform_specific(monkeypatch):
     kwargs = dispatcher_mod._background_popen_kwargs()
     assert "start_new_session" not in kwargs
     assert "close_fds" not in kwargs
+    assert kwargs["creationflags"] & 0x08000000
 
 
 def test_dispatcher_public_reindex_status_payload(tmp_path):
