@@ -270,14 +270,13 @@ def test_parse_batch_endpoint_can_create_background_job():
     assert "\"status\": \"queued\"" in source
 
 
-def test_selected_dataset_ids_preempt_glossary_deterministic_final():
+def test_selected_dataset_ids_stay_in_model_owned_scope_without_deterministic_final():
     source = inspect.getsource(chat_router._run_chat)
 
-    assert "_selected_scope_filter" in source
-    assert "__selected_dataset__" in source
-    assert "req.dataset_ids or _scope_snap.get(\"resolved_dataset_ids\")" in source
-    assert "dataset_filter=_selected_scope_filter" in source
-    assert "dataset_filter=req.dataset_filter or \"\", candidate=_cand" not in source
+    assert 'req.dataset_ids = _scope_snap["resolved_dataset_ids"]' in source
+    assert "_det_channels" not in source
+    assert "can_return_deterministic_final" not in source
+    assert "maybe_handle_glossary_query" not in source
 
 
 def test_notebook_study_uses_ready_navigation_without_query_time_artifact_fanout():

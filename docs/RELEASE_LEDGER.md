@@ -7,17 +7,31 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.28 (self-hosted target updater core)
-номер сборки:              501     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.501 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.29 (model-owned answers and direct source links)
+номер сборки:              502     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.502 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; 0.25.28 candidate
+dev implementation:       codex/sovushka-ui-kit; 0.25.29 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.25.29 / build 502 — ответ формулирует модель, источники являются ссылками
+>
+> Дата: 2026-07-29
+> Статус: candidate в `codex/sovushka-ui-kit`; без Tauri build, Legion install,
+> tag, GitHub Release, public feed и VPS. Из обычного чата удалены auto-note,
+> note-команды, legacy deterministic cascade и прямые visible finals
+> нормоконтроля, сверки, ВОР, outline, mail, field, table/clause: read-only
+> операции остаются evidence/tool-материалом, финальный текст принадлежит
+> модели. Профиль нормоконтроля больше не объявляет code-executor, а glossary и
+> project registry возвращают только typed evidence без top-level `answer`.
+> Под ответом остаётся один список человеческих кликабельных источников;
+> raw `source_ref` скрыт в техническом disclosure. Оценка «Да/Нет» сохраняется
+> через chat-history API и сразу показывает выбранное состояние.
+>
 > 0.25.28 / build 501 — новый updater проверяет уже этот же выпуск
 >
 > Дата: 2026-07-29

@@ -137,12 +137,16 @@ def test_chat_exposes_documents_navigation():
     assert "Открыть документы датасетов" in chat
     assert 'f"Источники · {len(srcs)}"' in chat
     assert 'value=False' in chat
-    assert 'ui.link(lbl, str(item["open_url"]))' in chat
+    assert 'target=str(item["open_url"])' in chat
     assert 'if item.get("viewer_url")' in chat
     assert "sov-embedded-file-viewer" in chat
     assert "/rag/file/viewer" in Path("sovushka/answer_render.py").read_text(encoding="utf-8")
     assert '"target=_blank"' in chat
-    assert "sov-source-detail" in chat
+    assert "sov-source-technical" in chat
+    assert "Ответ полезен?" in chat
+    assert "sov-answer-feedback__button--active" in chat
+    assert "Плохой ответ" not in chat
+    assert "Полный перечень источников" not in chat
     assert ".sov-source-expansion" in styles
     assert ".sov-embedded-file-viewer iframe" in styles
     assert "max-height: min(42vh, 360px)" in styles

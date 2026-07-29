@@ -27,18 +27,13 @@ class MailBackend:
         return [SimpleNamespace(id="mail-ds", name="MAIL_Index")]
 
     async def retrieve(self, *args, **kwargs):
-        raise AssertionError("deterministic mail query should not call vector retrieval")
+        raise AssertionError("production mail search must use the native retrieval contract")
 
 
 @pytest.mark.asyncio
-async def test_chat_answers_mail_query_without_llm_or_vector_retrieval(tmp_path, monkeypatch):
+async def test_chat_does_not_replace_model_with_deterministic_mail_answer(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
-    monkeypatch.setenv("LES_ROUTER_PRIMARY", "true")
-    monkeypatch.setattr(
-        "proxy.services.agent_router_service.route_with_name",
-        lambda *a, **k: ("unavailable", None),
-    )
     root = tmp_path / "storage" / "datasets" / "mail-ds" / "MAIL"
     root.mkdir(parents=True)
     _write_message(
@@ -78,10 +73,7 @@ async def test_chat_answers_mail_query_without_llm_or_vector_retrieval(tmp_path,
         _user=object(),
     )
 
-    assert response["crag_status"] == "VERIFIED"
-    assert response["effective_dataset_filter"] == "MAIL"
-    assert response["query_route"]["channel"] == "mail"
-    assert response["cache"] == "deterministic_mail"
-    assert response["mail_query"]["mode"] == "mail_messages"
-    assert "Dropbox notice" in response["answer"]
-    assert response["history_id"] is not None
+    assert response["crag_status"] == "BLOCKED"
+    assert response["retrieval_trace"]["status"] == "blocked"
+    assert response["cache"] != "deterministic_mail"
+    assert "Dropbox notice" not in response["answer"]

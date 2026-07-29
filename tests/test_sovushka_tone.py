@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from proxy.services.glossary_chat_service import maybe_handle_glossary_query
+from proxy.services.glossary_chat_service import glossary_tool_result, maybe_handle_glossary_query
 from proxy.services.smeta_chat_service import maybe_handle_smeta_query
 from proxy.services import sovushka_tone as tone
 
@@ -32,6 +32,8 @@ def test_bypass_lets_channels_yield_to_model():
     # явное «к модели» → каналы возвращают None (вопрос уходит в RAG/LLM, не в справочник)
     assert maybe_handle_glossary_query("что такое КАЦ своими словами") is None
     assert maybe_handle_smeta_query("цена 91.05.01-017, но ответь своими словами") is None
-    # без обхода — канал отвечает (с голосом)
-    g = maybe_handle_glossary_query("что такое КАЦ")
-    assert g is not None and "конъюнктурный" in g["answer"].lower()
+    # Обычный lookup тоже не создаёт visible answer: typed evidence идёт модели.
+    assert maybe_handle_glossary_query("что такое КАЦ") is None
+    g = glossary_tool_result("что такое КАЦ")
+    assert g is not None and "конъюнктурный" in g["evidence"]["term"].lower()
+    assert "answer" not in g

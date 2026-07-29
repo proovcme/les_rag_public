@@ -145,8 +145,15 @@ def check_chat_glossary(c, base, *, timeout: float):
             return _r("chat_glossary", "P0", "fail", t0, f"http={resp.status_code}: {str(d)[:80]}", ev)
         if not ans:
             return _r("chat_glossary", "P0", "fail", t0, "пустой ответ на глоссарный вопрос", ev)
-        if channel != "glossary" or not has_version:
-            return _r("chat_glossary", "P0", "fail", t0, "нет glossary route или version_info", ev)
+        if channel in {"glossary", "scope_clarification"} or not has_version:
+            return _r(
+                "chat_glossary",
+                "P0",
+                "fail",
+                t0,
+                "professional answer ушёл в code-final route или потерял version_info",
+                ev,
+            )
         return _r("chat_glossary", "P0", "pass", t0, "", ev)
     except Exception as e:
         return _r("chat_glossary", "P0", "fail", t0, f"{type(e).__name__}: {e}")

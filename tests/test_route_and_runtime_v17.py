@@ -78,7 +78,9 @@ def test_project_registry_not_triggered_by_reestr_dokumentacii():
 
 def test_no_scope_for_document_registry_actionable_missing():
     r = prc.maybe_handle_document_registry("составь реестр документации котельной", project_id=0, dataset_filter="")
-    assert r and r["operation"] == "document_registry_no_scope" and "выберите" in r["answer"].lower()
+    assert r and r["operation"] == "document_registry_no_scope"
+    assert r["status"] == "blocked" and r["error_code"] == "MISSING_SCOPE"
+    assert "answer" not in r
 
 def test_document_registry_sees_dataset_ids_scope():
     # РЕГРЕССИЯ: датасет выбран через ScopeSelector → приходит dataset_ids (НЕ dataset_filter).
@@ -101,11 +103,12 @@ def test_two_similar_document_registry_queries_not_same_global_answer():
     q2 = prc.maybe_handle_registry_query("составь реестр документации про котельную на лесном 64", project_id=2)
     assert q1 is None and q2 is None   # ни один не вернул глобальный «Реестр проектов ЛЕС»
 
-def test_document_registry_channel_wired_in_chat():
+def test_document_registry_code_final_not_wired_in_chat():
     import inspect as _inspect
     from proxy.routers import chat as chat_mod
     src = _inspect.getsource(chat_mod)
-    assert "doc_registry" in src and "maybe_handle_document_registry" in src
+    assert "maybe_handle_document_registry" not in src
+    assert "document_registry_no_scope" not in src
 
 
 # ── §15 honest .xls ───────────────────────────────────────────────────────────────────────

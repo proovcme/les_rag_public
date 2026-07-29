@@ -19,19 +19,23 @@ def test_registry_intent(q, hit):
     assert reg.is_registry_query(q) is hit
 
 
-def test_registry_answer_shape(monkeypatch):
+def test_registry_tool_result_shape(monkeypatch):
     monkeypatch.setattr("proxy.services.project_service.build_registry",
                         lambda: {"projects": [{"id": 3, "name": "Котельная", "stage": "РД",
                                                "code": "Ш-1", "address": "СПб", "folders": ["/x"],
                                                "datasets": 0, "has_les_md": True}], "count": 1})
-    res = reg.registry_answer()
-    assert res["operation"] == "registry" and "Котельная" in res["answer"] and "#3" in res["answer"]
+    res = reg.registry_tool_result()
+    assert res["operation"] == "project_registry_lookup"
+    assert res["registry"]["projects"][0]["name"] == "Котельная"
+    assert "answer" not in res
 
 
 def test_registry_empty(monkeypatch):
     monkeypatch.setattr("proxy.services.project_service.build_registry",
                         lambda: {"projects": [], "count": 0})
-    assert reg.registry_answer()["operation"] == "registry_empty"
+    result = reg.registry_tool_result()
+    assert result["status"] == "empty"
+    assert "answer" not in result
 
 
 # ── агент-роутер ──
@@ -101,10 +105,14 @@ def test_classify_bare_name(monkeypatch):
 def test_agent_routes_to_tool(monkeypatch):
     monkeypatch.setenv("LES_AGENT_LOOP", "true")
     monkeypatch.setattr(ar, "_classify", lambda q: "project_registry")
-    monkeypatch.setattr("proxy.services.project_registry_chat_service.registry_answer",
-                        lambda: {"answer": "реестр", "operation": "registry"})
+    monkeypatch.setattr(
+        "proxy.services.project_registry_chat_service.registry_tool_result",
+        lambda: {"operation": "project_registry_lookup", "registry": {"projects": []}},
+    )
     res = ar.maybe_agent_route("что у нас за объекты")
-    assert res["agent_tool"] == "project_registry" and res["answer"] == "реестр"
+    assert res["agent_tool"] == "project_registry"
+    assert res["tool_result"]["registry"] == {"projects": []}
+    assert "answer" not in res
 
 
 def test_agent_none_tool_falls_back(monkeypatch):

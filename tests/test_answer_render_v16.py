@@ -238,22 +238,6 @@ def test_split_inline_source_notes_keeps_prose_readable():
     assert notes[0]["markers"] == ["[Источник 1]"]
     assert "Пояснительная записка.docx" in notes[0]["text"]
 
-def test_source_notes_artifact_lists_notes_and_sources():
-    artifact = ar.source_notes_artifact(
-        "Факт.\nИсточники: [Источник 1] файл — фрагмент",
-        sources=[{
-            "source_ref": "BAI/ОЦТ/ИОС_5.2/03_Пояснительная записка.docx#para12",
-            "source_kind": "extracted_body",
-            "snippet": "Адрес объекта",
-        }],
-    )
-
-    assert artifact["title"] == "Источники ответа"
-    assert artifact["mode"] == "markdown"
-    assert "## Пометки из ответа" in artifact["content"]
-    assert "## Перечень источников" in artifact["content"]
-    assert "Пояснительная записка.docx" in artifact["content"]
-
 def test_group_evidence_sections_order_and_missing_visible():
     from proxy.services.evidence_contract import EvidenceItem, EvidenceType, block_of
     blocks = [block_of(EvidenceType.MISSING, "M", [EvidenceItem(EvidenceType.MISSING, "x", status="missing")]),

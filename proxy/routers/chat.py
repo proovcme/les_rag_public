@@ -33,7 +33,6 @@ from proxy.services.chat_evidence_application_service import (
 from proxy.services.answer_contract_service import decorate_payload, scenario_for_request
 from proxy.services.class_router_service import build_class_suggestions
 from proxy.services.chat_provider_session_service import ChatProviderConfig
-from proxy.services.clarification_service import build_clarification_decision
 from backend.inference.validator import rules_pre_verdict
 from backend.inference.routing import (
     decide_provider,
@@ -51,11 +50,10 @@ from proxy.services.evidence_packet_service import (
     render_retrieval_evidence_for_model,
 )
 from proxy.services.memory_service import (
-    recall_context, session_memory, session_recent_retrieval_traces, session_user_questions)
+    session_memory, session_recent_retrieval_traces, session_user_questions)
 from proxy.services.kot_service import analyze_question
 from proxy.services.lexical_index_service import retrieval_fingerprint
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
-from proxy.services.mail_query_service import maybe_answer_mail_query
 from proxy.services.notebook_study_service import (
     build_notebook_study_pack,
     format_study_artifact,
@@ -1665,62 +1663,6 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
     )
 
 
-async def _run_project_normcontrol(req: "ChatRequest", pid: int) -> str:
-    """Режим «Проверка проекта»: формальный нормоконтроль PDF датасетов объекта
-    (run_normcontrol, без LLM) → markdown-таблица замечаний. Нет датасета → подсказка."""
-    from proxy.services.normcontrol_service import run_normcontrol
-
-    ds_ids = list(req.dataset_ids or [])
-    if not ds_ids and pid:
-        try:
-            from proxy.services.project_service import project_dataset_ids
-            ds_ids = await asyncio.to_thread(project_dataset_ids, pid) or []
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[REVIEW] project scope failed: %s", e)
-    if not ds_ids:
-        if req.attachment_context:
-            return (
-                "Режим «Проверка проекта» видит прикреплённый файл, но read-вложение пришло как текст. "
-                "Для нормоконтроля нужны сами PDF/файлы комплекта: формат листа, рамка, штамп и ведомость "
-                "по одному тексту не проверяются. Прикрепи файл в режиме «В базу» или выбери датасет/проект, "
-                "после этого запусти проверку ещё раз."
-            )
-        return ("Режим «Проверка проекта» (нормоконтроль): выбери объект или датасет — проверка "
-                "идёт по его PDF-файлам (форматы листов, шифры, ведомость↔файлы). Открой проект "
-                "слева и повтори запрос.")
-    storage_root = Path("storage/datasets")
-    findings: list[dict] = []
-    checked = 0
-    for ds in ds_ids:
-        fdir = storage_root / ds
-        if not fdir.exists():
-            continue
-        try:
-            res = await asyncio.to_thread(run_normcontrol, ds, fdir, storage_root, None)
-        except Exception as e:  # noqa: BLE001
-            logger.warning("[REVIEW] normcontrol %s failed: %s", ds, e)
-            continue
-        checked += res.get("files_checked", 0)
-        findings.extend(res.get("findings", []))
-    if not checked:
-        return ("Режим «Проверка проекта»: в датасетах объекта нет PDF для формального "
-                "нормоконтроля (проверяются чертежи-PDF: форматы листов, шифры, комплектность).")
-    if not findings:
-        return f"Нормоконтроль: проверено {checked} PDF — формальных замечаний нет. ✅"
-    sev_lbl = {"error": "🔴 ошибка", "warning": "🟡 предупр.", "info": "ℹ️ инфо"}
-    lines = [f"Нормоконтроль проекта: {checked} PDF, замечаний — {len(findings)}.", "",
-             "| Уровень | Проверка | Объект | Замечание |", "|---|---|---|---|"]
-    for f in findings[:60]:
-        sev = sev_lbl.get(f.get("severity", ""), f.get("severity", ""))
-        chk = str(f.get("check", "")).replace("|", "/")
-        tgt = str(f.get("target", "")).replace("|", "/")
-        msg = str(f.get("message", "")).replace("|", "/")
-        lines.append(f"| {sev} | {chk} | {tgt} | {msg} |")
-    if len(findings) > 60:
-        lines += ["", f"… и ещё {len(findings) - 60} замечаний (полный список — кнопкой выгрузки xlsx)."]
-    return "\n".join(lines)
-
-
 async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     """Режим «Свободный»: прямой вызов LLM БЕЗ ретрива (ответ из знаний модели) + мягкая
     плашка. Изолирован — RAG-конвейер не задействуется. Стримит токены, если token_sink задан."""
@@ -3220,14 +3162,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         raise HTTPException(400, "Empty question")
     t_request_start = time.time()
 
-    # W16.2/W16.3: команды задачника и заметок — детерминированно (regex+SQL, без LLM
-    # и до admission: «поставь задачу…»/«запомни…» обязаны работать даже при memory-guard).
-    from proxy.services.memory_service import maybe_handle_memory_command
-    from proxy.services.task_service import maybe_handle_task_command
-    from proxy.services.field_intake_service import maybe_handle_field_command
-    from proxy.services.decision_service import maybe_handle_decision_command
-
-    pid = req.project_id or 0  # Q3: режим объекта → задачи/объёмы/заметки/решения привязываются к нему
+    pid = req.project_id or 0
 
     # v0.21: нормализованная ОБЛАСТЬ ПОИСКА (snapshot для trace/истории; явный ui-scope управляет ретривом).
     from proxy.services.scope_service import resolve_scope
@@ -3251,15 +3186,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         resolve as _resolve_profile, route_source_for_channel)
     _resolution = _resolve_profile(mode=req.mode, question=req.question)
     _PROFILE = _resolution.profile_id
-    # «Мины детерминации vs инструменты»: при router_primary (дефолт ON) keyword-МИНЫ, перехватывавшие
-    # descriptive-текст (mail/project_summary/clarification/scope_clar/autonote/каскад), выключены —
-    # понимание делает LLM-роутер, ответ собирает RAG (стрим). А ИНСТРУМЕНТЫ (table-сумма/reconcile/
-    # clause/цена/гэсн/задача/память/поле) РАБОТАЮТ — но вызываются по ИНТЕНТУ роутера (_rt), не keyword.
-    from proxy.services.agent_router_service import router_primary as _router_primary
-    _rp = _router_primary()
-    _rt = ""  # имя инструмента по версии LLM-роутера (для in-flow гейта table/reconcile/clause)
-    _router_down = False   # роутер-LLM недоступен (таймаут/сеть/5xx) ≠ осознанный «none»
-    _rp_eff = _rp          # эффективный router-primary: роутер упал → False → легаси детерм.-каскад
+    # Model-final-only invariant: свободный запрос не может завершиться ответом
+    # regex/SQL/Python обработчика. Код читает, ищет, считает и проверяет внутри
+    # evidence/tool loop; видимый ответ формулирует модель.
     _has_read_attachment = bool(req.attachment_context)
 
     def _profile_route(channel: str, operation: str | None, *,
@@ -3352,84 +3281,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             },
         )
 
-    # ── Unified Construction Harness v0.3 (feature-flag LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED,
-    # OFF дефолт). В обычном чате харнесс больше не имеет права становиться visible final:
-    # модель должна получить источники/инструменты и ответить сама. Для старого smoke-контракта
-    # оставлен явный opt-in LES_UNIFIED_CONSTRUCTION_HARNESS_FINAL_ENABLED=1.
-    # ВАЖНО: импорт unified-харнесса ТОЛЬКО при включённом флаге — иначе в рантайме (где unified-стек
-    # не задеплоен, флаг OFF) каждый /chat падал бы ModuleNotFoundError. env-проверка ДО импорта +
-    # try/except: флаг OFF или модуль отсутствует → старый RAG-путь (поведение прежнее).
-    _uns_on = (
-        os.getenv("LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
-        and _env_bool("LES_UNIFIED_CONSTRUCTION_HARNESS_FINAL_ENABLED", False)
-    )
-    if _PROFILE in ("auto", "grounded_rag") and _uns_on:
-        try:
-            from proxy.services.unified_construction_harness_service import (
-                unified_enabled, run_unified_construction_harness_async, compose_unified_answer)
-        except ModuleNotFoundError:
-            unified_enabled = None
-        if unified_enabled and unified_enabled():
-            _uds = list(req.dataset_ids or [])
-            if not _uds and pid:
-                try:
-                    from proxy.services.project_service import project_dataset_ids
-                    _uds = await asyncio.to_thread(project_dataset_ids, pid) or []
-                except Exception:  # noqa: BLE001
-                    _uds = []
-            # v0.10: async vector/mail замыкания — только при РЕАЛЬНОМ backend (есть list_datasets);
-            # offline/test-backend → fn=None → честный unavailable (не фейк, не краш).
-            _backend = getattr(state, "backend", None)
-            _vector_fn = _mail_fn = None
-            if _backend is not None and hasattr(_backend, "list_datasets"):
-                async def _vector_fn(_q, _dsids, _b=_backend):  # noqa: E306
-                    _r = await retrieve_chat_chunks(
-                        question=_q, dataset_ids=_dsids, rag_backend=_b, reranker_enabled=False,
-                        reranker_available=state.reranker_available, reranker_cls=state.reranker_cls,
-                        mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"), logger=logger,
-                        llm_semaphore=state.llm_semaphore, return_trace=False)
-                    return getattr(_r, "chunks", _r)
-
-                async def _mail_fn(_q, _b=_backend):  # noqa: E306
-                    return await maybe_answer_mail_query(_q, _b)
-            _ures = await run_unified_construction_harness_async(
-                req.question, project_id=pid, dataset_ids=_uds, vector_fn=_vector_fn, mail_fn=_mail_fn)
-            if _ures is not None:   # поддержанный intent → честный evidence-ответ (вкл. MISSING)
-                _ad = _ures.answer_data or {}
-                _intent = (_ad.get("route") or {}).get("intent", _ad.get("intent", "construction"))
-                # auto-профиль: харнесс сам выбрал intent словарём/scope → keyword (не «pending»).
-                _resolution.refine(route_source="keyword", channel="unified_construction_harness",
-                                   operation=_intent)
-                _reply = _mode_reply(compose_unified_answer(_ures), _intent,
-                                     "unified_construction_harness", crag="EVIDENCE")
-                _ev = {b.type.value: len(b.items) for b in _ures.evidence_blocks}
-                _astat = _ad.get("adapter_statuses", {})
-                # v0.10 observability: tier'ы + статус адаптеров (parquet/lexical/vector/mail/workbook)
-                _reply["query_route"]["version"] = "unified_construction_harness_v0_10"
-                _reply["query_route"]["intent"] = _intent
-                _reply["query_route"]["source_scope"] = _ad.get("source_scope", "")
-                _reply["query_route"]["provenance"] = _ad.get("provenance", "")
-                _reply["total_status"] = _ures.total_status
-                _reply["evidence_summary"] = _ev
-                _reply["sources"] = list(_ures.sources or [])
-                _reply["unified_trace"] = {
-                    "version": "unified_construction_harness_v0_10", "intent": _intent,
-                    "source_scope": _ad.get("source_scope", ""), "query_terms": _ad.get("query_terms", []),
-                    "dataset_scope": _uds, "needs_scope": bool(_ad.get("needs_scope")),
-                    "searched_tiers": _ad.get("searched_tiers", []), "adapter_statuses": _astat,
-                    "adapter_warnings": _ad.get("adapter_warnings", []) + list(_ures.warnings or []),
-                    "tools": [t.get("tool") for t in (_ures.tool_trace or [])],
-                    "sources_count": len(_ures.sources or []), "evidence": _ev,
-                    "blockers_count": sum(len(it.blockers) for b in _ures.evidence_blocks for it in b.items),
-                    "total_status": _ures.total_status,
-                }
-                return _reply
-
-    if _PROFILE == "normcontrol":
-        # Нормоконтроль документов проекта (формальный, без LLM) → таблица замечаний.
-        answer = await _run_project_normcontrol(req, pid)
-        return _mode_reply(answer, "normcontrol", "review_mode")
-
     if _PROFILE == "free_llm":
         # Свободный: прямой LLM БЕЗ ретрива (отвечает из своих знаний) + мягкая плашка.
         # Изолированный путь — RAG-конвейер не трогаем.
@@ -3449,28 +3300,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             )
 
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
-        if _auto_estimate_work and _PROFILE == "auto":
-            from proxy.smeta_core.application import run_smeta_workflow
-
-            harness_question = _smeta_harness_question(req)
-            hres = await asyncio.to_thread(run_smeta_workflow, harness_question, _harness_complete)
-            answer = _format_harness(hres)
-            artifact = _format_harness_artifact(hres)
-            trace = {
-                "mode": "smeta",
-                "model_rag_only": False,
-                "smeta_dialog_state": _smeta_dialog_state(hres),
-            }
-            return _mode_reply(
-                answer,
-                "estimate_harness_auto_work",
-                "harness_mode",
-                extra={
-                    **hres,
-                    "artifact": artifact,
-                    "retrieval_trace": trace,
-                },
-            )
         if req.attachment_id and _smeta_request_needs_lsr_output(req.question):
             document_result = await run_smeta_document_application(
                 attachment_id=req.attachment_id,
@@ -3513,152 +3342,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             extra=direct_result.extra,
         )
 
-    from proxy.services.asbuilt_chat_service import maybe_handle_asbuilt_query  # приёмка ИД-сканов
-    from proxy.services.les_md_chat_service import maybe_handle_les_md_query  # LES.md: пойми папку
-    from proxy.services.project_registry_chat_service import (  # реестр проектов / документации
-        maybe_handle_registry_query, maybe_handle_document_registry)
-    from proxy.services.preset_chat_service import maybe_handle_preset_query  # режим local/cloud/mix
-    from proxy.services.glossary_chat_service import maybe_handle_glossary_query  # глоссарий: что такое X
-    from proxy.services.smeta_chat_service import maybe_handle_smeta_query  # смета: цена/КАЦ/стеснённость
-    from proxy.services.help_chat_service import maybe_handle_help_query  # помощь: как спрашивать
-
-    # Детерминированные каналы по порядку (regex+SQL, 0 LLM): первый сработавший — ответ.
-    _det_channels = (
-        ("tasks", lambda: maybe_handle_task_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid)),
-        ("preset", lambda: maybe_handle_preset_query(req.question, project_id=pid)),
-        ("asbuilt", lambda: maybe_handle_asbuilt_query(req.question, project_id=pid)),
-        ("les_md", lambda: maybe_handle_les_md_query(req.question, project_id=pid)),
-        # v0.17: «реестр документации» — scoped (нет scope → actionable MISSING; есть → RAG по объекту),
-        # ПЕРЕД глобальным registry, чтобы документный запрос не уходил в «Реестр проектов ЛЕС».
-        ("doc_registry", lambda: maybe_handle_document_registry(
-            req.question, project_id=pid, dataset_filter=req.dataset_filter or "",
-            dataset_ids=(req.dataset_ids or _scope_snap.get("resolved_dataset_ids")))),
-        ("registry", lambda: maybe_handle_registry_query(req.question, project_id=pid)),
-        ("glossary", lambda: maybe_handle_glossary_query(req.question, project_id=pid, dataset_filter=req.dataset_filter or "")),
-        ("smeta", lambda: maybe_handle_smeta_query(req.question, project_id=pid)),
-        ("help", lambda: maybe_handle_help_query(req.question, project_id=pid)),
-        ("field", lambda: maybe_handle_field_command(req.question, project_id=pid)),
-        ("decision", lambda: maybe_handle_decision_command(req.question, project_id=pid)),  # W17.4
-        ("memory", lambda: maybe_handle_memory_command(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)),
-    )
-    reply, channel = None, ""
-    _rejected_det: list[dict] = []   # v0.18: отклонённые policy детерминированные кандидаты (для trace)
-    _selected_scope_filter = req.dataset_filter or (
-        "__selected_dataset__" if (req.dataset_ids or _scope_snap.get("resolved_dataset_ids")) else ""
-    )
-    # Шаг 2 инверсии (docs/AUDIT_DETERMINISM): роутер ОСНОВНОЙ — LLM (локальная main, :8080)
-    # выбирает инструмент ПЕРЕД keyword-каскадом. За флагом LES_ROUTER_PRIMARY; none/сбой/таймаут →
-    # каскад/RAG (каскад сохранён фолбэком, обратимо). Роутер-бенч = 100% локально.
-    # Режим «РАГ» (явно выбран): форсим заземлённый RAG — пропускаем роутер/каскад/автозаметку,
-    # чтобы ничто не увело запрос в детерминированный канал. reply=None → дальше в RAG-конвейер.
-    from proxy.services.agent_router_service import maybe_agent_route, router_primary, route_with_name
-    if _PROFILE != "grounded_rag" and not (_has_read_attachment and _PROFILE == "auto"):
-        if _rp:
-            # route_with_name: имя инструмента + результат handler'а. Имя (_rt) гейтит in-flow
-            # инструменты без handler'а (table_agg/clause/reconcile исполняются ниже, где есть данные).
-            _rt, reply = route_with_name(req.question, project_id=pid)
-            if _rt == "unavailable":
-                # Роутер-LLM недоступен (таймаут/сеть/5xx) — это НЕ осознанный «none». Деградируем в
-                # легаси детерм.-каскад: mail/table/scope/glossary отвечают БЕЗ LLM, а route_source у
-                # каждого канала остаётся ЧЕСТНЫМ (regex/keyword) — не врём «llm_router». Маркер «упал»
-                # пишем в trace. См. docs/ALGO-routing.md §«Фолбэк при недоступном роутере».
-                _router_down = True
-                _rt = ""
-                _rp_eff = _rp and not _router_down   # → False: ниже работают _det_channels + keyword-гейты
-                _scope_snap.setdefault("warnings", []).append("router_unavailable_cascade_fallback")
-            elif reply is not None:
-                from proxy.services.deterministic_policy_service import can_return_deterministic_final
-                _ok, _why = can_return_deterministic_final(
-                    _rt, req.question, project_id=pid, dataset_filter=_selected_scope_filter,
-                    candidate=reply)
-                if _ok:
-                    channel = "agent"
-                else:
-                    _rejected_det.append({"channel": _rt, "accepted": False, "reject_reason": _why})
-                    reply = None
-        # ИНВЕРСИЯ (AUDIT_DETERMINISM, no-determinism-in-chat-directive): keyword-каскад — ТОЛЬКО
-        # legacy-фолбэк. В режиме router_primary (дефолт ON) понимание делает LLM-роутер выше; его
-        # «none» = это RAG-вопрос → НЕ запускаем гейты на свободный текст, уступаем дорогу RAG.
-        if reply is None and not _rp_eff:
-            # v0.18 DeterministicFinalPolicy: кандидат-ответ детерминированного канала принимается final
-            # ТОЛЬКО при явном намерении (см. deterministic_policy_service). Иначе — отклоняем, пишем в
-            # trace и уступаем дорогу RAG (legacy-канал не перехватывает проектный/descriptive/scoped вопрос).
-            from proxy.services.deterministic_policy_service import can_return_deterministic_final
-            for _ch, _fn in _det_channels:
-                _cand = _fn()
-                if _cand is None:
-                    continue
-                _ok, _why = can_return_deterministic_final(
-                    _ch, req.question, project_id=pid, dataset_filter=_selected_scope_filter, candidate=_cand)
-                if not _ok:
-                    _rejected_det.append({"channel": _ch, "accepted": False, "reject_reason": _why})
-                    continue
-                reply = _cand
-                channel = _ch
-                break
-        # Авто-заметки: утверждение-факт (не вопрос/команда) ЛЕС запоминает сам. 0 LLM.
-        if reply is None and not _rp_eff:
-            from proxy.services.memory_service import maybe_autonote
-            reply = maybe_autonote(req.question, dataset_filter=req.dataset_filter or "", project_id=pid, output_directive=req.output_directive)
-            if reply is not None:
-                channel = "memory"
-        # Ярус 2 (флаг LES_AGENT_LOOP): чат сам выбирает инструмент, если regex не поймал.
-        # В режиме router_primary роутер УЖЕ отработал выше — не зовём повторно.
-        if reply is None and not _rp:
-            reply = maybe_agent_route(req.question, project_id=pid)
-            if reply is not None:
-                channel = "agent"
-        # v0.22 был финальным стопом: проектный запрос при scope=all → "выбери область".
-        # Model-first v0.286: это только warning в trace. Не блокируем RAG/LLM, потому что иначе
-        # обычные вопросы вроде "расскажи про котельную" вообще не доходят до модели.
-        if reply is None and not _rp_eff and _scope_snap.get("scope_type") == "all":
-            from proxy.services.scope_service import needs_project_scope
-            if needs_project_scope(req.question):
-                _scope_snap.setdefault("warnings", []).append("scope_all_for_project_query")
-    if reply is not None:
-        det_route = _profile_route(channel, reply.get("operation"),
-                                   base={"agent_tool": reply.get("agent_tool"), "scope": _scope_snap})
-        det_sources = reply.get("sources") or []
-        det_trace = reply.get("retrieval_trace") or {}
-        if _rejected_det:                       # v0.18: что policy отклонила до принятого кандидата
-            det_route["rejected_deterministic"] = _rejected_det
-        det_hid = None
-        try:  # детерм. ответы тоже в историю (видны в Совушке); сбой записи не ломает ответ
-            det_history_sources = [
-                str(s.get("source_ref") or s.get("ref") or s.get("path") or s)
-                if isinstance(s, dict) else str(s)
-                for s in det_sources
-            ]
-            det_hid = save_chat_history(
-                question=req.question, answer=reply["answer"], sources=det_history_sources,
-                crag_status="DETERMINISTIC", latency_sec=0.0, tokens=0,
-                session_id=req.session_id, query_route=det_route, retrieval_trace=det_trace, validation_enabled=False,
-            )
-        except Exception as _hist_err:
-            logger.warning("[HISTORY] deterministic save failed: %s", _hist_err)
-        payload = {
-            "answer": reply["answer"],
-            "crag_status": "DETERMINISTIC",
-            "sources": det_sources,
-            "history_id": det_hid,
-            "query_route": det_route,
-            "retrieval_trace": det_trace,
-            "validation": {"enabled": False, "reason": f"deterministic_{channel}_command"},
-            "versions": _version_stamp(),
-        }
-        for key in ("provenance", "defense", "evidence_summary", "total_status"):
-            if key in reply:
-                payload[key] = reply[key]
-        return payload
-
-    # W16.1/W16.3: рабочая память — релевантные заметки оператора и прошлые удачные
-    # ответы (лексический recall, без LLM). Считается до clarification: проектные
-    # вопросы («корпус Б») часто режутся уточнением, а заметка как раз про них.
-    try:
-        memory_block = recall_context(req.question)
-    except Exception as err:
-        logger.warning("[MEMORY] recall failed: %s", err)
-        memory_block = ""
+    # Операторские заметки не создаются, не читаются и не подмешиваются в чат.
+    # Контекст ниже содержит только явное вложение, LES.md, typed dataset passport
+    # и историю текущей сессии, которую читает модель.
+    memory_block = ""
     if req.attachment_context:
         attachment_block = (
             "Контекст прикреплённого файла (read-mode, не индекс):\n"
@@ -3711,149 +3398,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 logger.info("[PROJECT] режим объекта %s → датасеты %s", req.project_id, scope)
         except Exception as proj_err:
             logger.warning("[PROJECT] scope resolve failed: %s", proj_err)
-
-    # W11.4b: сверка ВОР↔КС-2↔смета↔ИД — задача чата, не кнопка. До clarification,
-    # иначе «проверь соответствие…» перехватит уточняющий гейт (broad_review). 0 LLM.
-    from proxy.services.reconcile_chat_service import answer_reconcile_query, is_reconcile_query
-    from proxy.services.reconcile_service import doc_type_label
-    if ((_rt == "reconcile") if _rp_eff else is_reconcile_query(req.question)):
-        t_rec_start = time.time()
-        try:
-            rec_names = await _dataset_name_map(rag_backend)
-            rec = await asyncio.to_thread(
-                answer_reconcile_query, req.question,
-                dataset_ids=effective_dataset_ids, dataset_names=rec_names,
-            )
-        except Exception as rec_err:
-            logger.warning("[RECONCILE] deterministic answer skipped: %s", rec_err)
-            rec = None
-        if rec is not None:
-            t_rec = time.time() - t_rec_start
-            status = "VERIFIED"
-            state.crag_stats["verified"] += 1
-            state.chat_metrics["crag_pass"] += 1
-            rec_answer = rec["answer"] + (f"\n\n{memory_block}" if memory_block else "")
-            rec_route = _profile_route("reconcile", "reconcile")
-            rec_trace = {
-                "mode": "deterministic_reconcile",
-                "vector_count": 0, "lexical_count": 0,
-                "merged_count": rec["totals"]["lines"], "retry_count": 0,
-                "quality_status": "deterministic_reconcile",
-                "reconcile": {"totals": rec["totals"], "doc_types": rec["doc_types"]},
-            }
-            history_id = None
-            try:
-                history_id = save_chat_history(
-                    question=req.question, answer=rec_answer,
-                    sources=[doc_type_label(dt) for dt in rec["doc_types"]],
-                    crag_status=status, latency_sec=t_rec, tokens=0,
-                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter="RECONCILE",
-                    resolved_dataset_ids=rec["dataset_ids"], resolved_dataset_names=[],
-                    source_dataset_ids=rec["dataset_ids"], source_dataset_names=[],
-                    query_route=rec_route,
-                    retrieval_trace=rec_trace, cache_type="deterministic_reconcile",
-                    validation_enabled=False, success=1,
-                )
-            except Exception as db_err:
-                logger.warning("[CHAT] History save error: %s", db_err)
-            return {
-                "answer": rec_answer, "crag_status": status,
-                "sources": [doc_type_label(dt) for dt in rec["doc_types"]],
-                "effective_dataset_filter": "RECONCILE",
-                "query_route": rec_route,
-                "retrieval_trace": rec_trace, "cache": "deterministic_reconcile",
-                "validation": {"enabled": False, "reason": "deterministic_reconcile"},
-                "reconcile": {"totals": rec["totals"], "doc_types": rec["doc_types"]},
-                "history_id": history_id,
-            }
-
-    # Нормоконтроль комплекта (СПДС, ГОСТ Р 21.101) — чат-инструмент: LLM-роутер выбрал doc_review,
-    # ЛИБО оператор включил режим-чип «Нормоконтроль» (mode=doc_review). Исполняем на скоупном
-    # датасете (RAG-led review). Проверки/числа считает код, вердикт — за инженером.
-    _dr_mode = str(getattr(req, "mode", "") or "").lower() == "doc_review"
-    if _dr_mode or (_rp_eff and _rt == "doc_review"):
-        from proxy.services import doc_review_service as _drs
-        _dr_ds = effective_dataset_ids[0] if effective_dataset_ids else None
-        if not _dr_ds:
-            _dr_route = _profile_route("doc_review", "doc_review")
-            return {
-                "answer": "Выбери комплект (датасет) в шапке чата — нормоконтроль идёт по конкретному "
-                          "комплекту. Затем повтори: «проверь комплект по ГОСТ Р 21.101».",
-                "crag_status": "NEEDS_SCOPE", "sources": [],
-                "effective_dataset_filter": "DOC_REVIEW", "query_route": _dr_route,
-                "retrieval_trace": {"mode": "doc_review", "quality_status": "needs_scope"},
-                "validation": {"enabled": False, "reason": "doc_review_needs_scope"},
-            }
-        _t_dr = time.time()
-        try:
-            _dr_map, _dr_items = await asyncio.to_thread(_drs.review_dataset, _dr_ds)
-        except Exception as _dr_err:
-            logger.warning("[DOC_REVIEW] skipped: %s", _dr_err)
-            _dr_map = _dr_items = None
-        if _dr_items is not None:
-            _dr_text = _drs.review_to_chat_text(_dr_items, _dr_map)
-            _dr_sum = _drs.review_summary(_dr_items)
-            _dr_json = _drs.review_to_json(_dr_items, _dr_map)
-            _dr_route = _profile_route("doc_review", "doc_review")
-            _dr_trace = {"mode": "doc_review", "vector_count": 0, "lexical_count": 0,
-                         "merged_count": _dr_sum["total"], "retry_count": 0,
-                         "quality_status": "doc_review", "doc_review": _dr_sum,
-                         "defense_status": "manual_required"}
-            _dr_hist = None
-            try:
-                _dr_hist = save_chat_history(
-                    question=req.question, answer=_dr_text, sources=[_dr_map.standard],
-                    crag_status="VERIFIED", latency_sec=time.time() - _t_dr, tokens=0,
-                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter="DOC_REVIEW",
-                    resolved_dataset_ids=[_dr_ds], resolved_dataset_names=[],
-                    source_dataset_ids=[_dr_ds], source_dataset_names=[],
-                    query_route=_dr_route, retrieval_trace=_dr_trace,
-                    cache_type="doc_review", validation_enabled=False, success=1,
-                )
-            except Exception as _db_err:
-                logger.warning("[CHAT] History save error: %s", _db_err)
-            return {
-                "answer": _dr_text, "crag_status": "VERIFIED", "sources": [_dr_map.standard],
-                "effective_dataset_filter": "DOC_REVIEW", "query_route": _dr_route,
-                "retrieval_trace": _dr_trace, "cache": "doc_review",
-                "validation": {"enabled": False, "reason": "doc_review"},
-                "doc_review": _dr_json,
-                "defense": _dr_json.get("defense"),
-                "history_id": _dr_hist,
-            }
-
-    clarification = build_clarification_decision(
-        req.question,
-        dataset_ids=effective_dataset_ids,
-        dataset_filter=req.dataset_filter,
-    )
-    if not _rp and clarification.needs_clarification and not _has_read_attachment:
-        logger.info(
-            "[CLARIFY] reasons=%s route=%s filter=%s",
-            clarification.classification.reasons,
-            clarification.classification.route_reason,
-            clarification.classification.dataset_filter,
-        )
-        clar_answer = clarification.answer
-        if memory_block:
-            clar_answer = f"{clar_answer}\n\n{memory_block}"
-        clar_route = _profile_route(
-            "scope_clarification",
-            "scope_clarification",
-            base={"scope": _scope_snap},
-        )
-        return {
-            "answer": clar_answer,
-            "crag_status": "DETERMINISTIC",
-            "sources": [],
-            "effective_dataset_filter": clarification.classification.dataset_filter,
-            "query_route": clar_route,
-            "clarification": clarification.payload(),
-            "clarifying_questions": clarification.questions,
-            "suggested_filters": clarification.suggested_filters,
-        }
 
     query_intent = route_query(
         req.question,
@@ -3938,118 +3482,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     except Exception as err:  # навигационная память не должна блокировать RAG
         logger.warning("[CONTEXT_MEMORY] prompt block skipped: %s", err)
 
-    # W11.10: «сделай ВОР из спецификации (Ф9)» — детерминированное преобразование
-    # позиций спецификации в строки работ (объём = кол-во, глагол по словарю). 0 LLM.
-    from proxy.services.spec_to_bor_service import (
-        format_spec_bor_answer, generate_spec_bor, is_spec_to_bor_query,
-    )
-    if is_spec_to_bor_query(req.question) and _dataset_ids:
-        t_spec = time.time()
-        spec_res = None
-        spec_ds = ""
-        try:
-            for ds in _dataset_ids:
-                r = await asyncio.to_thread(generate_spec_bor, ds, storage_root=Path("./storage/datasets"))
-                if r["bor_lines"]:
-                    spec_res, spec_ds = r, ds
-                    break
-        except Exception as spec_err:
-            logger.warning("[SPEC_BOR] deterministic spec→bor skipped: %s", spec_err)
-        if spec_res and spec_res["bor_lines"]:
-            label = (dataset_name_by_id.get(spec_ds, "") or "")
-            answer = format_spec_bor_answer(spec_res, dataset_label=label)
-            if memory_block:
-                answer = f"{answer}\n\n{memory_block}"
-            state.crag_stats["verified"] += 1
-            state.chat_metrics["crag_pass"] += 1
-            spec_route = _profile_route("spec_to_bor", "spec_to_bor")
-            spec_trace = {
-                "mode": "deterministic_spec_to_bor", "vector_count": 0, "lexical_count": 0,
-                "merged_count": spec_res["bor_lines"], "retry_count": 0,
-                "quality_status": "deterministic_spec_to_bor",
-                "spec_to_bor": {"bor_lines": spec_res["bor_lines"], "source_rows": spec_res["source_rows"]},
-            }
-            history_id = None
-            try:
-                history_id = save_chat_history(
-                    question=req.question, answer=answer, sources=[label or spec_ds],
-                    crag_status="VERIFIED", latency_sec=time.time() - t_spec, tokens=0,
-                    session_id=req.session_id, requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter=effective_dataset_filter,
-                    resolved_dataset_ids=[spec_ds], resolved_dataset_names=[label] if label else [],
-                    source_dataset_ids=[spec_ds], source_dataset_names=[label] if label else [],
-                    query_route=spec_route,
-                    retrieval_trace=spec_trace, cache_type="deterministic_spec_to_bor",
-                    validation_enabled=False, success=1,
-                )
-            except Exception as db_err:
-                logger.warning("[CHAT] History save error: %s", db_err)
-            return {
-                "answer": answer, "crag_status": "VERIFIED", "sources": [label or spec_ds],
-                "effective_dataset_filter": effective_dataset_filter,
-                "query_route": spec_route,
-                "retrieval_trace": spec_trace, "cache": "deterministic_spec_to_bor",
-                "validation": {"enabled": False, "reason": "deterministic_spec_to_bor"},
-                "spec_to_bor": spec_trace["spec_to_bor"], "history_id": history_id,
-            }
-
     # W11.15 used to auto-hijack broad chat questions ("расскажи про проект") into a
     # deterministic project register. That made LES look like a file inventory instead of a
     # notebook/RAG synthesis. Project summary stays available as an explicit command/MCP tool,
     # but normal chat questions now continue into retrieval + model.
-
-    # Состав/перечень разделов документа: семантика не собирает структуру (заголовки
-    # размазаны по чанкам, единого чанка нет). Детерминированно извлекаем нумерованную
-    # структуру из полного текста документа — 0 LLM. Additive: не вышло → обычный RAG.
-    from proxy.services.document_outline_service import (
-        is_outline_query, fetch_doc_text, parse_outline, format_outline,
-    )
-    if is_outline_query(req.question) and len(resolved_dataset_names) == 1:
-        try:
-            _ds = resolved_dataset_names[0]
-            _txt, _doc = await asyncio.to_thread(
-                fetch_doc_text, _ds,
-                qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
-                collection=os.getenv("RAG_COLLECTION_NAME", "les_rag"),
-            )
-            _items = parse_outline(_txt, capital_only=True)
-            if len(_items) >= 3:
-                _ans = format_outline(_items, _doc)
-                if memory_block:
-                    _ans = f"{_ans}\n\n{memory_block}"
-                logger.info("[OUTLINE] детерминированная структура %s: %s пунктов", _doc, len(_items))
-                _outline_route = _profile_route("outline", "document_outline")
-                # Детерминированный ответ — тоже ответ: пишем в историю (раньше outline-роут
-                # возвращался мимо хвоста save_chat_history → «история не пишется»).
-                _outline_history_id = None
-                try:
-                    _outline_history_id = save_chat_history(
-                        question=req.question,
-                        answer=_ans,
-                        sources=[_doc],
-                        crag_status="DETERMINISTIC",
-                        latency_sec=0.0,
-                        tokens=0,
-                        session_id=req.session_id,
-                        requested_dataset_filter=req.dataset_filter,
-                        resolved_dataset_ids=_dataset_ids,
-                        resolved_dataset_names=resolved_dataset_names,
-                        source_dataset_names=[_ds],
-                        query_route=_outline_route,
-                        validation_enabled=False,
-                    )
-                except Exception as _hist_err:
-                    logger.warning("[OUTLINE] history save error: %s", _hist_err)
-                return {
-                    "answer": _ans,
-                    "crag_status": "DETERMINISTIC",
-                    "sources": [{"doc_name": _doc, "dataset_name": _ds}],
-                    "query_route": _outline_route,
-                    "validation": {"enabled": False, "reason": "deterministic_document_outline"},
-                    "history_id": _outline_history_id,
-                }
-        except Exception as _outline_err:
-            logger.warning("[OUTLINE] fallback to RAG: %s", _outline_err)
 
     query_route_payload = _query_route_payload(query_intent, effective_dataset_filter, kot_decision)
     query_route_payload["scope"] = _scope_snap   # v0.21: где реально искали (snapshot для trace/истории)
@@ -4138,215 +3574,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "evidence": "source_map+project_inventory_artifact",
         }
 
-    if not _rp_eff and (query_intent.channel == "mail" or effective_dataset_filter == "MAIL"):
-        t_mail_start = time.time()
-        try:
-            mail_result = await maybe_answer_mail_query(req.question, rag_backend)
-        except Exception as mail_err:
-            logger.warning("[EJIK] deterministic mail answer skipped: %s", mail_err)
-            mail_result = None
-        if mail_result:
-            t_mail = time.time() - t_mail_start
-            status = "VERIFIED" if mail_result.total > 0 else "NO_DATA"
-            if status == "VERIFIED":
-                state.crag_stats["verified"] += 1
-                state.chat_metrics["crag_pass"] += 1
-            else:
-                state.crag_stats["no_data"] += 1
-                state.chat_metrics["crag_fail"] += 1
-            state.chat_metrics["latency_search"].append(t_mail)
-            state.chat_metrics["latency_gen"].append(0.0)
-            state.chat_metrics["tokens"].append(0)
-            for key in ("latency_search", "latency_gen", "tokens"):
-                state.chat_metrics[key] = state.chat_metrics[key][-100:]
-            mail_trace = {
-                "mode": "mail",
-                "vector_count": 0,
-                "lexical_count": 0,
-                "merged_count": mail_result.total,
-                "retry_count": 0,
-                "quality_status": "deterministic_mail",
-                "mail": mail_result.payload(),
-            }
-            history_id = None
-            try:
-                history_id = save_chat_history(
-                    question=req.question,
-                    answer=mail_result.answer,
-                    sources=mail_result.sources,
-                    crag_status=status,
-                    latency_sec=t_mail,
-                    tokens=0,
-                    session_id=req.session_id,
-                    requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter=effective_dataset_filter,
-                    resolved_dataset_ids=_dataset_ids,
-                    resolved_dataset_names=resolved_dataset_names,
-                    source_dataset_ids=_dataset_ids,
-                    source_dataset_names=resolved_dataset_names,
-                    query_route=query_route_payload,
-                    retrieval_trace=mail_trace,
-                    cache_type="deterministic_mail",
-                    validation_enabled=False,
-                    success=1 if status == "VERIFIED" else 0,
-                )
-            except Exception as db_err:
-                logger.warning("[CHAT] History save error: %s", db_err)
-            return {
-                "answer": mail_result.answer,
-                "crag_status": status,
-                "sources": mail_result.sources,
-                "effective_dataset_filter": effective_dataset_filter,
-                "query_route": query_route_payload,
-                "retrieval_trace": mail_trace,
-                "cache": "deterministic_mail",
-                "validation": {"enabled": False, "reason": "deterministic_mail"},
-                "mail_query": mail_result.payload(),
-                "history_id": history_id,
-            }
-
-    if query_intent.channel == "field":
-        from proxy.services.field_intake_service import maybe_answer_field_volume_query
-
-        t_field_start = time.time()
-        try:
-            field_result = await asyncio.to_thread(maybe_answer_field_volume_query, req.question)
-        except Exception as field_err:
-            logger.warning("[FIELD] deterministic field answer skipped: %s", field_err)
-            field_result = None
-        if field_result is not None:
-            t_field = time.time() - t_field_start
-            status = "VERIFIED" if field_result["total_entries"] > 0 else "NO_DATA"
-            if status == "VERIFIED":
-                state.crag_stats["verified"] += 1
-                state.chat_metrics["crag_pass"] += 1
-            else:
-                state.crag_stats["no_data"] += 1
-                state.chat_metrics["crag_fail"] += 1
-            state.chat_metrics["latency_search"].append(t_field)
-            state.chat_metrics["latency_gen"].append(0.0)
-            state.chat_metrics["tokens"].append(0)
-            for key in ("latency_search", "latency_gen", "tokens"):
-                state.chat_metrics[key] = state.chat_metrics[key][-100:]
-            field_trace = {
-                "mode": "field",
-                "vector_count": 0,
-                "lexical_count": 0,
-                "merged_count": field_result["total_entries"],
-                "retry_count": 0,
-                "quality_status": "deterministic_field",
-                "field": {"period": field_result["period"], "groups": len(field_result["rows"])},
-            }
-            history_id = None
-            try:
-                history_id = save_chat_history(
-                    question=req.question,
-                    answer=field_result["answer"],
-                    sources=["журнал полевых объёмов"],
-                    crag_status=status,
-                    latency_sec=t_field,
-                    tokens=0,
-                    session_id=req.session_id,
-                    requested_dataset_filter=req.dataset_filter,
-                    effective_dataset_filter="FIELD",
-                    resolved_dataset_ids=[],
-                    resolved_dataset_names=[],
-                    source_dataset_ids=[],
-                    source_dataset_names=[],
-                    query_route=query_route_payload,
-                    retrieval_trace=field_trace,
-                    cache_type="deterministic_field",
-                    validation_enabled=False,
-                    success=1 if status == "VERIFIED" else 0,
-                )
-            except Exception as db_err:
-                logger.warning("[CHAT] History save error: %s", db_err)
-            return {
-                "answer": field_result["answer"],
-                "crag_status": status,
-                "sources": ["журнал полевых объёмов"],
-                "effective_dataset_filter": "FIELD",
-                "query_route": query_route_payload,
-                "retrieval_trace": field_trace,
-                "cache": "deterministic_field",
-                "validation": {"enabled": False, "reason": "deterministic_field"},
-                "field_query": {"period": field_result["period"], "rows": field_result["rows"]},
-                "history_id": history_id,
-            }
-
     table_result = None
-    if ((_rt == "table_agg") if _rp_eff else (query_intent.channel == "table")) and _dataset_ids:
-        t_table_start = time.time()
-        table_chunks = parquet_ref_chunks_for_datasets(
-            _dataset_ids,
-            storage_root=Path("./storage/datasets"),
-        )
-        if not table_chunks:
-            try:
-                table_chunks = await rag_backend.retrieve_table_rows(dataset_ids=_dataset_ids)
-            except AttributeError:
-                table_chunks = []
-            except Exception as table_err:
-                logger.warning("[TABLE] direct table rows skipped: %s", table_err)
-                table_chunks = []
-        table_result = maybe_answer_table_query(
-            req.question,
-            table_chunks,
-            storage_root=Path("./storage/datasets"),
-        )
-        if table_result:
-            table_trace = {
-                "mode": "deterministic_table",
-                "vector_count": 0,
-                "lexical_count": 0,
-                "merged_count": len(table_chunks),
-                "retry_count": 0,
-                "quality_status": "deterministic_table",
-                "table_query": table_result.payload(),
-            }
-            return _table_query_response(
-                state=state,
-                question=req.question,
-                table_result=table_result,
-                chunks=table_chunks,
-                t_search=time.time() - t_table_start,
-                session_id=req.session_id,
-                requested_dataset_filter=req.dataset_filter,
-                effective_dataset_filter=effective_dataset_filter,
-                resolved_dataset_ids=_dataset_ids,
-                resolved_dataset_names=resolved_dataset_names,
-                dataset_name_by_id=dataset_name_by_id,
-                query_route_payload=query_route_payload,
-                retrieval_trace=table_trace,
-                cache_marker="deterministic_table",
-                use_validation=False,
-            )
-
-    if ((_rt == "clause") if _rp_eff else (query_intent.channel == "rag")) and _dataset_ids:
-        t_clause_start = time.time()
-        try:
-            clause_result = maybe_answer_clause_lookup(
-                req.question,
-                collection=getattr(rag_backend, "collection_name", ""),
-                dataset_ids=_dataset_ids,
-            )
-        except Exception as clause_err:
-            logger.warning("[CLAUSE] deterministic clause lookup skipped: %s", clause_err)
-            clause_result = None
-        if clause_result:
-            return _clause_lookup_response(
-                state=state,
-                question=req.question,
-                clause_result=clause_result,
-                t_search=time.time() - t_clause_start,
-                session_id=req.session_id,
-                requested_dataset_filter=req.dataset_filter,
-                effective_dataset_filter=effective_dataset_filter,
-                resolved_dataset_ids=_dataset_ids,
-                resolved_dataset_names=resolved_dataset_names,
-                dataset_name_by_id=dataset_name_by_id,
-                query_route_payload=query_route_payload,
-            )
 
     _gen_semaphore = generation_semaphore(state.llm_semaphore)
     admission = evaluate_chat_admission(

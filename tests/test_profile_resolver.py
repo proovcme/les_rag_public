@@ -67,6 +67,10 @@ def test_profile_carries_declarative_policy():
     assert free.grounded is False                  # вольный — без ретрива
     rag = resolve(mode="rag", question="x").profile
     assert rag.grounded is True                    # РАГ — заземлён
+    review = resolve(mode="review", question="x").profile
+    assert review.executor == "router"             # visible final формулирует модель
+    assert review.grounded is True
+    assert review.validation_policy == "require_citations"
 
 
 def test_as_trace_compact():
@@ -81,16 +85,16 @@ def test_as_trace_compact():
 # ── auto-путь: один контракт ProfileResolution для каскада/router/RAG (долг #2) ──
 
 def test_route_source_for_channel_honest():
-    # команда / regex-каналы / llm-router / keyword-каскад / неизвестный канал → fallback
+    # команда / model-tool-selector / retrieval-intent / неизвестный legacy-канал → fallback
     assert route_source_for_channel("command") == "command"
-    for ch in ("glossary", "registry", "tasks", "memory", "scope_clarification", "decision"):
-        assert route_source_for_channel(ch) == "regex", ch
     assert route_source_for_channel("agent") == "llm_router"
-    for ch in ("table", "mail", "rag", "reconcile", "spec_to_bor", "project_summary", "outline"):
+    for ch in ("table", "mail", "field", "rag"):
         assert route_source_for_channel(ch) == "keyword", ch
+    for ch in ("glossary", "registry", "tasks", "memory", "decision", "project_summary"):
+        assert route_source_for_channel(ch) == "fallback", ch
     assert route_source_for_channel("does_not_exist") == "fallback"
     assert route_source_for_channel("") == "fallback"
-    assert route_source_for_channel("GLOSSARY") == "regex"   # регистронезависимо
+    assert route_source_for_channel("RAG") == "keyword"   # регистронезависимо
 
 
 def test_every_known_channel_maps_to_valid_source():
@@ -108,19 +112,19 @@ def test_confidence_ladder():
     assert c("unknown") == 0.0
 
 
-def test_refine_keeps_profile_but_records_channel():
+def test_refine_keeps_profile_but_records_model_tool_channel():
     # auto-путь: профиль НЕ меняется (auto остаётся auto), фиксируется КАК принят маршрут.
     r = resolve(mode=None, question="что такое ОЖР")
-    out = r.refine(route_source=route_source_for_channel("glossary"),
-                   channel="glossary", operation="term_explain")
+    out = r.refine(route_source=route_source_for_channel("agent"),
+                   channel="agent", operation="term_explain")
     assert out is r                                  # чейнится, мутирует
     assert r.profile_id == "auto"                    # профиль не подменён
-    assert r.route_source == "regex"
-    assert r.channel == "glossary" and r.operation == "term_explain"
-    assert r.confidence == confidence_for_source("regex")
+    assert r.route_source == "llm_router"
+    assert r.channel == "agent" and r.operation == "term_explain"
+    assert r.confidence == confidence_for_source("llm_router")
     t = r.as_trace()
-    assert t["channel"] == "glossary" and t["operation"] == "term_explain"
-    assert t["route_source"] == "regex" and t["profile_id"] == "auto"
+    assert t["channel"] == "agent" and t["operation"] == "term_explain"
+    assert t["route_source"] == "llm_router" and t["profile_id"] == "auto"
 
 
 def test_refine_rag_fallback_vs_keyword():
@@ -162,20 +166,10 @@ def _mock_chat_state(chat_router):
         reranker_available=False, reranker_cls=None, current_mode={"mode": "chat"}))
 
 
-@pytest.mark.asyncio
-async def test_query_route_carries_honest_profile_for_glossary():
-    # auto-путь, regex-канал «glossary»: trace говорит ПРАВДУ о том, как принят маршрут,
-    # а не остаётся «pending»/«llm_router». Это и есть закрытие долга #2 (один контракт).
-    from proxy.routers import chat as chat_router
-    _mock_chat_state(chat_router)
-    resp = await chat_router.chat(
-        chat_router.ChatRequest(question="что такое ОЖР"), _user=object())
-    assert resp["crag_status"] == "DETERMINISTIC"
-    prof = resp["query_route"]["profile"]
-    assert prof["profile_id"] == "auto"
-    assert prof["route_source"] == "regex"
-    assert prof["channel"] == "glossary"
-    assert resp["versions"]["version_info"]["app_version"]
+def test_professional_legacy_channels_cannot_claim_deterministic_route():
+    for channel in ("glossary", "registry", "tasks", "memory", "decision", "project_summary"):
+        assert channel not in CHANNEL_SOURCES
+        assert route_source_for_channel(channel) == "fallback"
 
 
 @pytest.mark.asyncio

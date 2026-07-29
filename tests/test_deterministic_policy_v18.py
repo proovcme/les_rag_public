@@ -1,8 +1,4 @@
-"""v0.18 — DeterministicFinalPolicy: детерминированный final-ответ только при явном намерении.
-
-Класс-фикс взамен stopword-пластыря: glossary/registry не перехватывают проектные/descriptive/source-
-scoped вопросы. Glossary final только если термин ЛИТЕРАЛЬНО в запросе. Registry только точный глобальный.
-"""
+"""DeterministicFinalPolicy: professional visible final всегда принадлежит модели."""
 
 from pathlib import Path
 
@@ -19,17 +15,16 @@ from proxy.services import project_registry_chat_service as prc
 def test_deterministic_final_policy_rejects_project_descriptive_glossary():
     ok, why = P("glossary", "Расскажи про котельную на лесном 64?", project_id=2,
                 candidate={"concept": "ozr"})
-    assert ok is False and why == "matched_term_not_in_query"
+    assert ok is False and why == "professional_domain_requires_model_final"
 
 def test_policy_source_scoped_rejects_glossary():
     # литеральный термин есть, но не явное «что такое» + source-scoped → reject
     ok, why = P("glossary", "найди КАЦ в спецификации", candidate={"concept": "kac"})
-    assert ok is False and why == "source_scoped_query"
+    assert ok is False and why == "professional_domain_requires_model_final"
 
-def test_policy_explicit_term_with_context_not_blocked_by_scope():
-    # «что такое КАЦ в смете» — явное определение, «в смете» не должно блокировать
+def test_policy_explicit_term_still_requires_model_final():
     ok, why = P("glossary", "Что такое КАЦ в смете и из чего он формируется?", candidate={"concept": "kac"})
-    assert ok is True and why == "explicit_term_literal_present"
+    assert ok is False and why == "professional_domain_requires_model_final"
 
 def test_policy_command_channels_pass_through():
     assert P("tasks", "создай задачу проверить АОСР")[0] is True
@@ -75,18 +70,21 @@ def test_resolve_stopword_na_none():
 def test_fuzzy_long_phrase_does_not_resolve_to_ozhr():
     assert gl.maybe_handle_glossary_query("расскажи про объект на участке стройки") is None
 
-def test_explicit_ozhr_still_glossary():
-    assert gl.maybe_handle_glossary_query("что такое ОЖР")["concept"] == "ozr"
+def test_explicit_ozhr_is_typed_tool_evidence_not_visible_answer():
+    assert gl.maybe_handle_glossary_query("что такое ОЖР") is None
+    result = gl.glossary_tool_result("что такое ОЖР")
+    assert result["concept"] == "ozr"
+    assert "answer" not in result
+    assert result["evidence"]["source_ref"] == "config/domain/smeta_ontology.yaml"
 
-def test_explicit_kac_still_glossary():
-    assert gl.maybe_handle_glossary_query("что такое КАЦ")["concept"] == "kac"
+def test_explicit_kac_is_typed_tool_evidence():
+    assert gl.glossary_tool_result("что такое КАЦ")["concept"] == "kac"
 
-def test_explicit_lsr_still_glossary():
-    assert gl.maybe_handle_glossary_query("что такое ЛСР")["concept"] == "lsr"
+def test_explicit_lsr_is_typed_tool_evidence():
+    assert gl.glossary_tool_result("что такое ЛСР")["concept"] == "lsr"
 
-def test_rasskazhi_pro_exact_term_without_scope_allowed():
-    # «расскажи про КАЦ» — термин литерально присутствует, нет scope → допустимо
-    assert gl.maybe_handle_glossary_query("расскажи про КАЦ")["concept"] == "kac"
+def test_rasskazhi_pro_exact_term_is_typed_tool_evidence():
+    assert gl.glossary_tool_result("расскажи про КАЦ")["concept"] == "kac"
 
 
 # ── §5 project scope preempts glossary ────────────────────────────────────────────────────
@@ -97,9 +95,9 @@ def test_project_scope_preempts_glossary_for_descriptive_query():
     assert ok is False
 
 def test_explicit_term_works_even_with_project_scope():
-    # явное «что такое ОЖР» при выбранном проекте → глоссарий допустим (явное определение)
     ok, why = P("glossary", "что такое ОЖР", project_id=2, candidate={"concept": "ozr"})
-    assert ok is True
+    assert ok is False
+    assert why == "professional_domain_requires_model_final"
 
 
 # ── §6 registry deterministic ─────────────────────────────────────────────────────────────
@@ -108,17 +106,22 @@ def test_reestr_dokumentacii_routes_project_document_registry():
     assert prc.is_registry_query("составь реестр документации котельной") is False
     assert prc.is_document_registry_query("составь реестр документации котельной") is True
 
-def test_global_project_registry_only_exact():
+def test_global_project_registry_is_tool_evidence_not_code_final():
     for q in ("реестр проектов", "покажи реестр проектов", "какие проекты есть"):
-        assert P("registry", q, candidate={"operation": "registry"})[0] is True
+        assert P("registry", q, candidate={"operation": "registry"}) == (
+            False,
+            "professional_domain_requires_model_final",
+        )
 
 def test_project_registry_not_triggered_by_reestr_dokumentacii():
     ok, why = P("registry", "составь реестр документации котельной", candidate={"operation": "registry"})
-    assert ok is False and why == "not_global_registry_query"
+    assert ok is False and why == "professional_domain_requires_model_final"
 
 def test_no_scope_for_document_registry_actionable_missing():
     r = prc.maybe_handle_document_registry("составь реестр документации котельной", project_id=0, dataset_filter="")
     assert r and r["operation"] == "document_registry_no_scope"
+    assert r["status"] == "blocked" and r["error_code"] == "MISSING_SCOPE"
+    assert "answer" not in r
 
 def test_legacy_deterministic_does_not_preempt_unified_doc_registry():
     from proxy.services import agent_router_service as ar
@@ -128,11 +131,20 @@ def test_legacy_deterministic_does_not_preempt_unified_doc_registry():
 
 # ── trace records rejected candidate ──────────────────────────────────────────────────────
 
-def test_trace_records_rejected_deterministic_candidate():
+def test_chat_free_text_has_no_deterministic_visible_final():
     import inspect
     from proxy.routers import chat as chat_mod
     src = inspect.getsource(chat_mod)
-    assert "rejected_deterministic" in src and "can_return_deterministic_final" in src
+    assert "_det_channels" not in src
+    assert "maybe_autonote" not in src
+    assert "maybe_handle_memory_command" not in src
+    assert "deterministic save failed" not in src
+    assert "deterministic_mail" not in src
+    assert "deterministic_field" not in src
+    assert "deterministic_spec_to_bor" not in src
+    assert "deterministic_document_outline" not in src
+    assert "run_project_normcontrol" not in src
+    assert "Model-final-only invariant" in src
 
 
 # ── §18 legacy .xls (регресс) ─────────────────────────────────────────────────────────────

@@ -1,8 +1,7 @@
-"""DeterministicFinalPolicy (v0.18+) — детерминированный final-ответ только для control-plane.
+"""DeterministicFinalPolicy — детерминированный visible final только для control-plane.
 
-Класс-фикс взамен точечного stopword-фикса: legacy deterministic-каналы больше не перехватывают
-проектные/descriptive/source-scoped вопросы. Professional-domain каналы не имеют права становиться
-финальным visible answer: код может вернуть tool-result, но ответ формулирует модель.
+Любой professional-domain канал не имеет права становиться финальным visible answer:
+код может вернуть модели структурированный tool-result, но ответ формулирует модель.
 """
 
 from __future__ import annotations
@@ -99,47 +98,16 @@ _COMMAND_CHANNELS = frozenset({
 })
 # professional-domain каналы должны быть tools/model-context, а не финальным ответом кода.
 _PROFESSIONAL_DOMAIN_CHANNELS = frozenset({
-    "asbuilt", "doc_registry", "field", "smeta",
+    "asbuilt", "doc_registry", "field", "glossary", "registry", "smeta",
 })
-# каналы, которые МОГУТ перехватить нарративный/проектный вопрос → жёсткая policy.
-_GATED_CHANNELS = frozenset({"glossary", "registry"})
 
 
 def can_return_deterministic_final(channel: str, question: str, *, project_id: int = 0,
                                    dataset_filter: str = "", candidate: dict | None = None) -> tuple[bool, str]:
     """Разрешён ли детерминированный FINAL-ответ канала. → (allowed, reason). Отказ → запрос идёт
     в unified/router/RAG (а не выдаёт случайный термин/глобальный реестр)."""
-    q = (question or "").lower().replace("ё", "е")
-    cand = candidate or {}
     if channel in _PROFESSIONAL_DOMAIN_CHANNELS:
         return False, "professional_domain_requires_model_final"
     if channel in _COMMAND_CHANNELS:
         return True, "command_or_tool_channel"
-    if channel not in _GATED_CHANNELS:
-        return False, "deterministic_final_not_allowed"
-
-    scoped = is_source_scoped_query(q)
-    descriptive = is_project_descriptive_query(q)
-    has_scope = has_project_scope(project_id, dataset_filter)
-
-    if channel == "glossary":
-        concept = cand.get("concept") or cand.get("concept_id")
-        if not glossary_term_in_query(concept, question):
-            return False, "matched_term_not_in_query"        # фейк-резолв («на»→ОЖР) отсекается
-        # явное «что такое X» с литеральным термином — определение (даже с контекстом «… в смете»)
-        if is_explicit_term_query(q):
-            return True, "explicit_term_literal_present"
-        if scoped:
-            return False, "source_scoped_query"
-        if has_scope and descriptive:
-            return False, "project_scope_preempts_glossary"  # проект выбран + descriptive → проектный путь
-        return True, "term_literal_present"
-
-    if channel == "registry":
-        if scoped:
-            return False, "source_scoped_query"
-        if is_global_project_registry_query(q):
-            return True, "global_registry_exact"
-        return False, "not_global_registry_query"
-
     return False, "deterministic_final_not_allowed"

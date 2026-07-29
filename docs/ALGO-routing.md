@@ -3,33 +3,29 @@
 Как ЛЕС выбирает, ЧЕМ отвечать на запрос. Канон текущей механики (сверено с кодом 2026-06-27).
 История решения «инвертировать детерминизм» — в [AUDIT_DETERMINISM.md](AUDIT_DETERMINISM.md) (исполнено).
 
-## Принцип (инверсия детерминизма — исполнена)
+## Принцип: видимый ответ принадлежит модели
 
-Раньше keyword-каскад (11 детерм. каналов) стоял ПЕРВЫМ и перехватывал намерение по словам. Теперь
-**основной — агент-роутер** (LLM выбирает инструмент по смыслу), а keyword-каскад — спящий фолбэк.
-Детерминизм живёт в **инструментах и гейтах**, а не в перехвате по подстроке.
+Обычный текстовый запрос не может завершиться готовым ответом regex/SQL/Python-обработчика.
+Модель сама выбирает read-only инструменты в evidence-loop; код ищет, читает, считает,
+валидирует и возвращает ей результаты. Видимый содержательный ответ формулирует модель.
+Явные slash-команды остаются control-plane действиями и не считаются экспертным ответом.
 
 ```
 запрос → runtime_admission (очередь/режим)
-       → ProfileResolver.resolve()  → Profile (контур ответа)         [profile_resolver.py]
-       → agent_router (router_primary ON по умолчанию)                 [agent_router_service.py]
-           │ LLM выбирает инструмент из каталога _TOOLS (price/kac/lsr/glossary/doc_review/asbuilt…)
-           ▼ инструмент исполняется в chat.py (где есть scope/effective_dataset_ids)
-       → если роутер недоступен ИЛИ not router_primary() → keyword-каскад _det_channels (фолбэк)
-       → иначе → RAG-конвейер (retrieval → saferag C-RAG → dispatcher), профиль задаёт каркас ответа
+       → ProfileResolver.resolve() → Profile
+       → retrieval / exact readers / typed context
+       → model-owned research loop выбирает read-only tools
+       → результаты инструментов возвращаются модели как evidence
+       → модель формулирует ответ
+       → validation + sources + trace + history
 ```
 
-## Фолбэк при недоступном роутере
+## Сбой выбора инструмента
 
-Важно различать два разных состояния:
-
-- `none` — роутер ответил и осознанно выбрал обычный RAG; keyword-каскад не запускается.
-- `unavailable` — роутер-LLM не ответил из-за таймаута/сети/5xx; `chat.py` считает effective
-  router-primary выключенным (`_rp_eff=false`) и включает legacy deterministic cascade.
-
-В режиме `unavailable` детерминированные каналы и in-flow гейты (`mail`, `reconcile`, `table_agg`,
-`clause`, scope clarification) работают по своим regex/keyword/`query_intent` правилам, а `route_source`
-остаётся честным (`regex`/`keyword`/`fallback`), не `llm_router`.
+Сбой tool-selector не включает старый каскад кодовых автоответов. Ошибка остаётся в
+`retrieval_trace`, после чего основной модельный вызов работает с уже доступным evidence.
+Если обязательного evidence нет, модель получает честный `MISSING/BLOCKED`; код не сочиняет
+заменяющий ответ.
 
 ## ProfileResolver — единый контракт
 
@@ -39,7 +35,7 @@
 | Режим (чип) | Профиль | Контур |
 |---|---|---|
 | Сметы | `estimate_harness` | модель сама раскладывает объект; харнесс даёт `search_norm`/`add_position` и проверяет числа |
-| Нормоконтроль | `normcontrol` | doc-review по rulepack |
+| Нормоконтроль | `normcontrol` | модель формулирует вывод по rulepack/RAG/tool evidence |
 | Поиск (default) | `grounded_rag` | RAG с цитатами |
 | (свободный) | `free_llm` | прямой LLM |
 | КП | `grounded_rag` | модельный/RAG-контур; кодовая заглушка КП удалена |
@@ -55,11 +51,15 @@
 ## Где в коде
 
 - Резолвер профиля: `proxy/services/profile_resolver.py`
-- Агент-роутер (каталог инструментов + LLM-выбор): `proxy/services/agent_router_service.py` (`router_primary()` — флаг `LES_ROUTER_PRIMARY`, дефолт **OFF**, только явный opt-in)
-- Детерм. политика финала: `proxy/services/deterministic_policy_service.py` (legacy control-plane каналы дают final только при явном намерении/команде/точном термине; professional-domain tool candidates не становятся visible answer без модели)
+- Model-owned research loop: `proxy/services/chat_evidence_application_service.py`
+- Tool-selector: `proxy/services/agent_router_service.py` (выдаёт только typed
+  `tool_result`, top-level `answer` удаляется на его границе)
+- Детерм. политика: `proxy/services/deterministic_policy_service.py` (разрешает
+  code-final только control-plane; glossary/registry/smeta/field и другие
+  professional-domain каналы всегда требуют model final)
 - Область поиска: `proxy/services/scope_service.py` (all/project/dataset…; проектный запрос при scope=all → не искать молча, спросить)
-- Поток: `proxy/routers/chat.py` (`_run_chat`: роутер ПЕРЕД каскадом; каскад =
-  `not effective_router_primary`, то есть `LES_ROUTER_PRIMARY=false` или router `unavailable`)
+- Поток: `proxy/routers/chat.py` (`_run_chat`: profile/scope → evidence application; свободный
+  запрос не вызывает `_det_channels`, auto-note или note-команды)
 - Общий план результата: `proxy/services/workflow_plan_service.py`, док [ALGO-workflow-plan.md](ALGO-workflow-plan.md)
 - Read-вложение из скрепки (`attachment_context`) — часть следующего пользовательского запроса:
   в auto-профиле ранний keyword/clarification-каскад пропускается, чтобы файл обработал LLM/RAG-путь.
@@ -70,4 +70,8 @@
 ## Граница
 
 - `table_query` детект всё ещё substring (`_looks_like_table_query`) — но теперь под router-интентом, агрегация пост-ретрив над Parquet ([[ALGO-table-query]]).
-- Цель «детерминированные автоответы по широким словам запрещены» (ROADMAP §2.3) — соблюдается: final от legacy-канала только на явный сигнал ([[no-determinism-in-chat-directive]]).
+- Операторские заметки не создаются, не читаются и не подмешиваются в чат.
+- Кодовый visible final для любого обычного текстового запроса запрещён независимо от формулировки и
+  доступности router/tool-selector.
+- Глоссарий и реестр проектов возвращают структурированное evidence без поля `answer`;
+  блокеры могут быть сформированы кодом, но не подменяют предметное объяснение.

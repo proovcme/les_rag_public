@@ -1,15 +1,16 @@
-"""Чат-канал глоссария: «что такое X» → определение из онтологии (0 LLM)."""
+"""Typed glossary tool: ontology evidence without a code-authored visible answer."""
 
 from __future__ import annotations
 
-from proxy.services.glossary_chat_service import maybe_handle_glossary_query as h
+from proxy.services.glossary_chat_service import glossary_tool_result as h
 
 
 def test_definition_questions_resolve():
     r = h("Что такое КАЦ в смете и из чего он формируется?")
     assert r is not None and r["concept"] == "kac"
-    assert "конъюнктурный" in r["answer"].lower()
-    assert r["operation"] == "glossary"
+    assert "конъюнктурный" in r["evidence"]["term"].lower()
+    assert r["operation"] == "glossary_lookup"
+    assert "answer" not in r
     assert h("расскажи про ВОР")["concept"] == "vor"
     assert h("что значит стеснённость")["concept"] == "coef_stesn"
     assert h("дай определение ЛСР")["concept"] == "lsr"
@@ -36,7 +37,7 @@ def test_narrative_about_object_not_hijacked_by_glossary():
     assert maybe_handle_glossary_query("расскажи про объект на участке") is None
 
 def test_real_glossary_terms_still_resolve():
-    from proxy.services.glossary_chat_service import maybe_handle_glossary_query as h
+    from proxy.services.glossary_chat_service import glossary_tool_result as h
     assert h("что такое КАЦ")["concept"] == "kac"
     assert h("что такое ЛСР")["concept"] == "lsr"
     assert h("что такое ВОР")["concept"] == "vor"

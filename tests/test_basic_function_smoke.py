@@ -120,10 +120,10 @@ def test_diagnostics_error_is_not_hidden_by_http_200():
     assert result["severity"] == "P1"
 
 
-def test_glossary_smoke_requires_route_and_version_trace():
+def test_glossary_smoke_requires_model_route_and_version_trace():
     payload = {
         "answer": "ОЖР — общий журнал работ.",
-        "query_route": {"channel": "glossary"},
+        "query_route": {"channel": "rag"},
         "version_info": {},
     }
     result = check_chat_glossary(_Client(_Response(200, payload)), "http://example.test", timeout=1)
@@ -134,12 +134,23 @@ def test_glossary_smoke_requires_route_and_version_trace():
 def test_glossary_smoke_accepts_current_nested_version_trace():
     payload = {
         "answer": "ОЖР — общий журнал работ.",
-        "query_route": {"channel": "glossary"},
+        "query_route": {"channel": "rag"},
         "versions": {"version_info": {}},
     }
     result = check_chat_glossary(_Client(_Response(200, payload)), "http://example.test", timeout=1)
 
     assert result["status"] == "pass"
+
+
+def test_glossary_smoke_rejects_legacy_code_final_route():
+    payload = {
+        "answer": "ОЖР — общий журнал работ.",
+        "query_route": {"channel": "glossary"},
+        "versions": {"version_info": {}},
+    }
+    result = check_chat_glossary(_Client(_Response(200, payload)), "http://example.test", timeout=1)
+
+    assert result["status"] == "fail"
 
 
 def test_project_noscope_smoke_rejects_glossary_hijack():

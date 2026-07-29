@@ -749,6 +749,81 @@ html {
   border-color: color-mix(in srgb, var(--warn) 62%, var(--border));
 }
 .sov-source-usage--muted { color: var(--dim); }
+.sov-source-technical {
+  width: 100%;
+  margin-top: 8px;
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+}
+.sov-source-primary__icon {
+  width: var(--sov-ui-icon-column);
+  min-width: var(--sov-ui-icon-column);
+  margin-right: var(--sov-ui-icon-gap);
+  flex: 0 0 var(--sov-ui-icon-column);
+  color: var(--accent);
+  font-size: 18px;
+  text-align: center;
+}
+.sov-source-primary .q-btn__content {
+  width: 100%;
+  gap: var(--sov-ui-icon-gap);
+  flex-wrap: nowrap;
+  justify-content: flex-start;
+  text-align: left;
+}
+.sov-source-primary .q-btn__content > .q-icon {
+  width: var(--sov-ui-icon-column);
+  min-width: var(--sov-ui-icon-column);
+  margin: 0;
+  flex: 0 0 var(--sov-ui-icon-column);
+  color: var(--accent);
+  font-size: 18px;
+  text-align: center;
+}
+.sov-source-technical__ref {
+  padding: 4px 0 7px;
+  color: var(--dim);
+  font-family: var(--sov-ui-font-code);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.sov-answer-feedback {
+  min-height: 32px;
+  margin-left: 4px;
+  gap: 4px;
+  align-items: center;
+}
+.sov-answer-feedback__label {
+  margin-right: 2px;
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+}
+.sov-answer-feedback__button {
+  min-height: 30px !important;
+  padding: 2px 8px !important;
+  color: var(--dim) !important;
+  border: 1px solid transparent !important;
+  border-radius: var(--sov-ui-radius-control) !important;
+  font-size: var(--sov-ui-font-size-meta) !important;
+}
+.sov-answer-feedback__button:hover {
+  color: var(--text) !important;
+  background: color-mix(in srgb, var(--accent) 6%, transparent) !important;
+}
+.sov-answer-feedback__button--active {
+  font-weight: 800 !important;
+}
+.sov-answer-feedback__button--good {
+  color: var(--ok) !important;
+  border-color: color-mix(in srgb, var(--ok) 38%, var(--border)) !important;
+  background: color-mix(in srgb, var(--ok) 8%, var(--card-bg)) !important;
+}
+.sov-answer-feedback__button--bad {
+  color: var(--err) !important;
+  border-color: color-mix(in srgb, var(--err) 38%, var(--border)) !important;
+  background: color-mix(in srgb, var(--err) 7%, var(--card-bg)) !important;
+}
 .sov-retrieval-notice {
   width: 100%;
   margin: 6px 0;

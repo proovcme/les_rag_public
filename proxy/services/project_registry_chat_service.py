@@ -1,6 +1,6 @@
-"""project_registry_chat_service.py — «реестр проектов / общая карта папок» из чата.
+"""project_registry_chat_service.py — typed project-registry tool.
 
-Детерминированно (0 LLM): список всех объектов ЛЕС + папки + мета из LES.md. Канал `registry`.
+Код возвращает модели список объектов и метаданные, но не готовый visible answer.
 """
 from __future__ import annotations
 
@@ -54,35 +54,25 @@ def maybe_handle_document_registry(question: str, *, project_id: int = 0,
                  or bool(dataset_ids))
     if has_scope:
         return None      # scope есть → RAG-конвейер ответит по документам выбранного объекта
-    return {"answer": "Для реестра документации нужен выбранный проект или датасет. Выберите объект "
-                      "в списке слева (или укажите датасет) — и соберу состав документов по нему.",
-            "operation": "document_registry_no_scope", "missing": ["project_id|dataset_ids"]}
+    return {
+        "operation": "document_registry_no_scope",
+        "status": "blocked",
+        "error_code": "MISSING_SCOPE",
+        "missing": ["project_id|dataset_ids"],
+    }
 
 
-def registry_answer() -> dict[str, Any]:
+def registry_tool_result() -> dict[str, Any]:
     from proxy.services.project_service import build_registry
 
     reg = build_registry()
-    if not reg["projects"]:
-        return {"answer": "Объектов пока нет. «Пойми папку «<путь>»» — и появится первый "
-                          "(или дай папку на индексацию — LES.md соберётся сам).",
-                "operation": "registry_empty"}
-    lines = [f"Реестр проектов ЛЕС — {reg['count']}:"]
-    for p in reg["projects"][:40]:
-        bits = [str(p["name"])]
-        if p.get("stage"):
-            bits.append(str(p["stage"]))
-        if p.get("code"):
-            bits.append(str(p["code"]))
-        if p.get("address"):
-            bits.append(str(p["address"]))
-        tail = f"папок {len(p.get('folders') or [])}, датасетов {p.get('datasets', 0)}"
-        flag = " ✓LES.md" if p.get("has_les_md") else ""
-        lines.append(f"  • #{p['id']} {' · '.join(bits)} — {tail}{flag}")
-    return {"answer": "\n".join(lines), "operation": "registry", "registry": reg}
+    return {
+        "operation": "project_registry_lookup",
+        "status": "ok" if reg["projects"] else "empty",
+        "registry": reg,
+    }
 
 
 def maybe_handle_registry_query(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
-    if not is_registry_query(question):
-        return None
-    return registry_answer()
+    """Legacy visible-answer entrypoint is disabled: professional final belongs to the model."""
+    return None

@@ -23,7 +23,7 @@ class FakeDispatcher:
 
 
 @pytest.mark.asyncio
-async def test_chat_table_query_uses_expanded_context_rows(tmp_path, monkeypatch):
+async def test_chat_table_query_reaches_model_owned_evidence_boundary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
@@ -75,6 +75,19 @@ async def test_chat_table_query_uses_expanded_context_rows(tmp_path, monkeypatch
             payload=lambda: {"enabled": True, "output_count": 1},
         ),
     )
+    captured = {}
+
+    async def fake_evidence(request, runtime, boundary):
+        captured["request"] = request
+        return {
+            "answer": "Модель сформулировала ответ по результатам инструмента.",
+            "crag_status": "UNVALIDATED",
+            "sources": [],
+            "retrieval_trace": {"status": "ok"},
+            "cache": "miss",
+        }
+
+    monkeypatch.setattr(chat_router, "run_chat_evidence_application", fake_evidence)
     chat_router.set_chat_state(
         chat_router.ChatRouterState(
             rag_backend=FakeBackend(),
@@ -104,15 +117,13 @@ async def test_chat_table_query_uses_expanded_context_rows(tmp_path, monkeypatch
         _user=object(),
     )
 
-    assert response["crag_status"] == "VERIFIED"
-    assert response["table_query"]["operation"] == "list"
-    assert response["table_query"]["parquet_paths"] == ["_parquet/sp.parquet"]
-    assert "Гостиницы, общежития" in response["answer"]
-    assert "3 500 м2" in response["answer"]
+    assert response["crag_status"] == "UNVALIDATED"
+    assert response["answer"].startswith("Модель сформулировала")
+    assert captured["request"].table_result is None
 
 
 @pytest.mark.asyncio
-async def test_chat_table_query_can_answer_without_vector_embedding(tmp_path, monkeypatch):
+async def test_chat_table_query_never_falls_back_to_code_answer(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "data").mkdir()
     monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
@@ -146,10 +157,23 @@ async def test_chat_table_query_can_answer_without_vector_embedding(tmp_path, mo
             raise AssertionError("table direct path should not call vector retrieval")
 
     monkeypatch.setattr(chat_router, "RuntimeDispatcher", FakeDispatcher)
+    captured = {}
+
+    async def fake_evidence(request, runtime, boundary):
+        captured["request"] = request
+        return {
+            "answer": "Ответ модели",
+            "crag_status": "UNVALIDATED",
+            "sources": [],
+            "retrieval_trace": {"status": "ok"},
+            "cache": "miss",
+        }
+
+    monkeypatch.setattr(chat_router, "run_chat_evidence_application", fake_evidence)
     chat_router.set_chat_state(
         chat_router.ChatRouterState(
             rag_backend=TableBackend(),
-            llm_semaphore=SimpleNamespace(_value=0),
+            llm_semaphore=SimpleNamespace(_value=1),
             crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},
             chat_metrics={
                 "latency_search": [],
@@ -160,8 +184,8 @@ async def test_chat_table_query_can_answer_without_vector_embedding(tmp_path, mo
             },
             reranker_available=False,
             reranker_cls=None,
-            current_mode={"mode": "paused"},
-            metrics_cache={"ram_free_gb": 4.0, "swap_pct": 0.0},
+            current_mode={"mode": "chat"},
+            metrics_cache={"ram_free_gb": 12.0, "swap_pct": 0.0},
         )
     )
 
@@ -174,7 +198,6 @@ async def test_chat_table_query_can_answer_without_vector_embedding(tmp_path, mo
         _user=object(),
     )
 
-    assert response["crag_status"] == "VERIFIED"
-    assert response["cache"] == "deterministic_table"
-    assert response["retrieval_trace"]["mode"] == "deterministic_table"
-    assert response["table_query"]["total"] == 1200
+    assert response["crag_status"] == "UNVALIDATED"
+    assert response["answer"] == "Ответ модели"
+    assert captured["request"].table_result is None

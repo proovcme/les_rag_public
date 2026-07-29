@@ -56,19 +56,19 @@ def test_clarification_no_suggestion_when_ambiguous():
 
 # ── §1 wiring в chat ──────────────────────────────────────────────────────────────────────
 
-def test_scope_warning_wired_in_chat_without_final_hijack():
+def test_scope_clarification_cannot_become_code_final_in_chat():
     from proxy.routers import chat as chat_mod
     src = inspect.getsource(chat_mod)
-    assert "needs_project_scope" in src
-    assert "scope_all_for_project_query" in src   # warning в trace
+    assert "needs_project_scope" not in src
+    assert "scope_clarification(" not in src
     assert 'reply = {"answer": _clar["answer"], "operation": "scope_clarification"}' not in src
     assert 'channel = "scope_clarification"' not in src
 
-def test_scope_resolution_warning_in_trace():
-    # warning добавляется в _scope_snap["warnings"] (виден в query_route.scope)
+def test_scope_resolution_stays_in_trace_without_code_authored_clarification():
     from proxy.routers import chat as chat_mod
     src = inspect.getsource(chat_mod)
-    assert '_scope_snap.setdefault("warnings", []).append("scope_all_for_project_query")' in src
+    assert 'query_route_payload["scope"] = _scope_snap' in src
+    assert "scope_clarification" not in src
 
 
 def test_empty_retrieval_no_generic_code_no_data_final():
@@ -86,9 +86,10 @@ def test_kotelnaya_selected_project_not_clarification():
                         project_resolver=lambda pid: ["d3"])
     assert r["scope_type"] == "project" and r["resolved_dataset_ids"] == ["d3"]
 
-def test_explicit_ozhr_still_glossary():
-    from proxy.services.glossary_chat_service import maybe_handle_glossary_query
-    assert maybe_handle_glossary_query("что такое ОЖР")["concept"] == "ozr"
+def test_explicit_ozhr_still_available_as_tool_evidence():
+    from proxy.services.glossary_chat_service import glossary_tool_result
+    result = glossary_tool_result("что такое ОЖР")
+    assert result["concept"] == "ozr" and "answer" not in result
 
 # ── §2/§3 ScopeSelector UI wiring (source-level) ──────────────────────────────────────────
 

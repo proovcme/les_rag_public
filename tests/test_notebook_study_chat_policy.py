@@ -48,7 +48,8 @@ def test_sovushka_moves_source_notes_to_artifact_instead_of_quote_blocks():
     chat_ui = Path("sovushka/pages/chat.py").read_text()
 
     assert "_format_sources_as_quotes" in chat_ui
-    assert "source_notes_artifact" in chat_ui
+    assert "source_notes_artifact" not in chat_ui
+    assert "Источники ·" in chat_ui
     assert "> Источники:" not in chat_ui
 
 

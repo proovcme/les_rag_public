@@ -1854,12 +1854,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         '</div>'
                     )
                 if item.get("source_ref"):
-                    ui.label(str(item["source_ref"])).style(
-                        "font-family:ui-monospace,SFMono-Regular,Menlo,monospace;"
-                        "font-size:.62rem;color:var(--dim);word-break:break-all;margin-top:6px;"
-                    )
                     with ui.row().classes("gap-2 items-center flex-wrap").style("margin-top:6px;"):
-                        _copy_button("source_ref", str(item["source_ref"]), classes="sov-answer-act")
                         citation_text = f"{title}\n{item.get('snippet') or item.get('source_ref') or ''}".strip()
                         _copy_button("Цитату", citation_text, icon="o_format_quote", classes="sov-answer-act")
                         if item.get("viewer_url"):
@@ -1872,6 +1867,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             ui.label(str(item.get("unavailable_reason") or "Открытие недоступно")).classes(
                                 "src-tag src-tag-warn"
                             )
+                    with ui.expansion("Техническая ссылка").props("dense").classes(
+                        "sov-source-technical"
+                    ):
+                        ui.label(str(item["source_ref"])).classes("sov-source-technical__ref")
+                        _copy_button("Скопировать", str(item["source_ref"]), classes="sov-answer-act")
                 else:
                     ui.label(str(item.get("unavailable_reason") or "Нет source_ref")).classes("src-tag src-tag-warn")
                 if item.get("snippet"):
@@ -1883,7 +1883,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         meta: dict | None = None,
         answer: str = "",
     ):
-        from sovushka.answer_render import citation_drawer_item, source_chip, source_usage
+        from sovushka.answer_render import citation_drawer_item, source_chip
         if not srcs and not crag and not meta:
             return
 
@@ -1897,25 +1897,29 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     for i, source in enumerate(srcs, 1):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
-                        usage = source_usage(source, i, answer)
-                        lbl = f"{i} · {_source_label(source)}"
+                        lbl = f"{i}. {_source_label(source)}"
                         with ui.row().classes("sov-source-row sov-ui-evidence-card"):
                             if item.get("viewer_url"):
                                 primary = ui.button(
                                     lbl,
+                                    icon="o_description",
                                     on_click=lambda s=source, n=i: _show_source_drawer(s, n),
                                 ).props("flat dense no-caps").classes(
                                     "sov-source-primary sov-ui-source-chip"
                                 )
                                 primary.tooltip("Открыть внутри Л.И.С.Т." + (f" · {c['locator']}" if c["locator"] else ""))
                             elif item.get("open_url"):
-                                primary = ui.link(lbl, str(item["open_url"])).props(
-                                    "target=_blank"
-                                ).classes("sov-source-primary sov-ui-source-chip")
+                                with ui.link(
+                                    target=str(item["open_url"]),
+                                    new_tab=True,
+                                ).classes("sov-source-primary sov-ui-source-chip") as primary:
+                                    ui.icon("o_description").classes("sov-source-primary__icon")
+                                    ui.label(lbl)
                                 primary.tooltip("Открыть документ" + (f" · {c['locator']}" if c["locator"] else ""))
                             elif c["has_ref"]:
                                 primary = ui.button(
                                     lbl,
+                                    icon="o_description",
                                     on_click=lambda s=source, n=i: _show_source_drawer(s, n),
                                 ).props("flat dense no-caps").classes(
                                     "sov-source-primary sov-ui-source-chip"
@@ -1926,20 +1930,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     "sov-source-primary sov-source-unavailable sov-ui-source-chip"
                                 )
                                 primary.tooltip("У источника нет точной ссылки")
-                            if c["kind"]:
-                                ui.label(c["kind"]).classes(
-                                    "sov-source-kind sov-source-kind-warn" if c["weak"] else "sov-source-kind"
-                                )
-                            ui.label(usage["label"]).classes(
-                                f"sov-source-usage sov-source-usage--{usage['tone']}"
-                            )
-                            if c["has_ref"]:
-                                ui.button(
-                                    icon="o_info",
-                                    on_click=lambda s=source, n=i: _show_source_drawer(s, n),
-                                ).props(
-                                    'flat round dense aria-label="Показать карточку источника"'
-                                ).classes("sov-source-detail").tooltip("Карточка источника и цитата")
 
         with ui.row().classes("msg-srcs sov-source-tools"):
             if crag:
@@ -1961,26 +1951,60 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 ui.label(item).classes("src-tag")
                 history_id = meta.get("history_id")
                 if history_id:
-                    async def _feedback(status: str):
-                        result = await api_post(f"/api/chat/history/{history_id}/feedback", {"feedback": status})
-                        if result:
-                            ui.notify("Оценка сохранена", type="positive")
-                        else:
-                            ui.notify(last_api_error_text("Не удалось сохранить оценку"), type="warning")
+                    feedback_buttons: dict[str, object] = {}
 
-                    ui.button(
-                        icon="thumb_up",
-                        on_click=lambda: asyncio.create_task(_feedback("correct")),
-                    ).props("flat dense round").tooltip("Ответ корректен")
-                    ui.button(
-                        "Плохой ответ",
-                        icon="thumb_down",
-                        on_click=lambda: asyncio.create_task(_feedback("bad_answer")),
-                    ).props("flat dense").tooltip("Плохой ответ: сохранить для разбора")
-                    ui.button(
-                        icon="travel_explore",
-                        on_click=lambda: asyncio.create_task(_feedback("wrong_dataset")),
-                    ).props("flat dense round").tooltip("Источник не из того датасета")
+                    def _paint_feedback(status: str) -> None:
+                        for value, button in feedback_buttons.items():
+                            button.classes(
+                                remove=(
+                                    "sov-answer-feedback__button--active "
+                                    "sov-answer-feedback__button--good "
+                                    "sov-answer-feedback__button--bad"
+                                )
+                            )
+                            if value == status:
+                                tone = "good" if value == "correct" else "bad"
+                                button.classes(
+                                    add=(
+                                        "sov-answer-feedback__button--active "
+                                        f"sov-answer-feedback__button--{tone}"
+                                    )
+                                )
+
+                    async def _feedback(status: str):
+                        for button in feedback_buttons.values():
+                            button.disable()
+                        try:
+                            result = await api_post(
+                                f"/api/chat/history/{history_id}/feedback",
+                                {"feedback": status},
+                            )
+                            if result:
+                                meta["feedback"] = status
+                                _paint_feedback(status)
+                                ui.notify("Оценка сохранена", type="positive")
+                            else:
+                                ui.notify(
+                                    last_api_error_text("Не удалось сохранить оценку"),
+                                    type="warning",
+                                )
+                        finally:
+                            for button in feedback_buttons.values():
+                                button.enable()
+
+                    with ui.row().classes("sov-answer-feedback"):
+                        ui.label("Ответ полезен?").classes("sov-answer-feedback__label")
+                        feedback_buttons["correct"] = ui.button(
+                            "Да",
+                            icon="thumb_up",
+                            on_click=lambda: asyncio.create_task(_feedback("correct")),
+                        ).props("flat dense no-caps").classes("sov-answer-feedback__button")
+                        feedback_buttons["bad_answer"] = ui.button(
+                            "Нет",
+                            icon="thumb_down",
+                            on_click=lambda: asyncio.create_task(_feedback("bad_answer")),
+                        ).props("flat dense no-caps").classes("sov-answer-feedback__button")
+                    _paint_feedback(str(meta.get("feedback") or ""))
 
     def _render_suggestions(meta: dict | None):
         if not meta:
@@ -2384,22 +2408,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         except Exception:
             pass
 
-    def _source_notes_artifact_from_answer(ans: str, meta: dict | None, srcs: list | None = None) -> dict:
-        from sovushka.answer_render import source_notes_artifact
-
-        sources = list(srcs or [])
-        return source_notes_artifact(
-            ans,
-            sources=sources,
-            source_map=(meta or {}).get("source_map"),
-        )
-
     def _show_meta_artifact(meta: dict | None, ans: str, mode: str, srcs: list | None = None) -> None:
         if _render_project_inventory_artifact(meta):
             return
         meta_artifact = _artifact_from_meta(meta)
         if not meta_artifact:
-            meta_artifact = _source_notes_artifact_from_answer(ans, meta, srcs)
+            _show_artifact(ans, mode)
+            return
         _show_artifact(
             str(meta_artifact.get("content") or ans or ""),
             str(meta_artifact.get("mode") or mode or "text"),
@@ -2408,28 +2423,27 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     def _artifact_button(ans: str, mode: str, meta: dict | None = None, srcs: list | None = None) -> None:
         """Кнопка-карточка артефакта в пузыре ответа (если артефакт есть)."""
         meta_artifact = _artifact_from_meta(meta)
-        source_artifact = {} if meta_artifact else _source_notes_artifact_from_answer(ans, meta, srcs)
-        content = str((meta_artifact or source_artifact).get("content") or ans or "")
-        artifact_mode = str((meta_artifact or source_artifact).get("mode") or mode or "text")
-        if not meta_artifact and not source_artifact and not _artifact_present(ans, mode):
+        content = str(meta_artifact.get("content") or ans or "")
+        artifact_mode = str(meta_artifact.get("mode") or mode or "text")
+        if not meta_artifact and not _artifact_present(ans, mode):
             return
         # В model-first сметах таблица внутри Markdown — часть человеческого ответа,
         # а не отдельный "артефакт". Иначе в пузыре появляется шумная кнопка
         # "Артефакт: Таблица" для обычной ВОР.
-        if not meta_artifact and not source_artifact and str(mode or "text") == "text":
+        if not meta_artifact and str(mode or "text") == "text":
             return
         has_inventory = bool(_inventory_file_rows_from_meta(meta))
         lbl = (
             "Реестр файлов"
             if has_inventory
             else str(
-                (meta_artifact or source_artifact).get("title")
+                meta_artifact.get("title")
                 or (OUTPUT_FORMATS[mode][0] if (mode in OUTPUT_FORMATS and mode != "text") else "Таблица")
             )
         )
         ui.button(
             f"Артефакт: {lbl} — открыть",
-            icon="o_format_quote" if source_artifact else "o_table_view",
+            icon="o_table_view",
             on_click=lambda a=content, m=artifact_mode, md=meta, ss=list(srcs or []): _show_meta_artifact(md, a, m, ss),
         ).props("no-caps flat dense").classes("sov-artifact-chip").style(
             "margin-top:6px;border:1px solid var(--border);border-radius:8px;"
@@ -2448,14 +2462,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         return t or "Готово — результат в артефакте (кнопка ниже)."
 
     def _format_sources_as_quotes(text: str) -> str:
-        """Keep prose readable: source notes go to the artifact, inline markers stay inline."""
+        """Keep prose readable: source service lines are replaced by links below the answer."""
         from sovushka.answer_render import split_inline_source_notes
 
-        body, notes = split_inline_source_notes(text)
-        if not notes:
-            return body
-        suffix = '_Полный перечень источников — в артефакте «Источники ответа»._'
-        return f"{body}\n\n{suffix}".strip()
+        body, _notes = split_inline_source_notes(text)
+        return body
 
     # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──
     # Ответ режется на сегменты по месту блока (mermaid-fence, markdown-таблица),

@@ -1,15 +1,13 @@
-"""agent_router_service.py — Ярус 2: чат сам выбирает инструмент (function-calling).
+"""agent_router_service.py — модель выбирает инструмент (function-calling).
 
-Когда детерминированные regex-каналы не сработали, LLM-роутер по описанию инструментов
-выбирает ОДИН подходящий — но **исполняет существующий детерминированный обработчик**
-(числа/действия считает код, не LLM, ADR-11). Это превращает Совушку из «набора каналов» в
-агент над своими инструментами: спрашиваешь как угодно — она сама решает, что вызвать.
+LLM-router выбирает ОДИН подходящий tool. Код исполняет typed lookup/action и возвращает
+структурированный tool-result без top-level ``answer``. Финальный visible answer всегда
+формулирует основная модель.
 
 Legacy-ступень за флагом ``LES_AGENT_LOOP`` (по умолчанию off). Primary-роутер за
 ``LES_ROUTER_PRIMARY`` вызывается из chat.py перед keyword-каскадом только при явном opt-in.
-Любой осознанный «none» →
-обычный RAG; транспортная недоступность роутера возвращается как sentinel, чтобы chat.py включил
-детерминированный fallback.
+Любой осознанный ``none`` → обычный RAG. Транспортная недоступность возвращается как sentinel;
+она не включает legacy visible-answer cascade.
 
 Дешёвые рычаги надёжности (ADR-11, ПЕРЕД любой LoRA):
   • чёткие описания + 1-2 примера-триггера на каждый инструмент (по ним LLM выбирает);
@@ -33,11 +31,8 @@ logger = logging.getLogger(__name__)
 class RouterUnavailable(RuntimeError):
     """Роутер-LLM НЕ ответил (таймаут/сеть/5xx) — это НЕ осознанный выбор «none».
 
-    Критично для chat.py: «роутер упал» ≠ «роутер выбрал RAG». Первое → детерм.-каскад-фолбэк
-    с ЧЕСТНЫМ route_source канала (regex/keyword); второе → RAG (default). Без этого различения
-    route_source врал «llm_router», а 0-LLM-каналы (mail/table/scope/glossary) были мертвы при
-    медленном/упавшем MLX. См. docs/ALGO-routing.md §«Фолбэк при недоступном роутере»,
-    memory router-regression-deferred.
+    «Роутер упал» ≠ «роутер выбрал RAG»: caller фиксирует сбой в trace и продолжает
+    модельный evidence-путь без legacy code-final.
     """
 
 
@@ -57,10 +52,13 @@ def _h_les_md(q: str, pid: int):
 def _h_registry(q: str, pid: int):
     # v0.17: даже если LLM-роутер выбрал project_registry для «реестр документации …» — глобальный
     # список НЕ выдаём (defense-in-depth): документный запрос уступает дорогу RAG по выбранному объекту.
-    from proxy.services.project_registry_chat_service import is_document_registry_query, registry_answer
+    from proxy.services.project_registry_chat_service import (
+        is_document_registry_query,
+        registry_tool_result,
+    )
     if is_document_registry_query(q):
         return None
-    return registry_answer()
+    return registry_tool_result()
 
 
 def _h_field(q: str, pid: int):
@@ -79,18 +77,13 @@ def _h_preset(q: str, pid: int):
 
 
 def _h_glossary(q: str, pid: int):
-    from proxy.services.glossary_chat_service import maybe_handle_glossary_query
-    return maybe_handle_glossary_query(q, project_id=pid)
+    from proxy.services.glossary_chat_service import glossary_tool_result
+    return glossary_tool_result(q)
 
 
 def _h_help(q: str, pid: int):
     from proxy.services.help_chat_service import maybe_handle_help_query
     return maybe_handle_help_query(q, project_id=pid)
-
-
-def _h_memory(q: str, pid: int):
-    from proxy.services.memory_service import maybe_handle_memory_command
-    return maybe_handle_memory_command(q, project_id=pid)
 
 
 def _h_decision(q: str, pid: int):
@@ -193,10 +186,6 @@ _TOOLS: tuple[dict[str, Any], ...] = (
              "выбранного комплекта инструментом — НЕ определение термина и НЕ поиск требования норматива.",
      "examples": ["проверь комплект по ГОСТ Р 21.101", "сделай нормоконтроль документации объекта",
                   "нормоконтроль комплекта", "проверь оформление документации по СПДС"]},
-    {"name": "memory", "handler": _h_memory,
-     "desc": "КОМАНДА памяти: «запомни …», «забудь заметку N», «мои заметки» (сохранить/удалить/"
-             "показать заметки оператора). НЕ для вопросов про содержание.",
-     "examples": ["запомни: прораб на объекте Иванов", "покажи мои заметки"]},
     {"name": "decision", "handler": _h_decision,
      "desc": "КОМАНДА слоя решений: «реши: …», «зафиксируй решение …», «решения» (записать/показать "
              "проектные решения). НЕ для вопросов про содержание.",
@@ -223,7 +212,6 @@ _FEWSHOT: tuple[tuple[str, str], ...] = (
     ("сколько стоит ресурс 91.05.01-017", "price_lookup"),
     ("какая расценка у кода 01.7.15.06-0111", "price_lookup"),
     ("что такое конъюнктурный анализ цен", "glossary"),
-    ("запомни что прораб Иванов", "memory"),
     ("какие требования к ширине эвакуационных путей", "none"),
     ("составь реестр документации котельной", "none"),
     ("реестр проектов", "project_registry"),
@@ -267,7 +255,7 @@ def _build_prompt(question: str) -> str:
     return (
         "Ты — маршрутизатор инструментов строительной системы ЛЕС. Инструменты — ТОЛЬКО для "
         "ДЕЙСТВИЙ и КОМАНД (извлечь объём, цена/КАЦ/стеснённость/смета по коду, переключить режим, "
-        "понять папку, записать объём, список объектов, запомнить/решить, список задач). "
+        "понять папку, записать объём, список объектов, зафиксировать решение, список задач). "
         "Если оператор спрашивает ИНФОРМАЦИЮ или факты (что известно про X, расскажи/объясни про X, "
         "справка по объекту, какие требования) — это none (обычный поиск по документам). "
         "Сомневаешься — none. Выбери РОВНО ОДИН инструмент из списка по имени или none. "
@@ -379,7 +367,7 @@ def _classify(question: str) -> str:
 
 
 def maybe_agent_route(question: str, *, project_id: int = 0) -> Optional[dict[str, Any]]:
-    """Ярус 2: LLM выбирает инструмент → исполняет детерминированный обработчик. Off/сбой → None."""
+    """LLM выбирает tool → typed result без top-level visible answer. Off/сбой → None."""
     if not _agent_loop_on() or not (question or "").strip():
         return None
     try:
@@ -397,8 +385,15 @@ def maybe_agent_route(question: str, *, project_id: int = 0) -> Optional[dict[st
         return None
     if not res:  # обработчик не смог (напр. нет пути/кода/контекста) → фолбэк на обычный путь
         return None
-    res.setdefault("operation", name)
-    res["agent_tool"] = name
+    tool_result = dict(res)
+    proposed_text = tool_result.pop("answer", None)
+    if proposed_text:
+        tool_result["tool_text"] = proposed_text
+    res = {
+        "operation": name,
+        "agent_tool": name,
+        "tool_result": tool_result,
+    }
     logger.info("[AGENT] запрос → инструмент «%s»", name)
     return res
 
@@ -433,8 +428,15 @@ def route_with_name(question: str, *, project_id: int = 0) -> tuple[str, Optiona
             logger.warning("[AGENT] tool %s failed: %s", name, err)
             res = None
         if res:
-            res.setdefault("operation", name)
-            res["agent_tool"] = name
+            tool_result = dict(res)
+            proposed_text = tool_result.pop("answer", None)
+            if proposed_text:
+                tool_result["tool_text"] = proposed_text
+            res = {
+                "operation": name,
+                "agent_tool": name,
+                "tool_result": tool_result,
+            }
         else:
             res = None
     return name, res

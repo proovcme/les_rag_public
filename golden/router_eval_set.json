@@ -33,9 +33,6 @@
     {"id": "clause_1", "question": "приведи пункт 4.2.1 СП 1.13130", "expected": "clause", "rephrase": false},
     {"id": "clause_2", "question": "процитируй дословно п. 6.1 ГОСТ 21.501", "expected": "clause", "rephrase": true},
 
-    {"id": "mem_1", "question": "запомни: прораб на объекте Иванов", "expected": "memory", "rephrase": false},
-    {"id": "mem_2", "question": "сохрани заметку что бетон везут по понедельникам", "expected": "memory", "rephrase": true},
-    {"id": "mem_3", "question": "покажи мои заметки", "expected": "memory", "rephrase": true},
 
     {"id": "dec_1", "question": "реши: кабель вести по лотку обоснование экономия", "expected": "decision", "rephrase": false},
     {"id": "dec_2", "question": "зафиксируй решение: фундамент на сваях", "expected": "decision", "rephrase": true},

@@ -1,10 +1,10 @@
 """ProfileResolver — единый контракт маршрутизации (ревью Codex §10.1A, §10.2).
 
-Все источники выбора пути (явный режим, команда, regex, keyword-каскад, LLM-router,
+Все источники выбора пути (явный режим, команда, retrieval-intent, LLM-router,
 fallback) приводятся к ОДНОМУ результату `ProfileResolution`. Формализован ЯВНЫЙ РЕЖИМ
 (mode→Profile) И auto-путь: когда режим не задан, `resolve` возвращает профиль `auto` в
 состоянии `pending` («какой задачу решаю — ещё не решено»), а конвейер чата уточняет
-резолюцию через `refine(...)`, как только конкретный источник (command/regex/keyword/
+резолюцию через `refine(...)`, как только конкретный источник (command/keyword/
 llm_router/fallback) выбрал канал. Так «какой канал дёрнут» перестаёт быть неявным
 control-flow и становится одним записанным контрактом (`query_route.profile`).
 
@@ -25,7 +25,8 @@ RouteSource = Literal[
     "explicit_mode", "command", "regex", "keyword", "llm_router", "fallback", "pending"
 ]
 
-# executor: где исполняется. deterministic = 0 LLM (код); router = решает нижний слой.
+# executor: где исполняется. deterministic допустим только для control-plane команд;
+# любой видимый профессиональный ответ проходит через модельный router/tool loop.
 Executor = Literal["deterministic", "local_small", "local_large", "cloud_large", "router", "none"]
 
 
@@ -46,9 +47,9 @@ class Profile:
 # Реестр профилей.
 PROFILES: dict[str, Profile] = {
     "normcontrol": Profile(
-        id="normcontrol", executor="deterministic", role="нормоконтролёр",
-        tools=("run_normcontrol",), grounded=False,
-        validation_policy="fail_open", escalation_policy="none",
+        id="normcontrol", executor="router", role="нормоконтролёр",
+        tools=("run_normcontrol", "retrieval", "citation_check"), grounded=True,
+        validation_policy="require_citations", escalation_policy="on_tool_failure",
         failure_policy="say_no_data", output_contract="findings_table_v1",
     ),
     "grounded_rag": Profile(
@@ -92,17 +93,11 @@ MODE_TO_PROFILE: dict[str, str] = {
 #    разбросано по control-flow chat.py: «какой канал → каким источником выбран». ──
 CHANNEL_SOURCES: dict[str, RouteSource] = {
     "command": "command",
-    # детерминированные regex/SQL-каналы (0 LLM): первый сработавший — ответ
-    "tasks": "regex", "preset": "regex", "asbuilt": "regex", "les_md": "regex",
-    "doc_registry": "regex", "registry": "regex", "glossary": "regex", "smeta": "regex",
-    "help": "regex", "field": "regex", "decision": "regex", "memory": "regex",
-    "scope_clarification": "regex",
-    # Ярус 2 / router_primary: локальная LLM выбрала инструмент
+    # Модельный tool-selector выбрал инструмент.
     "agent": "llm_router",
-    # keyword-каскад query_router + детерминированные табличные/сводные каналы
+    # Retrieval-intent сужает evidence, но не формулирует ответ.
     "table": "keyword", "mail": "keyword", "rag": "keyword",
-    "reconcile": "keyword", "spec_to_bor": "keyword",
-    "project_summary": "keyword", "outline": "keyword",
+    "field": "keyword",
 }
 
 # documentary-confidence по источнику (Codex §3: поля контракта документируют намерение)

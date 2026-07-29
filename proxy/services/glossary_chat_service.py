@@ -1,8 +1,7 @@
-"""Чат-канал глоссария: «что такое ВОР/КАЦ/ЛСР/КС…» → ответ из доменной онтологии.
+"""Typed tool глоссария: «что такое ВОР/КАЦ/ЛСР/КС…» → evidence из доменной онтологии.
 
-Детерминированный канал ДО RAG (0 LLM): определение + зачем + из чего выходит → во что,
-с нормативной основой. Закрывает кейс, когда RAG-роутинг уводит сметный вопрос в TABLE-домен
-и отвечает NO_DATA. Источник истины — `config/domain/smeta_ontology.yaml` (см. [[smeta-ontology]]).
+Код извлекает структурированный факт, но не формулирует видимый ответ. Источник истины —
+`config/domain/smeta_ontology.yaml` (см. [[smeta-ontology]]).
 """
 
 from __future__ import annotations
@@ -62,45 +61,30 @@ def _resolve(candidate: str):
     return None
 
 
-def _format(node: dict[str, Any]) -> str:
-    by_id = onto.load_ontology()["by_id"]
-    lines = [str(node.get("term", "")).strip()]
-    if node.get("what"):
-        lines.append(f"Что это: {node['what']}")
-    if node.get("why"):
-        lines.append(f"Зачем: {node['why']}")
-    if node.get("inputs"):
-        terms = ", ".join(by_id.get(i, {}).get("term", i) for i in node["inputs"])
-        lines.append(f"Из чего выходит: {terms}")
-    if node.get("outputs"):
-        terms = ", ".join(by_id.get(o, {}).get("term", o) for o in node["outputs"])
-        lines.append(f"Во что превращается / что питает: {terms}")
-    if node.get("basis"):
-        lines.append(f"Нормативная основа: {node['basis']}")
-    lines.append("(из доменной онтологии ЛЕС — config/domain/smeta_ontology.yaml)")
-    return "\n".join(lines)
-
-
 def maybe_handle_glossary_query(question: str, *, project_id: int = 0,
                                 dataset_filter: str = "") -> Optional[dict[str, Any]]:
-    """«что такое X» → определение из онтологии. None — не глоссарный вопрос/термин не найден.
-    v0.18 DeterministicFinalPolicy: глоссарий — final ТОЛЬКО при явном намерении (термин литерально в
-    запросе, нет проектного scope-preempt, не source-scoped); иначе уступает дорогу RAG/проектному пути."""
-    from proxy.services import sovushka_tone
+    """Legacy visible-answer entrypoint is disabled: professional final belongs to the model."""
+    return None
 
-    if sovushka_tone.wants_model(question):   # «своими словами» → уступаем дорогу модели
-        return None
+
+def glossary_tool_result(question: str) -> Optional[dict[str, Any]]:
+    """Вернуть модели typed evidence без готовой человеческой формулировки."""
     term = _extract_term(question)
     if not term:
         return None
     node = _resolve(term)
     if node is None:
         return None
-    from proxy.services.deterministic_policy_service import can_return_deterministic_final
-    ok, _reason = can_return_deterministic_final(
-        "glossary", question, project_id=project_id, dataset_filter=dataset_filter,
-        candidate={"concept": node.get("id")})
-    if not ok:
-        return None       # policy отклонила: термин не в запросе / проект-scope / source-scoped
-    return {"answer": sovushka_tone.flavor(_format(node), "glossary", seed=term),
-            "operation": "glossary", "concept": node.get("id")}
+    return {
+        "operation": "glossary_lookup",
+        "concept": node.get("id"),
+        "evidence": {
+            "term": node.get("term"),
+            "what": node.get("what"),
+            "why": node.get("why"),
+            "inputs": list(node.get("inputs") or []),
+            "outputs": list(node.get("outputs") or []),
+            "basis": node.get("basis"),
+            "source_ref": "config/domain/smeta_ontology.yaml",
+        },
+    }

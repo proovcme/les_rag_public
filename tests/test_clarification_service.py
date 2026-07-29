@@ -83,51 +83,13 @@ def test_table_query_does_not_need_clarification():
     assert decision.classification.reasons == []
 
 
-@pytest.mark.asyncio
-async def test_chat_asks_to_narrow_scope_before_retrieval():
-    # v0.22: проектный запрос при scope=all («проверь все документы») перехватывает
-    # scope_clarification РАНЬШЕ старого build_clarification — и не молча ищет весь корпус.
-    # Инвариант сохранён: ретрив не запускается до выбора области. Раньше тест ждал
-    # NEEDS_CLARIFICATION (v0.21) — это поведение superseded scope_clarification (v0.22).
-    class BackendThatMustNotRun:
-        async def list_datasets(self):
-            raise AssertionError("list_datasets should not run before scope is chosen")
+def test_chat_never_returns_clarification_service_text_as_visible_final():
+    import inspect
 
-        async def retrieve(self, *args, **kwargs):
-            raise AssertionError("retrieve should not run before scope is chosen")
-
-    chat_router.set_chat_state(
-        chat_router.ChatRouterState(
-            rag_backend=BackendThatMustNotRun(),
-            llm_semaphore=SimpleNamespace(_value=1),
-            crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},
-            chat_metrics={
-                "latency_search": [],
-                "latency_gen": [],
-                "tokens": [],
-                "crag_pass": 0,
-                "crag_fail": 0,
-            },
-            reranker_available=False,
-            reranker_cls=None,
-            current_mode={"mode": "chat"},
-        )
-    )
-
-    response = await chat_router.chat(
-        chat_router.ChatRequest(question="проверь все документы"),
-        _user=object(),
-    )
-
-    assert response["crag_status"] == "DETERMINISTIC"
-    assert response["sources"] == []
-    assert "област" in response["answer"].lower()        # просит выбрать область поиска
-    route = response["query_route"]
-    assert route["channel"] == "scope_clarification"
-    # #2: query_route несёт честный profile-трейс (auto-путь, regex-канал — не «pending»).
-    assert route["profile"]["channel"] == "scope_clarification"
-    assert route["profile"]["route_source"] == "regex"
-    assert route["profile"]["profile_id"] == "auto"
+    source = inspect.getsource(chat_router)
+    assert "build_clarification_decision" not in source
+    assert "scope_clarification(" not in source
+    assert 'channel = "scope_clarification"' not in source
 
 
 @pytest.mark.asyncio

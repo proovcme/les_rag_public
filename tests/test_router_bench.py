@@ -19,7 +19,7 @@ def test_catalog_registers_target_tools():
     expected = {
         "asbuilt", "les_md", "project_registry", "field", "task", "preset",
         "glossary", "price_lookup", "kac", "stesnennost", "lsr_assemble",
-        "table_agg", "clause", "memory", "decision", "none",
+        "table_agg", "clause", "decision", "none",
     }
     assert expected <= names, f"не зарегистрированы: {expected - names}"
 
@@ -36,7 +36,7 @@ def test_every_tool_has_desc_and_examples():
 def test_prompt_has_catalog_and_fewshot():
     p = ar._build_prompt("сколько стоит 91.05.01-017")
     assert "price_lookup" in p and "none" in p          # каталог
-    assert "Примеры:" in p and '"tool": "memory"' in p  # few-shot встроен
+    assert "Примеры:" in p and '"tool": "price_lookup"' in p  # few-shot встроен
 
 
 # ── constrained output: имя валидируется по каталогу ──

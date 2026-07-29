@@ -126,17 +126,18 @@ def test_kotelnaya_question_not_glossary_v020():
     from proxy.services.glossary_chat_service import maybe_handle_glossary_query
     assert maybe_handle_glossary_query("Расскажи про котельную на лесном 64?", project_id=2) is None
 
-def test_explicit_ozhr_still_glossary_v020():
-    from proxy.services.glossary_chat_service import maybe_handle_glossary_query
-    assert maybe_handle_glossary_query("что такое ОЖР")["concept"] == "ozr"
+def test_explicit_ozhr_still_available_as_tool_evidence_v020():
+    from proxy.services.glossary_chat_service import glossary_tool_result
+    result = glossary_tool_result("что такое ОЖР")
+    assert result["concept"] == "ozr" and "answer" not in result
 
 def test_document_registry_not_global_v020():
     from proxy.services import project_registry_chat_service as prc
     assert prc.maybe_handle_registry_query("составь реестр документации котельной", project_id=2) is None
 
-def test_global_registry_still_available_v020():
+def test_global_registry_requires_model_final_v020():
     from proxy.services.deterministic_policy_service import can_return_deterministic_final as P
-    assert P("registry", "реестр проектов лес", candidate={"operation": "registry"})[0] is True
+    assert P("registry", "реестр проектов лес", candidate={"operation": "registry"})[0] is False
 
 def test_source_scoped_not_glossary_v020():
     from proxy.services.deterministic_policy_service import can_return_deterministic_final as P
