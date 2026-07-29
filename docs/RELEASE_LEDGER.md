@@ -7,21 +7,32 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.23 (console-free UI probes + in-page chat navigation)
-номер сборки:              496     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.496 (internal identity; soft-update target)
+версия продукта (SemVer):  0.25.24 (lazy cached work surfaces)
+номер сборки:              497     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.497 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; hard + soft updater on one Python lifecycle
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion hotfix target 0.25.23 / 496
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.23 / 496, next target 0.25.24 / 497
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion exact live result is written by updater report
 ```
 
+> 0.25.24 / build 497 — вкладка строится один раз, а не весь интерфейс сразу
+>
+> Дата: 2026-07-29
+> Статус: internal Legion soft-update target; без Tauri build, tag, GitHub
+> Release, public feed и VPS. Общий UI-kit primitive `cached_tab_panels`
+> создаёт только активную рабочую панель. Документы, Студия, почта, история и
+> административные разделы строятся по первому открытию и затем остаются в
+> `keep_alive`. Переход Чат/Студия не меняет route; вход в Чат или Конфигурацию
+> больше не ждёт eager-render всех скрытых вкладок.
+>
 > 0.25.23 / build 496 — без вспышек при работе с чатом
 >
 > Дата: 2026-07-29
-> Статус: internal Legion hotfix; без tag, GitHub Release, public feed и VPS.
+> Статус: установлен и принят на Legion, exact commit `2f042fc28960`; без tag,
+> GitHub Release, public feed и VPS.
 > Windows runtime probes (`tasklist` и другие команды общего operational
 > launcher), фоновые dispatcher jobs и нативный folder picker всегда получают
 > `CREATE_NO_WINDOW` и закрытый stdin. «Чат» и «Студия» больше не выполняют

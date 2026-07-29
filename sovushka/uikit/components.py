@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 from nicegui import ui
@@ -11,6 +11,18 @@ from sovushka.uikit.states import feedback_state
 
 BUTTON_VARIANTS = frozenset({"primary", "secondary", "quiet", "danger"})
 PANEL_VARIANTS = frozenset({"plain", "raised", "inset"})
+
+
+def tab_name(value: Any) -> str:
+    """Return the stable Quasar tab name from an element or an event value."""
+    if isinstance(value, str):
+        return value
+    props = getattr(value, "_props", None)
+    if props is not None:
+        name = props.get("name")
+        if name is not None:
+            return str(name)
+    return str(value)
 
 
 def add_classes(element: Any, *classes: str) -> Any:
@@ -157,4 +169,56 @@ def render_feedback_state(
             ui.label(state["error_code"]).classes(
                 "sov-ui-feedback__detail sov-ui-source-chip"
             )
+    return container
+
+
+def cached_tab_panels(
+    tabs: Any,
+    definitions: Iterable[tuple[Any, Callable[[], Any]]],
+    *,
+    initial: Any,
+    classes: str = "",
+    style: str = "",
+) -> Any:
+    """Build the active panel only once and retain it for later switches.
+
+    Large NiceGUI pages used to construct every hidden working surface on each
+    route entry. That made a navigation click wait for unrelated documents,
+    mail and configuration panels. The shell now appears immediately, builds
+    the requested panel, and lazily caches every panel after its first visit.
+    """
+    panel_by_name: dict[str, tuple[Any, Callable[[], Any]]] = {}
+    built: set[str] = set()
+
+    with ui.tab_panels(
+        tabs,
+        value=initial,
+        animated=False,
+        keep_alive=True,
+    ).classes(classes).style(style) as container:
+        for tab, builder in definitions:
+            with ui.tab_panel(tab).classes("sov-ui-cached-tab-panel") as tab_panel:
+                render_feedback_state("loading", detail="Открываю раздел…")
+            panel_by_name[tab_name(tab)] = (tab_panel, builder)
+
+    def ensure_built(value: Any) -> None:
+        name = tab_name(value)
+        if name in built or name not in panel_by_name:
+            return
+        tab_panel, builder = panel_by_name[name]
+        tab_panel.clear()
+        try:
+            with tab_panel:
+                builder()
+        except Exception:
+            with tab_panel:
+                render_feedback_state(
+                    "error",
+                    detail="Раздел не открылся. Ошибка записана в журнал ЛЕС.",
+                )
+            raise
+        built.add(name)
+
+    ensure_built(initial)
+    container.on_value_change(lambda event: ensure_built(event.value))
     return container

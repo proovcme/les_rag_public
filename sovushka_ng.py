@@ -230,6 +230,7 @@ async def classic_chat_page(request: Request):
     from sovushka.pages.history import build_history
     from sovushka.pages.mail import build_mail
     from sovushka.pages.samovar import build_samovar
+    from sovushka.uikit.components import cached_tab_panels
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -264,6 +265,24 @@ async def classic_chat_page(request: Request):
         tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
+        _requested_tab = (request.query_params.get("tab") or "").strip().casefold()
+        _forced_chat_tab = bool((request.query_params.get("question") or "").strip())
+        _query_tab = {"chat": "AI ЧАТ", "studio": "Студия"}.get(_requested_tab)
+        _last_tab = (
+            "AI ЧАТ"
+            if _forced_chat_tab
+            else (_query_tab or app.storage.user.get("last_chat_tab", "AI ЧАТ"))
+        )
+        _target = {
+            "AI ЧАТ": tab_chat,
+            "Датасеты": tab_samovar,
+            "Документы": tab_documents,
+            "Студия": tab_studio,
+            "CAD/BIM": tab_cad_bim,
+            "Почта": tab_mail,
+            "ИСТОРИЯ": tab_history,
+        }.get(_last_tab) or tab_chat
+
         def _save_chat_tab(e):
             try:
                 val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
@@ -282,42 +301,21 @@ async def classic_chat_page(request: Request):
 
         tabs.on("update:model-value", _save_chat_tab)
 
-        with ui.tab_panels(tabs, value=tab_chat).classes("w-full flex-1 sov-app-content").style(
-            "background:var(--bg);overflow-y:auto;padding:0;"
-        ):
-            with ui.tab_panel(tab_chat):
-                build_chat(is_admin, tabs, None, tab_documents)
-            if tab_samovar:
-                with ui.tab_panel(tab_samovar):
-                    build_samovar()
-            if tab_documents:
-                with ui.tab_panel(tab_documents):
-                    build_documents(surface="documents")
-            if tab_studio:
-                with ui.tab_panel(tab_studio):
-                    build_documents(surface="studio")
-            if tab_cad_bim:
-                with ui.tab_panel(tab_cad_bim):
-                    build_documents(surface="cad_bim")
-            if tab_mail:
-                with ui.tab_panel(tab_mail):
-                    build_mail()
-            with ui.tab_panel(tab_history):
-                build_history(tabs, tab_chat)
-
-    _requested_tab = (request.query_params.get("tab") or "").strip().casefold()
-    _forced_chat_tab = bool((request.query_params.get("question") or "").strip())
-    _query_tab = {"chat": "AI ЧАТ", "studio": "Студия"}.get(_requested_tab)
-    _last_tab = (
-        "AI ЧАТ"
-        if _forced_chat_tab
-        else (_query_tab or app.storage.user.get("last_chat_tab", "AI ЧАТ"))
-    )
-    _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents,
-               "Студия": tab_studio, "CAD/BIM": tab_cad_bim,
-               "Почта": tab_mail, "ИСТОРИЯ": tab_history}.get(_last_tab)
-    if _target and _target != tab_chat:
-        tabs.set_value(_target)
+        cached_tab_panels(
+            tabs,
+            [
+                (tab_chat, lambda: build_chat(is_admin, tabs, None, tab_documents)),
+                *(([(tab_samovar, build_samovar)] if tab_samovar else [])),
+                *(([(tab_documents, lambda: build_documents(surface="documents"))] if tab_documents else [])),
+                *(([(tab_studio, lambda: build_documents(surface="studio"))] if tab_studio else [])),
+                *(([(tab_cad_bim, lambda: build_documents(surface="cad_bim"))] if tab_cad_bim else [])),
+                *(([(tab_mail, build_mail)] if tab_mail else [])),
+                (tab_history, lambda: build_history(tabs, tab_chat)),
+            ],
+            initial=_target,
+            classes="w-full flex-1 sov-app-content",
+            style="background:var(--bg);overflow-y:auto;padding:0;",
+        )
 
 
 @ui.page("/les/classic")
@@ -329,6 +327,7 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.mail import build_mail_settings
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
+    from sovushka.uikit.components import cached_tab_panels
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -373,37 +372,32 @@ async def classic_admin_page(request: Request):
                 pass
         tabs.on("update:model-value", _save_tab)
 
-        # Контент — Состояние (landing) / Датасеты / Визуал
-        _default_tab = tab_diag
-        with ui.tab_panels(tabs, value=_default_tab).classes("w-full flex-1 sov-app-content").style(
-            "background:var(--bg);overflow-y:auto;padding:0;"
-        ):
-            with ui.tab_panel(tab_diag):
-                build_diag()
-            with ui.tab_panel(tab_samovar):
-                build_samovar()
-            with ui.tab_panel(tab_mail_settings):
-                build_mail_settings()
-            with ui.tab_panel(tab_instrumenty):
-                build_instrumenty()
-            with ui.tab_panel(tab_qdrant_viz):
-                _build_qdrant_visualizer_panel(visualizer_url)
-            with ui.tab_panel(tab_volk):
-                build_volk()
+        _last_tab = app.storage.user.get("last_tab", "Состояние")
+        _tab_map = {
+            "Состояние": tab_diag,
+            "Датасеты": tab_samovar,
+            "Настройка почты": tab_mail_settings,
+            "Инструменты": tab_instrumenty,
+            "Визуал": tab_qdrant_viz,
+            "Доступ": tab_volk,
+        }
+        _target = _tab_map.get(_last_tab) or tab_diag
 
-    # Восстанавливаем последний активный таб
-    _last_tab = app.storage.user.get("last_tab", "Состояние")
-    _tab_map = {
-        "Состояние": tab_diag,
-        "Датасеты":  tab_samovar,
-        "Настройка почты": tab_mail_settings,
-        "Инструменты": tab_instrumenty,
-        "Визуал":    tab_qdrant_viz,
-        "Доступ":    tab_volk,
-    }
-    _target = _tab_map.get(_last_tab)
-    if _target and _target != _default_tab:
-        tabs.set_value(_target)
+        # Контент — Состояние (landing) / Датасеты / Визуал
+        cached_tab_panels(
+            tabs,
+            [
+                (tab_diag, lambda: build_diag()),
+                (tab_samovar, lambda: build_samovar()),
+                (tab_mail_settings, lambda: build_mail_settings()),
+                (tab_instrumenty, lambda: build_instrumenty()),
+                (tab_qdrant_viz, lambda: _build_qdrant_visualizer_panel(visualizer_url)),
+                (tab_volk, lambda: build_volk()),
+            ],
+            initial=_target,
+            classes="w-full flex-1 sov-app-content",
+            style="background:var(--bg);overflow-y:auto;padding:0;",
+        )
 
 
 

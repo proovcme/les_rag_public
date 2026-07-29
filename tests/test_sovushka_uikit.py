@@ -1,9 +1,11 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
-from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS
+from sovushka.uikit import components as components_module
+from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS, tab_name
 from sovushka.uikit.states import feedback_state
 from sovushka.uikit.tokens import UIKIT_CSS
 
@@ -21,6 +23,81 @@ def test_feedback_states_have_human_copy(kind: str):
 def test_feedback_state_rejects_unknown_kind():
     with pytest.raises(ValueError, match="Unknown feedback state"):
         feedback_state("mystery")
+
+
+def test_cached_tab_panel_uses_same_name_for_element_and_event_value():
+    tab = SimpleNamespace(_props={"name": "Студия"})
+
+    assert tab_name(tab) == "Студия"
+    assert tab_name("Студия") == "Студия"
+
+
+def test_cached_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
+    class FakeElement:
+        def __init__(self, name=""):
+            self._props = {"name": name} if name else {}
+            self.on_change = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def classes(self, *_args, **_kwargs):
+            return self
+
+        def style(self, *_args, **_kwargs):
+            return self
+
+        def props(self, *_args, **_kwargs):
+            return self
+
+        def clear(self):
+            return None
+
+        def on_value_change(self, callback):
+            self.on_change = callback
+            return self
+
+    class FakeUi:
+        def tab_panels(self, *_args, **_kwargs):
+            return FakeElement()
+
+        def tab_panel(self, tab):
+            return FakeElement(tab_name(tab))
+
+        def element(self, *_args, **_kwargs):
+            return FakeElement()
+
+        def label(self, *_args, **_kwargs):
+            return FakeElement()
+
+    monkeypatch.setattr(components_module, "ui", FakeUi())
+    chat = SimpleNamespace(_props={"name": "Чат"})
+    studio = SimpleNamespace(_props={"name": "Студия"})
+    built = []
+
+    container = components_module.cached_tab_panels(
+        FakeElement(),
+        [
+            (chat, lambda: built.append("Чат")),
+            (studio, lambda: built.append("Студия")),
+        ],
+        initial=chat,
+    )
+
+    assert built == ["Чат"]
+    container.on_change(SimpleNamespace(value="Студия"))
+    container.on_change(SimpleNamespace(value="Студия"))
+    assert built == ["Чат", "Студия"]
+
+
+def test_classic_surfaces_use_shared_lazy_cached_panels():
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    assert shell.count("cached_tab_panels(") == 2
+    assert "with ui.tab_panels(" not in shell
 
 
 def test_uikit_has_accessible_motion_and_control_contract():
