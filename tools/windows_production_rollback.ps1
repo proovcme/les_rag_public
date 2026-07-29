@@ -20,6 +20,7 @@ if (-not $BackupRoot.StartsWith($AllowedBackupRoot, [System.StringComparison]::O
   throw "Rollback backup must stay under $AllowedBackupRoot"
 }
 if (-not (Test-Path -LiteralPath $BackupRoot)) { throw "Rollback backup not found: $BackupRoot" }
+. (Join-Path $PSScriptRoot "..\installers\windows\runtime-process.ps1")
 
 function Stop-LesApplication {
   try {
@@ -29,9 +30,9 @@ function Stop-LesApplication {
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
   } catch { }
   foreach ($port in @(8050, 8051, 8052, 8053)) {
-    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-      if ($_.OwningProcess -gt 0) {
-        $process = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$_.OwningProcess) `
+    foreach ($listenerPid in @(Get-LesListeningProcessIds $port)) {
+      if ($listenerPid -gt 0) {
+        $process = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$listenerPid) `
           -ErrorAction SilentlyContinue
         $executable = [string]$process.ExecutablePath
         $commandLine = [string]$process.CommandLine
@@ -41,7 +42,7 @@ function Stop-LesApplication {
           $commandLine -match "proxy_server:app|sovushka_ng\.py"
         )
         if ($isLes) {
-          Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+          Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
         }
       }
     }

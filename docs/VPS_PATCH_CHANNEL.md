@@ -4,8 +4,8 @@
 
 Application updater v2 заменяет повседневную передачу полного `LES-Setup.exe`: установленный
 Windows-ЛЕС вручную получает небольшой content-addressed пакет с
-`https://les.ovc.me/updates/`. Legion будет только полигоном приёмки после завершения Mac-работ;
-сейчас updater на Legion не запускается.
+`https://les.ovc.me/updates/`. На Legion updater v2 установлен последним bootstrap-installer;
+дальше обычные изменения должны идти только bounded application package.
 
 Оператор нажимает `Проверить обновление` → `Установить`. Фоновых проверок и самопроизвольной
 установки нет. Apply никогда не запускает pytest, сборку Tauri, baseline, dependency sync или
@@ -17,8 +17,8 @@ installer.
 - prompts/skills и безопасные JSON/YAML/Markdown/UI assets;
 - корневые `proxy_server.py` и `sovushka_ng.py`;
 - собственный helper `tools/vps_patch_apply.py` и паспорт `config/version.json`.
-- четыре exact lifecycle-скрипта:
-  `installers/windows/{start-light,stop-light,state}.ps1` и
+- пять exact lifecycle-скриптов:
+  `installers/windows/{start-light,stop-light,runtime-process,state}.ps1` и
   `installers/windows/app/bootstrap.ps1`;
 - опционально один уже собранный `les-desktop.exe` как отдельный `scope=app`.
 
@@ -63,6 +63,12 @@ deploy stamp и стартует предыдущая версия. User state, 
 не входят в transaction.
 Статус лежит в persistent state и доступен через `GET /api/update/patch/status` после рестарта.
 
+Первичный bootstrap и rollback используют тот же bounded process contract:
+`System.Diagnostics.ProcessStartInfo` ждёт только точный PID с timeout и получает реальный
+exit code, а не следует за долгоживущими потомками как `Start-Process -Wait`. Поиск слушателя
+порта выполняет быстрый `netstat`, без тяжёлого WMI/CIM `Get-NetTCPConnection`. Эти правила
+закреплены коротким updater-гейтом и обязательны для start/stop/deploy/rollback.
+
 ## Публикация
 
 ```bash
@@ -97,7 +103,7 @@ manifest раньше полного архива.
 make test-updater
 
 powershell -NoProfile -File tools/windows_updater_smoke.ps1 \
-  -ExpectedVersion 0.25.18 -ExpectedBuild 491 -ExpectedCommit <sha>
+  -ExpectedVersion 0.25.19 -ExpectedBuild 492 -ExpectedCommit <sha>
 ```
 
 Offline-профиль поведенчески применяет и откатывает runtime + desktop на временных деревьях,
@@ -105,7 +111,7 @@ Offline-профиль поведенчески применяет и откат
 проверяет только установленное обновление, identity, API/UI/index contract и process hygiene.
 Он не строит приложение, не создаёт baseline, не вызывает модель/RAG и не запускает общую suite.
 
-Переход с установленного v1-helper на v2 требует один последний полный installer, потому что старый
-helper не знает `scope=app`. После этого обычные изменения доставляются application updater; полный
-installer нужен только при изменении зависимостей, layout persistent state или самого формата
-обновления.
+Переход с установленного v1-helper на v2 выполнен на Legion одним последним полным installer,
+потому что старый helper не знал `scope=app`. После этого обычные изменения доставляются
+application updater; полный installer допустим только при изменении зависимостей, layout
+persistent state или самого формата обновления.

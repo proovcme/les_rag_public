@@ -23,6 +23,7 @@ $ReportPath = Join-Path $LogDir "production-deploy.json"
 $StatusPath = Join-Path $LogDir "bootstrap-status.json"
 $RuntimeStatePath = Join-Path $LogDir "windows-light-state.json"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+. (Join-Path $PSScriptRoot "..\installers\windows\runtime-process.ps1")
 
 $result = [ordered]@{
   schema = "les_windows_production_deploy_v1"
@@ -78,9 +79,9 @@ function Stop-LesRuntime {
   # the production state file only remembers the canonical pair. Stop only
   # listeners that are demonstrably LES-owned across the complete port set.
   foreach ($port in @(8050, 8051, 8052, 8053)) {
-    Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | ForEach-Object {
-      if ($_.OwningProcess -gt 0) {
-        $process = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$_.OwningProcess) `
+    foreach ($listenerPid in @(Get-LesListeningProcessIds $port)) {
+      if ($listenerPid -gt 0) {
+        $process = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$listenerPid) `
           -ErrorAction SilentlyContinue
         $executable = [string]$process.ExecutablePath
         $commandLine = [string]$process.CommandLine
@@ -90,7 +91,7 @@ function Stop-LesRuntime {
           $commandLine -match "proxy_server:app|sovushka_ng\.py"
         )
         if ($isLes) {
-          Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue
+          Stop-Process -Id $listenerPid -Force -ErrorAction SilentlyContinue
         }
       }
     }
@@ -136,18 +137,18 @@ function Start-PreparedUpdateRuntime(
     }
     $startOut = Join-Path $LogDir "production-fast-start.out.log"
     $startErr = Join-Path $LogDir "production-fast-start.err.log"
-    $startProcess = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+    $startProcess = Invoke-LesBoundedProcess -File "powershell.exe" -Arguments @(
       "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $startLight,
       "-ProxyPort", "8050", "-UiPort", "8051"
-    ) -Wait -PassThru -WindowStyle Hidden `
-      -RedirectStandardOutput $startOut -RedirectStandardError $startErr
-    if ($startProcess.ExitCode -ne 0) {
+    ) -WorkingDirectory $RuntimeRoot -TimeoutSeconds 120 `
+      -StdOut $startOut -StdErr $startErr
+    if ($startProcess.exit_code -ne 0) {
       $detail = if (Test-Path -LiteralPath $startErr) {
         (Get-Content -LiteralPath $startErr -Tail 12) -join " | "
       } else {
         "no stderr"
       }
-      throw "Prepared update service start failed ($($startProcess.ExitCode)): $detail"
+      throw "Prepared update service start failed ($($startProcess.exit_code)): $detail"
     }
   } finally {
     Pop-Location
@@ -314,8 +315,12 @@ try {
   Stop-LesRuntime
 
   $result.stage = "install"
-  $install = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallRoot") -Wait -PassThru
-  if ($install.ExitCode -ne 0) { throw "Production NSIS install failed with exit code $($install.ExitCode)" }
+  $install = Invoke-LesBoundedProcess -File $Installer `
+    -Arguments @("/S", "/D=$InstallRoot") -WorkingDirectory (Split-Path -Parent $Installer) `
+    -TimeoutSeconds 300
+  if ($install.exit_code -ne 0) {
+    throw "Production NSIS install failed with exit code $($install.exit_code)"
+  }
 
   $RuntimeRoot = @(
     (Join-Path $InstallRoot "resources\runtime"),

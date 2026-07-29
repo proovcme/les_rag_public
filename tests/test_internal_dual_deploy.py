@@ -191,8 +191,8 @@ def test_windows_production_update_uses_fast_start_not_first_run_bootstrap():
     assert "--extra windows-reranker" in production
     assert '-Filter "python.exe" -Recurse' not in production
     assert "app\\bootstrap.ps1" not in production
-    assert "-RedirectStandardOutput $startOut" in production
-    assert "-RedirectStandardError $startErr" in production
+    assert "Invoke-LesBoundedProcess" in production
+    assert "-StdOut $startOut -StdErr $startErr" in production
     assert "Get-LesRuntimeProcessHygiene" in production
     assert 'process_contract -ne "direct_python_no_console_v1"' in production
     assert "cmd.exe wrapper process(es)" in production

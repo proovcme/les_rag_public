@@ -7,17 +7,34 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.18 (transactional Windows application updater v2)
-номер сборки:              491     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.491 (internal identity; Windows installer ещё не собран)
+версия продукта (SemVer):  0.25.19 (bounded Windows bootstrap process contract)
+номер сборки:              492     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.492 (internal identity; последний bootstrap installer)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; quiet/idempotent Windows lifecycle
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion не затрагивался
+dev implementation:       codex/sovushka-ui-kit; updater v2 + bounded Windows process layer
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.19 / build 492
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          один bootstrap installer 0.25.18 / build 491 после отдельной команды; затем только application update
-рантайм /api/version:      Mac 0.25.16 / build 489; dev-версия 0.25.18 ещё не установлена
+следующий выпуск:          только bounded application update; полный installer для обычных правок запрещён
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.19 / build 492
 ```
 
+> 0.25.19 / build 492 — последний bootstrap installer и bounded Windows process layer
+>
+> Дата: 2026-07-29
+> Статус: внутренний Legion bootstrap; без tag, GitHub Release, public feed и публикации.
+> Один последний полный installer установил updater v2. Диагностика реального Legion
+> закрыла три системных дефекта старого контура: `Start-Process -Wait` ожидал всё
+> унаследованное дерево после завершения NSIS/start-light; Windows PowerShell 5 не
+> гарантировал заполненный `ExitCode` у короткоживущего `Start-Process`; многократный
+> `Get-NetTCPConnection` раздувал PowerShell и минуты тратил CPU на WMI/CIM.
+> Общий `runtime-process.ps1` теперь запускает exact PID через
+> `System.Diagnostics.ProcessStartInfo`, скрывает окно, имеет жёсткий timeout и
+> настоящий exit code; порты разрешаются точечным `netstat`. Один контракт используют
+> start/stop, production deploy и rollback. Bootstrap использует cached baseline,
+> не передаёт 54–56 МБ с Mac, не запускает общую suite/RAG и сохраняет user state.
+> Короткий `make test-updater` и живой identity/API/UI/index/process smoke являются
+> достаточной приёмкой этого контура.
+>
 > 0.25.18 / build 491 — корректный application updater и короткий тестовый контракт
 >
 > Дата: 2026-07-29

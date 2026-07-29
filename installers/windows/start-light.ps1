@@ -15,6 +15,7 @@ $ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")
 $UiPortExplicit = $PSBoundParameters.ContainsKey("UiPort")
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
+. (Join-Path $PSScriptRoot "runtime-process.ps1")
 
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) { [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT) } else { "" }
 if ($StateRoot) {
@@ -47,11 +48,6 @@ if (-not $Model) {
   if (-not $Model -and $Provider -eq "ollama") { $Model = "qwen3.5:9b" }
 }
 
-function Test-LesPortFree([int]$Port) {
-  $connection = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  return $null -eq $connection
-}
-
 function Get-LesFreePort([int]$StartPort, [int[]]$Reserved = @()) {
   for ($port = $StartPort; $port -lt ($StartPort + 100); $port++) {
     if (($Reserved -notcontains $port) -and (Test-LesPortFree -Port $port)) {
@@ -59,15 +55,6 @@ function Get-LesFreePort([int]$StartPort, [int[]]$Reserved = @()) {
     }
   }
   throw "No free TCP port found in range $StartPort-$($StartPort + 99)."
-}
-
-function Stop-LesPortProcess([int]$Port) {
-  $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  foreach ($conn in $connections) {
-    if ($conn.OwningProcess -gt 0) {
-      Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
-    }
-  }
 }
 
 function Resolve-LesPython {

@@ -30,6 +30,7 @@ ALLOWED_FILES = {
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",
+    "installers/windows/runtime-process.ps1",
     "installers/windows/state.ps1",
     "installers/windows/app/bootstrap.ps1",
 }

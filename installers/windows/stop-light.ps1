@@ -10,6 +10,7 @@ param(
 $ErrorActionPreference = "SilentlyContinue"
 $ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")
 $UiPortExplicit = $PSBoundParameters.ContainsKey("UiPort")
+. (Join-Path $PSScriptRoot "runtime-process.ps1")
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) {
   [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT)
 } elseif ($env:LOCALAPPDATA) {
@@ -24,15 +25,6 @@ if ($StatePath -and (Test-Path -LiteralPath $StatePath)) {
     if (-not $ProxyPortExplicit -and $runtimeState.proxy_port) { $ProxyPort = [int]$runtimeState.proxy_port }
     if (-not $UiPortExplicit -and $runtimeState.ui_port) { $UiPort = [int]$runtimeState.ui_port }
   } catch { }
-}
-
-function Stop-LesPortProcess([int]$Port) {
-  $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  foreach ($conn in $connections) {
-    if ($conn.OwningProcess -gt 0) {
-      Stop-Process -Id $conn.OwningProcess -Force -ErrorAction SilentlyContinue
-    }
-  }
 }
 
 Stop-LesPortProcess -Port $ProxyPort

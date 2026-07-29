@@ -10,6 +10,8 @@ import pytest
 
 from tools import vps_patch_apply
 
+ROOT = Path(__file__).resolve().parents[1]
+
 
 def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -265,3 +267,36 @@ def test_windows_updater_process_hygiene_is_behaviorally_enforced():
                 "cmd_wrappers": 0,
             },
         )
+
+
+def test_windows_bootstrap_process_primitives_are_bounded_and_console_free():
+    helper = (
+        ROOT / "installers" / "windows" / "runtime-process.ps1"
+    ).read_text(encoding="utf-8")
+    start = (
+        ROOT / "installers" / "windows" / "start-light.ps1"
+    ).read_text(encoding="utf-8")
+    stop = (
+        ROOT / "installers" / "windows" / "stop-light.ps1"
+    ).read_text(encoding="utf-8")
+    production = (
+        ROOT / "tools" / "windows_production_deploy.ps1"
+    ).read_text(encoding="utf-8-sig")
+    rollback = (
+        ROOT / "tools" / "windows_production_rollback.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "System.Diagnostics.ProcessStartInfo" in helper
+    assert "$startInfo.CreateNoWindow = $true" in helper
+    assert "$process.WaitForExit($TimeoutSeconds * 1000)" in helper
+    assert "taskkill.exe" in helper
+    assert "netstat.exe" in helper
+    assert "Get-LesListeningProcessIds" in helper
+
+    for source in (start, stop, production, rollback):
+        assert "runtime-process.ps1" in source
+        assert "Get-NetTCPConnection" not in source
+    assert "Invoke-LesBoundedProcess -File $Installer" in production
+    assert 'Invoke-LesBoundedProcess -File "powershell.exe"' in production
+    assert "Start-Process -FilePath $Installer" not in production
+    assert "-Wait -PassThru" not in production

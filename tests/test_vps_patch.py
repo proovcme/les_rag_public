@@ -19,6 +19,10 @@ def test_patch_allowlist_rejects_runtime_boundaries():
         vps_patch.normalize_path("installers/windows/start-light.ps1")
         == "installers/windows/start-light.ps1"
     )
+    assert (
+        vps_patch.normalize_path("installers/windows/runtime-process.ps1")
+        == "installers/windows/runtime-process.ps1"
+    )
     with pytest.raises(ValueError, match="allowlist|denied"):
         vps_patch.normalize_path("pyproject.toml")
     with pytest.raises(ValueError, match="allowlist|denied"):
