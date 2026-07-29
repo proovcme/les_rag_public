@@ -172,7 +172,7 @@ def render_feedback_state(
     return container
 
 
-def cached_tab_panels(
+def lazy_tab_panels(
     tabs: Any,
     definitions: Iterable[tuple[Any, Callable[[], Any]]],
     *,
@@ -193,11 +193,11 @@ def cached_tab_panels(
     with ui.tab_panels(
         tabs,
         value=initial,
-        animated=False,
+        animated=True,
         keep_alive=True,
     ).classes(classes).style(style) as container:
         for tab, builder in definitions:
-            with ui.tab_panel(tab).classes("sov-ui-cached-tab-panel") as tab_panel:
+            with ui.tab_panel(tab).classes("sov-ui-lazy-tab-panel") as tab_panel:
                 render_feedback_state("loading", detail="Открываю раздел…")
             panel_by_name[tab_name(tab)] = (tab_panel, builder)
 

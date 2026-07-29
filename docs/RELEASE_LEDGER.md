@@ -7,22 +7,34 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.24 (lazy cached work surfaces)
-номер сборки:              497     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.497 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.25 (lazy surfaces with restored native motion)
+номер сборки:              498     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.498 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; runtime code at f1242840, ledger-only HEAD may be newer
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.24 / 497 at f12428403380
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.24 / 497, next target 0.25.25 / 498
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.24 / 497, f12428403380
 ```
 
+> 0.25.25 / build 498 — возвращена прежняя плавность вкладок
+>
+> Дата: 2026-07-29
+> Статус: internal Legion soft-update target; без Tauri build, tag, GitHub
+> Release, public feed и VPS. Регрессия находилась в общем
+> `lazy_tab_panels`: при переходе на lazy mount штатная Quasar-анимация была
+> ошибочно отключена через `animated=False`. Возвращён прежний `animated=True`;
+> нативный Quasar `keep_alive` и быстрое переключение сохранены. Для смены
+> same-origin маршрута Чат↔Конфигурация добавлен короткий `@view-transition`.
+> Системный
+> `prefers-reduced-motion` по-прежнему отключает движение адресно.
+>
 > 0.25.24 / build 497 — вкладка строится один раз, а не весь интерфейс сразу
 >
 > Дата: 2026-07-29
 > Статус: установлен и принят на Legion, exact commit `f12428403380`; без
-> Tauri build, tag, GitHub Release, public feed и VPS. Общий UI-kit primitive `cached_tab_panels`
+> Tauri build, tag, GitHub Release, public feed и VPS. Общий UI-kit primitive `lazy_tab_panels`
 > создаёт только активную рабочую панель. Документы, Студия, почта, история и
 > административные разделы строятся по первому открытию и затем остаются в
 > `keep_alive`. Переход Чат/Студия не меняет route; вход в Чат или Конфигурацию

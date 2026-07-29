@@ -25,14 +25,16 @@ def test_feedback_state_rejects_unknown_kind():
         feedback_state("mystery")
 
 
-def test_cached_tab_panel_uses_same_name_for_element_and_event_value():
+def test_lazy_tab_panel_uses_same_name_for_element_and_event_value():
     tab = SimpleNamespace(_props={"name": "Студия"})
 
     assert tab_name(tab) == "Студия"
     assert tab_name("Студия") == "Студия"
 
 
-def test_cached_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
+def test_lazy_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
+    panel_options = {}
+
     class FakeElement:
         def __init__(self, name=""):
             self._props = {"name": name} if name else {}
@@ -61,7 +63,8 @@ def test_cached_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch)
             return self
 
     class FakeUi:
-        def tab_panels(self, *_args, **_kwargs):
+        def tab_panels(self, *_args, **kwargs):
+            panel_options.update(kwargs)
             return FakeElement()
 
         def tab_panel(self, tab):
@@ -78,7 +81,7 @@ def test_cached_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch)
     studio = SimpleNamespace(_props={"name": "Студия"})
     built = []
 
-    container = components_module.cached_tab_panels(
+    container = components_module.lazy_tab_panels(
         FakeElement(),
         [
             (chat, lambda: built.append("Чат")),
@@ -88,15 +91,17 @@ def test_cached_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch)
     )
 
     assert built == ["Чат"]
+    assert panel_options["animated"] is True
+    assert panel_options["keep_alive"] is True
     container.on_change(SimpleNamespace(value="Студия"))
     container.on_change(SimpleNamespace(value="Студия"))
     assert built == ["Чат", "Студия"]
 
 
-def test_classic_surfaces_use_shared_lazy_cached_panels():
+def test_classic_surfaces_use_shared_lazy_panels():
     shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
 
-    assert shell.count("cached_tab_panels(") == 2
+    assert shell.count("lazy_tab_panels(") == 2
     assert "with ui.tab_panels(" not in shell
 
 
@@ -105,6 +110,12 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert ":focus-visible" in UIKIT_CSS
     assert "outline: 2px solid var(--accent) !important" in UIKIT_CSS
     assert "prefers-reduced-motion: reduce" in UIKIT_CSS
+    assert "@view-transition" in UIKIT_CSS
+    assert "navigation: auto" in UIKIT_CSS
+    assert "sov-route-out 130ms ease-in" in UIKIT_CSS
+    assert "sov-route-in 180ms cubic-bezier(.2, 0, 0, 1)" in UIKIT_CSS
+    assert "::view-transition-old(root)" in UIKIT_CSS
+    assert "animation-duration: .001ms !important" in UIKIT_CSS
     assert "transition: all" not in UIKIT_CSS
     assert "scale(.96)" in UIKIT_CSS
     assert "font-variant-numeric: tabular-nums" in UIKIT_CSS

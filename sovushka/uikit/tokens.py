@@ -34,6 +34,34 @@ html {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Preserve spatial continuity between the two same-origin AppShell routes.
+   Unsupported WebViews ignore this block and keep normal navigation. */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root) {
+  animation: sov-route-out 130ms ease-in both;
+}
+
+::view-transition-new(root) {
+  animation: sov-route-in 180ms cubic-bezier(.2, 0, 0, 1) both;
+}
+
+@keyframes sov-route-out {
+  to {
+    opacity: .96;
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes sov-route-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
 .sov-ui-shell {
   min-width: 0;
   color: var(--text);
@@ -3197,6 +3225,11 @@ html {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation-duration: .001ms !important;
+  }
+
   .sov-ui-shell *,
   .sov-ui-shell *::before,
   .sov-ui-shell *::after {

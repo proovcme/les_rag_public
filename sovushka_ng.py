@@ -230,7 +230,7 @@ async def classic_chat_page(request: Request):
     from sovushka.pages.history import build_history
     from sovushka.pages.mail import build_mail
     from sovushka.pages.samovar import build_samovar
-    from sovushka.uikit.components import cached_tab_panels
+    from sovushka.uikit.components import lazy_tab_panels
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -301,7 +301,7 @@ async def classic_chat_page(request: Request):
 
         tabs.on("update:model-value", _save_chat_tab)
 
-        cached_tab_panels(
+        lazy_tab_panels(
             tabs,
             [
                 (tab_chat, lambda: build_chat(is_admin, tabs, None, tab_documents)),
@@ -327,7 +327,7 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.mail import build_mail_settings
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
-    from sovushka.uikit.components import cached_tab_panels
+    from sovushka.uikit.components import lazy_tab_panels
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
@@ -384,7 +384,7 @@ async def classic_admin_page(request: Request):
         _target = _tab_map.get(_last_tab) or tab_diag
 
         # Контент — Состояние (landing) / Датасеты / Визуал
-        cached_tab_panels(
+        lazy_tab_panels(
             tabs,
             [
                 (tab_diag, lambda: build_diag()),
