@@ -322,6 +322,54 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
 
 
 @pytest.mark.asyncio
+async def test_local_ollama_qwen_document_application_uses_single_row_batches(tmp_path, monkeypatch):
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-test")
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_BATCH_SIZE", raising=False)
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source,
+        {"original_name": "source.pdf", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+    seen = {}
+
+    def run_workflow(_path, **kwargs):
+        seen.update(kwargs)
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {
+                "summary": {
+                    "result_status": "priced_complete",
+                    "input_rows": 1,
+                    "bound_rows": 1,
+                    "open_rows": 0,
+                },
+                "positions": [],
+            },
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="ollama",
+        model_name="qwen3.5:9b",
+        cloud_provider=False,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result is not None
+    assert seen["batch_size"] == 1
+    assert seen["accumulate_task_state"] is False
+    assert seen["require_global_review"] is True
+
+
+@pytest.mark.asyncio
 async def test_qwen_document_application_defaults_to_accumulated_single_rows(tmp_path, monkeypatch):
     source = tmp_path / "source.xlsx"
     source.write_bytes(b"xlsx")
@@ -501,6 +549,119 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     assert captured["body"]["options"]["temperature"] == 0.0
     assert captured["body"]["options"]["seed"] == 0
     assert result["_les_seed"] == 0
+
+
+def test_document_mapping_exchange_strips_inline_thinking(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "content": (
+                        '<think>{"unrelated":"reasoning"}</think>'
+                        '{"rows":[{"work_id":"w1","decision":"unbound","reason":"model"}]}'
+                    ),
+                },
+                "done_reason": "stop",
+                "eval_count": 42,
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **_kwargs):
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_mapping_exchange(
+        [{"role": "user", "content": "mapping"}],
+        {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
+    )
+
+    assert result["rows"][0]["reason"] == "model"
+
+
+def test_document_mapping_exchange_retries_ollama_without_thinking(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    requests = []
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            body = kwargs["json"]
+            requests.append(body)
+            if body.get("think") is False:
+                return Response({
+                    "message": {
+                        "content": (
+                            '{"rows":[{"work_id":"w1","decision":"unbound",'
+                            '"reason":"retry"}]}'
+                        ),
+                    },
+                    "done_reason": "stop",
+                    "eval_count": 12,
+                })
+            return Response({
+                "message": {"content": "", "thinking": "unfinished reasoning"},
+                "done_reason": "length",
+                "eval_count": 8000,
+            })
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_mapping_exchange(
+        [{"role": "user", "content": "mapping"}],
+        {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
+    )
+
+    assert result["rows"][0]["reason"] == "retry"
+    assert len(requests) == 2
+    assert "think" not in requests[0]
+    assert requests[1]["think"] is False
+    assert requests[1]["options"]["num_predict"] == 16000
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

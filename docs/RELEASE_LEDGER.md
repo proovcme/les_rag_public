@@ -7,17 +7,29 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.29 (model-owned answers and direct source links)
-номер сборки:              502     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.502 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.30 (bounded local smeta transport recovery)
+номер сборки:              503     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.503 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; 0.25.29 candidate
+dev implementation:       codex/sovushka-ui-kit; 0.25.30 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.25.30 / build 503 — полезное ядро PR #8 без обхода model-owned контракта
+>
+> Дата: 2026-07-29
+> Статус: candidate в `codex/sovushka-ui-kit`; без Mac/Legion deploy, Tauri build,
+> tag, GitHub Release, public feed и VPS. Native Ollama/Qwen получает по одной
+> строке на transport-пакет, обязательная global-review сохранена. Structured
+> mapping увеличен до 8000 токенов и имеет один bounded retry с `think=false`,
+> если reasoning не оставил валидный JSON, а отклонённый terminal JSON получает
+> один schema-repair той же модели. `unbound` provenance выравнивается только по
+> реальным search/read вызовам; код не создаёт tool calls, запросы, причины
+> отказа или coverage и не включает soft-accept непроверенного `bind`.
+>
 > 0.25.29 / build 502 — ответ формулирует модель, источники являются ссылками
 >
 > Дата: 2026-07-29

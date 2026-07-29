@@ -962,7 +962,10 @@ class SmetaNormToolSession:
                 continue
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
-                evidence = dict(item.get("unbound_evidence") or {})
+                evidence = self._align_unbound_evidence_to_trace(
+                    work_id,
+                    dict(item.get("unbound_evidence") or {}),
+                )
                 evidence_errors = self._unbound_evidence_errors(
                     work_id,
                     reason=reason,
@@ -1142,6 +1145,62 @@ class SmetaNormToolSession:
             "queries_used": queries,
             "opened_norm_codes": opened_codes,
         }
+
+    def _align_unbound_evidence_to_trace(
+        self,
+        work_id: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Normalize provenance to real tool calls without creating model evidence."""
+        allowed = self._allowed_unbound_evidence(work_id)
+        executed_queries = [
+            str(value).strip()
+            for value in (allowed.get("queries_used") or [])
+            if str(value).strip()
+        ]
+        query_by_key = {value.casefold(): value for value in executed_queries}
+        submitted_queries = [
+            str(value).strip()
+            for value in (evidence.get("queries_used") or [])
+            if str(value).strip()
+        ]
+        aligned_queries = list(dict.fromkeys(
+            query_by_key[value.casefold()]
+            for value in submitted_queries
+            if value.casefold() in query_by_key
+        ))
+
+        opened_codes = [
+            str(value).strip()
+            for value in (allowed.get("opened_norm_codes") or [])
+            if str(value).strip()
+        ]
+        opened_by_key = {value.casefold(): value for value in opened_codes}
+        submitted_opened = [
+            str(value).strip()
+            for value in (evidence.get("opened_norm_codes") or [])
+            if str(value).strip()
+        ]
+        aligned_opened = list(dict.fromkeys(
+            opened_by_key[value.casefold()]
+            for value in submitted_opened
+            if value.casefold() in opened_by_key
+        ))
+
+        aligned = dict(evidence)
+        if len({value.casefold() for value in aligned_queries}) >= 2:
+            aligned["queries_used"] = aligned_queries
+        elif len({value.casefold() for value in executed_queries}) >= 2:
+            aligned["queries_used"] = executed_queries
+        else:
+            aligned["queries_used"] = aligned_queries
+        if aligned_opened:
+            aligned["opened_norm_codes"] = aligned_opened
+        elif opened_codes:
+            aligned["opened_norm_codes"] = opened_codes
+        else:
+            aligned["opened_norm_codes"] = []
+        return aligned
 
     def _unbound_evidence_errors(
         self,
@@ -1593,10 +1652,17 @@ def _run_batch_norm_agent(
     accepted_rows = session.accepted_rows
     previous_call_signature = ""
     duplicate_feedback_signature = ""
+    structured_mapping_attempts = 0
 
     def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
+        nonlocal structured_mapping_attempts
         if mapping_exchange is None:
             raise RuntimeError(reason)
+        if structured_mapping_attempts >= 2:
+            raise RuntimeError(
+                "smeta model mapping failed validation after one bounded schema repair"
+            )
+        structured_mapping_attempts += 1
         remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
         schema = _mapping_output_schema(remaining)
         request = {
@@ -1648,7 +1714,8 @@ def _run_batch_norm_agent(
             "function": {"name": "submit_lsr_mapping", "arguments": {"rows": rows}},
         }
 
-    finalization_turns = 1 if mapping_exchange is not None else 0
+    last_submit_result: dict[str, Any] | None = None
+    finalization_turns = 2 if mapping_exchange is not None else 0
     for turn in range(1, max_turns + finalization_turns + 1):
         started = perf_counter()
         forced_mapping = turn > max_turns
@@ -1663,8 +1730,14 @@ def _run_batch_norm_agent(
             })
         assistant: dict[str, Any] = {}
         if forced_mapping:
+            repair_mapping = bool(last_submit_result and not last_submit_result.get("ok"))
             calls = [structured_mapping_call(
-                reason=f"smeta evidence tool budget exhausted after {max_turns} model turns",
+                reason=(
+                    "previous structured mapping failed validation; resubmit only "
+                    "the remaining work_id values using the returned errors"
+                    if repair_mapping else
+                    f"smeta evidence tool budget exhausted after {max_turns} model turns"
+                ),
                 turn=turn,
             )]
             model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
@@ -1775,6 +1848,8 @@ def _run_batch_norm_agent(
                 "content": json.dumps(result, ensure_ascii=False, default=str),
             })
             model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+            if name == "submit_lsr_mapping" and isinstance(result, dict):
+                last_submit_result = result
             submitted = dict(session.accepted_rows) if session.complete else None
         if submitted is not None:
             return session.result(
@@ -1793,6 +1868,16 @@ def _run_batch_norm_agent(
                     ),
                 },
             )
+    if last_submit_result and not last_submit_result.get("ok"):
+        errors = json.dumps(
+            (last_submit_result.get("errors") or [])[:8],
+            ensure_ascii=False,
+            default=str,
+        )
+        raise RuntimeError(
+            "smeta model mapping failed validation after bounded repair: "
+            f"{errors[:800]}"
+        )
     raise RuntimeError(f"smeta model did not submit mapping within {max_turns} model turns")
 
 

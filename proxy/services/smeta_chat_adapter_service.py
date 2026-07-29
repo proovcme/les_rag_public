@@ -473,7 +473,7 @@ def _smeta_document_mapping_exchange(
 ) -> dict[str, Any]:
     """Serialize the same model's decisions with provider-enforced JSON schema."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 6000)
+    max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 8000)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
@@ -523,7 +523,33 @@ def _smeta_document_mapping_exchange(
                 else response_payload.get("choices", [{}])[0].get("message", {})
             )
             message = message if isinstance(message, dict) else {}
-            parsed = _extract_json_object(str(message.get("content") or ""))
+            parsed = _extract_json_object(_assistant_text(message))
+            if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
+                parsed = None
+            if parsed is None and native_ollama:
+                retry_body = dict(body)
+                retry_body["think"] = False
+                if str(response_payload.get("done_reason") or "") == "length":
+                    options = dict(retry_body.get("options") or {})
+                    options["num_predict"] = max(
+                        int(options.get("num_predict") or max_tokens),
+                        max_tokens * 2,
+                    )
+                    retry_body["options"] = options
+                logger.warning(
+                    "[SMETA_DOCUMENT] structured mapping missing; retrying once "
+                    "without thinking done_reason=%r eval_count=%r",
+                    response_payload.get("done_reason"),
+                    response_payload.get("eval_count"),
+                )
+                response = client.post(chat_url, headers=headers, json=retry_body)
+                response.raise_for_status()
+                response_payload = response.json()
+                message = response_payload.get("message", {})
+                message = message if isinstance(message, dict) else {}
+                parsed = _extract_json_object(_assistant_text(message))
+                if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
+                    parsed = None
             if parsed is None:
                 raise RuntimeError("smeta provider returned invalid structured mapping JSON")
             parsed["_les_done_reason"] = response_payload.get("done_reason")

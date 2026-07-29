@@ -566,6 +566,12 @@ async def run_smeta_document_application(
             document_batch_size = int(configured_batch_size)
         elif agent_engine == "qwen_agent":
             document_batch_size = 1
+        elif (
+            not cloud_provider
+            and str(model_provider or "").casefold() == "ollama"
+            and "qwen" in str(model_name or "").casefold()
+        ):
+            document_batch_size = 1
         else:
             document_batch_size = 0 if cloud_provider else 5
         document_max_turns = int(os.getenv(

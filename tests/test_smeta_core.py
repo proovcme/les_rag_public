@@ -1256,6 +1256,89 @@ def test_batch_agent_rejects_unbound_without_two_traced_searches(monkeypatch):
     ]
 
 
+def test_unbound_provenance_is_aligned_only_to_real_tool_trace(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    turns = iter([
+        [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1",
+            "queries": ["реальный буквальный", "реальный ФСНБ"],
+        }])],
+        [_native_call("submit", "submit_lsr_mapping", rows=[{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "защищаемой нормы нет",
+            "unbound_evidence": {
+                "queries_used": ["выдуманный поиск"],
+                "opened_norm_codes": ["ГЭСН00-00-000-00"],
+                "rejection_reasons": ["поиск не дал применимой карточки"],
+                "coverage_checked": "покрытие соседней строкой не подтверждено",
+            },
+        }])],
+    ])
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        lambda _messages, _tools: {"tool_calls": next(turns)},
+        candidate_limit=5,
+        max_turns=2,
+    )
+
+    evidence = result["selections"]["w1"]["unbound_evidence"]
+    assert evidence["queries_used"] == ["реальный буквальный", "реальный ФСНБ"]
+    assert evidence["opened_norm_codes"] == []
+    assert "выдуманный поиск" not in json.dumps(result["query_trace"], ensure_ascii=False)
+
+
+def test_forced_mapping_gets_one_bounded_schema_repair(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    mapping_calls = {"count": 0}
+
+    def exchange(_messages, _tools):
+        return {"tool_calls": [_native_call("search", "search_norms_batch", items=[{
+            "work_id": "w1",
+            "queries": ["буквальный поиск", "нормативный поиск"],
+        }])]}
+
+    def mapping_exchange(_messages, _schema):
+        mapping_calls["count"] += 1
+        evidence = {
+            "queries_used": ["буквальный поиск", "нормативный поиск"],
+            "opened_norm_codes": [],
+            "rejection_reasons": ["применимая норма не найдена"],
+        }
+        if mapping_calls["count"] > 1:
+            evidence["coverage_checked"] = "покрытие другими строками не подтверждено"
+        return {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "защищаемой нормы нет",
+            "unbound_evidence": evidence,
+        }]}
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+    )
+
+    assert mapping_calls["count"] == 2
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
+    assert "search-preflight-harness" not in json.dumps(
+        result["model_trace"],
+        ensure_ascii=False,
+    )
+
+
 def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
