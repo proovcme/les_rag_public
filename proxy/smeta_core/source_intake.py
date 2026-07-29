@@ -6,6 +6,7 @@ norms, analogs, coefficients or prices. Ambiguous rows stay visible as issues.
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import re
 from dataclasses import asdict
@@ -17,6 +18,7 @@ from proxy.smeta_core.contracts import WorkItem
 
 _HEADER_ALIASES = {
     "number": ("№", "пп", "номер"),
+    "section": ("раздел", "секция", "section"),
     "title": ("наименование", "работа", "описание"),
     "unit": ("ед. изм", "единица", "ед изм", "ед."),
     "quantity": ("кол-во", "количество", "объем", "объём"),
@@ -54,6 +56,61 @@ def _header_map(row: Iterable[Any]) -> dict[str, int]:
     return result
 
 
+def _canonical_column_map(column_map: dict[str, Any] | None) -> dict[str, Any]:
+    aliases = {
+        "order_no": "number",
+        "number": "number",
+        "№ п/п": "number",
+        "section": "section",
+        "section_name": "section",
+        "раздел": "section",
+        "title": "title",
+        "work_name": "title",
+        "наименование работ": "title",
+        "unit": "unit",
+        "ед. изм.": "unit",
+        "quantity": "quantity",
+        "количество": "quantity",
+        "note": "note",
+        "примечание": "note",
+    }
+    normalized: dict[str, Any] = {}
+    for raw_key, value in (column_map or {}).items():
+        key = aliases.get(str(raw_key).strip().casefold(), str(raw_key).strip().casefold())
+        if key in _HEADER_ALIASES:
+            normalized[key] = value
+    return normalized
+
+
+def _explicit_header_map(
+    rows: list[list[Any]],
+    column_map: dict[str, Any],
+) -> tuple[int, dict[str, int]]:
+    if not column_map:
+        return -1, {}
+    numeric = {
+        key: int(value)
+        for key, value in column_map.items()
+        if isinstance(value, int) or (isinstance(value, str) and value.strip().isdigit())
+    }
+    if {"title", "unit", "quantity"}.issubset(numeric):
+        return 0, numeric
+    requested = {
+        key: _text(value).casefold()
+        for key, value in column_map.items()
+        if key not in numeric and _text(value)
+    }
+    for row_index, row in enumerate(rows[:20]):
+        by_name = {_text(value).casefold(): index for index, value in enumerate(row)}
+        resolved = dict(numeric)
+        for key, header in requested.items():
+            if header in by_name:
+                resolved[key] = by_name[header]
+        if {"title", "unit", "quantity"}.issubset(resolved):
+            return row_index, resolved
+    return -1, {}
+
+
 def _cell(row: list[Any], index: int | None) -> str:
     return _text(row[index]) if index is not None and index < len(row) else ""
 
@@ -65,6 +122,7 @@ def _rows_to_items(
     source_locator: str,
     table_index: int,
     work_id_start: int = 0,
+    column_map: dict[str, Any] | None = None,
 ) -> tuple[list[WorkItem], list[dict[str, Any]]]:
     items: list[WorkItem] = []
     issues: list[dict[str, Any]] = []
@@ -72,11 +130,15 @@ def _rows_to_items(
         return items, issues
     header_at = -1
     columns: dict[str, int] = {}
-    for index, row in enumerate(rows[:12]):
-        candidate = _header_map(row)
-        if {"title", "unit", "quantity"}.issubset(candidate):
-            header_at, columns = index, candidate
-            break
+    explicit_map = _canonical_column_map(column_map)
+    if explicit_map:
+        header_at, columns = _explicit_header_map(rows, explicit_map)
+    else:
+        for index, row in enumerate(rows[:12]):
+            candidate = _header_map(row)
+            if {"title", "unit", "quantity"}.issubset(candidate):
+                header_at, columns = index, candidate
+                break
     if header_at < 0:
         return items, [{"code": "vor_header_not_found", "source": source_locator, "table": table_index}]
 
@@ -98,6 +160,9 @@ def _rows_to_items(
         quantity = _number(quantity_raw)
         visible_number = _cell(row, columns.get("number"))
         note = _cell(row, columns.get("note"))
+        row_section = _cell(row, columns.get("section"))
+        if row_section:
+            current_section = row_section
         if not title and not unit and quantity is None:
             continue
 
@@ -183,7 +248,11 @@ def intake_vor_pdf(path: str | Path) -> dict[str, Any]:
     }
 
 
-def intake_vor_xlsx(path: str | Path) -> dict[str, Any]:
+def intake_vor_xlsx(
+    path: str | Path,
+    *,
+    column_map: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Extract visible work rows from every worksheet without semantic guessing."""
     source = Path(path).expanduser().resolve()
     if not source.is_file() or source.suffix.lower() not in {".xlsx", ".xlsm"}:
@@ -209,6 +278,7 @@ def intake_vor_xlsx(path: str | Path) -> dict[str, Any]:
                 source_locator=f"sheet={worksheet.title}",
                 table_index=1,
                 work_id_start=len(items),
+                column_map=column_map,
             )
             items.extend(extracted)
             issues.extend(sheet_issues)
@@ -228,11 +298,68 @@ def intake_vor_xlsx(path: str | Path) -> dict[str, Any]:
     }
 
 
-def intake_vor_document(path: str | Path) -> dict[str, Any]:
+def intake_vor_csv(
+    path: str | Path,
+    *,
+    column_map: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Extract visible VOR rows from UTF-8 or Windows-1251 CSV."""
+    source = Path(path).expanduser().resolve()
+    if not source.is_file() or source.suffix.lower() != ".csv":
+        raise ValueError(f"CSV source not found: {source}")
+    raw = source.read_bytes()
+    text = ""
+    encoding = ""
+    for candidate in ("utf-8-sig", "utf-8", "cp1251"):
+        try:
+            text = raw.decode(candidate)
+            encoding = candidate
+            break
+        except UnicodeDecodeError:
+            continue
+    if not text:
+        raise ValueError("CSV encoding must be UTF-8 or Windows-1251")
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ";"
+    rows = [list(row) for row in csv.reader(text.splitlines(), delimiter=delimiter)]
+    items, issues = _rows_to_items(
+        rows,
+        source_path=source,
+        source_locator="csv",
+        table_index=1,
+        column_map=column_map,
+    )
+    return {
+        "schema": "smeta_vor_intake_v1",
+        "source_kind": "csv",
+        "source_path": str(source),
+        "source_sha256": _source_id(source).split(":", 1)[1],
+        "encoding": encoding,
+        "delimiter": delimiter,
+        "table_count": 1,
+        "work_item_count": len(items),
+        "section_count": len({item.section for item in items}),
+        "work_items": [asdict(item) for item in items],
+        "issues": issues,
+        "semantic_selection_performed": False,
+    }
+
+
+def intake_vor_document(
+    path: str | Path,
+    *,
+    column_map: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Dispatch a supported source document to its lossless intake parser."""
     suffix = Path(path).suffix.lower()
     if suffix == ".pdf":
         return intake_vor_pdf(path)
     if suffix in {".xlsx", ".xlsm"}:
-        return intake_vor_xlsx(path)
+        return intake_vor_xlsx(path, column_map=column_map)
+    if suffix == ".csv":
+        return intake_vor_csv(path, column_map=column_map)
     raise ValueError(f"Unsupported VOR document format: {suffix or 'none'}")

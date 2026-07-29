@@ -227,6 +227,45 @@ async def api_post_file(
         return None
 
 
+async def api_post_file_form(
+    path: str,
+    content: bytes,
+    filename: str,
+    *,
+    data: Optional[dict] = None,
+    base: Optional[str] = None,
+) -> Optional[dict]:
+    """Multipart upload with form fields for typed import endpoints."""
+    from sovushka.config import PROXY_URL
+
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(base),
+            timeout=300.0,
+        ) as client:
+            response = await client.post(
+                f"{base}{path}",
+                files={"file": (filename, content)},
+                data={
+                    str(key): (
+                        json.dumps(value, ensure_ascii=False)
+                        if isinstance(value, (dict, list))
+                        else str(value)
+                    )
+                    for key, value in (data or {}).items()
+                },
+                headers=_auth_headers(),
+            )
+            response.raise_for_status()
+            _api_success()
+            return response.json()
+    except Exception as error:
+        _api_error("POST", path, error)
+        return None
+
+
 async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optional[str] = None) -> bool:
     """W5.1: POST с чтением Server-Sent Events. Для каждого события вызывает
     `on_event(event: str, payload)` — payload уже распарсен из JSON (для `token`

@@ -1,0 +1,443 @@
+"""One persistent conversational turn for a RIM estimate session.
+
+The model owns scope, questions and draft professional choices.  This service
+only supplies state-scoped tools, validates their transport and persists the
+result as immutable session revisions.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Callable
+from uuid import uuid4
+
+from proxy.services.prompt_registry_service import smeta_native_skill_prompt
+from proxy.services.rim_agent_action_service import model_tool_specs, validate_model_action
+from proxy.smeta_core.document_workflow import _run_batch_norm_agent
+from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
+
+
+Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]]
+MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
+
+
+def _arguments(tool_call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    function = tool_call.get("function") if isinstance(tool_call.get("function"), dict) else {}
+    name = str(function.get("name") or "")
+    raw = function.get("arguments")
+    if isinstance(raw, dict):
+        return name, raw
+    try:
+        parsed = json.loads(str(raw or "{}"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"Qwen returned invalid arguments for {name}") from error
+    if not isinstance(parsed, dict):
+        raise ValueError(f"Qwen arguments for {name} must be an object")
+    return name, parsed
+
+
+def _single_action(
+    *,
+    session: dict[str, Any],
+    context: dict[str, Any],
+    user_message: str,
+    exchange: Exchange,
+    only_actions: set[str] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    tools = model_tool_specs(session)
+    if only_actions is not None:
+        tools = [
+            tool
+            for tool in tools
+            if str((tool.get("function") or {}).get("name") or "") in only_actions
+        ]
+    message = exchange(
+        [
+            {
+                "role": "system",
+                "content": (
+                    smeta_native_skill_prompt()
+                    + "\n\nRIM DIALOG CONTRACT: use only the supplied state-scoped tools. "
+                    "The server owns session identity and state. Ask one highest-value question. "
+                    "Do not invent a norm, price, coefficient or calculation."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {
+                        "user_message": str(user_message or ""),
+                        "session_context": context,
+                        "required_result": (
+                            "Call exactly one supplied tool. Ordinary prose is not an action."
+                        ),
+                    },
+                    ensure_ascii=False,
+                    default=str,
+                ),
+            },
+        ],
+        tools,
+    )
+    calls = list(message.get("tool_calls") or [])
+    if len(calls) != 1:
+        raise ValueError("Qwen must return exactly one state-scoped tool call")
+    action, arguments = _arguments(calls[0])
+    intent = str(message.get("content") or "").strip() or f"Выполняю действие {action}."
+    validated = validate_model_action(
+        session,
+        {
+            "action": action,
+            "arguments": arguments,
+            "user_visible_intent": intent,
+        },
+    )
+    return validated, message
+
+
+def _current_payload(
+    store: RimSessionStore,
+    session: dict[str, Any],
+    revision_id: str,
+    *,
+    owner_id: str,
+    allow_admin: bool,
+) -> dict[str, Any]:
+    if not revision_id:
+        return {}
+    return store.revision_payload(
+        session["session_id"],
+        revision_id,
+        owner_id=owner_id,
+        allow_admin=allow_admin,
+    )["payload"]
+
+
+def _work_rows(vor_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "work_id": str(row.get("work_id") or ""),
+            "title": str(row.get("work_name") or row.get("title") or ""),
+            "unit": str(row.get("unit") or ""),
+            "quantity": row.get("quantity"),
+            "section": str(row.get("section_name") or row.get("section") or ""),
+            "note": str(row.get("note") or ""),
+            "source_row": row.get("source_row"),
+            "source_refs": list(
+                row.get("source_refs")
+                or ([row.get("source_ref")] if row.get("source_ref") else [])
+            ),
+        }
+        for row in vor_rows[:30]
+    ]
+
+
+def _mapping_rows(
+    work_rows: list[dict[str, Any]],
+    result: dict[str, Any],
+) -> list[dict[str, Any]]:
+    by_work = {str(row.get("work_id") or ""): row for row in work_rows}
+    opened = {
+        str(work_id): {
+            str(card.get("norm_code") or ""): card
+            for card in cards or []
+            if isinstance(card, dict)
+        }
+        for work_id, cards in (result.get("opened_cards") or {}).items()
+    }
+    candidates: dict[str, dict[str, dict[str, Any]]] = {}
+    for work_id, payloads in (result.get("browse_trace") or {}).items():
+        bucket = candidates.setdefault(str(work_id), {})
+        for payload in payloads or []:
+            for card in (payload or {}).get("candidates") or []:
+                if isinstance(card, dict) and str(card.get("norm_code") or ""):
+                    bucket[str(card["norm_code"])] = card
+
+    rows: list[dict[str, Any]] = []
+    for work_id, selection in (result.get("selections") or {}).items():
+        work = by_work.get(str(work_id), {})
+        norm_code = str(selection.get("norm_code") or "")
+        covered_by = str(selection.get("covered_by_work_id") or "")
+        reason = str(selection.get("reason") or selection.get("coverage_reason") or "")
+        source_refs = list(work.get("source_refs") or [])
+        if not norm_code:
+            rows.append(
+                {
+                    "schema": "rim_mapping_row_v1",
+                    "mapping_row_id": uuid4().hex,
+                    "work_id": str(work_id),
+                    "norm_key": "",
+                    "norm_code": "",
+                    "norm_title": "",
+                    "norm_unit": "",
+                    "norm_quantity": None,
+                    "candidate_rank": 1,
+                    "selection_status": "selected" if covered_by else "conflict",
+                    "selection_kind": "covered_by" if covered_by else "unbound",
+                    "covered_by_work_id": covered_by,
+                    "is_analog": False,
+                    "reason": reason,
+                    "source_refs": source_refs,
+                    "edited_by": "model",
+                    "card_opened": False,
+                    "unbound_evidence": dict(selection.get("unbound_evidence") or {}),
+                }
+            )
+            continue
+        candidate_bucket = candidates.setdefault(str(work_id), {})
+        candidate_bucket.setdefault(norm_code, opened.get(str(work_id), {}).get(norm_code, {}))
+        ordered_codes = [norm_code, *sorted(code for code in candidate_bucket if code != norm_code)]
+        for rank, code in enumerate(ordered_codes, 1):
+            card = opened.get(str(work_id), {}).get(code) or candidate_bucket.get(code) or {}
+            selected = code == norm_code
+            selection_kind = str(selection.get("selection_kind") or "exact")
+            rows.append(
+                {
+                    "schema": "rim_mapping_row_v1",
+                    "mapping_row_id": uuid4().hex,
+                    "work_id": str(work_id),
+                    "norm_key": str(card.get("norm_key") or ""),
+                    "norm_code": code,
+                    "norm_title": str(card.get("title") or ""),
+                    "norm_unit": str(card.get("measure_unit") or ""),
+                    "norm_quantity": None,
+                    "candidate_rank": rank,
+                    "selection_status": "selected" if selected else "candidate",
+                    "selection_kind": (
+                        "analog" if selected and selection_kind == "analog" else "direct"
+                    ),
+                    "is_analog": bool(selected and selection_kind == "analog"),
+                    "reason": reason if selected else "",
+                    "source_refs": source_refs,
+                    "norm_source_ref": str(card.get("source_ref") or ""),
+                    "normative_base_version": str(card.get("edition") or ""),
+                    "questions_to_ask": list(card.get("questions_to_ask") or [])[:8],
+                    "edited_by": "model",
+                    "card_opened": bool(code in opened.get(str(work_id), {})),
+                    "applicability": (
+                        str(selection.get("applicability") or "") if selected else ""
+                    ),
+                    "analog_limitations": (
+                        list(selection.get("analog_limitations") or []) if selected else []
+                    ),
+                    "technology_check": (
+                        dict(selection.get("technology_check") or {}) if selected else {}
+                    ),
+                    "resource_bindings": (
+                        list(selection.get("resource_bindings") or []) if selected else []
+                    ),
+                    "nr_sp_rule_id": (
+                        str(selection.get("nr_sp_rule_id") or "") if selected else ""
+                    ),
+                }
+            )
+    return rows
+
+
+def _question_hints(mapping_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    hints = []
+    for row in mapping_rows:
+        if str(row.get("selection_status") or "") != "selected":
+            continue
+        for question in row.get("questions_to_ask") or []:
+            text = str(question or "").strip()
+            if text and not any(item["text"] == text for item in hints):
+                hints.append(
+                    {
+                        "text": text,
+                        "work_ids": [str(row.get("work_id") or "")],
+                        "norm_code": str(row.get("norm_code") or ""),
+                    }
+                )
+    return hints[:15]
+
+
+def run_rim_agent_turn(
+    store: RimSessionStore,
+    session_id: str,
+    *,
+    owner_id: str,
+    user_message: str,
+    exchange: Exchange,
+    mapping_exchange: MappingExchange,
+    allow_admin: bool = False,
+) -> dict[str, Any]:
+    """Run one user-visible turn; long norm research remains one bounded tool loop."""
+    session = store.get_session(
+        session_id, owner_id=owner_id, allow_admin=allow_admin
+    )
+    if session.get("pending_question_id"):
+        action, model_message = _single_action(
+            session=session,
+            context={
+                "pending_question": session.get("pending_question"),
+                "instruction": "Interpret the user message only as this pending answer.",
+            },
+            user_message=user_message,
+            exchange=exchange,
+        )
+        if action["action"] != "interpret_pending_answer":
+            raise RimSessionConflict("pending question must be answered in place")
+        result = store.answer_question(
+            session_id,
+            owner_id=owner_id,
+            answer=dict(action["arguments"].get("answer") or {}),
+            expected_parent_revision_id=session["head_revision_id"],
+            allow_admin=allow_admin,
+        )
+        return {
+            **result.as_dict(),
+            "agent_action": action,
+            "model": model_message.get("_les_model") or "",
+            "message": "Ответ сохранён в текущем контексте сессии.",
+        }
+
+    if session.get("phase") == "intake":
+        intake = _current_payload(
+            store,
+            session,
+            str(session.get("head_revision_id") or ""),
+            owner_id=owner_id,
+            allow_admin=allow_admin,
+        )
+        action, model_message = _single_action(
+            session=session,
+            context={
+                "intake": {
+                    "source_kind": intake.get("source_kind"),
+                    "work_items": list(intake.get("work_items") or [])[:30],
+                    "issues": list(intake.get("issues") or [])[:20],
+                }
+            },
+            user_message=user_message,
+            exchange=exchange,
+        )
+        if action["action"] == "ask_user":
+            result = store.open_question(
+                session_id,
+                owner_id=owner_id,
+                question=action["arguments"],
+                expected_parent_revision_id=session["head_revision_id"],
+                allow_admin=allow_admin,
+            )
+            return {
+                **result.as_dict(),
+                "agent_action": action,
+                "model": model_message.get("_les_model") or "",
+                "message": action["arguments"]["text"],
+            }
+        if action["action"] != "draft_work_schedule":
+            return {
+                "session_id": session_id,
+                "status": session["display_state"],
+                "agent_action": action,
+                "message": action["user_visible_intent"],
+            }
+        result = store.save_vor_revision(
+            session_id,
+            owner_id=owner_id,
+            rows=list(action["arguments"].get("rows") or []),
+            expected_parent_revision_id=session["head_revision_id"],
+            created_by="model",
+            change_note="Черновик ВОР из спецификации",
+            allow_admin=allow_admin,
+        )
+        return {
+            **result.as_dict(),
+            "agent_action": action,
+            "model": model_message.get("_les_model") or "",
+            "message": "Сформирован черновик ВОР; проверьте строки и источники.",
+        }
+
+    if session.get("phase") == "vor" and session.get("mapping_status") == "not_started":
+        vor = _current_payload(
+            store,
+            session,
+            str(session.get("current_vor_revision_id") or ""),
+            owner_id=owner_id,
+            allow_admin=allow_admin,
+        )
+        work_rows = _work_rows(list(vor.get("rows") or []))
+        if not work_rows:
+            raise RimSessionConflict("VOR has no rows for norm mapping")
+        result = _run_batch_norm_agent(
+            work_rows,
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=8,
+            max_turns=64,
+            user_request=user_message,
+            require_scoped_search=True,
+        )
+        mapping_rows = _mapping_rows(work_rows, result)
+        revision = store.save_mapping_revision(
+            session_id,
+            owner_id=owner_id,
+            mapping_rows=mapping_rows,
+            expected_parent_revision_id=session["head_revision_id"],
+            created_by="model",
+            change_note="Qwen batch mapping: catalog → scoped search → typed read",
+            allow_admin=allow_admin,
+        )
+        current = revision.session
+        hints = _question_hints(mapping_rows)
+        question_action: dict[str, Any] | None = None
+        if hints:
+            question_action, _message = _single_action(
+                session=current,
+                context={
+                    "mapping_summary": {
+                        "rows": len(mapping_rows),
+                        "selected": sum(
+                            row.get("selection_status") == "selected"
+                            for row in mapping_rows
+                        ),
+                    },
+                    "navigation_questions_to_ask": hints,
+                    "instruction": (
+                        "Choose one highest-value unresolved navigation hint and turn it "
+                        "into a human question with fact, reason, options and consequences."
+                    ),
+                },
+                user_message=user_message,
+                exchange=exchange,
+                only_actions={"ask_user"},
+            )
+            if question_action["action"] == "ask_user":
+                question_revision = store.open_question(
+                    session_id,
+                    owner_id=owner_id,
+                    question=question_action["arguments"],
+                    expected_parent_revision_id=revision.revision_id,
+                    allow_admin=allow_admin,
+                )
+                return {
+                    **question_revision.as_dict(),
+                    "mapping_revision_id": revision.revision_id,
+                    "agent_action": question_action,
+                    "message": question_action["arguments"]["text"],
+                    "agent_trace": result.get("agent_trace") or {},
+                }
+        return {
+            **revision.as_dict(),
+            "mapping_revision_id": revision.revision_id,
+            "agent_action": question_action,
+            "message": (
+                "Кандидаты и модельный черновик mapping сохранены. "
+                "Для расчёта нужна пользовательская проверка и global review."
+            ),
+            "agent_trace": result.get("agent_trace") or {},
+        }
+
+    return {
+        "session_id": session_id,
+        "status": session["display_state"],
+        "revision_id": session["head_revision_id"],
+        "parent_revision_id": "",
+        "issues": session.get("issues") or [],
+        "requirements": session.get("requirements") or [],
+        "message": (
+            "Текущий шаг требует пользовательского решения в рабочей таблице "
+            "или запуска детерминированного действия."
+        ),
+    }

@@ -36,6 +36,7 @@ from proxy.routers.estimates import router as estimates_router
 from proxy.routers.prices import router as prices_router
 from proxy.routers.kac import router as kac_router
 from proxy.routers.lsr import router as lsr_router
+from proxy.routers.rim import router as rim_router
 from proxy.routers.extract import router as extract_router
 from proxy.routers.external_radar import router as external_radar_router
 from proxy.routers.verify import router as verify_router
@@ -505,6 +506,7 @@ def create_app():
     fastapi_app.include_router(prices_router)
     fastapi_app.include_router(kac_router)
     fastapi_app.include_router(lsr_router)
+    fastapi_app.include_router(rim_router)
     fastapi_app.include_router(extract_router)
     fastapi_app.include_router(external_radar_router)
     fastapi_app.include_router(verify_router)

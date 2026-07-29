@@ -12,10 +12,11 @@ from proxy.security import require_admin
 from proxy.services.resource_governor import chat_generation_allowed
 
 try:
-    from backend.reranker import select_reranker_cls
+    from backend.reranker import Reranker, select_reranker_cls
 
     RERANKER_AVAILABLE = True
 except ImportError:
+    Reranker = None
     select_reranker_cls = None
     RERANKER_AVAILABLE = False
 

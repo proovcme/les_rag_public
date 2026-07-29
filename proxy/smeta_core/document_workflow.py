@@ -288,6 +288,24 @@ def _norm_collection(code: object) -> str:
     return bare[:2] if bare else ""
 
 
+def _questions_to_ask_for_norm(code: str) -> list[str]:
+    """Return bounded navigation hints; they never make a norm calculable."""
+    from proxy.services.smeta_norm_store import get_smeta_norm_store
+
+    profile = get_smeta_norm_store().norm_profile(code)
+    navigation = profile.get("navigation") if isinstance(profile, dict) else {}
+    questions = (
+        navigation.get("questions_to_ask")
+        if isinstance(navigation, dict)
+        else []
+    )
+    return [
+        str(question).strip()
+        for question in (questions or [])
+        if str(question).strip()
+    ][:8]
+
+
 def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | None:
     norm = gesn_service.get_norm(code, strict_family=True)
     if not norm:
@@ -314,6 +332,10 @@ def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | 
         "resource_count": len(resources),
         "nr_sp_candidates": candidate.get("nr_sp_candidates") or [],
         "source_ref": candidate.get("source_ref") or "",
+        "questions_to_ask": list(
+            candidate.get("questions_to_ask") or _questions_to_ask_for_norm(code)
+        )[:8],
+        "card_role": "structured_normative_store_evidence",
     }
 
 
@@ -664,11 +686,13 @@ class SmetaNormToolSession:
         candidate_limit: int,
         progress: Progress | None = None,
         evidence_budget: EvidenceBudget | None = None,
+        require_scoped_search: bool = False,
     ) -> None:
         self.by_id = {str(row["work_id"]): row for row in work_rows}
         self.candidate_limit = max(1, int(candidate_limit))
         self.progress = progress
         self.evidence_budget = evidence_budget or EvidenceBudget.from_environment()
+        self.require_scoped_search = bool(require_scoped_search)
         self.started_at = perf_counter()
         self.evidence_usage = {"search_calls": 0, "read_calls": 0, "opened_cards": 0}
         self.catalog_trace: list[dict[str, Any]] = []
@@ -923,6 +947,35 @@ class SmetaNormToolSession:
             except ValueError as error:
                 scope_errors[index] = str(error)
                 continue
+            if self.require_scoped_search:
+                if scope_mode != "scoped" or not base_types or not collections:
+                    scope_errors[index] = (
+                        "RIM search requires scope_mode=scoped with non-empty "
+                        "base_types and collections selected by the model"
+                    )
+                    continue
+                missing_catalog_scopes = [
+                    f"{base_type}:{collection}"
+                    for base_type in base_types
+                    for collection in collections
+                    if not any(
+                        seen_work_id == str(item.get("work_id") or "")
+                        and seen_family == base_type.casefold()
+                        and seen_collection == re.sub(r"\D", "", collection)[:2]
+                        for (
+                            seen_work_id,
+                            seen_family,
+                            seen_collection,
+                            _seen_table,
+                        ) in self.catalog_seen
+                    )
+                ]
+                if missing_catalog_scopes:
+                    scope_errors[index] = (
+                        "RIM scoped search requires browse_norm_catalog first for: "
+                        + ", ".join(missing_catalog_scopes)
+                    )
+                    continue
             filter_key = (base_types, collections, table_codes)
             item_filters[index] = filter_key
             grouped_queries.setdefault(filter_key, [])
@@ -1017,6 +1070,7 @@ class SmetaNormToolSession:
                         if isinstance(value, dict)
                     ],
                     "matched_query": str(card.get("matched_query") or "")[:240],
+                    "questions_to_ask": _questions_to_ask_for_norm(code),
                 })
             search_intent = str(item.get("search_intent") or item.get("intent") or "unspecified")
             scope_plan = scope_plans[index].as_dict()
@@ -1854,10 +1908,14 @@ def _run_batch_norm_agent(
     progress: Progress | None = None,
     user_request: str = "",
     checkpoint: Checkpoint | None = None,
+    require_scoped_search: bool = False,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
     session = SmetaNormToolSession(
-        work_rows, candidate_limit=candidate_limit, progress=progress,
+        work_rows,
+        candidate_limit=candidate_limit,
+        progress=progress,
+        require_scoped_search=require_scoped_search,
     )
     by_id = session.by_id
     browse_trace = session.browse_trace
@@ -1882,7 +1940,15 @@ def _run_batch_norm_agent(
             "work_items": list(by_id.values()),
             "batch_contract": (
                 "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
-                "navigation for overlap/coverage; do not search or submit those neighboring work_ids here."
+                "navigation for overlap/coverage; do not search or submit those neighboring work_ids here. "
+                + (
+                    "RIM invariant: for every work_id call browse_norm_catalog, then search_norms_batch "
+                    "with scope_mode=scoped and explicit base_types plus collections selected by you, "
+                    "then read_norms_batch before any bind. RAG candidates are navigation only; only a "
+                    "full typed card opened by read_norms_batch may support submit_lsr_mapping."
+                    if require_scoped_search
+                    else ""
+                )
             ),
         }, ensure_ascii=False, default=str)},
     ]
@@ -2406,6 +2472,11 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             },
         },
     ]
+
+
+def batch_norm_tools() -> list[dict[str, Any]]:
+    """Public copy of the canonical batch norm contract for RIM agents."""
+    return copy.deepcopy(_batch_norm_tools())
 
 
 def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:

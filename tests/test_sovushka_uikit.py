@@ -233,6 +233,38 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert "text_field(" in documents
 
 
+def test_rim_surface_uses_uikit_and_exposes_auditable_workflow():
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+
+    assert 'tab_refs["rim"] = ui.tab("РИМ-смета"' in header
+    assert "build_rim" in shell
+    assert "sov-rim-question__choices" in rim
+    assert "await send_message()" in rim
+    for primitive in (
+        "action_button(",
+        "panel(",
+        "section_heading(",
+        "status_badge(",
+        "render_feedback_state(",
+        "select_field(",
+        "text_field(",
+    ):
+        assert primitive in rim
+    for label in (
+        "ВОР",
+        "Кандидаты ГЭСН",
+        "Проверка",
+        "Недостающие данные",
+        "Черновики ЛСР",
+        "Финализация",
+    ):
+        assert label in rim
+    assert "sov-rim-page" in UIKIT_CSS
+    assert "@media (max-width: 520px)" in UIKIT_CSS
+
+
 def test_chat_ui_cannot_disable_required_reranker():
     chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
 

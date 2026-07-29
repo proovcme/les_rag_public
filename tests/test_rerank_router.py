@@ -5,6 +5,10 @@ import pytest
 from proxy.routers import rerank
 
 
+def test_router_preserves_app_reranker_fallback_export():
+    assert rerank.Reranker is not None
+
+
 class FakeRequest:
     async def json(self):
         return {

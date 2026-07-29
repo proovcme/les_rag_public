@@ -7,17 +7,35 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.34 (scoped loopback HTTP policy)
-номер сборки:              507     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.507 (internal identity; code-only soft-update target)
-ветка выпуска:             codex/recover-forgotten-branches
-dev implementation:       codex/recover-forgotten-branches; 0.25.34 candidate
+версия продукта (SemVer):  0.26.0 (conversational RIM session)
+номер сборки:              508     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.508 (internal identity; code-only soft-update target)
+ветка выпуска:             codex/rim-dialog-mvp
+dev implementation:       codex/rim-dialog-mvp; 0.26.0 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.26.0 / build 508 — диалоговая РИМ-сессия с двумя пользовательскими lock
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Добавлены persistent owner-scoped сессии и immutable ревизии, XLSX/CSV
+> intake, черновик ВОР, mapping round-trip, global review, authored scenarios,
+> canonical РИМ-расчёт, requirements, audit/XLSX и lazy UI «РИМ-смета».
+> РИМ-агент использует только строгую model-selected scoped batch-цепочку
+> `browse_norm_catalog → search_norms_batch → read_norms_batch →
+> submit_lsr_mapping`; RAG-card служит навигацией, а расчёт допускает только
+> открытую карточку structured store. `questions_to_ask` превращаются Qwen в
+> один вопрос с кликабельными вариантами. Решение КАЦ/коэффициента требует
+> нового пересчёта до final lock. Восстановлен совместимый `Reranker` export,
+> без которого актуальный `proxy.app` не импортировался. Первый живой ход Mac Qwen 3.5 9B выбрал
+> catalog; полный однострочный live loop за пять минут не завершился и остаётся
+> performance gate.
+>
 > 0.25.34 / build 507 — loopback защищён от системного proxy без отключения интернета
 >
 > Дата: 2026-07-29
