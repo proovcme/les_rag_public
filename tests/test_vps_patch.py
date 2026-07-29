@@ -401,3 +401,39 @@ async def test_patch_archive_download_accepts_only_vps_origin(tmp_path):
                 trusted_url=update_service._trusted_patch_url,
             )
     assert target.read_bytes() == b"patch"
+
+
+def test_patch_launcher_uses_checksum_declared_target_engine(tmp_path):
+    runtime = tmp_path / "runtime"
+    root = tmp_path / "update"
+    root.mkdir()
+    for name in ("vps_patch_apply.py", "windows_update_engine.py", "windows_runtime.py"):
+        path = runtime / "tools" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"old-{name}".encode())
+    new_engine = b"TARGET_ENGINE = True\n"
+    manifest = {
+        "files": [
+            {
+                "scope": "runtime",
+                "path": "tools/windows_update_engine.py",
+                "sha256": hashlib.sha256(new_engine).hexdigest(),
+                "bytes": len(new_engine),
+            }
+        ]
+    }
+    archive = tmp_path / "patch.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("payload/tools/windows_update_engine.py", new_engine)
+
+    with zipfile.ZipFile(archive) as bundle:
+        helper, engine, launcher = update_service._stage_vps_patch_launcher(
+            bundle,
+            manifest,
+            runtime=runtime,
+            root=root,
+        )
+
+    assert helper.read_bytes() == b"old-vps_patch_apply.py"
+    assert engine.read_bytes() == new_engine
+    assert launcher.read_bytes() == b"old-windows_runtime.py"

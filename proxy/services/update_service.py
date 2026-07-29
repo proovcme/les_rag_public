@@ -571,6 +571,48 @@ def read_vps_patch_status() -> dict:
         return {"schema": "les.vps-patch-status.v1", "state": "failed", "message": "Не удалось прочитать состояние обновления"}
 
 
+def _stage_vps_patch_launcher(
+    bundle: zipfile.ZipFile,
+    manifest: dict,
+    *,
+    runtime: Path,
+    root: Path,
+) -> tuple[Path, Path, Path]:
+    """Stage the target updater core when the patch updates itself.
+
+    Falling back to the installed copy keeps ordinary content-only patches
+    small. If a patch carries a new helper/engine/runtime launcher, acceptance
+    must run that checksum-declared target code rather than the previous
+    release's smoke logic.
+    """
+    entries = {
+        str(entry.get("path") or ""): entry
+        for entry in manifest.get("files") or []
+        if str(entry.get("scope") or "runtime") == "runtime"
+    }
+    staged: list[Path] = []
+    for relative in (
+        "tools/vps_patch_apply.py",
+        "tools/windows_update_engine.py",
+        "tools/windows_runtime.py",
+    ):
+        target = root / Path(relative).name
+        entry = entries.get(relative)
+        if entry is None:
+            shutil.copy2(runtime / relative, target)
+        else:
+            data = bundle.read(f"payload/{relative}")
+            if (
+                len(data) != int(entry.get("bytes") or -1)
+                or hashlib.sha256(data).hexdigest()
+                != str(entry.get("sha256") or "").lower()
+            ):
+                raise UpdateError(f"Updater payload повреждён: {relative}")
+            target.write_bytes(data)
+        staged.append(target)
+    return staged[0], staged[1], staged[2]
+
+
 async def download_and_launch_vps_patch() -> dict:
     if not sys.platform.startswith("win"):
         raise UpdateError("Быстрое обновление поддерживается только в Windows-сборке")
@@ -594,6 +636,7 @@ async def download_and_launch_vps_patch() -> dict:
     if actual != info["archive_sha256"]:
         archive.unlink(missing_ok=True)
         raise UpdateError("Контрольная сумма быстрого обновления не совпала")
+    helper: Path | None = None
     try:
         with zipfile.ZipFile(archive) as bundle:
             bundled = json.loads(bundle.read("manifest.json"))
@@ -611,16 +654,17 @@ async def download_and_launch_vps_patch() -> dict:
             }
             if names != expected:
                 raise UpdateError("Архив быстрого обновления содержит лишние или отсутствующие файлы")
+            helper, _, _ = _stage_vps_patch_launcher(
+                bundle,
+                bundled,
+                runtime=runtime_root(),
+                root=root,
+            )
     except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
         raise UpdateError(f"Архив быстрого обновления повреждён: {exc}") from exc
     state_root = update_root().parents[1]
-    helper = root / "vps_patch_apply.py"
-    shutil.copy2(runtime_root() / "tools" / "vps_patch_apply.py", helper)
-    shutil.copy2(
-        runtime_root() / "tools" / "windows_update_engine.py",
-        root / "windows_update_engine.py",
-    )
-    shutil.copy2(runtime_root() / "tools" / "windows_runtime.py", root / "windows_runtime.py")
+    if helper is None:
+        raise UpdateError("Не удалось подготовить движок быстрого обновления")
     status = patch_status_path()
     job = root / "job.json"
     job.write_text(

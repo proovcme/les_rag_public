@@ -146,8 +146,11 @@ powershell -NoProfile -File tools/windows_updater_smoke.ps1 \
 Offline-профиль поведенчески применяет и откатывает runtime + desktop на временных деревьях,
 проверяет отказ до остановки и сохранность user state. Windows smoke использует
 bounded поэтапные пробы (не более трёх минут при реальном отказе) и
-проверяет только установленное обновление, identity, API/UI/index contract и process hygiene.
-Он не строит приложение, не создаёт baseline, не вызывает модель/RAG и не запускает общую suite.
+проверяет только установленное обновление, identity, API/UI/index contract, configured reranker
+на двух коротких фрагментах и process hygiene. Он не строит приложение, не создаёт baseline,
+не вызывает генеративную модель/полный RAG и не запускает общую suite. Если пакет меняет
+`vps_patch_apply.py`, `windows_update_engine.py` или `windows_runtime.py`, detached launcher
+берётся из checksum-declared target payload; иначе используется уже установленное ядро обновления.
 
 Первый запуск нового контура на Legion выполняется hard-job из проверенного
 локального installer без публикации. После его приёмки обычные изменения

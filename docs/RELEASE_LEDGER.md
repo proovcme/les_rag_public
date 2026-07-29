@@ -7,16 +7,27 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.27 (bounded Windows reranker and real updater warmup)
-номер сборки:              500     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.500 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.28 (self-hosted target updater core)
+номер сборки:              501     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.501 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; 0.25.27 candidate
+dev implementation:       codex/sovushka-ui-kit; 0.25.28 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
+
+> 0.25.28 / build 501 — новый updater проверяет уже этот же выпуск
+>
+> Дата: 2026-07-29
+> Статус: candidate для малого Legion-обновления; без Tauri build, tag,
+> GitHub Release, public feed и VPS. Быстрое обновление при наличии изменённого
+> updater core извлекает checksum-declared target helper/engine/runtime launcher
+> из уже проверенного ZIP и запускает acceptance на них. Поэтому новый smoke
+> и rollback-контракт применяются к текущему устанавливаемому выпуску, а не
+> начинают работать лишь со следующего обновления. Content-only ZIP по-прежнему
+> использует установленный updater и не дублирует файлы.
 
 > 0.25.27 / build 500 — bounded Windows reranker и настоящий updater-smoke
 >
