@@ -21,6 +21,12 @@ from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
 Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 _INTAKE_WORK_ITEM_BATCH_SIZE = 5
+_NORM_MAPPING_CHECKPOINT = "norm_mapping"
+_IMMUTABLE_PROJECT_SOURCE_FIELDS = (
+    "source_ref",
+    "source_refs",
+    "source_row",
+)
 
 
 def _arguments(tool_call: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -157,6 +163,76 @@ def _work_rows(vor_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         }
         for row in vor_rows[:30]
     ]
+
+
+def _preserve_project_source_provenance(
+    previous_rows: list[dict[str, Any]],
+    revised_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep model revisions bound to the immutable uploaded source rows.
+
+    Qwen owns the revised work wording and may add a quantity derivation, but it
+    does not own the identity or provenance of the project row. Normative
+    evidence is stored later on mapping rows and must never replace source_ref.
+    """
+    previous_by_id = {
+        str(row.get("work_id") or ""): row
+        for row in previous_rows
+        if str(row.get("work_id") or "")
+    }
+    previous_by_ref: dict[str, dict[str, Any]] = {}
+    for row in previous_rows:
+        refs = list(row.get("source_refs") or [])
+        if row.get("source_ref"):
+            refs.insert(0, row["source_ref"])
+        for ref in refs:
+            normalized = str(ref or "").strip()
+            if normalized:
+                previous_by_ref[normalized] = row
+    preserved: list[dict[str, Any]] = []
+    for row in revised_rows:
+        work_id = str(row.get("work_id") or "")
+        bound = dict(row)
+        source = previous_by_id.get(work_id)
+        if source is not None:
+            for field in _IMMUTABLE_PROJECT_SOURCE_FIELDS:
+                value = source.get(field)
+                if field == "source_refs":
+                    value = list(
+                        value
+                        or (
+                            [source.get("source_ref")]
+                            if source.get("source_ref")
+                            else []
+                        )
+                    )
+                bound[field] = value
+        else:
+            refs = [
+                str(ref or "").strip()
+                for ref in (
+                    list(row.get("source_refs") or [])
+                    or ([row.get("source_ref")] if row.get("source_ref") else [])
+                )
+                if str(ref or "").strip()
+            ]
+            if not refs or any(ref not in previous_by_ref for ref in refs):
+                raise RimSessionConflict(
+                    "new derived VOR work must cite only project source refs "
+                    "from the parent revision"
+                )
+            source_rows = {
+                previous_by_ref[ref].get("source_row")
+                for ref in refs
+                if previous_by_ref[ref].get("source_row") is not None
+            }
+            bound["source_ref"] = refs[0]
+            bound["source_refs"] = refs
+            bound["source_row"] = (
+                next(iter(source_rows)) if len(source_rows) == 1 else None
+            )
+        preserved.append(bound)
+    return preserved
 
 
 def _mapping_rows(
@@ -346,7 +422,10 @@ def run_rim_agent_turn(
             revised = store.save_vor_revision(
                 session_id,
                 owner_id=owner_id,
-                rows=list(draft_action["arguments"].get("rows") or []),
+                rows=_preserve_project_source_provenance(
+                    list(vor.get("rows") or []),
+                    list(draft_action["arguments"].get("rows") or []),
+                ),
                 expected_parent_revision_id=result.revision_id,
                 created_by="model",
                 change_note="Уточнение черновика ВОР по ответу пользователя",
@@ -500,16 +579,35 @@ def run_rim_agent_turn(
         }
 
     if session.get("phase") == "vor" and session.get("mapping_status") == "not_started":
+        vor_revision_id = str(session.get("current_vor_revision_id") or "")
         vor = _current_payload(
             store,
             session,
-            str(session.get("current_vor_revision_id") or ""),
+            vor_revision_id,
             owner_id=owner_id,
             allow_admin=allow_admin,
         )
         work_rows = _work_rows(list(vor.get("rows") or []))
         if not work_rows:
             raise RimSessionConflict("VOR has no rows for norm mapping")
+        stored_checkpoint = store.load_agent_checkpoint(
+            session_id,
+            owner_id=owner_id,
+            checkpoint_kind=_NORM_MAPPING_CHECKPOINT,
+            base_revision_id=vor_revision_id,
+            allow_admin=allow_admin,
+        )
+
+        def save_mapping_checkpoint(payload: dict[str, Any]) -> None:
+            store.save_agent_checkpoint(
+                session_id,
+                owner_id=owner_id,
+                checkpoint_kind=_NORM_MAPPING_CHECKPOINT,
+                base_revision_id=vor_revision_id,
+                payload=payload,
+                allow_admin=allow_admin,
+            )
+
         result = _run_batch_norm_agent(
             work_rows,
             exchange,
@@ -517,6 +615,12 @@ def run_rim_agent_turn(
             candidate_limit=8,
             max_turns=64,
             user_request=user_message,
+            checkpoint=save_mapping_checkpoint,
+            resume_checkpoint=(
+                dict(stored_checkpoint.get("payload") or {})
+                if stored_checkpoint
+                else None
+            ),
             require_scoped_search=True,
         )
         mapping_rows = _mapping_rows(work_rows, result)
@@ -527,6 +631,12 @@ def run_rim_agent_turn(
             expected_parent_revision_id=session["head_revision_id"],
             created_by="model",
             change_note="Qwen batch mapping: catalog → scoped search → typed read",
+            allow_admin=allow_admin,
+        )
+        store.clear_agent_checkpoint(
+            session_id,
+            owner_id=owner_id,
+            checkpoint_kind=_NORM_MAPPING_CHECKPOINT,
             allow_admin=allow_admin,
         )
         current = revision.session
@@ -567,6 +677,7 @@ def run_rim_agent_turn(
                     "agent_action": question_action,
                     "message": question_action["arguments"]["text"],
                     "agent_trace": result.get("agent_trace") or {},
+                    "resumed_from_checkpoint": bool(stored_checkpoint),
                 }
         return {
             **revision.as_dict(),
@@ -577,6 +688,7 @@ def run_rim_agent_turn(
                 "Для расчёта нужна пользовательская проверка и global review."
             ),
             "agent_trace": result.get("agent_trace") or {},
+            "resumed_from_checkpoint": bool(stored_checkpoint),
         }
 
     return {

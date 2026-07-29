@@ -3,7 +3,7 @@ import json
 import pytest
 
 from proxy.services import rim_agent_turn_service
-from proxy.smeta_core.rim_session import RimSessionStore
+from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
 
 
 def _create_vor(store):
@@ -211,7 +211,10 @@ def test_single_action_returns_structured_validation_error_for_one_repair():
                                     "unit": "шт.",
                                     "quantity": 2,
                                     "quantity_origin": "source_explicit",
-                                    "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+                                    "source_ref": (
+                                        "Техническая часть сборника ФСНБ-2022, "
+                                        "выдуманная моделью"
+                                    ),
                                 }
                             ]
                         },
@@ -314,7 +317,10 @@ def test_pending_vor_answer_creates_source_linked_work_revision(tmp_path):
                                     "unit": "шт.",
                                     "quantity": 2,
                                     "quantity_origin": "source_explicit",
-                                    "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+                                    "source_ref": (
+                                        "Техническая часть сборника ФСНБ-2022, "
+                                        "выдуманная моделью"
+                                    ),
                                 }
                             ]
                         },
@@ -343,6 +349,47 @@ def test_pending_vor_answer_creates_source_linked_work_revision(tmp_path):
     )["payload"]
     assert payload["rows"][0]["work_name"].startswith("Сборка и установка")
     assert payload["rows"][0]["source_ref"] == "СКС.xlsx#sheet=СКС;row=6"
+    assert payload["rows"][0]["source_refs"] == ["СКС.xlsx#sheet=СКС;row=6"]
+
+
+def test_vor_provenance_allows_model_split_only_with_parent_project_refs():
+    previous = [
+        {
+            "work_id": "vor-001",
+            "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+            "source_refs": ["СКС.xlsx#sheet=СКС;row=6"],
+            "source_row": 6,
+        }
+    ]
+    split = rim_agent_turn_service._preserve_project_source_provenance(
+        previous,
+        [
+            {
+                "work_id": "vor-001-install",
+                "work_name": "Установка шкафа",
+                "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+            },
+            {
+                "work_id": "vor-001-connect",
+                "work_name": "Подключение шкафа",
+                "source_refs": ["СКС.xlsx#sheet=СКС;row=6"],
+            },
+        ],
+    )
+
+    assert [row["source_row"] for row in split] == [6, 6]
+    assert split[1]["source_ref"] == "СКС.xlsx#sheet=СКС;row=6"
+    with pytest.raises(RimSessionConflict, match="project source refs"):
+        rim_agent_turn_service._preserve_project_source_provenance(
+            previous,
+            [
+                {
+                    "work_id": "vor-001-install",
+                    "work_name": "Установка шкафа",
+                    "source_ref": "fsnb.sqlite#norm=10-01-001-01",
+                }
+            ],
+        )
 
 
 def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_path):
@@ -441,6 +488,117 @@ def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_pa
     assert mapping[0]["norm_key"] == "ГЭСНм:10-06-001-01"
     assert mapping[0]["card_opened"] is True
     assert mapping[0]["norm_source_ref"] == "fsnb.sqlite#guid=1"
+
+
+def test_mapping_turn_resumes_durable_checkpoint_and_clears_it_on_success(
+    monkeypatch,
+    tmp_path,
+):
+    store = RimSessionStore(tmp_path)
+    vor = _create_vor(store)
+    checkpoint_payload = {
+        "resume_state": {
+            "schema": "smeta_norm_agent_resume_v1",
+            "next_turn": 3,
+            "conversation": [{"role": "tool", "content": "family catalog"}],
+        }
+    }
+
+    def interrupted(*_args, **kwargs):
+        assert kwargs["resume_checkpoint"] is None
+        kwargs["checkpoint"](checkpoint_payload)
+        raise RuntimeError("simulated process interruption")
+
+    monkeypatch.setattr(
+        rim_agent_turn_service,
+        "_run_batch_norm_agent",
+        interrupted,
+    )
+    with pytest.raises(RuntimeError, match="simulated process interruption"):
+        rim_agent_turn_service.run_rim_agent_turn(
+            store,
+            vor.session["session_id"],
+            owner_id="tester",
+            user_message="Подбери нормы",
+            exchange=lambda *_args: {},
+            mapping_exchange=lambda *_args: {},
+        )
+
+    saved = store.load_agent_checkpoint(
+        vor.session["session_id"],
+        owner_id="tester",
+        checkpoint_kind="norm_mapping",
+        base_revision_id=vor.revision_id,
+    )
+    assert saved["payload"] == checkpoint_payload
+
+    def resumed(*_args, **kwargs):
+        assert kwargs["resume_checkpoint"] == checkpoint_payload
+        return {
+            "selections": {
+                "vor-001": {
+                    "norm_code": "ГЭСНм10-06-001-01",
+                    "selection_kind": "exact",
+                    "applicability": "exact",
+                    "reason": "Состав работ совпадает",
+                    "technology_check": {"conclusion": "applicable"},
+                }
+            },
+            "browse_trace": {
+                "vor-001": [
+                    {
+                        "candidates": [
+                            {
+                                "norm_code": "ГЭСНм10-06-001-01",
+                                "norm_key": "ГЭСНм:10-06-001-01",
+                                "title": "Прокладка кабеля",
+                                "measure_unit": "100 м",
+                                "source_ref": "fsnb.sqlite#guid=1",
+                            }
+                        ]
+                    }
+                ]
+            },
+            "opened_cards": {
+                "vor-001": [
+                    {
+                        "norm_code": "ГЭСНм10-06-001-01",
+                        "norm_key": "ГЭСНм:10-06-001-01",
+                        "title": "Прокладка кабеля",
+                        "measure_unit": "100 м",
+                        "edition": "ФСНБ-2022",
+                        "source_ref": "fsnb.sqlite#guid=1",
+                        "questions_to_ask": [],
+                    }
+                ]
+            },
+            "agent_trace": {"tool_trajectory": []},
+        }
+
+    monkeypatch.setattr(
+        rim_agent_turn_service,
+        "_run_batch_norm_agent",
+        resumed,
+    )
+    result = rim_agent_turn_service.run_rim_agent_turn(
+        store,
+        vor.session["session_id"],
+        owner_id="tester",
+        user_message="Продолжи подбор",
+        exchange=lambda *_args: {},
+        mapping_exchange=lambda *_args: {},
+    )
+
+    assert result["resumed_from_checkpoint"] is True
+    assert (
+        store.load_agent_checkpoint(
+            vor.session["session_id"],
+            owner_id="tester",
+            checkpoint_kind="norm_mapping",
+            base_revision_id=vor.revision_id,
+        )
+        is None
+    )
 
 
 def test_rim_model_reference_is_phase_scoped_and_never_contains_numeric_rules():

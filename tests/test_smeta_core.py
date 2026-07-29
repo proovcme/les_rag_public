@@ -1000,6 +1000,112 @@ def test_batch_agent_searches_reads_and_submits_model_choice(monkeypatch):
     ]
 
 
+def test_batch_agent_checkpoint_resumes_after_last_tool_without_repeating_search(
+    monkeypatch,
+):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "browse_norms_many",
+        lambda queries, **_kwargs: {
+            query: {"backend": "rrf", "cards": []} for query in queries
+        },
+    )
+    checkpoints = []
+    first_calls = 0
+
+    def interrupted_exchange(_messages, _tools):
+        nonlocal first_calls
+        first_calls += 1
+        if first_calls == 1:
+            return {
+                "tool_calls": [
+                    _native_call(
+                        "search",
+                        "search_norms_batch",
+                        items=[
+                            {
+                                "work_id": "w1",
+                                "queries": [
+                                    "монтаж элемента",
+                                    "установка элемента ФСНБ",
+                                ],
+                            }
+                        ],
+                    )
+                ]
+            }
+        raise RuntimeError("process interrupted during next model wait")
+
+    rows = [
+        {
+            "work_id": "w1",
+            "title": "Монтаж элемента",
+            "unit": "шт",
+            "quantity": 1,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="process interrupted"):
+        workflow._run_batch_norm_agent(
+            rows,
+            interrupted_exchange,
+            candidate_limit=6,
+            max_turns=2,
+            checkpoint=checkpoints.append,
+        )
+
+    assert first_calls == 2
+    checkpoint = checkpoints[-1]
+    assert checkpoint["resume_state"]["next_turn"] == 2
+    assert checkpoint["query_trace"][0]["queries"] == [
+        "монтаж элемента",
+        "установка элемента ФСНБ",
+    ]
+    resumed_calls = 0
+
+    def resumed_exchange(messages, _tools):
+        nonlocal resumed_calls
+        resumed_calls += 1
+        assert any(message.get("role") == "tool" for message in messages)
+        return {
+            "tool_calls": [
+                _native_call(
+                    "submit",
+                    "submit_lsr_mapping",
+                    rows=[
+                        {
+                            "work_id": "w1",
+                            "decision": "unbound",
+                            "reason": "После двух поисков точная норма не найдена",
+                            "unbound_evidence": _unbound_evidence(
+                                queries=[
+                                    "монтаж элемента",
+                                    "установка элемента ФСНБ",
+                                ]
+                            ),
+                        }
+                    ],
+                )
+            ]
+        }
+
+    result = workflow._run_batch_norm_agent(
+        rows,
+        resumed_exchange,
+        candidate_limit=6,
+        max_turns=2,
+        checkpoint=checkpoints.append,
+        resume_checkpoint=checkpoint,
+    )
+
+    assert resumed_calls == 1
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
+    assert [
+        item["tool"] for item in result["agent_trace"]["tool_trajectory"]
+    ] == ["search_norms_batch", "submit_lsr_mapping"]
+
+
 def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 

@@ -7,17 +7,36 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.26.2 (RIM normative scope compass)
-номер сборки:              510     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.510 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.3 (RIM durable model workflow)
+номер сборки:              511     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.511 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.2 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.3 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.26.3 / build 511 — длинный РИМ-диалог не теряет выполненные ходы
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Norm-mapping после каждого завершённого tool call сохраняет durable
+> revision-bound checkpoint: диалог, каталог/scope, search/read evidence,
+> принятые строки и следующий ход. Рестарт или timeout продолжает с последнего
+> результата, не повторяя уже выполненный поиск; checkpoint удаляется только
+> после immutable mapping-ревизии. Модельное уточнение ВОР больше не может
+> заменить `source_ref/source_refs/source_row` нормативной ссылкой: project
+> provenance наследуется из родительской VOR, нормативный источник остаётся
+> отдельным `norm_source_ref`. MLX Host кеширует стабильный message-prefix до
+> нового assistant-ответа; cache bounded и очищается при unload/switch.
+> Изолированный Qwen 3.5 9B probe повторно использовал `14 968` из `14 996`
+> prompt tokens: второй ход `2,24 с` после холодного `139,17 с`.
+> Пятистрочный СКС-прогон по явной команде остановлен и этой проверкой не
+> продолжался.
+>
 > 0.26.2 / build 510 — нормативный компас РИМ без скрытого выбора сборника
 >
 > Дата: 2026-07-29

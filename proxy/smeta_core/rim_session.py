@@ -426,6 +426,16 @@ class RimSessionStore:
                 created_at TEXT NOT NULL,
                 PRIMARY KEY (session_id, idempotency_key)
             );
+            CREATE TABLE IF NOT EXISTS rim_agent_checkpoints (
+                session_id TEXT NOT NULL REFERENCES rim_sessions(session_id),
+                checkpoint_kind TEXT NOT NULL,
+                base_revision_id TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                payload_sha256 TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (session_id, checkpoint_kind)
+            );
             """
         )
         columns = {
@@ -741,6 +751,141 @@ class RimSessionStore:
                 }
                 for row in rows
             ]
+
+    def save_agent_checkpoint(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+        checkpoint_kind: str,
+        base_revision_id: str,
+        payload: dict[str, Any],
+        allow_admin: bool = False,
+    ) -> dict[str, Any]:
+        """Durably save internal agent progress without advancing session head."""
+        safe_session = _safe_id(session_id, name="session_id")
+        kind = str(checkpoint_kind or "").strip()
+        base = str(base_revision_id or "").strip()
+        if not kind:
+            raise RimSessionValidationError("checkpoint_kind is required")
+        if not base:
+            raise RimSessionValidationError("base_revision_id is required")
+        if not isinstance(payload, dict):
+            raise RimSessionValidationError("checkpoint payload must be an object")
+        now = _utcnow()
+        canonical = _canonical_json(payload)
+        digest = _payload_sha256(payload)
+        with self._connection() as conn:
+            self._session_row(
+                conn,
+                safe_session,
+                owner_id=_owner_id(owner_id),
+                allow_admin=allow_admin,
+            )
+            base_row = conn.execute(
+                "SELECT 1 FROM rim_revisions WHERE session_id=? AND revision_id=?",
+                (safe_session, base),
+            ).fetchone()
+            if base_row is None:
+                raise RimSessionValidationError(
+                    "checkpoint base revision does not belong to this RIM session"
+                )
+            conn.execute(
+                """
+                INSERT INTO rim_agent_checkpoints (
+                    session_id, checkpoint_kind, base_revision_id,
+                    payload_json, payload_sha256, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(session_id, checkpoint_kind) DO UPDATE SET
+                    base_revision_id=excluded.base_revision_id,
+                    payload_json=excluded.payload_json,
+                    payload_sha256=excluded.payload_sha256,
+                    updated_at=excluded.updated_at
+                """,
+                (
+                    safe_session,
+                    kind,
+                    base,
+                    canonical,
+                    digest,
+                    now,
+                    now,
+                ),
+            )
+        return {
+            "session_id": safe_session,
+            "checkpoint_kind": kind,
+            "base_revision_id": base,
+            "payload_sha256": digest,
+            "updated_at": now,
+        }
+
+    def load_agent_checkpoint(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+        checkpoint_kind: str,
+        base_revision_id: str,
+        allow_admin: bool = False,
+    ) -> dict[str, Any] | None:
+        """Load only a checkpoint bound to the current immutable input revision."""
+        safe_session = _safe_id(session_id, name="session_id")
+        kind = str(checkpoint_kind or "").strip()
+        base = str(base_revision_id or "").strip()
+        with self._connection() as conn:
+            self._session_row(
+                conn,
+                safe_session,
+                owner_id=_owner_id(owner_id),
+                allow_admin=allow_admin,
+            )
+            row = conn.execute(
+                """
+                SELECT base_revision_id, payload_json, payload_sha256, updated_at
+                FROM rim_agent_checkpoints
+                WHERE session_id=? AND checkpoint_kind=?
+                """,
+                (safe_session, kind),
+            ).fetchone()
+            if row is None or str(row["base_revision_id"] or "") != base:
+                return None
+            payload = _json_load(row["payload_json"], {})
+            if not isinstance(payload, dict) or _payload_sha256(payload) != str(
+                row["payload_sha256"] or ""
+            ):
+                raise RimSessionValidationError("RIM agent checkpoint integrity failure")
+            return {
+                "session_id": safe_session,
+                "checkpoint_kind": kind,
+                "base_revision_id": base,
+                "payload": payload,
+                "payload_sha256": str(row["payload_sha256"] or ""),
+                "updated_at": str(row["updated_at"] or ""),
+            }
+
+    def clear_agent_checkpoint(
+        self,
+        session_id: str,
+        *,
+        owner_id: str,
+        checkpoint_kind: str,
+        allow_admin: bool = False,
+    ) -> None:
+        safe_session = _safe_id(session_id, name="session_id")
+        kind = str(checkpoint_kind or "").strip()
+        with self._connection() as conn:
+            self._session_row(
+                conn,
+                safe_session,
+                owner_id=_owner_id(owner_id),
+                allow_admin=allow_admin,
+            )
+            conn.execute(
+                "DELETE FROM rim_agent_checkpoints "
+                "WHERE session_id=? AND checkpoint_kind=?",
+                (safe_session, kind),
+            )
 
     def revision_payload(
         self,

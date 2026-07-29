@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import copy
+import hashlib
 import json
 import math
 import os
@@ -735,6 +736,129 @@ class SmetaNormToolSession:
         self.accepted_rows: dict[str, dict[str, Any]] = {}
         self.invalid_submission_attempts: dict[str, int] = {}
         self.tool_trajectory: list[dict[str, Any]] = []
+
+    def work_fingerprint(self) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                self.by_id,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def checkpoint_state(self) -> dict[str, Any]:
+        """Return JSON-safe state needed to resume after the last tool result."""
+        return {
+            "schema": "smeta_norm_tool_session_checkpoint_v1",
+            "work_fingerprint": self.work_fingerprint(),
+            "candidate_limit": self.candidate_limit,
+            "require_scoped_search": self.require_scoped_search,
+            "evidence_usage": dict(self.evidence_usage),
+            "catalog_trace": copy.deepcopy(self.catalog_trace),
+            "catalog_seen": [list(value) for value in sorted(self.catalog_seen)],
+            "family_catalog_seen": sorted(self.family_catalog_seen),
+            "selected_base_types": copy.deepcopy(self.selected_base_types),
+            "selected_collections": {
+                work_id: [list(value) for value in sorted(values)]
+                for work_id, values in self.selected_collections.items()
+            },
+            "selected_tables": {
+                work_id: [list(value) for value in sorted(values)]
+                for work_id, values in self.selected_tables.items()
+            },
+            "candidates": copy.deepcopy(self.candidates),
+            "opened": copy.deepcopy(self.opened),
+            "browse_trace": copy.deepcopy(self.browse_trace),
+            "query_trace": copy.deepcopy(self.query_trace),
+            "accepted_rows": copy.deepcopy(self.accepted_rows),
+            "invalid_submission_attempts": dict(self.invalid_submission_attempts),
+            "tool_trajectory": copy.deepcopy(self.tool_trajectory),
+        }
+
+    def restore_checkpoint_state(self, state: dict[str, Any]) -> None:
+        """Restore trusted server-produced state for the same immutable VOR."""
+        if str(state.get("schema") or "") != "smeta_norm_tool_session_checkpoint_v1":
+            raise RuntimeError("unsupported smeta norm checkpoint schema")
+        if str(state.get("work_fingerprint") or "") != self.work_fingerprint():
+            raise RuntimeError("smeta norm checkpoint belongs to another work revision")
+        known = set(self.by_id)
+
+        def work_mapping(name: str) -> dict[str, Any]:
+            raw = state.get(name) if isinstance(state.get(name), dict) else {}
+            unknown = set(str(key) for key in raw) - known
+            if unknown:
+                raise RuntimeError(
+                    f"smeta norm checkpoint {name} has unknown work_ids: {sorted(unknown)}"
+                )
+            return {str(key): value for key, value in raw.items()}
+
+        self.evidence_usage = {
+            **self.evidence_usage,
+            **dict(state.get("evidence_usage") or {}),
+        }
+        self.catalog_trace = copy.deepcopy(list(state.get("catalog_trace") or []))
+        self.catalog_seen = {
+            tuple(str(item) for item in value)
+            for value in (state.get("catalog_seen") or [])
+            if isinstance(value, list) and len(value) == 4
+        }
+        self.family_catalog_seen = {
+            str(value)
+            for value in (state.get("family_catalog_seen") or [])
+            if str(value) in known
+        }
+        restored_base_types = work_mapping("selected_base_types")
+        self.selected_base_types = {
+            work_id: copy.deepcopy(restored_base_types.get(work_id) or {})
+            for work_id in self.by_id
+        }
+        restored_collections = work_mapping("selected_collections")
+        self.selected_collections = {
+            work_id: {
+                tuple(str(item) for item in value)
+                for value in (restored_collections.get(work_id) or [])
+                if isinstance(value, list) and len(value) == 2
+            }
+            for work_id in self.by_id
+        }
+        restored_tables = work_mapping("selected_tables")
+        self.selected_tables = {
+            work_id: {
+                tuple(str(item) for item in value)
+                for value in (restored_tables.get(work_id) or [])
+                if isinstance(value, list) and len(value) == 3
+            }
+            for work_id in self.by_id
+        }
+        for name in ("candidates", "opened", "browse_trace"):
+            restored = work_mapping(name)
+            setattr(
+                self,
+                name,
+                {
+                    work_id: copy.deepcopy(
+                        restored.get(work_id)
+                        or ({} if name != "browse_trace" else [])
+                    )
+                    for work_id in self.by_id
+                },
+            )
+        self.query_trace = copy.deepcopy(list(state.get("query_trace") or []))
+        self.accepted_rows = {
+            work_id: copy.deepcopy(value)
+            for work_id, value in work_mapping("accepted_rows").items()
+        }
+        self.invalid_submission_attempts = {
+            str(key): int(value)
+            for key, value in dict(
+                state.get("invalid_submission_attempts") or {}
+            ).items()
+        }
+        self.tool_trajectory = copy.deepcopy(
+            list(state.get("tool_trajectory") or [])
+        )
 
     @property
     def remaining_work_ids(self) -> list[str]:
@@ -2251,6 +2375,7 @@ def _run_batch_norm_agent(
     progress: Progress | None = None,
     user_request: str = "",
     checkpoint: Checkpoint | None = None,
+    resume_checkpoint: dict[str, Any] | None = None,
     require_scoped_search: bool = False,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
@@ -2260,11 +2385,27 @@ def _run_batch_norm_agent(
         progress=progress,
         require_scoped_search=require_scoped_search,
     )
+    resumed = dict(resume_checkpoint or {})
+    resume_state = (
+        dict(resumed.get("resume_state") or {})
+        if isinstance(resumed.get("resume_state"), dict)
+        else {}
+    )
+    if resume_state:
+        if str(resume_state.get("schema") or "") != "smeta_norm_agent_resume_v1":
+            raise RuntimeError("unsupported smeta norm agent resume schema")
+        session.restore_checkpoint_state(
+            dict(resume_state.get("tool_session") or {})
+        )
     by_id = session.by_id
     browse_trace = session.browse_trace
     query_trace = session.query_trace
-    model_trace: list[dict[str, Any]] = []
-    context_metrics: list[dict[str, Any]] = []
+    model_trace: list[dict[str, Any]] = list(
+        resume_state.get("model_trace") or []
+    )
+    context_metrics: list[dict[str, Any]] = list(
+        resume_state.get("context_metrics") or []
+    )
     # Search/read are agent tools. The model's final professional mapping is
     # serialized in a separate structured-output request, matching Ollama's
     # documented "no tool calls => end agent loop" contract.
@@ -2276,44 +2417,71 @@ def _run_batch_norm_agent(
     if not skill_prompt:
         raise RuntimeError("canonical smeta skill is unavailable")
     system_prompt = skill_prompt
-    conversation: list[dict[str, Any]] = [
+    initial_conversation: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": json.dumps({
-            "user_request": str(user_request or "").strip(),
-            "work_items": list(by_id.values()),
-            "batch_contract": (
-                "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
-                "navigation for overlap/coverage; do not search or submit those neighboring work_ids here. "
-                + (
-                    "RIM invariant: for every work_id call browse_norm_catalog, then search_norms_batch "
-                    "first compare the returned family passports. Select a family in a separate "
-                    "browse_norm_catalog call with your own scope_reason and confidence; then select "
-                    "one collection inside that family with its own scope_reason and confidence. "
-                    "Read the returned collection_passport before search. Call search_norms_batch with scope_mode=scoped "
-                    "and explicit base_types plus collections selected by you, "
-                    "then read_norms_batch before any bind. RAG candidates are navigation only; only a "
-                    "full typed card opened by read_norms_batch may support submit_lsr_mapping."
-                    if require_scoped_search
-                    else ""
-                )
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "user_request": str(user_request or "").strip(),
+                    "work_items": list(by_id.values()),
+                    "batch_contract": (
+                        "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
+                        "navigation for overlap/coverage; do not search or submit those neighboring work_ids here. "
+                        + (
+                            "RIM invariant: for every work_id call browse_norm_catalog, then search_norms_batch "
+                            "first compare the returned family passports. Select a family in a separate "
+                            "browse_norm_catalog call with your own scope_reason and confidence; then select "
+                            "one collection inside that family with its own scope_reason and confidence. "
+                            "Read the returned collection_passport before search. Call search_norms_batch with scope_mode=scoped "
+                            "and explicit base_types plus collections selected by you, "
+                            "then read_norms_batch before any bind. RAG candidates are navigation only; only a "
+                            "full typed card opened by read_norms_batch may support submit_lsr_mapping."
+                            if require_scoped_search
+                            else ""
+                        )
+                    ),
+                },
+                ensure_ascii=False,
+                default=str,
             ),
-        }, ensure_ascii=False, default=str)},
+        },
     ]
+    conversation: list[dict[str, Any]] = (
+        copy.deepcopy(list(resume_state.get("conversation") or []))
+        if resume_state.get("conversation")
+        else initial_conversation
+    )
+    if not conversation or str((conversation[0] or {}).get("role") or "") != "system":
+        raise RuntimeError("smeta norm checkpoint has invalid conversation")
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
     accepted_rows = session.accepted_rows
-    previous_call_signature = ""
-    duplicate_feedback_signature = ""
-    structured_mapping_attempts = 0
+    previous_call_signature = str(
+        resume_state.get("previous_call_signature") or ""
+    )
+    duplicate_feedback_signature = str(
+        resume_state.get("duplicate_feedback_signature") or ""
+    )
+    structured_mapping_attempts = int(
+        resume_state.get("structured_mapping_attempts") or 0
+    )
+    last_submit_result: dict[str, Any] | None = (
+        copy.deepcopy(resume_state.get("last_submit_result"))
+        if isinstance(resume_state.get("last_submit_result"), dict)
+        else None
+    )
     mapping_chunk = _mapping_chunk_size()
 
     def emit_checkpoint(
-        *, incomplete_blocker: dict[str, Any] | None = None,
+        *,
+        incomplete_blocker: dict[str, Any] | None = None,
+        next_turn: int | None = None,
     ) -> None:
         if checkpoint is None:
             return
-        checkpoint(session.result(
+        payload = session.result(
             model_trace=model_trace,
             agent_trace={
                 "mode": "model_batch_rag_tools",
@@ -2323,7 +2491,20 @@ def _run_batch_norm_agent(
             },
             allow_incomplete=True,
             incomplete_blocker=incomplete_blocker,
-        ))
+        )
+        payload["resume_state"] = {
+            "schema": "smeta_norm_agent_resume_v1",
+            "conversation": copy.deepcopy(conversation),
+            "tool_session": session.checkpoint_state(),
+            "model_trace": copy.deepcopy(model_trace),
+            "context_metrics": copy.deepcopy(context_metrics),
+            "next_turn": int(next_turn or (len(model_trace) + 1)),
+            "previous_call_signature": previous_call_signature,
+            "duplicate_feedback_signature": duplicate_feedback_signature,
+            "structured_mapping_attempts": structured_mapping_attempts,
+            "last_submit_result": copy.deepcopy(last_submit_result),
+        }
+        checkpoint(payload)
 
     def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
         nonlocal structured_mapping_attempts
@@ -2418,7 +2599,6 @@ def _run_batch_norm_agent(
             "function": {"name": "submit_lsr_mapping", "arguments": {"rows": rows}},
         }
 
-    last_submit_result: dict[str, Any] | None = None
     mapping_rows_per_call = (
         mapping_chunk if mapping_chunk > 0 else max(1, len(by_id))
     )
@@ -2426,7 +2606,8 @@ def _run_batch_norm_agent(
         math.ceil(max(1, len(by_id)) / mapping_rows_per_call) + 1
         if mapping_exchange is not None else 0
     )
-    for turn in range(1, max_turns + finalization_turns + 1):
+    start_turn = max(1, int(resume_state.get("next_turn") or 1))
+    for turn in range(start_turn, max_turns + finalization_turns + 1):
         started = perf_counter()
         forced_mapping = turn > max_turns
         if progress:
@@ -2538,6 +2719,7 @@ def _run_batch_norm_agent(
                         "content": json.dumps(result, ensure_ascii=False),
                     })
                     model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+                emit_checkpoint(next_turn=turn + 1)
                 continue
             calls = [structured_mapping_call(reason=failure, turn=turn)]
             call_signature = json.dumps([{
@@ -2565,7 +2747,7 @@ def _run_batch_norm_agent(
             submitted = dict(session.accepted_rows) if session.complete else None
         if len(accepted_rows) > accepted_before_turn:
             structured_mapping_attempts = 0
-            emit_checkpoint()
+        emit_checkpoint(next_turn=turn + 1)
         if submitted is not None:
             return session.result(
                 model_trace=model_trace,

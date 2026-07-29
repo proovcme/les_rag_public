@@ -2,7 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
+from proxy.smeta_core.rim_session import (
+    RimSessionConflict,
+    RimSessionStore,
+    RimSessionValidationError,
+)
 
 
 def _vor_rows():
@@ -213,6 +217,73 @@ def test_stale_parent_cannot_overwrite_session_head(tmp_path):
             expected_parent_revision_id=vor.revision_id,
         )
     assert opened.session["head_revision_id"] == opened.revision_id
+
+
+def test_agent_checkpoint_is_durable_bound_to_input_revision_and_not_a_revision(tmp_path):
+    store = RimSessionStore(tmp_path)
+    vor = _create_with_vor(store)
+    session_id = vor.session["session_id"]
+    revision_count = len(store.list_revisions(session_id, owner_id="tester"))
+    payload = {
+        "resume_state": {
+            "schema": "smeta_norm_agent_resume_v1",
+            "next_turn": 4,
+            "conversation": [{"role": "tool", "content": "catalog result"}],
+        }
+    }
+
+    saved = store.save_agent_checkpoint(
+        session_id,
+        owner_id="tester",
+        checkpoint_kind="norm_mapping",
+        base_revision_id=vor.revision_id,
+        payload=payload,
+    )
+
+    assert saved["payload_sha256"]
+    assert len(store.list_revisions(session_id, owner_id="tester")) == revision_count
+    with pytest.raises(
+        RimSessionValidationError,
+        match="base revision does not belong",
+    ):
+        store.save_agent_checkpoint(
+            session_id,
+            owner_id="tester",
+            checkpoint_kind="norm_mapping",
+            base_revision_id="another-vor-revision",
+            payload=payload,
+        )
+    loaded = store.load_agent_checkpoint(
+        session_id,
+        owner_id="tester",
+        checkpoint_kind="norm_mapping",
+        base_revision_id=vor.revision_id,
+    )
+    assert loaded["payload"] == payload
+    assert (
+        store.load_agent_checkpoint(
+            session_id,
+            owner_id="tester",
+            checkpoint_kind="norm_mapping",
+            base_revision_id="another-vor-revision",
+        )
+        is None
+    )
+
+    store.clear_agent_checkpoint(
+        session_id,
+        owner_id="tester",
+        checkpoint_kind="norm_mapping",
+    )
+    assert (
+        store.load_agent_checkpoint(
+            session_id,
+            owner_id="tester",
+            checkpoint_kind="norm_mapping",
+            base_revision_id=vor.revision_id,
+        )
+        is None
+    )
 
 
 def test_vor_validation_preserves_bad_rows_as_issues(tmp_path):
