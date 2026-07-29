@@ -18,6 +18,10 @@ contracts. Это не release-gate самостоятельного ARTEL и н
 Исторический checklist-chat не входит в активный контур и не может вернуть
 готовый ответ за модель.
 
+`tests/test_http_client_policy.py` проверяет scoped proxy-env contract:
+loopback всегда идёт напрямую, внешние/LAN/ZeroTier URL не лишаются proxy,
+а критические внутренние `httpx`-клиенты используют общий helper.
+
 Для updater общая suite **запрещена**: prepare/apply не вызывают `make test`, `make verify`,
 Tauri build или baseline. Единственный offline-гейт этого слоя — `make test-updater`; нативная
 Windows-приёмка после ручной установки — `tools/windows_updater_smoke.ps1`, максимум 90 секунд.

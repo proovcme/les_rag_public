@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.33 (Glorax checklist evidence review)
-номер сборки:              506     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.506 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.25.34 (scoped loopback HTTP policy)
+номер сборки:              507     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.507 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/recover-forgotten-branches
-dev implementation:       codex/recover-forgotten-branches; 0.25.33 candidate
+dev implementation:       codex/recover-forgotten-branches; 0.25.34 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.25.34 / build 507 — loopback защищён от системного proxy без отключения интернета
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Общая URL-policy отключает `trust_env` только для localhost/127.0.0.0/8/::1.
+> Она применена к UI→proxy, lite bridge, local model warmup/runtime,
+> diagnostics, metrics и reranker. Внешние, LAN и ZeroTier URL продолжают
+> использовать обычную httpx proxy-policy; ETM/update/cloud не затронуты.
+>
 > 0.25.33 / build 506 — восстановлен Glorax checklist-review без code-owned ответа
 >
 > Дата: 2026-07-29

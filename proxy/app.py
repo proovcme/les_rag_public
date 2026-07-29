@@ -15,6 +15,7 @@ import psutil
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.http_client_policy import trust_env_for_url
 from backend.metrics_collector import init_db, metrics_loop
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 from backend.rag_config import embedding_api_model, rag_meta_db_path
@@ -275,7 +276,10 @@ async def metrics_collector_loop():
                 provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
                 if provider == "mlx":
                     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-                    async with httpx.AsyncClient(timeout=2.0) as client:
+                    async with httpx.AsyncClient(
+                        trust_env=trust_env_for_url(mlx_url),
+                        timeout=2.0,
+                    ) as client:
                         response = await client.get(f"{mlx_url}/api/host_memory")
                         if response.status_code == 200:
                             host_mem = response.json()
@@ -400,7 +404,10 @@ async def _warmup_models():
 
         mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         model = os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)
-        async with httpx.AsyncClient(timeout=180) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(mlx),
+            timeout=180,
+        ) as client:
             await client.post(
                 f"{mlx}/v1/chat/completions",
                 json={"model": model, "messages": [{"role": "user", "content": "прогрев"}], "max_tokens": 1},

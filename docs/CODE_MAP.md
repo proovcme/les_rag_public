@@ -16,6 +16,10 @@
   канонического `proovcme/Agnostis`, а не вторая копия исходников. LES владеет
   только интеграцией с ARTEL Index/BIM export и `tests/test_artel_packaging.py`;
   сборка и выпуск Revit-продукта выполняются в Agnostis.
+- **Loopback HTTP policy:** `backend/http_client_policy.py` отключает
+  proxy-env только для localhost/loopback URL. UI→proxy, local model,
+  diagnostics и reranker используют общий `trust_env_for_url`; внешние
+  ETM/update/cloud URL сохраняют нормальную proxy-policy.
 
 ## Алгоритм-доки (детерминированные ядра, 0 LLM)
 

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+
+from backend.http_client_policy import trust_env_for_url
 import json
 import os
 import sqlite3
@@ -165,7 +167,7 @@ async def api_get(path: str, base: Optional[str] = None) -> Optional[Union[dict,
     if base is None:
         base = PROXY_URL
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=180.0) as client:
             r = await client.get(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
             _api_success()
@@ -180,7 +182,7 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
     if base is None:
         base = PROXY_URL
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=180.0) as client:
             r = await client.post(f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers())
             r.raise_for_status()
             _api_success()
@@ -210,7 +212,7 @@ async def api_post_file(
     if base is None:
         base = PROXY_URL
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=300.0) as client:
             r = await client.post(
                 f"{base}{path}",
                 files={"file": (filename, content)},
@@ -235,7 +237,7 @@ async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optio
         base = PROXY_URL
     got_final = False
     try:
-        async with httpx.AsyncClient(timeout=300.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=300.0) as client:
             async with client.stream(
                 "POST", f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers()
             ) as r:
@@ -274,7 +276,7 @@ async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple
     if base is None:
         base = PROXY_URL
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=180.0) as client:
             r = await client.get(f"{base}{path}", headers=_auth_headers())
             r.raise_for_status()
             disp = r.headers.get("content-disposition", "")
@@ -293,7 +295,7 @@ async def api_patch(path: str, data: Optional[dict] = None, base: Optional[str] 
     if base is None:
         base = PROXY_URL
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=180.0) as client:
             r = await client.patch(f"{base}{path}", json=data or {}, headers=_auth_headers())
             r.raise_for_status()
             _api_success()
@@ -310,7 +312,7 @@ async def api_delete(
     if base is None:
         base = PROXY_URL
     try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=180.0) as client:
             # DELETE с телом (напр. снятие привязки ProjectLink) — через request().
             if data is not None:
                 r = await client.request("DELETE", f"{base}{path}", headers=_auth_headers(), json=data)
@@ -432,7 +434,10 @@ async def refresh_proxy_logs(limit: int = 120):
             add_log(f"[LOGS] local proxy.log read error: {error}")
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(PROXY_URL),
+            timeout=5.0,
+        ) as client:
             r = await client.get(f"{PROXY_URL}/api/logs/recent?limit={limit}", headers=_auth_headers())
             r.raise_for_status()
             d = r.json()
@@ -611,7 +616,10 @@ async def live_subscribe() -> bool:
     try:
         # read больше серверного интервала снимков (LES_LIVE_INTERVAL_SEC, деф. 3с),
         # но конечен — иначе half-open соединение висит вечно и UI замирает.
-        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=20.0)) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(PROXY_URL),
+            timeout=httpx.Timeout(10.0, read=20.0),
+        ) as client:
             async with client.stream("GET", f"{PROXY_URL}/api/live", headers=_auth_headers()) as r:
                 if r.status_code != 200:
                     return False
