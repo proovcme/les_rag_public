@@ -15,11 +15,17 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import windows_runtime
+except ImportError:
+    from tools import windows_runtime
 
 
 CREATE_NO_WINDOW = 0x08000000
@@ -103,6 +109,7 @@ def run_bounded(
     timeout: int,
     environment: dict[str, str] | None = None,
     accepted_codes: set[int] | None = None,
+    max_working_set_mb: int | None = None,
 ) -> int:
     """Run one exact child PID with file-backed output and a hard timeout."""
     log_root.mkdir(parents=True, exist_ok=True)
@@ -120,9 +127,28 @@ def run_bounded(
             close_fds=True,
             creationflags=creation_flags(),
         )
-        try:
-            code = process.wait(timeout=timeout)
-        except subprocess.TimeoutExpired as exc:
+        deadline = time.monotonic() + timeout
+        code: int | None = None
+        while time.monotonic() < deadline:
+            code = process.poll()
+            if code is not None:
+                break
+            if max_working_set_mb and _working_set_bytes(process.pid) > (
+                max_working_set_mb * 1024 * 1024
+            ):
+                subprocess.run(
+                    ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    creationflags=creation_flags(),
+                )
+                raise RuntimeError(
+                    f"{name} exceeded {max_working_set_mb} MB working-set limit"
+                )
+            time.sleep(0.25)
+        if code is None:
             subprocess.run(
                 ["taskkill.exe", "/PID", str(process.pid), "/T", "/F"],
                 stdin=subprocess.DEVNULL,
@@ -131,11 +157,48 @@ def run_bounded(
                 check=False,
                 creationflags=creation_flags(),
             )
-            raise RuntimeError(f"{name} timed out after {timeout}s") from exc
+            raise RuntimeError(f"{name} timed out after {timeout}s")
     if code not in accepted:
         detail = stderr_path.read_text(encoding="utf-8", errors="replace")[-1200:]
         raise RuntimeError(f"{name} failed ({code}): {detail.strip() or 'see log'}")
     return code
+
+
+def _working_set_bytes(pid: int) -> int:
+    if os.name != "nt":
+        return 0
+    import ctypes
+    from ctypes import wintypes
+
+    class ProcessMemoryCounters(ctypes.Structure):
+        _fields_ = [
+            ("cb", wintypes.DWORD),
+            ("PageFaultCount", wintypes.DWORD),
+            ("PeakWorkingSetSize", ctypes.c_size_t),
+            ("WorkingSetSize", ctypes.c_size_t),
+            ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+            ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+            ("PagefileUsage", ctypes.c_size_t),
+            ("PeakPagefileUsage", ctypes.c_size_t),
+        ]
+
+    query = 0x1000 | 0x0010
+    handle = ctypes.windll.kernel32.OpenProcess(query, False, pid)
+    if not handle:
+        return 0
+    try:
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        ok = ctypes.windll.psapi.GetProcessMemoryInfo(
+            handle,
+            ctypes.byref(counters),
+            counters.cb,
+        )
+        return int(counters.WorkingSetSize) if ok else 0
+    finally:
+        ctypes.windll.kernel32.CloseHandle(handle)
 
 
 def stop_desktop() -> None:
@@ -150,30 +213,24 @@ def stop_desktop() -> None:
 
 
 def stop_runtime(runtime: Path, state: Path, log_root: Path) -> None:
-    stop = runtime / "installers" / "windows" / "stop-light.ps1"
-    if not stop.is_file():
-        raise RuntimeError(f"runtime stop entrypoint is missing: {stop}")
     environment = dict(os.environ)
     environment["LES_WINDOWS_STATE_ROOT"] = str(state)
     run_bounded(
         [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(stop),
-            "-ProxyPort",
-            "8050",
-            "-UiPort",
-            "8051",
+            sys.executable,
+            str(Path(windows_runtime.__file__).resolve()),
+            "stop",
+            "--runtime",
+            str(runtime),
+            "--state",
+            str(state),
         ],
         cwd=runtime,
         log_root=log_root,
         name="stop-runtime",
-        timeout=45,
+        timeout=30,
         environment=environment,
+        max_working_set_mb=256,
     )
 
 
@@ -234,25 +291,20 @@ def probe_environment(runtime: Path, state: Path, log_root: Path) -> None:
 
 
 def start_runtime(runtime: Path, state: Path, log_root: Path) -> None:
-    start = runtime / "installers" / "windows" / "start-light.ps1"
-    if not start.is_file():
-        raise RuntimeError(f"runtime start entrypoint is missing: {start}")
     environment = dict(os.environ)
     environment["LES_WINDOWS_STATE_ROOT"] = str(state)
-    environment["LES_ENV_PATH"] = str(state / ".env")
-    environment["UV_PROJECT_ENVIRONMENT"] = str(state / ".venv")
     run_bounded(
         [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(start),
-            "-ProxyPort",
+            sys.executable,
+            str(Path(windows_runtime.__file__).resolve()),
+            "start",
+            "--runtime",
+            str(runtime),
+            "--state",
+            str(state),
+            "--proxy-port",
             "8050",
-            "-UiPort",
+            "--ui-port",
             "8051",
         ],
         cwd=runtime,
@@ -260,6 +312,7 @@ def start_runtime(runtime: Path, state: Path, log_root: Path) -> None:
         name="start-runtime",
         timeout=120,
         environment=environment,
+        max_working_set_mb=512,
     )
 
 
@@ -342,7 +395,7 @@ def wait_ready(
     while time.monotonic() < deadline:
         try:
             version = _json_url("http://127.0.0.1:8050/api/version")
-            health = _json_url("http://127.0.0.1:8050/api/health")
+            health = _json_url("http://127.0.0.1:8050/api/health", timeout=20)
             with urllib.request.urlopen(  # noqa: S310
                 "http://127.0.0.1:8051/healthz", timeout=5
             ) as response:
@@ -353,13 +406,15 @@ def wait_ready(
                 or actual_commit.startswith(expected_commit[:8])
             )
             contract = ((health.get("rag") or {}).get("index_contract") or {})
+            qdrant = ((health.get("rag") or {}).get("qdrant") or {})
             runtime_state = json.loads(
                 (state / "logs" / "windows-light-state.json").read_text(
                     encoding="utf-8-sig"
                 )
             )
             direct = (
-                runtime_state.get("process_contract") == "direct_python_no_console_v1"
+                runtime_state.get("process_contract")
+                in {"direct_python_no_console_v1", "direct_python_no_console_v2"}
                 and int(runtime_state.get("proxy_pid") or 0) > 0
                 and int(runtime_state.get("ui_pid") or 0) > 0
             )
@@ -369,6 +424,7 @@ def wait_ready(
                 and same_commit
                 and ui_ok
                 and contract.get("compatible") is True
+                and qdrant.get("ok") is True
                 and direct
             ):
                 return {
@@ -376,12 +432,14 @@ def wait_ready(
                     "build_number": expected_build,
                     "deployed_commit": actual_commit,
                     "index_contract_compatible": True,
-                    "process_contract": "direct_python_no_console_v1",
+                    "qdrant_ready": True,
+                    "process_contract": str(runtime_state.get("process_contract")),
                 }
             last = (
                 f"version={version.get('product_version')}/{version.get('build_number')}, "
                 f"commit={actual_commit}, ui={ui_ok}, "
-                f"contract={contract.get('status')}, direct={direct}"
+                f"contract={contract.get('status')}, qdrant={qdrant.get('ok')}, "
+                f"direct={direct}"
             )
         except Exception as exc:  # noqa: BLE001
             last = str(exc)
@@ -433,7 +491,7 @@ def _validate_job(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_hard_job(job_path: Path) -> int:
-    job = _validate_job(json.loads(job_path.read_text(encoding="utf-8")))
+    job = _validate_job(json.loads(job_path.read_text(encoding="utf-8-sig")))
     install, state = validate_boundary(
         Path(job["install_root"]),
         Path(job["state_root"]),
@@ -599,11 +657,116 @@ def apply_hard_job(job_path: Path) -> int:
             lock_path.unlink(missing_ok=True)
 
 
+def resume_hard_job(job_path: Path) -> int:
+    """Finish smoke/handoff after an interrupted hard job without reinstalling."""
+    job = _validate_job(json.loads(job_path.read_text(encoding="utf-8-sig")))
+    install, state = validate_boundary(
+        Path(job["install_root"]),
+        Path(job["state_root"]),
+    )
+    status = Path(job["status_path"]).resolve()
+    log_root = state / "logs" / "updates" / f"{job['update_id']}-resume"
+    runtime = runtime_root(install)
+    version = json.loads(
+        (runtime / "config" / "version.json").read_text(encoding="utf-8")
+    )
+    if (
+        str(version.get("product_version")) != job["product_version"]
+        or int(version.get("build_number") or 0) != int(job["build_number"])
+        or str(version.get("desktop_version")) != job["desktop_version"]
+    ):
+        raise RuntimeError("installed tree does not match interrupted hard-update job")
+    stamp = json.loads(
+        (runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8-sig")
+    )
+    if str(stamp.get("deployed_commit") or "") != job["target_commit"]:
+        raise RuntimeError("installed deploy stamp does not match interrupted hard-update job")
+    marker_path = state / "artifacts" / "updates" / "state-preservation.json"
+    marker = json.loads(marker_path.read_text(encoding="utf-8-sig"))
+    if marker.get("update_id") != job["update_id"]:
+        raise RuntimeError("persistent-state marker does not match interrupted hard-update job")
+
+    lock_path = state / "artifacts" / "updates" / "application-update.lock"
+    if lock_path.is_file():
+        try:
+            stale_pid = int(lock_path.read_text(encoding="ascii").strip())
+        except ValueError:
+            lock_path.unlink(missing_ok=True)
+        else:
+            alive = (
+                _working_set_bytes(stale_pid) > 0
+                if os.name == "nt"
+                else _pid_alive(stale_pid)
+            )
+            if alive:
+                raise RuntimeError(f"hard update is still running (pid={stale_pid})")
+            lock_path.unlink(missing_ok=True)
+
+    write_status(
+        status,
+        state="applying",
+        stage="resume_smoke",
+        update_id=job["update_id"],
+        message="Проверяю уже установленное дерево",
+    )
+    try:
+        _json_url("http://127.0.0.1:8050/api/version", timeout=5)
+    except Exception:
+        start_runtime(runtime, state, log_root)
+    desktop_task = start_desktop(install, f"{job['update_id']}-resume", log_root)
+    try:
+        smoke = wait_ready(
+            expected_commit=job["target_commit"],
+            expected_version=job["product_version"],
+            expected_build=int(job["build_number"]),
+            state=state,
+            timeout=120,
+        )
+    finally:
+        remove_task(desktop_task, install, log_root)
+    recoveries = sorted(
+        install.parent.glob(f"{install.name}.recovery-*"),
+        key=lambda path: path.stat().st_mtime_ns,
+        reverse=True,
+    )
+    recovery = recoveries[0] if recoveries else None
+    write_status(
+        status,
+        state="ready",
+        stage="done",
+        update_id=job["update_id"],
+        message="Выпуск установлен",
+        product_version=job["product_version"],
+        build_number=int(job["build_number"]),
+        target_commit=job["target_commit"],
+        recovery_root=str(recovery) if recovery else "",
+        smoke=smoke,
+        resumed_after_interruption=True,
+        application_tree_replaced=True,
+        user_data_untouched=True,
+    )
+    return 0
+
+
+def _pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--job", type=Path, required=True)
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--job", type=Path)
+    mode.add_argument("--resume-job", type=Path)
     args = parser.parse_args(argv)
-    return apply_hard_job(args.job)
+    return (
+        resume_hard_job(args.resume_job)
+        if args.resume_job is not None
+        else apply_hard_job(args.job)
+    )
 
 
 if __name__ == "__main__":

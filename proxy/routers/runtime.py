@@ -19,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from backend.metrics_collector import DB_PATH, heartbeats
-from backend.rag_config import rag_meta_db_path, rag_runtime_config
+from backend.rag_config import index_contract_status, rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.security import require_admin, require_root_admin
@@ -213,18 +213,41 @@ async def health():
     backend = get_runtime_state().backend
     if not backend:
         return {"status": "starting", "backend": "none"}
-    ok = await backend.health()
+    timeout = max(0.05, min(float(os.getenv("LES_HEALTH_TIMEOUT_SEC", "6")), 15.0))
+    try:
+        ok = await asyncio.wait_for(backend.health(), timeout=timeout)
+    except TimeoutError:
+        logger.warning("[HEALTH] backend probe timed out after %.1fs", timeout)
+        ok = False
+    except Exception as error:
+        logger.warning("[HEALTH] backend probe failed: %s", error)
+        ok = False
     response = {"status": "ok" if ok else "error", "backend": "qdrant_llama"}
     if hasattr(backend, "health_snapshot"):
         try:
-            snapshot = await backend.health_snapshot()
+            snapshot = await asyncio.wait_for(
+                backend.health_snapshot(),
+                timeout=timeout,
+            )
             response["rag"] = snapshot
             rag_status = snapshot.get("status")
             if ok and rag_status in {"empty", "not_indexed", "degraded"}:
                 response["status"] = "degraded"
+        except TimeoutError:
+            logger.warning("[HEALTH] RAG snapshot timed out after %.1fs", timeout)
+            response["rag"] = {
+                "status": "unavailable",
+                "error_code": "RAG_HEALTH_TIMEOUT",
+                "index_contract": index_contract_status(),
+            }
         except Exception as error:
             logger.warning("[HEALTH] RAG snapshot failed: %s", error)
-            response["rag"] = {"status": "unknown", "error": str(error)}
+            response["rag"] = {
+                "status": "unknown",
+                "error_code": "RAG_HEALTH_FAILED",
+                "error": str(error),
+                "index_contract": index_contract_status(),
+            }
     response["embedding"] = rag_runtime_config()
     return response
 

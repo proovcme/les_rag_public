@@ -20,6 +20,14 @@ class DegradedBackend(FakeBackend):
         }
 
 
+class HangingBackend(FakeBackend):
+    async def health(self):
+        await asyncio.Event().wait()
+
+    async def health_snapshot(self):
+        await asyncio.Event().wait()
+
+
 @pytest.fixture()
 def runtime_state(request):
     previous = runtime._state
@@ -58,6 +66,23 @@ async def test_health_reports_degraded_rag_index(runtime_state):
 
     assert response["status"] == "degraded"
     assert response["rag"]["totals"]["pending_files"] == 798
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_state", [HangingBackend()], indirect=True)
+async def test_health_is_bounded_when_backend_hangs(runtime_state, monkeypatch):
+    monkeypatch.setenv("LES_HEALTH_TIMEOUT_SEC", "0.01")
+    monkeypatch.setattr(
+        runtime,
+        "index_contract_status",
+        lambda: {"status": "compatible", "compatible": True},
+    )
+
+    response = await asyncio.wait_for(runtime.health(), timeout=0.2)
+
+    assert response["status"] == "error"
+    assert response["rag"]["error_code"] == "RAG_HEALTH_TIMEOUT"
+    assert response["rag"]["index_contract"]["compatible"] is True
 
 
 @pytest.mark.asyncio

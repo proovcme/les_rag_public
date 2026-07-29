@@ -73,6 +73,8 @@ VPS_PATCH_ALLOWED_FILES = {
     "proxy_server.py",
     "tools/vps_patch_apply.py",
     "tools/windows_update_engine.py",
+    "tools/windows_runtime.py",
+    "tools/windows_env_doctor.py",
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",
@@ -255,6 +257,7 @@ async def download_and_launch_update() -> dict:
     state_root = update_root().parents[1]
     helper = root / "windows_update_engine.py"
     shutil.copy2(runtime_root() / "tools" / "windows_update_engine.py", helper)
+    shutil.copy2(runtime_root() / "tools" / "windows_runtime.py", root / "windows_runtime.py")
     status = hard_update_status_path()
     job = root / "hard-update-job.json"
     update_id = f"release-{info['latest_version']}-{info['build_number']}"
@@ -617,6 +620,7 @@ async def download_and_launch_vps_patch() -> dict:
         runtime_root() / "tools" / "windows_update_engine.py",
         root / "windows_update_engine.py",
     )
+    shutil.copy2(runtime_root() / "tools" / "windows_runtime.py", root / "windows_runtime.py")
     status = patch_status_path()
     job = root / "job.json"
     job.write_text(

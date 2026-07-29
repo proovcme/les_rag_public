@@ -110,7 +110,7 @@ test-mail-release: test-mail test-tauri
 
 test-updater:
 	uv run python tools/sync_version_contract.py --check
-	uv run python -m py_compile tools/windows_update_engine.py tools/vps_patch.py tools/vps_patch_apply.py tools/windows_update_shell.py tools/mac_update.py tools/mac_update_apply.py proxy/services/update_service.py proxy/routers/updates.py sovushka/components/header.py
+	uv run python -m py_compile tools/windows_runtime.py tools/windows_update_engine.py tools/vps_patch.py tools/vps_patch_apply.py tools/windows_update_shell.py tools/mac_update.py tools/mac_update_apply.py proxy/services/update_service.py proxy/routers/updates.py sovushka/components/header.py
 	uv run python -m pytest -q $(UPDATER_TESTS)
 	@echo "OK — updater behavior-гейт зелёный; build, baseline и общая LES suite не запускались."
 

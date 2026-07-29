@@ -1571,7 +1571,11 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     async def health(self) -> bool:
         try:
-            await self._ensure_collection()
+            timeout = max(
+                1.0,
+                min(float(os.getenv("LES_QDRANT_HEALTH_TIMEOUT_SEC", "4")), 12.0),
+            )
+            await asyncio.wait_for(self._ensure_collection(), timeout=timeout)
             return True
         except Exception:
             return False

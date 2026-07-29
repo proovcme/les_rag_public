@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools import vps_patch_apply, windows_update_engine
+from tools import vps_patch_apply, windows_runtime, windows_update_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -147,6 +147,24 @@ def test_windows_updater_applies_atomically_without_build_or_test(tmp_path, monk
     backup = Path(status["backup_root"])
     assert (backup / "files" / "runtime" / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
     assert (backup / "files" / "app" / "les-desktop.exe").read_bytes() == b"old desktop"
+
+
+def test_windows_updater_accepts_powershell_utf8_bom_job(tmp_path, monkeypatch):
+    runtime, state, job = _prepared_job(tmp_path)
+    job.write_text(job.read_text(encoding="utf-8"), encoding="utf-8-sig")
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_wait_ready",
+        lambda *_args: {
+            "contract": "direct_python_no_console_v2",
+            "runtime_processes": ["pythonw.exe", "pythonw.exe"],
+            "cmd_wrappers": 0,
+        },
+    )
+
+    assert vps_patch_apply.apply_job(job) == 0
+    assert (runtime / "proxy" / "example.py").read_bytes() == b"NEW = True\n"
 
 
 def test_windows_updater_rolls_back_all_files_when_smoke_fails(tmp_path, monkeypatch):
@@ -414,6 +432,7 @@ def test_hard_update_rejects_install_root_containing_user_state(tmp_path):
 
 def test_windows_update_orchestration_is_python_owned_and_file_backed():
     source = (ROOT / "tools" / "windows_update_engine.py").read_text(encoding="utf-8")
+    runtime_source = (ROOT / "tools" / "windows_runtime.py").read_text(encoding="utf-8")
     assert "application tree replaced" in source
     assert "stdout_path.open" in source
     assert "stderr_path.open" in source
@@ -421,3 +440,37 @@ def test_windows_update_orchestration_is_python_owned_and_file_backed():
     assert "Get-CimInstance" not in source
     assert "Get-NetTCPConnection" not in source
     assert "uv sync" not in source
+    assert "powershell.exe" not in runtime_source
+    assert "subprocess.Popen" in runtime_source
+    assert "PROCESS_CONTRACT = \"direct_python_no_console_v2\"" in runtime_source
+    assert "tools/windows_env_doctor.py" in vps_patch_apply.ALLOWED_FILES
+
+
+def test_windows_runtime_environment_keeps_ollama_embedding_contract(tmp_path):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "LES"
+    state.mkdir()
+    (state / ".env").write_text(
+        "LES_LLM_PROVIDER=ollama\nOLLAMA_MODEL=qwen3.5:9b\n", encoding="utf-8"
+    )
+
+    environment = windows_runtime.runtime_environment(runtime, state)
+
+    assert environment["LES_LLM_PROVIDER"] == "ollama"
+    assert environment["OLLAMA_MODEL"] == "qwen3.5:9b"
+    assert environment["MLX_URL"] == "http://127.0.0.1:11434"
+    assert environment["EMBED_MODEL"] == "bge-m3:latest"
+    assert environment["RERANKER_BACKEND"] == "sentence_transformers"
+
+
+def test_windows_runtime_rejects_oversized_env_before_reading_it(tmp_path):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "LES"
+    state.mkdir()
+    env = state / ".env"
+    with env.open("wb") as stream:
+        stream.seek(windows_runtime.MAX_ENV_BYTES)
+        stream.write(b"x")
+
+    with pytest.raises(RuntimeError, match="LES_ENV_OVERSIZED"):
+        windows_runtime.runtime_environment(runtime, state)

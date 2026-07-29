@@ -17,10 +17,14 @@ Tauri, baseline или dependency sync.
 
 `tools/windows_update_engine.py` — единственный владелец stop/start/smoke и
 полной hard-транзакции. До остановки он проверяет SHA installer и готовность
-persistent venv. Текущее дерево `%LOCALAPPDATA%\Programs\LES` атомарно
+persistent venv. `tools/windows_runtime.py` напрямую запускает proxy/UI через
+`pythonw.exe`, без PowerShell/cmd, хранит exact PID и до чтения отклоняет
+`.env` больше 1 МБ с кодом `LES_ENV_OVERSIZED`. Повреждённый env чинится
+`tools/windows_env_doctor.py`: значения не выводятся, исходный файл атомарно
+уходит в persistent recovery. Текущее дерево `%LOCALAPPDATA%\Programs\LES` атомарно
 переименовывается в sibling recovery point; silent NSIS создаёт новое дерево,
 `state.ps1` восстанавливает junctions на `%LOCALAPPDATA%\LES`. Успех требует
-exact commit/version/build, API/UI, совместимого index contract и прямого
+exact commit/version/build, API/UI, доступного Qdrant, совместимого index contract и прямого
 Python process contract. При провале новое дерево удаляется, старое возвращается
 одним rename и перезапускается.
 
@@ -76,8 +80,9 @@ Helper запускается через `pythonw.exe` независимой и
 desktop, атомарно заменяет runtime и/или `les-desktop.exe`; компилируются только изменённые `.py`
 файлы. Новый deploy stamp записывается перед стартом.
 
-Успех требует точного commit/product version/build, HTTP proxy/UI, совместимого index contract,
-прямых `python.exe/pythonw.exe` PID и `direct_python_no_console_v1`.
+Успех требует точного commit/product version/build, HTTP proxy/UI, доступного Qdrant,
+совместимого index contract, прямых `python.exe/pythonw.exe` PID и
+`direct_python_no_console_v2`.
 При любой ошибке возвращаются все существовавшие файлы, удаляются добавленные, восстанавливается
 deploy stamp и стартует предыдущая версия. User state, `data/`, `storage/`, RAG, секреты и индексы
 не входят в transaction.

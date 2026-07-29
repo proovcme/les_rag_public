@@ -33,6 +33,8 @@ ALLOWED_FILES = {
     "proxy_server.py",
     "tools/vps_patch_apply.py",
     "tools/windows_update_engine.py",
+    "tools/windows_runtime.py",
+    "tools/windows_env_doctor.py",
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",
@@ -385,7 +387,7 @@ def _stamp(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def apply_job(job_path: Path) -> int:
-    job = json.loads(Path(job_path).read_text(encoding="utf-8"))
+    job = json.loads(Path(job_path).read_text(encoding="utf-8-sig"))
     runtime = Path(job["runtime_root"]).resolve()
     state = Path(job["state_root"]).resolve()
     archive = Path(job["archive"]).resolve()

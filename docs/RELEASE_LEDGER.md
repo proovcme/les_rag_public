@@ -7,17 +7,33 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.20 (единый Windows install/update engine)
-номер сборки:              493     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.493 (internal identity; hard-update candidate)
+версия продукта (SemVer):  0.25.21 (bounded Windows runtime + platform diagnostics)
+номер сборки:              494     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.494 (internal identity; soft-update target)
 ветка выпуска:             codex/sovushka-ui-kit
 dev implementation:       codex/sovushka-ui-kit; hard + soft updater on one Python lifecycle
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion acceptance pending
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion acceptance target 0.25.21 / 494
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion must be re-probed after hard install
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion exact live result is written by updater report
 ```
 
+> 0.25.21 / build 494 — bounded Windows runtime и платформенная диагностика
+>
+> Дата: 2026-07-29
+> Статус: internal acceptance target для Legion поверх установленного hard-base
+> 0.25.20; без tag, GitHub Release, public feed и VPS. Точная причина прежнего
+> раздувания процесса установлена: persistent `.env` имел размер 23,5 ГБ, и
+> старые lifecycle-пути читали его целиком. `windows_runtime.py` теперь запускает
+> proxy/UI напрямую без PowerShell/cmd, ограничивает lifecycle working set и
+> блокирует env больше 1 МБ до чтения. `windows_env_doctor.py` восстанавливает
+> допустимые ключи без печати значений, а исходник перемещает в persistent
+> recovery. `/api/health` имеет bounded Qdrant/RAG timeout и возвращает
+> машинный error code вместо зависания; updater требует живой Qdrant, совместимый
+> index contract и exact direct-Python PID. Диагностика Совушки различает
+> платформы: Windows показывает Ollama, Docker Desktop и «Ресурсы Windows»,
+> macOS — MLX/Metal, LaunchAgents и «Ресурсы Mac».
+>
 > 0.25.20 / build 493 — один движок жёсткой установки и мягкого обновления
 >
 > Дата: 2026-07-29

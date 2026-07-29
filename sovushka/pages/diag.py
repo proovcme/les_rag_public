@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
 import time
 from nicegui import ui
 
@@ -18,9 +20,30 @@ from sovushka.uikit.components import (
 )
 
 
+def _is_windows() -> bool:
+    return sys.platform.startswith("win")
+
+
+def _platform_labels() -> dict[str, str]:
+    if _is_windows():
+        return {
+            "resources": "Ресурсы Windows",
+            "model": "Ollama",
+            "model_detail": "локальные модели · порт 11434",
+            "runtime_detail": "Docker Desktop и локальные процессы",
+        }
+    return {
+        "resources": "Ресурсы Mac",
+        "model": "MLX Host",
+        "model_detail": "локальный inference · порт 8080",
+        "runtime_detail": "сервисы работают через LaunchAgents",
+    }
+
+
 def _build_diag_map_html(results: list) -> str:
     """Строит читаемый реестр контуров с живыми статусами узлов."""
     result_map = {r["name"]: r for r in results}
+    platform = _platform_labels()
 
     def st(*names: str) -> str:
         for name in names:
@@ -70,15 +93,19 @@ def _build_diag_map_html(results: list) -> str:
             node("SQLite", "метаданные документов", st("SQLite метабаза")),
         ]),
         group("Модели", [
-            node("MLX Host", "локальный inference · порт 8080", st("MLX Backend", "MLX Host :8080")),
-            node("Latency", "время ответа health и chat", st("MLX latency", "Chat latency (тест)")),
+            node(
+                platform["model"],
+                platform["model_detail"],
+                st("Локальная модель", "MLX Backend", "MLX Host :8080"),
+            ),
+            node("Latency", "время ответа модели и чата", st("Model latency", "MLX latency", "Chat latency (тест)")),
             node("Т.О.С.К.А.", "контроль качества ответов", st("Т.О.С.К.А. статистика")),
         ]),
-        group("Ресурсы Mac", [
+        group(platform["resources"], [
             node("RAM", "оперативная память", st("RAM")),
             node("CPU", "текущая нагрузка", st("CPU")),
             node("Диск", "свободное место", st("Диск")),
-            node("Runtime", "сервисы работают через LaunchAgents", st("Docker runtime", "Docker")),
+            node("Runtime", platform["runtime_detail"], st("Docker runtime", "Docker")),
         ]),
     ]
 
@@ -137,8 +164,11 @@ def _build_acronym_glossary_html() -> str:
         ("К.О.Т.", "Классификатор Областей и Терминов", "таксономия доменов и синонимов"),
         ("RAG", "Retrieval-Augmented Generation", "ответ с поиском по источникам"),
         ("CRAG", "Corrective RAG", "контроль достоверности ответа"),
-        ("MLX", "Apple MLX / Metal runtime", "локальные модели"),
     ]
+    if _is_windows():
+        items.append(("Ollama", "Локальный runtime моделей", "генерация и эмбеддинги Windows"))
+    else:
+        items.append(("MLX", "Apple MLX / Metal runtime", "локальные модели"))
     cards = []
     for code, full, role in items:
         cards.append(
@@ -171,10 +201,10 @@ def _normalize_diag_payload(payload: dict) -> dict:
             and item.get("status") == "err"
             and ("no such file" in value_msg or "not found" in value_msg or "not running" in value_msg)
         )
-        if docker_missing:
+        if docker_missing and not _is_windows():
             item.update(
                 name="Docker runtime", status="ok", value="removed", expected="no Docker",
-                message="не используется — Qdrant/proxy/UI/MLX на host LaunchAgents",
+                message="не используется — Qdrant/proxy/UI/MLX работают через LaunchAgents",
             )
         elif name == "MLX Backend" and item.get("status") == "err" and mlx_health_ok:
             item.update(
@@ -574,11 +604,18 @@ def build_diag():
             return ("ok" if ok else "err"), ("UP" if ok else "DOWN"), "UP", ""
         await _chk("les-proxy :8050", chk_proxy())
 
-        # ── MLX Host — имя совпадает с node_map ──
-        async def chk_mlx():
+        # ── Активный локальный runtime моделей ──
+        async def chk_local_model():
             provider = await active_llm_provider()
+            if provider == "ollama":
+                base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+                r = await api_get("/api/tags", base=base)
+                if not isinstance(r, dict):
+                    return "err", "DOWN", "UP", "Ollama недоступна"
+                models = r.get("models") or []
+                return "ok", f"Ollama · {len(models)} моделей", "UP", ""
             if provider != "mlx":
-                return "warn", provider.upper(), "MLX or local provider", "MLX Host не опрашивается для текущего провайдера"
+                return "warn", provider.upper(), "локальный runtime", "Проверка локальной модели не применяется"
             r = await api_get("/api/health", base=MLX_URL)
             if not r:
                 return "err", "DOWN", "UP", "MLX Host недоступен"
@@ -592,7 +629,7 @@ def build_diag():
             status = "ok" if is_loaded else "warn"
             val_str = f"{model_name} [{'LIVE' if is_loaded else 'IDLE'}]"
             return status, val_str, "LIVE", ""
-        await _chk("MLX Host :8080", chk_mlx())
+        await _chk("Локальная модель", chk_local_model())
 
         # ── Qdrant — имя совпадает с node_map ──
         async def chk_qdrant():
@@ -617,8 +654,16 @@ def build_diag():
             return ("ok" if ok_flag else "warn"), f"{len(indexed)}/{total} indexed", "≥1", ""
         await _chk("Qdrant индекс", chk_qdrant_idx())
 
-        # ── MLX loaded models ──
-        async def chk_mlx_models():
+        # ── Загруженные модели активного runtime ──
+        async def chk_loaded_models():
+            provider = await active_llm_provider()
+            if provider == "ollama":
+                base = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+                r = await api_get("/api/ps", base=base)
+                if not isinstance(r, dict):
+                    return "warn", "—", "runtime status", "Ollama status недоступен"
+                models = r.get("models") or []
+                return "ok", f"{len(models)} loaded", "0+ guarded", ""
             r = await api_get("/api/status")
             if not r:
                 return "warn", "—", "status", "status недоступен"
@@ -627,12 +672,19 @@ def build_diag():
             if models:
                 return "ok", f"{len(models)} loaded", "0+ guarded", ""
             return "ok", "0 loaded", "0+ guarded", "Модели выгружены до запроса"
-        await _chk("MLX loaded models", chk_mlx_models())
+        await _chk("Загруженные модели", chk_loaded_models())
 
-        # ── Docker intentionally absent in the current host-launchd runtime ──
-        async def chk_no_docker():
-            return "ok", "removed", "no Docker", "Qdrant/proxy/UI/MLX run on host LaunchAgents"
-        await _chk("Docker runtime", chk_no_docker())
+        # ── На Mac Docker не нужен; на Windows он является runtime Qdrant ──
+        async def chk_runtime():
+            if not _is_windows():
+                return "ok", "LaunchAgents", "host services", "Docker не используется"
+            r = await api_get("/api/metrics")
+            rag = r.get("rag", {}) if isinstance(r, dict) else {}
+            qdrant_status = str(rag.get("status") or "").lower()
+            if qdrant_status in {"ready", "ok", "degraded", "empty", "not_indexed"}:
+                return "ok", "Docker/Qdrant UP", "UP", ""
+            return "warn", "не подтверждено", "Docker/Qdrant UP", "Проверьте Docker Desktop и Qdrant"
+        await _chk("Docker runtime", chk_runtime())
 
         # ── RAM / CPU / Диск из метрик ──
         metrics_data = state.get("metrics", {})
