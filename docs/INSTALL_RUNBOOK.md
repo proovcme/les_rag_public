@@ -109,12 +109,12 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 
 3. `tools/windows_patch_release.ps1` на Windows строго обновляет `main` до запрошенного commit,
    собирает Tauri/NSIS, устанавливает EXE в изолированный `%LOCALAPPDATA%\LES-release-smoke` и
-   запускает `windows_release_smoke.ps1`. Только после его успеха
-   `windows_production_deploy.ps1` останавливает старые production API/UI, устанавливает тот же
-   проверенный EXE в `%LOCALAPPDATA%\Programs\LES`, поднимает persistent `%LOCALAPPDATA%\LES` и
-   проверяет версию, совместимость индексного контракта, ручной Outlook-сборщик и desktop.
-   Пользовательские датасеты при production gate не создаются и не изменяются. Qdrant и отдельная
-   ФСНБ-задача не останавливаются. Любая ошибка блокирует публикацию.
+   запускает `windows_release_smoke.ps1`. Только после его успеха installer передаётся как
+   payload в `windows_update_engine.py`: движок переименовывает всё старое дерево приложения
+   в recovery, ставит новое, повторно привязывает persistent `%LOCALAPPDATA%\LES` и проверяет
+   exact identity, API/UI, index contract и process contract. Пользовательские данные не входят
+   в удаляемую область; провал smoke целиком возвращает предыдущее дерево. Outlook probe и
+   доменная проверка остаются отдельными release-гейтами, а не частью install-транзакции.
 
 4. Публикация начинается только после проверки версии, номера сборки, commit, изолированного
    clean-install PDF+RRF smoke, production runtime/mail/desktop smoke и SHA-256.

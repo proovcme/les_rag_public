@@ -598,7 +598,7 @@ fn show_error(app: &AppHandle, message: &str) {
             .replace("${", "\\${")
             .replace('\n', "<br>");
         let _ = window.eval(format!(
-            "document.querySelector('main').innerHTML = `<div class='mark'>!</div><h1>ЛЕС не запустился</h1><p>{safe}</p>`;"
+            "document.querySelector('main').innerHTML = `<div class='mark'>!</div><h1>Запуск остановлен</h1><p>{safe}</p><p>Откройте «Настройка» и повторите проверку после устранения указанной причины.</p>`;"
         ));
     }
 }

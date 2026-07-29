@@ -128,24 +128,38 @@ try {
   $smoke = Get-Content -LiteralPath $SmokeReport -Raw | ConvertFrom-Json
   if (-not $smoke.ok) { throw "Live Windows smoke did not pass" }
 
-  # Only a clean isolated smoke may advance to the actual Legion production
-  # state. The isolated smoke already proves PDF ingestion and dense+sparse
-  # RRF. The production gate installs in-place without mutating user datasets,
-  # then checks the persistent runtime, manual Outlook intake and desktop.
+  # The verified installer is only a payload. The Python engine owns the whole
+  # application-tree transaction and its rollback.
+  $sha = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
+  $ProductionStatus = Join-Path $env:LOCALAPPDATA "LES\artifacts\updates\hard-update-status.json"
+  $ProductionJob = Join-Path $env:LOCALAPPDATA "LES\artifacts\updates\patch-release-job.json"
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ProductionJob) | Out-Null
+  [ordered]@{
+    schema = "les.windows-hard-update.v1"
+    update_id = "patch-release-$Version-$BuildNumber"
+    installer = $Installer
+    installer_sha256 = $sha
+    install_root = (Join-Path $env:LOCALAPPDATA "Programs\LES")
+    state_root = (Join-Path $env:LOCALAPPDATA "LES")
+    status_path = $ProductionStatus
+    product_version = $Version
+    build_number = $BuildNumber
+    desktop_version = "5.1.$BuildNumber"
+    target_commit = $BuildCommit
+    branch = "release"
+  } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $ProductionJob -Encoding utf8
   Invoke-Checked "powershell.exe" @(
     "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
-    (Join-Path $RepoRoot "tools\windows_transactional_production_deploy.ps1"),
-    "-Installer", $Installer,
-    "-ExpectedVersion", $Version
+    (Join-Path $RepoRoot "tools\windows_production_deploy.ps1"),
+    "-Job", $ProductionJob
   )
-  $ProductionReport = Join-Path $env:LOCALAPPDATA "LES\logs\production-deploy.json"
+  $ProductionReport = $ProductionStatus
   if (-not (Test-Path -LiteralPath $ProductionReport)) {
     throw "Production deploy report was not created: $ProductionReport"
   }
   $production = Get-Content -LiteralPath $ProductionReport -Raw | ConvertFrom-Json
-  if (-not $production.ok) { throw "Production Legion deploy did not pass" }
+  if ($production.state -ne "ready") { throw "Production Legion deploy did not pass" }
 
-  $sha = (Get-FileHash -LiteralPath $Installer -Algorithm SHA256).Hash.ToLowerInvariant()
   $Checksum = Join-Path $RepoRoot "dist\LES-Setup.exe.sha256"
   [System.IO.File]::WriteAllText($Checksum, "$sha  LES-Setup.exe`n", [System.Text.Encoding]::ASCII)
   $summary = [ordered]@{

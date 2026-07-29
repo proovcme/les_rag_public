@@ -7,22 +7,40 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.19 (bounded Windows bootstrap process contract)
-номер сборки:              492     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.492 (internal identity; последний bootstrap installer)
+версия продукта (SemVer):  0.25.20 (единый Windows install/update engine)
+номер сборки:              493     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.493 (internal identity; hard-update candidate)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; updater v2 + bounded Windows process layer
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.19 / build 492
+dev implementation:       codex/sovushka-ui-kit; hard + soft updater on one Python lifecycle
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion acceptance pending
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          только bounded application update; полный installer для обычных правок запрещён
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.19 / build 492
+следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion must be re-probed after hard install
 ```
 
+> 0.25.20 / build 493 — один движок жёсткой установки и мягкого обновления
+>
+> Дата: 2026-07-29
+> Статус: dev candidate для первой установки новым контуром на Legion; без tag,
+> GitHub Release, public feed и VPS. `windows_update_engine.py` владеет всей
+> hard-транзакцией: exact installer SHA/identity → локальный dependency probe до
+> остановки → stop → atomic rename всего `%LOCALAPPDATA%\Programs\LES` в recovery
+> → silent NSIS → повторная привязка persistent state → start → bounded
+> identity/API/UI/index/process smoke. При провале новое дерево удаляется, старое
+> возвращается одним rename; `%LOCALAPPDATA%\LES` не входит в удаляемую область.
+> Мягкий ZIP-helper использует тот же start/stop/smoke lifecycle. Installer,
+> тесты, build, baseline, WMI/CIM и dependency sync не выполняются внутри apply.
+> Исторические production/bootstrap PowerShell entrypoints сокращены до тонких
+> алиасов Python engine; отдельный PowerShell rollback запрещён. В настройках
+> разделены «быстрое обновление» и «переустановить выпуск». Текст «Нужна помощь»
+> заменён конкретным состоянием и действием.
+>
 > 0.25.19 / build 492 — последний bootstrap installer и bounded Windows process layer
 >
 > Дата: 2026-07-29
-> Статус: внутренний Legion bootstrap; без tag, GitHub Release, public feed и публикации.
-> Один последний полный installer установил updater v2. Диагностика реального Legion
+> Статус: не принят на Legion: повторные production apply/rollback не дали
+> стабильного установленного результата. Без tag, GitHub Release, public feed и публикации.
+> Диагностика реального Legion
 > закрыла три системных дефекта старого контура: `Start-Process -Wait` ожидал всё
 > унаследованное дерево после завершения NSIS/start-light; Windows PowerShell 5 не
 > гарантировал заполненный `ExitCode` у короткоживущего `Start-Process`; многократный
@@ -30,7 +48,9 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > Общий `runtime-process.ps1` теперь запускает exact PID через
 > `System.Diagnostics.ProcessStartInfo`, скрывает окно, имеет жёсткий timeout и
 > настоящий exit code; порты разрешаются точечным `netstat`. Один контракт используют
-> start/stop, production deploy и rollback. Bootstrap использует cached baseline,
+> start/stop, production deploy и rollback. Apply больше не вызывает сетевой `uv sync`:
+> готовый persistent venv проходит локальный bounded import-spec probe, а отсутствие
+> зависимости честно блокирует обновление до остановки сервисов. Bootstrap использует cached baseline,
 > не передаёт 54–56 МБ с Mac, не запускает общую suite/RAG и сохраняет user state.
 > Короткий `make test-updater` и живой identity/API/UI/index/process smoke являются
 > достаточной приёмкой этого контура.

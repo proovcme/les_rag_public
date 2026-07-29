@@ -212,38 +212,19 @@ def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     production = (ROOT / "tools" / "windows_production_deploy.ps1").read_text(encoding="utf-8")
 
     assert 'summary.get("production")' in source
-    assert 'production_rag.get("retrieval_proof") != "isolated_clean_install_smoke"' in source
-    assert 'production_rag.get("user_corpus_mutated") is not False' in source
-    assert 'production_mail.get("schedule") != "manual"' in source
+    assert 'production.get("application_tree_replaced") is not True' in source
+    assert 'production.get("user_data_untouched") is not True' in source
+    assert 'production.get("state") != "ready"' in source
     assert '"--resume-verified-commit"' in source
     assert '"merge-base", "--is-ancestor"' in source
-    assert "windows_transactional_production_deploy.ps1" in windows
+    assert "les.windows-hard-update.v1" in windows
+    assert "windows_production_deploy.ps1" in windows
     assert "production = $production" in windows
     assert "Heavy PDF polygon" not in production
     assert "LES production PDF smoke" not in production
-    assert "user_corpus_mutated = $false" in production
-    assert '"RAG_COLLECTION_NAME" $newCollection' in production
-    assert "previous_index_contract_incompatible" in production
-    assert "old_collection_preserved = $true" in production
-    assert "Production index contract is not compatible after fast start" in production
-    assert 'retrieval_proof = "isolated_clean_install_smoke"' in production
-    assert "Start-InteractiveLesDesktop" in production
-    assert 'Join-Path $InstallRoot "les-desktop.exe"' in production
-    assert 'launch_mode = "interactive_scheduled_task"' in production
-    assert "Get-LesRuntimeProcessHygiene" in production
-    assert "New-ScheduledTaskAction -Execute $Desktop" in production
-    assert "$env:ComSpec" not in production
-    assert '$result.stage = "desktop_handoff"' in production
-    assert "collector must be manual" in production
-    assert 'schedule = "manual"' in production
-    assert "trigger_count = 0" in production
-    assert "@(8050, 8051, 8052, 8053)" in production
-    assert "$previousRunTime = $previousInfo.LastRunTime" in production
-    assert "$probeInfo.LastRunTime -gt $previousRunTime" in production
-    assert 'outlook_probe = $outlookProbe' in production
-    assert "Outlook probe skipped:" in production
-    assert "services_reused = $true" in production
-    assert "bootstrap_reentered = $false" in production
+    assert "windows_update_engine.py" in production
+    assert "Get-CimInstance" not in production
+    assert "Get-NetTCPConnection" not in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):

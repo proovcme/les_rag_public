@@ -14,6 +14,9 @@ def _release(version: str = "0.24.0.405") -> dict:
         "version": version,
         "name": f"LES {version}",
         "notes": "Изменения",
+        "build_number": 405,
+        "desktop_version": "5.1.405",
+        "commit": "a" * 40,
     }
 
 
@@ -23,6 +26,16 @@ def test_release_summary_requires_newer_complete_package(monkeypatch):
     assert result["available"] is True
     assert result["package_complete"] is True
     assert result["install_supported"] is True
+    assert result["build_number"] == 405
+    assert result["target_commit"] == "a" * 40
+
+
+def test_release_summary_marks_release_without_exact_identity_incomplete():
+    payload = _release()
+    payload.pop("commit")
+    assert update_service.release_summary(
+        payload, current_version="0.24.0.404"
+    )["package_complete"] is False
 
 
 def test_release_summary_does_not_downgrade():

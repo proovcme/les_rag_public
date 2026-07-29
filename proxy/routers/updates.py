@@ -11,6 +11,7 @@ from proxy.services.update_service import (
     download_and_launch_update,
     download_and_launch_vps_patch,
     launch_mac_update,
+    read_hard_update_status,
     read_mac_update_status,
     read_vps_patch_status,
 )
@@ -33,6 +34,11 @@ async def update_install(_admin=Depends(require_admin)):
         return await download_and_launch_update()
     except UpdateError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/status")
+async def update_status(_user=Depends(require_user)):
+    return read_hard_update_status()
 
 
 @router.get("/patch/check")

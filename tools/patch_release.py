@@ -458,24 +458,20 @@ def verify_local_artifacts(contract: dict[str, Any], commit: str) -> dict[str, A
     smoke = summary.get("smoke") or {}
     production = summary.get("production") or {}
     smeta = smoke.get("smeta_baseline") or {}
-    production_rag = production.get("rag") or {}
-    production_mail = production.get("mail") or {}
-    production_rollback = production.get("rollback") or {}
+    production_smoke = production.get("smoke") or {}
     if summary.get("build_commit") != commit or not smoke.get("ok"):
         raise RuntimeError("remote build commit or live smoke is not verified")
     if not smeta.get("ok") or int(smeta.get("norm_count") or 0) < 40_000:
         raise RuntimeError("clean-install smeta baseline was not verified")
     if (
-        not production.get("ok")
-        or production.get("les_version") != contract["product_version"]
-        or not production_rag.get("index_contract_compatible")
-        or production_rag.get("retrieval_proof") != "isolated_clean_install_smoke"
-        or production_rag.get("user_corpus_mutated") is not False
-        or production_mail.get("schedule") != "manual"
-        or int(production_mail.get("trigger_count") or 0) != 0
-        or production_mail.get("outlook_probe") != "ok"
-        or production_rollback.get("available") is not True
-        or production_rollback.get("data_untouched") is not True
+        production.get("state") != "ready"
+        or production.get("product_version") != contract["product_version"]
+        or int(production.get("build_number") or 0) != int(contract["build_number"])
+        or production.get("target_commit") != commit
+        or production_smoke.get("index_contract_compatible") is not True
+        or production.get("application_tree_replaced") is not True
+        or production.get("user_data_untouched") is not True
+        or not str(production.get("recovery_root") or "")
     ):
         raise RuntimeError("production Legion deploy was not verified")
     return summary
@@ -491,6 +487,8 @@ def create_release_files(contract: dict[str, Any], commit: str, notes: str) -> N
         "published_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "html_url": f"https://github.com/{PUBLIC_REPOSITORY}/releases/tag/v{version}",
         "build_number": int(contract["build_number"]),
+        "desktop_version": str(contract["desktop_version"]),
+        "target_commit": commit,
         "build_commit": commit,
     }
     (DIST / "latest.json").write_text(

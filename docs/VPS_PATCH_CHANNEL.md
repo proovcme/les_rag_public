@@ -1,22 +1,42 @@
-# Windows application updater ЛЕС
+# Windows installation and application updater ЛЕС
 
 ## Назначение
 
-Application updater v2 заменяет повседневную передачу полного `LES-Setup.exe`: установленный
-Windows-ЛЕС вручную получает небольшой content-addressed пакет с
-`https://les.ovc.me/updates/`. На Legion updater v2 установлен последним bootstrap-installer;
-дальше обычные изменения должны идти только bounded application package.
+Есть два независимых пользовательских действия поверх одного lifecycle:
 
-Оператор нажимает `Проверить обновление` → `Установить`. Фоновых проверок и самопроизвольной
-установки нет. Apply никогда не запускает pytest, сборку Tauri, baseline, dependency sync или
-installer.
+- **жёсткая установка выпуска** — проверенный `LES-Setup.exe` является только payload;
+  Python engine целиком заменяет дерево программы и сохраняет `%LOCALAPPDATA%\LES`;
+- **мягкое обновление** — небольшой content-addressed ZIP меняет только разрешённые
+  файлы приложения.
+
+Оператор запускает нужный режим вручную в настройках. Фоновых проверок и
+самопроизвольной установки нет. Apply никогда не запускает pytest, сборку
+Tauri, baseline или dependency sync.
+
+## Общий lifecycle
+
+`tools/windows_update_engine.py` — единственный владелец stop/start/smoke и
+полной hard-транзакции. До остановки он проверяет SHA installer и готовность
+persistent venv. Текущее дерево `%LOCALAPPDATA%\Programs\LES` атомарно
+переименовывается в sibling recovery point; silent NSIS создаёт новое дерево,
+`state.ps1` восстанавливает junctions на `%LOCALAPPDATA%\LES`. Успех требует
+exact commit/version/build, API/UI, совместимого index contract и прямого
+Python process contract. При провале новое дерево удаляется, старое возвращается
+одним rename и перезапускается.
+
+PowerShell допустим только как bounded single-purpose launcher для state,
+start/stop и интерактивной Scheduled Task. Он не хранит вывод дочернего процесса
+в памяти, не строит приложение, не опрашивает WMI/CIM и не управляет откатом.
+Исторические `windows_*production*.ps1` оставлены тонкими алиасами; standalone
+PowerShell rollback закрыт.
 
 ## Что разрешено
 
 - Python под `backend/`, `proxy/`, `sovushka/`;
 - prompts/skills и безопасные JSON/YAML/Markdown/UI assets;
 - корневые `proxy_server.py` и `sovushka_ng.py`;
-- собственный helper `tools/vps_patch_apply.py` и паспорт `config/version.json`.
+- собственные helpers `tools/{vps_patch_apply,windows_update_engine}.py` и паспорт
+  `config/version.json`.
 - пять exact lifecycle-скриптов:
   `installers/windows/{start-light,stop-light,runtime-process,state}.ps1` и
   `installers/windows/app/bootstrap.ps1`;
@@ -57,17 +77,18 @@ desktop, атомарно заменяет runtime и/или `les-desktop.exe`; 
 файлы. Новый deploy stamp записывается перед стартом.
 
 Успех требует точного commit/product version/build, HTTP proxy/UI, совместимого index contract,
-прямых `python.exe/pythonw.exe` PID, `direct_python_no_console_v1` и нуля LES-owned `cmd.exe`.
+прямых `python.exe/pythonw.exe` PID и `direct_python_no_console_v1`.
 При любой ошибке возвращаются все существовавшие файлы, удаляются добавленные, восстанавливается
 deploy stamp и стартует предыдущая версия. User state, `data/`, `storage/`, RAG, секреты и индексы
 не входят в transaction.
 Статус лежит в persistent state и доступен через `GET /api/update/patch/status` после рестарта.
 
-Первичный bootstrap и rollback используют тот же bounded process contract:
-`System.Diagnostics.ProcessStartInfo` ждёт только точный PID с timeout и получает реальный
-exit code, а не следует за долгоживущими потомками как `Start-Process -Wait`. Поиск слушателя
-порта выполняет быстрый `netstat`, без тяжёлого WMI/CIM `Get-NetTCPConnection`. Эти правила
-закреплены коротким updater-гейтом и обязательны для start/stop/deploy/rollback.
+Python engine ждёт exact child PID с timeout, пишет stdout/stderr сразу в файлы
+и не удерживает многогигабайтный вывод в памяти. Apply не делает сетевой
+`uv sync`: готовый persistent venv проверяется локальным bounded import-spec
+probe до остановки. Изменение зависимостей требует отдельного полного
+release-build с offline dependency payload; текущий update не маскирует
+отсутствующую зависимость сетевой установкой.
 
 ## Публикация
 
@@ -103,7 +124,7 @@ manifest раньше полного архива.
 make test-updater
 
 powershell -NoProfile -File tools/windows_updater_smoke.ps1 \
-  -ExpectedVersion 0.25.19 -ExpectedBuild 492 -ExpectedCommit <sha>
+  -ExpectedVersion 0.25.20 -ExpectedBuild 493 -ExpectedCommit <sha>
 ```
 
 Offline-профиль поведенчески применяет и откатывает runtime + desktop на временных деревьях,
@@ -111,7 +132,7 @@ Offline-профиль поведенчески применяет и откат
 проверяет только установленное обновление, identity, API/UI/index contract и process hygiene.
 Он не строит приложение, не создаёт baseline, не вызывает модель/RAG и не запускает общую suite.
 
-Переход с установленного v1-helper на v2 выполнен на Legion одним последним полным installer,
-потому что старый helper не знал `scope=app`. После этого обычные изменения доставляются
-application updater; полный installer допустим только при изменении зависимостей, layout
-persistent state или самого формата обновления.
+Первый запуск нового контура на Legion выполняется hard-job из проверенного
+локального installer без публикации. После его приёмки обычные изменения
+доставляются мягким package; hard install остаётся живым пользовательским путём
+для полного выпуска или восстановления повреждённого дерева приложения.

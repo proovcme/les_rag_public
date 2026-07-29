@@ -18,7 +18,7 @@ function render(data) {
   const bootstrap = data.bootstrap || {};
   const failed = bootstrap.state === "failed";
   const preparing = ["running", undefined].includes(bootstrap.state);
-  $("overall-state").textContent = failed ? "Нужна помощь" : data.can_start ? "Всё готово" : preparing ? "Подготовка…" : "Нужна настройка";
+  $("overall-state").textContent = failed ? "Ошибка подготовки" : data.can_start ? "Всё готово" : preparing ? "Подготовка…" : "Нужна настройка";
   $("overall-state").dataset.tone = failed ? "danger" : data.can_start ? "" : "warning";
 
   $("notice").classList.toggle("visible", failed);
@@ -28,7 +28,7 @@ function render(data) {
 
   const runtimeReady = !failed && !preparing;
   setDot("runtime-dot", runtimeReady ? "ok" : failed ? "warn" : "");
-  $("runtime-status").textContent = failed ? "Подготовка остановилась — смотрите сообщение выше" : runtimeReady ? "Python и uv подготовлены" : bootstrap.message || "Подготавливаю…";
+  $("runtime-status").textContent = failed ? "Подготовка остановлена; причина и журнал указаны выше" : runtimeReady ? "Python и uv подготовлены" : bootstrap.message || "Подготавливаю…";
 
   const ollama = data.ollama || {};
   setDot("ollama-dot", ollama.running ? "ok" : ollama.installed ? "warn" : "");

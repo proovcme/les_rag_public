@@ -15,6 +15,11 @@ def test_settings_exposes_platform_native_manual_update_flow_with_status():
     assert '"/api/update/mac/check"' in section
     assert '"/api/update/mac/install"' in section
     assert '"/api/update/mac/status"' in section
+    assert '"/api/update/check"' in section
+    assert '"/api/update/install"' in section
+    assert '"/api/update/status"' in section
+    assert '"Переустановить выпуск"' in section
+    assert "заменяет всё дерево программы" in section
     assert "api_get(update_check_path)" in section
     assert "api_post(update_install_path, {})" in section
     assert "api_get(update_status_path)" in section

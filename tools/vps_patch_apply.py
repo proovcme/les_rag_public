@@ -20,6 +20,11 @@ from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+try:
+    import windows_update_engine
+except ImportError:  # project import during tests and direct repo execution
+    from tools import windows_update_engine
+
 
 SCHEMA = "les.vps-patch.v2"
 ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
@@ -27,6 +32,7 @@ ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
     "tools/vps_patch_apply.py",
+    "tools/windows_update_engine.py",
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",
@@ -227,73 +233,52 @@ def _atomic_copy(source: Path, target: Path) -> None:
 
 
 def _stop_runtime(runtime: Path, state: Path) -> None:
-    stop = runtime / "installers" / "windows" / "stop-light.ps1"
-    if not stop.is_file():
-        raise RuntimeError(f"LES stop script is missing: {stop}")
-    environment = dict(os.environ)
-    environment["LES_WINDOWS_STATE_ROOT"] = str(state)
-    completed = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(stop),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=45,
-        check=False,
-        creationflags=_creation_flags(),
-        env=environment,
+    windows_update_engine.stop_runtime(
+        runtime,
+        state,
+        state / "logs" / "updates" / "soft-update",
     )
-    if completed.returncode != 0:
-        raise RuntimeError(f"LES stop failed: {completed.stderr[-500:]}")
 
 
 def _stop_desktop() -> None:
-    subprocess.run(
-        ["taskkill.exe", "/IM", "les-desktop.exe", "/F"],
-        check=False,
-        capture_output=True,
-        creationflags=_creation_flags(),
-    )
+    windows_update_engine.stop_desktop()
+
+
+_DESKTOP_TASK_ROOTS: dict[str, Path] = {}
 
 
 def start_desktop(runtime: Path, patch_id: str) -> str:
-    executable = runtime.parent / "les-desktop.exe"
-    if not executable.is_file():
-        raise RuntimeError(f"LES desktop executable is missing: {executable}")
-    safe_id = "".join(char if char.isalnum() or char in "-_" else "-" for char in patch_id)[:32]
-    task_name = f"LES-Patch-Start-{safe_id or 'update'}"
-    subprocess.run(
-        ["taskkill.exe", "/IM", "les-desktop.exe", "/F"],
-        check=False,
-        capture_output=True,
-        creationflags=_creation_flags(),
+    install_root = windows_update_engine.install_root_from_runtime(runtime)
+    task_name = windows_update_engine.start_desktop(
+        install_root,
+        patch_id,
+        runtime / "logs" / "updates" / "soft-update",
     )
-    script = (
-        "$ErrorActionPreference='Stop'; "
-        f"$name={ps_literal(task_name)}; "
-        "Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue; "
-        f"$action=New-ScheduledTaskAction -Execute {ps_literal(str(executable))}; "
-        "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
-        "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
-        "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null; "
-        "Start-ScheduledTask -TaskName $name"
-    )
-    powershell(script)
+    _DESKTOP_TASK_ROOTS[task_name] = install_root
     return task_name
 
 
 def remove_task(name: str) -> None:
     if name:
-        powershell(
-            f"Unregister-ScheduledTask -TaskName {ps_literal(name)} -Confirm:$false -ErrorAction SilentlyContinue",
-            check=False,
+        install_root = _DESKTOP_TASK_ROOTS.pop(name, Path.cwd())
+        windows_update_engine.remove_task(
+            name,
+            install_root,
+            install_root / "runtime" / "logs" / "updates" / "soft-update",
         )
+
+
+def _start_runtime(runtime: Path, state: Path) -> None:
+    windows_update_engine.probe_environment(
+        runtime,
+        state,
+        state / "logs" / "updates" / "soft-update",
+    )
+    windows_update_engine.start_runtime(
+        runtime,
+        state,
+        state / "logs" / "updates" / "soft-update",
+    )
 
 
 def _json_url(url: str, timeout: float = 5) -> dict[str, Any]:
@@ -371,41 +356,13 @@ def _process_hygiene(state: Path) -> dict[str, Any]:
 
 
 def _wait_ready(manifest: dict[str, Any], state: Path, timeout: int = 90) -> dict[str, Any]:
-    deadline = time.monotonic() + timeout
-    expected_commit = str(manifest["target_commit"])
-    expected_version = str(manifest["product_version"])
-    expected_build = int(manifest["build_number"])
-    last = "services did not answer"
-    while time.monotonic() < deadline:
-        try:
-            version = _json_url("http://127.0.0.1:8050/api/version")
-            health = _json_url("http://127.0.0.1:8050/api/health")
-            with urllib.request.urlopen(  # noqa: S310 - loopback only
-                "http://127.0.0.1:8051/healthz", timeout=5
-            ) as response:
-                ui_ok = response.status == 200
-            actual_commit = str(version.get("deployed_commit") or "")
-            same_commit = len(actual_commit) >= 8 and (
-                expected_commit.startswith(actual_commit)
-                or actual_commit.startswith(expected_commit[:8])
-            )
-            contract = ((health.get("rag") or {}).get("index_contract") or {})
-            if (
-                str(version.get("product_version") or "") == expected_version
-                and int(version.get("build_number") or 0) == expected_build
-                and same_commit
-                and ui_ok
-                and contract.get("compatible") is True
-            ):
-                return _process_hygiene(state)
-            last = (
-                f"version={version.get('product_version')}/{version.get('build_number')}, "
-                f"commit={actual_commit}, ui={ui_ok}, contract={contract.get('status')}"
-            )
-        except Exception as exc:  # noqa: BLE001
-            last = str(exc)
-        time.sleep(1)
-    raise RuntimeError(f"Windows update smoke did not converge: {last}")
+    return windows_update_engine.wait_ready(
+        expected_commit=str(manifest["target_commit"]),
+        expected_version=str(manifest["product_version"]),
+        expected_build=int(manifest["build_number"]),
+        state=state,
+        timeout=timeout,
+    )
 
 
 def _stamp(manifest: dict[str, Any]) -> dict[str, Any]:
@@ -505,6 +462,7 @@ def apply_job(job_path: Path) -> int:
         os.replace(stamp_tmp, stamp_path)
         stamp_touched = True
         write_status(status, state="applying", stage="restart", patch_id=patch_id, message="Перезапускаю ЛЕС")
+        _start_runtime(runtime, state)
         desktop_task = start_desktop(runtime, patch_id)
         process_hygiene = _wait_ready(manifest, state)
         remove_task(desktop_task)
@@ -570,6 +528,7 @@ def apply_job(job_path: Path) -> int:
             try:
                 if desktop_task:
                     remove_task(desktop_task)
+                _start_runtime(runtime, state)
                 rollback_task = start_desktop(runtime, f"{patch_id}-rollback")
                 with urllib.request.urlopen(  # noqa: S310 - loopback only
                     "http://127.0.0.1:8051/healthz", timeout=30

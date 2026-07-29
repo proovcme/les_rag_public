@@ -65,17 +65,12 @@ def test_windows_bootstrap_installs_bounded_manual_interactive_task():
     assert "collector/import" in setup
     assert "outlook_mail_poller\\setup_task.ps1" in bootstrap
     assert "-EveryMinutes" not in bootstrap
-    production = (ROOT / "tools/windows_production_deploy.ps1").read_text(encoding="utf-8-sig")
-    assert "LesMailPoller.exe" in production
-    assert "--probe" in production
-    assert "Invoke-InteractiveOutlookProbe" in production
-    assert "New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive" in production
-    assert 'probe_mode = "interactive_scheduled_task"' in production
-    assert 'outlook_probe = $outlookProbe' in production
-    assert "Outlook probe skipped:" in production
-    assert "Unregister-ScheduledTask -TaskName $probeTaskName" in production
-    assert "/api/mail/accounts" in production
-    assert "password" in production
+    production = (ROOT / "tools/windows_production_deploy.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+    assert "windows_update_engine.py" in production
+    assert "LesMailPoller.exe" not in production
+    assert "--probe" not in production
 
     platform_gate = (ROOT / "tools/platform_release_gate.py").read_text(encoding="utf-8")
     assert "def verify_windows_mail_collector()" in platform_gate

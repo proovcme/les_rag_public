@@ -24,6 +24,7 @@ ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
     "tools/vps_patch_apply.py",
+    "tools/windows_update_engine.py",
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",

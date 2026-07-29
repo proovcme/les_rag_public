@@ -72,6 +72,7 @@ VPS_PATCH_ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
     "tools/vps_patch_apply.py",
+    "tools/windows_update_engine.py",
     "config/version.json",
     "installers/windows/start-light.ps1",
     "installers/windows/stop-light.ps1",
@@ -107,12 +108,28 @@ def release_summary(payload: dict, *, current_version: str = LES_VERSION) -> dic
     installer_url = f"{release_root}/{INSTALLER_ASSET}"
     checksum_url = f"{release_root}/{CHECKSUM_ASSET}"
     available = latest_key > current_key
+    build_number = int(payload.get("build_number") or 0)
+    target_commit = str(
+        payload.get("commit")
+        or payload.get("target_commit")
+        or payload.get("build_commit")
+        or ""
+    )
+    desktop_version = str(payload.get("desktop_version") or "")
+    identity_complete = (
+        build_number > 0
+        and re.fullmatch(r"[0-9a-f]{40}", target_commit) is not None
+        and re.fullmatch(r"\d+\.\d+\.\d+", desktop_version) is not None
+    )
     return {
         "current_version": current_version,
         "latest_version": latest,
         "available": available,
         "install_supported": sys.platform.startswith("win"),
-        "package_complete": True,
+        "package_complete": identity_complete,
+        "build_number": build_number,
+        "target_commit": target_commit,
+        "desktop_version": desktop_version,
         "name": str(payload.get("name") or tag),
         "notes": str(payload.get("notes") or "")[:4000],
         "published_at": payload.get("published_at"),
@@ -216,7 +233,9 @@ async def download_and_launch_update() -> dict:
     if not info["available"]:
         raise UpdateError("Новая версия не найдена")
     if not info["package_complete"]:
-        raise UpdateError("В выпуске нет installer или файла SHA-256")
+        raise UpdateError(
+            "Полный выпуск не содержит точный commit, build number или версию оболочки"
+        )
 
     root = update_root() / info["latest_version"]
     root.mkdir(parents=True, exist_ok=True)
@@ -232,12 +251,80 @@ async def download_and_launch_update() -> dict:
         installer.unlink(missing_ok=True)
         raise UpdateError(f"Контрольная сумма обновления не совпала: ожидалось {expected}, получено {actual}")
 
-    subprocess.Popen([str(installer)], cwd=str(root), close_fds=True)  # noqa: S603 — verified local artifact
+    application = application_root()
+    state_root = update_root().parents[1]
+    helper = root / "windows_update_engine.py"
+    shutil.copy2(runtime_root() / "tools" / "windows_update_engine.py", helper)
+    status = hard_update_status_path()
+    job = root / "hard-update-job.json"
+    update_id = f"release-{info['latest_version']}-{info['build_number']}"
+    job.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-hard-update.v1",
+                "update_id": update_id,
+                "installer": str(installer),
+                "installer_sha256": actual,
+                "install_root": str(application),
+                "state_root": str(state_root),
+                "status_path": str(status),
+                "product_version": info["latest_version"],
+                "build_number": info["build_number"],
+                "desktop_version": info["desktop_version"],
+                "target_commit": info["target_commit"],
+                "branch": "release",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    task_name, encoded_command = _detached_task_command(
+        helper,
+        f'"{helper}" --job "{job}"',
+        update_id,
+        prefix="LES-Hard-Update",
+    )
+    job_payload = json.loads(job.read_text(encoding="utf-8"))
+    job_payload["helper_task_name"] = task_name
+    job.write_text(
+        json.dumps(job_payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    status.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-hard-update-status.v1",
+                "state": "starting",
+                "stage": "downloaded",
+                "update_id": update_id,
+                "message": "Выпуск проверен; готовлю замену приложения",
+                "helper_task_name": task_name,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    launched = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_command],
+        cwd=str(root),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        creationflags=0x08000000,
+    )
+    if launched.returncode != 0:
+        raise UpdateError("Windows не смог запустить транзакцию переустановки")
     return {
         **info,
-        "status": "installer_launched",
+        "status": "starting",
+        "state": "starting",
         "sha256": actual,
         "installer": str(installer),
+        "update_id": update_id,
+        "message": "Выпуск проверен и передан транзакционному установщику",
     }
 
 
@@ -245,18 +332,54 @@ def runtime_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def application_root() -> Path:
+    runtime = runtime_root()
+    candidates = (runtime.parent, runtime.parent.parent)
+    for candidate in candidates:
+        if (candidate / "les-desktop.exe").is_file():
+            return candidate
+    raise UpdateError("Не удалось определить корень установленного приложения")
+
+
 def patch_status_path() -> Path:
     return update_root() / "vps-patch-status.json"
+
+
+def hard_update_status_path() -> Path:
+    return update_root() / "hard-update-status.json"
+
+
+def read_hard_update_status() -> dict:
+    path = hard_update_status_path()
+    if not path.is_file():
+        return {
+            "schema": "les.windows-hard-update-status.v1",
+            "state": "idle",
+            "message": "Переустановка выпуска не запускалась",
+        }
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return {
+            "schema": "les.windows-hard-update-status.v1",
+            "state": "failed",
+            "message": "Не удалось прочитать состояние переустановки",
+        }
 
 
 def _ps_literal(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, str]:
-    safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", patch_id)[:32] or "update"
-    task_name = f"LES-Patch-{safe_id}"
-    arguments = f'"{helper}" --job "{job}"'
+def _detached_task_command(
+    helper: Path,
+    arguments: str,
+    update_id: str,
+    *,
+    prefix: str,
+) -> tuple[str, str]:
+    safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", update_id)[:32] or "update"
+    task_name = f"{prefix}-{safe_id}"
     python_executable = Path(sys.executable)
     pythonw = python_executable.with_name("pythonw.exe")
     if pythonw.is_file():
@@ -274,6 +397,15 @@ def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, st
     )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     return task_name, encoded
+
+
+def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, str]:
+    return _detached_task_command(
+        helper,
+        f'"{helper}" --job "{job}"',
+        patch_id,
+        prefix="LES-Patch",
+    )
 
 
 def _validate_patch_feed(payload: dict) -> dict:
@@ -481,6 +613,10 @@ async def download_and_launch_vps_patch() -> dict:
     state_root = update_root().parents[1]
     helper = root / "vps_patch_apply.py"
     shutil.copy2(runtime_root() / "tools" / "vps_patch_apply.py", helper)
+    shutil.copy2(
+        runtime_root() / "tools" / "windows_update_engine.py",
+        root / "windows_update_engine.py",
+    )
     status = patch_status_path()
     job = root / "job.json"
     job.write_text(

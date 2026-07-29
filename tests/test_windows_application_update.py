@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools import vps_patch_apply
+from tools import vps_patch_apply, windows_update_engine
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -102,6 +102,7 @@ def _prepared_job(
 def _patch_windows_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vps_patch_apply, "_stop_runtime", lambda _runtime, _state: None)
     monkeypatch.setattr(vps_patch_apply, "_stop_desktop", lambda: None)
+    monkeypatch.setattr(vps_patch_apply, "_start_runtime", lambda _runtime, _state: None)
     monkeypatch.setattr(
         vps_patch_apply, "start_desktop", lambda _runtime, patch_id: f"task-{patch_id}"
     )
@@ -269,34 +270,154 @@ def test_windows_updater_process_hygiene_is_behaviorally_enforced():
         )
 
 
-def test_windows_bootstrap_process_primitives_are_bounded_and_console_free():
-    helper = (
-        ROOT / "installers" / "windows" / "runtime-process.ps1"
-    ).read_text(encoding="utf-8")
-    start = (
-        ROOT / "installers" / "windows" / "start-light.ps1"
-    ).read_text(encoding="utf-8")
-    stop = (
-        ROOT / "installers" / "windows" / "stop-light.ps1"
-    ).read_text(encoding="utf-8")
-    production = (
-        ROOT / "tools" / "windows_production_deploy.ps1"
-    ).read_text(encoding="utf-8-sig")
-    rollback = (
-        ROOT / "tools" / "windows_production_rollback.ps1"
-    ).read_text(encoding="utf-8-sig")
+def _hard_job(tmp_path: Path) -> tuple[Path, Path, Path]:
+    install = tmp_path / "Programs" / "LES"
+    state = tmp_path / "UserState" / "LES"
+    runtime = install / "runtime"
+    (runtime / "config").mkdir(parents=True)
+    (runtime / "config" / "version.json").write_text(
+        json.dumps(
+            {
+                "product_version": "0.25.19",
+                "build_number": 492,
+                "desktop_version": "5.1.492",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (runtime / "old-code.txt").write_text("old", encoding="utf-8")
+    (install / "les-desktop.exe").write_bytes(b"old desktop")
+    (state / "data").mkdir(parents=True)
+    (state / "data" / "user.db").write_bytes(b"user-owned")
+    installer = state / "artifacts" / "LES-Setup.exe"
+    installer.parent.mkdir(parents=True)
+    installer.write_bytes(b"verified installer")
+    status = state / "artifacts" / "updates" / "hard-status.json"
+    job = state / "artifacts" / "hard-job.json"
+    job.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-hard-update.v1",
+                "update_id": "hard-contract",
+                "installer": str(installer),
+                "installer_sha256": windows_update_engine.sha256_file(installer),
+                "install_root": str(install),
+                "state_root": str(state),
+                "status_path": str(status),
+                "product_version": "0.25.20",
+                "build_number": 493,
+                "desktop_version": "5.1.493",
+                "target_commit": "b" * 40,
+                "branch": "codex/sovushka-ui-kit",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return install, state, job
 
-    assert "System.Diagnostics.ProcessStartInfo" in helper
-    assert "$startInfo.CreateNoWindow = $true" in helper
-    assert "$process.WaitForExit($TimeoutSeconds * 1000)" in helper
-    assert "taskkill.exe" in helper
-    assert "netstat.exe" in helper
-    assert "Get-LesListeningProcessIds" in helper
 
-    for source in (start, stop, production, rollback):
-        assert "runtime-process.ps1" in source
-        assert "Get-NetTCPConnection" not in source
-    assert "Invoke-LesBoundedProcess -File $Installer" in production
-    assert 'Invoke-LesBoundedProcess -File "powershell.exe"' in production
-    assert "Start-Process -FilePath $Installer" not in production
-    assert "-Wait -PassThru" not in production
+def _mock_hard_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    smoke_error: str | None = None,
+) -> None:
+    monkeypatch.setattr(windows_update_engine, "probe_environment", lambda *_args: None)
+    monkeypatch.setattr(windows_update_engine, "stop_runtime", lambda *_args: None)
+    monkeypatch.setattr(windows_update_engine, "stop_desktop", lambda: None)
+    monkeypatch.setattr(windows_update_engine, "initialize_state", lambda *_args: None)
+    monkeypatch.setattr(windows_update_engine, "start_runtime", lambda *_args: None)
+    monkeypatch.setattr(
+        windows_update_engine,
+        "start_desktop",
+        lambda *_args: "LES-Update-Start-hard-contract",
+    )
+    monkeypatch.setattr(windows_update_engine, "remove_task", lambda *_args: None)
+
+    def fake_run(arguments, *, cwd, **_kwargs):
+        if str(arguments[0]).endswith("LES-Setup.exe"):
+            install = Path(str(arguments[-1]).removeprefix("/D="))
+            runtime = install / "runtime"
+            (runtime / "config").mkdir(parents=True)
+            (runtime / "config" / "version.json").write_text(
+                json.dumps(
+                    {
+                        "product_version": "0.25.20",
+                        "build_number": 493,
+                        "desktop_version": "5.1.493",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (runtime / "new-code.txt").write_text("new", encoding="utf-8")
+            (install / "les-desktop.exe").write_bytes(b"new desktop")
+        return 0
+
+    monkeypatch.setattr(windows_update_engine, "run_bounded", fake_run)
+    if smoke_error:
+        monkeypatch.setattr(
+            windows_update_engine,
+            "wait_ready",
+            lambda **_kwargs: (_ for _ in ()).throw(RuntimeError(smoke_error)),
+        )
+    else:
+        monkeypatch.setattr(
+            windows_update_engine,
+            "wait_ready",
+            lambda **_kwargs: {"index_contract_compatible": True},
+        )
+
+
+def test_hard_update_replaces_complete_application_tree_and_keeps_state(tmp_path, monkeypatch):
+    install, state, job = _hard_job(tmp_path)
+    _mock_hard_lifecycle(monkeypatch)
+
+    assert windows_update_engine.apply_hard_job(job) == 0
+
+    status = json.loads(
+        (state / "artifacts" / "updates" / "hard-status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert not (install / "runtime" / "old-code.txt").exists()
+    assert (install / "runtime" / "new-code.txt").read_text(encoding="utf-8") == "new"
+    assert (state / "data" / "user.db").read_bytes() == b"user-owned"
+    recovery = Path(status["recovery_root"])
+    assert (recovery / "runtime" / "old-code.txt").read_text(encoding="utf-8") == "old"
+    assert status["application_tree_replaced"] is True
+    assert status["user_data_untouched"] is True
+
+
+def test_hard_update_restores_whole_previous_tree_when_smoke_fails(tmp_path, monkeypatch):
+    install, state, job = _hard_job(tmp_path)
+    _mock_hard_lifecycle(monkeypatch, smoke_error="identity smoke failed")
+
+    assert windows_update_engine.apply_hard_job(job) == 1
+
+    status = json.loads(
+        (state / "artifacts" / "updates" / "hard-status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert (install / "runtime" / "old-code.txt").read_text(encoding="utf-8") == "old"
+    assert not (install / "runtime" / "new-code.txt").exists()
+    assert (state / "data" / "user.db").read_bytes() == b"user-owned"
+    assert status["stage"] == "rolled_back"
+    assert "identity smoke failed" in status["error"]
+
+
+def test_hard_update_rejects_install_root_containing_user_state(tmp_path):
+    install = tmp_path / "Programs" / "LES"
+    state = install / "data" / "LES"
+    with pytest.raises(RuntimeError, match="disjoint"):
+        windows_update_engine.validate_boundary(install, state)
+
+
+def test_windows_update_orchestration_is_python_owned_and_file_backed():
+    source = (ROOT / "tools" / "windows_update_engine.py").read_text(encoding="utf-8")
+    assert "application tree replaced" in source
+    assert "stdout_path.open" in source
+    assert "stderr_path.open" in source
+    assert "capture_output=True" not in source
+    assert "Get-CimInstance" not in source
+    assert "Get-NetTCPConnection" not in source
+    assert "uv sync" not in source

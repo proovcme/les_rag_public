@@ -152,56 +152,42 @@ def test_mac_transaction_excludes_user_state_and_has_rollback():
 
 
 def test_legion_deploy_is_transactional_and_preserves_data():
-    release = (ROOT / "tools/windows_patch_release.ps1").read_text(encoding="utf-8")
     wrapper = (
-        ROOT / "tools/windows_transactional_production_deploy.ps1"
+        ROOT / "tools/windows_production_deploy.ps1"
     ).read_text(encoding="utf-8-sig")
-    rollback = (ROOT / "tools/windows_production_rollback.ps1").read_text(
-        encoding="utf-8-sig"
+    engine = (ROOT / "tools/windows_update_engine.py").read_text(encoding="utf-8")
+    rollback = (
+        ROOT / "tools/windows_production_rollback.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "windows_update_engine.py" in wrapper
+    assert "--job" in wrapper
+    assert "Get-CimInstance" not in wrapper
+    assert "Get-NetTCPConnection" not in wrapper
+    assert "os.replace(install, recovery)" in engine
+    assert "shutil.rmtree(install)" in engine
+    assert "os.replace(recovery, install)" in engine
+    assert "state in install.parents" in engine
+    assert "user_data_untouched=True" in engine
+    assert "Standalone PowerShell rollback is retired" in rollback
+
+
+def test_windows_production_update_uses_python_engine_not_powershell_orchestration():
+    production = (
+        ROOT / "tools/windows_production_deploy.ps1"
+    ).read_text(encoding="utf-8-sig")
+    engine = (ROOT / "tools/windows_update_engine.py").read_text(
+        encoding="utf-8"
     )
 
-    assert "windows_transactional_production_deploy.ps1" in release
-    assert "robocopy.exe $InstallRoot $BackupRoot" in wrapper
-    assert "/XJ" in wrapper
-    assert "exit code $LASTEXITCODE" in wrapper
-    assert "windows_production_rollback.ps1" in wrapper
-    assert "data_untouched = $true" in wrapper
-    assert 'runtime\\config\\version.json' in wrapper
-    assert "Previous LES API is offline" in wrapper
-    assert wrapper.index("Previous LES API is offline") < wrapper.index(
-        "robocopy.exe $InstallRoot $BackupRoot"
-    )
-    assert "@(8050, 8051, 8052, 8053)" in rollback
-    assert 'proxy_server:app|sovushka_ng\\.py' in rollback
-    assert '"runtime\\installers\\windows\\start-light.ps1"' in rollback
-    assert "service_fallback_used = $fallbackStarted" in rollback
-    assert "Remove-Item -LiteralPath $InstallRoot" in rollback
-    assert "Remove-Item -LiteralPath $StateRoot" not in rollback
-    assert "New-ScheduledTaskAction -Execute $Desktop" in rollback
-    assert "$env:ComSpec" not in rollback
-
-
-def test_windows_production_update_uses_fast_start_not_first_run_bootstrap():
-    production = (ROOT / "tools/windows_production_deploy.ps1").read_text(
-        encoding="utf-8-sig"
-    )
-
-    assert "Start-PreparedUpdateRuntime" in production
-    assert 'start_mode = "prepared_fast_update"' in production
-    assert "--extra windows-reranker" in production
-    assert '-Filter "python.exe" -Recurse' not in production
-    assert "app\\bootstrap.ps1" not in production
-    assert "Invoke-LesBoundedProcess" in production
-    assert "-StdOut $startOut -StdErr $startErr" in production
-    assert "Get-LesRuntimeProcessHygiene" in production
-    assert 'process_contract -ne "direct_python_no_console_v1"' in production
-    assert "cmd.exe wrapper process(es)" in production
-    assert "single-instance gate failed" in production
-    assert "New-ScheduledTaskAction -Execute $Desktop" in production
-    assert "$env:ComSpec" not in production
-    assert "services_reused = $true" in production
-    assert "bootstrap_reentered = $false" in production
-    assert production.count("Stop-LesRuntime") == 2
+    assert len(production.splitlines()) < 40
+    assert "windows_update_engine.py" in production
+    assert "capture_output=True" not in engine
+    assert "stdout_path.open" in engine
+    assert "stderr_path.open" in engine
+    assert "uv sync" not in production
+    assert "Get-CimInstance" not in engine
+    assert "Get-NetTCPConnection" not in engine
 
 
 def test_windows_prepare_and_apply_are_separate_cached_steps():
@@ -217,12 +203,11 @@ def test_windows_prepare_and_apply_are_separate_cached_steps():
     assert "cache_hit = $true" in prepare
     assert "windows_release_smoke.ps1" in prepare
     assert "windows_transactional_production_deploy.ps1" not in prepare
-    assert "windows_transactional_production_deploy.ps1" in apply
+    assert "les.windows-hard-update.v1" in apply
+    assert "windows_production_deploy.ps1" in apply
     assert "build_windows_installer.py" not in apply
     assert "windows_release_smoke.ps1" not in apply
-    assert "baseline_transfer = $false" in apply
-    assert "write_deploy_stamp" in apply
-    assert 'deployed_branch="codex/audit-rag"' in apply
+    assert "hard-update-status.json" in apply
 
 
 def test_fast_apply_never_runs_release_gates_or_builds():

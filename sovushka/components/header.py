@@ -674,6 +674,82 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
+                    if is_windows:
+                        hard_update_status = ui.label(
+                            "Полный выпуск заменяет всё дерево программы, но сохраняет "
+                            "датасеты, документы, настройки и другие пользовательские данные."
+                        ).style("color:var(--dim);font-size:.68rem;width:100%;")
+
+                        async def _check_hard_update() -> None:
+                            from sovushka.state import api_get
+
+                            hard_update_button.disable()
+                            hard_update_status.set_text("Проверяю полный выпуск и его SHA-256…")
+                            result = await api_get("/api/update/check")
+                            if not isinstance(result, dict):
+                                hard_update_status.set_text(
+                                    last_api_error_text("Не удалось проверить полный выпуск")
+                                )
+                                return
+                            if not result.get("available"):
+                                hard_update_status.set_text("Нового полного выпуска нет.")
+                                return
+                            if not result.get("package_complete"):
+                                hard_update_status.set_text(
+                                    "Выпуск неполный: нет commit, build или версии оболочки."
+                                )
+                                return
+                            hard_update_status.set_text(
+                                f"Готов выпуск {result.get('latest_version')} · "
+                                f"build {result.get('build_number')} · с автоматическим откатом."
+                            )
+                            hard_update_button.enable()
+
+                        async def _install_hard_update() -> None:
+                            from sovushka.state import api_get, api_post
+
+                            hard_update_button.disable()
+                            hard_update_status.set_text("Скачиваю и проверяю полный installer…")
+                            result = await api_post("/api/update/install", {})
+                            if not isinstance(result, dict):
+                                hard_update_status.set_text(
+                                    last_api_error_text("Не удалось запустить переустановку")
+                                )
+                                return
+                            hard_update_status.set_text(
+                                "Installer проверен. Приложение будет заменено одной транзакцией."
+                            )
+
+                            async def _watch_hard_update() -> None:
+                                for _ in range(150):
+                                    await asyncio.sleep(2)
+                                    state = await api_get("/api/update/status")
+                                    if not isinstance(state, dict):
+                                        continue
+                                    hard_update_status.set_text(
+                                        str(state.get("message") or "Переустанавливаю ЛЕС…")
+                                    )
+                                    if state.get("state") in {"ready", "failed"}:
+                                        return
+
+                            asyncio.create_task(_watch_hard_update())
+
+                        with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
+                            ui.button(
+                                "Проверить полный выпуск",
+                                icon="o_verified",
+                                on_click=_check_hard_update,
+                            ).props("no-caps flat").style(
+                                "border:1px solid var(--border);color:var(--accent);background:transparent;"
+                            )
+                            hard_update_button = ui.button(
+                                "Переустановить выпуск",
+                                icon="o_system_update",
+                                on_click=_install_hard_update,
+                            ).props("no-caps disable").style(
+                                "border:1px solid var(--accent);color:var(--accent);background:transparent;"
+                            )
+
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("⚠ Опасная зона").style("color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;")
 

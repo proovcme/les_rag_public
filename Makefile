@@ -22,7 +22,7 @@ ARCHITECTURE_EXCLUDED_TESTS := $(LEGACY_ARCHITECTURE_TESTS) $(ARTEL_TESTS)
 ARCHITECTURE_IGNORE_ARGS := $(foreach test,$(ARCHITECTURE_EXCLUDED_TESTS),--ignore=$(test))
 LES_RELEASE_IGNORE_ARGS := $(ARCHITECTURE_IGNORE_ARGS)
 MAIL_TESTS ?= tests/test_chat_mail_query.py tests/test_converter_email.py tests/test_ezhik_imap_smoke.py tests/test_mail_ingest.py tests/test_mail_profile.py tests/test_mail_push_service.py tests/test_mail_query_service.py tests/test_mail_registry_service.py tests/test_mail_router.py tests/test_mail_threads.py tests/test_outlook_mail_poller.py
-UPDATER_TESTS ?= tests/test_vps_patch.py tests/test_windows_application_update.py tests/test_windows_update_shell.py tests/test_mac_update.py
+UPDATER_TESTS ?= tests/test_vps_patch.py tests/test_windows_application_update.py tests/test_windows_update_shell.py tests/test_update_service.py tests/test_manual_update_ui.py tests/test_mac_update.py
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
 SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
@@ -110,7 +110,7 @@ test-mail-release: test-mail test-tauri
 
 test-updater:
 	uv run python tools/sync_version_contract.py --check
-	uv run python -m py_compile tools/vps_patch.py tools/vps_patch_apply.py tools/windows_update_shell.py tools/mac_update.py tools/mac_update_apply.py proxy/services/update_service.py sovushka/components/header.py
+	uv run python -m py_compile tools/windows_update_engine.py tools/vps_patch.py tools/vps_patch_apply.py tools/windows_update_shell.py tools/mac_update.py tools/mac_update_apply.py proxy/services/update_service.py proxy/routers/updates.py sovushka/components/header.py
 	uv run python -m pytest -q $(UPDATER_TESTS)
 	@echo "OK — updater behavior-гейт зелёный; build, baseline и общая LES suite не запускались."
 
