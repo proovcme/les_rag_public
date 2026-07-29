@@ -54,8 +54,7 @@ function Start-DesktopInteractive([string]$Desktop) {
     throw "Interactive LES user cannot be resolved for rollback"
   }
   $taskName = "LES Audit RAG Rollback Start"
-  $arguments = '/c start "" "' + $Desktop + '"'
-  $action = New-ScheduledTaskAction -Execute $env:ComSpec -Argument $arguments `
+  $action = New-ScheduledTaskAction -Execute $Desktop `
     -WorkingDirectory (Split-Path -Parent $Desktop)
   $principal = New-ScheduledTaskPrincipal -UserId ([string]$collectorTask.Principal.UserId) -LogonType Interactive
   try {

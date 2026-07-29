@@ -382,13 +382,13 @@ if (-not (Test-Path -LiteralPath $SmetaBaseline)) {
 # but must not launch the legacy pywebview shell.
 if ($env:LES_TAURI_SHELL -eq "1") {
   if ($env:LES_TAURI_ACTION -eq "stop") {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\stop-light.ps1")
+    & (Join-Path $Root "installers\windows\stop-light.ps1")
     if ($LASTEXITCODE -ne 0) { Fail "не удалось остановить службы" }
     exit 0
   }
   if ($env:LES_TAURI_ACTION -eq "restart") {
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\stop-light.ps1")
-    & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "installers\windows\start-light.ps1")
+    & (Join-Path $Root "installers\windows\stop-light.ps1")
+    & (Join-Path $Root "installers\windows\start-light.ps1")
     if ($LASTEXITCODE -ne 0) { Fail "не удалось перезапустить службы" }
     exit 0
   }

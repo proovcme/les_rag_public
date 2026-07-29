@@ -86,6 +86,45 @@ try {
   }
 
   $runtimeState = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+  if ($runtimeState.process_contract -ne "direct_python_no_console_v1") {
+    throw "runtime process contract is not console-clean"
+  }
+  if ($bootstrapProcess -and -not $bootstrapProcess.HasExited) {
+    if (-not $bootstrapProcess.WaitForExit(10000)) {
+      throw "bootstrap PowerShell stayed alive after terminal ready"
+    }
+  }
+  $runtimePids = @(
+    $runtimeState.proxy_pid,
+    $runtimeState.ui_pid,
+    $runtimeState.lemonade_host_pid
+  ) | Where-Object { $_ -and [int]$_ -gt 0 }
+  $runtimeProcessNames = @()
+  foreach ($runtimePid in $runtimePids) {
+    $runtimeProcess = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$runtimePid) `
+      -ErrorAction SilentlyContinue
+    if (-not $runtimeProcess) {
+      throw "runtime process $runtimePid disappeared before process hygiene gate"
+    }
+    if ([string]$runtimeProcess.Name -notin @("python.exe", "pythonw.exe")) {
+      throw "runtime process $runtimePid is an unexpected launcher: $($runtimeProcess.Name)"
+    }
+    $runtimeProcessNames += [string]$runtimeProcess.Name
+  }
+  $consoleWrappers = @(Get-CimInstance Win32_Process | Where-Object {
+    ([string]$_.Name -eq "cmd.exe") -and (
+      ([string]$_.CommandLine) -match "proxy_server:app|sovushka_ng\.py|lemonade_host\.py"
+    )
+  })
+  if ($consoleWrappers.Count -ne 0) {
+    throw "runtime left $($consoleWrappers.Count) cmd.exe wrapper process(es)"
+  }
+  $result.process_hygiene = [ordered]@{
+    contract = [string]$runtimeState.process_contract
+    runtime_processes = $runtimeProcessNames
+    cmd_wrappers = 0
+    bootstrap_exited = $true
+  }
   $proxyPort = [int]$runtimeState.proxy_port
   $uiPort = [int]$runtimeState.ui_port
   $result.proxy_port = $proxyPort
@@ -235,6 +274,7 @@ try {
     [int]$smetaBaseline.norm_count -ge 40000 -and
     [int]$smetaBaseline.fsem_rows -ge 1500 -and
     [int]$ui.StatusCode -eq 200 -and
+    $result.process_hygiene.cmd_wrappers -eq 0 -and
     $result.fgis.started -and
     [int]$result.fgis.layers -ge 7 -and
     @($rrf.chunks).Count -gt 0 -and

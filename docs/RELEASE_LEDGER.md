@@ -7,17 +7,38 @@
 ## Текущее состояние (2026-07-29)
 
 ```
-версия продукта (SemVer):  0.25.16 (mail discovery + remaining Sovushka surfaces)
-номер сборки:              489     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.489 (internal identity; app bundle не пересобирается)
+версия продукта (SemVer):  0.25.17 (console-free Windows lifecycle + updater handoff)
+номер сборки:              490     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.490 (internal identity; Windows installer ещё не собран)
 ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; mail discovery + remaining surfaces
-задеплоено на рантайм:     Mac 0.25.16 / build 489 target; Legion не затрагивался
+dev implementation:       codex/sovushka-ui-kit; quiet/idempotent Windows lifecycle
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion не затрагивался
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          Legion только после отдельной команды и приёмки
-рантайм /api/version:      Mac 0.25.16 / build 489 target; runtime alignment обязан быть aligned
+следующий выпуск:          Windows 0.25.17 / build 490 только после отдельной команды и live smoke
+рантайм /api/version:      Mac 0.25.16 / build 489; dev-версия 0.25.17 ещё не установлена
 ```
 
+> 0.25.17 / build 490 — тихий и идемпотентный Windows lifecycle
+>
+> Дата: 2026-07-29
+> Статус: dev; Mac runtime, Legion, public, tags и release assets не изменяются.
+> Tauri release теперь Windows GUI application без собственной консоли, держит
+> named single-instance mutex и не допускает параллельные bootstrap/restart.
+> Все запускаемые из Rust Windows-команды используют `CREATE_NO_WINDOW`; setup
+> wizard больше не вызывает `where.exe`, выполняет один `ollama list` и опрашивает
+> внешние компоненты раз в 10 секунд. Proxy, Совушка и Lemonade запускаются
+> напрямую из persistent venv через `pythonw.exe`/`python.exe`, без постоянных
+> `cmd.exe /c uv run` wrappers; state хранит реальные PID и process contract.
+> Junctions создаются нативным PowerShell без `cmd.exe /c mklink`. Подготовленный
+> updater запускает `les-desktop.exe` напрямую и сохраняет уже проверенные API/UI
+> при desktop handoff, поэтому не повторяет полный bootstrap. Installed release
+> smoke и production apply fail-closed требуют terminal bootstrap exit, direct
+> Python PID, ноль LES-owned `cmd.exe` и ровно один интерактивный desktop.
+> Контроль исходников: профильные Windows/Tauri/updater/version — `68 passed`;
+> Tauri `cargo check` — green; `make verify` — `2808 collected`; `make test` —
+> `2799 passed / 9 skipped` за 140,17 с. Installed Windows/Legion smoke остаётся
+> обязательным перед установкой и не подменяется этими offline-проверками.
+>
 > 0.25.16 / build 489 — обнаружение Outlook-ящиков и оставшиеся операторские экраны
 >
 > Дата: 2026-07-29

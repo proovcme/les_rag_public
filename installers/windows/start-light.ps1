@@ -70,26 +70,32 @@ function Stop-LesPortProcess([int]$Port) {
   }
 }
 
-function Start-LesUvProcess([string[]]$UvArgs, [string]$StdOut, [string]$StdErr) {
-  # Start the command through cmd.exe so Windows keeps the real uv child alive.
-  # Direct Start-Process uv can exit after the launcher/build step on some uv installs.
-  $quoted = @("uv")
-  foreach ($arg in $UvArgs) {
-    if ($arg -match '[\s"&|<>^]') {
-      $quoted += '"' + ($arg -replace '"', '\"') + '"'
-    } else {
-      $quoted += $arg
+function Resolve-LesPython {
+  $environment = if ($env:UV_PROJECT_ENVIRONMENT) {
+    $env:UV_PROJECT_ENVIRONMENT
+  } else {
+    Join-Path $Root ".venv"
+  }
+  foreach ($name in @("pythonw.exe", "python.exe")) {
+    $candidate = Join-Path $environment "Scripts\$name"
+    if (Test-Path -LiteralPath $candidate) {
+      return $candidate
     }
   }
-  $cmdLine = $quoted -join " "
-  Start-Process -FilePath "cmd.exe" `
-    -ArgumentList @("/d", "/s", "/c", $cmdLine) `
+  throw "LES Python environment is not ready: $environment"
+}
+
+function Start-LesPythonProcess([string[]]$PythonArgs, [string]$StdOut, [string]$StdErr) {
+  Start-Process -FilePath $LesPython `
+    -ArgumentList $PythonArgs `
     -WorkingDirectory $Root `
     -PassThru `
     -WindowStyle Hidden `
     -RedirectStandardOutput $StdOut `
     -RedirectStandardError $StdErr
 }
+
+$LesPython = Resolve-LesPython
 
 function Wait-LesHttp([string]$Url, [int]$Seconds = 30) {
   $deadline = (Get-Date).AddSeconds($Seconds)
@@ -200,28 +206,28 @@ if ($Provider -eq "lemonade") {
     $env:LEMONADE_HOST_PORT = "$LemonadeHostPort"
     $env:MLX_URL = "http://127.0.0.1:$LemonadeHostPort"
   }
-  $lemonadeHostArgs = @("run", "python", "lemonade_host.py")
+  $lemonadeHostArgs = @("lemonade_host.py")
   $lemonadeHostOut = Join-Path $Root "logs\windows-light-lemonade-host.out.log"
   $lemonadeHostErr = Join-Path $Root "logs\windows-light-lemonade-host.err.log"
-  $lemonadeHost = Start-LesUvProcess -UvArgs $lemonadeHostArgs -StdOut $lemonadeHostOut -StdErr $lemonadeHostErr
+  $lemonadeHost = Start-LesPythonProcess -PythonArgs $lemonadeHostArgs -StdOut $lemonadeHostOut -StdErr $lemonadeHostErr
   $lemonadeHealth = Wait-LesHttp "http://127.0.0.1:$LemonadeHostPort/api/health" 25
   if ($null -eq $lemonadeHealth) {
     Write-Warning "Lemonade adapter did not answer /api/health within startup timeout."
   }
 }
 
-$proxyArgs = @("run", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", "$ProxyPort")
+$proxyArgs = @("-m", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", "$ProxyPort")
 $proxyOut = Join-Path $Root "logs\windows-light-proxy.out.log"
 $proxyErr = Join-Path $Root "logs\windows-light-proxy.err.log"
-$proxy = Start-LesUvProcess -UvArgs $proxyArgs -StdOut $proxyOut -StdErr $proxyErr
+$proxy = Start-LesPythonProcess -PythonArgs $proxyArgs -StdOut $proxyOut -StdErr $proxyErr
 
 $ui = $null
 if (-not $NoUi) {
   $env:SOVUSHKA_UI_PORT = "$UiPort"
-  $uiArgs = @("run", "python", "sovushka_ng.py")
+  $uiArgs = @("sovushka_ng.py")
   $uiOut = Join-Path $Root "logs\windows-light-ui.out.log"
   $uiErr = Join-Path $Root "logs\windows-light-ui.err.log"
-  $ui = Start-LesUvProcess -UvArgs $uiArgs -StdOut $uiOut -StdErr $uiErr
+  $ui = Start-LesPythonProcess -PythonArgs $uiArgs -StdOut $uiOut -StdErr $uiErr
 }
 
 $health = Wait-LesHttp "http://127.0.0.1:$ProxyPort/api/health" 45
@@ -252,6 +258,8 @@ $payload = [pscustomobject]@{
   ui_log = if ($ui) { $uiErr } else { $null }
   health = $health
   state_root = if ($StateRoot) { $StateRoot } else { $Root.Path }
+  process_contract = "direct_python_no_console_v1"
+  python_executable = $LesPython
 }
 
 $statePath = Join-Path $Root "logs\windows-light-state.json"

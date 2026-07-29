@@ -230,6 +230,9 @@ def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     assert "Start-InteractiveLesDesktop" in production
     assert 'Join-Path $InstallRoot "les-desktop.exe"' in production
     assert 'launch_mode = "interactive_scheduled_task"' in production
+    assert "Get-LesRuntimeProcessHygiene" in production
+    assert "New-ScheduledTaskAction -Execute $Desktop" in production
+    assert "$env:ComSpec" not in production
     assert '$result.stage = "desktop_handoff"' in production
     assert "collector must be manual" in production
     assert 'schedule = "manual"' in production
@@ -239,7 +242,8 @@ def test_patch_release_keeps_heavy_pdf_smoke_isolated_from_production():
     assert "$probeInfo.LastRunTime -gt $previousRunTime" in production
     assert 'outlook_probe = $outlookProbe' in production
     assert "Outlook probe skipped:" in production
-    assert "service_fallback_used = $fallbackStarted" in production
+    assert "services_reused = $true" in production
+    assert "bootstrap_reentered = $false" in production
 
 
 def test_patch_release_requires_independent_legion_persistence(monkeypatch):

@@ -96,6 +96,12 @@ The canonical Windows/Tauri profile also keeps mutable state outside the
 replaceable NSIS application tree: `%LOCALAPPDATA%\LES` owns `.env`, uv venv,
 MetaDB, source/storage data, artifacts and logs. Runtime-relative directories
 are junctions to that root; Qdrant uses `les-qdrant-data`.
+The release shell is a Windows GUI subsystem process with a named single-instance
+mutex. Rust child commands always use `CREATE_NO_WINDOW`; proxy, UI and the optional
+Lemonade adapter run directly from the persistent venv without `cmd.exe`/`uv`
+wrappers. Installed/update smoke fails if the runtime state is not
+`direct_python_no_console_v1`, if a LES-owned `cmd.exe` survives, or if more than
+one interactive desktop process exists.
 
 ## Automated platform gates and release
 

@@ -92,27 +92,36 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert '[int]$smetaBaseline.norm_count -lt 40000' in text
     assert '[int]$smetaBaseline.fsem_rows -lt 1500' in text
     assert 'status = "requires_region_zone_period_selection"' in text
+    assert 'process_contract -ne "direct_python_no_console_v1"' in text
+    assert 'runtimeProcess.Name -notin @("python.exe", "pythonw.exe")' in text
+    assert "cmd.exe wrapper process(es)" in text
+    assert "bootstrap PowerShell stayed alive after terminal ready" in text
 
 
-def test_start_light_keeps_uv_server_processes_alive():
+def test_start_light_uses_direct_console_free_python_processes():
     ps1 = build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
     text = ps1.read_text(encoding="utf-8")
 
-    assert "function Start-LesUvProcess" in text
+    assert "function Resolve-LesPython" in text
+    assert "function Start-LesPythonProcess" in text
+    assert '@("pythonw.exe", "python.exe")' in text
+    assert "Start-Process -FilePath $LesPython" in text
+    assert '"-m", "uvicorn", "proxy_server:app"' in text
+    assert 'process_contract = "direct_python_no_console_v1"' in text
     assert "function Get-LesFreePort" in text
     assert '$ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")' in text
     assert '$env:PROXY_URL = "http://127.0.0.1:$ProxyPort"' in text
     assert '[int]$LemonadeHostPort = 18080' in text
-    assert '"run", "python", "lemonade_host.py"' in text
+    assert '@("lemonade_host.py")' in text
     assert "windows-light-lemonade-host.err.log" in text
     assert "lemonade_adapter_url" in text
     assert "lemonade_host_pid" in text
     assert "$payload = [pscustomobject]@{" in text
     assert "windows-light-state.json" in text
     assert "ui_health_url" in text
-    assert 'Start-Process -FilePath "cmd.exe"' in text
     assert "Wait-LesHttp" in text
-    assert "Start-Process uv -ArgumentList" not in text
+    assert 'Start-Process -FilePath "cmd.exe"' not in text
+    assert "function Start-LesUvProcess" not in text
 
 
 def test_windows_bootstrap_reports_ready_only_after_api_health():
@@ -159,6 +168,8 @@ def test_windows_tauri_uses_update_safe_persistent_state():
     assert 'Join-Path $env:LOCALAPPDATA "LES"' in state
     assert "Move-Item -LiteralPath $source -Destination $backup" in state
     assert "New-LesDirectoryJunction" in state
+    assert "New-Item -ItemType Junction" in state
+    assert "cmd.exe /d /c mklink" not in state
     assert 'schema = "les_windows_state_v1"' in state
     assert "$env:LES_ENV_PATH = $State.env_path" in bootstrap
     assert "$env:UV_PROJECT_ENVIRONMENT" in bootstrap

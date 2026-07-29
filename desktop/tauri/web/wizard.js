@@ -115,4 +115,4 @@ document.querySelectorAll("[data-copy]").forEach((button) => button.addEventList
 }));
 
 refresh();
-window.setInterval(refresh, 2500);
+window.setInterval(refresh, 10000);

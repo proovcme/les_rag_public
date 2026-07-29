@@ -79,11 +79,10 @@ function Grant-LesWindowsStateAccess {
 }
 
 function New-LesDirectoryJunction([string]$LinkPath, [string]$TargetPath) {
-  $quotedLink = '"' + $LinkPath + '"'
-  $quotedTarget = '"' + $TargetPath + '"'
-  $output = & cmd.exe /d /c mklink /J $quotedLink $quotedTarget 2>&1
-  if ($LASTEXITCODE -ne 0) {
-    throw "Unable to create junction $LinkPath -> ${TargetPath}: $output"
+  try {
+    New-Item -ItemType Junction -Path $LinkPath -Target $TargetPath -ErrorAction Stop | Out-Null
+  } catch {
+    throw "Unable to create junction $LinkPath -> ${TargetPath}: $($_.Exception.Message)"
   }
 }
 

@@ -34,7 +34,9 @@ def test_tauri_config_is_the_canonical_les_desktop_shell():
 
 def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     source = (TAURI / "src-tauri" / "src" / "lib.rs").read_text(encoding="utf-8")
+    main = (TAURI / "src-tauri" / "src" / "main.rs").read_text(encoding="utf-8")
 
+    assert '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]' in main
     assert 'const UI_URL: &str = "http://127.0.0.1:8051/les"' in source
     assert 'windows-light-state.json' in source
     assert 'std::env::var_os("LOCALAPPDATA")' in source
@@ -50,7 +52,17 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert "powershell_file_arg(" in source
     assert 'std::fs::remove_file(path)' in source
     assert '.get("install_url")' in source
-    assert 'creation_flags(0x0800_0000)' in source
+    assert "const CREATE_NO_WINDOW: u32 = 0x0800_0000" in source
+    assert "fn windows_command(" in source
+    assert "creation_flags(CREATE_NO_WINDOW)" in source
+    assert "WindowsSingleInstanceGuard" in source
+    assert r'Local\LES.Tauri.SingleInstance' in source
+    assert "LIFECYCLE_IN_FLIGHT" in source
+    assert "compare_exchange(false, true" in source
+    assert "schedule_boot_and_navigate" in source
+    assert 'Command::new("cmd.exe")' not in source
+    assert 'Command::new("where.exe")' not in source
+    assert source.count('.arg("list")') == 1
     assert '"restart" => run_action' in source
     assert '"stop" => run_action' in source
     assert '"setup" => show_setup' in source
@@ -69,6 +81,7 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert "ollama pull bge-m3" in wizard
     assert 'invoke("install_setup_component"' in script
     assert 'invoke("start_from_setup"' in script
+    assert "window.setInterval(refresh, 10000)" in script
 
 
 def test_tauri_bootstrap_does_not_install_or_launch_pywebview():

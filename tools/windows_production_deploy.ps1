@@ -171,6 +171,41 @@ function Start-PreparedUpdateRuntime(
   throw "Prepared update API/UI did not become healthy within $TimeoutSeconds seconds"
 }
 
+function Get-LesRuntimeProcessHygiene([string]$RuntimeStatePath) {
+  if (-not (Test-Path -LiteralPath $RuntimeStatePath)) {
+    throw "Windows runtime state is missing for process hygiene gate"
+  }
+  $state = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+  if ($state.process_contract -ne "direct_python_no_console_v1") {
+    throw "Windows runtime does not use direct console-free Python processes"
+  }
+  $runtimePids = @($state.proxy_pid, $state.ui_pid, $state.lemonade_host_pid) |
+    Where-Object { $_ -and [int]$_ -gt 0 }
+  $names = @()
+  foreach ($runtimePid in $runtimePids) {
+    $process = Get-CimInstance Win32_Process -Filter ("ProcessId=" + [int]$runtimePid) `
+      -ErrorAction SilentlyContinue
+    if (-not $process) { throw "LES runtime process $runtimePid is not alive" }
+    if ([string]$process.Name -notin @("python.exe", "pythonw.exe")) {
+      throw "LES runtime process $runtimePid is an unexpected launcher: $($process.Name)"
+    }
+    $names += [string]$process.Name
+  }
+  $consoleWrappers = @(Get-CimInstance Win32_Process | Where-Object {
+    ([string]$_.Name -eq "cmd.exe") -and (
+      ([string]$_.CommandLine) -match "proxy_server:app|sovushka_ng\.py|lemonade_host\.py"
+    )
+  })
+  if ($consoleWrappers.Count -ne 0) {
+    throw "LES runtime left $($consoleWrappers.Count) cmd.exe wrapper process(es)"
+  }
+  return [ordered]@{
+    contract = [string]$state.process_contract
+    runtime_processes = $names
+    cmd_wrappers = 0
+  }
+}
+
 function Invoke-InteractiveOutlookProbe(
   [string]$Collector,
   [object]$CollectorTask,
@@ -185,8 +220,6 @@ function Invoke-InteractiveOutlookProbe(
   if (-not $userId) { throw "E.ZH.I.K. Scheduled Task has no interactive user" }
   $action = New-ScheduledTaskAction -Execute $Collector -Argument "--probe"
   $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive
-  $fallbackStarted = $false
-  $fallbackAt = (Get-Date).AddSeconds(60)
   try {
     Unregister-ScheduledTask -TaskName $probeTaskName -Confirm:$false -ErrorAction SilentlyContinue
     Register-ScheduledTask -TaskName $probeTaskName -Action $action -Principal $principal -Force | Out-Null
@@ -223,8 +256,7 @@ function Start-InteractiveLesDesktop(
   $taskName = "LES Release Desktop Start"
   $userId = [string]$CollectorTask.Principal.UserId
   if (-not $userId) { throw "LES desktop handoff has no interactive user" }
-  $arguments = '/c start "" "' + $Desktop + '"'
-  $action = New-ScheduledTaskAction -Execute $env:ComSpec -Argument $arguments `
+  $action = New-ScheduledTaskAction -Execute $Desktop `
     -WorkingDirectory (Split-Path -Parent $Desktop)
   $principal = New-ScheduledTaskPrincipal -UserId $userId -LogonType Interactive
   try {
@@ -234,29 +266,13 @@ function Start-InteractiveLesDesktop(
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     do {
       Start-Sleep -Seconds 1
-      if (-not $fallbackStarted -and (Get-Date) -ge $fallbackAt) {
-        # Some Tauri launches leave bootstrap at services/running without
-        # keeping its child stack alive. Stop only that bootstrap and start
-        # the installed service script explicitly; the desktop process stays.
-        Get-CimInstance Win32_Process | Where-Object {
-          ([string]$_.CommandLine) -match "bootstrap\.ps1" -and
-          ([string]$_.CommandLine).Contains($InstallRoot)
-        } | ForEach-Object {
-          Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-        }
-        $runtimeRoot = Join-Path $InstallRoot "runtime"
-        $startLight = Join-Path $runtimeRoot "installers\windows\start-light.ps1"
-        $env:LES_WINDOWS_STATE_ROOT = $StateRoot
-        Start-Process -FilePath "powershell.exe" -ArgumentList @(
-          "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $startLight,
-          "-ProxyPort", "8050", "-UiPort", "8051"
-        ) -WindowStyle Hidden | Out-Null
-        $fallbackStarted = $true
-      }
       $desktopCount = @(Get-Process -Name "les-desktop" -ErrorAction SilentlyContinue | Where-Object {
         $_.SessionId -ne 0
       }).Count
-      if ($desktopCount -gt 0) {
+      if ($desktopCount -gt 1) {
+        throw "single-instance gate failed: found $desktopCount interactive LES desktops"
+      }
+      if ($desktopCount -eq 1) {
         try {
           $version = Invoke-RestMethod -Uri "http://127.0.0.1:8050/api/version" -TimeoutSec 10
           $ui = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:8051/healthz" -TimeoutSec 10
@@ -266,7 +282,9 @@ function Start-InteractiveLesDesktop(
               ui_status = [int]$ui.StatusCode
               desktop_processes = [int]$desktopCount
               launch_mode = "interactive_scheduled_task"
-              service_fallback_used = $fallbackStarted
+              services_reused = $true
+              bootstrap_reentered = $false
+              process_hygiene = Get-LesRuntimeProcessHygiene $RuntimeStatePath
             }
           }
         } catch { }
@@ -343,6 +361,7 @@ try {
   $result.les_version = $version.les_version
   $result.git_commit = $version.git_commit
   $result.ui_status = [int]$ui.StatusCode
+  $result.process_hygiene = Get-LesRuntimeProcessHygiene $RuntimeStatePath
 
   $result.stage = "outlook_mail"
   $collector = Join-Path $StateRoot "bin\LesMailPoller.exe"
@@ -400,7 +419,6 @@ try {
   if ($result.ok) {
     try {
       $result.stage = "desktop_handoff"
-      Stop-LesRuntime
       $result.desktop_handoff = Start-InteractiveLesDesktop `
         (Join-Path $InstallRoot "les-desktop.exe") $mailTask
       $result.stage = "done"

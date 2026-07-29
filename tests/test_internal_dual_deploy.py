@@ -177,6 +177,8 @@ def test_legion_deploy_is_transactional_and_preserves_data():
     assert "service_fallback_used = $fallbackStarted" in rollback
     assert "Remove-Item -LiteralPath $InstallRoot" in rollback
     assert "Remove-Item -LiteralPath $StateRoot" not in rollback
+    assert "New-ScheduledTaskAction -Execute $Desktop" in rollback
+    assert "$env:ComSpec" not in rollback
 
 
 def test_windows_production_update_uses_fast_start_not_first_run_bootstrap():
@@ -191,6 +193,15 @@ def test_windows_production_update_uses_fast_start_not_first_run_bootstrap():
     assert "app\\bootstrap.ps1" not in production
     assert "-RedirectStandardOutput $startOut" in production
     assert "-RedirectStandardError $startErr" in production
+    assert "Get-LesRuntimeProcessHygiene" in production
+    assert 'process_contract -ne "direct_python_no_console_v1"' in production
+    assert "cmd.exe wrapper process(es)" in production
+    assert "single-instance gate failed" in production
+    assert "New-ScheduledTaskAction -Execute $Desktop" in production
+    assert "$env:ComSpec" not in production
+    assert "services_reused = $true" in production
+    assert "bootstrap_reentered = $false" in production
+    assert production.count("Stop-LesRuntime") == 2
 
 
 def test_windows_prepare_and_apply_are_separate_cached_steps():

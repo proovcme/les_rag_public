@@ -3,6 +3,7 @@ use std::{
     net::{SocketAddr, TcpStream},
     path::PathBuf,
     process::{Command, Stdio},
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -16,6 +17,91 @@ use serde_json::{json, Value};
 
 const UI_URL: &str = "http://127.0.0.1:8051/les";
 const HEALTH_URL: &str = "http://127.0.0.1:8051/healthz";
+static LIFECYCLE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+#[cfg(target_os = "windows")]
+fn windows_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = Command::new(program);
+    command.creation_flags(CREATE_NO_WINDOW).stdin(Stdio::null());
+    command
+}
+
+struct LifecycleGuard;
+
+impl LifecycleGuard {
+    fn try_acquire() -> Option<Self> {
+        LIFECYCLE_IN_FLIGHT
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self)
+    }
+}
+
+impl Drop for LifecycleGuard {
+    fn drop(&mut self) {
+        LIFECYCLE_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(target_os = "windows")]
+struct WindowsSingleInstanceGuard(*mut std::ffi::c_void);
+
+#[cfg(target_os = "windows")]
+impl WindowsSingleInstanceGuard {
+    fn acquire() -> Result<Option<Self>, String> {
+        use std::os::windows::ffi::OsStrExt;
+
+        const ERROR_ALREADY_EXISTS: u32 = 183;
+        let name = std::ffi::OsStr::new(r"Local\LES.Tauri.SingleInstance")
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect::<Vec<_>>();
+        let handle = unsafe {
+            CreateMutexW(
+                std::ptr::null_mut(),
+                0,
+                name.as_ptr(),
+            )
+        };
+        if handle.is_null() {
+            return Err(std::io::Error::last_os_error().to_string());
+        }
+        let last_error = unsafe { GetLastError() };
+        if last_error == ERROR_ALREADY_EXISTS {
+            unsafe {
+                CloseHandle(handle);
+            }
+            return Ok(None);
+        }
+        Ok(Some(Self(handle)))
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl Drop for WindowsSingleInstanceGuard {
+    fn drop(&mut self) {
+        unsafe {
+            CloseHandle(self.0);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+#[link(name = "kernel32")]
+extern "system" {
+    fn CreateMutexW(
+        mutex_attributes: *mut std::ffi::c_void,
+        initial_owner: i32,
+        name: *const u16,
+    ) -> *mut std::ffi::c_void;
+    fn GetLastError() -> u32;
+    fn CloseHandle(handle: *mut std::ffi::c_void) -> i32;
+}
 
 fn endpoint_ready(url: &str) -> bool {
     let Ok(parsed) = url.parse::<Url>() else {
@@ -123,19 +209,17 @@ fn read_bootstrap_status() -> Value {
 
 #[cfg(target_os = "windows")]
 fn resolve_windows_program(name: &str, candidates: &[PathBuf]) -> Option<PathBuf> {
-    let path = Command::new("where.exe")
-        .arg(name)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .map(PathBuf::from)
-        });
-    path.or_else(|| candidates.iter().find(|path| path.is_file()).cloned())
+    candidates
+        .iter()
+        .find(|path| path.is_file())
+        .cloned()
+        .or_else(|| {
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|directory| directory.join(name))
+                    .find(|candidate| candidate.is_file())
+            })
+        })
 }
 
 #[cfg(target_os = "windows")]
@@ -196,9 +280,20 @@ fn setup_snapshot(app: AppHandle) -> Value {
     #[cfg(target_os = "windows")]
     {
         let (ollama, docker) = windows_programs();
-        let models = ollama
+        let ollama_output = ollama
             .as_ref()
-            .and_then(|program| Command::new(program).arg("list").output().ok())
+            .and_then(|program| {
+                windows_command(program)
+                    .arg("list")
+                    .stderr(Stdio::null())
+                    .output()
+                    .ok()
+            });
+        let ollama_running = ollama_output
+            .as_ref()
+            .is_some_and(|output| output.status.success());
+        let models = ollama_output
+            .as_ref()
             .filter(|output| output.status.success())
             .map(|output| {
                 String::from_utf8_lossy(&output.stdout)
@@ -209,13 +304,16 @@ fn setup_snapshot(app: AppHandle) -> Value {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let ollama_running = ollama
-            .as_ref()
-            .and_then(|program| Command::new(program).arg("list").status().ok())
-            .is_some_and(|status| status.success());
         let docker_running = docker
             .as_ref()
-            .and_then(|program| Command::new(program).arg("info").status().ok())
+            .and_then(|program| {
+                windows_command(program)
+                    .arg("info")
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status()
+                    .ok()
+            })
             .is_some_and(|status| status.success());
         let selected_model = windows_state_root()
             .map(|root| root.join(".env"))
@@ -253,7 +351,7 @@ fn install_setup_component(component: String) -> Result<(), String> {
             "docker" => ("Docker.DockerDesktop", "Docker Desktop"),
             _ => return Err("неизвестный компонент".to_string()),
         };
-        let status = Command::new("winget.exe")
+        let status = windows_command("winget.exe")
             .args([
                 "install",
                 "--id",
@@ -264,6 +362,8 @@ fn install_setup_component(component: String) -> Result<(), String> {
                 "--accept-source-agreements",
                 "--accept-package-agreements",
             ])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .map_err(|_| format!("winget недоступен. Установите {title} по ссылке в мастере"))?;
         return status
@@ -287,7 +387,11 @@ fn open_setup_link(kind: String) -> Result<(), String> {
         _ => return Err("неизвестная ссылка".to_string()),
     };
     #[cfg(target_os = "windows")]
-    let status = Command::new("cmd.exe").args(["/c", "start", "", url]).status();
+    let status = windows_command("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     #[cfg(target_os = "macos")]
     let status = Command::new("open").arg(url).status();
     #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
@@ -372,14 +476,11 @@ fn bootstrap_command(app: &AppHandle, action: &str) -> Result<Command, String> {
 
     #[cfg(target_os = "windows")]
     let mut command = {
-        use std::os::windows::process::CommandExt;
-
-        let mut value = Command::new("powershell.exe");
+        let mut value = windows_command("powershell.exe");
         value.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"]);
         value.arg(powershell_file_arg(
             resources.join("runtime/installers/windows/app/bootstrap.ps1"),
         ));
-        value.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         value
     };
 
@@ -467,13 +568,16 @@ fn save_setup_model(model: String) -> Result<(), String> {
 #[tauri::command]
 fn start_from_setup(app: AppHandle, model: String) -> Result<(), String> {
     save_setup_model(model)?;
-    boot_and_navigate(app);
-    Ok(())
+    schedule_boot_and_navigate(app)
+        .then_some(())
+        .ok_or_else(|| "Подготовка ЛЕС уже выполняется".to_string())
 }
 
 #[tauri::command]
-fn retry_setup(app: AppHandle) {
-    boot_and_navigate(app);
+fn retry_setup(app: AppHandle) -> Result<(), String> {
+    schedule_boot_and_navigate(app)
+        .then_some(())
+        .ok_or_else(|| "Подготовка ЛЕС уже выполняется".to_string())
 }
 
 fn show_main(app: &AppHandle) {
@@ -499,49 +603,64 @@ fn show_error(app: &AppHandle, message: &str) {
     }
 }
 
-fn boot_and_navigate(app: AppHandle) {
-    thread::spawn(move || {
-        if !ui_ready(&app) {
-            if let Err(error) = run_bootstrap(&app, "start") {
-                eprintln!("LES bootstrap: {error}");
-                show_setup(&app);
-                return;
-            }
-            if setup_required() {
-                show_setup(&app);
-                return;
-            }
-        }
-
-        let deadline = Instant::now() + Duration::from_secs(900);
-        while Instant::now() < deadline {
-            if ui_ready(&app) {
-                if let Some(window) = app.get_webview_window("main") {
-                    let (ui_url, _) = runtime_urls(&app);
-                    match ui_url.parse::<Url>() {
-                        Ok(url) => {
-                            let _ = window.navigate(url);
-                            show_main(&app);
-                        }
-                        Err(error) => show_error(&app, &error.to_string()),
+fn wait_for_ui_and_navigate(app: &AppHandle) {
+    let deadline = Instant::now() + Duration::from_secs(900);
+    while Instant::now() < deadline {
+        if ui_ready(app) {
+            if let Some(window) = app.get_webview_window("main") {
+                let (ui_url, _) = runtime_urls(app);
+                match ui_url.parse::<Url>() {
+                    Ok(url) => {
+                        let _ = window.navigate(url);
+                        show_main(app);
                     }
+                    Err(error) => show_error(app, &error.to_string()),
                 }
-                return;
             }
-            thread::sleep(Duration::from_secs(1));
+            return;
         }
-        show_setup(&app);
+        thread::sleep(Duration::from_secs(1));
+    }
+    show_setup(app);
+}
+
+fn boot_and_navigate(app: &AppHandle) {
+    if !ui_ready(app) {
+        if run_bootstrap(app, "start").is_err() {
+            show_setup(app);
+            return;
+        }
+        if setup_required() {
+            show_setup(app);
+            return;
+        }
+    }
+    wait_for_ui_and_navigate(app);
+}
+
+fn schedule_boot_and_navigate(app: AppHandle) -> bool {
+    let Some(guard) = LifecycleGuard::try_acquire() else {
+        return false;
+    };
+    thread::spawn(move || {
+        let _guard = guard;
+        boot_and_navigate(&app);
     });
+    true
 }
 
 fn run_action(app: AppHandle, action: &'static str) {
+    let Some(guard) = LifecycleGuard::try_acquire() else {
+        return;
+    };
     thread::spawn(move || {
+        let _guard = guard;
         if let Err(error) = run_bootstrap(&app, action) {
             show_error(&app, &error);
             return;
         }
         if action == "restart" {
-            boot_and_navigate(app);
+            wait_for_ui_and_navigate(&app);
         }
     });
 }
@@ -572,6 +691,23 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    #[cfg(target_os = "windows")]
+    let _single_instance = match WindowsSingleInstanceGuard::acquire() {
+        Ok(Some(guard)) => guard,
+        Ok(None) => return,
+        Err(error) => {
+            if let Some(root) = windows_state_root() {
+                let logs = root.join("logs");
+                let _ = std::fs::create_dir_all(&logs);
+                let _ = std::fs::write(
+                    logs.join("tauri-shell.err.log"),
+                    format!("single-instance guard failed: {error}\n"),
+                );
+            }
+            return;
+        }
+    };
+
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             setup_snapshot,
@@ -583,7 +719,7 @@ pub fn run() {
         ])
         .setup(|app| {
             install_tray(app)?;
-            boot_and_navigate(app.handle().clone());
+            schedule_boot_and_navigate(app.handle().clone());
             Ok(())
         })
         .run(tauri::generate_context!())

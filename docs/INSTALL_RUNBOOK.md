@@ -217,7 +217,9 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    existing directory instead of being orphaned during the path transition.
 2. First launch: SmartScreen warns (unsigned). **[ручками]** **More info →
    Run anyway**. One time per machine.
-3. The shortcut → `launcher.vbs` (hidden) → `bootstrap.ps1`:
+3. Ярлык запускает `les-desktop.exe` напрямую. Release EXE собран как Windows GUI application:
+   отдельной консоли у Tauri нет, второй запуск тихо завершается по named single-instance mutex,
+   а повторные команды setup/restart не создают параллельный bootstrap:
    - separates replaceable code from persistent state: `data`, `storage`,
      `RAG_Content`, `logs`, `artifacts`, `.env` and the uv environment live in
      `%LOCALAPPDATA%\LES`; update-safe directory junctions preserve existing
@@ -260,14 +262,23 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    - `onboard_models.py --skip-if-cloud`,
    - запускает обязательный Qdrant в Docker с постоянным именованным томом
      `les-qdrant-data` и ждёт ответа `/collections`,
-   - brings the stack up via `start-light.ps1`; Tauri opens the live UI.
+   - brings the stack up via `start-light.ps1`; proxy/UI/Lemonade стартуют прямыми
+     `pythonw.exe`/`python.exe` из persistent venv, без `cmd.exe /c uv run` wrappers.
+     Tauri открывает live UI, а `windows-light-state.json` хранит реальные PID и
+     `process_contract=direct_python_no_console_v1`;
    Ход запуска и незакрытые шаги видны в wizard. Реальные ошибки внутренней подготовки остаются
    внутри этого же экрана с кодом и путём к журналу; приложение не заменяет их общим fatal-screen. Подробный журнал:
    `%LOCALAPPDATA%\LES\logs\bootstrap.log`; машинный статус:
    `%LOCALAPPDATA%\LES\logs\bootstrap-status.json`.
-   Оба файла создаются до подключения state helper, поэтому даже самая ранняя ошибка запуска
-   должна оставить читаемую причину. `%LOCALAPPDATA%\ЛЕС` — возможный старый каталог программы,
-   а не каталог постоянных журналов.
+Оба файла создаются до подключения state helper, поэтому даже самая ранняя ошибка запуска
+должна оставить читаемую причину. `%LOCALAPPDATA%\ЛЕС` — возможный старый каталог программы,
+а не каталог постоянных журналов.
+
+Установочный и updater smoke дополнительно проверяют чистоту lifecycle: terminal bootstrap
+обязан завершиться, runtime PID должны принадлежать прямым Python-процессам, LES-owned
+`cmd.exe` wrappers запрещены, а после desktop handoff остаётся ровно один `les-desktop.exe`.
+Подготовленный updater сохраняет уже прошедшие health-проверку API/UI при запуске нового
+desktop shell, поэтому не повторяет полный bootstrap и не устраивает второй цикл подготовки.
 
 На чистой Windows Docker Desktop может запросить повышение прав и завершение настройки WSL 2.
 Это штатное системное требование Docker. После установки или перезагрузки достаточно снова открыть
