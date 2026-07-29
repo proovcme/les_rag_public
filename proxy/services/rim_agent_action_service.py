@@ -219,6 +219,32 @@ def model_tool_specs(session: dict[str, Any]) -> list[dict[str, Any]]:
     return specs
 
 
+def _normalize_schema_transport(value: Any, schema: dict[str, Any]) -> Any:
+    """Repair exact JSON scalar spellings emitted as strings by a local model."""
+    schema_type = schema.get("type")
+    if schema_type == "boolean" and isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "true":
+            return True
+        if normalized == "false":
+            return False
+        return value
+    if schema_type == "object" and isinstance(value, dict):
+        properties = schema.get("properties")
+        if not isinstance(properties, dict):
+            return value
+        return {
+            key: _normalize_schema_transport(item, properties.get(key, {}))
+            for key, item in value.items()
+        }
+    if schema_type == "array" and isinstance(value, list):
+        item_schema = schema.get("items")
+        if not isinstance(item_schema, dict):
+            return value
+        return [_normalize_schema_transport(item, item_schema) for item in value]
+    return value
+
+
 def validate_model_action(
     session: dict[str, Any],
     payload: dict[str, Any],
@@ -239,6 +265,7 @@ def validate_model_action(
         schema = _BATCH_NORM_TOOLS[action]["function"]["parameters"]
     else:
         schema = _TOOLS[action]["arguments"]
+    arguments = _normalize_schema_transport(arguments, schema)
 
     from proxy.services.structured_extract import validate
 

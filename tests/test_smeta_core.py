@@ -1068,6 +1068,19 @@ def test_batch_agent_checkpoint_resumes_after_last_tool_without_repeating_search
         nonlocal resumed_calls
         resumed_calls += 1
         assert any(message.get("role") == "tool" for message in messages)
+        assert sum(
+            "smeta_norm_agent_resume_status_v1" in str(message.get("content") or "")
+            for message in messages
+        ) == 1
+        resume_status = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_resume_status_v1" in str(message.get("content") or "")
+        )
+        assert resume_status["remaining_work_ids"] == ["w1"]
+        assert resume_status["authoritative_budget_remaining"]["search_calls"] == 3
+        assert "one batch tool call" in resume_status["instruction"]
         return {
             "tool_calls": [
                 _native_call(
@@ -1104,6 +1117,101 @@ def test_batch_agent_checkpoint_resumes_after_last_tool_without_repeating_search
     assert [
         item["tool"] for item in result["agent_trace"]["tool_trajectory"]
     ] == ["search_norms_batch", "submit_lsr_mapping"]
+
+
+def test_batch_agent_resume_requires_read_before_more_search(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "browse_norms_many",
+        lambda queries, **_kwargs: {
+            query: {
+                "backend": "rrf",
+                "cards": [
+                    {
+                        "norm_code": "ГЭСНм10-07-058-01",
+                        "title": "Кандидат шкафа",
+                        "unit": "шт",
+                        "source_ref": "fsnb.sqlite#guid=1",
+                    }
+                ],
+            }
+            for query in queries
+        },
+    )
+    checkpoints = []
+    calls = 0
+
+    def interrupted_exchange(_messages, _tools):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {
+                "tool_calls": [
+                    _native_call(
+                        "search",
+                        "search_norms_batch",
+                        items=[
+                            {
+                                "work_id": "w1",
+                                "queries": ["монтаж шкафа связи"],
+                            }
+                        ],
+                    )
+                ]
+            }
+        raise RuntimeError("interrupt after candidate search")
+
+    rows = [
+        {
+            "work_id": "w1",
+            "title": "Монтаж шкафа связи",
+            "unit": "шт",
+            "quantity": 1,
+        }
+    ]
+    with pytest.raises(RuntimeError, match="interrupt after candidate search"):
+        workflow._run_batch_norm_agent(
+            rows,
+            interrupted_exchange,
+            candidate_limit=6,
+            max_turns=2,
+            checkpoint=checkpoints.append,
+        )
+
+    def inspect_resume(messages, _tools):
+        assert sum(
+            "smeta_norm_agent_resume_status_v1" in str(message.get("content") or "")
+            for message in messages
+        ) == 1
+        resume_status = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_resume_status_v1" in str(message.get("content") or "")
+        )
+        assert resume_status["must_read_before_more_search"] == ["w1"]
+        assert resume_status["work_evidence_status"] == [
+            {
+                "work_id": "w1",
+                "candidate_count": 1,
+                "candidate_codes": ["ГЭСНм10-07-058-01"],
+                "opened_count": 0,
+                "search_count": 1,
+            }
+        ]
+        assert "must be read_norms_batch" in resume_status["instruction"]
+        raise RuntimeError("resume status inspected")
+
+    with pytest.raises(RuntimeError, match="resume status inspected"):
+        workflow._run_batch_norm_agent(
+            rows,
+            inspect_resume,
+            candidate_limit=6,
+            max_turns=2,
+            resume_checkpoint=checkpoints[-1],
+        )
 
 
 def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
@@ -1612,6 +1720,63 @@ def test_mapping_timeout_stops_without_identical_retry_and_saves_checkpoint(monk
     assert checkpoints
     assert checkpoints[-1]["incomplete"] is True
     assert checkpoints[-1]["incomplete_blocker"]["code"] == "structured_mapping_timeout"
+
+
+def test_batch_mapping_timeout_does_not_consume_schema_repair(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    checkpoints = []
+
+    def exchange(_messages, _tools):
+        return {"tool_calls": [_native_call(
+            "search",
+            "search_norms_batch",
+            items=[{
+                "work_id": "w1",
+                "queries": ["буквальный поиск", "нормативный поиск"],
+            }],
+        )]}
+
+    with pytest.raises(workflow.MappingTransportTimeout):
+        workflow._run_batch_norm_agent(
+            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+            exchange,
+            mapping_exchange=lambda _messages, _schema: (
+                _ for _ in ()
+            ).throw(TimeoutError("structured mapping timed out")),
+            candidate_limit=5,
+            max_turns=1,
+            checkpoint=checkpoints.append,
+        )
+
+    checkpoint = checkpoints[-1]
+    assert checkpoint["incomplete_blocker"]["code"] == "structured_mapping_timeout"
+    assert checkpoint["resume_state"]["structured_mapping_attempts"] == 0
+
+    result = workflow._run_batch_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=lambda _messages, _schema: {
+            "rows": [
+                {
+                    "work_id": "w1",
+                    "decision": "unbound",
+                    "reason": "После двух поисков точная норма не найдена",
+                    "unbound_evidence": _unbound_evidence(
+                        queries=["буквальный поиск", "нормативный поиск"],
+                    ),
+                }
+            ]
+        },
+        candidate_limit=5,
+        max_turns=1,
+        resume_checkpoint=checkpoint,
+    )
+
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
 
 
 def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(monkeypatch):

@@ -4,19 +4,44 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-29)
+## Текущее состояние (2026-07-30)
 
 ```
-версия продукта (SemVer):  0.26.3 (RIM durable model workflow)
-номер сборки:              511     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.511 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.4 (RIM resumable evidence workflow)
+номер сборки:              512     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.512 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.3 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.4 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
+
+> 0.26.4 / build 512 — resume знает актуальный бюджет и фазу evidence
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Resume norm-mapping теперь сообщает Qwen authoritative остаток
+> search/read/card/time budget, оставшиеся `work_id` и компактный evidence
+> status. Старое `budget exhausted` не блокирует продолжение при увеличенном
+> бюджете; одинаковые строки рекомендуется вести batch-вызовом, а найденные,
+> но не открытые кандидаты переводят следующую фазу в `read_norms_batch`.
+> Structured transport timeout сохраняет checkpoint и не расходует попытку
+> schema-repair. Локальное строковое `"False"` нормализуется в boolean только
+> по JSON-schema поля инструмента.
+>
+> Живой пятистрочный прогон `СКС.xlsx` подтвердил восстановление после
+> process/model restart, source rows 6–10, модельный выбор `ГЭСНм → сборник
+> 10`, scoped batch search и полный typed read 12 карточек по шкафу. Карточки
+> оказались неприменимыми (кабели, телефонный шкаф, железнодорожная прокладка,
+> сосуды/аппараты), и код не принял ни одну норму. До сметы прогон не дошёл:
+> толстый checkpoint вырос до 1 126 516 байт, structured context — до 42 944
+> токенов, cold prefill занял 398,28 с, затем получен timeout 600 с. Это
+> сохранённый partial и вход для thin checkpoint/event-log v2, а не успешная
+> ЛСР. Профильные тесты зелёные; полная suite по решению владельца не
+> запускалась.
 
 > 0.26.3 / build 511 — длинный РИМ-диалог не теряет выполненные ходы
 >

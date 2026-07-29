@@ -2454,6 +2454,84 @@ def _run_batch_norm_agent(
     )
     if not conversation or str((conversation[0] or {}).get("role") or "") != "system":
         raise RuntimeError("smeta norm checkpoint has invalid conversation")
+    if resume_state:
+        conversation = [
+            message
+            for message in conversation
+            if "smeta_norm_agent_resume_status_v1"
+            not in str(message.get("content") or "")
+        ]
+        usage = session.evidence_usage
+        budget = session.evidence_budget
+        elapsed_used = float(usage.get("tool_elapsed_seconds") or 0.0)
+        work_evidence_status = [
+            {
+                "work_id": work_id,
+                "candidate_count": len(session.candidates.get(work_id) or {}),
+                "candidate_codes": sorted(
+                    str(code)
+                    for code in (session.candidates.get(work_id) or {})
+                    if str(code)
+                ),
+                "opened_count": len(session.opened.get(work_id) or {}),
+                "search_count": sum(
+                    1
+                    for item in session.query_trace
+                    if str(item.get("work_id") or "") == work_id
+                ),
+            }
+            for work_id in session.remaining_work_ids
+        ]
+        must_read = [
+            item["work_id"]
+            for item in work_evidence_status
+            if item["candidate_count"] > 0 and item["opened_count"] == 0
+        ]
+        conversation.append({
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "resume_contract": "smeta_norm_agent_resume_status_v1",
+                    "remaining_work_ids": session.remaining_work_ids,
+                    "work_evidence_status": work_evidence_status,
+                    "must_read_before_more_search": must_read,
+                    "authoritative_budget_remaining": {
+                        "search_calls": max(
+                            0,
+                            int(budget.search_calls)
+                            - int(usage.get("search_calls") or 0),
+                        ),
+                        "read_calls": max(
+                            0,
+                            int(budget.read_calls)
+                            - int(usage.get("read_calls") or 0),
+                        ),
+                        "opened_cards": max(
+                            0,
+                            int(budget.opened_cards)
+                            - int(usage.get("opened_cards") or 0),
+                        ),
+                        "tool_elapsed_seconds": round(
+                            max(0.0, float(budget.elapsed_seconds) - elapsed_used),
+                            4,
+                        ),
+                    },
+                    "instruction": (
+                        "Continue from the stored tool results. The budget above is "
+                        "authoritative for this resumed process; an older tool message "
+                        "saying that a budget was exhausted is stale when the corresponding "
+                        "remaining value above is positive. Prefer one batch tool call for "
+                        "all remaining_work_ids that need the same catalog/search/read phase. "
+                        "For every work_id in must_read_before_more_search, the next tool call "
+                        "for that work_id must be read_norms_batch with model-chosen codes from "
+                        "its candidate_codes; do not browse or search that work_id again until "
+                        "at least one current candidate card is read. Call tools instead of "
+                        "narrating the next intended action."
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+        })
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
@@ -2514,7 +2592,6 @@ def _run_batch_norm_agent(
             raise RuntimeError(
                 "smeta model mapping failed validation after one bounded schema repair"
             )
-        structured_mapping_attempts += 1
         remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
         serialize_ids = (
             remaining[:mapping_chunk]
@@ -2566,6 +2643,7 @@ def _run_batch_norm_agent(
                 emit_checkpoint(incomplete_blocker=blocker)
                 raise MappingTransportTimeout(str(error)) from error
             raise
+        structured_mapping_attempts += 1
         wait_ms = round((perf_counter() - started) * 1000, 2)
         rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
         if not rows:

@@ -103,6 +103,25 @@ def test_pending_question_is_interpreted_in_place_not_restarted():
         )
 
 
+def test_pending_answer_normalizes_exact_string_boolean_from_local_model():
+    result = validate_model_action(
+        _session(
+            pending_question_id="question-1",
+            display_state="awaiting_mapping_decisions",
+        ),
+        {
+            "action": "interpret_pending_answer",
+            "arguments": {
+                "answer": {"free_text": "Монтаж внутри шкафа."},
+                "needs_clarification": "False",
+            },
+            "user_visible_intent": "Сохраняю уточнение.",
+        },
+    )
+
+    assert result["arguments"]["needs_clarification"] is False
+
+
 def test_model_can_request_but_not_create_final_lock():
     session = _session(
         phase="pricing",
