@@ -231,7 +231,40 @@ def _atomic_copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".les-restore.tmp")
     shutil.copy2(source, temporary)
-    os.replace(temporary, target)
+    _replace_with_retry(temporary, target)
+
+
+def _replace_with_retry(source: Path, target: Path, *, timeout: float = 20.0) -> None:
+    """Wait out transient Windows image/Defender locks without weakening atomicity."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
+
+
+def _reusable_backup(backup_root: Path, manifest: dict[str, Any]) -> Path | None:
+    """Resume a crashed patch from its first complete recovery point."""
+    if not backup_root.is_dir():
+        return None
+    for candidate in sorted(path for path in backup_root.iterdir() if path.is_dir()):
+        try:
+            saved = json.loads(
+                (candidate / "manifest.json").read_text(encoding="utf-8-sig")
+            )
+        except (OSError, ValueError, TypeError):
+            continue
+        if (
+            saved.get("schema") == SCHEMA
+            and saved.get("patch_id") == manifest.get("patch_id")
+            and saved.get("target_commit") == manifest.get("target_commit")
+        ):
+            return candidate
+    return None
 
 
 def _stop_runtime(runtime: Path, state: Path) -> None:
@@ -421,23 +454,29 @@ def apply_job(job_path: Path) -> int:
             stage = Path(stage_dir)
             _stage_payload(bundle, manifest, stage, runtime)
 
-            attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-            backup = backup_root / f"{attempt}-{os.getpid()}"
-            backup.mkdir(parents=True, exist_ok=False)
-            (backup / "manifest.json").write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
             stamp_path = runtime / ".les_deploy_stamp.json"
-            if stamp_path.is_file():
-                previous_stamp = stamp_path.read_bytes()
-                (backup / "previous_deploy_stamp.json").write_bytes(previous_stamp)
-            for entry in manifest["files"]:
-                target, _, backup_rel = entry_paths(entry, runtime)
-                if target.is_file():
-                    saved = backup / "files" / backup_rel
-                    saved.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(target, saved)
+            backup = _reusable_backup(backup_root, manifest)
+            if backup is None:
+                attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+                backup = backup_root / f"{attempt}-{os.getpid()}"
+                backup.mkdir(parents=True, exist_ok=False)
+                (backup / "manifest.json").write_text(
+                    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8",
+                )
+                if stamp_path.is_file():
+                    previous_stamp = stamp_path.read_bytes()
+                    (backup / "previous_deploy_stamp.json").write_bytes(previous_stamp)
+                for entry in manifest["files"]:
+                    target, _, backup_rel = entry_paths(entry, runtime)
+                    if target.is_file():
+                        saved = backup / "files" / backup_rel
+                        saved.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(target, saved)
+            else:
+                saved_stamp = backup / "previous_deploy_stamp.json"
+                if saved_stamp.is_file():
+                    previous_stamp = saved_stamp.read_bytes()
 
             _stop_runtime(runtime, state)
             _stop_desktop()
@@ -452,11 +491,11 @@ def apply_job(job_path: Path) -> int:
             for entry in manifest["files"]:
                 target, _, backup_rel = entry_paths(entry, runtime)
                 existed = target.is_file()
-                changed.append((target, existed, backup_rel))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 temporary = target.with_name(target.name + ".les-update.tmp")
                 shutil.copy2(stage / backup_rel, temporary)
-                os.replace(temporary, target)
+                _replace_with_retry(temporary, target)
+                changed.append((target, existed, backup_rel))
 
         stamp_path = runtime / ".les_deploy_stamp.json"
         stamp_tmp = stamp_path.with_suffix(".tmp")
@@ -503,6 +542,7 @@ def apply_job(job_path: Path) -> int:
         return 0
     except Exception as exc:  # noqa: BLE001
         mutated = bool(changed) or stamp_touched
+        restore_errors: list[str] = []
         if mutated:
             write_status(
                 status,
@@ -516,17 +556,23 @@ def apply_job(job_path: Path) -> int:
                 if backup is None:
                     break
                 saved = backup / "files" / backup_rel
-                if existed and saved.is_file():
-                    _atomic_copy(saved, target)
-                elif not existed:
-                    target.unlink(missing_ok=True)
+                try:
+                    if existed and saved.is_file():
+                        _atomic_copy(saved, target)
+                    elif not existed:
+                        target.unlink(missing_ok=True)
+                except Exception as restore_error:  # noqa: BLE001
+                    restore_errors.append(f"{target}: {restore_error}")
             stamp_path = runtime / ".les_deploy_stamp.json"
-            if previous_stamp is not None:
-                stamp_path.write_bytes(previous_stamp)
-            else:
-                stamp_path.unlink(missing_ok=True)
+            try:
+                if previous_stamp is not None:
+                    stamp_path.write_bytes(previous_stamp)
+                else:
+                    stamp_path.unlink(missing_ok=True)
+            except Exception as restore_error:  # noqa: BLE001
+                restore_errors.append(f"{stamp_path}: {restore_error}")
         rollback_ready = False
-        if runtime_stopped:
+        if runtime_stopped and not restore_errors:
             try:
                 if desktop_task:
                     remove_task(desktop_task)
@@ -557,7 +603,11 @@ def apply_job(job_path: Path) -> int:
                 if rollback_ready
                 else "Файлы восстановлены, но ЛЕС не перезапустился автоматически"
             ),
-            error=str(exc),
+            error=(
+                str(exc)
+                if not restore_errors
+                else f"{exc}; rollback errors: {'; '.join(restore_errors)}"
+            ),
             user_data_untouched=True,
         )
         remove_task(helper_task_name)

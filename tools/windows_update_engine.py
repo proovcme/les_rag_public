@@ -202,14 +202,37 @@ def _working_set_bytes(pid: int) -> int:
 
 
 def stop_desktop() -> None:
-    subprocess.run(
-        ["taskkill.exe", "/IM", "les-desktop.exe", "/F"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        creationflags=creation_flags(),
-    )
+    deadline = time.monotonic() + 20
+    while True:
+        subprocess.run(
+            ["taskkill.exe", "/IM", "les-desktop.exe", "/F"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=creation_flags(),
+        )
+        probe = subprocess.run(
+            [
+                "tasklist.exe",
+                "/FI",
+                "IMAGENAME eq les-desktop.exe",
+                "/FO",
+                "CSV",
+                "/NH",
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=creation_flags(),
+        )
+        output = probe.stdout.decode("utf-8", errors="replace").casefold()
+        if "les-desktop.exe" not in output:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("les-desktop.exe did not exit within 20s")
+        time.sleep(0.25)
 
 
 def stop_runtime(runtime: Path, state: Path, log_root: Path) -> None:

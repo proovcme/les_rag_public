@@ -167,6 +167,69 @@ def test_windows_updater_accepts_powershell_utf8_bom_job(tmp_path, monkeypatch):
     assert (runtime / "proxy" / "example.py").read_bytes() == b"NEW = True\n"
 
 
+def test_windows_updater_rolls_back_runtime_when_desktop_replace_is_locked(
+    tmp_path, monkeypatch
+):
+    runtime, state, job = _prepared_job(tmp_path)
+    _patch_windows_actions(monkeypatch)
+    original_replace = vps_patch_apply._replace_with_retry
+
+    def fail_desktop_update(source, target, **kwargs):
+        if (
+            target.name == "les-desktop.exe"
+            and source.name.endswith(".les-update.tmp")
+        ):
+            raise PermissionError("desktop image is still locked")
+        return original_replace(source, target, **kwargs)
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(vps_patch_apply, "_replace_with_retry", fail_desktop_update)
+    monkeypatch.setattr(
+        vps_patch_apply.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: HealthyUi(),
+    )
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert (runtime / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
+    assert not (runtime / "sovushka" / "new-state.js").exists()
+    assert (runtime.parent / "les-desktop.exe").read_bytes() == b"old desktop"
+
+
+def test_windows_atomic_replace_retries_transient_permission_error(
+    tmp_path, monkeypatch
+):
+    source = tmp_path / "new.tmp"
+    target = tmp_path / "app.exe"
+    source.write_bytes(b"new")
+    target.write_bytes(b"old")
+    actual_replace = vps_patch_apply.os.replace
+    attempts = 0
+
+    def flaky_replace(left, right):
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise PermissionError("image lock")
+        actual_replace(left, right)
+
+    monkeypatch.setattr(vps_patch_apply.os, "replace", flaky_replace)
+    monkeypatch.setattr(vps_patch_apply.time, "sleep", lambda _seconds: None)
+
+    vps_patch_apply._replace_with_retry(source, target, timeout=1)
+
+    assert attempts == 3
+    assert target.read_bytes() == b"new"
+
+
 def test_windows_updater_rolls_back_all_files_when_smoke_fails(tmp_path, monkeypatch):
     runtime, state, job = _prepared_job(tmp_path)
     previous_stamp = (runtime / ".les_deploy_stamp.json").read_bytes()
@@ -204,7 +267,7 @@ def test_windows_updater_rolls_back_all_files_when_smoke_fails(tmp_path, monkeyp
     assert "identity smoke failed" in status["error"]
 
 
-def test_windows_updater_retry_uses_a_new_recovery_point(tmp_path, monkeypatch):
+def test_windows_updater_retry_reuses_original_recovery_point(tmp_path, monkeypatch):
     runtime, state, job = _prepared_job(tmp_path)
     _patch_windows_actions(monkeypatch)
     monkeypatch.setattr(
@@ -226,7 +289,7 @@ def test_windows_updater_retry_uses_a_new_recovery_point(tmp_path, monkeypatch):
         (state / "artifacts" / "updates" / "status.json").read_text(encoding="utf-8")
     )["backup_root"]
 
-    assert first != second
+    assert first == second
     assert Path(first).is_dir()
     assert Path(second).is_dir()
     assert (runtime.parent / "les-desktop.exe").read_bytes() == b"new desktop"
