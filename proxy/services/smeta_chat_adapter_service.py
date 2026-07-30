@@ -483,6 +483,14 @@ def _smeta_document_mapping_exchange(
     """Serialize the same model's decisions with provider-enforced JSON schema."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 8000)
+    row_limit = int(
+        (((schema.get("properties") or {}).get("rows") or {}).get("maxItems"))
+        or 0
+    )
+    if row_limit == 1:
+        max_tokens = min(max_tokens, 2200)
+    elif 1 < row_limit <= 5:
+        max_tokens = min(max_tokens, 4800)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"

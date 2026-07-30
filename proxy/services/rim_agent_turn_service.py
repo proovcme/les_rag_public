@@ -663,6 +663,19 @@ def run_rim_agent_turn(
             mapping_rows=mapping_rows,
             expected_parent_revision_id=session["head_revision_id"],
             created_by="model",
+            conflicts=list(result.get("professional_conflicts") or []),
+            agent_audit={
+                "schema": "rim_norm_mapping_agent_audit_v1",
+                "validation_contract_version": str(
+                    (result.get("agent_trace") or {}).get(
+                        "validation_contract_version"
+                    )
+                    or ""
+                ),
+                "catalog_trace": list(result.get("catalog_trace") or []),
+                "query_trace": list(result.get("query_trace") or []),
+                "agent_trace": dict(result.get("agent_trace") or {}),
+            },
             change_note="Qwen batch mapping: catalog → scoped search → typed read",
             allow_admin=allow_admin,
         )

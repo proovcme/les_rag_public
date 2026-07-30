@@ -85,6 +85,22 @@ def test_messages_to_prompt_can_render_reusable_message_boundary():
     assert captured["kwargs"]["add_generation_prompt"] is False
 
 
+def test_stable_cache_prefix_excludes_compacted_agent_tail():
+    mlx_host = importlib.import_module("mlx_host")
+    messages = [
+        mlx_host.OAIMessage(role="system", content="contract"),
+        mlx_host.OAIMessage(role="user", content="immutable task"),
+        mlx_host.OAIMessage(role="assistant", content="old tool choice"),
+        mlx_host.OAIMessage(role="tool", content='{"ok":true}'),
+        mlx_host.OAIMessage(role="user", content="compacted working memory"),
+    ]
+
+    prefix = mlx_host._stable_cache_prefix_messages(messages)
+
+    assert [message.role for message in prefix] == ["system", "user"]
+    assert prefix[-1].content == "immutable task"
+
+
 def test_messages_to_prompt_preserves_tool_conversation_for_qwen_template():
     mlx_host = importlib.import_module("mlx_host")
     captured = {}

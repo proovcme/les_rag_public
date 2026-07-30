@@ -1829,6 +1829,19 @@ async def generate_ollama(req: GenerateRequest):
     return {"model": req.model, "response": answer, "eval_count": len(answer.split())}
 
 
+def _stable_cache_prefix_messages(messages: list[OAIMessage]) -> list[OAIMessage]:
+    """Keep the immutable system/task prefix, excluding compacted agent history."""
+    stable: list[OAIMessage] = []
+    for message in messages:
+        role = str(message.role or "")
+        if role not in {"system", "user"}:
+            break
+        stable.append(message)
+        if role == "user":
+            break
+    return stable or list(messages[:1])
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: OAIChatRequest):
     """OpenAI-совместимый — основной для прокси и Roo Code."""
@@ -1836,8 +1849,13 @@ async def chat_completions(req: OAIChatRequest):
         raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine, tools=req.tools)
+    # Agent working memory can compact or replace the recent tail between
+    # turns. Caching the entire previous transcript then yields no prefix hit.
+    # The system message plus initial user task are the durable shared prefix;
+    # keeping only that prefix also fits the bounded Mac cache comfortably.
+    stable_prefix_messages = _stable_cache_prefix_messages(req.messages)
     cache_prefix_prompt = _messages_to_prompt(
-        req.messages,
+        stable_prefix_messages,
         engine,
         tools=req.tools,
         add_generation_prompt=False,

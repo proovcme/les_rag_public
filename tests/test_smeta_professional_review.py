@@ -221,6 +221,95 @@ def test_evidence_budget_has_independent_dimensions():
     assert budget.elapsed_seconds == 120
 
 
+def test_resumed_norm_session_keeps_lifetime_audit_but_refreshes_slice_budget(
+    monkeypatch,
+):
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}]
+    budget = EvidenceBudget(
+        search_calls=1,
+        read_calls=1,
+        opened_cards=2,
+        elapsed_seconds=120,
+    )
+    original = workflow.SmetaNormToolSession(
+        rows,
+        candidate_limit=4,
+        evidence_budget=budget,
+    )
+    original.evidence_usage.update({
+        "search_calls": 7,
+        "read_calls": 5,
+        "opened_cards": 9,
+        "tool_elapsed_seconds": 181.25,
+    })
+
+    resumed = workflow.SmetaNormToolSession(
+        rows,
+        candidate_limit=4,
+        evidence_budget=budget,
+    )
+    resumed.restore_checkpoint_state(original.checkpoint_state())
+
+    assert resumed.evidence_usage == original.evidence_usage
+    assert resumed.evidence_slice_usage() == {
+        "search_calls": 0,
+        "read_calls": 0,
+        "opened_cards": 0,
+        "tool_elapsed_seconds": 0.0,
+    }
+    assert resumed.evidence_remaining()["search_calls"] == 1
+
+    monkeypatch.setattr(
+        workflow,
+        "browse_norms_many",
+        lambda queries, **_kwargs: {
+            query: {"backend": "rrf", "cards": []} for query in queries
+        },
+    )
+    result = resumed.execute(
+        "search_norms_batch",
+        {"items": [{"work_id": "w1", "queries": ["новый поиск"]}]},
+        turn=8,
+    )
+
+    assert result["ok"] is True
+    assert resumed.evidence_usage["search_calls"] == 8
+    assert resumed.evidence_remaining()["search_calls"] == 0
+
+
+def test_reopening_same_typed_card_forces_mapping_without_spending_slice_budget():
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        evidence_budget=EvidenceBudget(
+            search_calls=1,
+            read_calls=1,
+            opened_cards=2,
+            elapsed_seconds=120,
+        ),
+    )
+    code = "ГЭСНм10-01-001-01"
+    card = {"norm_code": code, "measure_unit": "шт"}
+    session.candidates["w1"][code] = card
+    session.opened["w1"][code] = card
+
+    result = session.execute(
+        "read_norms_batch",
+        {"items": [{"work_id": "w1", "norm_codes": [code]}]},
+        turn=2,
+    )
+
+    assert result["ok"] is False
+    assert result["force_mapping_serialization"] is True
+    assert "already open" in result["error"]
+    assert session.evidence_slice_usage()["read_calls"] == 0
+    assert session.evidence_slice_usage()["opened_cards"] == 0
+
+
 def test_model_scope_plan_separates_scoped_and_global_search():
     scoped = ModelScopePlan(
         work_id="w1",

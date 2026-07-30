@@ -165,7 +165,7 @@ def test_rim_api_exposes_active_mapping_checkpoint_progress(tmp_path):
         base_revision_id=vor["revision_id"],
         payload={
             "resume_state": {
-                "validation_contract_version": "grounded-terminal-unbound-v4",
+                "validation_contract_version": "grounded-unit-scoped-mapping-v9",
                 "tool_session": {
                     "candidates": {
                         "vor-001": {

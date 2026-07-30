@@ -780,6 +780,131 @@ def test_rim_catalog_must_search_and_read_first_collection_before_expanding(
     assert ("гэснм", "11") in session.selected_collections["w1"]
 
 
+def test_rim_repeated_unconfirmed_collection_returns_exact_confirmation_hint(
+    monkeypatch,
+):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "browse_norm_catalog",
+        lambda **_kwargs: {
+            "level": "table",
+            "filters": {"family": "ГЭСНм", "collection": "08", "table": ""},
+            "items": [{"key": "08-01-001", "norm_count": 1}],
+            "collection_passport": {
+                "title": "Электротехнические установки",
+                "source_ref": "ФСНБ-2022 · ГЭСНм, сборник 08 «Электротехнические установки»",
+                "representative_sections": ["Отдел 1. Распределительные устройства"],
+            },
+        },
+    )
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж блока", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session.family_catalog_seen.add("w1")
+    session.selected_base_types["w1"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "Монтаж оборудования",
+        "confidence": "medium",
+    }
+    args = {"items": [{
+        "work_id": "w1",
+        "family": "ГЭСНм",
+        "collection": "08",
+        "scope_reason": "Проверка электротехнического сборника",
+        "confidence": "medium",
+    }]}
+
+    preview = session.execute("browse_norm_catalog", args, turn=1)
+    repeated = session.execute("browse_norm_catalog", args, turn=2)
+
+    assert preview["rows"][0]["level"] == "collection_previewed"
+    assert repeated["rows"][0]["ok"] is False
+    assert repeated["rows"][0]["next_action"] == (
+        "confirm_scope_or_preview_another_collection"
+    )
+    assert "Электротехнические установки" in repeated["rows"][0]["details"][1]
+
+
+def test_rim_family_catalog_allows_distinct_model_authored_refinement_query(
+    monkeypatch,
+):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "browse_norm_catalog",
+        lambda **_kwargs: {
+            "level": "collection",
+            "filters": {"family": "ГЭСНм", "collection": "", "table": ""},
+            "items": [
+                {
+                    "key": "08",
+                    "title": "Электротехнические установки",
+                    "norm_count": 100,
+                    "resource_count": 500,
+                    "source_ref": "ФСНБ-2022 · ГЭСНм 08",
+                },
+                {
+                    "key": "10",
+                    "title": "Оборудование связи",
+                    "norm_count": 100,
+                    "resource_count": 500,
+                    "source_ref": "ФСНБ-2022 · ГЭСНм 10",
+                },
+            ],
+        },
+    )
+    queries_seen = []
+
+    def browse_many(queries, **_kwargs):
+        queries_seen.extend(queries)
+        return {
+            query: {
+                "cards": [{
+                    "norm_code": "ГЭСНм10-01-001-01",
+                    "title": "Оборудование связи",
+                }],
+                "retrieval_trace": {"rerank_status": "ok"},
+            }
+            for query in queries
+        }
+
+    monkeypatch.setattr(workflow, "browse_norms_many", browse_many)
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж блока", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session.family_catalog_seen.add("w1")
+    session.catalog_seen.add(("w1", "гэснм", "", ""))
+    session.catalog_trace.append({
+        "work_id": "w1",
+        "level": "base_type_selected",
+        "filters": {"family": "ГЭСНм", "collection": "", "table": ""},
+        "catalog_query": "блок розеток",
+    })
+
+    refined = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "w1",
+            "family": "ГЭСНм",
+            "scope_reason": "Ищу монтаж оборудования связи",
+            "catalog_query": "оборудование связи",
+            "confidence": "medium",
+        }]},
+        turn=2,
+    )
+
+    assert queries_seen == ["оборудование связи"]
+    assert refined["rows"][0]["level"] == "base_type_selected"
+    assert refined["rows"][0]["items"][0]["key"] == "10"
+
+
 def test_mapping_transport_does_not_rewrite_model_decision():
     from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
 
@@ -1183,7 +1308,7 @@ def test_batch_agent_checkpoint_resumes_after_last_tool_without_repeating_search
             and "smeta_norm_agent_working_memory_v1" in str(message.get("content") or "")
         )
         assert resume_status["remaining_work_ids"] == ["w1"]
-        assert resume_status["authoritative_budget_remaining"]["search_calls"] == 3
+        assert resume_status["authoritative_budget_remaining"]["search_calls"] == 4
         assert resume_status["focus_work_id"] == "w1"
         assert "historical tool messages are only an audit log" in (
             resume_status["instruction"]
@@ -1330,6 +1455,77 @@ def test_batch_agent_resume_requires_read_before_more_search(monkeypatch):
             candidate_limit=6,
             max_turns=2,
             resume_checkpoint=checkpoints[-1],
+        )
+
+
+def test_batch_agent_resume_requires_search_for_selected_unsought_scope():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [{
+        "work_id": "w1",
+        "title": "Монтаж блока",
+        "unit": "шт",
+        "quantity": 1,
+    }]
+    tool_session = workflow.SmetaNormToolSession(
+        rows,
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    tool_session.selected_base_types["w1"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "Монтаж оборудования",
+        "confidence": "high",
+    }
+    tool_session.selected_collections["w1"].add(("гэснм", "20"))
+    checkpoint = {
+        "resume_state": {
+            "schema": "smeta_norm_agent_resume_v1",
+            "conversation": [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "task"},
+            ],
+            "tool_session": tool_session.checkpoint_state(),
+            "model_trace": [],
+            "context_metrics": [],
+            "next_turn": 1,
+            "structured_mapping_attempts": 0,
+            "focus_serialization_pending": False,
+            "validation_contract_version": (
+                workflow.MAPPING_VALIDATION_CONTRACT_VERSION
+            ),
+        }
+    }
+
+    def inspect_resume(messages, _tools):
+        working_memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        assert working_memory["must_search_selected_scopes"] == [{
+            "work_id": "w1",
+            "base_type": "ГЭСНм",
+            "collection": "20",
+        }]
+        assert "call search_norms_batch for it now" in (
+            working_memory["instruction"]
+        )
+        raise RuntimeError("selected scope search requirement inspected")
+
+    with pytest.raises(
+        RuntimeError,
+        match="selected scope search requirement inspected",
+    ):
+        workflow._run_batch_norm_agent(
+            rows,
+            inspect_resume,
+            candidate_limit=4,
+            max_turns=1,
+            resume_checkpoint=checkpoint,
+            require_scoped_search=True,
         )
 
 
@@ -1723,7 +1919,7 @@ def test_unbound_rejects_nonterminal_and_unopened_norm_claims():
             "work_id": "w1",
             "decision": "unbound",
             "reason": (
-                "ГЭСНм08-02-182-04 не подходит; требуется дополнительный поиск "
+                "ГЭСНм08-02-182-04 не подходит; требуется расширенный нормативный поиск "
                 "по сборнику 06."
             ),
             "unbound_evidence": {
@@ -2066,6 +2262,119 @@ def test_batch_agent_preserves_model_norm_and_leaves_unit_check_to_calculation(m
     assert result["selections"]["w1"]["norm_code"] == bad_code
 
 
+def test_rim_terminal_rejects_opened_card_with_incompatible_unit():
+    from proxy.smeta_core import document_workflow as workflow
+
+    bad_code = "ГЭСНм10-06-034-03"
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Блок розеток", "unit": "шт.", "quantity": 2}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    card = {
+        "norm_code": bad_code,
+        "title": "Шкаф телефонный распределительный",
+        "measure_unit": "шкаф",
+        "work_steps": ["Установка и монтаж"],
+    }
+    session.candidates["w1"][bad_code] = card
+    session.opened["w1"][bad_code] = card
+
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": bad_code,
+            "selection_kind": "exact",
+            "applicability": "exact",
+            "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations(bad_code),
+            "technology_check": _technology_check(),
+            "reason": "модель считает карточку точной",
+        }]},
+        turn=1,
+    )
+
+    assert result["ok"] is False
+    assert (
+        "selected typed card unit is incompatible with the source work unit"
+        in result["errors"][0]["details"]
+    )
+    assert session.accepted_rows == {}
+
+
+def test_terminal_rejects_exact_bind_that_declares_missing_operations():
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "ГЭСНм10-01-052-07"
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Установка блока розеток", "unit": "шт.", "quantity": 4}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    card = {
+        "norm_code": code,
+        "title": "Кроссировка в шкафу",
+        "measure_unit": "10 шт",
+        "work_steps": ["Кроссировка"],
+    }
+    session.candidates["w1"][code] = card
+    session.opened["w1"][code] = card
+
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": code,
+            "selection_kind": "exact",
+            "applicability": "exact",
+            "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations(code),
+            "technology_check": _technology_check(
+                missing_operations=["Установка блока розеток"],
+            ),
+            "reason": "модель одновременно назвала норму точной и указала пропуск",
+        }]},
+        turn=1,
+    )
+
+    assert result["ok"] is False
+    assert any(
+        "selection_kind exact contradicts missing operations" in detail
+        for detail in result["errors"][0]["details"]
+    )
+    assert session.accepted_rows == {}
+
+
+def test_structured_mapping_schema_excludes_unit_incompatible_bind_codes():
+    from proxy.smeta_core import document_workflow as workflow
+
+    schema = workflow._mapping_output_schema(
+        ["w1"],
+        allowed_bind_codes={"w1": ["ГЭСНм10-01-001-01"]},
+    )
+    variants = schema["properties"]["rows"]["items"]["oneOf"]
+    bind = next(
+        variant
+        for variant in variants
+        if variant["properties"]["decision"]["enum"] == ["bind"]
+    )
+
+    assert bind["properties"]["work_id"]["enum"] == ["w1"]
+    assert bind["properties"]["norm_code"]["enum"] == ["ГЭСНм10-01-001-01"]
+
+    no_bind_schema = workflow._mapping_output_schema(
+        ["w1"],
+        allowed_bind_codes={"w1": []},
+    )
+    assert all(
+        variant["properties"]["decision"]["enum"] != ["bind"]
+        for variant in no_bind_schema["properties"]["rows"]["items"]["oneOf"]
+    )
+
+
 def test_batch_agent_does_not_force_extra_read_after_model_submits_norm(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 
@@ -2365,14 +2674,9 @@ def test_batch_agent_serializes_after_repeated_tool_feedback(monkeypatch):
     calls = 0
     mapping_calls = 0
 
-    def exchange(messages, _tools):
+    def exchange(_messages, _tools):
         nonlocal calls
         calls += 1
-        if calls == 3:
-            assert any(
-                "identical deterministic request" in str(message.get("content") or "")
-                for message in messages
-            )
         return {"tool_calls": [_native_call(
             f"search-{calls}",
             "search_norms_batch",
@@ -2383,9 +2687,13 @@ def test_batch_agent_serializes_after_repeated_tool_feedback(monkeypatch):
             }],
         )]}
 
-    def mapping_exchange(_messages, _schema):
+    def mapping_exchange(messages, _schema):
         nonlocal mapping_calls
         mapping_calls += 1
+        assert any(
+            "identical deterministic request" in str(message.get("content") or "")
+            for message in messages
+        )
         return {"rows": [{
             "work_id": "w1", "decision": "unbound", "reason": "решение модели",
             "unbound_evidence": _unbound_evidence(),
@@ -2398,9 +2706,79 @@ def test_batch_agent_serializes_after_repeated_tool_feedback(monkeypatch):
         candidate_limit=5,
     )
 
-    assert calls == 3
+    assert calls == 2
     assert mapping_calls == 1
     assert result["selections"]["w1"]["reason"] == "решение модели"
+
+
+def test_batch_agent_returns_to_tools_when_unbound_needs_more_evidence(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    exchange_calls = 0
+    mapping_calls = 0
+
+    def exchange(messages, _tools):
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 1:
+            return {"tool_calls": [_native_call(
+                "search-1", "search_norms_batch",
+                items=[{"work_id": "w1", "queries": ["буквальный поиск"]}],
+            )]}
+        if exchange_calls == 2:
+            return {"content": "Данных достаточно для вывода."}
+        if exchange_calls in {3, 4}:
+            return {"tool_calls": [_native_call(
+                f"search-1-repeat-{exchange_calls}",
+                "search_norms_batch",
+                items=[{"work_id": "w1", "queries": ["буквальный поиск"]}],
+            )]}
+        working_memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        assert (
+            working_memory["last_submit_validation"][0]["details"][0]
+            == "unbound requires at least two distinct query or scoped-search strategies"
+        )
+        return {"tool_calls": [_native_call(
+            "search-2", "search_norms_batch",
+            items=[{
+                "work_id": "w1",
+                "queries": ["нормативная формулировка"],
+            }],
+        )]}
+
+    def mapping_exchange(_messages, _schema):
+        nonlocal mapping_calls
+        mapping_calls += 1
+        return {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "После выполненных поисков применимая норма не найдена",
+            "unbound_evidence": _unbound_evidence(),
+        }]}
+
+    result = workflow._run_batch_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=5,
+    )
+
+    assert exchange_calls == 5
+    assert mapping_calls == 2
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
+    assert set(
+        result["selections"]["w1"]["unbound_evidence"]["queries_used"]
+    ) == {"буквальный поиск", "нормативная формулировка"}
 
 
 def test_batch_agent_structures_model_decision_at_tool_turn_budget(monkeypatch):

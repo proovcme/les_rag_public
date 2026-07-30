@@ -7,17 +7,69 @@
 ## Текущее состояние (2026-07-30)
 
 ```
-версия продукта (SemVer):  0.26.6 (RIM visible durable mapping progress)
-номер сборки:              514     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.514 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.7 (RIM resumable mapping convergence)
+номер сборки:              515     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.515 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.6 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.7 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.26.7 / build 515 — resumable mapping, stable cache и fail-closed bind
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Lifetime evidence counters больше не блокируют новый bounded resume-slice:
+> checkpoint сохраняет уже выполненную работу, а продолжение получает
+> собственный search/read/card/time budget. Повтор уже открытой карточки,
+> исчерпание slice либо идентичный tool call сразу переводит Qwen к
+> terminal-сериализации только когда terminal evidence действительно
+> достаточно. Если `unbound` отклонён из-за отсутствующего второго поиска или
+> непрочитанной карточки, tool-loop снова открывается при наличии бюджета;
+> повтор инструмента не может преждевременно вернуть режим сериализации.
+> До появления search/read повтор каталога не форсирует недоказанный
+> `unbound`: active history пересобирается из task prefix + compact working
+> memory, где видны последние catalog steps и точный `next_action`. Отличающийся
+> model-authored `catalog_query` может заново построить shortlist семейства,
+> поэтому первая неудачная гипотеза о сборнике не запирает агента навсегда.
+> Уже подтверждённый, но ещё не обысканный scope помечается
+> `must_search_selected_scopes`: следующий допустимый ход — scoped batch search,
+> а не новый preview того же сборника.
+>
+> Structured mapping допускает `bind` только для открытой typed-карточки с
+> формально совместимым измерителем. `exact`, в котором сама модель указала
+> missing operation, unresolved condition или limited conclusion, не проходит
+> как непротиворечивое решение. Model self-conflicts сохраняются в revision.
+> После очистки успешного checkpoint остаётся SHA-защищённый `agent_audit`
+> с catalog/query/tool trace и lifetime evidence usage.
+>
+> MLX cache теперь фиксирует неизменяемый `system + initial user task`, поэтому
+> сжатие рабочей истории не обнуляет prefix hit. В живом Mac-прогоне cache
+> повторно использовал `3375/7578`, затем `4123/4642` prompt tokens; второй
+> prefill занял `5,90 с`.
+>
+> Живой resume реальных первых пяти строк `СКС.xlsx` завершил immutable
+> mapping revision `4207474a2815462ab169464a6656dc2e`: все 5 строк получили
+> model-owned terminal decision, три первых и пятая честно остались без нормы.
+> На четвёртой Qwen выбрала `ГЭСНм10-01-052-07`, но одновременно указала
+> missing operation; это зафиксировано как regression, а не принимается за
+> готовую смету. Повторная проверка строки открыла и отвергла четыре typed-нормы
+> ГЭСНм 08-03-572 как шкафы/распределительные пункты с краном, сваркой и
+> металлоконструкциями. Qwen затем сама уточнила гипотезу: подтвердила паспорт
+> ГЭСНм 20 как второй scope, но несколько раз повторила catalog preview вместо
+> обязательного scoped search. Harness не засчитал это как выполненный поиск и
+> не принял `unbound`. Mac-проверка остановлена на сохранённом ходе 47 из-за
+> swap 90–92%; checkpoint остаётся возобновляемым. Живой retrieval trace
+> объясняет неверный shortlist: `degraded_sparse_only` из-за
+> `embedding_backend_mismatch:coreml!=sentence_transformers`, при этом rerank
+> реально выполнялся. Поэтому результат пяти строк — проверяемый mapping draft
+> с блокерами, а не ЛСР; mapping lock и расчёт корректно не запускались.
+> Полная suite по решению владельца не запускалась; focused regressions зелёные.
+>
 > 0.26.6 / build 514 — видимый durable progress пяти строк РИМ
 >
 > Дата: 2026-07-30

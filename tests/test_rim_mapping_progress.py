@@ -93,7 +93,7 @@ def _checkpoint(*, validation_version: str) -> dict[str, object]:
 
 
 def test_mapping_progress_exposes_all_five_durable_rows_and_readable_sources():
-    checkpoint = _checkpoint(validation_version="grounded-terminal-unbound-v4")
+    checkpoint = _checkpoint(validation_version="grounded-unit-scoped-mapping-v9")
 
     result = build_mapping_progress(_vor_rows(), checkpoint)
 

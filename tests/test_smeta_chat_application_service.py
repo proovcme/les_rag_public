@@ -551,7 +551,11 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
         "qwen3.5:9b", "", True,
     ))
     monkeypatch.setattr(adapter.httpx, "Client", Client)
-    schema = {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]}
+    schema = {
+        "type": "object",
+        "properties": {"rows": {"type": "array", "maxItems": 1}},
+        "required": ["rows"],
+    }
 
     result = adapter._smeta_document_mapping_exchange(
         [{"role": "assistant", "content": "", "thinking": "model reasoning"}], schema,
@@ -567,6 +571,7 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     assert captured["body"]["options"]["num_ctx"] == 32768
     assert captured["body"]["options"]["temperature"] == 0.0
     assert captured["body"]["options"]["seed"] == 0
+    assert captured["body"]["options"]["num_predict"] == 2200
     assert result["_les_seed"] == 0
 
 

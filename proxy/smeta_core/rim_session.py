@@ -1026,6 +1026,7 @@ class RimSessionStore:
         created_by: str = "model",
         revision_kind: str = "mapping_revision",
         conflicts: list[dict[str, Any]] | None = None,
+        agent_audit: dict[str, Any] | None = None,
         change_note: str = "",
         allow_admin: bool = False,
     ) -> RevisionResult:
@@ -1052,6 +1053,7 @@ class RimSessionStore:
                 "mapping_rows": mapping_rows,
                 "issues": issues,
                 "professional_conflicts": review_conflicts,
+                "agent_audit": dict(agent_audit or {}),
                 "change_note": str(change_note or ""),
                 "vor_revision_id": row["current_vor_revision_id"],
             }

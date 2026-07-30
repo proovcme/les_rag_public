@@ -528,6 +528,18 @@ def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_pa
                     {"tool": "submit_lsr_mapping"},
                 ]
             },
+            "professional_conflicts": [
+                {
+                    "conflict_id": "model-self-conflict",
+                    "code": "technology_check_contradicts_bind",
+                    "severity": "error",
+                    "work_ids": ["vor-001"],
+                    "claim": "Выбран bind при незакрытом технологическом конфликте.",
+                    "evidence": {"norm_code": "ГЭСНм10-06-001-01"},
+                }
+            ],
+            "catalog_trace": [{"family": "ГЭСНм", "selected_by": "model"}],
+            "query_trace": [{"work_id": "vor-001", "queries": ["прокладка кабеля"]}],
         },
     )
 
@@ -564,14 +576,18 @@ def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_pa
     assert result["mapping_revision_id"]
     session = store.get_session(vor.session["session_id"], owner_id="tester")
     assert session["pending_question_id"]
-    mapping = store.revision_payload(
+    mapping_payload = store.revision_payload(
         vor.session["session_id"],
         result["mapping_revision_id"],
         owner_id="tester",
-    )["payload"]["mapping_rows"]
+    )["payload"]
+    mapping = mapping_payload["mapping_rows"]
     assert mapping[0]["norm_key"] == "ГЭСНм:10-06-001-01"
     assert mapping[0]["card_opened"] is True
     assert mapping[0]["norm_source_ref"] == "fsnb.sqlite#guid=1"
+    assert mapping_payload["professional_conflicts"][0]["conflict_id"] == "model-self-conflict"
+    assert mapping_payload["agent_audit"]["schema"] == "rim_norm_mapping_agent_audit_v1"
+    assert mapping_payload["agent_audit"]["query_trace"][0]["work_id"] == "vor-001"
 
 
 def test_mapping_turn_resumes_durable_checkpoint_and_clears_it_on_success(

@@ -46,7 +46,7 @@ _COMPRESSIBLE_TOOL_RESULTS = frozenset({
     "read_norms_batch",
 })
 _RIM_MAX_READ_CARDS_PER_CALL = 2
-MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-terminal-unbound-v4"
+MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-unit-scoped-mapping-v9"
 
 
 class MappingTransportTimeout(RuntimeError):
@@ -525,10 +525,25 @@ def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
 def _technology_check_errors(item: dict[str, Any]) -> list[str]:
     """Validate bind evidence shape without judging the model's applicability conclusion."""
     errors: list[str] = []
-    if str(item.get("selection_kind") or "") not in {"exact", "analog"}:
+    selection_kind = str(item.get("selection_kind") or "")
+    applicability = str(item.get("applicability") or "")
+    analog_limitations = [
+        str(value).strip()
+        for value in (item.get("analog_limitations") or [])
+        if str(value).strip()
+    ]
+    if selection_kind not in {"exact", "analog"}:
         errors.append("selection_kind must be exact|analog")
-    if str(item.get("applicability") or "") not in {"exact", "close_analog", "weak_analog"}:
+    if applicability not in {"exact", "close_analog", "weak_analog"}:
         errors.append("applicability must be exact|close_analog|weak_analog")
+    if selection_kind == "exact" and (
+        applicability in {"close_analog", "weak_analog"} or analog_limitations
+    ):
+        errors.append(
+            "selection_kind exact contradicts analog applicability or limitations"
+        )
+    if selection_kind == "analog" and applicability == "exact":
+        errors.append("selection_kind analog contradicts exact applicability")
     check = item.get("technology_check")
     if not isinstance(check, dict):
         return [*errors, "technology_check must be an object"]
@@ -547,6 +562,15 @@ def _technology_check_errors(item: dict[str, Any]) -> list[str]:
         errors.append("technology_check.conditions_checked must describe checked conditions")
     if str(check.get("conclusion") or "") not in {"applicable", "applicable_with_limitations"}:
         errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
+    if selection_kind == "exact" and (
+        str(check.get("conclusion") or "") == "applicable_with_limitations"
+        or any(str(value).strip() for value in (check.get("missing_operations") or []))
+        or any(str(value).strip() for value in (check.get("unresolved_conditions") or []))
+    ):
+        errors.append(
+            "selection_kind exact contradicts missing operations, unresolved conditions, "
+            "or a limited technology conclusion"
+        )
     return errors
 
 
@@ -830,6 +854,10 @@ class SmetaNormToolSession:
             "opened_cards": 0,
             "tool_elapsed_seconds": 0.0,
         }
+        # Lifetime usage is immutable audit evidence and survives checkpoints.
+        # A resumed process receives a fresh bounded execution slice, otherwise
+        # an exhausted historical counter would make durable resume impossible.
+        self._evidence_slice_baseline = dict(self.evidence_usage)
         self.catalog_trace: list[dict[str, Any]] = []
         self.catalog_seen: set[tuple[str, str, str, str]] = set()
         self.family_catalog_seen: set[str] = set()
@@ -927,6 +955,7 @@ class SmetaNormToolSession:
             **self.evidence_usage,
             **dict(state.get("evidence_usage") or {}),
         }
+        self._evidence_slice_baseline = dict(self.evidence_usage)
         self.catalog_trace = copy.deepcopy(list(state.get("catalog_trace") or []))
         self.catalog_seen = {
             tuple(str(item) for item in value)
@@ -997,11 +1026,55 @@ class SmetaNormToolSession:
     def complete(self) -> bool:
         return bool(self.by_id) and not self.remaining_work_ids
 
+    def evidence_slice_usage(self) -> dict[str, float | int]:
+        return {
+            key: max(
+                0.0 if key == "tool_elapsed_seconds" else 0,
+                float(self.evidence_usage.get(key) or 0)
+                - float(self._evidence_slice_baseline.get(key) or 0),
+            )
+            for key in self.evidence_usage
+        }
+
+    def evidence_remaining(self) -> dict[str, float | int]:
+        usage = self.evidence_slice_usage()
+        return {
+            "search_calls": max(
+                0,
+                int(self.evidence_budget.search_calls)
+                - int(usage.get("search_calls") or 0),
+            ),
+            "read_calls": max(
+                0,
+                int(self.evidence_budget.read_calls)
+                - int(usage.get("read_calls") or 0),
+            ),
+            "opened_cards": max(
+                0,
+                int(self.evidence_budget.opened_cards)
+                - int(usage.get("opened_cards") or 0),
+            ),
+            "tool_elapsed_seconds": round(
+                max(
+                    0.0,
+                    float(self.evidence_budget.elapsed_seconds)
+                    - float(usage.get("tool_elapsed_seconds") or 0.0),
+                ),
+                4,
+            ),
+        }
+
     def execute(self, name: str, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
         started = perf_counter()
         budget_error = self._budget_error(name, args)
         if budget_error:
-            result = {"ok": False, "error": budget_error, "evidence_usage": dict(self.evidence_usage)}
+            result = {
+                "ok": False,
+                "error": budget_error,
+                "force_mapping_serialization": True,
+                "evidence_usage": dict(self.evidence_usage),
+                "evidence_slice_usage": self.evidence_slice_usage(),
+            }
         elif name == "browse_norm_catalog":
             result = self._catalog(args, turn=turn)
         elif name == "search_norms_batch":
@@ -1032,30 +1105,49 @@ class SmetaNormToolSession:
         # terminal decision after it has spent the available search/read time.
         if name == "submit_lsr_mapping":
             return ""
-        elapsed = float(self.evidence_usage["tool_elapsed_seconds"])
+        slice_usage = self.evidence_slice_usage()
+        elapsed = float(slice_usage["tool_elapsed_seconds"])
         if elapsed > self.evidence_budget.elapsed_seconds:
             return (
                 f"evidence tool time budget exhausted after {elapsed:.1f}s; "
                 "submit the model-owned decision"
             )
         if name == "search_norms_batch":
-            if self.evidence_usage["search_calls"] >= self.evidence_budget.search_calls:
+            if int(slice_usage["search_calls"]) >= self.evidence_budget.search_calls:
                 return "search budget exhausted; use collected evidence and submit the model-owned decision"
             self.evidence_usage["search_calls"] += 1
         elif name == "read_norms_batch":
-            requested = sum(
-                len(_normalize_norm_codes_transport(item))
+            requested_pairs = {
+                (str(item.get("work_id") or ""), str(code))
                 for item in _tool_array_argument(args, "items")
+                for code in _normalize_norm_codes_transport(item)
+            }
+            requested = sum(
+                1
+                for work_id, requested_code in requested_pairs
+                if _resolve_norm_code_transport(
+                    requested_code,
+                    self.opened.get(work_id, {}),
+                )
+                not in self.opened.get(work_id, {})
             )
+            if requested == 0 and requested_pairs:
+                return (
+                    "all requested typed cards are already open; "
+                    "use collected evidence and submit the model-owned decision"
+                )
             if self.require_scoped_search and requested > _RIM_MAX_READ_CARDS_PER_CALL:
                 return (
                     "RIM read batch is limited to two full typed cards per model turn; "
                     "choose the strongest candidate and one comparison card, then continue "
                     "with another bounded read batch if evidence still requires it"
                 )
-            if self.evidence_usage["read_calls"] >= self.evidence_budget.read_calls:
+            if int(slice_usage["read_calls"]) >= self.evidence_budget.read_calls:
                 return "read budget exhausted; use opened cards and submit the model-owned decision"
-            if self.evidence_usage["opened_cards"] + requested > self.evidence_budget.opened_cards:
+            if (
+                int(slice_usage["opened_cards"]) + requested
+                > self.evidence_budget.opened_cards
+            ):
                 return "opened-card budget exhausted; use opened cards and submit the model-owned decision"
             self.evidence_usage["read_calls"] += 1
             self.evidence_usage["opened_cards"] += requested
@@ -1170,6 +1262,9 @@ class SmetaNormToolSession:
             confirm_scope = _tool_bool(item.get("confirm_scope"), False)
             scope_reason = " ".join(str(item.get("scope_reason") or "").split()).strip()
             confidence = str(item.get("confidence") or "").strip().casefold()
+            requested_catalog_query = " ".join(
+                str(item.get("catalog_query") or scope_reason).split()
+            ).strip()
             filters = {"family": family, "collection": collection, "table": table}
             if self.require_scoped_search and pending_read_work_ids:
                 reject(
@@ -1200,6 +1295,28 @@ class SmetaNormToolSession:
                 table,
             )
             catalog_was_seen = catalog_key in self.catalog_seen
+            if (
+                catalog_was_seen
+                and self.require_scoped_search
+                and family
+                and not collection
+                and not table
+                and requested_catalog_query
+            ):
+                seen_family_queries = {
+                    str(trace.get("catalog_query") or "").casefold()
+                    for trace in self.catalog_trace
+                    if (
+                        str(trace.get("work_id") or "") == work_id
+                        and str((trace.get("filters") or {}).get("family") or "").casefold()
+                        == family.casefold()
+                        and not str(
+                            (trace.get("filters") or {}).get("collection") or ""
+                        )
+                    )
+                }
+                if requested_catalog_query.casefold() not in seen_family_queries:
+                    catalog_was_seen = False
             pending_collection_confirmation = bool(
                 self.require_scoped_search
                 and family
@@ -1210,6 +1327,56 @@ class SmetaNormToolSession:
                 not in self.selected_collections[work_id]
             )
             if catalog_was_seen and not pending_collection_confirmation:
+                selected_scope = (
+                    (family.casefold(), collection)
+                    in self.selected_collections[work_id]
+                    if family and collection
+                    else False
+                )
+                if family and collection and not table and not selected_scope:
+                    repeated_payload = browse_norm_catalog(
+                        family=family,
+                        collection=collection,
+                        table="",
+                        limit=1000,
+                    )
+                    repeated_passport = dict(
+                        repeated_payload.get("collection_passport") or {}
+                    )
+                    passport_examples = [
+                        str(repeated_passport.get("title") or "").strip(),
+                        str(repeated_passport.get("source_ref") or "").strip(),
+                        *[
+                            str(value).strip()
+                            for value in (
+                                repeated_passport.get("representative_sections")
+                                or []
+                            )[:2]
+                        ],
+                    ]
+                    passport_examples = [
+                        value for value in passport_examples if value
+                    ]
+                    reject(
+                        work_id=work_id,
+                        error=(
+                            "collection passport was previewed but scope is not confirmed"
+                        ),
+                        details=[
+                            "call browse_norm_catalog with confirm_scope=true",
+                            (
+                                "passport_evidence must quote one of: "
+                                + " | ".join(passport_examples)
+                            ),
+                            (
+                                "if the passport does not fit, preview another collection "
+                                "instead of repeating this one"
+                            ),
+                        ],
+                        filters=filters,
+                        next_action="confirm_scope_or_preview_another_collection",
+                    )
+                    continue
                 row = {
                     "work_id": work_id,
                     "ok": True,
@@ -1411,9 +1578,7 @@ class SmetaNormToolSession:
                 and not collection
                 and not table
             ):
-                catalog_query = " ".join(
-                    str(item.get("catalog_query") or scope_reason).split()
-                ).strip()
+                catalog_query = requested_catalog_query
                 shortlist_cache_key = (
                     family.casefold(),
                     catalog_query.casefold(),
@@ -1674,8 +1839,17 @@ class SmetaNormToolSession:
                     reject(
                         work_id=work_id,
                         error="collection confirmation requires passport evidence",
-                        details=missing_evidence,
+                        details=[
+                            *missing_evidence,
+                            (
+                                "quote one of: "
+                                + " | ".join(
+                                    anchor for anchor in passport_anchors if anchor
+                                )
+                            ),
+                        ],
                         filters=filters,
+                        next_action="confirm_scope_with_returned_passport_evidence",
                     )
                     continue
 
@@ -2272,6 +2446,8 @@ class SmetaNormToolSession:
                 continue
             requested_code = str(item.get("norm_code") or "")
             opened_for_work = self.opened.get(work_id, {})
+            opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
+            opened_card = opened_for_work.get(opened_code) if opened_code else None
             bind_errors = _technology_check_errors(item)
             bind_errors.extend(_candidate_evaluation_errors(
                 item,
@@ -2280,6 +2456,17 @@ class SmetaNormToolSession:
             ))
             if not str(item.get("reason") or "").strip():
                 bind_errors.append("reason is required")
+            if (
+                self.require_scoped_search
+                and opened_card is not None
+                and not units_compatible(
+                    str(self.by_id[work_id].get("unit") or ""),
+                    str(opened_card.get("measure_unit") or ""),
+                )
+            ):
+                bind_errors.append(
+                    "selected typed card unit is incompatible with the source work unit"
+                )
             if bind_errors:
                 errors.append({
                     "work_id": work_id,
@@ -2292,8 +2479,6 @@ class SmetaNormToolSession:
                     ))[:12],
                 })
                 continue
-            opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
-            opened_card = opened_for_work.get(opened_code) if opened_code else None
             code = str((opened_card or {}).get("norm_code") or requested_code)
             if self.require_scoped_search and opened_card is None:
                 errors.append({
@@ -2562,7 +2747,8 @@ class SmetaNormToolSession:
             errors.append("reason is required")
         if re.search(
             r"\b(?:требуется|необходимо|нужно|следует)\s+"
-            r"(?:дополнительн\w*\s+)?(?:поиск|искать|проверить|открыть)\b",
+            r"(?:[\w-]+\s+){0,4}"
+            r"(?:поиск\w*|искать|провер\w*|откры\w*|уточн\w*)\b",
             decision_text,
             flags=re.IGNORECASE,
         ):
@@ -2676,6 +2862,7 @@ class SmetaNormToolSession:
             },
             "agent_trace": {
                 **agent_trace,
+                "validation_contract_version": MAPPING_VALIDATION_CONTRACT_VERSION,
                 "tool_trajectory": self.tool_trajectory,
                 "evidence_budget": asdict(self.evidence_budget),
                 "evidence_usage": dict(self.evidence_usage),
@@ -3189,8 +3376,15 @@ def _run_batch_norm_agent(
             ),
         },
     ]
+    resume_validation_contract_changed = bool(
+        resume_state
+        and str(resume_state.get("validation_contract_version") or "")
+        != MAPPING_VALIDATION_CONTRACT_VERSION
+    )
     conversation: list[dict[str, Any]] = (
-        copy.deepcopy(list(resume_state.get("conversation") or []))
+        copy.deepcopy(initial_conversation)
+        if resume_validation_contract_changed
+        else copy.deepcopy(list(resume_state.get("conversation") or []))
         if resume_state.get("conversation")
         else initial_conversation
     )
@@ -3208,9 +3402,7 @@ def _run_batch_norm_agent(
             if "smeta_norm_agent_resume_status_v1"
             not in str(message.get("content") or "")
         ]
-        usage = session.evidence_usage
-        budget = session.evidence_budget
-        elapsed_used = float(usage.get("tool_elapsed_seconds") or 0.0)
+        budget_remaining = session.evidence_remaining()
         work_evidence_status = [
             {
                 "work_id": work_id,
@@ -3243,25 +3435,7 @@ def _run_batch_norm_agent(
                     "work_evidence_status": work_evidence_status,
                     "must_read_before_more_search": must_read,
                     "authoritative_budget_remaining": {
-                        "search_calls": max(
-                            0,
-                            int(budget.search_calls)
-                            - int(usage.get("search_calls") or 0),
-                        ),
-                        "read_calls": max(
-                            0,
-                            int(budget.read_calls)
-                            - int(usage.get("read_calls") or 0),
-                        ),
-                        "opened_cards": max(
-                            0,
-                            int(budget.opened_cards)
-                            - int(usage.get("opened_cards") or 0),
-                        ),
-                        "tool_elapsed_seconds": round(
-                            max(0.0, float(budget.elapsed_seconds) - elapsed_used),
-                            4,
-                        ),
+                        **budget_remaining,
                     },
                     "instruction": (
                         "Continue from the stored tool results. The budget above is "
@@ -3292,11 +3466,7 @@ def _run_batch_norm_agent(
     structured_mapping_attempts = int(
         resume_state.get("structured_mapping_attempts") or 0
     )
-    validation_contract_changed = bool(
-        resume_state
-        and str(resume_state.get("validation_contract_version") or "")
-        != MAPPING_VALIDATION_CONTRACT_VERSION
-    )
+    validation_contract_changed = resume_validation_contract_changed
     if validation_contract_changed:
         structured_mapping_attempts = 0
         previous_call_signature = ""
@@ -3335,8 +3505,42 @@ def _run_batch_norm_agent(
             }
     focus_serialization_pending = bool(
         resume_state.get("focus_serialization_pending")
-    )
+    ) and not validation_contract_changed
     mapping_chunk = _mapping_chunk_size()
+
+    def submit_requires_more_evidence(result: dict[str, Any] | None) -> bool:
+        """Return to tools when terminal validation names missing evidence."""
+        if not result or result.get("ok"):
+            return False
+        evidence_markers = (
+            "requires at least two distinct query or scoped-search strategies",
+            "without an opened typed card",
+        )
+        missing_evidence = any(
+            any(
+                marker in str(detail)
+                for marker in evidence_markers
+            )
+            for error in (result.get("errors") or [])
+            if isinstance(error, dict)
+            for detail in (error.get("details") or [])
+        )
+        if not missing_evidence:
+            return False
+        remaining = session.evidence_remaining()
+        return (
+            int(remaining.get("search_calls") or 0) > 0
+            and float(remaining.get("tool_elapsed_seconds") or 0.0) > 0.0
+        )
+
+    if (
+        focus_serialization_pending
+        and submit_requires_more_evidence(last_submit_result)
+    ):
+        structured_mapping_attempts = 0
+        focus_serialization_pending = False
+        previous_call_signature = ""
+        duplicate_feedback_signature = ""
 
     def refresh_agent_working_memory() -> None:
         """Expose compact canonical evidence without replaying the event log."""
@@ -3376,6 +3580,7 @@ def _run_batch_norm_agent(
         ]
         work_evidence_status = []
         must_read = []
+        must_search_scopes = []
         pending_candidates: dict[str, dict[str, dict[str, Any]]] = {}
         pending_opened: dict[str, dict[str, dict[str, Any]]] = {}
         for work_id in session.remaining_work_ids:
@@ -3393,6 +3598,35 @@ def _run_batch_norm_agent(
             pending_opened[work_id] = opened_cards
             if candidate_cards and not opened_cards:
                 must_read.append(work_id)
+            searched_scopes = {
+                (
+                    str(base_type).casefold(),
+                    str(collection).casefold(),
+                )
+                for trace in session.query_trace
+                if str(trace.get("work_id") or "") == work_id
+                for base_type in (
+                    (trace.get("filters") or {}).get("base_types") or []
+                )
+                for collection in (
+                    (trace.get("filters") or {}).get("collections") or []
+                )
+            }
+            for family, collection in sorted(
+                session.selected_collections.get(work_id) or set()
+            ):
+                if (family.casefold(), collection.casefold()) in searched_scopes:
+                    continue
+                family_card = (
+                    session.selected_base_types.get(work_id) or {}
+                ).get(family.casefold()) or {}
+                must_search_scopes.append({
+                    "work_id": work_id,
+                    "base_type": str(
+                        family_card.get("family") or family
+                    ),
+                    "collection": collection,
+                })
         focus_work_id = (
             must_read[0]
             if must_read
@@ -3465,10 +3699,25 @@ def _run_batch_norm_agent(
                     for item in session.query_trace
                     if str(item.get("work_id") or "") == work_id
                 ),
+                "latest_catalog_steps": [
+                    {
+                        "level": str(item.get("level") or ""),
+                        "filters": dict(item.get("filters") or {}),
+                        "error": str(item.get("error") or ""),
+                        "details": list(item.get("details") or [])[:4],
+                        "next_action": str(item.get("next_action") or ""),
+                        "passport_source_ref": str(
+                            item.get("passport_source_ref") or ""
+                        )[:300],
+                    }
+                    for item in [
+                        trace
+                        for trace in session.catalog_trace
+                        if str(trace.get("work_id") or "") == work_id
+                    ][-3:]
+                ],
             })
-        usage = session.evidence_usage
-        budget = session.evidence_budget
-        elapsed_used = float(usage.get("tool_elapsed_seconds") or 0.0)
+        budget_remaining = session.evidence_remaining()
         conversation.append({
             "role": "user",
             "content": json.dumps(
@@ -3480,26 +3729,14 @@ def _run_batch_norm_agent(
                     "focus_work_id": focus_work_id,
                     "work_evidence_status": work_evidence_status,
                     "must_read_before_more_search": must_read,
+                    "must_search_selected_scopes": must_search_scopes,
+                    "last_submit_validation": (
+                        copy.deepcopy(last_submit_result.get("errors") or [])
+                        if submit_requires_more_evidence(last_submit_result)
+                        else []
+                    ),
                     "authoritative_budget_remaining": {
-                        "search_calls": max(
-                            0,
-                            int(budget.search_calls)
-                            - int(usage.get("search_calls") or 0),
-                        ),
-                        "read_calls": max(
-                            0,
-                            int(budget.read_calls)
-                            - int(usage.get("read_calls") or 0),
-                        ),
-                        "opened_cards": max(
-                            0,
-                            int(budget.opened_cards)
-                            - int(usage.get("opened_cards") or 0),
-                        ),
-                        "tool_elapsed_seconds": round(
-                            max(0.0, float(budget.elapsed_seconds) - elapsed_used),
-                            4,
-                        ),
+                        **budget_remaining,
                     },
                     "instruction": (
                         "This compact typed state is authoritative; historical tool "
@@ -3512,6 +3749,14 @@ def _run_batch_norm_agent(
                         "work_id in must_read_before_more_search, call read_norms_batch "
                         "before browsing or searching again. When evidence is sufficient, "
                         "end the tool loop so LES can serialize your own mapping. In "
+                        "must_search_selected_scopes, each listed scope was already "
+                        "professionally selected but has no executed scoped search: call "
+                        "search_norms_batch for it now and do not browse that collection "
+                        "again. In "
+                        "last_submit_validation, missing query or opened-card evidence "
+                        "means you must return to the corresponding catalog/search/read "
+                        "tools while their authoritative budget remains. "
+                        "Do not merely restate the rejected terminal decision. In "
                         "reasons, assert only facts explicitly present in titles, work "
                         "steps, resources, units and source refs shown here; do not invent "
                         "an industry, facility or application context."
@@ -3572,7 +3817,36 @@ def _run_batch_norm_agent(
             if mapping_chunk > 0
             else list(remaining)
         )
-        schema = _mapping_output_schema(serialize_ids)
+        typed_bind_options: dict[str, list[dict[str, str]]] = {}
+        allowed_bind_codes: dict[str, list[str]] = {}
+        for work_id in serialize_ids:
+            source_unit = str((by_id.get(work_id) or {}).get("unit") or "")
+            seen_codes: set[str] = set()
+            for candidate_code, card in (
+                session.opened.get(work_id) or {}
+            ).items():
+                if not isinstance(card, dict):
+                    continue
+                code = str(card.get("norm_code") or candidate_code).strip()
+                measure_unit = str(card.get("measure_unit") or "").strip()
+                if (
+                    not code
+                    or code in seen_codes
+                    or not units_compatible(source_unit, measure_unit)
+                ):
+                    continue
+                seen_codes.add(code)
+                allowed_bind_codes.setdefault(work_id, []).append(code)
+                typed_bind_options.setdefault(work_id, []).append({
+                    "norm_code": code,
+                    "title": str(card.get("title") or "")[:240],
+                    "measure_unit": measure_unit,
+                    "source_ref": str(card.get("source_ref") or "")[:240],
+                })
+        schema = _mapping_output_schema(
+            serialize_ids,
+            allowed_bind_codes=allowed_bind_codes,
+        )
         request = {
             "transport_request": (
                 "Serialize your own current professional decisions for every remaining_work_id "
@@ -3597,6 +3871,14 @@ def _run_batch_norm_agent(
                 copy.deepcopy(last_submit_result.get("errors") or [])
                 if last_submit_result and not last_submit_result.get("ok")
                 else []
+            ),
+            "typed_bind_options": typed_bind_options,
+            "unit_guardrail": (
+                "A bind is schema-valid only for a norm_code listed in "
+                "typed_bind_options for the same work_id. Those are opened typed "
+                "cards whose formal measure is convertible from the source unit. "
+                "If none is professionally applicable, choose unbound; do not "
+                "reinterpret a card measure or invent another norm code."
             ),
             "grounding_rule": (
                 "Use only facts present in the compact opened_evidence. Do not "
@@ -3777,6 +4059,20 @@ def _run_batch_norm_agent(
             )
             if mapping_exchange is None:
                 raise RuntimeError(failure)
+            has_terminal_evidence = any(
+                any(
+                    str(item.get("work_id") or "") == work_id
+                    for item in session.query_trace
+                )
+                or bool(session.opened.get(work_id))
+                for work_id in session.remaining_work_ids
+            )
+            evidence_loop_required = submit_requires_more_evidence(
+                last_submit_result
+            )
+            force_mapping_serialization = (
+                has_terminal_evidence and not evidence_loop_required
+            )
             if duplicate_feedback_signature != call_signature:
                 duplicate_feedback_signature = call_signature
                 for call_index, call in enumerate(calls, 1):
@@ -3784,6 +4080,9 @@ def _run_batch_norm_agent(
                     result = {
                         "ok": False,
                         "error": "identical deterministic request already executed; no new evidence was produced",
+                        "force_mapping_serialization": (
+                            force_mapping_serialization
+                        ),
                     }
                     conversation.append({
                         "role": "tool",
@@ -3792,9 +4091,43 @@ def _run_batch_norm_agent(
                         "content": json.dumps(result, ensure_ascii=False),
                     })
                     model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+                focus_serialization_pending = force_mapping_serialization
+                if not force_mapping_serialization:
+                    previous_call_signature = ""
+                    conversation[:] = copy.deepcopy(initial_conversation)
+                    refresh_agent_working_memory()
+                    conversation.append({
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "recovery_contract": (
+                                    "smeta_norm_agent_scope_stall_recovery_v1"
+                                ),
+                                "instruction": (
+                                    "The previous catalog action was repeated without "
+                                    "progress. Read latest_catalog_steps from working "
+                                    "memory and execute its next_action exactly. To confirm "
+                                    "a previewed collection, set confirm_scope=true and "
+                                    "copy passport_evidence from the returned passport. "
+                                    "If the collection is already selected, call "
+                                    "search_norms_batch with that selected scope instead "
+                                    "of browsing it again. "
+                                    "If the passport is professionally unsuitable, preview "
+                                    "another collection instead. Do not repeat the same "
+                                    "confirm_scope=false call."
+                                ),
+                            },
+                            ensure_ascii=False,
+                        ),
+                    })
                 emit_checkpoint(next_turn=turn + 1)
                 continue
-            calls = [structured_mapping_call(reason=failure, turn=turn)]
+            if force_mapping_serialization:
+                calls = [structured_mapping_call(reason=failure, turn=turn)]
+            else:
+                previous_call_signature = ""
+                emit_checkpoint(next_turn=turn + 1)
+                continue
             call_signature = json.dumps([{
                 "name": "submit_lsr_mapping",
                 "arguments": _tool_arguments(calls[0]),
@@ -3819,6 +4152,8 @@ def _run_batch_norm_agent(
             else:
                 result = focus_guard
                 focus_serialization_pending = True
+            if bool(result.get("force_mapping_serialization")):
+                focus_serialization_pending = True
             conversation.append({
                 "role": "tool", "tool_call_id": call_id, "name": name,
                 "content": json.dumps(result, ensure_ascii=False, default=str),
@@ -3826,6 +4161,11 @@ def _run_batch_norm_agent(
             model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
             if name == "submit_lsr_mapping" and isinstance(result, dict):
                 last_submit_result = result
+                if submit_requires_more_evidence(result):
+                    structured_mapping_attempts = 0
+                    focus_serialization_pending = False
+                    previous_call_signature = ""
+                    duplicate_feedback_signature = ""
             submitted = dict(session.accepted_rows) if session.complete else None
         if len(accepted_rows) > accepted_before_turn:
             structured_mapping_attempts = 0
@@ -4133,7 +4473,11 @@ def batch_norm_tools() -> list[dict[str, Any]]:
     return copy.deepcopy(_batch_norm_tools())
 
 
-def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
+def _mapping_output_schema(
+    remaining_work_ids: list[str],
+    *,
+    allowed_bind_codes: dict[str, list[str]] | None = None,
+) -> dict[str, Any]:
     """Build a compact decision-specific transport schema for local models.
 
     The canonical submit contract stays rich because bind decisions need a
@@ -4157,16 +4501,44 @@ def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
         decision: str,
         property_names: tuple[str, ...],
         required: tuple[str, ...],
+        *,
+        work_ids: list[str] | None = None,
+        property_overrides: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         selected = {
             name: copy.deepcopy(properties[name])
             for name in property_names
         }
         selected["work_id"] = copy.deepcopy(work_id)
+        selected["work_id"]["enum"] = list(work_ids or remaining_work_ids)
+        for name, override in (property_overrides or {}).items():
+            selected[name] = copy.deepcopy(override)
         selected["decision"] = {
             "type": "string",
             "enum": [decision],
         }
+        if "reason" in selected:
+            selected["reason"]["maxLength"] = 480
+        if "analog_limitations" in selected:
+            selected["analog_limitations"]["maxItems"] = 4
+            selected["analog_limitations"]["items"]["maxLength"] = 180
+        if "candidate_evaluations" in selected:
+            evaluations = selected["candidate_evaluations"]
+            evaluations["maxItems"] = 3
+            evaluation_properties = evaluations["items"]["properties"]
+            evaluation_properties["reason"]["maxLength"] = 280
+            evaluation_properties["foreign_resources"]["maxItems"] = 5
+            evaluation_properties["foreign_resources"]["items"]["maxLength"] = 160
+        if "technology_check" in selected:
+            technology_properties = selected["technology_check"]["properties"]
+            for name in (
+                "matched_operations", "missing_operations", "extra_operations",
+                "foreign_resources", "overlaps_with_work_ids",
+                "conditions_checked", "unresolved_conditions",
+            ):
+                technology_properties[name]["maxItems"] = 6
+                technology_properties[name]["items"]["maxLength"] = 180
+            technology_properties["overlap_resolution"]["maxLength"] = 240
         return {
             "type": "object",
             "properties": selected,
@@ -4174,19 +4546,47 @@ def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
             "additionalProperties": False,
         }
 
-    bind = variant(
-        "bind",
-        (
-            "norm_code", "selection_kind", "applicability",
-            "analog_limitations", "candidate_evaluations",
-            "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
-        ),
-        (
-            "norm_code", "selection_kind", "applicability",
-            "analog_limitations", "candidate_evaluations",
-            "technology_check", "reason",
-        ),
-    )
+    bind_variants: list[dict[str, Any]] = []
+    if allowed_bind_codes is None:
+        bind_variants.append(variant(
+            "bind",
+            (
+                "norm_code", "selection_kind", "applicability",
+                "analog_limitations", "candidate_evaluations",
+                "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
+            ),
+            (
+                "norm_code", "selection_kind", "applicability",
+                "analog_limitations", "candidate_evaluations",
+                "technology_check", "reason",
+            ),
+        ))
+    else:
+        for row_work_id in remaining_work_ids:
+            codes = list(dict.fromkeys(
+                str(code).strip()
+                for code in (allowed_bind_codes.get(row_work_id) or [])
+                if str(code).strip()
+            ))
+            if not codes:
+                continue
+            bind_variants.append(variant(
+                "bind",
+                (
+                    "norm_code", "selection_kind", "applicability",
+                    "analog_limitations", "candidate_evaluations",
+                    "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
+                ),
+                (
+                    "norm_code", "selection_kind", "applicability",
+                    "analog_limitations", "candidate_evaluations",
+                    "technology_check", "reason",
+                ),
+                work_ids=[row_work_id],
+                property_overrides={
+                    "norm_code": {"type": "string", "enum": codes},
+                },
+            ))
     covered_by = variant(
         "covered_by",
         ("covered_by_work_id", "reason"),
@@ -4213,11 +4613,13 @@ def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
             properties["unbound_evidence"]["properties"]["coverage_checked"]
         ),
     }
+    unbound_evidence["properties"]["rejection_reasons"]["items"]["maxLength"] = 320
+    unbound_evidence["properties"]["coverage_checked"]["maxLength"] = 320
     unbound_evidence["required"] = ["rejection_reasons", "coverage_checked"]
     unbound_evidence["additionalProperties"] = False
 
     parameters["properties"]["rows"]["items"] = {
-        "oneOf": [bind, covered_by, unbound],
+        "oneOf": [*bind_variants, covered_by, unbound],
     }
     parameters["properties"]["rows"]["minItems"] = 1
     parameters["properties"]["rows"]["maxItems"] = max(1, len(remaining_work_ids))
