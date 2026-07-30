@@ -52,6 +52,17 @@ def _single_action(
     exchange: Exchange,
     only_actions: set[str] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    session_fact_fields = (
+        "normative_base_version",
+        "pricebook_id",
+        "region_code",
+        "price_period",
+    )
+    confirmed_session_facts = {
+        field: str(session.get(field) or "")
+        for field in session_fact_fields
+        if str(session.get(field) or "").strip()
+    }
     tools = model_tool_specs(session)
     if only_actions is not None:
         tools = [
@@ -65,13 +76,19 @@ def _single_action(
             smeta_native_skill_prompt()
             + "\n\nRIM DIALOG CONTRACT: use only the supplied state-scoped tools. "
             "The server owns session identity and state. Ask one highest-value question. "
-            "Do not invent a norm, price, coefficient or calculation."
+            "Before pricing, a question may request only an observable installation fact or a "
+            "concrete fact stated in project documents, including region or period. Technical "
+            "parts, norm catalog scope and search strategy belong to evidence tools. Never ask "
+            "for a blanket coefficient. Do not invent a norm, price, coefficient or calculation."
+            " Every non-empty value in confirmed_session_facts is server-confirmed: use it and "
+            "never ask the user to repeat it."
         ),
     }
     request_payload: dict[str, Any] = {
         "user_message": str(user_message or ""),
         "session_context": {
             **context,
+            "confirmed_session_facts": confirmed_session_facts,
             "rim_reference": model_reference_for_session(session),
         },
         "required_result": "Call exactly one supplied tool. Ordinary prose is not an action.",
@@ -392,6 +409,10 @@ def run_rim_agent_turn(
         if (
             str(session.get("phase") or "") == "vor"
             and str(session.get("mapping_status") or "") == "not_started"
+            and not any(
+                str((action["arguments"].get("answer") or {}).get(field) or "").strip()
+                for field in ("region_code", "price_period")
+            )
         ):
             vor = _current_payload(
                 store,
@@ -419,12 +440,18 @@ def run_rim_agent_turn(
                 exchange=exchange,
                 only_actions={"draft_work_schedule"},
             )
+            revised_rows = list(draft_action["arguments"].get("rows") or [])
+            if not revised_rows:
+                raise RimSessionConflict(
+                    "Qwen returned an empty VOR revision after the answered question; "
+                    "the previous source-linked revision remains current"
+                )
             revised = store.save_vor_revision(
                 session_id,
                 owner_id=owner_id,
                 rows=_preserve_project_source_provenance(
                     list(vor.get("rows") or []),
-                    list(draft_action["arguments"].get("rows") or []),
+                    revised_rows,
                 ),
                 expected_parent_revision_id=result.revision_id,
                 created_by="model",
@@ -549,9 +576,12 @@ def run_rim_agent_turn(
                     "Ask one highest-value unresolved question for this VOR draft. "
                     "State the known fact, why it affects the work or norm, give practical "
                     "answer options and keep the question bound to the relevant work_ids. "
-                    "Ask only for a missing physical installation or project condition. "
+                    "Ask only for a missing physical installation condition or a concrete project "
+                    "fact such as region or period. "
                     "Do not ask the user to prioritize norm searches, choose collections, "
-                    "approve unbound rows or decide the model's retrieval strategy."
+                    "a technical part, approve unbound rows, approve a blanket coefficient "
+                    "or decide the model's retrieval strategy. Set question_kind to "
+                    "physical_installation or project_condition."
                 ),
             },
             user_message=user_message,
@@ -612,7 +642,10 @@ def run_rim_agent_turn(
             work_rows,
             exchange,
             mapping_exchange=mapping_exchange,
-            candidate_limit=8,
+            # One five-row RIM navigation batch must stay digestible for the
+            # local 9B model. Qwen still selects candidates and may request a
+            # later page; code only bounds the current payload.
+            candidate_limit=4,
             max_turns=64,
             user_request=user_message,
             checkpoint=save_mapping_checkpoint,
@@ -656,7 +689,10 @@ def run_rim_agent_turn(
                     "navigation_questions_to_ask": hints,
                     "instruction": (
                         "Choose one highest-value unresolved navigation hint and turn it "
-                        "into a human question with fact, reason, options and consequences."
+                        "into a human question with fact, reason, options and consequences. "
+                        "Ask for the missing physical/project fact, not for a technical part "
+                        "or coefficient choice. Set question_kind to physical_installation "
+                        "or project_condition."
                     ),
                 },
                 user_message=user_message,

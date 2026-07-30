@@ -138,16 +138,37 @@ _TOOLS: dict[str, dict[str, Any]] = {
         "arguments": {"type": "object", "properties": {}},
     },
     "ask_user": {
-        "description": "Ask one highest-value question bound to work_ids and answer options.",
+        "description": (
+            "Ask exactly one highest-value question bound to work_ids and practical answer "
+            "options. Before pricing, request only an observable installation fact or a concrete "
+            "fact from the project, such as region or period. Do not ask for a norm family, "
+            "collection, table, technical part, search strategy or blanket coefficient. A "
+            "coefficient may be discussed only later as an exact sourced proposal."
+        ),
         "arguments": {
             "type": "object",
             "properties": {
+                "question_kind": {
+                    "type": "string",
+                    "enum": [
+                        "physical_installation",
+                        "project_condition",
+                        "price_evidence",
+                        "coefficient_approval",
+                        "final_review",
+                    ],
+                    "description": (
+                        "Classify the missing user-owned fact. physical_installation is an "
+                        "observable method/material/location/geometry; project_condition is a "
+                        "fact recorded in project documents, never a normative choice."
+                    ),
+                },
                 "text": {"type": "string"},
                 "reason": {"type": "string"},
                 "work_ids": {"type": "array", "items": {"type": "string"}},
                 "options": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
             },
-            "required": ["text", "reason"],
+            "required": ["question_kind", "text", "reason"],
         },
     },
     "interpret_pending_answer": {
@@ -162,6 +183,27 @@ _TOOLS: dict[str, dict[str, Any]] = {
         },
     },
 }
+
+
+def _allowed_question_kinds(session: dict[str, Any]) -> set[str]:
+    mapping_status = str(session.get("mapping_status") or "not_started")
+    pricing_status = str(session.get("pricing_status") or "unpriced")
+    if mapping_status != "mapping_locked":
+        return {"physical_installation", "project_condition"}
+    if pricing_status == "priced_partial":
+        return {
+            "physical_installation",
+            "project_condition",
+            "price_evidence",
+            "coefficient_approval",
+        }
+    if pricing_status == "priced_draft":
+        return {"final_review"}
+    return {
+        "physical_installation",
+        "project_condition",
+        "price_evidence",
+    }
 
 
 def allowed_model_actions(session: dict[str, Any]) -> list[str]:
@@ -206,16 +248,19 @@ def model_tool_specs(session: dict[str, Any]) -> list[dict[str, Any]]:
         if name in _BATCH_NORM_TOOLS:
             specs.append(copy.deepcopy(_BATCH_NORM_TOOLS[name]))
             continue
-        specs.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": _TOOLS[name]["description"],
-                    "parameters": _TOOLS[name]["arguments"],
-                },
-            }
-        )
+        spec = {
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": _TOOLS[name]["description"],
+                "parameters": copy.deepcopy(_TOOLS[name]["arguments"]),
+            },
+        }
+        if name == "ask_user":
+            spec["function"]["parameters"]["properties"]["question_kind"]["enum"] = sorted(
+                _allowed_question_kinds(session)
+            )
+        specs.append(spec)
     return specs
 
 
@@ -317,6 +362,14 @@ def validate_model_action(
         if scope_errors:
             raise ValueError(
                 "RIM catalog scope is invalid: " + "; ".join(scope_errors[:8])
+            )
+    if action == "ask_user":
+        question_kind = str(arguments.get("question_kind") or "")
+        allowed_question_kinds = _allowed_question_kinds(session)
+        if question_kind not in allowed_question_kinds:
+            raise ValueError(
+                "RIM question kind is invalid for the current phase: "
+                f"{question_kind!r}; allowed={sorted(allowed_question_kinds)}"
             )
     intent = str(payload.get("user_visible_intent") or "").strip()
     if not intent:

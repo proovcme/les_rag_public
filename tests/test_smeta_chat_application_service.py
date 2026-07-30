@@ -739,6 +739,48 @@ def test_mlx_native_tool_exchange_does_not_append_prose_prefill(monkeypatch):
     assert captured["messages"][-1]["role"] == "user"
 
 
+def test_document_exchange_bounds_single_question_generation(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"tool_calls": [{"id": "question-1"}]}}]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            captured.update(kwargs["json"])
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "mlx", "http://127.0.0.1:8080", "http://127.0.0.1:8080/v1/chat/completions",
+        "local-tool-model", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Задай один вопрос"}],
+        [{"type": "function", "function": {"name": "ask_user"}}],
+    )
+
+    assert captured["max_tokens"] == 512
+
+
 @pytest.mark.asyncio
 async def test_direct_application_preserves_model_owned_priced_flow(tmp_path, monkeypatch):
     request = SimpleNamespace(

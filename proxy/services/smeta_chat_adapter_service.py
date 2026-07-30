@@ -387,6 +387,15 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
+    tool_names = {
+        str((tool.get("function") or {}).get("name") or "")
+        for tool in tools
+        if isinstance(tool, dict)
+    }
+    if tool_names and tool_names <= {"ask_user", "interpret_pending_answer"}:
+        # These schemas are tiny.  A large generation allowance only lets a
+        # local reasoning model spend minutes on a one-question transport call.
+        max_tokens = min(max_tokens, 512)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"

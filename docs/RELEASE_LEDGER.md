@@ -7,16 +7,37 @@
 ## Текущее состояние (2026-07-30)
 
 ```
-версия продукта (SemVer):  0.26.4 (RIM resumable evidence workflow)
-номер сборки:              512     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.512 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.5 (RIM compact grounded row decisions)
+номер сборки:              513     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.513 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.4 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.5 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
+
+> 0.26.5 / build 513 — компактный terminal mapping и grounded resume
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Однострочная structured-сериализация разделена на decision-specific
+> `bind|covered_by|unbound`: короткий `unbound` больше не повторяет запросы,
+> коды карточек и bind-only technology contract, а получает provenance из
+> typed tool trace. Terminal-валидация отклоняет решение, которое само требует
+> продолжить поиск либо ссылается на неоткрытую норму/сборник; при смене
+> validation contract такое checkpoint-решение остаётся в tool trajectory и
+> снова становится pending.
+>
+> Живой resume `СКС.xlsx` сохранил первую строку после полной выгрузки Qwen и
+> продолжил со второй. Компактная сериализация второй строки заняла 135,66 с
+> вместо прежнего 4-минутного большого ответа, но выявила новый честный
+> regression-case: модель сослалась на неоткрытые кандидаты и написала
+> «требуется поиск». Решение сохранено как исторический tool result, но новый
+> v4-grounding contract не должен пропускать его в расчёт. До пяти строк и ЛСР
+> прогон ещё не завершён.
 
 > 0.26.4 / build 512 — resume знает актуальный бюджет и фазу evidence
 >

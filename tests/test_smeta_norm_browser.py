@@ -358,6 +358,65 @@ def test_mass_triage_honors_explicit_rerank_request(monkeypatch, tmp_path):
     assert all(item["retrieval_trace"]["reranked"] for item in results.values())
 
 
+def test_rim_reranks_lexical_only_shortlist_without_hidden_query_expansion(
+    monkeypatch,
+    tmp_path,
+):
+    from proxy.smeta_core import norm_browser
+
+    query = "шина заземления в шкафу"
+    lexical = [
+        {
+            "norm_key": f"l:{index}",
+            "norm_code": f"ГЭСНм10-01-00{index}-01",
+            "title": f"lex {index}",
+        }
+        for index in range(6)
+    ]
+    seen = []
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
+    monkeypatch.setattr(
+        norm_browser,
+        "_rag_cards_many",
+        lambda values, **_kwargs: {value: [] for value in values},
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "_query_variants",
+        lambda _query: (_ for _ in ()).throw(
+            AssertionError("RIM query expansion must remain disabled")
+        ),
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "_rerank_cards",
+        lambda value, cards, **_kwargs: (
+            seen.append((value, len(cards))) or cards,
+            True,
+            "ok",
+        ),
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    result = norm_browser.browse_norms_many(
+        [query],
+        limit=5,
+        base_path=tmp_path / "base.sqlite",
+        rerank=True,
+        expand_queries=False,
+    )[query]
+
+    assert seen == [(query, 6)]
+    assert result["retrieval_trace"]["rerank_status"] == "ok"
+    assert result["retrieval_trace"]["reranked"] is True
+    assert result["retrieval_trace"]["query_variants"] == [query]
+    assert result["retrieval_trace"]["query_expansion"] is False
+
+
 def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_path):
     from proxy.smeta_core import norm_browser
 

@@ -1253,6 +1253,7 @@ class RimSessionStore:
             payload = {
                 "schema": "rim_question_v1",
                 "question_id": question_id,
+                "question_kind": str(question.get("question_kind") or ""),
                 "text": text,
                 "reason": str(question.get("reason") or ""),
                 "work_ids": list(question.get("work_ids") or []),
@@ -1323,8 +1324,13 @@ class RimSessionStore:
                 """,
                 (revision_id, _canonical_json(answer), _utcnow(), question_id, safe_id),
             )
+            session_updates = {"pending_question_id": ""}
+            for field in ("region_code", "price_period"):
+                value = answer.get(field)
+                if isinstance(value, str) and value.strip():
+                    session_updates[field] = value.strip()
             self._update_session(
-                conn, safe_id, revision_id, {"pending_question_id": ""}
+                conn, safe_id, revision_id, session_updates
             )
             session = self._session_dict(conn, self._session_row(conn, safe_id))
             return RevisionResult(session, revision_id, parent)

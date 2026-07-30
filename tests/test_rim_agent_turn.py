@@ -57,6 +57,7 @@ def test_specification_turn_reads_nested_intake_and_opens_question(monkeypatch, 
         if len(calls) == 1:
             assert payload["session_context"]["intake"]["work_item_count"] == 1
             assert payload["session_context"]["rim_reference"]["sources"] == []
+            assert payload["session_context"]["confirmed_session_facts"] == {}
             assert payload["session_context"]["intake"]["work_items"][0]["title"].startswith(
                 "Кабель U/UTP"
             )
@@ -96,6 +97,7 @@ def test_specification_turn_reads_nested_intake_and_opens_question(monkeypatch, 
                     "function": {
                         "name": "ask_user",
                         "arguments": {
+                            "question_kind": "physical_installation",
                             "text": "Как проложен кабель?",
                             "reason": "Способ прокладки влияет на норму.",
                             "work_ids": ["vor-001"],
@@ -352,6 +354,87 @@ def test_pending_vor_answer_creates_source_linked_work_revision(tmp_path):
     assert payload["rows"][0]["source_refs"] == ["СКС.xlsx#sheet=СКС;row=6"]
 
 
+def test_pending_region_answer_updates_session_without_rewriting_vor(tmp_path):
+    store = RimSessionStore(tmp_path)
+    created = store.create_session(
+        owner_id="tester",
+        region_code="test",
+        price_period="test",
+    )
+    vor = store.save_vor_revision(
+        created.session["session_id"],
+        owner_id="tester",
+        expected_parent_revision_id=created.revision_id,
+        rows=[
+            {
+                "work_id": "vor-001",
+                "section_name": "Оборудование СКС",
+                "work_name": "Установка шкафа 42U",
+                "unit": "шт.",
+                "quantity": 2,
+                "quantity_origin": "source_explicit",
+                "source_ref": "СКС.xlsx#sheet=СКС;row=6",
+            }
+        ],
+    )
+    question = store.open_question(
+        created.session["session_id"],
+        owner_id="tester",
+        expected_parent_revision_id=vor.revision_id,
+        question={
+            "question_kind": "project_condition",
+            "text": "В каком регионе и квартале составляется смета?",
+            "reason": "Это требуется для текущих цен.",
+            "work_ids": ["vor-001"],
+            "options": ["77, 2026-Q2", "78, 2026-Q2"],
+        },
+    )
+
+    def exchange(_messages, tools):
+        assert [tool["function"]["name"] for tool in tools] == [
+            "interpret_pending_answer"
+        ]
+        return {
+            "_les_model": "qwen3.5:9b",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "interpret_pending_answer",
+                        "arguments": {
+                            "answer": {
+                                "region_code": "77",
+                                "price_period": "2026-Q2",
+                            },
+                            "needs_clarification": False,
+                        },
+                    }
+                }
+            ],
+        }
+
+    result = rim_agent_turn_service.run_rim_agent_turn(
+        store,
+        created.session["session_id"],
+        owner_id="tester",
+        user_message="77 (Москва), 2026-Q2",
+        exchange=exchange,
+        mapping_exchange=lambda *_args: {},
+    )
+
+    session = store.get_session(created.session["session_id"], owner_id="tester")
+    assert result["revision_id"]
+    assert session["current_vor_revision_id"] == vor.revision_id
+    assert session["head_revision_id"] == result["revision_id"]
+    assert session["region_code"] == "77"
+    assert session["price_period"] == "2026-Q2"
+    payload = store.revision_payload(
+        created.session["session_id"],
+        vor.revision_id,
+        owner_id="tester",
+    )["payload"]
+    assert len(payload["rows"]) == 1
+
+
 def test_vor_provenance_allows_model_split_only_with_parent_project_refs():
     previous = [
         {
@@ -458,6 +541,7 @@ def test_agent_turn_persists_typed_mapping_and_asks_rag_hint(monkeypatch, tmp_pa
                     "function": {
                         "name": "ask_user",
                         "arguments": {
+                            "question_kind": "physical_installation",
                             "text": "Для 400 м кабеля способ прокладки не указан. Как он проложен?",
                             "reason": "От способа зависит состав работ нормы.",
                             "work_ids": ["vor-001"],
@@ -506,6 +590,7 @@ def test_mapping_turn_resumes_durable_checkpoint_and_clears_it_on_success(
 
     def interrupted(*_args, **kwargs):
         assert kwargs["resume_checkpoint"] is None
+        assert kwargs["candidate_limit"] == 4
         kwargs["checkpoint"](checkpoint_payload)
         raise RuntimeError("simulated process interruption")
 

@@ -905,6 +905,7 @@ def browse_norms_many(
     collections: list[str] | tuple[str, ...] | None = None,
     table_codes: list[str] | tuple[str, ...] | None = None,
     rerank: bool | None = None,
+    expand_queries: bool = True,
 ) -> dict[str, dict[str, Any]]:
     tool_started = perf_counter()
     bounded_limit = max(1, min(int(limit), 50))
@@ -966,7 +967,14 @@ def browse_norms_many(
     # The configured cross-encoder owns batching. A document with many rows
     # must receive the same retrieval contract as a one-row query.
     rerank_enabled = bool(rerank) if rerank is not None else True
-    variants_by_query = {query: _query_variants(query) for query in clean_queries}
+    variants_by_query = {
+        query: (
+            _query_variants(query)
+            if expand_queries
+            else [query]
+        )
+        for query in clean_queries
+    }
     all_variants = list(dict.fromkeys(
         variant for query in clean_queries for variant in variants_by_query.get(query) or [query]
     ))
@@ -1020,21 +1028,21 @@ def browse_norms_many(
         rerank_status = "not_attempted"
         if rag_cards:
             backend = f"{backend}+smeta_norm_qdrant_hybrid"
-            if rerank_enabled:
-                rerank_started = perf_counter()
-                cards, reranked, rerank_status = _rerank_cards(
-                    query,
-                    fused,
-                    limit=bounded_limit,
-                )
-                rerank_ms += (perf_counter() - rerank_started) * 1000
-                if reranked:
-                    backend = f"{backend}+bge_rerank_rrf"
-                else:
-                    backend = f"{backend}+rerank_{rerank_status}"
+        if rerank_enabled:
+            rerank_started = perf_counter()
+            cards, reranked, rerank_status = _rerank_cards(
+                query,
+                fused,
+                limit=bounded_limit,
+            )
+            rerank_ms += (perf_counter() - rerank_started) * 1000
+            if reranked:
+                backend = f"{backend}+bge_rerank_rrf"
             else:
-                rerank_status = "disabled_by_caller"
-                backend = f"{backend}+rerank_deferred"
+                backend = f"{backend}+rerank_{rerank_status}"
+        else:
+            rerank_status = "disabled_by_caller"
+            backend = f"{backend}+rerank_deferred"
         out[query] = {
             "schema": "smeta_norm_browse_v1",
             "query": query,
@@ -1053,6 +1061,7 @@ def browse_norms_many(
                 "rag": dict(rag_trace),
                 "filters": {"base_types": list(clean_base_types), "collections": list(clean_collections)},
                 "query_variants": query_variants,
+                "query_expansion": bool(expand_queries),
                 "embedding_ms": float(rag_trace.get("embedding_ms") or 0.0),
                 "retrieval_ms": float(rag_trace.get("retrieval_ms") or 0.0),
                 "rerank_ms": round(rerank_ms, 2),
