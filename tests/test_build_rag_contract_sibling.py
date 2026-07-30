@@ -141,6 +141,26 @@ def test_retry_call_recovers_transient_failure(monkeypatch):
 def test_resume_rehydrates_embedding_environment_from_generation_contract(
     monkeypatch, tmp_path: Path
 ):
+    # _configure_contract intentionally writes the process environment for the
+    # resumed worker. Register every written key with monkeypatch first so this
+    # test cannot leak the Qwen build profile into later runtime tests.
+    for env_name in (
+        "RAG_COLLECTION_NAME",
+        "RAG_INDEX_CONTRACT_PATH",
+        "RAG_QDRANT_SCHEMA",
+        "RAG_DENSE_VECTOR_NAME",
+        "RAG_SPARSE_VECTOR_NAME",
+        "EMBEDDING_MODEL",
+        "EMBED_MODEL",
+        "EMBED_BACKEND",
+        "RAG_VECTOR_SIZE",
+        "RAG_CHUNK_UNIT",
+        "COREML_EMBED_MODEL",
+        "COREML_EMBED_SEQ_LEN",
+        "COREML_EMBED_COMPUTE_UNITS",
+        "COREML_EMBED_FALLBACK",
+    ):
+        monkeypatch.setenv(env_name, __import__("os").environ.get(env_name, ""))
     contract = tmp_path / "contract.json"
     contract.write_text(
         json.dumps(

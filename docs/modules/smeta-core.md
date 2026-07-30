@@ -4,9 +4,13 @@
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
 
-> **Статус 2026-07-28: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
-> model-owned evidence loop, immutable построчный mapping, обязательная глобальная модельная ревизия,
+> **Статус 2026-07-29: ✅ код и документ синхронизированы (0.25.1).** Канонический PDF→ЛСР путь —
+> model-owned evidence loop, immutable построчный mapping, optional global-review на local Ollama,
 > автoчерновик и отдельный пользовательский lock перед финальным расчётом.
+> На local Ollama/Qwen incomplete `unbound`/`bind` evidence по умолчанию принимается как
+> `precalculation_blockers` (поведение 0.24.48), чтобы ЛСР доходил до XLSX; cloud остаётся
+> hard-reject. Env: `LES_SMETA_DOCUMENT_SOFT_ACCEPT`, `LES_SMETA_DOCUMENT_GLOBAL_REVIEW`,
+> `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS`, `LES_SMETA_DOCUMENT_BATCH_SIZE`.
 > Архитектурное решение и судьба экспериментальных веток зафиксированы в
 > [ADR-13](../ADR-13-smeta-session-workflow.md).
 
@@ -64,6 +68,12 @@ tool-loop с точным validation feedback, сама выбирает evidenc
 поиска дублей; Python его не редактирует и не выбирает решение. После успешного
 `submit_lsr_mapping` session публикует `row_ready`, application переводит его в SSE `smeta_row`, а
 Совушка обновляет таблицу внутри текущего сообщения. Черновые кандидаты в таблицу не выводятся.
+После каждого принятого transport-пакета application атомарно сохраняет checkpoint, привязанный к
+SHA-256 исходного вложения. Повторный запуск продолжает только оставшиеся `work_id`; готовые
+модельные решения не генерируются заново. Structured mapping сериализуется порциями до
+`LES_SMETA_DOCUMENT_MAPPING_CHUNK` строк (default 8). Timeout останавливает идентичный
+детерминированный запрос после первой попытки и сохраняет уже принятые строки. Для локальной
+диагностики тот же контракт доступен через `tools/smeta_document_local_run.py`.
 
 Отдельных обязательных resource-review, impact-review, dominant-review и `finish_norm_selection` нет.
 После построчного mapping обязательна одна глобальная модельная ревизия всей таблицы. Её расчёт имеет
@@ -128,6 +138,9 @@ immutable lock-ревизию и только затем отдельный фи
   выбранные моделью `table_codes` возвращаются полным официальным меню без ranking.
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.
+- `proxy.services.etm_price_service` и `/api/prices/etm/*` — read-only источник текущих
+  поставщицких цен для КАЦ: session reuse, пакеты до 50 кодов, rate limit и provenance.
+  Код товара/материал выбирает модель или пользователь; ETM adapter только читает заданные коды.
 - `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
 
 `estimate_harness_service` временно исполняет старый tool-loop только за
@@ -178,6 +191,11 @@ Score и порядок кандидатов не являются выборо�
 Если модель подряд повторила полностью идентичный детерминированный tool-call, workflow также
 останавливается сразу: повтор не меняет evidence и не должен превращаться в многоминутный цикл.
 Профессиональная полнота evidence определяется skill и моделью, а не Python-gate.
+Локальный native Ollama/Qwen обрабатывает исходник по одной строке на transport-пакет; общий
+контекст сохраняется через `neighbor_context`, а обязательная глобальная модельная ревизия не
+отключается. Если reasoning-модель исчерпала лимит до видимого structured JSON, transport один раз
+повторяет только сериализацию с `think=false`; после отклонённого JSON допускается ещё один
+ограниченный schema-repair той же модели. Поиск и открытие карточек при этом не синтезируются кодом.
 Если Ollama-модель дважды сериализовала `items`/`rows` как JSON-строку внутри аргументов,
 transport рекурсивно распаковывает только контейнеры JSON/Python literal. Все `work_id`, коды и
 решения остаются дословными; исполняемый `eval` не используется.
@@ -207,6 +225,10 @@ Batch-level `page`/`limit`, которые Qwen кладёт рядом с `item
 подготовительные операции и слои не оплачивались дважды.
 JSON Schema является transport-контрактом, а не профессиональным validator: значения полей создаёт
 та же модель из собственной conversation history; Python их не дописывает и не меняет.
+Для `unbound` поля `queries_used` и `opened_norm_codes` нормализуются только по фактической tool
+trajectory: выдуманные ссылки отбрасываются, а реально выполненные запросы и чтения могут быть
+восстановлены из trace. Причины отказа и вывод о coverage код не сочиняет; если их нет, mapping
+остаётся невалидным и возвращается той же модели.
 
 `candidate_evaluations` фиксирует оценку выбранной карточки по операции, объекту, измерителю, области
 и чужим ресурсам. Если search показал несколько карточек, transport требует открыть и сравнить выбранную хотя

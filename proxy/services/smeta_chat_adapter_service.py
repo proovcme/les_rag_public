@@ -383,6 +383,15 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
+    tool_names = {
+        str((tool.get("function") or {}).get("name") or "")
+        for tool in tools
+        if isinstance(tool, dict)
+    }
+    if tool_names and tool_names <= {"ask_user", "interpret_pending_answer"}:
+        # These schemas are tiny.  A large generation allowance only lets a
+        # local reasoning model spend minutes on a one-question transport call.
+        max_tokens = min(max_tokens, 512)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
@@ -469,7 +478,7 @@ def _smeta_document_mapping_exchange(
 ) -> dict[str, Any]:
     """Serialize the same model's decisions with provider-enforced JSON schema."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 6000)
+    max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 8000)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
@@ -519,8 +528,58 @@ def _smeta_document_mapping_exchange(
                 else response_payload.get("choices", [{}])[0].get("message", {})
             )
             message = message if isinstance(message, dict) else {}
-            parsed = _extract_json_object(str(message.get("content") or ""))
+            # Prefer content. On long Ollama/Qwen conversations the model often
+            # spends the whole budget in `thinking` and leaves content empty —
+            # then retry once with think=false so `format` lands in content.
+            visible_text = _assistant_text(message)
+            parsed = _extract_json_object(visible_text)
             if parsed is None:
+                thinking_text = _strip_think(str(message.get("thinking") or ""))
+                parsed = _extract_json_object(thinking_text)
+                if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
+                    parsed = None
+            if parsed is None and native_ollama and "think" not in body:
+                retry_body = dict(body)
+                retry_body["think"] = False
+                # Truncation often burns the budget on thinking; give the retry
+                # more room for the JSON object itself.
+                if str(response_payload.get("done_reason") or "") == "length":
+                    options = dict(retry_body.get("options") or {})
+                    options["num_predict"] = max(int(options.get("num_predict") or max_tokens), max_tokens * 2)
+                    retry_body["options"] = options
+                logger.warning(
+                    "[SMETA_DOCUMENT] empty mapping content; retrying once with think=false "
+                    "done_reason=%r eval_count=%r thinking_chars=%s num_predict=%s",
+                    response_payload.get("done_reason"),
+                    response_payload.get("eval_count"),
+                    len(str(message.get("thinking") or "")),
+                    (retry_body.get("options") or {}).get("num_predict"),
+                )
+                response = client.post(chat_url, headers=headers, json=retry_body)
+                response.raise_for_status()
+                response_payload = response.json()
+                message = response_payload.get("message", {})
+                message = message if isinstance(message, dict) else {}
+                visible_text = _assistant_text(message)
+                parsed = _extract_json_object(visible_text)
+                if parsed is None:
+                    parsed = _extract_json_object(_strip_think(str(message.get("thinking") or "")))
+                    if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
+                        parsed = None
+            if parsed is None:
+                raw_preview = " ".join(str(message.get("content") or "").split())[:800]
+                visible_preview = " ".join(str(visible_text or "").split())[:800]
+                thinking_preview = " ".join(str(message.get("thinking") or "").split())[:400]
+                logger.warning(
+                    "[SMETA_DOCUMENT] invalid mapping preview done_reason=%r eval_count=%r "
+                    "keys=%r raw=%r visible=%r thinking=%r",
+                    response_payload.get("done_reason"),
+                    response_payload.get("eval_count"),
+                    sorted(message.keys()),
+                    raw_preview,
+                    visible_preview,
+                    thinking_preview,
+                )
                 raise RuntimeError("smeta provider returned invalid structured mapping JSON")
             parsed["_les_done_reason"] = response_payload.get("done_reason")
             parsed["_les_eval_count"] = response_payload.get("eval_count")

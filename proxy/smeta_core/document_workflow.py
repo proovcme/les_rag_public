@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import ast
+import copy
+import hashlib
 import json
+import math
+import os
 import re
 from dataclasses import asdict
 from pathlib import Path
@@ -34,6 +38,179 @@ Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 Progress = Callable[[dict[str, Any]], None]
 AgentBatchRunner = Callable[..., dict[str, Any]]
+Checkpoint = Callable[[dict[str, Any]], None]
+
+_COMPRESSIBLE_TOOL_RESULTS = frozenset({
+    "browse_norm_catalog",
+    "search_norms_batch",
+    "read_norms_batch",
+})
+_RIM_MAX_READ_CARDS_PER_CALL = 2
+MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-terminal-unbound-v4"
+
+
+class MappingTransportTimeout(RuntimeError):
+    """Structured mapping timed out; the identical payload must not be retried."""
+
+
+def _mapping_chunk_size() -> int:
+    """Bound only the JSON transport; the model still owns every decision."""
+    raw = os.getenv("LES_SMETA_DOCUMENT_MAPPING_CHUNK", "8").strip()
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 8
+
+
+def _is_timeout_error(error: BaseException) -> bool:
+    text = f"{type(error).__name__}: {error}".casefold()
+    return "readtimeout" in text or "timed out" in text or "timeout" in text
+
+
+def _compress_tool_result(name: str, payload: Any) -> Any:
+    """Keep traceable navigation facts while dropping stale bulky payloads."""
+    if not isinstance(payload, dict):
+        return {"compressed": True, "tool": name}
+    envelope = {
+        "compressed": True,
+        "tool": name,
+        **{
+            key: payload.get(key)
+            for key in (
+                "ok", "error", "next_action", "focus_work_id",
+                "deferred_work_ids",
+            )
+            if payload.get(key) not in (None, "", [])
+        },
+    }
+    if name == "browse_norm_catalog":
+        rows = []
+        for item in payload.get("rows") or payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            compact_row = {
+                key: item.get(key)
+                for key in (
+                    "work_id", "ok", "level", "family", "collection", "table",
+                    "families", "collections", "tables", "error",
+                )
+                if item.get(key) not in (None, "", [])
+            }
+            shortlist = [
+                {
+                    key: entry.get(key)
+                    for key in ("key", "title", "navigation_score")
+                    if entry.get(key) not in (None, "")
+                }
+                for entry in (item.get("items") or [])[:6]
+                if isinstance(entry, dict)
+            ]
+            if shortlist:
+                compact_row["collection_shortlist"] = shortlist
+            passport = (
+                item.get("collection_passport")
+                if isinstance(item.get("collection_passport"), dict)
+                else {}
+            )
+            if passport:
+                compact_row["collection_passport"] = {
+                    "collection": passport.get("collection"),
+                    "title": passport.get("title"),
+                    "representative_sections": list(
+                        passport.get("representative_sections") or []
+                    )[:4],
+                }
+            rows.append(compact_row)
+        return {**envelope, "rows": rows}
+    if name == "search_norms_batch":
+        rows = []
+        for item in payload.get("rows") or payload.get("items") or []:
+            if not isinstance(item, dict):
+                continue
+            candidates = item.get("candidates") or []
+            rows.append({
+                "work_id": item.get("work_id"),
+                "ok": item.get("ok"),
+                "candidate_codes": [
+                    str(card.get("norm_code") or "")
+                    for card in candidates
+                    if isinstance(card, dict) and card.get("norm_code")
+                ],
+                "candidates": [
+                    {
+                        "norm_code": str(card.get("norm_code") or ""),
+                        "title": str(
+                            card.get("title") or card.get("norm_name") or ""
+                        )[:240],
+                        "measure_unit": str(card.get("measure_unit") or ""),
+                        "candidate_rank": card.get("candidate_rank"),
+                    }
+                    for card in candidates
+                    if isinstance(card, dict) and card.get("norm_code")
+                ],
+                "page": item.get("page"),
+                "has_more": item.get("has_more"),
+                "error": item.get("error"),
+            })
+        return {**envelope, "rows": rows}
+    if name == "read_norms_batch":
+        rows = []
+        for item in payload.get("rows") or []:
+            if not isinstance(item, dict):
+                continue
+            rows.append({
+                "work_id": item.get("work_id"),
+                "ok": item.get("ok"),
+                "norm_codes": [
+                    str(card.get("norm_code") or "")
+                    for card in (item.get("norms") or [])
+                    if isinstance(card, dict) and card.get("norm_code")
+                ],
+                "error": item.get("error"),
+            })
+        return {**envelope, "rows": rows}
+    return envelope
+
+
+def _prune_stale_tool_evidence(
+    conversation: list[dict[str, Any]], *, keep_recent: int = 1,
+) -> None:
+    """Keep only the current typed read full; compact navigation and old reads."""
+    compressible: list[int] = []
+    readable: list[int] = []
+    for index, message in enumerate(conversation):
+        if str(message.get("role") or "") != "tool":
+            continue
+        name = str(message.get("name") or "")
+        if name in _COMPRESSIBLE_TOOL_RESULTS:
+            compressible.append(index)
+            if name == "read_norms_batch":
+                readable.append(index)
+    keep_count = max(0, int(keep_recent))
+    keep = set(readable[-keep_count:]) if keep_count else set()
+    for index in compressible:
+        if index in keep:
+            continue
+        message = conversation[index]
+        if message.get("_les_compressed"):
+            continue
+        name = str(message.get("name") or "")
+        try:
+            payload = json.loads(str(message.get("content") or "") or "{}")
+        except json.JSONDecodeError:
+            payload = {"raw": str(message.get("content") or "")[:200]}
+        message["content"] = json.dumps(
+            _compress_tool_result(name, payload),
+            ensure_ascii=False,
+            default=str,
+        )
+        message["_les_compressed"] = True
+    for message in conversation[:-2]:
+        if str(message.get("role") or "") == "assistant":
+            message.pop("thinking", None)
+            if message.get("tool_calls"):
+                message["content"] = None
+                message["_les_content_compressed"] = True
 
 
 def _decision_name(selection: dict[str, Any]) -> str:
@@ -54,6 +231,44 @@ def _stable_unique_text(values: list[Any]) -> list[str]:
     return sorted(normalized, key=lambda value: (value.casefold(), value))
 
 
+_CATALOG_COMPASS_STOP_WORDS = frozenset({
+    "для", "или", "при", "это", "что", "как", "под", "над", "без", "все",
+    "работ", "работы", "монтаж", "установка", "установки", "сборник",
+    "официальный", "типичный", "типовые",
+})
+
+
+def _catalog_compass_roots(value: object) -> set[str]:
+    """Normalize official catalog identity without adding domain vocabulary."""
+    roots = set()
+    for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", str(value or "").casefold()):
+        normalized = token.replace("ё", "е")
+        if len(normalized) < 4 or normalized in _CATALOG_COMPASS_STOP_WORDS:
+            continue
+        roots.add(normalized[:7] if len(normalized) > 7 else normalized)
+    return roots
+
+
+def _catalog_compass_score(query: str, item: dict[str, Any]) -> float:
+    """Match a model query against an official collection title and purpose."""
+    query_roots = _catalog_compass_roots(query)
+    catalog_roots = _catalog_compass_roots(
+        " ".join([
+            str(item.get("title") or ""),
+            str(item.get("purpose") or ""),
+            " ".join(str(value) for value in (item.get("typical_scope") or [])),
+        ])
+    )
+    if not query_roots or not catalog_roots:
+        return 0.0
+    overlap = query_roots & catalog_roots
+    if not overlap:
+        return 0.0
+    catalog_coverage = len(overlap) / len(catalog_roots)
+    query_coverage = len(overlap) / len(query_roots)
+    return round((2.0 * catalog_coverage) + query_coverage, 6)
+
+
 def _candidate_payload(
     work: dict[str, Any],
     query: str | list[str],
@@ -70,12 +285,15 @@ def _candidate_payload(
     cards: list[dict[str, Any]] = []
     seen: set[str] = set()
     backends: list[str] = []
+    retrieval_traces: list[dict[str, Any]] = []
     source_integrity: dict[str, Any] = {}
     candidate_sets: list[tuple[str, list[dict[str, Any]]]] = []
     results = search_results or browse_norms_many(queries, limit=min(50, max(limit, limit * 3)))
     for search_query in queries:
         result = results.get(search_query) or {}
         backends.append(str(result.get("backend") or ""))
+        if isinstance(result.get("retrieval_trace"), dict):
+            retrieval_traces.append(dict(result["retrieval_trace"]))
         source_integrity = result.get("source_integrity") or source_integrity
         ranked = []
         for card in result.get("cards") or []:
@@ -142,6 +360,11 @@ def _candidate_payload(
         if len(cards) >= page_end:
             break
     page_cards = cards[page_start:page_end]
+    rerank_statuses = list(dict.fromkeys(
+        str(trace.get("rerank_status") or "")
+        for trace in retrieval_traces
+        if str(trace.get("rerank_status") or "")
+    ))
     return {
         "work_id": work["work_id"],
         "source": {
@@ -154,6 +377,9 @@ def _candidate_payload(
         },
         "query": queries,
         "backend": ",".join(dict.fromkeys(backends)),
+        "retrieval_policy": "native_rrf_then_rerank_required",
+        "rerank_status": rerank_statuses,
+        "reranked": any(bool(trace.get("reranked")) for trace in retrieval_traces),
         "source_integrity": source_integrity,
         "candidates": page_cards,
         "page": page_number,
@@ -166,6 +392,24 @@ def _norm_collection(code: object) -> str:
     """Expose the collection encoded by a typed norm ref without choosing scope."""
     bare = gesn_service._split_norm_ref(code)[1]
     return bare[:2] if bare else ""
+
+
+def _questions_to_ask_for_norm(code: str) -> list[str]:
+    """Return bounded navigation hints; they never make a norm calculable."""
+    from proxy.services.smeta_norm_store import get_smeta_norm_store
+
+    profile = get_smeta_norm_store().norm_profile(code)
+    navigation = profile.get("navigation") if isinstance(profile, dict) else {}
+    questions = (
+        navigation.get("questions_to_ask")
+        if isinstance(navigation, dict)
+        else []
+    )
+    return [
+        str(question).strip()
+        for question in (questions or [])
+        if str(question).strip()
+    ][:8]
 
 
 def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | None:
@@ -194,6 +438,10 @@ def _opened_norm_card(code: str, candidate: dict[str, Any]) -> dict[str, Any] | 
         "resource_count": len(resources),
         "nr_sp_candidates": candidate.get("nr_sp_candidates") or [],
         "source_ref": candidate.get("source_ref") or "",
+        "questions_to_ask": list(
+            candidate.get("questions_to_ask") or _questions_to_ask_for_norm(code)
+        )[:8],
+        "card_role": "structured_normative_store_evidence",
     }
 
 
@@ -325,15 +573,9 @@ def _candidate_evaluation_errors(
         for code, card in opened_for_work.items()
         if str((card or {}).get("norm_code") or code).strip()
     }
-    candidate_codes = {
-        str((card or {}).get("norm_code") or code).strip()
-        for code, card in candidates_for_work.items()
-        if str((card or {}).get("norm_code") or code).strip()
-    }
     evaluated_codes: set[str] = set()
     evaluation_signatures: dict[str, tuple[Any, ...]] = {}
     selected_evaluations = 0
-    compared_alternatives = 0
     allowed = {
         "operation_match": {"exact", "partial", "none", "unknown"},
         "object_match": {"exact", "partial", "none", "unknown"},
@@ -387,19 +629,9 @@ def _candidate_evaluation_errors(
         decision = str(evaluation.get("decision") or "")
         if code == selected_code and decision == "selected":
             selected_evaluations += 1
-        elif decision in {"rejected", "uncertain"}:
-            compared_alternatives += 1
 
     if selected_evaluations != 1:
         errors.append("candidate_evaluations must mark the submitted norm exactly once as selected")
-    if len(candidate_codes) >= 2 and len(opened_codes) < 2:
-        errors.append(
-            "candidate_evaluations requires opening at least one shown alternative before bind"
-        )
-    elif len(candidate_codes) >= 2 and (len(evaluated_codes) < 2 or compared_alternatives < 1):
-        errors.append(
-            "candidate_evaluations must compare at least one rejected or uncertain opened alternative"
-        )
     return errors
 
 
@@ -530,6 +762,46 @@ def _tool_string_list(value: Any) -> list[str]:
     return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
 
+def _focus_serialization_guard(
+    session: "SmetaNormToolSession",
+    args: dict[str, Any],
+    *,
+    mapping_chunk: int,
+) -> dict[str, Any] | None:
+    """Keep a completed one-row focus durable before later evidence work."""
+    focus_work_id = (
+        session.remaining_work_ids[0]
+        if session.remaining_work_ids
+        else ""
+    )
+    requested_work_ids = {
+        str(item.get("work_id") or "")
+        for item in _tool_array_argument(args, "items")
+        if str(item.get("work_id") or "")
+    }
+    deferred = requested_work_ids - {focus_work_id}
+    if (
+        mapping_chunk != 1
+        or not focus_work_id
+        or not session.opened.get(focus_work_id)
+        or not deferred
+    ):
+        return None
+    return {
+        "ok": False,
+        "error": (
+            "finish and serialize the current focus work before "
+            "using evidence tools for later rows"
+        ),
+        "focus_work_id": focus_work_id,
+        "deferred_work_ids": sorted(deferred),
+        "next_action": (
+            "end the tool loop now; LES will request your own "
+            "structured mapping for the focus work_id"
+        ),
+    }
+
+
 class SmetaNormToolSession:
     """State shared by every smeta agent implementation.
 
@@ -544,15 +816,32 @@ class SmetaNormToolSession:
         candidate_limit: int,
         progress: Progress | None = None,
         evidence_budget: EvidenceBudget | None = None,
+        require_scoped_search: bool = False,
     ) -> None:
         self.by_id = {str(row["work_id"]): row for row in work_rows}
         self.candidate_limit = max(1, int(candidate_limit))
         self.progress = progress
         self.evidence_budget = evidence_budget or EvidenceBudget.from_environment()
+        self.require_scoped_search = bool(require_scoped_search)
         self.started_at = perf_counter()
-        self.evidence_usage = {"search_calls": 0, "read_calls": 0, "opened_cards": 0}
+        self.evidence_usage = {
+            "search_calls": 0,
+            "read_calls": 0,
+            "opened_cards": 0,
+            "tool_elapsed_seconds": 0.0,
+        }
         self.catalog_trace: list[dict[str, Any]] = []
         self.catalog_seen: set[tuple[str, str, str, str]] = set()
+        self.family_catalog_seen: set[str] = set()
+        self.selected_base_types: dict[str, dict[str, dict[str, str]]] = {
+            work_id: {} for work_id in self.by_id
+        }
+        self.selected_collections: dict[str, set[tuple[str, str]]] = {
+            work_id: set() for work_id in self.by_id
+        }
+        self.selected_tables: dict[str, set[tuple[str, str, str]]] = {
+            work_id: set() for work_id in self.by_id
+        }
         self.candidates: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
@@ -577,6 +866,129 @@ class SmetaNormToolSession:
         self.invalid_submission_attempts: dict[str, int] = {}
         self.tool_trajectory: list[dict[str, Any]] = []
 
+    def work_fingerprint(self) -> str:
+        return hashlib.sha256(
+            json.dumps(
+                self.by_id,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+                default=str,
+            ).encode("utf-8")
+        ).hexdigest()
+
+    def checkpoint_state(self) -> dict[str, Any]:
+        """Return JSON-safe state needed to resume after the last tool result."""
+        return {
+            "schema": "smeta_norm_tool_session_checkpoint_v1",
+            "work_fingerprint": self.work_fingerprint(),
+            "candidate_limit": self.candidate_limit,
+            "require_scoped_search": self.require_scoped_search,
+            "evidence_usage": dict(self.evidence_usage),
+            "catalog_trace": copy.deepcopy(self.catalog_trace),
+            "catalog_seen": [list(value) for value in sorted(self.catalog_seen)],
+            "family_catalog_seen": sorted(self.family_catalog_seen),
+            "selected_base_types": copy.deepcopy(self.selected_base_types),
+            "selected_collections": {
+                work_id: [list(value) for value in sorted(values)]
+                for work_id, values in self.selected_collections.items()
+            },
+            "selected_tables": {
+                work_id: [list(value) for value in sorted(values)]
+                for work_id, values in self.selected_tables.items()
+            },
+            "candidates": copy.deepcopy(self.candidates),
+            "opened": copy.deepcopy(self.opened),
+            "browse_trace": copy.deepcopy(self.browse_trace),
+            "query_trace": copy.deepcopy(self.query_trace),
+            "accepted_rows": copy.deepcopy(self.accepted_rows),
+            "invalid_submission_attempts": dict(self.invalid_submission_attempts),
+            "tool_trajectory": copy.deepcopy(self.tool_trajectory),
+        }
+
+    def restore_checkpoint_state(self, state: dict[str, Any]) -> None:
+        """Restore trusted server-produced state for the same immutable VOR."""
+        if str(state.get("schema") or "") != "smeta_norm_tool_session_checkpoint_v1":
+            raise RuntimeError("unsupported smeta norm checkpoint schema")
+        if str(state.get("work_fingerprint") or "") != self.work_fingerprint():
+            raise RuntimeError("smeta norm checkpoint belongs to another work revision")
+        known = set(self.by_id)
+
+        def work_mapping(name: str) -> dict[str, Any]:
+            raw = state.get(name) if isinstance(state.get(name), dict) else {}
+            unknown = set(str(key) for key in raw) - known
+            if unknown:
+                raise RuntimeError(
+                    f"smeta norm checkpoint {name} has unknown work_ids: {sorted(unknown)}"
+                )
+            return {str(key): value for key, value in raw.items()}
+
+        self.evidence_usage = {
+            **self.evidence_usage,
+            **dict(state.get("evidence_usage") or {}),
+        }
+        self.catalog_trace = copy.deepcopy(list(state.get("catalog_trace") or []))
+        self.catalog_seen = {
+            tuple(str(item) for item in value)
+            for value in (state.get("catalog_seen") or [])
+            if isinstance(value, list) and len(value) == 4
+        }
+        self.family_catalog_seen = {
+            str(value)
+            for value in (state.get("family_catalog_seen") or [])
+            if str(value) in known
+        }
+        restored_base_types = work_mapping("selected_base_types")
+        self.selected_base_types = {
+            work_id: copy.deepcopy(restored_base_types.get(work_id) or {})
+            for work_id in self.by_id
+        }
+        restored_collections = work_mapping("selected_collections")
+        self.selected_collections = {
+            work_id: {
+                tuple(str(item) for item in value)
+                for value in (restored_collections.get(work_id) or [])
+                if isinstance(value, list) and len(value) == 2
+            }
+            for work_id in self.by_id
+        }
+        restored_tables = work_mapping("selected_tables")
+        self.selected_tables = {
+            work_id: {
+                tuple(str(item) for item in value)
+                for value in (restored_tables.get(work_id) or [])
+                if isinstance(value, list) and len(value) == 3
+            }
+            for work_id in self.by_id
+        }
+        for name in ("candidates", "opened", "browse_trace"):
+            restored = work_mapping(name)
+            setattr(
+                self,
+                name,
+                {
+                    work_id: copy.deepcopy(
+                        restored.get(work_id)
+                        or ({} if name != "browse_trace" else [])
+                    )
+                    for work_id in self.by_id
+                },
+            )
+        self.query_trace = copy.deepcopy(list(state.get("query_trace") or []))
+        self.accepted_rows = {
+            work_id: copy.deepcopy(value)
+            for work_id, value in work_mapping("accepted_rows").items()
+        }
+        self.invalid_submission_attempts = {
+            str(key): int(value)
+            for key, value in dict(
+                state.get("invalid_submission_attempts") or {}
+            ).items()
+        }
+        self.tool_trajectory = copy.deepcopy(
+            list(state.get("tool_trajectory") or [])
+        )
+
     @property
     def remaining_work_ids(self) -> list[str]:
         return [work_id for work_id in self.by_id if work_id not in self.accepted_rows]
@@ -600,12 +1012,18 @@ class SmetaNormToolSession:
             result = self._submit(args)
         else:
             result = {"ok": False, "error": f"unknown tool: {name}"}
+        elapsed_seconds = max(0.0, perf_counter() - started)
+        if name != "submit_lsr_mapping":
+            self.evidence_usage["tool_elapsed_seconds"] = round(
+                float(self.evidence_usage["tool_elapsed_seconds"]) + elapsed_seconds,
+                4,
+            )
         self.tool_trajectory.append({
             "turn": turn,
             "tool": name,
             "arguments": args,
             "result": result,
-            "elapsed_ms": round((perf_counter() - started) * 1000, 2),
+            "elapsed_ms": round(elapsed_seconds * 1000, 2),
         })
         return result
 
@@ -614,9 +1032,12 @@ class SmetaNormToolSession:
         # terminal decision after it has spent the available search/read time.
         if name == "submit_lsr_mapping":
             return ""
-        elapsed = perf_counter() - self.started_at
+        elapsed = float(self.evidence_usage["tool_elapsed_seconds"])
         if elapsed > self.evidence_budget.elapsed_seconds:
-            return f"task time budget exhausted after {elapsed:.1f}s; submit the model-owned decision"
+            return (
+                f"evidence tool time budget exhausted after {elapsed:.1f}s; "
+                "submit the model-owned decision"
+            )
         if name == "search_norms_batch":
             if self.evidence_usage["search_calls"] >= self.evidence_budget.search_calls:
                 return "search budget exhausted; use collected evidence and submit the model-owned decision"
@@ -626,6 +1047,12 @@ class SmetaNormToolSession:
                 len(_normalize_norm_codes_transport(item))
                 for item in _tool_array_argument(args, "items")
             )
+            if self.require_scoped_search and requested > _RIM_MAX_READ_CARDS_PER_CALL:
+                return (
+                    "RIM read batch is limited to two full typed cards per model turn; "
+                    "choose the strongest candidate and one comparison card, then continue "
+                    "with another bounded read batch if evidence still requires it"
+                )
             if self.evidence_usage["read_calls"] >= self.evidence_budget.read_calls:
                 return "read budget exhausted; use opened cards and submit the model-owned decision"
             if self.evidence_usage["opened_cards"] + requested > self.evidence_budget.opened_cards:
@@ -635,27 +1062,159 @@ class SmetaNormToolSession:
         return ""
 
     def _catalog(self, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
-        rows_out = []
+        rows_out: list[dict[str, Any]] = []
+        shared_catalog_owner: dict[tuple[str, str, str, str], str] = {}
+        collection_shortlist_cache: dict[
+            tuple[str, str],
+            dict[str, Any],
+        ] = {}
+        pending_read_work_ids = [
+            work_id
+            for work_id in self.by_id
+            if self.candidates.get(work_id) and not self.opened.get(work_id)
+        ]
+
+        def compact_items(payload: dict[str, Any]) -> list[dict[str, Any]]:
+            compacted = []
+            for entry in payload.get("items") or []:
+                if not isinstance(entry, dict):
+                    continue
+                compact = {
+                    "key": entry.get("key") or entry.get("norm_code"),
+                    "norm_count": entry.get("norm_count"),
+                    "resource_count": entry.get("resource_count"),
+                }
+                for key, bound in (
+                    ("official_name", 240),
+                    ("purpose", 320),
+                    ("title", 240),
+                    ("approval_basis", 240),
+                    ("calculation_use", 320),
+                    ("navigation_url", 240),
+                    ("source_ref", 240),
+                    ("source_example", 160),
+                ):
+                    value = str(entry.get(key) or "").strip()
+                    if value:
+                        compact[key] = value[:bound]
+                for key in ("typical_scope", "not_for", "questions_to_ask"):
+                    values = [
+                        str(value).strip()
+                        for value in (entry.get(key) or [])
+                        if str(value).strip()
+                    ]
+                    if values:
+                        compact[key] = values[:6]
+                if entry.get("measure_unit"):
+                    compact["measure_unit"] = entry.get("measure_unit")
+                if entry.get("navigation_score") is not None:
+                    compact["navigation_score"] = entry.get("navigation_score")
+                if entry.get("catalog_compass_score") is not None:
+                    compact["catalog_compass_score"] = entry.get(
+                        "catalog_compass_score"
+                    )
+                examples = [
+                    {
+                        "norm_code": str(example.get("norm_code") or "")[:40],
+                        "norm_name": str(example.get("norm_name") or "")[:240],
+                    }
+                    for example in (entry.get("matched_norm_examples") or [])[:3]
+                    if isinstance(example, dict)
+                ]
+                if examples:
+                    compact["matched_norm_examples"] = examples
+                compacted.append(compact)
+            return compacted
+
+        def reject(
+            *,
+            work_id: str,
+            error: str,
+            details: list[str],
+            filters: dict[str, str],
+            next_action: str = "",
+        ) -> None:
+            row = {
+                "work_id": work_id,
+                "ok": False,
+                "error": error,
+                "details": details,
+                "filters": filters,
+                "items": [],
+            }
+            if next_action:
+                row["next_action"] = next_action
+            rows_out.append(row)
+            trace_row = {
+                "phase": "catalog_browse",
+                "turn": turn,
+                "work_id": work_id,
+                "level": "rejected",
+                "filters": filters,
+                "error": error,
+                "details": details,
+                "item_count": 0,
+            }
+            if next_action:
+                trace_row["next_action"] = next_action
+            self.catalog_trace.append(trace_row)
+
         for item in _tool_array_argument(args, "items"):
             work_id = str(item.get("work_id") or "")
             if work_id not in self.by_id:
                 rows_out.append({"work_id": work_id, "ok": False, "error": "unknown work_id"})
                 continue
             family = str(item.get("family") or "").strip()
-            collection = str(item.get("collection") or "").strip()
+            collection = re.sub(r"\D", "", str(item.get("collection") or ""))[:2]
             table = re.sub(r"[^0-9-]", "", str(item.get("table") or "")).strip("-")[:9]
+            confirm_scope = _tool_bool(item.get("confirm_scope"), False)
+            scope_reason = " ".join(str(item.get("scope_reason") or "").split()).strip()
+            confidence = str(item.get("confidence") or "").strip().casefold()
+            filters = {"family": family, "collection": collection, "table": table}
+            if self.require_scoped_search and pending_read_work_ids:
+                reject(
+                    work_id=work_id,
+                    error=(
+                        "candidate cards for the current work package must be read "
+                        "before further catalog navigation"
+                    ),
+                    details=[
+                        (
+                            "the current scoped batch search already returned candidates "
+                            "for work_ids: "
+                            + ", ".join(pending_read_work_ids)
+                        ),
+                        (
+                            "choose at most two current candidate codes per turn for one "
+                            "of those work_ids and call read_norms_batch"
+                        ),
+                    ],
+                    filters=filters,
+                    next_action="read_norms_batch",
+                )
+                continue
             catalog_key = (
                 work_id,
                 family.casefold(),
-                re.sub(r"\D", "", collection)[:2],
+                collection,
                 table,
             )
-            if catalog_key in self.catalog_seen:
+            catalog_was_seen = catalog_key in self.catalog_seen
+            pending_collection_confirmation = bool(
+                self.require_scoped_search
+                and family
+                and collection
+                and not table
+                and confirm_scope
+                and (family.casefold(), collection)
+                not in self.selected_collections[work_id]
+            )
+            if catalog_was_seen and not pending_collection_confirmation:
                 row = {
                     "work_id": work_id,
                     "ok": True,
                     "level": "already_seen",
-                    "filters": {"family": family, "collection": collection, "table": table},
+                    "filters": filters,
                     "items": [],
                     "repeated": True,
                     "next_action": "choose a table or call search_norms_batch with the selected scope",
@@ -667,8 +1226,472 @@ class SmetaNormToolSession:
                     "item_count": 0, "repeated": True,
                 })
                 continue
+
+            if self.require_scoped_search and not family:
+                self.family_catalog_seen.add(work_id)
+
+            if self.require_scoped_search and family and work_id not in self.family_catalog_seen:
+                reject(
+                    work_id=work_id,
+                    error="base type selection requires the family catalog",
+                    details=[
+                        "call browse_norm_catalog with only work_id first",
+                        "compare the model-visible family passports before choosing a base type",
+                    ],
+                    filters=filters,
+                )
+                continue
+
+            if (
+                self.require_scoped_search
+                and family
+                and not table
+                and (not collection or confirm_scope)
+            ):
+                if not scope_reason:
+                    reject(
+                        work_id=work_id,
+                        error="normative scope selection requires model reasoning",
+                        details=[
+                            (
+                                "scope_reason must explain why the selected base type "
+                                "or collection matches the work"
+                            ),
+                            "LES records the reasoning but does not choose the scope",
+                        ],
+                        filters=filters,
+                    )
+                    continue
+                if confidence not in {"low", "medium", "high"}:
+                    reject(
+                        work_id=work_id,
+                        error="normative scope selection requires confidence",
+                        details=["confidence must be one of: low, medium, high"],
+                        filters=filters,
+                    )
+                    continue
+
+            selected_family = family.casefold()
+            if self.require_scoped_search and family and collection:
+                if confirm_scope and not catalog_was_seen:
+                    reject(
+                        work_id=work_id,
+                        error="collection confirmation requires its passport preview",
+                        details=[
+                            (
+                                "call browse_norm_catalog for this family and collection "
+                                "without confirm_scope first"
+                            ),
+                            "read the returned collection_passport before confirming scope",
+                        ],
+                        filters=filters,
+                    )
+                    continue
+                if selected_family not in self.selected_base_types[work_id]:
+                    reject(
+                        work_id=work_id,
+                        error="collection selection requires an explicit base type selection",
+                        details=[
+                            (
+                                f"select {family!r} first with browse_norm_catalog using "
+                                "scope_reason and confidence"
+                            )
+                        ],
+                        filters=filters,
+                    )
+                    continue
+                requested_scope = (selected_family, collection)
+                existing_scopes = set(self.selected_collections[work_id])
+                if requested_scope not in existing_scopes and existing_scopes:
+                    searches_by_scope = {
+                        (
+                            str(base_type).casefold(),
+                            str(selected_collection),
+                        ): trace
+                        for trace in self.query_trace
+                        for base_type in (
+                            (trace.get("filters") or {}).get("base_types") or []
+                        )
+                        for selected_collection in (
+                            (trace.get("filters") or {}).get("collections") or []
+                        )
+                        if str(trace.get("work_id") or "") == work_id
+                    }
+                    pending_scopes = sorted(
+                        existing_scope
+                        for existing_scope in existing_scopes
+                        if existing_scope not in searches_by_scope
+                    )
+                    if pending_scopes:
+                        reject(
+                            work_id=work_id,
+                            error="selected collection must be searched before scope expansion",
+                            details=[
+                                (
+                                    "call search_norms_batch now for the already selected "
+                                    + ", ".join(
+                                        f"{scope_family}:{scope_collection}"
+                                        for scope_family, scope_collection in pending_scopes
+                                    )
+                                ),
+                                (
+                                    "a second collection is allowed only after the model "
+                                    "has tested its first scoped hypothesis"
+                                ),
+                            ],
+                            filters=filters,
+                        )
+                        continue
+                    shown_codes = {
+                        str(code)
+                        for existing_scope in existing_scopes
+                        for code in (
+                            searches_by_scope.get(existing_scope, {}).get(
+                                "candidate_codes"
+                            )
+                            or []
+                        )
+                        if str(code)
+                    }
+                    opened_codes = set(self.opened.get(work_id, {}))
+                    if shown_codes and shown_codes.isdisjoint(opened_codes):
+                        reject(
+                            work_id=work_id,
+                            error="candidate cards must be read before scope expansion",
+                            details=[
+                                (
+                                    "call read_norms_batch for at least one candidate "
+                                    "from the already searched collection"
+                                ),
+                                (
+                                    "do not abandon a populated shortlist without reading "
+                                    "its typed evidence"
+                                ),
+                            ],
+                            filters=filters,
+                        )
+                        continue
+                if table and (selected_family, collection) not in self.selected_collections[work_id]:
+                    reject(
+                        work_id=work_id,
+                        error="table selection requires an explicit collection selection",
+                        details=[
+                            (
+                                f"select collection {family}:{collection} first, then choose "
+                                "or omit the optional table"
+                            )
+                        ],
+                        filters=filters,
+                    )
+                    continue
+
+            if table and collection and not table.startswith(f"{collection}-"):
+                reject(
+                    work_id=work_id,
+                    error="table does not belong to the selected collection",
+                    details=[
+                        (
+                            f"table {table!r} encodes collection {table[:2]!r}, "
+                            f"but selected scope is {family}:{collection}"
+                        )
+                    ],
+                    filters=filters,
+                )
+                continue
+
+            payload = browse_norm_catalog(
+                family=family,
+                collection=collection,
+                table=table if table else "",
+                limit=1000,
+            )
+            if (
+                self.require_scoped_search
+                and family
+                and not collection
+                and not table
+            ):
+                catalog_query = " ".join(
+                    str(item.get("catalog_query") or scope_reason).split()
+                ).strip()
+                shortlist_cache_key = (
+                    family.casefold(),
+                    catalog_query.casefold(),
+                )
+                cached_shortlist = collection_shortlist_cache.get(
+                    shortlist_cache_key
+                )
+                if cached_shortlist is not None:
+                    payload = copy.deepcopy(cached_shortlist)
+                    shortlist_result = {}
+                else:
+                    shortlist_result = (
+                        browse_norms_many(
+                            [catalog_query],
+                            limit=24,
+                            base_types=[family],
+                            collections=[],
+                            rerank=True,
+                            expand_queries=False,
+                        ).get(catalog_query)
+                        or {}
+                    )
+                if cached_shortlist is not None:
+                    payload_items = [
+                        entry
+                        for entry in (payload.get("items") or [])
+                        if isinstance(entry, dict)
+                    ]
+                    if not payload_items:
+                        reject(
+                            work_id=work_id,
+                            error="collection catalog shortlist is empty",
+                            details=[
+                                "rephrase catalog_query or scope_reason in FSNB terminology",
+                                "do not guess a collection number from the complete catalog",
+                            ],
+                            filters=filters,
+                        )
+                        continue
+                else:
+                    catalog_retrieval_trace = dict(
+                        shortlist_result.get("retrieval_trace") or {}
+                    )
+                    rerank_status = str(
+                        catalog_retrieval_trace.get("rerank_status") or ""
+                    )
+                    if rerank_status != "ok":
+                        reject(
+                            work_id=work_id,
+                            error="collection catalog shortlist requires successful rerank",
+                            details=[
+                                f"rerank_status={rerank_status or 'missing'}",
+                                (
+                                    "retry the same family selection after the reranker "
+                                    "is available; do not guess a collection number"
+                                ),
+                            ],
+                            filters=filters,
+                        )
+                        continue
+                    collection_items = {
+                        str(entry.get("key") or ""): dict(entry)
+                        for entry in (payload.get("items") or [])
+                        if isinstance(entry, dict)
+                    }
+                    collection_scores: dict[str, float] = {}
+                    collection_compass_scores: dict[str, float] = {}
+                    collection_first_rank: dict[str, int] = {}
+                    collection_examples: dict[str, list[dict[str, str]]] = {}
+                    for candidate_collection, catalog_item in collection_items.items():
+                        compass_score = _catalog_compass_score(
+                            catalog_query,
+                            catalog_item,
+                        )
+                        if compass_score <= 0:
+                            continue
+                        collection_compass_scores[candidate_collection] = compass_score
+                        collection_scores[candidate_collection] = compass_score
+                        collection_first_rank[candidate_collection] = 10_000
+                    for rank, card in enumerate(
+                        shortlist_result.get("cards") or [],
+                        start=1,
+                    ):
+                        if not isinstance(card, dict):
+                            continue
+                        code = str(card.get("norm_code") or "")
+                        candidate_collection = _norm_collection(code)
+                        if candidate_collection not in collection_items:
+                            continue
+                        collection_scores[candidate_collection] = (
+                            collection_scores.get(candidate_collection, 0.0)
+                            + (1.0 / float(rank))
+                        )
+                        collection_first_rank.setdefault(
+                            candidate_collection,
+                            rank,
+                        )
+                        examples = collection_examples.setdefault(
+                            candidate_collection,
+                            [],
+                        )
+                        if len(examples) < 3:
+                            examples.append({
+                                "norm_code": code,
+                                "norm_name": str(
+                                    card.get("title")
+                                    or card.get("norm_name")
+                                    or ""
+                                ),
+                            })
+                    ranked_collections = sorted(
+                        collection_scores,
+                        key=lambda value: (
+                            -collection_scores[value],
+                            collection_first_rank[value],
+                            value,
+                        ),
+                    )[:6]
+                    if not ranked_collections:
+                        reject(
+                            work_id=work_id,
+                            error="collection catalog shortlist is empty",
+                            details=[
+                                "rephrase catalog_query or scope_reason in FSNB terminology",
+                                "do not guess a collection number from the complete catalog",
+                            ],
+                            filters=filters,
+                        )
+                        continue
+                    payload["items"] = [
+                        {
+                            **collection_items[value],
+                            "navigation_score": round(
+                                collection_scores[value],
+                                6,
+                            ),
+                            "catalog_compass_score": collection_compass_scores.get(
+                                value,
+                                0.0,
+                            ),
+                            "matched_norm_examples": collection_examples.get(
+                                value,
+                                [],
+                            ),
+                        }
+                        for value in ranked_collections
+                    ]
+                    payload["catalog_query"] = catalog_query
+                    payload["catalog_retrieval_trace"] = {
+                        **catalog_retrieval_trace,
+                        "retrieval_policy": "native_rrf_then_rerank_required",
+                        "collection_compass_policy": (
+                            "official_identity_lexical_plus_norm_rrf_rerank"
+                        ),
+                        "shortlisted_collections": ranked_collections,
+                    }
+                    collection_shortlist_cache[shortlist_cache_key] = (
+                        copy.deepcopy(payload)
+                    )
+            payload_items = [
+                entry for entry in (payload.get("items") or [])
+                if isinstance(entry, dict)
+            ]
+            if family and not payload_items:
+                reject(
+                    work_id=work_id,
+                    error="selected normative catalog scope does not exist",
+                    details=[
+                        (
+                            "the typed normative store contains no entries for "
+                            f"{family}:{collection or '*'}"
+                            + (f", table {table}" if table else "")
+                        ),
+                        "correct the base type, collection or table before searching",
+                    ],
+                    filters=filters,
+                )
+                continue
+
+            if (
+                self.require_scoped_search
+                and family
+                and collection
+                and not table
+                and not confirm_scope
+            ):
+                self.catalog_seen.add(catalog_key)
+                collection_passport = dict(payload.get("collection_passport") or {})
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "collection_previewed",
+                    "filters": {
+                        "family": family,
+                        "collection": collection,
+                        "table": "",
+                    },
+                    "items": [],
+                    "collection_passport": collection_passport,
+                    "next_action": (
+                        "compare this passport with the functional system of the work. If it "
+                        "fits, call browse_norm_catalog again with confirm_scope=true, "
+                        "passport_evidence, scope_reason and confidence; otherwise preview "
+                        "another collection"
+                    ),
+                }
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse",
+                    "turn": turn,
+                    "work_id": work_id,
+                    "level": "collection_previewed",
+                    "filters": row["filters"],
+                    "passport_source_ref": str(
+                        collection_passport.get("source_ref") or ""
+                    ),
+                    "item_count": 0,
+                    "repeated": False,
+                })
+                continue
+
+            if (
+                self.require_scoped_search
+                and family
+                and collection
+                and not table
+                and confirm_scope
+            ):
+                passport = dict(payload.get("collection_passport") or {})
+                passport_evidence = " ".join(
+                    str(item.get("passport_evidence") or "").split()
+                ).strip()
+                missing_evidence = []
+                if not passport_evidence:
+                    missing_evidence.append("passport_evidence is required")
+                passport_anchors = [
+                    str(passport.get("title") or ""),
+                    str(passport.get("source_ref") or ""),
+                    *[
+                        str(value)
+                        for value in (
+                            passport.get("representative_sections") or []
+                        )
+                    ],
+                ]
+                if passport_evidence and not any(
+                    anchor
+                    and (
+                        anchor.casefold() in passport_evidence.casefold()
+                        or passport_evidence.casefold() in anchor.casefold()
+                    )
+                    for anchor in passport_anchors
+                ):
+                    missing_evidence.append(
+                        "passport_evidence must quote the returned title, source or section"
+                    )
+                if missing_evidence:
+                    reject(
+                        work_id=work_id,
+                        error="collection confirmation requires passport evidence",
+                        details=missing_evidence,
+                        filters=filters,
+                    )
+                    continue
+
             self.catalog_seen.add(catalog_key)
-            if family and collection and table:
+            if self.require_scoped_search and family and not collection:
+                self.selected_base_types[work_id][selected_family] = {
+                    "family": family,
+                    "reason": scope_reason,
+                    "confidence": confidence,
+                }
+            if self.require_scoped_search and family and collection and not table:
+                self.selected_collections[work_id].add((selected_family, collection))
+            if self.require_scoped_search and family and collection and table:
+                self.selected_tables[work_id].add((selected_family, collection, table))
+
+            if self.require_scoped_search and family and collection and table:
                 row = {
                     "work_id": work_id,
                     "ok": True,
@@ -691,51 +1714,145 @@ class SmetaNormToolSession:
                     "item_count": 0, "repeated": False,
                 })
                 continue
-            payload = browse_norm_catalog(
-                family=family,
-                collection=collection,
-                table="",
-                limit=1000,
-            )
-            compact_items = []
-            for entry in payload.get("items") or []:
-                if not isinstance(entry, dict):
-                    continue
-                compact = {
-                    "key": entry.get("key") or entry.get("norm_code"),
-                    "norm_count": entry.get("norm_count"),
-                    "resource_count": entry.get("resource_count"),
+            if self.require_scoped_search and family and collection:
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "collection_selected",
+                    "filters": {
+                        "family": family,
+                        "collection": collection,
+                        "table": "",
+                    },
+                    "items": [],
+                    "collection_passport": dict(
+                        payload.get("collection_passport") or {}
+                    ),
+                    "scope_selection": {
+                        "family": family,
+                        "collection": collection,
+                        "reason": scope_reason,
+                        "confidence": confidence,
+                        "selection_owner": "model",
+                    },
+                    "next_action": (
+                        "call search_norms_batch now with scope_mode=scoped, this "
+                        "base_type and collection; table_codes are optional"
+                    ),
                 }
-                source_example = str(entry.get("source_example") or entry.get("source_ref") or "").strip()
-                if source_example:
-                    compact["source_example"] = source_example[:160]
-                if entry.get("title"):
-                    compact["title"] = str(entry.get("title"))[:240]
-                if entry.get("measure_unit"):
-                    compact["measure_unit"] = entry.get("measure_unit")
-                compact_items.append(compact)
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse",
+                    "turn": turn,
+                    "work_id": work_id,
+                    "level": "scope_selected",
+                    "filters": row["filters"],
+                    "scope_reason": scope_reason,
+                    "confidence": confidence,
+                    "passport_source_ref": str(
+                        row["collection_passport"].get("source_ref") or ""
+                    ),
+                    "item_count": 0,
+                    "repeated": False,
+                })
+                continue
+            shared_key = (
+                family.casefold(),
+                collection,
+                table,
+                str(payload.get("catalog_query") or "").casefold(),
+            )
+            if self.require_scoped_search and shared_key in shared_catalog_owner:
+                owner_work_id = shared_catalog_owner[shared_key]
+                row = {
+                    "work_id": work_id,
+                    "ok": True,
+                    "level": "shared_catalog",
+                    "filters": {
+                        "family": family,
+                        "collection": collection,
+                        "table": table,
+                    },
+                    "items": [],
+                    "shared_items_with_work_id": owner_work_id,
+                    "next_action": (
+                        "use the identical catalog menu returned for "
+                        f"{owner_work_id}; choose scope for this work_id"
+                    ),
+                }
+                rows_out.append(row)
+                self.catalog_trace.append({
+                    "phase": "catalog_browse",
+                    "turn": turn,
+                    "work_id": work_id,
+                    "level": "shared_catalog",
+                    "filters": row["filters"],
+                    "item_count": 0,
+                    "shared_items_with_work_id": owner_work_id,
+                    "repeated": False,
+                })
+                continue
+            shared_catalog_owner[shared_key] = work_id
+            compacted = compact_items(payload)
+            level = payload.get("level")
+            if self.require_scoped_search and family and not collection:
+                level = "base_type_selected"
             row = {
                 "work_id": work_id,
                 "ok": True,
-                "level": payload.get("level"),
+                "level": level,
                 "filters": payload.get("filters") or {},
-                "items": compact_items,
+                "items": compacted,
                 "next_action": (
-                    "choose a family, collection and official table; then call "
-                    "search_norms_batch with table_codes to receive every row of that table"
+                    (
+                        "choose one initial collection from this reranked navigation shortlist "
+                        "for every relevant work_id; preview its passport, confirm it, then call "
+                        "search_norms_batch before expanding scope"
+                    )
+                    if self.require_scoped_search and family
+                    else (
+                        "compare the family passports, then call browse_norm_catalog "
+                        "with family, scope_reason and confidence"
+                    )
+                    if self.require_scoped_search
+                    else (
+                        "choose a family, collection and official table; then call "
+                        "search_norms_batch with table_codes to receive every row of that table"
+                    )
                 ),
             }
+            if payload.get("catalog_query"):
+                row["catalog_query"] = str(payload.get("catalog_query") or "")
+                row["catalog_retrieval_trace"] = dict(
+                    payload.get("catalog_retrieval_trace") or {}
+                )
+            if self.require_scoped_search and family:
+                row["scope_selection"] = {
+                    "family": family,
+                    "reason": scope_reason,
+                    "confidence": confidence,
+                    "selection_owner": "model",
+                }
             rows_out.append(row)
             self.catalog_trace.append({
                 "phase": "catalog_browse",
                 "turn": turn,
                 "work_id": work_id,
-                "level": payload.get("level"),
+                "level": level,
                 "filters": payload.get("filters") or {},
-                "item_count": len(compact_items),
+                "scope_reason": scope_reason,
+                "confidence": confidence,
+                "item_count": len(compacted),
+                "catalog_query": str(payload.get("catalog_query") or ""),
+                "catalog_retrieval_trace": dict(
+                    payload.get("catalog_retrieval_trace") or {}
+                ),
                 "repeated": False,
             })
-        result: dict[str, Any] = {"ok": bool(rows_out), "rows": rows_out}
+        result: dict[str, Any] = {
+            "ok": any(row.get("ok") is True for row in rows_out),
+            "rows": rows_out,
+        }
         if not rows_out:
             result["error"] = "catalog items are empty or malformed"
         return result
@@ -803,6 +1920,125 @@ class SmetaNormToolSession:
             except ValueError as error:
                 scope_errors[index] = str(error)
                 continue
+            if self.require_scoped_search:
+                if scope_mode != "scoped" or not base_types or not collections:
+                    scope_errors[index] = (
+                        "RIM search requires scope_mode=scoped with non-empty "
+                        "base_types and collections selected by the model"
+                    )
+                    continue
+                if len(base_types) != 1 or len(collections) != 1:
+                    scope_errors[index] = (
+                        "RIM search item must contain exactly one model-selected base_type "
+                        "and one collection; use another item for another scope"
+                    )
+                    continue
+                work_id = str(item.get("work_id") or "")
+                selected_family = base_types[0].casefold()
+                selected_collection = re.sub(
+                    r"\D",
+                    "",
+                    collections[0],
+                )[:2]
+                selected_scope = (selected_family, selected_collection)
+                if (
+                    selected_family
+                    not in self.selected_base_types.get(work_id, {})
+                    or selected_scope
+                    not in self.selected_collections.get(work_id, set())
+                ):
+                    confirmed_by_work_id = next(
+                        (
+                            source_work_id
+                            for source_work_id in self.by_id
+                            if selected_family
+                            in self.selected_base_types.get(source_work_id, {})
+                            and selected_scope
+                            in self.selected_collections.get(
+                                source_work_id,
+                                set(),
+                            )
+                        ),
+                        "",
+                    )
+                    if confirmed_by_work_id:
+                        inherited = copy.deepcopy(
+                            self.selected_base_types[confirmed_by_work_id][
+                                selected_family
+                            ]
+                        )
+                        inherited.update({
+                            "selection_owner": "model",
+                            "applied_by": "search_norms_batch",
+                            "confirmed_by_work_id": confirmed_by_work_id,
+                        })
+                        self.selected_base_types[work_id][selected_family] = inherited
+                        self.selected_collections[work_id].add(selected_scope)
+                        self.catalog_trace.append({
+                            "phase": "catalog_scope_applied_by_batch",
+                            "turn": turn,
+                            "work_id": work_id,
+                            "level": "scope_selected",
+                            "filters": {
+                                "family": base_types[0],
+                                "collection": selected_collection,
+                                "table": "",
+                            },
+                            "selection_owner": "model",
+                            "applied_by": "search_norms_batch",
+                            "confirmed_by_work_id": confirmed_by_work_id,
+                            "search_intent": str(
+                                item.get("search_intent")
+                                or item.get("intent")
+                                or ""
+                            ),
+                        })
+                missing_base_selections = [
+                    base_type
+                    for base_type in base_types
+                    if base_type.casefold() not in self.selected_base_types.get(work_id, {})
+                ]
+                if missing_base_selections:
+                    scope_errors[index] = (
+                        "RIM scoped search requires an explicit model-owned base type "
+                        "selection with reason and confidence for: "
+                        + ", ".join(missing_base_selections)
+                    )
+                    continue
+                missing_catalog_scopes = [
+                    f"{base_type}:{collection}"
+                    for base_type in base_types
+                    for collection in collections
+                    if (
+                        base_type.casefold(),
+                        re.sub(r"\D", "", collection)[:2],
+                    ) not in self.selected_collections.get(work_id, set())
+                ]
+                if missing_catalog_scopes:
+                    scope_errors[index] = (
+                        "RIM scoped search requires explicit collection selection "
+                        "through browse_norm_catalog first for: "
+                        + ", ".join(missing_catalog_scopes)
+                    )
+                    continue
+                missing_tables = [
+                    f"{base_type}:{collection}:{table_code}"
+                    for base_type in base_types
+                    for collection in collections
+                    for table_code in table_codes
+                    if (
+                        base_type.casefold(),
+                        re.sub(r"\D", "", collection)[:2],
+                        table_code,
+                    ) not in self.selected_tables.get(work_id, set())
+                ]
+                if missing_tables:
+                    scope_errors[index] = (
+                        "RIM table search requires a table validated by "
+                        "browse_norm_catalog inside the selected scope first for: "
+                        + ", ".join(missing_tables)
+                    )
+                    continue
             filter_key = (base_types, collections, table_codes)
             item_filters[index] = filter_key
             grouped_queries.setdefault(filter_key, [])
@@ -814,7 +2050,13 @@ class SmetaNormToolSession:
                 base_types=list(filter_key[0]),
                 collections=list(filter_key[1]),
                 table_codes=list(filter_key[2]),
-                rerank=_tool_bool(args.get("rerank"), True),
+                # RIM retrieval quality is a harness invariant, not a model
+                # preference.  Table listings ignore ranking; every ordinary
+                # shortlist reaches the configured reranker.
+                rerank=True,
+                # RIM search uses only the model-authored scope/query. Generic
+                # retrieval vocabulary must not add hidden domain prose.
+                expand_queries=False,
             )
             for filter_key, queries in grouped_queries.items()
             if queries
@@ -897,6 +2139,7 @@ class SmetaNormToolSession:
                         if isinstance(value, dict)
                     ],
                     "matched_query": str(card.get("matched_query") or "")[:240],
+                    "questions_to_ask": _questions_to_ask_for_norm(code),
                 })
             search_intent = str(item.get("search_intent") or item.get("intent") or "unspecified")
             scope_plan = scope_plans[index].as_dict()
@@ -910,6 +2153,15 @@ class SmetaNormToolSession:
                 "scope_plan": scope_plan,
                 "filters": payload["filters"],
                 "retrieval_backend": str(payload.get("backend") or ""),
+                "retrieval_policy": str(payload.get("retrieval_policy") or ""),
+                "rerank_status": list(payload.get("rerank_status") or []),
+                "reranked": bool(payload.get("reranked")),
+                "next_action": (
+                    "choose at most two current candidate codes and call "
+                    "read_norms_batch"
+                    if compact
+                    else "use a distinct model-authored search formulation"
+                ),
             })
             self.query_trace.append({
                 "phase": "batch_search", "turn": turn, "work_id": work_id,
@@ -920,8 +2172,14 @@ class SmetaNormToolSession:
                 "candidate_codes": [str(card.get("norm_code") or "") for card in compact],
                 "scope_plan": scope_plan,
                 "filters": payload["filters"],
+                "retrieval_policy": str(payload.get("retrieval_policy") or ""),
+                "rerank_status": list(payload.get("rerank_status") or []),
+                "reranked": bool(payload.get("reranked")),
             })
-        result: dict[str, Any] = {"ok": bool(items), "rows": rows_out}
+        result: dict[str, Any] = {
+            "ok": any(row.get("ok") is True for row in rows_out),
+            "rows": rows_out,
+        }
         if not items:
             result["error"] = "search items are empty or malformed"
         return result
@@ -942,7 +2200,10 @@ class SmetaNormToolSession:
                     self.opened[work_id][requested_code] = card
                     cards.append(_norm_card_for_model(card, include_resources=include_resources))
             rows_out.append({"work_id": work_id, "ok": bool(cards), "norms": cards})
-        result: dict[str, Any] = {"ok": bool(rows_out), "rows": rows_out}
+        result: dict[str, Any] = {
+            "ok": any(row.get("ok") is True for row in rows_out),
+            "rows": rows_out,
+        }
         if not rows_out:
             result["error"] = "read items are empty or malformed"
         return result
@@ -962,7 +2223,10 @@ class SmetaNormToolSession:
                 continue
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
-                evidence = dict(item.get("unbound_evidence") or {})
+                evidence = self._align_unbound_evidence_to_trace(
+                    work_id,
+                    dict(item.get("unbound_evidence") or {}),
+                )
                 evidence_errors = self._unbound_evidence_errors(
                     work_id,
                     reason=reason,
@@ -1031,6 +2295,27 @@ class SmetaNormToolSession:
             opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
             opened_card = opened_for_work.get(opened_code) if opened_code else None
             code = str((opened_card or {}).get("norm_code") or requested_code)
+            if self.require_scoped_search and opened_card is None:
+                errors.append({
+                    "work_id": work_id,
+                    "error": "RIM bind requires a typed card opened by read_norms_batch",
+                    "details": [
+                        (
+                            f"norm_code {requested_code!r} is not present in the opened "
+                            "structured cards for this work_id"
+                        ),
+                        (
+                            "call browse_norm_catalog, scoped search_norms_batch and "
+                            "read_norms_batch before resubmitting this bind"
+                        ),
+                    ],
+                    "comparison_candidate_codes": list(dict.fromkeys(
+                        str((card or {}).get("norm_code") or candidate_code)
+                        for candidate_code, card in self.candidates.get(work_id, {}).items()
+                        if str((card or {}).get("norm_code") or candidate_code).strip()
+                    ))[:12],
+                })
+                continue
             blockers = []
             if code and opened_card is None:
                 blockers.append({
@@ -1143,6 +2428,62 @@ class SmetaNormToolSession:
             "opened_norm_codes": opened_codes,
         }
 
+    def _align_unbound_evidence_to_trace(
+        self,
+        work_id: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Normalize provenance to real tool calls without creating model evidence."""
+        allowed = self._allowed_unbound_evidence(work_id)
+        executed_queries = [
+            str(value).strip()
+            for value in (allowed.get("queries_used") or [])
+            if str(value).strip()
+        ]
+        query_by_key = {value.casefold(): value for value in executed_queries}
+        submitted_queries = [
+            str(value).strip()
+            for value in (evidence.get("queries_used") or [])
+            if str(value).strip()
+        ]
+        aligned_queries = list(dict.fromkeys(
+            query_by_key[value.casefold()]
+            for value in submitted_queries
+            if value.casefold() in query_by_key
+        ))
+
+        opened_codes = [
+            str(value).strip()
+            for value in (allowed.get("opened_norm_codes") or [])
+            if str(value).strip()
+        ]
+        opened_by_key = {value.casefold(): value for value in opened_codes}
+        submitted_opened = [
+            str(value).strip()
+            for value in (evidence.get("opened_norm_codes") or [])
+            if str(value).strip()
+        ]
+        aligned_opened = list(dict.fromkeys(
+            opened_by_key[value.casefold()]
+            for value in submitted_opened
+            if value.casefold() in opened_by_key
+        ))
+
+        aligned = dict(evidence)
+        if len({value.casefold() for value in aligned_queries}) >= 2:
+            aligned["queries_used"] = aligned_queries
+        elif len({value.casefold() for value in executed_queries}) >= 2:
+            aligned["queries_used"] = executed_queries
+        else:
+            aligned["queries_used"] = aligned_queries
+        if aligned_opened:
+            aligned["opened_norm_codes"] = aligned_opened
+        elif opened_codes:
+            aligned["opened_norm_codes"] = opened_codes
+        else:
+            aligned["opened_norm_codes"] = []
+        return aligned
+
     def _unbound_evidence_errors(
         self,
         work_id: str,
@@ -1165,6 +2506,38 @@ class SmetaNormToolSession:
             for query in (trace.get("queries") or [])
             if str(query).strip()
         }
+        executed_search_signatures = {
+            (
+                tuple(
+                    str(query).strip().casefold()
+                    for query in (trace.get("queries") or [])
+                    if str(query).strip()
+                ),
+                tuple(
+                    str(value).strip().casefold()
+                    for value in (
+                        (trace.get("filters") or {}).get("base_types") or []
+                    )
+                    if str(value).strip()
+                ),
+                tuple(
+                    str(value).strip()
+                    for value in (
+                        (trace.get("filters") or {}).get("collections") or []
+                    )
+                    if str(value).strip()
+                ),
+                tuple(
+                    str(value).strip()
+                    for value in (
+                        (trace.get("filters") or {}).get("table_codes") or []
+                    )
+                    if str(value).strip()
+                ),
+            )
+            for trace in self.query_trace
+            if str(trace.get("work_id") or "") == work_id
+        }
         opened_codes = [
             str(value).strip()
             for value in (evidence.get("opened_norm_codes") or [])
@@ -1181,17 +2554,84 @@ class SmetaNormToolSession:
             if str(value).strip()
         ]
         coverage_checked = str(evidence.get("coverage_checked") or "").strip()
+        decision_text = " ".join(
+            [reason, coverage_checked, *rejection_reasons]
+        )
 
         if not reason:
             errors.append("reason is required")
-        if len(unique_queries) < 2:
-            errors.append("queries_used must contain at least two distinct searches")
+        if re.search(
+            r"\b(?:требуется|необходимо|нужно|следует)\s+"
+            r"(?:дополнительн\w*\s+)?(?:поиск|искать|проверить|открыть)\b",
+            decision_text,
+            flags=re.IGNORECASE,
+        ):
+            errors.append(
+                "unbound is not terminal because its own text requires more evidence work"
+            )
+        if len(unique_queries) < 2 and len(executed_search_signatures) < 2:
+            errors.append(
+                "unbound requires at least two distinct query or scoped-search strategies"
+            )
         missing_queries = sorted(value for value in unique_queries if value not in executed_queries)
         if missing_queries:
             errors.append("queries_used contains searches absent from the tool trace: " + ", ".join(missing_queries))
         unopened_codes = sorted(code for code in opened_codes if code not in actually_opened)
         if unopened_codes:
             errors.append("opened_norm_codes contains cards not opened through tools: " + ", ".join(unopened_codes))
+        def compact_ref(value: object) -> str:
+            return re.sub(
+                r"[^а-яёa-z0-9]+",
+                "",
+                str(value or "").casefold(),
+            )
+
+        opened_ref_keys = {
+            compact_ref((card or {}).get("norm_code") or code)
+            for code, card in self.opened.get(work_id, {}).items()
+            if compact_ref((card or {}).get("norm_code") or code)
+        }
+        cited_norms = list(dict.fromkeys(
+            match.group(0).strip()
+            for match in re.finditer(
+                r"\bГЭСН[мрп]*\s*:?\s*\d{2}-\d{2}-\d{3}(?:-\d{2})?",
+                decision_text,
+                flags=re.IGNORECASE,
+            )
+        ))
+        unsupported_norms = [
+            cited
+            for cited in cited_norms
+            if not any(
+                opened.startswith(compact_ref(cited))
+                or compact_ref(cited).startswith(opened)
+                for opened in opened_ref_keys
+            )
+        ]
+        if unsupported_norms:
+            errors.append(
+                "unbound reasoning cites norm cards not opened through read_norms_batch: "
+                + ", ".join(unsupported_norms)
+            )
+        opened_collections = {
+            str((card or {}).get("collection") or "").zfill(2)
+            for card in self.opened.get(work_id, {}).values()
+            if str((card or {}).get("collection") or "").strip()
+        }
+        cited_collections = {
+            match.group(1).zfill(2)
+            for match in re.finditer(
+                r"\bсборник\w*\s+(\d{1,2})\b",
+                decision_text,
+                flags=re.IGNORECASE,
+            )
+        }
+        unsupported_collections = sorted(cited_collections - opened_collections)
+        if unsupported_collections:
+            errors.append(
+                "unbound reasoning cites collections without an opened typed card: "
+                + ", ".join(unsupported_collections)
+            )
         available_candidates = {
             str((card or {}).get("norm_code") or code).strip()
             for code, card in self.candidates.get(work_id, {}).items()
@@ -1212,8 +2652,10 @@ class SmetaNormToolSession:
         *,
         model_trace: list[dict[str, Any]],
         agent_trace: dict[str, Any],
+        allow_incomplete: bool = False,
+        incomplete_blocker: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        if not self.complete:
+        if not self.complete and not allow_incomplete:
             raise RuntimeError(
                 "smeta agent ended without terminal mapping for: "
                 + ",".join(self.remaining_work_ids)
@@ -1225,6 +2667,9 @@ class SmetaNormToolSession:
             "catalog_trace": self.catalog_trace,
             "model_trace": model_trace,
             "valid_model_rows": len(self.accepted_rows),
+            "incomplete": not self.complete,
+            "remaining_work_ids": self.remaining_work_ids,
+            "incomplete_blocker": dict(incomplete_blocker or {}),
             "opened_cards": {
                 work_id: list({str(card.get("norm_code") or key): card for key, card in cards.items()}.values())
                 for work_id, cards in self.opened.items()
@@ -1250,12 +2695,38 @@ def _run_native_norm_agent(
     user_request: str = "",
     batch_runner: AgentBatchRunner | None = None,
     accumulate_task_state: bool = False,
+    resume_result: dict[str, Any] | None = None,
+    checkpoint: Checkpoint | None = None,
 ) -> dict[str, Any]:
     """Give the model the source rows and merge its untouched decisions."""
     requested_size = int(batch_size)
     size = len(work_rows) if requested_size <= 0 else max(1, requested_size)
-    batches = [work_rows[index:index + size] for index in range(0, len(work_rows), size)]
-    if len(batches) <= 1:
+    resumed = dict(resume_result or {})
+    resumed_selections = dict(resumed.get("selections") or {})
+    ordered_work_ids = [str(row["work_id"]) for row in work_rows]
+    known_work_ids = set(ordered_work_ids)
+    unknown_resumed = sorted(set(resumed_selections) - known_work_ids)
+    if unknown_resumed:
+        raise RuntimeError(
+            f"resume checkpoint contains unknown work_ids: {unknown_resumed}"
+        )
+    pending_rows = [
+        row for row in work_rows
+        if str(row["work_id"]) not in resumed_selections
+    ]
+    if not pending_rows:
+        return {
+            **resumed,
+            "valid_model_rows": len(resumed_selections),
+            "incomplete": False,
+            "remaining_work_ids": [],
+            "incomplete_blocker": {},
+        }
+    batches = [
+        pending_rows[index:index + size]
+        for index in range(0, len(pending_rows), size)
+    ]
+    if len(batches) <= 1 and not resumed_selections and checkpoint is None:
         task_rows = work_rows
         if accumulate_task_state:
             task_rows = [
@@ -1290,15 +2761,22 @@ def _run_native_norm_agent(
         )
 
     merged = {
-        "selections": {},
-        "opened_cards": {},
-        "browse_trace": {},
-        "query_trace": [],
-        "catalog_trace": [],
-        "model_trace": [],
-        "valid_model_rows": 0,
+        "selections": dict(resumed_selections),
+        "opened_cards": dict(resumed.get("opened_cards") or {}),
+        "browse_trace": dict(resumed.get("browse_trace") or {}),
+        "query_trace": list(resumed.get("query_trace") or []),
+        "catalog_trace": list(resumed.get("catalog_trace") or []),
+        "model_trace": list(resumed.get("model_trace") or []),
+        "valid_model_rows": len(resumed_selections),
+        "incomplete": True,
+        "remaining_work_ids": [
+            str(row["work_id"]) for row in pending_rows
+        ],
+        "incomplete_blocker": {},
     }
-    batch_traces: list[dict[str, Any]] = []
+    batch_traces: list[dict[str, Any]] = list(
+        ((resumed.get("agent_trace") or {}).get("batch_traces") or [])
+    )
     batches_started = perf_counter()
     source_by_id = {str(row["work_id"]): row for row in work_rows}
     for batch_index, rows in enumerate(batches, 1):
@@ -1341,24 +2819,95 @@ def _run_native_norm_agent(
                 ),
             }
             task_rows = [{**row, "task_state": task_state} for row in rows]
-        if batch_runner is not None:
-            result = batch_runner(
-                task_rows,
-                candidate_limit=candidate_limit,
-                max_turns=max_turns,
-                progress=progress,
-                user_request=user_request,
-            )
-        else:
-            result = _run_batch_norm_agent(
-                task_rows,
-                exchange,
-                mapping_exchange=mapping_exchange,
-                candidate_limit=candidate_limit,
-                max_turns=max_turns,
-                progress=progress,
-                user_request=user_request,
-            )
+        try:
+            if batch_runner is not None:
+                result = batch_runner(
+                    task_rows,
+                    candidate_limit=candidate_limit,
+                    max_turns=max_turns,
+                    progress=progress,
+                    user_request=user_request,
+                )
+            else:
+                def batch_checkpoint(partial: dict[str, Any]) -> None:
+                    if checkpoint is None:
+                        return
+                    checkpoint(copy.deepcopy({
+                        **merged,
+                        "selections": {
+                            **merged["selections"],
+                            **dict(partial.get("selections") or {}),
+                        },
+                        "opened_cards": {
+                            **merged["opened_cards"],
+                            **dict(partial.get("opened_cards") or {}),
+                        },
+                        "browse_trace": {
+                            **merged["browse_trace"],
+                            **dict(partial.get("browse_trace") or {}),
+                        },
+                        "query_trace": [
+                            *merged["query_trace"],
+                            *list(partial.get("query_trace") or []),
+                        ],
+                        "catalog_trace": [
+                            *merged["catalog_trace"],
+                            *list(partial.get("catalog_trace") or []),
+                        ],
+                        "model_trace": [
+                            *merged["model_trace"],
+                            *[
+                                {**item, "source_batch": batch_index}
+                                for item in (partial.get("model_trace") or [])
+                            ],
+                        ],
+                        "valid_model_rows": (
+                            len(merged["selections"])
+                            + len(partial.get("selections") or {})
+                        ),
+                        "incomplete": True,
+                        "remaining_work_ids": [
+                            work_id
+                            for work_id in ordered_work_ids
+                            if work_id not in merged["selections"]
+                            and work_id not in (partial.get("selections") or {})
+                        ],
+                        "incomplete_blocker": dict(
+                            partial.get("incomplete_blocker") or {}
+                        ),
+                    }))
+
+                result = _run_batch_norm_agent(
+                    task_rows,
+                    exchange,
+                    mapping_exchange=mapping_exchange,
+                    candidate_limit=candidate_limit,
+                    max_turns=max_turns,
+                    progress=progress,
+                    user_request=user_request,
+                    checkpoint=batch_checkpoint if checkpoint is not None else None,
+                )
+        except Exception as error:
+            if checkpoint is not None:
+                checkpoint(copy.deepcopy({
+                    **merged,
+                    "incomplete": True,
+                    "remaining_work_ids": [
+                        work_id
+                        for work_id in ordered_work_ids
+                        if work_id not in merged["selections"]
+                    ],
+                    "incomplete_blocker": {
+                        "code": (
+                            "structured_mapping_timeout"
+                            if isinstance(error, MappingTransportTimeout)
+                            or _is_timeout_error(error)
+                            else "batch_failed"
+                        ),
+                        "reason": str(error),
+                    },
+                }))
+            raise
         merged["selections"].update(result["selections"])
         merged["opened_cards"].update(result.get("opened_cards") or {})
         merged["browse_trace"].update(result["browse_trace"])
@@ -1367,8 +2916,16 @@ def _run_native_norm_agent(
         merged["model_trace"].extend(
             {**item, "source_batch": batch_index} for item in result["model_trace"]
         )
-        merged["valid_model_rows"] += int(result.get("valid_model_rows") or 0)
+        merged["valid_model_rows"] = len(merged["selections"])
+        merged["remaining_work_ids"] = [
+            work_id for work_id in ordered_work_ids
+            if work_id not in merged["selections"]
+        ]
+        merged["incomplete"] = bool(merged["remaining_work_ids"])
+        merged["incomplete_blocker"] = {}
         batch_traces.append(result.get("agent_trace") or {})
+        if checkpoint is not None:
+            checkpoint(copy.deepcopy(merged))
         if progress:
             elapsed_sec = max(0.0, perf_counter() - batches_started)
             eta_sec = round((elapsed_sec / batch_index) * (len(batches) - batch_index))
@@ -1392,6 +2949,8 @@ def _run_native_norm_agent(
     missing = [str(row["work_id"]) for row in work_rows if str(row["work_id"]) not in merged["selections"]]
     if missing:
         raise RuntimeError(f"model batches did not cover source rows: {missing}")
+    merged["incomplete"] = False
+    merged["remaining_work_ids"] = []
     merged["agent_trace"] = {
         "mode": "model_bounded_batch_rag_tools",
         "engine": str((batch_traces[0] if batch_traces else {}).get("engine") or "native"),
@@ -1555,16 +3114,38 @@ def _run_batch_norm_agent(
     max_turns: int = 64,
     progress: Progress | None = None,
     user_request: str = "",
+    checkpoint: Checkpoint | None = None,
+    resume_checkpoint: dict[str, Any] | None = None,
+    require_scoped_search: bool = False,
 ) -> dict[str, Any]:
     """Thin model tool loop: batch RAG, batch read, one model-owned mapping submission."""
     session = SmetaNormToolSession(
-        work_rows, candidate_limit=candidate_limit, progress=progress,
+        work_rows,
+        candidate_limit=candidate_limit,
+        progress=progress,
+        require_scoped_search=require_scoped_search,
     )
+    resumed = dict(resume_checkpoint or {})
+    resume_state = (
+        dict(resumed.get("resume_state") or {})
+        if isinstance(resumed.get("resume_state"), dict)
+        else {}
+    )
+    if resume_state:
+        if str(resume_state.get("schema") or "") != "smeta_norm_agent_resume_v1":
+            raise RuntimeError("unsupported smeta norm agent resume schema")
+        session.restore_checkpoint_state(
+            dict(resume_state.get("tool_session") or {})
+        )
     by_id = session.by_id
     browse_trace = session.browse_trace
     query_trace = session.query_trace
-    model_trace: list[dict[str, Any]] = []
-    context_metrics: list[dict[str, Any]] = []
+    model_trace: list[dict[str, Any]] = list(
+        resume_state.get("model_trace") or []
+    )
+    context_metrics: list[dict[str, Any]] = list(
+        resume_state.get("context_metrics") or []
+    )
     # Search/read are agent tools. The model's final professional mapping is
     # serialized in a separate structured-output request, matching Ollama's
     # documented "no tool calls => end agent loop" contract.
@@ -1576,46 +3157,482 @@ def _run_batch_norm_agent(
     if not skill_prompt:
         raise RuntimeError("canonical smeta skill is unavailable")
     system_prompt = skill_prompt
-    conversation: list[dict[str, Any]] = [
+    initial_conversation: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": json.dumps({
-            "user_request": str(user_request or "").strip(),
-            "work_items": list(by_id.values()),
-            "batch_contract": (
-                "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
-                "navigation for overlap/coverage; do not search or submit those neighboring work_ids here."
+        {
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "user_request": str(user_request or "").strip(),
+                    "work_items": list(by_id.values()),
+                    "batch_contract": (
+                        "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
+                        "navigation for overlap/coverage; do not search or submit those neighboring work_ids here. "
+                        + (
+                            "RIM invariant: for every work_id call browse_norm_catalog, then search_norms_batch "
+                            "first compare the returned family passports. Select a family in a separate "
+                            "browse_norm_catalog call with your own scope_reason and confidence; LES uses "
+                            "that model-authored intent for a short native-RRF-plus-rerank collection "
+                            "shortlist. Select one collection from it to preview its passport. Confirm that same "
+                            "collection with passport_evidence, your scope_reason and confidence. "
+                            "Call search_norms_batch with scope_mode=scoped "
+                            "and explicit base_types plus collections selected by you, "
+                            "then read_norms_batch before any bind. RAG candidates are navigation only; only a "
+                            "full typed card opened by read_norms_batch may support submit_lsr_mapping."
+                            if require_scoped_search
+                            else ""
+                        )
+                    ),
+                },
+                ensure_ascii=False,
+                default=str,
             ),
-        }, ensure_ascii=False, default=str)},
+        },
     ]
+    conversation: list[dict[str, Any]] = (
+        copy.deepcopy(list(resume_state.get("conversation") or []))
+        if resume_state.get("conversation")
+        else initial_conversation
+    )
+    if not conversation or str((conversation[0] or {}).get("role") or "") != "system":
+        raise RuntimeError("smeta norm checkpoint has invalid conversation")
+    if resume_state:
+        # The canonical candidates/opened cards live in the typed tool-session
+        # checkpoint. Historical tool payloads are an event log, not active
+        # model memory; keeping the latest five-row search result here would
+        # replay tens of thousands of tokens on every resume.
+        _prune_stale_tool_evidence(conversation, keep_recent=0)
+        conversation = [
+            message
+            for message in conversation
+            if "smeta_norm_agent_resume_status_v1"
+            not in str(message.get("content") or "")
+        ]
+        usage = session.evidence_usage
+        budget = session.evidence_budget
+        elapsed_used = float(usage.get("tool_elapsed_seconds") or 0.0)
+        work_evidence_status = [
+            {
+                "work_id": work_id,
+                "candidate_count": len(session.candidates.get(work_id) or {}),
+                "candidate_codes": sorted(
+                    str(code)
+                    for code in (session.candidates.get(work_id) or {})
+                    if str(code)
+                ),
+                "opened_count": len(session.opened.get(work_id) or {}),
+                "search_count": sum(
+                    1
+                    for item in session.query_trace
+                    if str(item.get("work_id") or "") == work_id
+                ),
+            }
+            for work_id in session.remaining_work_ids
+        ]
+        must_read = [
+            item["work_id"]
+            for item in work_evidence_status
+            if item["candidate_count"] > 0 and item["opened_count"] == 0
+        ]
+        conversation.append({
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "resume_contract": "smeta_norm_agent_resume_status_v1",
+                    "remaining_work_ids": session.remaining_work_ids,
+                    "work_evidence_status": work_evidence_status,
+                    "must_read_before_more_search": must_read,
+                    "authoritative_budget_remaining": {
+                        "search_calls": max(
+                            0,
+                            int(budget.search_calls)
+                            - int(usage.get("search_calls") or 0),
+                        ),
+                        "read_calls": max(
+                            0,
+                            int(budget.read_calls)
+                            - int(usage.get("read_calls") or 0),
+                        ),
+                        "opened_cards": max(
+                            0,
+                            int(budget.opened_cards)
+                            - int(usage.get("opened_cards") or 0),
+                        ),
+                        "tool_elapsed_seconds": round(
+                            max(0.0, float(budget.elapsed_seconds) - elapsed_used),
+                            4,
+                        ),
+                    },
+                    "instruction": (
+                        "Continue from the stored tool results. The budget above is "
+                        "authoritative for this resumed process; an older tool message "
+                        "saying that a budget was exhausted is stale when the corresponding "
+                        "remaining value above is positive. Prefer one batch tool call for "
+                        "all remaining_work_ids that need the same catalog/search/read phase. "
+                        "For every work_id in must_read_before_more_search, the next tool call "
+                        "for that work_id must be read_norms_batch with model-chosen codes from "
+                        "its candidate_codes; do not browse or search that work_id again until "
+                        "at least one current candidate card is read. Call tools instead of "
+                        "narrating the next intended action."
+                    ),
+                },
+                ensure_ascii=False,
+            ),
+        })
 
     if max_turns < 1:
         raise ValueError("max_turns must be positive")
     accepted_rows = session.accepted_rows
-    previous_call_signature = ""
-    duplicate_feedback_signature = ""
+    previous_call_signature = str(
+        resume_state.get("previous_call_signature") or ""
+    )
+    duplicate_feedback_signature = str(
+        resume_state.get("duplicate_feedback_signature") or ""
+    )
+    structured_mapping_attempts = int(
+        resume_state.get("structured_mapping_attempts") or 0
+    )
+    validation_contract_changed = bool(
+        resume_state
+        and str(resume_state.get("validation_contract_version") or "")
+        != MAPPING_VALIDATION_CONTRACT_VERSION
+    )
+    if validation_contract_changed:
+        structured_mapping_attempts = 0
+        previous_call_signature = ""
+        duplicate_feedback_signature = ""
+    last_submit_result: dict[str, Any] | None = (
+        copy.deepcopy(resume_state.get("last_submit_result"))
+        if isinstance(resume_state.get("last_submit_result"), dict)
+        else None
+    )
+    if validation_contract_changed:
+        invalidated_rows: list[dict[str, Any]] = []
+        for work_id, selection in list(accepted_rows.items()):
+            if str(selection.get("review_status") or "") != "model_batch_unbound":
+                continue
+            evidence = dict(selection.get("unbound_evidence") or {})
+            validation_errors = session._unbound_evidence_errors(
+                work_id,
+                reason=str(selection.get("reason") or ""),
+                evidence=evidence,
+            )
+            if not validation_errors:
+                continue
+            invalidated_rows.append({
+                "work_id": work_id,
+                "error": "stored unbound decision fails the current grounding contract",
+                "details": validation_errors,
+                "preserved_in_tool_trajectory": True,
+            })
+            del accepted_rows[work_id]
+        if invalidated_rows:
+            last_submit_result = {
+                "ok": False,
+                "errors": invalidated_rows,
+                "accepted_work_ids": list(accepted_rows),
+                "remaining_work_ids": session.remaining_work_ids,
+            }
+    focus_serialization_pending = bool(
+        resume_state.get("focus_serialization_pending")
+    )
+    mapping_chunk = _mapping_chunk_size()
+
+    def refresh_agent_working_memory() -> None:
+        """Expose compact canonical evidence without replaying the event log."""
+        latest_tool_index = next(
+            (
+                index
+                for index in range(len(conversation) - 1, 1, -1)
+                if (
+                    str(conversation[index].get("role") or "") == "tool"
+                    and str(conversation[index].get("name") or "")
+                    in _COMPRESSIBLE_TOOL_RESULTS
+                )
+            ),
+            -1,
+        )
+        active_tail: list[dict[str, Any]] = []
+        if latest_tool_index >= 2:
+            assistant_index = next(
+                (
+                    index
+                    for index in range(latest_tool_index - 1, 1, -1)
+                    if str(conversation[index].get("role") or "") == "assistant"
+                ),
+                latest_tool_index,
+            )
+            active_tail = conversation[assistant_index : latest_tool_index + 1]
+        conversation[:] = [*conversation[:2], *active_tail]
+        conversation[:] = [
+            message
+            for message in conversation
+            if (
+                "smeta_norm_agent_resume_status_v1"
+                not in str(message.get("content") or "")
+                and "smeta_norm_agent_working_memory_v1"
+                not in str(message.get("content") or "")
+            )
+        ]
+        work_evidence_status = []
+        must_read = []
+        pending_candidates: dict[str, dict[str, dict[str, Any]]] = {}
+        pending_opened: dict[str, dict[str, dict[str, Any]]] = {}
+        for work_id in session.remaining_work_ids:
+            candidate_cards = {
+                str((card or {}).get("norm_code") or code): card
+                for code, card in (session.candidates.get(work_id) or {}).items()
+                if str((card or {}).get("norm_code") or code)
+            }
+            opened_cards = {
+                str((card or {}).get("norm_code") or code): card
+                for code, card in (session.opened.get(work_id) or {}).items()
+                if str((card or {}).get("norm_code") or code)
+            }
+            pending_candidates[work_id] = candidate_cards
+            pending_opened[work_id] = opened_cards
+            if candidate_cards and not opened_cards:
+                must_read.append(work_id)
+        focus_work_id = (
+            must_read[0]
+            if must_read
+            else (session.remaining_work_ids[0] if session.remaining_work_ids else "")
+        )
+        for work_id in session.remaining_work_ids:
+            candidate_cards = pending_candidates[work_id]
+            opened_cards = pending_opened[work_id]
+            latest_candidate_codes = next(
+                (
+                    [
+                        str(code)
+                        for code in (trace.get("candidate_codes") or [])
+                        if str(code)
+                    ]
+                    for trace in reversed(session.query_trace)
+                    if str(trace.get("work_id") or "") == work_id
+                ),
+                [],
+            )
+            active_candidate_cards = {
+                code: candidate_cards[code]
+                for code in latest_candidate_codes
+                if code in candidate_cards
+            } or candidate_cards
+            active_opened_cards = {
+                code: opened_cards[code]
+                for code in active_candidate_cards
+                if code in opened_cards
+            }
+            work_evidence_status.append({
+                "work_id": work_id,
+                "is_focus": work_id == focus_work_id,
+                "selected_base_types": list(
+                    (session.selected_base_types.get(work_id) or {}).values()
+                ),
+                "selected_collections": [
+                    {"family": family, "collection": collection}
+                    for family, collection in sorted(
+                        session.selected_collections.get(work_id) or set()
+                    )
+                ],
+                "candidate_codes": sorted(candidate_cards),
+                "active_candidate_codes": list(active_candidate_cards),
+                "candidates": [
+                    {
+                        "norm_code": code,
+                        "title": str(
+                            (card or {}).get("title")
+                            or (card or {}).get("norm_name")
+                            or ""
+                        )[:240],
+                        "measure_unit": str(
+                            (card or {}).get("measure_unit") or ""
+                        ),
+                        "candidate_rank": (card or {}).get("candidate_rank"),
+                        "source_ref": str((card or {}).get("source_ref") or "")[:240],
+                    }
+                    for code, card in active_candidate_cards.items()
+                ] if work_id == focus_work_id else [],
+                "opened_codes": sorted(opened_cards),
+                "active_opened_codes": sorted(active_opened_cards),
+                "opened_evidence": [
+                    _compact_norm_card_for_global_review(card)
+                    for _code, card in sorted(active_opened_cards.items())
+                    if isinstance(card, dict)
+                ] if work_id == focus_work_id else [],
+                "search_count": sum(
+                    1
+                    for item in session.query_trace
+                    if str(item.get("work_id") or "") == work_id
+                ),
+            })
+        usage = session.evidence_usage
+        budget = session.evidence_budget
+        elapsed_used = float(usage.get("tool_elapsed_seconds") or 0.0)
+        conversation.append({
+            "role": "user",
+            "content": json.dumps(
+                {
+                    "working_memory_contract": (
+                        "smeta_norm_agent_working_memory_v1"
+                    ),
+                    "remaining_work_ids": session.remaining_work_ids,
+                    "focus_work_id": focus_work_id,
+                    "work_evidence_status": work_evidence_status,
+                    "must_read_before_more_search": must_read,
+                    "authoritative_budget_remaining": {
+                        "search_calls": max(
+                            0,
+                            int(budget.search_calls)
+                            - int(usage.get("search_calls") or 0),
+                        ),
+                        "read_calls": max(
+                            0,
+                            int(budget.read_calls)
+                            - int(usage.get("read_calls") or 0),
+                        ),
+                        "opened_cards": max(
+                            0,
+                            int(budget.opened_cards)
+                            - int(usage.get("opened_cards") or 0),
+                        ),
+                        "tool_elapsed_seconds": round(
+                            max(0.0, float(budget.elapsed_seconds) - elapsed_used),
+                            4,
+                        ),
+                    },
+                    "instruction": (
+                        "This compact typed state is authoritative; historical tool "
+                        "messages are only an audit log. Use the latest full "
+                        "read_norms_batch result plus opened_evidence for professional "
+                        f"reasoning. Finish {focus_work_id or 'the current row'} first; "
+                        "other rows stay durably checkpointed and will become focus in "
+                        "order. A defensible selected card is sufficient; open a "
+                        "comparison card only when uncertainty requires it. For every "
+                        "work_id in must_read_before_more_search, call read_norms_batch "
+                        "before browsing or searching again. When evidence is sufficient, "
+                        "end the tool loop so LES can serialize your own mapping. In "
+                        "reasons, assert only facts explicitly present in titles, work "
+                        "steps, resources, units and source refs shown here; do not invent "
+                        "an industry, facility or application context."
+                    ),
+                },
+                ensure_ascii=False,
+                default=str,
+            ),
+        })
+
+    def emit_checkpoint(
+        *,
+        incomplete_blocker: dict[str, Any] | None = None,
+        next_turn: int | None = None,
+    ) -> None:
+        if checkpoint is None:
+            return
+        payload = session.result(
+            model_trace=model_trace,
+            agent_trace={
+                "mode": "model_batch_rag_tools",
+                "turns": len(model_trace),
+                "context_metrics": context_metrics,
+                "status": "turn_checkpoint",
+            },
+            allow_incomplete=True,
+            incomplete_blocker=incomplete_blocker,
+        )
+        payload["resume_state"] = {
+            "schema": "smeta_norm_agent_resume_v1",
+            "conversation": copy.deepcopy(conversation),
+            "tool_session": session.checkpoint_state(),
+            "model_trace": copy.deepcopy(model_trace),
+            "context_metrics": copy.deepcopy(context_metrics),
+            "next_turn": int(next_turn or (len(model_trace) + 1)),
+            "previous_call_signature": previous_call_signature,
+            "duplicate_feedback_signature": duplicate_feedback_signature,
+            "structured_mapping_attempts": structured_mapping_attempts,
+            "last_submit_result": copy.deepcopy(last_submit_result),
+            "focus_serialization_pending": focus_serialization_pending,
+            "validation_contract_version": (
+                MAPPING_VALIDATION_CONTRACT_VERSION
+            ),
+        }
+        checkpoint(payload)
 
     def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
+        nonlocal structured_mapping_attempts
         if mapping_exchange is None:
             raise RuntimeError(reason)
+        if structured_mapping_attempts >= 2:
+            raise RuntimeError(
+                "smeta model mapping failed validation after one bounded schema repair"
+            )
         remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
-        schema = _mapping_output_schema(remaining)
+        serialize_ids = (
+            remaining[:mapping_chunk]
+            if mapping_chunk > 0
+            else list(remaining)
+        )
+        schema = _mapping_output_schema(serialize_ids)
         request = {
             "transport_request": (
-                "Serialize your own current professional decisions for every remaining_work_id. "
-                "Do not delegate, revise or let code choose a decision. If the evidence you inspected "
-                "is insufficient, record your own unbound decision. Return only the required JSON."
+                "Serialize your own current professional decisions for every remaining_work_id "
+                "listed below. Do not decide deferred_work_ids yet; LES will request those after "
+                "this chunk is accepted. Do not delegate, revise or let code choose a decision. "
+                "If the evidence you inspected is insufficient, record your own unbound decision. "
+                "Return only the required JSON. Keep free-text fields concise: do not repeat the "
+                "same card list in reason and rejection_reasons. For unbound, group candidates "
+                "with the same rejection basis and return at most three grounded rejection "
+                "sentences; LES attaches executed queries and opened card codes from its typed "
+                "trace."
             ),
-            "remaining_work_ids": remaining,
+            "remaining_work_ids": serialize_ids,
+            "deferred_work_ids": [
+                work_id for work_id in remaining
+                if work_id not in serialize_ids
+            ],
             # Ollama explicitly recommends grounding a structured-output call
             # with the same schema in the prompt as well as in `format`.
             "output_schema": schema,
+            "validation_feedback": (
+                copy.deepcopy(last_submit_result.get("errors") or [])
+                if last_submit_result and not last_submit_result.get("ok")
+                else []
+            ),
+            "grounding_rule": (
+                "Use only facts present in the compact opened_evidence. Do not "
+                "repeat an industry, facility or application claim unless it is "
+                "explicitly present in a returned title, work step, resource, unit "
+                "or source_ref."
+            ),
         }
         conversation.append({
             "role": "user",
             "content": json.dumps(request, ensure_ascii=False),
         })
         started = perf_counter()
-        payload = mapping_exchange(conversation, schema) or {}
+        try:
+            payload = mapping_exchange(conversation, schema) or {}
+        except Exception as error:
+            wait_ms = round((perf_counter() - started) * 1000, 2)
+            model_trace.append({
+                "turn": turn,
+                "assistant": None,
+                "model_wait_ms": wait_ms,
+                "transport": "structured_mapping_error",
+                "trigger": reason,
+                "serialize_work_ids": serialize_ids,
+                "error": str(error),
+            })
+            if _is_timeout_error(error):
+                blocker = {
+                    "code": "structured_mapping_timeout",
+                    "reason": str(error),
+                    "serialize_work_ids": serialize_ids,
+                }
+                emit_checkpoint(incomplete_blocker=blocker)
+                raise MappingTransportTimeout(str(error)) from error
+            raise
+        structured_mapping_attempts += 1
         wait_ms = round((perf_counter() - started) * 1000, 2)
         rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
         if not rows:
@@ -1640,6 +3657,7 @@ def _run_batch_norm_agent(
             "model_wait_ms": wait_ms,
             "transport": "structured_mapping",
             "trigger": reason,
+            "serialize_work_ids": serialize_ids,
             "seed": payload.get("_les_seed"),
         })
         return {
@@ -1648,10 +3666,17 @@ def _run_batch_norm_agent(
             "function": {"name": "submit_lsr_mapping", "arguments": {"rows": rows}},
         }
 
-    finalization_turns = 1 if mapping_exchange is not None else 0
-    for turn in range(1, max_turns + finalization_turns + 1):
+    mapping_rows_per_call = (
+        mapping_chunk if mapping_chunk > 0 else max(1, len(by_id))
+    )
+    finalization_turns = (
+        math.ceil(max(1, len(by_id)) / mapping_rows_per_call) + 1
+        if mapping_exchange is not None else 0
+    )
+    start_turn = max(1, int(resume_state.get("next_turn") or 1))
+    for turn in range(start_turn, max_turns + finalization_turns + 1):
         started = perf_counter()
-        forced_mapping = turn > max_turns
+        forced_mapping = turn > max_turns or focus_serialization_pending
         if progress:
             progress({
                 "phase": "model_wait", "status": "started",
@@ -1663,12 +3688,25 @@ def _run_batch_norm_agent(
             })
         assistant: dict[str, Any] = {}
         if forced_mapping:
+            _prune_stale_tool_evidence(conversation)
+            refresh_agent_working_memory()
+            repair_mapping = bool(last_submit_result and not last_submit_result.get("ok"))
             calls = [structured_mapping_call(
-                reason=f"smeta evidence tool budget exhausted after {max_turns} model turns",
+                reason=(
+                    "previous structured mapping failed validation; resubmit only "
+                    "the remaining work_id values using the returned errors"
+                    if repair_mapping else
+                    "the current one-row focus has typed evidence and later-row "
+                    "tool calls were deferred; serialize your own focus decision now"
+                    if focus_serialization_pending else
+                    f"smeta evidence tool budget exhausted after {max_turns} model turns"
+                ),
                 turn=turn,
             )]
             model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
         else:
+            _prune_stale_tool_evidence(conversation)
+            refresh_agent_working_memory()
             assistant = exchange(conversation, tools) or {}
             model_wait_ms = round((perf_counter() - started) * 1000, 2)
             calls = [call for call in (assistant.get("tool_calls") or []) if isinstance(call, dict)]
@@ -1754,6 +3792,7 @@ def _run_batch_norm_agent(
                         "content": json.dumps(result, ensure_ascii=False),
                     })
                     model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+                emit_checkpoint(next_turn=turn + 1)
                 continue
             calls = [structured_mapping_call(reason=failure, turn=turn)]
             call_signature = json.dumps([{
@@ -1765,17 +3804,33 @@ def _run_batch_norm_agent(
         previous_call_signature = call_signature
 
         submitted: dict[str, dict[str, Any]] | None = None
+        accepted_before_turn = len(accepted_rows)
         for call_index, call in enumerate(calls, 1):
             call_id = str(call.get("id") or f"batch-{turn}-{call_index}")
             name = str(((call.get("function") or {}).get("name") or ""))
             args = _tool_arguments(call)
-            result = session.execute(name, args, turn=turn)
+            focus_guard = _focus_serialization_guard(
+                session,
+                args,
+                mapping_chunk=mapping_chunk,
+            )
+            if focus_guard is None:
+                result = session.execute(name, args, turn=turn)
+            else:
+                result = focus_guard
+                focus_serialization_pending = True
             conversation.append({
                 "role": "tool", "tool_call_id": call_id, "name": name,
                 "content": json.dumps(result, ensure_ascii=False, default=str),
             })
             model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
+            if name == "submit_lsr_mapping" and isinstance(result, dict):
+                last_submit_result = result
             submitted = dict(session.accepted_rows) if session.complete else None
+        if len(accepted_rows) > accepted_before_turn:
+            structured_mapping_attempts = 0
+            focus_serialization_pending = False
+        emit_checkpoint(next_turn=turn + 1)
         if submitted is not None:
             return session.result(
                 model_trace=model_trace,
@@ -1793,6 +3848,16 @@ def _run_batch_norm_agent(
                     ),
                 },
             )
+    if last_submit_result and not last_submit_result.get("ok"):
+        errors = json.dumps(
+            (last_submit_result.get("errors") or [])[:8],
+            ensure_ascii=False,
+            default=str,
+        )
+        raise RuntimeError(
+            "smeta model mapping failed validation after bounded repair: "
+            f"{errors[:800]}"
+        )
     raise RuntimeError(f"smeta model did not submit mapping within {max_turns} model turns")
 
 
@@ -1938,9 +4003,15 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "function": {
                 "name": "browse_norm_catalog",
                 "description": (
-                    "Browse the typed normative menu before searching: families, collections, then "
-                    "official tables. After choosing a table call search_norms_batch with table_codes. "
-                    "Catalog navigation never chooses a professional norm."
+                    "Browse the typed normative menu before searching. First call with only work_id "
+                    "and compare the authoritative family passports. Then select a family with "
+                    "scope_reason and confidence to receive a short native-RRF-plus-rerank collection "
+                    "shortlist, not the full catalog. Preview a collection "
+                    "in a later call, then confirm it from that passport; batch every work_id that shares "
+                    "that scope. Search the first "
+                    "selected collection before selecting another; if it returned candidates, read "
+                    "one before expanding. An official table is optional. Catalog navigation records "
+                    "the model's scope decision but never chooses a professional norm."
                 ),
                 "parameters": {
                     "type": "object",
@@ -1950,6 +4021,39 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                             "family": {"type": "string", "description": "Norm family such as ГЭСН, ГЭСНм, ГЭСНр. Empty returns families."},
                             "collection": {"type": "string", "description": "Two-digit collection selected by the model. Empty returns collections."},
                             "table": {"type": "string", "description": "Official table code selected by the model, such as 08-02-001."},
+                            "confirm_scope": {
+                                "type": "boolean",
+                                "description": (
+                                    "For a collection, omit/false to read its passport. Set true "
+                                    "only on the next call after checking the returned passport "
+                                    "against the work's functional system."
+                                ),
+                            },
+                            "passport_evidence": {
+                                "type": "string",
+                                "description": "Exact title, source or representative section copied from the previewed collection_passport.",
+                            },
+                            "scope_reason": {
+                                "type": "string",
+                                "description": (
+                                    "Required when selecting family or collection: why this "
+                                    "normative scope matches the work. It must come from the model, "
+                                    "not LES code. During family selection it is also the default "
+                                    "navigation query for the reranked collection shortlist."
+                                ),
+                            },
+                            "catalog_query": {
+                                "type": "string",
+                                "description": (
+                                    "Optional FSNB-language query authored by the model for "
+                                    "collection shortlisting. If omitted, scope_reason is used."
+                                ),
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high"],
+                                "description": "Required when selecting family or collection.",
+                            },
                         }, "required": ["work_id"]}},
                     },
                     "required": ["items"],
@@ -1983,12 +4087,11 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
                                     "collections selected from the catalog; global requires both empty."
                                 ),
                             },
-                            "base_types": {"type": "array", "items": {"type": "string"}, "description": "Families chosen by the model after catalog browse."},
-                            "collections": {"type": "array", "items": {"type": "string"}, "description": "Collection numbers chosen by the model after catalog browse."},
+                            "base_types": {"type": "array", "items": {"type": "string"}, "description": "Families chosen by the model after catalog browse. RIM uses one family per item; repeat the item for another family."},
+                            "collections": {"type": "array", "items": {"type": "string"}, "description": "Collection numbers chosen by the model after catalog browse. RIM uses one collection per item; repeat the item for another collection."},
                             "table_codes": {"type": "array", "items": {"type": "string"}, "description": "Official table codes shown by browse_norm_catalog. Selecting a table returns its complete row menu without ranking."},
                             "limit": {"type": "integer", "minimum": 1}, "page": {"type": "integer", "minimum": 0},
                         }, "required": ["work_id", "query", "search_intent", "scope_mode"]}},
-                        "rerank": {"type": "boolean"},
                     },
                     "required": ["items"],
                 },
@@ -1998,7 +4101,11 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             "type": "function",
             "function": {
                 "name": "read_norms_batch",
-                "description": "Read full typed norm cards for any number of source rows in one tool call.",
+                "description": (
+                    "Read full typed norm cards selected by the model. In RIM, send at most "
+                    "two cards total per call: the strongest candidate and one comparison "
+                    "card, possibly for two different work rows."
+                ),
                 "parameters": {"type": "object", "properties": {
                     "items": {"type": "array", "items": {"type": "object", "properties": {
                         "work_id": {"type": "string"},
@@ -2021,21 +4128,100 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
     ]
 
 
+def batch_norm_tools() -> list[dict[str, Any]]:
+    """Public copy of the canonical batch norm contract for RIM agents."""
+    return copy.deepcopy(_batch_norm_tools())
+
+
 def _mapping_output_schema(remaining_work_ids: list[str]) -> dict[str, Any]:
-    """Reuse the declared mapping row as a provider-enforced transport schema."""
+    """Build a compact decision-specific transport schema for local models.
+
+    The canonical submit contract stays rich because bind decisions need a
+    complete professional comparison and technology check.  A local model must
+    not, however, serialize every bind-only field when its decision is
+    ``unbound`` or ``covered_by``.  The variants below preserve the model-owned
+    decision while leaving executed queries and opened-card codes to the
+    deterministic trace alignment in :meth:`SmetaNormToolSession._submit`.
+    """
     submit_tool = next(
         tool for tool in _batch_norm_tools()
         if str((tool.get("function") or {}).get("name") or "") == "submit_lsr_mapping"
     )
     parameters = json.loads(json.dumps(submit_tool["function"]["parameters"], ensure_ascii=False))
-    row_schema = parameters["properties"]["rows"]["items"]
-    # Conditional validation remains in the ordinary submit processor. Ollama's
-    # grammar accepts a simpler schema more consistently; this only constrains
-    # serialization and never creates or changes a professional decision.
-    row_schema.pop("allOf", None)
-    row_schema["properties"]["work_id"]["enum"] = list(remaining_work_ids)
+    canonical_row = parameters["properties"]["rows"]["items"]
+    properties = canonical_row["properties"]
+    work_id = copy.deepcopy(properties["work_id"])
+    work_id["enum"] = list(remaining_work_ids)
+
+    def variant(
+        decision: str,
+        property_names: tuple[str, ...],
+        required: tuple[str, ...],
+    ) -> dict[str, Any]:
+        selected = {
+            name: copy.deepcopy(properties[name])
+            for name in property_names
+        }
+        selected["work_id"] = copy.deepcopy(work_id)
+        selected["decision"] = {
+            "type": "string",
+            "enum": [decision],
+        }
+        return {
+            "type": "object",
+            "properties": selected,
+            "required": ["work_id", "decision", *required],
+            "additionalProperties": False,
+        }
+
+    bind = variant(
+        "bind",
+        (
+            "norm_code", "selection_kind", "applicability",
+            "analog_limitations", "candidate_evaluations",
+            "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
+        ),
+        (
+            "norm_code", "selection_kind", "applicability",
+            "analog_limitations", "candidate_evaluations",
+            "technology_check", "reason",
+        ),
+    )
+    covered_by = variant(
+        "covered_by",
+        ("covered_by_work_id", "reason"),
+        ("covered_by_work_id", "reason"),
+    )
+    unbound = variant(
+        "unbound",
+        ("unbound_evidence", "reason"),
+        ("unbound_evidence", "reason"),
+    )
+    # Search queries and opened codes are already immutable typed tool trace.
+    # Asking Qwen to repeat them produced long, failure-prone JSON without
+    # adding a professional judgment.  Qwen still owns the rejection reasons
+    # and the coverage conclusion.
+    unbound_evidence = unbound["properties"]["unbound_evidence"]
+    unbound_evidence["properties"] = {
+        "rejection_reasons": {
+            **copy.deepcopy(
+                properties["unbound_evidence"]["properties"]["rejection_reasons"]
+            ),
+            "maxItems": 3,
+        },
+        "coverage_checked": copy.deepcopy(
+            properties["unbound_evidence"]["properties"]["coverage_checked"]
+        ),
+    }
+    unbound_evidence["required"] = ["rejection_reasons", "coverage_checked"]
+    unbound_evidence["additionalProperties"] = False
+
+    parameters["properties"]["rows"]["items"] = {
+        "oneOf": [bind, covered_by, unbound],
+    }
     parameters["properties"]["rows"]["minItems"] = 1
     parameters["properties"]["rows"]["maxItems"] = max(1, len(remaining_work_ids))
+    parameters["additionalProperties"] = False
     return parameters
 
 
@@ -2205,6 +4391,8 @@ def run_vor_document_workflow(
     agent_batch_runner: AgentBatchRunner | None = None,
     accumulate_task_state: bool = False,
     require_global_review: bool = True,
+    resume_agent_result: dict[str, Any] | None = None,
+    batch_checkpoint: Checkpoint | None = None,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     intake = intake_vor_document(path)
@@ -2237,6 +4425,8 @@ def run_vor_document_workflow(
         batch_size=batch_size,
         batch_runner=agent_batch_runner,
         accumulate_task_state=accumulate_task_state,
+        resume_result=resume_agent_result,
+        checkpoint=batch_checkpoint,
     )
     mapping_run_id = uuid4().hex
     from proxy.smeta_core.revision_store import DEFAULT_ROOT

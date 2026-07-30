@@ -218,6 +218,7 @@ async def classic_chat_page(request: Request):
     from sovushka.pages.documents import build_documents
     from sovushka.pages.history import build_history
     from sovushka.pages.mail import build_mail
+    from sovushka.pages.rim import build_rim
     from sovushka.pages.samovar import build_samovar
 
     allowed, role, holder, is_admin = _resolve_auth(request)
@@ -237,6 +238,7 @@ async def classic_chat_page(request: Request):
             admin_tabs=False,
             include_datasets=is_admin,
             include_documents=True,
+            include_rim=True,
             admin_link=is_admin,
         )
 
@@ -245,6 +247,7 @@ async def classic_chat_page(request: Request):
         tab_documents = tr.get("documents")
         tab_studio = tr.get("studio")
         tab_cad_bim = tr.get("cad_bim")
+        tab_rim = tr.get("rim")
         tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
@@ -275,6 +278,9 @@ async def classic_chat_page(request: Request):
             if tab_cad_bim:
                 with ui.tab_panel(tab_cad_bim):
                     build_documents(surface="cad_bim")
+            if tab_rim:
+                with ui.tab_panel(tab_rim):
+                    build_rim()
             if tab_mail:
                 with ui.tab_panel(tab_mail):
                     build_mail()
@@ -287,6 +293,7 @@ async def classic_chat_page(request: Request):
     _last_tab = "AI ЧАТ" if _forced_chat_tab else app.storage.user.get("last_chat_tab", "AI ЧАТ")
     _target = {"AI ЧАТ": tab_chat, "Датасеты": tab_samovar, "Документы": tab_documents,
                "Студия": tab_studio, "CAD/BIM": tab_cad_bim,
+               "РИМ-смета": tab_rim,
                "Почта": tab_mail, "ИСТОРИЯ": tab_history}.get(_last_tab)
     if _target and _target != tab_chat:
         tabs.set_value(_target)

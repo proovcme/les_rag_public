@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from backend.http_client_policy import trust_env_for_url
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import rag_meta_db_path, rag_runtime_config
 from proxy.config import docker_control_enabled, mlx_url
@@ -297,7 +298,10 @@ async def warmup_models(_admin=Depends(require_admin)):
         raise HTTPException(status_code=admission.status_code, detail=admission.reason)
     mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
     results = {}
-    async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(
+        trust_env=trust_env_for_url(mlx_url),
+        timeout=120.0,
+    ) as client:
         for name, model in [
             ("main", os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL)),
             ("val", os.getenv("MLX_VAL_MODEL", "mlx-community/Qwen3-4B-4bit")),
@@ -339,8 +343,12 @@ async def set_mode(req: ModeRequest, _admin=Depends(require_admin)):
 
 async def _unload_mlx_models() -> dict[str, Any]:
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(f"{mlx_url()}/api/unload_all", json={})
+        target_url = mlx_url()
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(target_url),
+            timeout=15.0,
+        ) as client:
+            response = await client.post(f"{target_url}/api/unload_all", json={})
         result: Any
         try:
             result = response.json()
@@ -366,8 +374,12 @@ async def _host_memory() -> dict[str, Any]:
             "source": "psutil_non_mlx_provider",
         }
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.get(f"{mlx_url()}/api/host_memory")
+        target_url = mlx_url()
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(target_url),
+            timeout=5.0,
+        ) as client:
+            response = await client.get(f"{target_url}/api/host_memory")
         response.raise_for_status()
         return response.json()
     except Exception as error:
@@ -594,7 +606,10 @@ async def get_status():
 
     loaded_models = []
     try:
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(mlx_url),
+            timeout=3.0,
+        ) as client:
             response = await client.get(f"{mlx_url}/api/ps")
             if response.status_code == 200:
                 for model in response.json().get("models", []):

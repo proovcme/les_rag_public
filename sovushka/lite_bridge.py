@@ -29,6 +29,7 @@ from fastapi import Request, Response
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from starlette.staticfiles import StaticFiles
 
+from backend.http_client_policy import trust_env_for_url
 from sovushka.config import PROXY_URL, TRUSTED_NETWORK_ROLE, TRUSTED_PROXY_HEADER
 from sovushka.trust import client_ip_from_request, trust_diagnostics, trusted_role_for_request
 
@@ -97,7 +98,10 @@ async def bridge_proxy_request(path: str, request: Request) -> Response:
     target_url = f"{PROXY_URL.rstrip('/')}{target_path}{query}"
     body = await request.body()
     try:
-        async with httpx.AsyncClient(timeout=600.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(target_url),
+            timeout=600.0,
+        ) as client:
             proxied = await client.request(
                 request.method,
                 target_url,

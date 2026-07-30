@@ -15,6 +15,8 @@ import time
 from datetime import datetime, timezone
 
 import httpx
+
+from backend.http_client_policy import trust_env_for_url
 import psutil
 
 logger = logging.getLogger(__name__)
@@ -64,7 +66,10 @@ def init_db():
 async def _get_llm_ram() -> float:
     """Асинхронно запрашивает RAM, занятый загруженными MLX моделями."""
     try:
-        async with httpx.AsyncClient(timeout=2.0) as c:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(MLX_HOST),
+            timeout=2.0,
+        ) as c:
             r = await c.get(f"{MLX_HOST}/api/ps")
             if r.status_code == 200:
                 return sum(
@@ -78,8 +83,12 @@ async def _get_llm_ram() -> float:
 async def _get_network_ok() -> int:
     """Проверяет доступность прокси — только localhost, без хардкода ZeroTier."""
     try:
-        async with httpx.AsyncClient(timeout=1.0) as c:
-            r = await c.get("http://localhost:8050/api/health")
+        proxy_url = "http://localhost:8050"
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(proxy_url),
+            timeout=1.0,
+        ) as c:
+            r = await c.get(f"{proxy_url}/api/health")
             return 1 if r.status_code == 200 else 0
     except Exception:
         return 0

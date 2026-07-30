@@ -33,6 +33,8 @@ import threading
 from dataclasses import dataclass
 from typing import Optional
 
+from backend.http_client_policy import trust_env_for_url
+
 logger = logging.getLogger("les.reranker")
 
 # ─────────────────────────────────────────
@@ -187,7 +189,10 @@ class Reranker:
             "temperature": 0.0,
         }
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(self.mlx_url),
+                timeout=self.timeout,
+            ) as client:
                 r = await client.post(
                     f"{self.mlx_url}/v1/chat/completions",
                     json=payload,
@@ -360,7 +365,10 @@ class CrossEncoderReranker:
             ]
 
         documents = [str(c.get("text", ""))[: self.max_chunk_len] for c in chunks]
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(self.mlx_url),
+            timeout=self.timeout,
+        ) as client:
             resp = await client.post(
                 f"{self.mlx_url}/v1/rerank",
                 json={"query": query, "documents": documents, "top_k": top_k},
