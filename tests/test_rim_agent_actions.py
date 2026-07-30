@@ -70,6 +70,7 @@ def test_server_stamps_session_and_rejects_model_authority_fields():
                         "scope_mode": "scoped",
                         "base_types": ["ГЭСНм"],
                         "collections": ["10"],
+                        "table_codes": ["10-01-001"],
                     }
                 ]
             },
@@ -240,7 +241,7 @@ def test_vor_draft_rejects_mapping_decisions_and_missing_work_fields():
 
 
 def test_rim_search_rejects_global_or_incomplete_model_scope():
-    with pytest.raises(ValueError, match="RIM search scope is invalid"):
+    with pytest.raises(ValueError, match="arguments are invalid"):
         validate_model_action(
             _session(),
             {
@@ -254,6 +255,7 @@ def test_rim_search_rejects_global_or_incomplete_model_scope():
                             "scope_mode": "global",
                             "base_types": [],
                             "collections": [],
+                            "table_codes": [],
                         }
                     ]
                 },
@@ -277,6 +279,7 @@ def test_rim_search_uses_one_typed_catalog_scope_per_item():
                             "scope_mode": "scoped",
                             "base_types": ["ГЭСНм", "ГЭСНп"],
                             "collections": ["10"],
+                            "table_codes": ["10-01-001"],
                         }
                     ]
                 },
@@ -323,11 +326,22 @@ def test_rim_norm_session_requires_catalog_scope_before_batch_search(monkeypatch
     def catalog(**kwargs):
         family = kwargs.get("family") or ""
         collection = kwargs.get("collection") or ""
+        section = kwargs.get("section") or ""
+        table = kwargs.get("table") or ""
         if not family:
             return {
                 "level": "family",
                 "filters": {"family": "", "collection": "", "table": ""},
-                "items": [{"key": "ГЭСНм", "norm_count": 10, "resource_count": 20}],
+                "items": [{
+                    "key": "ГЭСНм",
+                    "node_id": "catalog:family:ГЭСНм",
+                    "parent_id": "catalog:root",
+                    "node_type": "family",
+                    "cipher": "ГЭСНм",
+                    "purpose": "Монтаж оборудования",
+                    "norm_count": 10,
+                    "resource_count": 20,
+                }],
             }
         if not collection:
             return {
@@ -339,10 +353,52 @@ def test_rim_norm_session_requires_catalog_scope_before_batch_search(monkeypatch
                 ],
             }
         title = "Оборудование связи" if collection == "10" else "Приборы автоматики"
+        if table:
+            return {
+                "level": "norm",
+                "filters": {
+                    "family": family,
+                    "collection": collection,
+                    "section": section,
+                    "table": table,
+                },
+                "items": [{"norm_code": "ГЭСНм10-01-001-01"}],
+            }
+        if section:
+            return {
+                "level": "table",
+                "filters": {
+                    "family": family,
+                    "collection": collection,
+                    "section": section,
+                    "table": "",
+                },
+                "items": [{
+                    "key": "10-01-001",
+                    "title": "Оборудование станции",
+                    "norm_count": 2,
+                    "resource_count": 8,
+                }],
+            }
         return {
-            "level": "table",
-            "filters": {"family": family, "collection": collection, "table": ""},
-            "items": [{"key": "10-01-001", "norm_count": 2, "resource_count": 8}],
+            "level": "section",
+            "filters": {
+                "family": family,
+                "collection": collection,
+                "section": "",
+                "table": "",
+            },
+            "items": [{
+                "key": "10-01",
+                "node_id": "catalog:section:ГЭСНм:10-01",
+                "parent_id": "catalog:collection:ГЭСНм:10",
+                "node_type": "section",
+                "cipher": "10-01",
+                "title": "Городская телефонная связь",
+                "official_heading": "Отдел 1. Городская телефонная связь",
+                "norm_count": 10,
+                "resource_count": 20,
+            }],
             "collection_passport": {
                 "schema": "smeta_norm_collection_passport_v1",
                 "family": family,
@@ -359,6 +415,47 @@ def test_rim_norm_session_requires_catalog_scope_before_batch_search(monkeypatch
         }
 
     monkeypatch.setattr(document_workflow, "browse_norm_catalog", catalog)
+    monkeypatch.setattr(
+        document_workflow,
+        "rank_norm_catalog_collections",
+        lambda query, **_kwargs: {
+            "cards": [{
+                "key": "10",
+                "node_id": "catalog:collection:ГЭСНм:10",
+                "parent_id": "catalog:family:ГЭСНм",
+                "node_type": "collection",
+                "cipher": "10",
+                "collection": "10",
+                "navigation_kind": "collection",
+                "title": "Оборудование связи",
+            }],
+            "retrieval_trace": {
+                "rerank_status": "ok",
+                "reranked": True,
+                "retrieval_policy": "typed_catalog_graph_then_rerank",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        document_workflow,
+        "rank_norm_catalog_tables",
+        lambda query, **_kwargs: {
+            "cards": [{
+                "key": "10-01-001",
+                "node_id": "catalog:table:ГЭСНм:10-01-001",
+                "parent_id": "catalog:section:ГЭСНм:10-01",
+                "node_type": "table",
+                "cipher": "10-01-001",
+                "navigation_kind": "table",
+                "title": "Оборудование станции",
+            }],
+            "retrieval_trace": {
+                "rerank_status": "pool_too_small",
+                "reranked": False,
+                "retrieval_policy": "typed_catalog_graph_then_rerank",
+            },
+        },
+    )
     def browse_many(queries, **kwargs):
         search_calls.append((queries, kwargs))
         catalog_navigation = not kwargs.get("collections")
@@ -393,6 +490,7 @@ def test_rim_norm_session_requires_catalog_scope_before_batch_search(monkeypatch
                 "scope_mode": "scoped",
                 "base_types": ["ГЭСНм"],
                 "collections": ["10"],
+                "table_codes": ["10-01-001"],
             }
         ]
     }
@@ -407,58 +505,373 @@ def test_rim_norm_session_requires_catalog_scope_before_batch_search(monkeypatch
         turn=2,
     )
     assert families["rows"][0]["level"] == "family"
+    question = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "vor-001",
+            "current_node_id": "catalog:root",
+            "decision": "ask",
+            "evidence": [{
+                "source_node_id": "catalog:family:ГЭСНм",
+                "field": "purpose",
+                "claim": "Для монтажа оборудования важен способ установки.",
+            }],
+            "rejected_nodes": [],
+            "confidence": "low",
+            "missing_facts": ["способ установки"],
+            "question": {
+                "question_kind": "physical_installation",
+                "text": "Как прокладывается кабель?",
+                "reason": "Способ прокладки влияет на применимость нормы.",
+                "options": ["в лотке", "в трубе", "пока неизвестно"],
+            },
+        }]},
+        turn=3,
+    )
+    assert question["requires_user_input"] is True
+    assert question["pending_question"]["options"] == [
+        "в лотке",
+        "в трубе",
+        "пока неизвестно",
+    ]
+    invented_jump = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "vor-001",
+            "current_node_id": "catalog:root",
+            "decision": "continue",
+            "selected_node_id": "catalog:collection:ГЭСНм:10",
+            "evidence": [],
+            "rejected_nodes": [],
+            "confidence": "high",
+            "missing_facts": [],
+        }]},
+        turn=4,
+    )
+    assert invented_jump["rows"][0]["ok"] is False
+    assert "not a child shown" in invented_jump["rows"][0]["error"]
     base = session.execute(
         "browse_norm_catalog",
         {"items": [{
             "work_id": "vor-001",
-            "family": "ГЭСНм",
-            "scope_reason": "Работа описывает монтаж оборудования связи.",
+            "current_node_id": "catalog:root",
+            "decision": "continue",
+            "selected_node_id": "catalog:family:ГЭСНм",
+            "evidence": [{
+                "source_node_id": "catalog:family:ГЭСНм",
+                "field": "purpose",
+                "claim": "Вид норм охватывает монтаж оборудования.",
+            }],
+            "rejected_nodes": [],
             "confidence": "high",
+            "missing_facts": [],
+            "work_features": {
+                "domain": "связь",
+                "system": "кабельная система связи",
+                "equipment": "кабель",
+                "operation": "прокладка",
+                "assembly_state": "component",
+                "installation_context": "внутри здания",
+                "unknowns": [],
+            },
+            "catalog_query": "кабель прокладка",
         }]},
-        turn=3,
+        turn=5,
     )
-    assert base["rows"][0]["level"] == "base_type_selected"
-    assert base["rows"][0]["scope_selection"]["reason"].startswith("Работа")
+    assert base["rows"][0]["ok"] is True
+    assert base["rows"][0]["level"] == "collection"
     assert [item["key"] for item in base["rows"][0]["items"]] == ["10"]
-    assert base["rows"][0]["catalog_retrieval_trace"]["rerank_status"] == "ok"
-    assert base["rows"][0]["catalog_retrieval_trace"]["retrieval_policy"] == (
-        "native_rrf_then_rerank_required"
-    )
-    preview = session.execute(
-        "browse_norm_catalog",
-        {"items": [{
-            "work_id": "vor-001",
-            "family": "ГЭСНм",
-            "collection": "10",
-        }]},
-        turn=4,
-    )
-    assert preview["rows"][0]["level"] == "collection_previewed"
     catalog = session.execute(
         "browse_norm_catalog",
         {"items": [{
             "work_id": "vor-001",
-            "family": "ГЭСНм",
-            "collection": "10",
-            "scope_reason": "Сборник относится к оборудованию связи.",
+            "current_node_id": "catalog:family:ГЭСНм",
+            "decision": "continue",
+            "selected_node_id": "catalog:collection:ГЭСНм:10",
+            "evidence": [{
+                "source_node_id": "catalog:collection:ГЭСНм:10",
+                "field": "title",
+                "claim": "Сборник относится к оборудованию связи.",
+            }],
+            "rejected_nodes": [],
             "confidence": "high",
-            "confirm_scope": True,
-            "passport_evidence": (
-                "Раздел 3. Аппаратура уплотнения межстанционных связей"
-            ),
+            "missing_facts": [],
         }]},
-        turn=5,
+        turn=7,
     )
-    assert catalog["rows"][0]["level"] == "collection_selected"
-    assert catalog["rows"][0]["items"] == []
-    assert catalog["rows"][0]["collection_passport"]["title"] == "Оборудование связи"
-    assert catalog["rows"][0]["scope_selection"]["reason"].startswith("Сборник")
-    accepted = session.execute("search_norms_batch", search_args, turn=6)
+    assert catalog["rows"][0]["level"] == "section"
+    assert [item["key"] for item in catalog["rows"][0]["items"]] == ["10-01"]
+    broadened = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "vor-001",
+            "current_node_id": "catalog:collection:ГЭСНм:10",
+            "decision": "broaden",
+            "evidence": [],
+            "rejected_nodes": [],
+            "confidence": "medium",
+            "missing_facts": [],
+        }]},
+        turn=8,
+    )
+    assert broadened["rows"][0]["current_node_id"] == "catalog:family:ГЭСНм"
+    assert [item["node_id"] for item in broadened["rows"][0]["items"]] == [
+        "catalog:collection:ГЭСНм:10"
+    ]
+    catalog = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "vor-001",
+            "current_node_id": "catalog:family:ГЭСНм",
+            "decision": "continue",
+            "selected_node_id": "catalog:collection:ГЭСНм:10",
+            "evidence": [{
+                "source_node_id": "catalog:collection:ГЭСНм:10",
+                "field": "title",
+                "claim": "Сборник относится к оборудованию связи.",
+            }],
+            "rejected_nodes": [],
+            "confidence": "high",
+            "missing_facts": [],
+        }]},
+        turn=9,
+    )
+    section = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "vor-001",
+            "current_node_id": "catalog:collection:ГЭСНм:10",
+            "decision": "continue",
+            "selected_node_id": "catalog:section:ГЭСНм:10-01",
+            "evidence": [{
+                "source_node_id": "catalog:section:ГЭСНм:10-01",
+                "field": "official_heading",
+                "claim": "Раздел относится к городской телефонной связи.",
+            }],
+            "rejected_nodes": [],
+            "confidence": "medium",
+            "missing_facts": [],
+            "catalog_query": "оборудование телефонной станции",
+        }]},
+        turn=10,
+    )
+    assert section["rows"][0]["level"] == "table"
+    assert [item["key"] for item in section["rows"][0]["items"]] == [
+        "10-01-001"
+    ]
+    table = session.execute(
+        "browse_norm_catalog",
+        {"items": [{
+            "work_id": "vor-001",
+            "current_node_id": "catalog:section:ГЭСНм:10-01",
+            "decision": "continue",
+            "selected_node_id": "catalog:table:ГЭСНм:10-01-001",
+            "evidence": [{
+                "source_node_id": "catalog:table:ГЭСНм:10-01-001",
+                "field": "title",
+                "claim": "Таблица относится к оборудованию станции.",
+            }],
+            "rejected_nodes": [],
+            "confidence": "medium",
+            "missing_facts": [],
+        }]},
+        turn=11,
+    )
+    assert table["rows"][0]["level"] == "norm_search"
+    accepted = session.execute("search_norms_batch", search_args, turn=12)
     assert accepted["rows"][0]["ok"] is True
     assert search_calls[0][1]["base_types"] == ["ГЭСНм"]
-    assert search_calls[0][1]["collections"] == []
-    assert search_calls[-1][1]["base_types"] == ["ГЭСНм"]
-    assert search_calls[-1][1]["collections"] == ["10"]
+    assert search_calls[0][1]["collections"] == ["10"]
+    assert search_calls[0][1]["table_codes"] == ["10-01-001"]
+
+
+def test_rim_phase_exposes_simple_route_tools_instead_of_conditional_union():
+    tools = document_workflow._phase_norm_tools("section_select")
+    names = [tool["function"]["name"] for tool in tools]
+
+    assert names == [
+        "continue_norm_catalog",
+        "ask_norm_catalog_fact",
+        "broaden_norm_catalog",
+        "unbound_norm_catalog",
+    ]
+    ask_item = tools[1]["function"]["parameters"]["properties"]["items"]["items"]
+    assert "question" in ask_item["required"]
+    assert "selected_node_id" not in ask_item["properties"]
+    assert "decision" not in ask_item["properties"]
+    continue_item = tools[0]["function"]["parameters"]["properties"]["items"][
+        "items"
+    ]
+    assert "selected_node_id" in continue_item["required"]
+    assert "catalog_query" in continue_item["properties"]
+    assert "catalog_query" not in continue_item["required"]
+    serialized = json.dumps(tools, ensure_ascii=False, sort_keys=True)
+    for phase in ("family_select", "collection", "table_select"):
+        assert json.dumps(
+            document_workflow._phase_norm_tools(phase),
+            ensure_ascii=False,
+            sort_keys=True,
+        ) == serialized
+
+
+def test_family_phase_does_not_block_on_known_or_unknown_assembly_state():
+    prompt = document_workflow.smeta_phase_instruction("family_select")
+
+    assert "означает `site_assembled`" in prompt
+    assert "не блокируют выбор вида норм" in prompt
+    assert "обязательно выбери один" in prompt
+    assert "`ask_norm_catalog_fact`" in prompt
+
+
+def test_collection_phase_requires_child_evidence_not_parent_passport():
+    prompt = document_workflow.smeta_phase_instruction("collection")
+
+    assert "выбранный дочерний сборник" in prompt
+    assert "паспорт семейства является только контекстом пути" in prompt
+    assert "не может быть evidence выбора сборника" in prompt
+
+
+def test_collection_route_accepts_model_choice_with_five_rejected_siblings(
+    monkeypatch,
+):
+    work_id = "vor-0001"
+    family_id = "catalog:family:ГЭСНм"
+    choices = [
+        ("10", "Оборудование связи"),
+        ("32", "Оборудование предприятий электронной промышленности"),
+        ("40", "Дополнительное перемещение оборудования"),
+        ("37", "Оборудование общего назначения"),
+        ("08", "Электротехнические установки"),
+        ("36", "Оборудование коммунального хозяйства"),
+    ]
+    children = [
+        {
+            "node_id": f"catalog:collection:ГЭСНм:{code}",
+            "parent_id": family_id,
+            "node_type": "collection",
+            "cipher": code,
+            "title": title,
+            "source_ref": f"ФСНБ-2022 · ГЭСНм {code}",
+        }
+        for code, title in choices
+    ]
+    monkeypatch.setattr(
+        document_workflow,
+        "browse_norm_catalog",
+        lambda **_kwargs: {
+            "items": [],
+            "level": "section",
+        },
+    )
+    session = document_workflow.SmetaNormToolSession(
+        [{
+            "work_id": work_id,
+            "title": "Монтаж телекоммуникационного шкафа",
+            "unit": "шт.",
+            "quantity": 2,
+        }],
+        candidate_limit=6,
+        require_scoped_search=True,
+    )
+    session.family_catalog_seen.add(work_id)
+    session.selected_base_types[work_id] = {
+        "гэснм": {"family": "ГЭСНм", "confidence": "high"}
+    }
+    session.catalog_current_nodes[work_id] = family_id
+    session.catalog_menus[work_id] = {family_id: children}
+    session.catalog_node_registry[work_id] = {
+        family_id: {
+            "node_id": family_id,
+            "parent_id": "catalog:root",
+            "node_type": "family",
+            "cipher": "ГЭСНм",
+            "title": "Монтаж оборудования",
+        },
+        **{child["node_id"]: child for child in children},
+    }
+    selected_id = "catalog:collection:ГЭСНм:10"
+    result = session.execute(
+        "continue_norm_catalog",
+        {
+            "items": [{
+                "work_id": work_id,
+                "current_node_id": family_id,
+                "selected_node_id": selected_id,
+                "evidence": [{
+                    "source_node_id": selected_id,
+                    "field": "title",
+                    "claim": "Оборудование связи",
+                }],
+                "rejected_nodes": [
+                    {
+                        "node_id": child["node_id"],
+                        "reason": f"{child['title']} не соответствует СКС",
+                    }
+                    for child in children
+                    if child["node_id"] != selected_id
+                ],
+                "confidence": "high",
+                "missing_facts": [],
+            }]
+        },
+        turn=2,
+    )
+
+    assert result["rows"][0]["ok"] is True
+    assert result["rows"][0]["route_decision"]["selected_node_id"] == selected_id
+    assert session.selected_collections[work_id] == {("гэснм", "10")}
+
+
+def test_scoped_agent_prepares_root_without_spending_a_model_turn():
+    checkpoints = []
+    calls = 0
+
+    def inspect_first_model_call(messages, tools):
+        nonlocal calls
+        calls += 1
+        working_memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        assert working_memory["active_phase"] == "family_select"
+        assert working_memory["work_evidence_status"][0][
+            "catalog_current_node_id"
+        ] == "catalog:root"
+        assert len(
+            working_memory["work_evidence_status"][0][
+                "catalog_visible_children"
+            ]
+        ) == 5
+        assert "authoritative_budget_remaining" not in working_memory
+        assert all(message.get("role") != "tool" for message in messages)
+        assert [tool["function"]["name"] for tool in tools] == [
+            "continue_norm_catalog",
+            "ask_norm_catalog_fact",
+            "broaden_norm_catalog",
+            "unbound_norm_catalog",
+        ]
+        raise RuntimeError("first model call inspected")
+
+    with pytest.raises(RuntimeError, match="first model call inspected"):
+        document_workflow._run_batch_norm_agent(
+            [{
+                "work_id": "vor-001",
+                "title": "Монтаж шкафа связи",
+                "unit": "шт",
+                "quantity": 1,
+            }],
+            inspect_first_model_call,
+            candidate_limit=4,
+            max_turns=1,
+            checkpoint=checkpoints.append,
+            require_scoped_search=True,
+        )
+
+    assert calls == 1
+    assert checkpoints[-1]["catalog_trace"][0]["level"] == "family"
 
 
 def test_rim_catalog_menu_is_not_duplicated_for_identical_work_scopes(monkeypatch):
@@ -494,19 +907,19 @@ def test_rim_catalog_menu_is_not_duplicated_for_identical_work_scopes(monkeypatc
     monkeypatch.setattr(document_workflow, "browse_norm_catalog", catalog)
     monkeypatch.setattr(
         document_workflow,
-        "browse_norms_many",
-        lambda queries, **kwargs: shortlist_calls.append((queries, kwargs)) or {
-            query: {
-                "cards": [{
-                    "norm_code": "ГЭСНм10-01-001-01",
-                    "title": "Оборудование связи",
-                }],
-                "retrieval_trace": {
-                    "rerank_status": "ok",
-                    "reranked": True,
-                },
-            }
-            for query in queries
+        "rank_norm_catalog_collections",
+        lambda query, **kwargs: shortlist_calls.append((query, kwargs)) or {
+            "cards": [{
+                "key": "10",
+                "collection": "10",
+                "navigation_kind": "collection",
+                "title": "Оборудование связи",
+            }],
+            "retrieval_trace": {
+                "rerank_status": "ok",
+                "reranked": True,
+                "retrieval_policy": "typed_catalog_graph_then_rerank",
+            },
         },
     )
     session = document_workflow.SmetaNormToolSession(
@@ -542,15 +955,31 @@ def test_rim_catalog_menu_is_not_duplicated_for_identical_work_scopes(monkeypatc
             "items": [
                 {
                     "work_id": "vor-001",
-                    "family": "ГЭСНм",
-                    "scope_reason": "Монтаж оборудования связи.",
-                    "confidence": "high",
+                        "family": "ГЭСНм",
+                        "work_features": {
+                            "domain": "связь", "system": "СКС",
+                            "equipment": "шкаф", "operation": "монтаж",
+                            "assembly_state": "unknown",
+                            "installation_context": "в помещении",
+                            "unknowns": ["комплектность"],
+                        },
+                        "scope_reason": "Монтаж оборудования связи.",
+                        "catalog_query": "оборудование связи",
+                        "confidence": "high",
                 },
                 {
                     "work_id": "vor-002",
-                    "family": "ГЭСНм",
-                    "scope_reason": "Монтаж оборудования связи.",
-                    "confidence": "high",
+                        "family": "ГЭСНм",
+                        "work_features": {
+                            "domain": "связь", "system": "СКС",
+                            "equipment": "организатор", "operation": "монтаж",
+                            "assembly_state": "component",
+                            "installation_context": "в шкафу",
+                            "unknowns": [],
+                        },
+                        "scope_reason": "Монтаж оборудования связи.",
+                        "catalog_query": "оборудование связи",
+                        "confidence": "high",
                 },
             ]
         },
@@ -600,26 +1029,33 @@ def test_rim_collection_compass_keeps_official_title_match_when_norm_hits_miss_i
     monkeypatch.setattr(document_workflow, "browse_norm_catalog", catalog)
     monkeypatch.setattr(
         document_workflow,
-        "browse_norms_many",
-        lambda queries, **_kwargs: {
-            query: {
-                "cards": [
-                    {
-                        "norm_code": "ГЭСНм08-01-001-01",
-                        "title": "Трансформатор",
-                    },
-                    {
-                        "norm_code": "ГЭСНм20-01-001-01",
-                        "title": "Пульт железнодорожной сигнализации",
-                    },
-                ],
-                "retrieval_trace": {
-                    "rerank_status": "ok",
-                    "reranked": True,
-                    "query_expansion": False,
+        "rank_norm_catalog_collections",
+        lambda _query, **_kwargs: {
+            "cards": [
+                {
+                    "key": "10",
+                    "collection": "10",
+                    "navigation_kind": "collection",
+                    "title": "Оборудование связи",
                 },
-            }
-            for query in queries
+                {
+                    "key": "08",
+                    "collection": "08",
+                    "navigation_kind": "collection",
+                    "title": "Электротехнические установки",
+                },
+                {
+                    "key": "20",
+                    "collection": "20",
+                    "navigation_kind": "collection",
+                    "title": "Железнодорожная сигнализация",
+                },
+            ],
+            "retrieval_trace": {
+                "rerank_status": "ok",
+                "reranked": True,
+                "retrieval_policy": "typed_catalog_graph_then_rerank",
+            },
         },
     )
     session = document_workflow.SmetaNormToolSession(
@@ -639,11 +1075,20 @@ def test_rim_collection_compass_keeps_official_title_match_when_norm_hits_miss_i
             "items": [{
                 "work_id": "w1",
                 "family": "ГЭСНм",
-                "scope_reason": (
-                    "Монтаж телекоммуникационного шкафа относится к "
-                    "оборудованию связи"
-                ),
-                "confidence": "high",
+                    "work_features": {
+                        "domain": "связь", "system": "СКС",
+                        "equipment": "телекоммуникационный шкаф",
+                        "operation": "монтаж",
+                        "assembly_state": "unknown",
+                        "installation_context": "в помещении",
+                        "unknowns": ["комплектность"],
+                    },
+                    "scope_reason": (
+                        "Монтаж телекоммуникационного шкафа относится к "
+                        "оборудованию связи"
+                    ),
+                    "catalog_query": "оборудование связи",
+                    "confidence": "high",
             }]
         },
         turn=2,
@@ -655,11 +1100,11 @@ def test_rim_collection_compass_keeps_official_title_match_when_norm_hits_miss_i
     assert set(keys[:3]) == {"08", "10", "20"}
     assert row["items"][0]["catalog_compass_score"] > 0
     assert row["catalog_retrieval_trace"]["collection_compass_policy"] == (
-        "official_identity_lexical_plus_norm_rrf_rerank"
+        "official_catalog_graph_plus_rerank"
     )
 
 
-def test_rim_batch_search_explicitly_applies_one_confirmed_scope_to_other_rows(
+def test_rim_batch_search_never_copies_one_rows_catalog_route_to_another(
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -693,6 +1138,8 @@ def test_rim_batch_search_explicitly_applies_one_confirmed_scope_to_other_rows(
         "confidence": "high",
     }
     session.selected_collections["w1"].add(("гэснм", "10"))
+    session.selected_sections["w1"].add(("гэснм", "10", "10-01"))
+    session.selected_tables["w1"].add(("гэснм", "10", "10-01-001"))
 
     result = session.execute(
         "search_norms_batch",
@@ -705,6 +1152,7 @@ def test_rim_batch_search_explicitly_applies_one_confirmed_scope_to_other_rows(
                     "scope_mode": "scoped",
                     "base_types": ["ГЭСНм"],
                     "collections": ["10"],
+                    "table_codes": ["10-01-001"],
                 }
                 for work_id, query in (
                     ("w1", "шкаф связи"),
@@ -715,28 +1163,12 @@ def test_rim_batch_search_explicitly_applies_one_confirmed_scope_to_other_rows(
         turn=4,
     )
 
-    assert all(row["ok"] is True for row in result["rows"])
-    assert session.selected_collections["w2"] == {("гэснм", "10")}
-    assert session.selected_base_types["w2"]["гэснм"]["selection_owner"] == "model"
-    assert session.selected_base_types["w2"]["гэснм"]["applied_by"] == (
-        "search_norms_batch"
-    )
-    shared_trace = [
-        row
-        for row in session.catalog_trace
-        if row.get("phase") == "catalog_scope_applied_by_batch"
-    ]
-    assert shared_trace == [{
-        "phase": "catalog_scope_applied_by_batch",
-        "turn": 4,
-        "work_id": "w2",
-        "level": "scope_selected",
-        "filters": {"family": "ГЭСНм", "collection": "10", "table": ""},
-        "selection_owner": "model",
-        "applied_by": "search_norms_batch",
-        "confirmed_by_work_id": "w1",
-        "search_intent": "equipment_or_measure",
-    }]
+    by_work = {row["work_id"]: row for row in result["rows"]}
+    assert by_work["w1"]["ok"] is True
+    assert by_work["w2"]["ok"] is False
+    assert "explicit model-owned base type selection" in by_work["w2"]["details"][0]
+    assert session.selected_collections["w2"] == set()
+    assert session.selected_base_types["w2"] == {}
 
 
 def test_rim_rejects_more_than_two_full_cards_in_one_model_turn():
@@ -817,6 +1249,35 @@ def test_agent_context_compacts_search_but_keeps_latest_typed_read():
     assert "resources" not in compact_search["rows"][0]["candidates"][0]
     assert conversation[1].get("_les_compressed") is None
     assert "Сохраняемый ресурс" in conversation[1]["content"]
+
+
+def test_model_request_shape_profiles_cache_prefix_and_working_memory():
+    working_memory = {
+        "working_memory_contract": "smeta_norm_agent_working_memory_v1",
+        "work_evidence_status": [
+            {"catalog_visible_children": [{"node_id": "a"}, {"node_id": "b"}]}
+        ],
+    }
+    conversation = [
+        {"role": "system", "content": "stable system"},
+        {"role": "user", "content": "five rows"},
+        {
+            "role": "user",
+            "content": json.dumps(working_memory, ensure_ascii=False),
+        },
+    ]
+    tools = [{"type": "function", "function": {"name": "navigate"}}]
+
+    profile = document_workflow._model_request_shape(conversation, tools)
+
+    assert profile["visible_children_count"] == 2
+    assert profile["working_memory_bytes"] == len(
+        conversation[-1]["content"].encode("utf-8")
+    )
+    assert profile["prompt_bytes"] > profile["working_memory_bytes"]
+    assert len(profile["system_sha256"]) == 64
+    assert len(profile["tool_schema_sha256"]) == 64
+    assert len(profile["stable_prefix_sha256"]) == 64
 
 
 def test_one_row_mapping_chunk_serializes_focus_before_later_rows():
@@ -990,6 +1451,12 @@ def test_rim_rejects_inconsistent_table_before_retrieval(monkeypatch):
         candidate_limit=5,
         require_scoped_search=True,
     )
+    session.selected_base_types["vor-001"]["гэсн"] = {
+        "family": "ГЭСН",
+        "reason": "Строительная работа",
+        "confidence": "medium",
+    }
+    session.selected_collections["vor-001"].add(("гэсн", "34"))
     session.execute(
         "browse_norm_catalog", {"items": [{"work_id": "vor-001"}]}, turn=1,
     )
@@ -1098,6 +1565,13 @@ def test_rim_accepts_table_only_inside_selected_typed_scope(monkeypatch):
         candidate_limit=5,
         require_scoped_search=True,
     )
+    session.selected_base_types["vor-001"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "Монтаж оборудования",
+        "confidence": "high",
+    }
+    session.selected_collections["vor-001"].add(("гэснм", "08"))
+    session.selected_sections["vor-001"].add(("гэснм", "08", "08-02"))
     session.execute("browse_norm_catalog", {"items": [{"work_id": "vor-001"}]}, turn=1)
     session.execute(
         "browse_norm_catalog",
@@ -1139,6 +1613,7 @@ def test_rim_accepts_table_only_inside_selected_typed_scope(monkeypatch):
             "work_id": "vor-001",
             "family": "ГЭСНм",
             "collection": "08",
+            "section": "08-02",
             "table": "08-02-001",
         }]},
         turn=5,

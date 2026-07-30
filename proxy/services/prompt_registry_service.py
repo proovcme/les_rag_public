@@ -20,6 +20,9 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SMETA_ROLE_PACK_PATH = _REPO_ROOT / "config" / "prompts" / "smeta_estimator_role.json"
 _SMETA_SKILL_PATH = _REPO_ROOT / "skills" / "smeta" / "SKILL.md"
 _SMETA_DOCUMENT_SKILL_PATH = _REPO_ROOT / "skills" / "smeta" / "references" / "document-mapping-agent.md"
+_SMETA_PHASE_SKILL_DIR = (
+    _REPO_ROOT / "skills" / "smeta" / "references" / "phases"
+)
 _PROMPT_OVERRIDES_PATH = _REPO_ROOT / "config" / "prompts" / "prompt_overrides.json"
 PROMPT_OVERRIDES_SCHEMA = "prompt_overrides_v1"
 
@@ -402,6 +405,57 @@ def smeta_native_skill_prompt() -> str:
     except OSError:
         return ""
     return "Активная фаза smeta skill (единственный профессиональный контракт; не evidence):\n" + skill
+
+
+@lru_cache(maxsize=8)
+def smeta_phase_instruction(phase: str) -> str:
+    """Load only the active phase instruction for compact working memory."""
+    phase_name = str(phase or "").strip().casefold()
+    phase_file = {
+        "family_root": "family.md",
+        "family_select": "family.md",
+        "collection": "collection.md",
+        "section_select": "section-table.md",
+        "table_select": "section-table.md",
+        "norm_search": "norm-evidence.md",
+        "norm_read": "norm-evidence.md",
+        "norm_evidence": "norm-evidence.md",
+    }.get(phase_name)
+    if not phase_file:
+        return smeta_native_skill_prompt()
+    try:
+        active = (_SMETA_PHASE_SKILL_DIR / phase_file).read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        return smeta_native_skill_prompt()
+    return active
+
+
+@lru_cache(maxsize=1)
+def smeta_phase_common_prompt() -> str:
+    """Return the byte-stable system prefix shared by catalog phases."""
+    try:
+        common = (_SMETA_PHASE_SKILL_DIR / "common.md").read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        return smeta_native_skill_prompt()
+    return (
+        "Smeta catalog invariant (единственный профессиональный контракт; "
+        "не evidence):\n"
+        + common
+    )
+
+
+@lru_cache(maxsize=8)
+def smeta_phase_skill_prompt(phase: str) -> str:
+    """Compatibility projection used outside the cache-stable catalog loop."""
+    return (
+        smeta_phase_common_prompt()
+        + "\n\nАктивная фаза:\n"
+        + smeta_phase_instruction(phase)
+    )
 
 
 def _prompt_defaults() -> dict[str, str]:

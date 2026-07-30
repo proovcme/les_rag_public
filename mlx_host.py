@@ -1666,6 +1666,7 @@ def _oai_response(
     model: str,
     prompt_tokens: int = 0,
     cached_tokens: int = 0,
+    generation_metrics: dict | None = None,
 ) -> dict:
     completion_tokens = len(content.split())
     message, finish_reason = _assistant_message(content)
@@ -1676,7 +1677,7 @@ def _oai_response(
     }
     if cached_tokens > 0:
         usage["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
-    return {
+    response = {
         "id":      f"chatcmpl-les-{int(time.time())}",
         "object":  "chat.completion",
         "created": int(time.time()),
@@ -1688,6 +1689,9 @@ def _oai_response(
         }],
         "usage": usage,
     }
+    if generation_metrics:
+        response["les_metrics"] = generation_metrics
+    return response
 
 
 # ── Системные эндпоинты ───────────────────────────────────────────────────────
@@ -1955,6 +1959,7 @@ async def chat_completions(req: OAIChatRequest):
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
+    generation_started_at = time.perf_counter()
     try:
         answer, _ = await _generate_with_llm_policy(
             engine,
@@ -1967,11 +1972,41 @@ async def chat_completions(req: OAIChatRequest):
     generation_metrics = dict(
         getattr(engine, "last_generation_metrics", {}) or {}
     )
+    total_time_sec = max(0.0, time.perf_counter() - generation_started_at)
+    prompt_tokens = int(generation_metrics.get("prompt_tokens") or 0)
+    cached_tokens = int(generation_metrics.get("cached_tokens") or 0)
+    uncached_tokens = max(0, prompt_tokens - cached_tokens)
+    prompt_tps = float(generation_metrics.get("prompt_tps") or 0.0)
+    generation_tokens = int(
+        generation_metrics.get("generation_tokens") or len(answer.split())
+    )
+    generation_tps = float(generation_metrics.get("generation_tps") or 0.0)
+    profile = {
+        "prompt_tokens": prompt_tokens,
+        "cached_prompt_tokens": cached_tokens,
+        "uncached_prompt_tokens": uncached_tokens,
+        "completion_tokens": generation_tokens,
+        "cache_hit_ratio": round(cached_tokens / prompt_tokens, 6)
+        if prompt_tokens
+        else 0.0,
+        "ttft_sec": None,
+        "prefill_time_sec": round(uncached_tokens / prompt_tps, 4)
+        if prompt_tps > 0
+        else None,
+        "decode_time_sec": round(generation_tokens / generation_tps, 4)
+        if generation_tps > 0
+        else None,
+        "prompt_tps": round(prompt_tps, 4),
+        "generation_tps": round(generation_tps, 4),
+        "total_time_sec": round(total_time_sec, 4),
+        "measurement_mode": "nonstream_ttft_unavailable",
+    }
     return _oai_response(
         answer,
         engine.model_path,
-        prompt_tokens=int(generation_metrics.get("prompt_tokens") or 0),
-        cached_tokens=int(generation_metrics.get("cached_tokens") or 0),
+        prompt_tokens=prompt_tokens,
+        cached_tokens=cached_tokens,
+        generation_metrics=profile,
     )
 
 

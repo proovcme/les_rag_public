@@ -656,6 +656,32 @@ def run_rim_agent_turn(
             ),
             require_scoped_search=True,
         )
+        if bool(result.get("requires_user_input")) and isinstance(
+            result.get("pending_question"), dict
+        ):
+            pending_question = dict(result["pending_question"])
+            question_revision = store.open_question(
+                session_id,
+                owner_id=owner_id,
+                question=pending_question,
+                expected_parent_revision_id=session["head_revision_id"],
+                allow_admin=allow_admin,
+            )
+            return {
+                **question_revision.as_dict(),
+                "vor_revision_id": vor_revision_id,
+                "agent_action": {
+                    "schema": "rim_agent_action_v1",
+                    "session_id": session_id,
+                    "state": session["display_state"],
+                    "action": "ask_user",
+                    "arguments": pending_question,
+                    "user_visible_intent": pending_question.get("text") or "",
+                },
+                "message": pending_question.get("text") or "",
+                "agent_trace": result.get("agent_trace") or {},
+                "resumed_from_checkpoint": bool(stored_checkpoint),
+            }
         mapping_rows = _mapping_rows(work_rows, result)
         revision = store.save_mapping_revision(
             session_id,

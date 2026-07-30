@@ -450,7 +450,15 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
             return None
 
         def json(self):
-            return {"choices": [{"message": self._message}], "message": self._message}
+            return {
+                "choices": [{"message": self._message}],
+                "message": self._message,
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 75},
+                },
+            }
 
     class Client:
         def __init__(self, **_kwargs):
@@ -494,6 +502,9 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
 
     assert result["content"] == "Я отвечу текстом"
     assert result["_les_model"] == "gemma4:12b"
+    assert result["_les_generation_metrics"]["prompt_tokens"] == 100
+    assert result["_les_generation_metrics"]["cached_prompt_tokens"] == 75
+    assert result["_les_generation_metrics"]["cache_hit_ratio"] == 0.75
     assert "tool_calls" not in result
     assert "_les_fallback_from" not in result
     assert "options" in bodies[0]

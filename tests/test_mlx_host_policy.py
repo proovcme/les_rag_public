@@ -171,6 +171,32 @@ def test_oai_response_reports_reused_prompt_tokens():
     assert response["usage"]["prompt_tokens_details"]["cached_tokens"] == 900
 
 
+def test_oai_response_exposes_frame_profile_without_changing_openai_usage():
+    mlx_host = importlib.import_module("mlx_host")
+    profile = {
+        "prompt_tokens": 1200,
+        "cached_prompt_tokens": 900,
+        "uncached_prompt_tokens": 300,
+        "completion_tokens": 42,
+        "cache_hit_ratio": 0.75,
+        "ttft_sec": None,
+        "prefill_time_sec": 2.5,
+        "decode_time_sec": 4.0,
+        "total_time_sec": 6.7,
+    }
+
+    response = mlx_host._oai_response(
+        "готово",
+        "local-qwen",
+        prompt_tokens=1200,
+        cached_tokens=900,
+        generation_metrics=profile,
+    )
+
+    assert response["les_metrics"] == profile
+    assert response["usage"]["total_tokens"] == 1201
+
+
 def test_unload_peer_for_main_unloads_val(monkeypatch):
     mlx_host = importlib.import_module("mlx_host")
 

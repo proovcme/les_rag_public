@@ -536,6 +536,10 @@ def test_rim_ui_shows_durable_qwen_mapping_progress():
     assert "Живой прогресс подбора норм Qwen" in rim
     assert "Сохранено по строкам:" in rim
     assert "source_display" in rim
+    assert "Маршрут ФСНБ" in rim
+    assert "route_display" in rim
+    assert "route_timing_display" in rim
+    assert "маршрутов принято/отклонено:" in rim
 
 
 def test_rim_progress_table_keeps_codes_and_model_reason_compact():
@@ -558,4 +562,24 @@ def test_rim_progress_table_keeps_codes_and_model_reason_compact():
     result = _progress_result_display(row)
     assert result.startswith("Нужна повторная проверка · длинное основание")
     assert result.endswith("…")
+
+
+def test_rim_progress_table_shows_rejected_route_error_and_qwen_time():
+    result = _progress_result_display(
+        {
+            "stage_label": "Переход отклонён; сохранён предыдущий путь",
+            "route_events": [
+                {
+                    "outcome": "rejected",
+                    "error": "selected node is also present in rejected_nodes",
+                    "model_wait_seconds": 133.49,
+                }
+            ],
+        }
+    )
+
+    assert result == (
+        "Переход отклонён; сохранён предыдущий путь · "
+        "selected node is also present in rejected_nodes · Qwen: 133.49 с"
+    )
     assert len(result) < 210

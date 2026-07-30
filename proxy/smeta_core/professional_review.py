@@ -58,6 +58,8 @@ class ModelScopePlan:
     search_intents: tuple[str, ...]
     base_types: tuple[str, ...] = ()
     collections: tuple[str, ...] = ()
+    sections: tuple[str, ...] = ()
+    table_codes: tuple[str, ...] = ()
     explicit_scope_mode: bool = True
     schema: str = "smeta_scope_plan_v1"
 
@@ -70,12 +72,23 @@ class ModelScopePlan:
             raise ValueError("scope plan requires at least one model query")
         if self.scope_mode == "scoped" and (not self.base_types or not self.collections):
             raise ValueError("scoped plan requires model-selected base_types and collections")
-        if self.scope_mode == "global" and (self.base_types or self.collections):
-            raise ValueError("global plan cannot contain base_types or collections")
+        if self.scope_mode == "global" and (
+            self.base_types or self.collections or self.sections or self.table_codes
+        ):
+            raise ValueError(
+                "global plan cannot contain base_types, collections, sections or tables"
+            )
 
     def as_dict(self) -> dict[str, Any]:
         payload = asdict(self)
-        for field_name in ("queries", "search_intents", "base_types", "collections"):
+        for field_name in (
+            "queries",
+            "search_intents",
+            "base_types",
+            "collections",
+            "sections",
+            "table_codes",
+        ):
             payload[field_name] = list(payload[field_name])
         return payload
 

@@ -7,16 +7,52 @@
 ## Текущее состояние (2026-07-30)
 
 ```
-версия продукта (SemVer):  0.26.7 (RIM resumable mapping convergence)
-номер сборки:              515     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.515 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.8 (RIM typed FSNB route)
+номер сборки:              516     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.516 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.7 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.8 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
+
+> 0.26.8 / build 516 — typed FSNB route и durable success trace
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy.
+> FSNB-каталог теперь является конечным графом
+> `family → collection → section/department → table → norm`. После корневого
+> меню, сразу построенного кодом без отдельного LLM-вызова, Qwen выбирает один
+> из четырёх стабильных route-tools:
+> `continue/ask/broaden/unbound`. Код проверяет только реального родителя,
+> показанный child/evidence и model self-conflict; применимость остаётся
+> решением Qwen. Scope больше не наследуется между строками.
+>
+> `system`, route-tool schemas и исходный mapping packet побайтово стабильны
+> между уровнями; текущая фаза находится в единственном working-memory
+> snapshot в хвосте prompt. Старые tool-пары и универсальные последние события
+> остаются во внешнем audit. Профиль каждого кадра содержит prompt/cache tokens,
+> TTFT/prefill/decode/tool/total, число детей и размер working memory.
+>
+> Каждый accepted/rejected переход получает `trace_id/outcome`, сохраняется
+> после хода в checkpoint и после mapping — в immutable `agent_audit`.
+> Реальный Mac Qwen 3.5 9B выбрал `ГЭСНм`, затем самостоятельно выбрал
+> `сборник 10 «Оборудование связи»` по официальному паспорту и отверг сборник
+> 32. Кешированный второй ход повторно использовал `3024/5205` prompt tokens
+> (58,10%): 82,36 с холодный ход и 62,96 с второй ход. Первоначальный неверный
+> выбор сборника 32 оказался retrieval-регрессией: сборник 10 занимал восьмое
+> место и не попадал в видимые шесть. Stage-scoped словарь и fusion
+> `official_lexical_head_coverage_then_rerank` вернули 10 на первое место,
+> не закрепляя профессиональный выбор в коде.
+>
+> Живой ответ выбора сборника сначала был отклонён только из-за пяти
+> перечисленных rejected siblings при старом лимите четыре. Контракт v11
+> допускает до шести фактически показанных альтернатив; точный tool payload
+> повторно проигран детерминированным тестом и принят без изменения выбора
+> модели. До section/table/full-card и строки сметы этот прогон ещё не дошёл;
+> готовая норма или ЛСР не заявляются.
 
 > 0.26.7 / build 515 — resumable mapping, stable cache и fail-closed bind
 >

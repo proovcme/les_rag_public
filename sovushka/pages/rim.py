@@ -102,6 +102,25 @@ def _progress_result_display(row: dict[str, object]) -> str:
     detail = str(next(iter(row.get("blockers") or []), ""))
     if not detail and isinstance(decision, dict):
         detail = str(decision.get("reason") or "")
+    route_events = [
+        event
+        for event in (row.get("route_events") or [])
+        if isinstance(event, dict)
+    ]
+    if not detail and route_events:
+        latest = route_events[-1]
+        if str(latest.get("outcome") or "") == "rejected":
+            detail = str(
+                latest.get("error")
+                or next(iter(latest.get("details") or []), "")
+            )
+            wait_seconds = latest.get("model_wait_seconds")
+            if wait_seconds is not None:
+                detail = " · ".join(
+                    value
+                    for value in [detail, f"Qwen: {float(wait_seconds):.2f} с"]
+                    if value
+                )
     if len(detail) > 160:
         detail = detail[:157].rstrip() + "…"
     return " · ".join(
@@ -331,7 +350,11 @@ def build_rim() -> None:
                         columns=[
                             {"name": "work_name", "label": "Строка ВОР", "field": "work_name"},
                             {"name": "source_display", "label": "Источник", "field": "source_display"},
-                            {"name": "scope_display", "label": "Каталог", "field": "scope_display"},
+                            {
+                                "name": "scope_display",
+                                "label": "Маршрут ФСНБ",
+                                "field": "scope_display",
+                            },
                             {"name": "candidate_display", "label": "Кандидаты", "field": "candidate_display"},
                             {"name": "opened_display", "label": "Карточки", "field": "opened_display"},
                             {"name": "result_display", "label": "Текущий результат", "field": "result_display"},
@@ -733,21 +756,30 @@ def build_rim() -> None:
                 current["mapping_progress"] = [
                     {
                         **row,
-                        "scope_display": ", ".join(
-                            "/".join(
-                                [
-                                    *[
-                                        str(value)
-                                        for value in (scope.get("base_types") or [])
-                                    ],
-                                    *[
-                                        str(value)
-                                        for value in (scope.get("collections") or [])
-                                    ],
-                                ]
+                        "scope_display": (
+                            str(row.get("route_timing_display") or "")
+                            or
+                            str(row.get("route_display") or "")
+                            or ", ".join(
+                                "/".join(
+                                    [
+                                        *[
+                                            str(value)
+                                            for value in (
+                                                scope.get("base_types") or []
+                                            )
+                                        ],
+                                        *[
+                                            str(value)
+                                            for value in (
+                                                scope.get("collections") or []
+                                            )
+                                        ],
+                                    ]
+                                )
+                                for scope in (row.get("scopes") or [])
+                                if isinstance(scope, dict)
                             )
-                            for scope in (row.get("scopes") or [])
-                            if isinstance(scope, dict)
                         ),
                         "candidate_display": _progress_codes_display(
                             row, "candidates", "candidate_count"
@@ -768,6 +800,9 @@ def build_rim() -> None:
                         f"{int(progress_summary.get('completed_rows') or 0)}/"
                         f"{int(progress_summary.get('total_rows') or 0)} · "
                         f"осталось: {int(progress_summary.get('remaining_rows') or 0)} · "
+                        "маршрутов принято/отклонено: "
+                        f"{int(progress_summary.get('accepted_route_transitions') or 0)}/"
+                        f"{int(progress_summary.get('rejected_route_transitions') or 0)} · "
                         f"checkpoint {str(progress.get('checkpoint_updated_at') or '')}"
                     )
                 else:

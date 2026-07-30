@@ -1296,7 +1296,7 @@ def test_batch_agent_checkpoint_resumes_after_last_tool_without_repeating_search
     def resumed_exchange(messages, _tools):
         nonlocal resumed_calls
         resumed_calls += 1
-        assert any(message.get("role") == "tool" for message in messages)
+        assert all(message.get("role") != "tool" for message in messages)
         assert sum(
             "smeta_norm_agent_working_memory_v1" in str(message.get("content") or "")
             for message in messages
@@ -1308,7 +1308,7 @@ def test_batch_agent_checkpoint_resumes_after_last_tool_without_repeating_search
             and "smeta_norm_agent_working_memory_v1" in str(message.get("content") or "")
         )
         assert resume_status["remaining_work_ids"] == ["w1"]
-        assert resume_status["authoritative_budget_remaining"]["search_calls"] == 4
+        assert "authoritative_budget_remaining" not in resume_status
         assert resume_status["focus_work_id"] == "w1"
         assert "historical tool messages are only an audit log" in (
             resume_status["instruction"]
@@ -1417,21 +1417,7 @@ def test_batch_agent_resume_requires_read_before_more_search(monkeypatch):
             "smeta_norm_agent_working_memory_v1" in str(message.get("content") or "")
             for message in messages
         ) == 1
-        historical_search = next(
-            message
-            for message in messages
-            if message.get("role") == "tool"
-            and message.get("name") == "search_norms_batch"
-        )
-        assert historical_search["_les_compressed"] is True
-        compressed_search = json.loads(historical_search["content"])
-        assert compressed_search["compressed"] is True
-        assert compressed_search["rows"][0]["candidate_codes"] == [
-            "ГЭСНм10-07-058-01"
-        ]
-        assert compressed_search["rows"][0]["candidates"][0]["title"] == (
-            "Кандидат шкафа"
-        )
+        assert all(message.get("role") != "tool" for message in messages)
         resume_status = next(
             json.loads(message["content"])
             for message in reversed(messages)
@@ -1445,7 +1431,7 @@ def test_batch_agent_resume_requires_read_before_more_search(monkeypatch):
         assert status["candidate_codes"] == ["ГЭСНм10-07-058-01"]
         assert status["opened_codes"] == []
         assert status["search_count"] == 1
-        assert "call read_norms_batch" in resume_status["instruction"]
+        assert "Call read_norms_batch" in resume_status["instruction"]
         raise RuntimeError("resume status inspected")
 
     with pytest.raises(RuntimeError, match="resume status inspected"):
