@@ -73,6 +73,44 @@ def _human_source_ref(value: object) -> str:
     return filename or raw
 
 
+def _human_norm_source(row: dict[str, object]) -> str:
+    """Prefer the normative edition and code over an internal store locator."""
+    edition = str(row.get("normative_base_version") or "").strip()
+    code = str(row.get("norm_code") or "").strip()
+    if edition and code:
+        return f"{edition} · {code}"
+    if code and str(row.get("norm_source_ref") or "").strip():
+        return f"Структурированная ФСНБ · {code}"
+    return _human_source_ref(row.get("norm_source_ref"))
+
+
+def _progress_codes_display(row: dict[str, object], key: str, count_key: str) -> str:
+    cards = [
+        card
+        for card in (row.get(key) or [])
+        if isinstance(card, dict) and str(card.get("norm_code") or "")
+    ]
+    codes = [str(card["norm_code"]) for card in cards[:2]]
+    if int(row.get(count_key) or 0) > len(codes):
+        codes.append("…")
+    count = int(row.get(count_key) or 0)
+    return (f"{count} · " + ", ".join(codes)).rstrip(" ·")
+
+
+def _progress_result_display(row: dict[str, object]) -> str:
+    decision = row.get("decision")
+    detail = str(next(iter(row.get("blockers") or []), ""))
+    if not detail and isinstance(decision, dict):
+        detail = str(decision.get("reason") or "")
+    if len(detail) > 160:
+        detail = detail[:157].rstrip() + "…"
+    return " · ".join(
+        value
+        for value in [str(row.get("stage_label") or ""), detail]
+        if value
+    )
+
+
 def _status_tone(status: str) -> str:
     if status == "priced_final":
         return "ok"
@@ -108,6 +146,8 @@ def build_rim() -> None:
         "session": None,
         "vor": [],
         "mapping": [],
+        "mapping_progress": [],
+        "mapping_progress_refreshing": False,
         "requirements": [],
     }
 
@@ -284,6 +324,24 @@ def build_rim() -> None:
                     mapping_summary = ui.label("Кандидаты ещё не подобраны.").classes(
                         "sov-rim-panel-summary"
                     )
+                    mapping_progress_summary = ui.label(
+                        "Живой прогресс Qwen появится после первого шага поиска."
+                    ).classes("sov-rim-panel-summary")
+                    mapping_progress_table = ui.table(
+                        columns=[
+                            {"name": "work_name", "label": "Строка ВОР", "field": "work_name"},
+                            {"name": "source_display", "label": "Источник", "field": "source_display"},
+                            {"name": "scope_display", "label": "Каталог", "field": "scope_display"},
+                            {"name": "candidate_display", "label": "Кандидаты", "field": "candidate_display"},
+                            {"name": "opened_display", "label": "Карточки", "field": "opened_display"},
+                            {"name": "result_display", "label": "Текущий результат", "field": "result_display"},
+                        ],
+                        rows=[],
+                        row_key="work_id",
+                        pagination=10,
+                    ).props(
+                        'dense wrap-cells flat aria-label="Живой прогресс подбора норм Qwen"'
+                    ).classes("sov-rim-table")
                     mapping_table = ui.table(
                         columns=[
                             {"name": "work_id", "label": "ВОР", "field": "work_id"},
@@ -648,6 +706,77 @@ def build_rim() -> None:
                 return
             await refresh()
 
+        async def refresh_mapping_progress(session_id: str = "") -> None:
+            if bool(current.get("mapping_progress_refreshing")):
+                return
+            active_session = current.get("session")
+            resolved_session_id = session_id or (
+                str(active_session.get("session_id") or "")
+                if isinstance(active_session, dict)
+                else ""
+            )
+            if not resolved_session_id:
+                return
+            current["mapping_progress_refreshing"] = True
+            try:
+                progress = (
+                    await api_get(
+                        f"/api/rim/sessions/{resolved_session_id}/mapping/progress"
+                    )
+                    or {}
+                )
+                latest_session = current.get("session")
+                if not isinstance(latest_session, dict) or str(
+                    latest_session.get("session_id") or ""
+                ) != resolved_session_id:
+                    return
+                current["mapping_progress"] = [
+                    {
+                        **row,
+                        "scope_display": ", ".join(
+                            "/".join(
+                                [
+                                    *[
+                                        str(value)
+                                        for value in (scope.get("base_types") or [])
+                                    ],
+                                    *[
+                                        str(value)
+                                        for value in (scope.get("collections") or [])
+                                    ],
+                                ]
+                            )
+                            for scope in (row.get("scopes") or [])
+                            if isinstance(scope, dict)
+                        ),
+                        "candidate_display": _progress_codes_display(
+                            row, "candidates", "candidate_count"
+                        ),
+                        "opened_display": _progress_codes_display(
+                            row, "opened_cards", "opened_count"
+                        ),
+                        "result_display": _progress_result_display(row),
+                    }
+                    for row in (progress.get("rows") or [])
+                ]
+                mapping_progress_table.rows = current["mapping_progress"]
+                mapping_progress_table.update()
+                progress_summary = dict(progress.get("summary") or {})
+                if progress.get("active"):
+                    mapping_progress_summary.set_text(
+                        "Сохранено по строкам: "
+                        f"{int(progress_summary.get('completed_rows') or 0)}/"
+                        f"{int(progress_summary.get('total_rows') or 0)} · "
+                        f"осталось: {int(progress_summary.get('remaining_rows') or 0)} · "
+                        f"checkpoint {str(progress.get('checkpoint_updated_at') or '')}"
+                    )
+                else:
+                    mapping_progress_summary.set_text(
+                        "Активного checkpoint нет: показан финальный immutable mapping ниже."
+                    )
+            finally:
+                current["mapping_progress_refreshing"] = False
+
         async def refresh() -> None:
             sessions_payload = await api_get("/api/rim/sessions?limit=100")
             sessions = (
@@ -754,9 +883,7 @@ def build_rim() -> None:
             current["mapping"] = [
                 {
                     **row,
-                    "norm_source_display": _human_source_ref(
-                        row.get("norm_source_ref")
-                    ),
+                    "norm_source_display": _human_norm_source(row),
                 }
                 for row in (mapping.get("mapping_rows") or [])
             ]
@@ -774,6 +901,7 @@ def build_rim() -> None:
                 f"Кандидатов: {len(current['mapping'])} · выбрано: "
                 f"{sum(row.get('selection_status') in {'selected', 'accepted'} for row in current['mapping'])}"
             )
+            await refresh_mapping_progress(session_id)
             conflicts = list(mapping.get("professional_conflicts") or [])
             review_issues.clear()
             with review_issues:
@@ -849,3 +977,4 @@ def build_rim() -> None:
             else None
         )
         ui.timer(0.1, refresh, once=True)
+        ui.timer(5.0, refresh_mapping_progress)

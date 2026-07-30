@@ -1,6 +1,6 @@
 # Диалоговая РИМ-сессия
 
-Статус: реализован Mac-кандидат 0.26.4. Модуль расширяет `smeta_core`, не создаёт
+Статус: реализован Mac-кандидат 0.26.6. Модуль расширяет `smeta_core`, не создаёт
 второй сметный движок и не меняет профессиональные решения модели или сметчика.
 
 ## Поток
@@ -28,6 +28,14 @@ search / opened-card trace, принятые строки, remaining `work_id` �
 VOR-ревизии, но сам не двигает `head_revision_id`. После рестарта или timeout
 агент продолжает с последнего tool result и не повторяет уже выполненный
 поиск/чтение. После сохранения итоговой mapping-ревизии checkpoint удаляется.
+
+Checkpoint доступен оператору через read-only
+`GET /api/rim/sessions/{session_id}/mapping/progress`. Проекция не создаёт
+ревизию и не меняет решения Qwen: для каждой строки ВОР она показывает
+выбранный `base_type/collection`, число выполненных поисков, найденных
+кандидатов и прочитанных typed-карточек, сохранённое решение и blocker
+последней terminal-проверки. Решение от старой версии grounding contract
+показывается как «нужна повторная проверка», а не как завершённое.
 
 При resume Qwen получает короткий authoritative status: оставшиеся `work_id`,
 актуальный остаток search/read/card/time budget и по каждой строке число
@@ -160,8 +168,9 @@ MLX Host сохраняет bounded KV/prefix cache на стабильной г
 
 Роутер `proxy/routers/rim.py` предоставляет owner-scoped `/api/rim/sessions/*`:
 сессии и ревизии, импорт/ВОР, model tools и agent turn, mapping/XLSX/global
-review/lock, сценарии и расчёт (`/combinations/calculate` или `/recalculate`),
-requirements, final lock, export и audit.
+review/lock, read-only `/mapping/progress`, сценарии и расчёт
+(`/combinations/calculate` или `/recalculate`), requirements, final lock,
+export и audit.
 
 NiceGUI-поверхность `sovushka/pages/rim.py` доступна как lazy-вкладка
 «РИМ-смета». Она использует общий UI kit и показывает источник, ревизию,
@@ -169,6 +178,10 @@ NiceGUI-поверхность `sovushka/pages/rim.py` доступна как l
 финализации. Список owner-scoped сессий позволяет вернуться к предыдущей
 работе; отсутствующий либо устаревший сохранённый ID заменяется последней
 доступной сессией без ложного `404`.
+Пока Qwen выполняет долгий norm-mapping, UI раз в пять секунд читает только
+компактную progress-проекцию и обновляет строки без ожидания финальной
+mapping-ревизии. Проектный источник показывается как имя файла, лист и строка;
+нормативный — как редакция ФСНБ и шифр, при сохранении raw ref в API.
 
 ## Проверки кандидата
 

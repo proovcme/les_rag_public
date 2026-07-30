@@ -3,7 +3,7 @@ from fastapi.testclient import TestClient
 
 from proxy.routers.rim import router
 from proxy.security import RequestUser, require_user
-from proxy.smeta_core.application import set_rim_session_store
+from proxy.smeta_core.application import get_rim_session_store, set_rim_session_store
 from proxy.smeta_core.rim_session import RimSessionStore
 
 
@@ -134,6 +134,73 @@ def test_rim_api_rejects_stale_parent(tmp_path):
     )
     assert stale.status_code == 409
     assert "session head changed" in stale.text
+
+
+def test_rim_api_exposes_active_mapping_checkpoint_progress(tmp_path):
+    client = _client(tmp_path)
+    created = client.post("/api/rim/sessions", json={}).json()
+    session_id = created["session_id"]
+    vor = client.post(
+        f"/api/rim/sessions/{session_id}/vor/revisions",
+        json={
+            "expected_parent_revision_id": created["revision_id"],
+            "created_by": "user",
+            "rows": [
+                {
+                    "work_id": "vor-001",
+                    "section_name": "СКС",
+                    "work_name": "Монтаж шкафа",
+                    "unit": "шт",
+                    "quantity": 2,
+                    "source_ref": "/tmp/СКС.xlsx#sheet=СКС;row=6",
+                }
+            ],
+        },
+    ).json()
+    store = get_rim_session_store()
+    store.save_agent_checkpoint(
+        session_id,
+        owner_id="api-tester",
+        checkpoint_kind="norm_mapping",
+        base_revision_id=vor["revision_id"],
+        payload={
+            "resume_state": {
+                "validation_contract_version": "grounded-terminal-unbound-v4",
+                "tool_session": {
+                    "candidates": {
+                        "vor-001": {
+                            "ГЭСНм10-06-001-01": {
+                                "norm_code": "ГЭСНм10-06-001-01",
+                                "title": "Монтаж шкафа",
+                                "measure_unit": "1 шт.",
+                            }
+                        }
+                    },
+                    "opened": {"vor-001": {}},
+                    "accepted_rows": {},
+                    "query_trace": [
+                        {
+                            "work_id": "vor-001",
+                            "queries": ["монтаж шкафа"],
+                            "filters": {
+                                "base_types": ["ГЭСНм"],
+                                "collections": ["10"],
+                            },
+                        }
+                    ],
+                },
+            }
+        },
+    )
+
+    response = client.get(f"/api/rim/sessions/{session_id}/mapping/progress")
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["active"] is True
+    assert payload["summary"]["total_rows"] == 1
+    assert payload["rows"][0]["stage"] == "candidates_found"
+    assert payload["rows"][0]["source_display"] == "СКС.xlsx · лист «СКС» · строка 6"
 
 
 def test_rim_api_calculates_only_an_authored_scenario(tmp_path):

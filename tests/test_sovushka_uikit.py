@@ -4,7 +4,12 @@ from types import SimpleNamespace
 import pytest
 
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
-from sovushka.pages.rim import _human_source_ref
+from sovushka.pages.rim import (
+    _human_norm_source,
+    _human_source_ref,
+    _progress_codes_display,
+    _progress_result_display,
+)
 from sovushka.uikit import components as components_module
 from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS, tab_name
 from sovushka.uikit.states import feedback_state
@@ -512,3 +517,45 @@ def test_rim_source_locator_is_human_readable_without_losing_table_position():
         _human_source_ref("/tmp/spec.xlsx#sheet=Лист1;row=17")
         == "spec.xlsx · лист «Лист1» · строка 17"
     )
+    assert (
+        _human_norm_source(
+            {
+                "normative_base_version": "ФСНБ-2022 изм. 14",
+                "norm_code": "ГЭСНм10-06-001-01",
+                "norm_source_ref": "fsnb.sqlite#guid=1",
+            }
+        )
+        == "ФСНБ-2022 изм. 14 · ГЭСНм10-06-001-01"
+    )
+
+
+def test_rim_ui_shows_durable_qwen_mapping_progress():
+    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+
+    assert "/mapping/progress" in rim
+    assert "Живой прогресс подбора норм Qwen" in rim
+    assert "Сохранено по строкам:" in rim
+    assert "source_display" in rim
+
+
+def test_rim_progress_table_keeps_codes_and_model_reason_compact():
+    row = {
+        "candidate_count": 8,
+        "candidates": [
+            {"norm_code": "ГЭСНм10-01-001-01"},
+            {"norm_code": "ГЭСНм10-01-001-02"},
+            {"norm_code": "ГЭСНм10-01-001-03"},
+        ],
+        "stage_label": "Нужна повторная проверка",
+        "decision": {"reason": "длинное основание " * 20},
+        "blockers": [],
+    }
+
+    assert (
+        _progress_codes_display(row, "candidates", "candidate_count")
+        == "8 · ГЭСНм10-01-001-01, ГЭСНм10-01-001-02, …"
+    )
+    result = _progress_result_display(row)
+    assert result.startswith("Нужна повторная проверка · длинное основание")
+    assert result.endswith("…")
+    assert len(result) < 210

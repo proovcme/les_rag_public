@@ -23,6 +23,7 @@ from proxy.smeta_core.rim_session import (
 )
 from proxy.smeta_core.source_intake import intake_vor_document
 from proxy.services.rim_mapping_xlsx_service import read_mapping_xlsx, render_mapping_xlsx
+from proxy.services.rim_mapping_progress_service import build_mapping_progress
 from proxy.services.rim_mapping_review_service import review_mapping
 from proxy.services.rim_agent_action_service import model_tool_specs, validate_model_action
 from proxy.services.rim_agent_turn_service import run_rim_agent_turn
@@ -525,6 +526,43 @@ async def get_mapping(
             "mapping_rows": payload.get("mapping_rows") or [],
             "issues": payload.get("issues") or [],
             "professional_conflicts": payload.get("professional_conflicts") or [],
+        }
+    except Exception as error:  # noqa: BLE001
+        _raise_http(error)
+
+
+@router.get("/sessions/{session_id}/mapping/progress")
+async def get_mapping_progress(
+    session_id: str,
+    user: RequestUser = Depends(require_user),
+):
+    try:
+        store = _store()
+        session = store.get_session(
+            session_id, owner_id=_actor(user), allow_admin=_allow_admin(user)
+        )
+        vor_revision_id = str(session.get("current_vor_revision_id") or "")
+        if not vor_revision_id:
+            return {
+                "session_id": session_id,
+                **build_mapping_progress([], None),
+            }
+        vor = store.revision_payload(
+            session_id,
+            vor_revision_id,
+            owner_id=_actor(user),
+            allow_admin=_allow_admin(user),
+        )["payload"]
+        checkpoint = store.load_agent_checkpoint(
+            session_id,
+            owner_id=_actor(user),
+            checkpoint_kind="norm_mapping",
+            base_revision_id=vor_revision_id,
+            allow_admin=_allow_admin(user),
+        )
+        return {
+            "session_id": session_id,
+            **build_mapping_progress(list(vor.get("rows") or []), checkpoint),
         }
     except Exception as error:  # noqa: BLE001
         _raise_http(error)

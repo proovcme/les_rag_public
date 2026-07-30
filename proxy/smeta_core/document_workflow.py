@@ -46,7 +46,7 @@ _COMPRESSIBLE_TOOL_RESULTS = frozenset({
     "read_norms_batch",
 })
 _RIM_MAX_READ_CARDS_PER_CALL = 2
-_MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-terminal-unbound-v4"
+MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-terminal-unbound-v4"
 
 
 class MappingTransportTimeout(RuntimeError):
@@ -3295,7 +3295,7 @@ def _run_batch_norm_agent(
     validation_contract_changed = bool(
         resume_state
         and str(resume_state.get("validation_contract_version") or "")
-        != _MAPPING_VALIDATION_CONTRACT_VERSION
+        != MAPPING_VALIDATION_CONTRACT_VERSION
     )
     if validation_contract_changed:
         structured_mapping_attempts = 0
@@ -3553,7 +3553,7 @@ def _run_batch_norm_agent(
             "last_submit_result": copy.deepcopy(last_submit_result),
             "focus_serialization_pending": focus_serialization_pending,
             "validation_contract_version": (
-                _MAPPING_VALIDATION_CONTRACT_VERSION
+                MAPPING_VALIDATION_CONTRACT_VERSION
             ),
         }
         checkpoint(payload)

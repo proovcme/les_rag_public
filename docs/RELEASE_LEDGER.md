@@ -7,17 +7,35 @@
 ## Текущее состояние (2026-07-30)
 
 ```
-версия продукта (SemVer):  0.26.5 (RIM compact grounded row decisions)
-номер сборки:              513     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.513 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.26.6 (RIM visible durable mapping progress)
+номер сборки:              514     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.514 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.5 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.26.6 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.26.6 / build 514 — видимый durable progress пяти строк РИМ
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Новый owner-scoped `GET /api/rim/sessions/{session_id}/mapping/progress`
+> показывает checkpoint после каждого tool call: выбранный scope, число
+> поисков, кандидатов и открытых typed-карточек, сохранённое решение и
+> terminal blocker по каждой строке. Это read-only проекция без новой ревизии
+> и без изменения выбора Qwen. NiceGUI обновляет только эту компактную таблицу
+> раз в пять секунд; проектный источник виден как файл/лист/строка, нормативный
+> — как редакция ФСНБ и шифр.
+>
+> На сохранённом реальном checkpoint `СКС.xlsx` проекция показала все 5 строк:
+> по 8 кандидатов, 6/4/4/4/4 открытых карточки и model-selected scopes
+> `ГЭСНм/10` + `ГЭСНм/08`. Два решения старого v3 contract помечены
+> `needs_revalidation`, три строки — `cards_opened`; checkpoint не изменён.
+>
 > 0.26.5 / build 513 — компактный terminal mapping и grounded resume
 >
 > Дата: 2026-07-30
