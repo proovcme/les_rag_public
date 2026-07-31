@@ -183,7 +183,8 @@ def test_smeta_build_progress_is_visible(monkeypatch, tmp_path):
 
     result = service._smeta_status(FakeClient(points=10), {})
 
-    assert result["state"] == "building"
+    assert result["state"] == "blocked"
+    assert result["reason"] == "mechanical_base_missing_or_untrusted"
     assert result["progress_pct"] == 50.0
     assert result["rrf_ready"] is False
 
@@ -214,12 +215,12 @@ def test_smeta_complete_generation_waits_for_alias(monkeypatch, tmp_path):
 
     result = service._smeta_status(FakeClient(points=10), {})
 
-    assert result["state"] == "awaiting_activation"
-    assert result["ready"] is True
+    assert result["state"] == "blocked"
+    assert result["ready"] is False
     assert result["activated"] is False
 
 
-def test_smeta_verified_mechanical_base_is_ready_without_optional_card_index(monkeypatch, tmp_path):
+def test_smeta_verified_mechanical_base_is_blocked_without_required_card_index(monkeypatch, tmp_path):
     base = tmp_path / "base.sqlite"
     base.write_bytes(b"sqlite")
     monkeypatch.setattr(
@@ -235,12 +236,53 @@ def test_smeta_verified_mechanical_base_is_ready_without_optional_card_index(mon
 
     result = service._smeta_status(client, {})
 
-    assert result["state"] == "ready"
-    assert result["ready"] is True
+    assert result["state"] == "blocked"
+    assert result["ready"] is False
+    assert result["reason"] == "smeta_search_index_missing"
     assert result["mechanical_base"]["ready"] is True
     assert result["search_index"] == {
         "state": "missing",
         "ready": False,
-        "optional": True,
+        "optional": False,
         "reason": "collection_missing",
     }
+
+
+def test_smeta_ready_requires_mechanical_base_and_activated_hybrid_index(monkeypatch, tmp_path):
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"sqlite")
+    base.with_name("les_smeta_norm_rag_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "physical_generation": "smeta_physical_v3",
+                "expected_points": 10,
+                "index_mode": "hybrid",
+                "point_embedding_fingerprint": "fp",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.base_registry.active_base",
+        lambda: {"base_path": str(base), "rag_collection": "les_smeta_norm_cards"},
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.integrity.normative_base_integrity",
+        lambda: {
+            "status": "trusted",
+            "trusted_for_pricing": True,
+            "trusted_for_navigation": True,
+        },
+    )
+
+    result = service._smeta_status(
+        FakeClient(points=10),
+        {"les_smeta_norm_cards": "smeta_physical_v3"},
+    )
+
+    assert result["state"] == "ready"
+    assert result["ready"] is True
+    assert result["mechanical_base"]["ready"] is True
+    assert result["search_index"]["ready"] is True
+    assert result["rrf_ready"] is True

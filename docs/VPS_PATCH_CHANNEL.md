@@ -92,7 +92,8 @@ same-directory temporary file и bounded retry атомарного replace: Win
 не запускает rollback.
 
 Успех требует точного commit/product version/build, HTTP proxy/UI, доступного Qdrant,
-совместимого index contract, прямых `python.exe/pythonw.exe` PID и
+совместимого index contract, чтения persistent сметного baseline через рабочий
+`/api/lsr/gesn/{code}/expand`, прямых `python.exe/pythonw.exe` PID и
 `direct_python_no_console_v2`.
 При любой ошибке возвращаются все существовавшие файлы, удаляются добавленные, восстанавливается
 deploy stamp и стартует предыдущая версия. User state, `data/`, `storage/`, RAG, секреты и индексы

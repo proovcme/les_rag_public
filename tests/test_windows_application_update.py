@@ -103,6 +103,7 @@ def _patch_windows_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vps_patch_apply, "_stop_runtime", lambda _runtime, _state: None)
     monkeypatch.setattr(vps_patch_apply, "_stop_desktop", lambda: None)
     monkeypatch.setattr(vps_patch_apply, "_start_runtime", lambda _runtime, _state: None)
+    monkeypatch.setattr(vps_patch_apply, "_verify_smeta_baseline", lambda _runtime, _state: None)
     monkeypatch.setattr(
         vps_patch_apply, "start_desktop", lambda _runtime, patch_id: f"task-{patch_id}"
     )
@@ -147,6 +148,41 @@ def test_windows_updater_applies_atomically_without_build_or_test(tmp_path, monk
     backup = Path(status["backup_root"])
     assert (backup / "files" / "runtime" / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
     assert (backup / "files" / "app" / "les-desktop.exe").read_bytes() == b"old desktop"
+
+
+def test_soft_updater_verifies_bundled_smeta_baseline_with_persistent_python(
+    tmp_path, monkeypatch
+):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "state"
+    python = state / ".venv/Scripts/python.exe"
+    tool = runtime / "tools/smeta_release_baseline.py"
+    archive = runtime / "installers/windows/baseline/LES-smeta-baseline.zip"
+    for path in (python, tool, archive):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+    captured = {}
+
+    def run_bounded(arguments, **kwargs):
+        captured["arguments"] = arguments
+        captured["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(windows_update_engine, "run_bounded", run_bounded)
+
+    vps_patch_apply._verify_smeta_baseline(runtime, state)
+
+    assert captured["arguments"] == [
+        str(python),
+        str(tool),
+        "repair",
+        "--archive",
+        str(archive),
+        "--state-root",
+        str(state),
+    ]
+    assert captured["kwargs"]["timeout"] == 300
+    assert captured["kwargs"]["environment"]["LES_WINDOWS_STATE_ROOT"] == str(state)
 
 
 def test_windows_updater_accepts_powershell_utf8_bom_job(tmp_path, monkeypatch):
@@ -623,6 +659,11 @@ def test_windows_update_ready_snapshot_checks_live_direct_pids(
                 "qdrant": {"ok": True},
             }
         },
+        "http://127.0.0.1:8050/api/lsr/gesn/10-01-001-01/expand?qty=1": {
+            "code": "10-01-001-01",
+            "qty": 1,
+            "resources": [{"code": "1-100-01", "quantity": 1.0}],
+        },
     }
 
     class HealthyUi:
@@ -670,4 +711,67 @@ def test_windows_update_ready_snapshot_checks_live_direct_pids(
     assert snapshot["process_contract"] == "direct_python_no_console_v2"
     assert snapshot["proxy_pid"] == 101
     assert snapshot["ui_pid"] == 202
+    assert snapshot["smeta_baseline_ready"] is True
     assert snapshot["reranker_ready"] is True
+
+
+def test_windows_update_ready_snapshot_rejects_unreadable_smeta_baseline(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "LES"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "process_contract": "direct_python_no_console_v2",
+                "proxy_pid": 101,
+                "ui_pid": 202,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def json_probe(url, timeout=5):
+        if url.endswith("/api/version"):
+            return {
+                "product_version": "0.27.9",
+                "build_number": 526,
+                "deployed_commit": "d" * 40,
+            }
+        if url.endswith("/api/health"):
+            return {
+                "rag": {
+                    "index_contract": {"compatible": True},
+                    "qdrant": {"ok": True},
+                }
+            }
+        raise OSError("unable to open normative database")
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(windows_update_engine, "_json_url", json_probe)
+    monkeypatch.setattr(
+        windows_update_engine.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: HealthyUi(),
+    )
+    monkeypatch.setattr(windows_update_engine, "_pid_running", lambda pid: True)
+
+    snapshot, failure = windows_update_engine._ready_snapshot(
+        expected_commit="d" * 40,
+        expected_version="0.27.9",
+        expected_build=526,
+        state=state,
+        health_timeout=15,
+    )
+
+    assert snapshot is None
+    assert failure.startswith("smeta_baseline=OSError:")

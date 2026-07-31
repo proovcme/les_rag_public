@@ -301,15 +301,19 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
     result["search_index"] = {
         "state": "unknown",
         "ready": False,
-        "optional": True,
+        "optional": False,
     }
     if not physical or not client.collection_exists(physical):
         result["search_index"].update({"state": "missing", "reason": "collection_missing"})
         result.update(
             {
-                "state": "ready" if mechanical_ready else "missing",
-                "ready": mechanical_ready,
-                "reason": "" if mechanical_ready else "mechanical_base_missing_or_untrusted",
+                "state": "blocked",
+                "ready": False,
+                "reason": (
+                    "smeta_search_index_missing"
+                    if mechanical_ready
+                    else "mechanical_base_missing_or_untrusted"
+                ),
                 "rrf_ready": False,
                 "progress_pct": 0.0,
             }
@@ -333,12 +337,20 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
         state, reason = "building", "index_build_in_progress"
     else:
         state, reason = "blocked", "manifest_or_vector_coverage_incomplete"
+    search_ready = bool(complete and activated)
+    overall_ready = bool(mechanical_ready and search_ready)
+    if not mechanical_ready:
+        overall_state, overall_reason = "blocked", "mechanical_base_missing_or_untrusted"
+    elif not search_ready:
+        overall_state, overall_reason = state, reason
+    else:
+        overall_state, overall_reason = "ready", ""
     result.update(
         {
-            "state": state,
-            "reason": reason,
-            "ready": complete,
-            "rrf_ready": complete,
+            "state": overall_state,
+            "reason": overall_reason,
+            "ready": overall_ready,
+            "rrf_ready": search_ready,
             "points": total,
             "dense_points": dense,
             "sparse_points": sparse,
@@ -349,19 +361,12 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
     result["search_index"].update(
         {
             "state": state,
-            "ready": complete,
+            "ready": search_ready,
             "reason": reason,
             "points": total,
             "expected_points": expected,
         }
     )
-    # The typed SQLite reader is the operational smeta base. The vector card
-    # index is an optional model-navigation accelerator and must not make a
-    # verified mechanical base look absent.
-    if mechanical_ready:
-        result["state"] = "ready"
-        result["ready"] = True
-        result["reason"] = ""
     return result
 
 

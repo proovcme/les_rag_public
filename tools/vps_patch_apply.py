@@ -317,6 +317,35 @@ def _start_runtime(runtime: Path, state: Path) -> None:
     )
 
 
+def _verify_smeta_baseline(runtime: Path, state: Path) -> None:
+    """Repair/verify the bundled immutable FSNB base before accepting a patch."""
+    python = state / ".venv" / "Scripts" / "python.exe"
+    tool = runtime / "tools" / "smeta_release_baseline.py"
+    archive = runtime / "installers" / "windows" / "baseline" / "LES-smeta-baseline.zip"
+    missing = [str(path) for path in (python, tool, archive) if not path.is_file()]
+    if missing:
+        raise RuntimeError("smeta baseline provisioner is incomplete: " + ", ".join(missing))
+    environment = dict(os.environ)
+    environment["LES_WINDOWS_STATE_ROOT"] = str(state)
+    windows_update_engine.run_bounded(
+        [
+            str(python),
+            str(tool),
+            "repair",
+            "--archive",
+            str(archive),
+            "--state-root",
+            str(state),
+        ],
+        cwd=runtime,
+        log_root=state / "logs" / "updates" / "soft-update",
+        name="smeta-baseline",
+        timeout=300,
+        environment=environment,
+        max_working_set_mb=768,
+    )
+
+
 def _json_url(url: str, timeout: float = 5) -> dict[str, Any]:
     with urllib.request.urlopen(url, timeout=timeout) as response:  # noqa: S310 - loopback only
         return json.load(response)
@@ -499,6 +528,14 @@ def apply_job(job_path: Path) -> int:
                 changed.append((target, existed, backup_rel))
 
         stamp_path = runtime / ".les_deploy_stamp.json"
+        write_status(
+            status,
+            state="applying",
+            stage="smeta_baseline",
+            patch_id=patch_id,
+            message="Проверяю и подключаю базу ФСНБ",
+        )
+        _verify_smeta_baseline(runtime, state)
         stamp_tmp = stamp_path.with_suffix(".tmp")
         stamp_tmp.write_text(json.dumps(_stamp(manifest), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(stamp_tmp, stamp_path)

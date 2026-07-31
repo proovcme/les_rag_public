@@ -4,19 +4,32 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-31)
+## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.8 (fail-closed Windows startup evidence)
-номер сборки:              525     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.525 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.9 (smeta baseline acceptance gate)
+номер сборки:              526     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.526 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.8 candidate
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
+dev implementation:       codex/legion-model-quality; 0.27.9 candidate
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.9 / build 526 — fail-closed smeta baseline acceptance
+>
+> Дата: 2026-08-01
+> Статус: code-only soft-update candidate; полный NSIS/EXE не собирается.
+> Windows updater принимает новый runtime только если живой proxy через штатный
+> `/api/lsr/gesn/10-01-001-01/expand?qty=1` прочитал persistent ФСНБ SQLite и вернул
+> непустой ресурсный состав. Отсутствующий или недоступный baseline теперь даёт точный
+> `smeta_baseline=...` в updater status и запускает автоматический rollback вместо ложного `ready`.
+> Перед рестартом soft updater автоматически проверяет и при необходимости backup-first
+> восстанавливает ФСНБ из bundled checksum-verified `LES-smeta-baseline.zip`. Сметный readiness
+> теперь требует обе части одновременно: trusted mechanical SQLite и активный полный
+> `les_smeta_norm_cards` dense+sparse/RRF; одна живая половина больше не маскирует вторую.
 
 > 0.27.8 / build 525 — fail-closed Windows startup evidence
 >

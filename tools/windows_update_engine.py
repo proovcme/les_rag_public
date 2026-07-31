@@ -509,6 +509,15 @@ def _ready_snapshot(
             f"contract={contract.get('status')}, qdrant={qdrant.get('ok')}",
         )
     try:
+        smeta_probe = _json_url(
+            "http://127.0.0.1:8050/api/lsr/gesn/10-01-001-01/expand?qty=1",
+            timeout=min(15.0, health_timeout),
+        )
+    except Exception as exc:  # noqa: BLE001
+        return None, f"smeta_baseline={type(exc).__name__}: {exc}"
+    if not smeta_probe.get("resources"):
+        return None, "smeta_baseline=empty_resources"
+    try:
         rerank = _post_json_url(
             "http://127.0.0.1:8050/api/rerank",
             {
@@ -540,6 +549,7 @@ def _ready_snapshot(
             "deployed_commit": actual_commit,
             "index_contract_compatible": True,
             "qdrant_ready": True,
+            "smeta_baseline_ready": True,
             "reranker_ready": True,
             "process_contract": str(runtime_state.get("process_contract")),
             "proxy_pid": proxy_pid,
