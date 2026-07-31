@@ -69,11 +69,15 @@ def test_automatic_patch_files_keeps_only_runtime_allowlist(tmp_path):
     runtime_file.parent.mkdir()
     runtime_file.write_text("before\n", encoding="utf-8")
     (repo / "README.md").write_text("before\n", encoding="utf-8")
+    docs_file = repo / "docs" / "runtime.md"
+    docs_file.parent.mkdir()
+    docs_file.write_text("before\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
     base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     runtime_file.write_text("after\n", encoding="utf-8")
     (repo / "README.md").write_text("after\n", encoding="utf-8")
+    docs_file.write_text("after\n", encoding="utf-8")
     subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
     target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     original = vps_patch.ROOT

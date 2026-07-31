@@ -456,6 +456,8 @@ def _automatic_patch_files(base: str, target: str) -> list[str]:
     ).splitlines()
     selected: list[str] = []
     for value in changed:
+        if PurePosixPath(value.replace("\\", "/")).parts[:1] == ("docs",):
+            continue
         try:
             selected.append(normalize_path(value))
         except ValueError:
