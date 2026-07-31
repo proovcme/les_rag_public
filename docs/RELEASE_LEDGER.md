@@ -7,16 +7,26 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.4 (Legion resumable RAG v3 transition)
-номер сборки:              521     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.521 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.5 (reviewed sibling creation gate)
+номер сборки:              522     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.522 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.4 candidate
+dev implementation:       codex/legion-model-quality; 0.27.5 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.5 / build 522 — reviewed sibling creation gate
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; installed runtime не изменён.
+> Первый Legion generation preflight подтвердил два индексированных пользовательских
+> датасета, Ollama `bge-m3:latest` и vector size 1024, затем fail-closed остановился до
+> мутации: supervisor не переносил builder-флаг `--create`. Job profile теперь требует
+> явный `--create-destination`, который единожды создаёт только указанный sibling;
+> source collection остаётся read-only, последующие запуски используют checkpoints.
 
 > 0.27.4 / build 521 — resumable Legion RAG v3 transition
 >

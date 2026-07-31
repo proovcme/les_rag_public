@@ -48,14 +48,16 @@ def test_generation_job_carries_windows_embedding_and_legacy_handoff_profile():
         embedding_api_model="bge-m3:latest",
         rag_chunk_unit="chars",
         archive_physical_alias_as="les_rag_legacy_v2",
+        create_destination=True,
     )
 
     worker = _worker_arguments(args)
 
-    assert worker[-10:] == [
+    assert worker[-11:] == [
         "--embed-backend", "ollama",
         "--embedding-model", "bge-m3",
         "--embedding-api-model", "bge-m3:latest",
         "--rag-chunk-unit", "chars",
         "--archive-physical-alias-as", "les_rag_legacy_v2",
+        "--create-destination",
     ]

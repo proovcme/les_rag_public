@@ -59,6 +59,11 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--embedding-api-model", default="")
     parser.add_argument("--rag-chunk-unit", choices=("chars", "tokens"), default="")
     parser.add_argument("--archive-physical-alias-as", default="")
+    parser.add_argument(
+        "--create-destination",
+        action="store_true",
+        help="allow the reviewed generation job to create its missing sibling collection",
+    )
     parser.add_argument("--max-failures", type=int, default=12)
 
 
@@ -88,6 +93,8 @@ def _worker_arguments(args: argparse.Namespace) -> list[str]:
     ):
         if value:
             result.extend((option, value))
+    if args.create_destination:
+        result.append("--create-destination")
     return result
 
 
@@ -146,11 +153,7 @@ def run(args: argparse.Namespace) -> int:
     )
     python = Path(sys.executable)
     try:
-        _run_stage(
-            state,
-            args.state_path,
-            "build",
-            [
+        build = [
                 str(python),
                 str(ROOT / "tools/build_rag_contract_sibling.py"),
                 "--src", args.src,
@@ -162,7 +165,14 @@ def run(args: argparse.Namespace) -> int:
                 "--resume",
                 "--report-path", str(args.migration_report),
                 "--progress-path", str(args.progress_path),
-            ],
+            ]
+        if args.create_destination:
+            build.append("--create")
+        _run_stage(
+            state,
+            args.state_path,
+            "build",
+            build,
         )
         _run_stage(
             state,
