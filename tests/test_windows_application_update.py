@@ -199,6 +199,7 @@ def test_soft_updater_verifies_bundled_smeta_baseline_with_persistent_python(
         return 0
 
     monkeypatch.setattr(windows_update_engine, "run_bounded", run_bounded)
+    monkeypatch.setattr(vps_patch_apply, "_live_smeta_baseline_ready", lambda: False)
 
     vps_patch_apply._verify_smeta_baseline(runtime, state)
 
@@ -232,12 +233,54 @@ def test_soft_updater_preflights_with_staged_baseline_tool(tmp_path, monkeypatch
         "run_bounded",
         lambda arguments, **_kwargs: captured.setdefault("arguments", arguments) and 0,
     )
+    monkeypatch.setattr(vps_patch_apply, "_live_smeta_baseline_ready", lambda: False)
 
     vps_patch_apply._verify_smeta_baseline(
         runtime, state, staged_runtime=staged_runtime
     )
 
     assert captured["arguments"][1] == str(staged_tool)
+
+
+def test_soft_updater_keeps_live_ready_smeta_without_touching_baseline(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(vps_patch_apply, "_live_smeta_baseline_ready", lambda: True)
+    monkeypatch.setattr(
+        windows_update_engine,
+        "run_bounded",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("healthy live baseline must not be repaired")
+        ),
+    )
+
+    vps_patch_apply._verify_smeta_baseline(tmp_path / "runtime", tmp_path / "state")
+
+
+def test_live_smeta_acceptance_requires_mechanical_rrf_and_exact_resources(monkeypatch):
+    responses = {
+        "readiness": {
+            "smeta": {
+                "ready": True,
+                "rrf_ready": True,
+                "mechanical_base": {
+                    "ready": True,
+                    "trusted_for_navigation": True,
+                },
+                "search_index": {"ready": True},
+            }
+        },
+        "expand": {"resources": [{"kind": "labor", "qty": 1.0}]},
+    }
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_json_url",
+        lambda url, timeout=5: responses["expand" if "expand" in url else "readiness"],
+    )
+
+    assert vps_patch_apply._live_smeta_baseline_ready() is True
+    responses["expand"] = {"resources": []}
+    assert vps_patch_apply._live_smeta_baseline_ready() is False
 
 
 def test_windows_updater_accepts_powershell_utf8_bom_job(tmp_path, monkeypatch):

@@ -323,6 +323,8 @@ def _verify_smeta_baseline(
     runtime: Path, state: Path, *, staged_runtime: Path | None = None
 ) -> None:
     """Repair/verify the bundled immutable FSNB base before accepting a patch."""
+    if _live_smeta_baseline_ready():
+        return
     python = state / ".venv" / "Scripts" / "python.exe"
     tool = runtime / "tools" / "smeta_release_baseline.py"
     staged_tool = (staged_runtime or Path()) / "tools" / "smeta_release_baseline.py"
@@ -350,6 +352,35 @@ def _verify_smeta_baseline(
         timeout=300,
         environment=environment,
         max_working_set_mb=768,
+    )
+
+
+def _live_smeta_baseline_ready() -> bool:
+    """Accept an already-running base only on mechanical, RRF and exact-expand evidence."""
+    try:
+        readiness = _json_url("http://127.0.0.1:8050/api/rag/readiness", timeout=10)
+        expansion = _json_url(
+            "http://127.0.0.1:8050/api/lsr/gesn/10-01-001-01/expand?qty=1",
+            timeout=10,
+        )
+    except (OSError, ValueError, TypeError):
+        return False
+    smeta = readiness.get("smeta") if isinstance(readiness, dict) else None
+    if not isinstance(smeta, dict):
+        return False
+    mechanical = smeta.get("mechanical_base")
+    search = smeta.get("search_index")
+    resources = expansion.get("resources") if isinstance(expansion, dict) else None
+    return bool(
+        smeta.get("ready")
+        and smeta.get("rrf_ready")
+        and isinstance(mechanical, dict)
+        and mechanical.get("ready")
+        and mechanical.get("trusted_for_navigation")
+        and isinstance(search, dict)
+        and search.get("ready")
+        and isinstance(resources, list)
+        and resources
     )
 
 
