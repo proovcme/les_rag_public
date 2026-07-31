@@ -127,6 +127,11 @@ uv run python tools/vps_patch.py publish --output dist/vps-patch
 поэтому тот же профиль работает на Legion без GNU Make. Entry point сам создаёт
 доступный pytest `--basetemp` внутри workspace; оператор не воспроизводит список
 тестов вручную.
+
+Clean-install smoke также использует content-addressed
+`.codex_tmp/windows-release-smoke/<commit>` внутри checkout. Он не переиспользует
+общий `%LOCALAPPDATA%\LES-release-smoke`, где файлы прежнего installer могут
+иметь несовместимый ACL и блокировать следующий автоматический prepare.
 Нативная сборка shell выполняется отдельно и только если менялся Tauri; apply её не
 повторяет. Builder принимает только явно перечисленные файлы. Публикация сначала загружает `.part`, затем
 атомарно переименовывает архив и в последнюю очередь `latest.json`, поэтому клиент не увидит

@@ -7,16 +7,26 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.2 (Legion update gate + RIM intake correction)
-номер сборки:              519     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.519 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.3 (ACL-safe isolated Windows prepare)
+номер сборки:              520     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.520 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.2 candidate
+dev implementation:       codex/legion-model-quality; 0.27.3 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.3 / build 520 — ACL-safe isolated Windows prepare
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; установленный Legion остаётся 0.25.26 / 499, update не применён.
+> Первый автоматический prepare 0.27.2 успешно собрал NSIS, но остановился до
+> smoke/apply: старый `%LOCALAPPDATA%\LES-release-smoke` имел недоступные ACL на
+> baseline-файлах. Новый prepare использует content-addressed
+> `.codex_tmp/windows-release-smoke/<commit>` внутри checkout; ACL вручную не
+> меняются, старый contour не удаляется и production tree не затрагивается.
 
 > 0.27.2 / build 519 — системный Legion updater-гейт и корректный RIM intake
 >

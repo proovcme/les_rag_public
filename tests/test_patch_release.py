@@ -154,6 +154,13 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
     assert "Verified smeta baseline archive was not provided" in source
 
 
+def test_prepared_update_smoke_uses_checkout_owned_temporary_root():
+    source = (ROOT / "tools/windows_prepare_update.ps1").read_text(encoding="utf-8")
+
+    assert '.codex_tmp\\windows-release-smoke\\$BuildCommit' in source
+    assert 'Join-Path $env:LOCALAPPDATA "LES-release-smoke"' not in source
+
+
 def test_windows_patch_release_creates_missing_tracking_branch():
     source = (ROOT / "tools/windows_patch_release.ps1").read_text(encoding="utf-8")
 
