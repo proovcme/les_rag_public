@@ -33,6 +33,7 @@ ALLOWED_FILES = {
     "proxy_server.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
+    "tools/smeta_model_quality_benchmark.py",
     "tools/windows_update_engine.py",
     "tools/windows_runtime.py",
     "tools/windows_env_doctor.py",

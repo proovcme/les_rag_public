@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -28,6 +29,7 @@ ALLOWED_FILES = {
     "proxy_server.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
+    "tools/smeta_model_quality_benchmark.py",
     "tools/windows_update_engine.py",
     "tools/windows_runtime.py",
     "tools/windows_env_doctor.py",
@@ -412,12 +414,19 @@ def apply_local(*, output: Path, runtime: Path, state: Path) -> dict:
         ),
         encoding="utf-8",
     )
+    elevation_script = (
+        "$ErrorActionPreference='Stop'; "
+        f"$args=@('-NoProfile','-NonInteractive','-EncodedCommand','{encoded}'); "
+        "$process=Start-Process -FilePath 'powershell.exe' -ArgumentList $args "
+        "-Verb RunAs -Wait -PassThru; exit $process.ExitCode"
+    )
+    elevated = base64.b64encode(elevation_script.encode("utf-16le")).decode("ascii")
     launched = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", elevated],
         cwd=str(update_dir),
         capture_output=True,
         text=True,
-        timeout=30,
+        timeout=180,
         check=False,
         creationflags=0x08000000,
     )

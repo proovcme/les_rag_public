@@ -681,7 +681,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--num-ctx", type=int, default=32768)
     parser.add_argument("--tool-max-tokens", type=int, default=1800)
     parser.add_argument("--mapping-max-tokens", type=int, default=8000)
+    parser.add_argument("--state-root", type=Path)
     args = parser.parse_args(argv)
+
+    if args.state_root:
+        os.environ["LES_WINDOWS_STATE_ROOT"] = str(args.state_root.resolve())
+    elif os.name == "nt" and not os.getenv("LES_WINDOWS_STATE_ROOT", "").strip():
+        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        if not local_app_data:
+            parser.error("LOCALAPPDATA is unavailable; pass --state-root")
+        os.environ["LES_WINDOWS_STATE_ROOT"] = str(Path(local_app_data) / "LES")
 
     source = args.source.resolve()
     if not source.is_file():
