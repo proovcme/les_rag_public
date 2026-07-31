@@ -113,6 +113,22 @@ def test_rrf_readiness_requires_every_dataset_and_both_vector_channels():
     assert report["covered_dataset_points"] == 2
 
 
+def test_rrf_readiness_rejects_migration_from_different_scope_manifest():
+    migration = _migration_report()
+    migration["scope_manifest_sha256"] = "old"
+    report = audit_rrf_readiness(
+        client=FakeClient(),
+        collection="clean-v2",
+        contract=_contract(),
+        datasets=[{"id": "a", "name": "A"}, {"id": "b", "name": "B"}],
+        migration_report=migration,
+        lexical_status=_lexical_status(),
+        scope_manifest_sha256="current",
+    )
+    assert report["ready"] is False
+    assert report["scope_manifest_match"] is False
+
+
 def test_rrf_readiness_blocks_collection_with_missing_sparse_vectors():
     report = audit_rrf_readiness(
         client=FakeClient(sparse_points=1),

@@ -45,6 +45,7 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dst", required=True)
     parser.add_argument("--alias", default="les_rag")
     parser.add_argument("--source-db", type=Path, required=True)
+    parser.add_argument("--scope-manifest", type=Path, required=True)
     parser.add_argument("--contract-path", type=Path, required=True)
     parser.add_argument("--alias-contract-path", type=Path, required=True)
     parser.add_argument("--lexical-db", type=Path, required=True)
@@ -73,6 +74,7 @@ def _worker_arguments(args: argparse.Namespace) -> list[str]:
         "--dst", args.dst,
         "--alias", args.alias,
         "--source-db", str(args.source_db),
+        "--scope-manifest", str(args.scope_manifest),
         "--contract-path", str(args.contract_path),
         "--alias-contract-path", str(args.alias_contract_path),
         "--lexical-db", str(args.lexical_db),
@@ -159,6 +161,7 @@ def run(args: argparse.Namespace) -> int:
                 "--src", args.src,
                 "--dst", args.dst,
                 "--source-db", str(args.source_db),
+                "--scope-manifest", str(args.scope_manifest),
                 "--contract-path", str(args.contract_path),
                 "--qdrant-url", args.qdrant_url,
                 "--embed-url", args.embed_url,
@@ -197,6 +200,7 @@ def run(args: argparse.Namespace) -> int:
                 "--collection", args.dst,
                 "--contract-path", str(args.contract_path),
                 "--source-db", str(args.source_db),
+                "--scope-manifest", str(args.scope_manifest),
                 "--migration-report", str(args.migration_report),
                 "--lexical-db", str(args.lexical_db),
                 "--qdrant-url", args.qdrant_url,

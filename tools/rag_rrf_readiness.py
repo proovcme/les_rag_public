@@ -16,7 +16,7 @@ from backend.inference.bm25_sparse import encode_bm25
 from backend.qdrant_adapter import EmbedClient
 from backend.rag_config import prepare_query_for_embedding
 from tools.build_rag_contract_sibling import (
-    resolve_indexed_datasets,
+    load_scope_manifest,
     verify_embedding_runtime_identity,
 )
 
@@ -61,6 +61,7 @@ def audit_rrf_readiness(
     datasets: list[dict[str, str]],
     migration_report: dict[str, Any] | None = None,
     lexical_status: dict[str, Any] | None = None,
+    scope_manifest_sha256: str = "",
 ) -> dict[str, Any]:
     dense_name = str(contract.get("dense_vector_name") or "dense")
     sparse_name = str(contract.get("sparse_vector_name") or "bm25_sparse")
@@ -153,6 +154,11 @@ def audit_rrf_readiness(
         )
         for item in migrated_datasets
     )
+    scope_manifest_match = bool(
+        not scope_manifest_sha256
+        or str((migration_report or {}).get("scope_manifest_sha256") or "")
+        == scope_manifest_sha256
+    )
     migration_complete = bool(
         migration_report
         and migration_report.get("status") == "completed"
@@ -168,6 +174,7 @@ def audit_rrf_readiness(
             for item in migrated_datasets
         )
         and exclusion_accounting_ok
+        and scope_manifest_match
     )
     schema_ok = bool(
         contract.get("schema") == "les.rag.index-contract.v3"
@@ -222,6 +229,8 @@ def audit_rrf_readiness(
         "legacy_table_smeta_points": legacy_table_smeta_points,
         "lexical": {**(lexical_status or {}), "ready": lexical_ready},
         "migration_complete": migration_complete,
+        "scope_manifest_sha256": scope_manifest_sha256,
+        "scope_manifest_match": scope_manifest_match,
         "exclusion_accounting_ok": exclusion_accounting_ok,
         "source_points_excluded": int(
             (migration_report or {}).get("source_points_excluded") or 0
@@ -341,6 +350,7 @@ def main() -> int:
     parser.add_argument("--collection", required=True)
     parser.add_argument("--contract-path", type=Path, required=True)
     parser.add_argument("--source-db", type=Path, required=True)
+    parser.add_argument("--scope-manifest", type=Path, required=True)
     parser.add_argument("--migration-report", type=Path, required=True)
     parser.add_argument("--lexical-db", type=Path, required=True)
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
@@ -353,7 +363,13 @@ def main() -> int:
     from proxy.services.lexical_index_service import LexicalIndex
 
     lexical_status = LexicalIndex(str(args.lexical_db)).status(args.collection)
-    datasets = resolve_indexed_datasets(args.source_db)
+    scope_manifest, scope_manifest_digest = load_scope_manifest(
+        args.scope_manifest, args.source_db
+    )
+    datasets = [
+        {"id": str(item["id"]), "name": str(item["name"])}
+        for item in scope_manifest["datasets"]
+    ]
     client = QdrantClient(
         url=args.qdrant_url, timeout=60.0, check_compatibility=False
     )
@@ -364,6 +380,7 @@ def main() -> int:
         datasets=datasets,
         migration_report=migration_report,
         lexical_status=lexical_status,
+        scope_manifest_sha256=scope_manifest_digest,
     )
     if args.live_rrf and report["ready"]:
         compatible_url, endpoint_failures = select_compatible_embed_url(

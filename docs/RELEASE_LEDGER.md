@@ -7,16 +7,26 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.6 (reproducible Qwen/Gemma model-quality harness)
-номер сборки:              523     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.523 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.7 (manifest-locked general RAG product boundary)
+номер сборки:              524     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.524 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.6 candidate
+dev implementation:       codex/legion-model-quality; 0.27.7 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.7 / build 524 — manifest-locked general RAG product boundary
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; installed runtime и активный `les_rag` не изменены.
+> Общая коллекция больше не мигрирует «все indexed datasets»: `rag_scope_manifest.py`
+> фиксирует exact indexed-user identity, а один SHA-256 проходит через plan/checkpoint/report/readiness.
+> Изменение корпуса или manifest блокирует resume/activation. `ARTEL_Index` канонически типизирован
+> как внешняя module-owned интеграция `system/artel`, не provision'ится LES bootstrap'ом и не входит
+> в общий project RAG. Первый Legion manifest содержит только пользовательский датасет `NS`.
 
 > 0.27.6 / build 523 — reproducible Qwen/Gemma model-quality harness
 >

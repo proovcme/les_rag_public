@@ -28,12 +28,15 @@ SYSTEM_DATASETS: tuple[SystemDatasetSpec, ...] = (
     SystemDatasetSpec("PRICE_SERVICE_Index", "smeta", "price_reference", "Прайсы", 20),
     SystemDatasetSpec("SMETA_SERVICE_Index", "smeta", "module_navigation", "Сметные источники", 30),
 )
+EXTERNAL_SYSTEM_DATASETS: tuple[SystemDatasetSpec, ...] = (
+    SystemDatasetSpec("ARTEL_Index", "artel", "integration_knowledge", "ARTEL", 5),
+)
 _SYSTEM_DATASET_NAMESPACE = uuid.UUID("fda5fe77-08da-47c0-9866-cfbde72bbd83")
 
 
 def system_dataset_spec(dataset_name: str) -> SystemDatasetSpec | None:
     name = str(dataset_name or "").strip()
-    for item in SYSTEM_DATASETS:
+    for item in (*SYSTEM_DATASETS, *EXTERNAL_SYSTEM_DATASETS):
         if name == item.dataset_name:
             return item
     if name == "GESN_NORMS_2022_PDF" or name.startswith("SMETA_RU_NORM_"):

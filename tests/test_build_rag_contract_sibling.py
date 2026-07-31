@@ -16,7 +16,10 @@ from tools.build_rag_contract_sibling import (
     canonicalize_dataset_payload,
     deterministic_point_id,
     resolve_datasets,
+    load_scope_manifest,
     resolve_indexed_datasets,
+    scope_manifest_payload,
+    scope_manifest_sha256,
     sparse_vector_or_exclusion,
     validate_embedding_health,
     verify_embedding_runtime_identity,
@@ -63,6 +66,32 @@ def test_default_migration_scope_contains_every_indexed_dataset(tmp_path: Path):
         {"id": "b", "name": "BAI"},
         {"id": "f", "name": "NTD_FIRE_Index"},
     ]
+
+
+def test_general_rag_scope_excludes_module_owned_artel_and_is_exact(tmp_path: Path):
+    path = tmp_path / "meta.db"
+    _db(path)
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO datasets (id, name, chunk_count) VALUES ('artel', 'ARTEL_Index', 7)"
+        )
+    manifest = scope_manifest_payload(path)
+    assert [item["name"] for item in manifest["datasets"]] == [
+        "BAI",
+        "NTD_FIRE_Index",
+    ]
+    manifest_path = tmp_path / "scope.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    loaded, digest = load_scope_manifest(manifest_path, path)
+    assert loaded == manifest
+    assert digest == scope_manifest_sha256(manifest)
+
+    with sqlite3.connect(path) as conn:
+        conn.execute(
+            "INSERT INTO datasets (id, name, chunk_count) VALUES ('new', 'New project', 1)"
+        )
+    with pytest.raises(ValueError, match="stale"):
+        load_scope_manifest(manifest_path, path)
 
 
 def test_deterministic_point_id_is_idempotent_and_child_specific():

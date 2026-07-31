@@ -33,6 +33,7 @@ def test_generation_job_carries_windows_embedding_and_legacy_handoff_profile():
         dst="les_rag_windows_v3_b521",
         alias="les_rag",
         source_db=Path("data/les_meta.db"),
+        scope_manifest=Path("artifacts/scope.json"),
         contract_path=Path("artifacts/contract.json"),
         alias_contract_path=Path("data/alias-contract.json"),
         lexical_db=Path("data/lexical.db"),
@@ -53,6 +54,7 @@ def test_generation_job_carries_windows_embedding_and_legacy_handoff_profile():
 
     worker = _worker_arguments(args)
 
+    assert worker[worker.index("--scope-manifest") + 1] == "artifacts\\scope.json"
     assert worker[-11:] == [
         "--embed-backend", "ollama",
         "--embedding-model", "bge-m3",

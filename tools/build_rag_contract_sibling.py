@@ -22,6 +22,8 @@ from typing import Any, Iterable
 
 
 MIGRATION_NAMESPACE = uuid.UUID("e40ed045-32cd-48b2-a15d-e523c64921bc")
+SCOPE_MANIFEST_SCHEMA = "les.rag.collection-scope.v1"
+GENERAL_RAG_ROLE = "general_project_rag"
 
 
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
@@ -230,17 +232,18 @@ def resolve_datasets(db_path: Path, names: Iterable[str]) -> list[dict[str, str]
     return [{"id": found[name], "name": name} for name in requested]
 
 
-def resolve_indexed_datasets(db_path: Path) -> list[dict[str, str]]:
-    """Return every dataset that currently owns indexed chunks.
-
-    This is the default migration scope.  A clean production sibling must not
-    silently cover only a hand-picked canary subset.
-    """
+def resolve_indexed_dataset_identities(db_path: Path) -> list[dict[str, str]]:
+    """Return canonical identities for every dataset with indexed chunks."""
     with sqlite3.connect(db_path) as conn:
         conn.row_factory = sqlite3.Row
+        columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(datasets)")}
+        scope_expr = "COALESCE(d.dataset_scope, 'user')" if "dataset_scope" in columns else "'user'"
+        module_expr = "COALESCE(d.module_id, '')" if "module_id" in columns else "''"
         rows = conn.execute(
-            """
-            SELECT DISTINCT d.id, d.name
+            f"""
+            SELECT DISTINCT d.id, d.name,
+                   {scope_expr} AS dataset_scope,
+                   {module_expr} AS module_id
             FROM datasets d
             LEFT JOIN documents doc ON doc.dataset_id = d.id
             WHERE COALESCE(d.chunk_count, 0) > 0
@@ -248,7 +251,77 @@ def resolve_indexed_datasets(db_path: Path) -> list[dict[str, str]]:
             ORDER BY d.name
             """
         ).fetchall()
-    return [{"id": str(row["id"]), "name": str(row["name"])} for row in rows]
+    from proxy.services.system_dataset_service import dataset_identity
+
+    result: list[dict[str, str]] = []
+    for row in rows:
+        name = str(row["name"])
+        registered_scope, registered_module = dataset_identity(name)
+        dataset_scope = str(row["dataset_scope"] or "user")
+        module_id = str(row["module_id"] or "")
+        if registered_scope == "system":
+            dataset_scope, module_id = registered_scope, registered_module
+        result.append(
+            {
+                "id": str(row["id"]),
+                "name": name,
+                "dataset_scope": dataset_scope,
+                "module_id": module_id,
+            }
+        )
+    return result
+
+
+def resolve_indexed_datasets(db_path: Path) -> list[dict[str, str]]:
+    """Return all indexed user datasets eligible for the general LES RAG."""
+    return [
+        {"id": item["id"], "name": item["name"]}
+        for item in resolve_indexed_dataset_identities(db_path)
+        if item["dataset_scope"] == "user"
+    ]
+
+
+def scope_manifest_payload(db_path: Path) -> dict[str, Any]:
+    datasets = [
+        item
+        for item in resolve_indexed_dataset_identities(db_path)
+        if item["dataset_scope"] == "user"
+    ]
+    if not datasets:
+        raise ValueError("no indexed user datasets found for general LES RAG")
+    return {
+        "schema": SCOPE_MANIFEST_SCHEMA,
+        "collection_role": GENERAL_RAG_ROLE,
+        "selection_policy": "exact-indexed-user-datasets",
+        "datasets": datasets,
+    }
+
+
+def scope_manifest_sha256(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def load_scope_manifest(path: Path, db_path: Path) -> tuple[dict[str, Any], str]:
+    payload = _read_json(path)
+    if payload.get("schema") != SCOPE_MANIFEST_SCHEMA:
+        raise ValueError(f"invalid RAG scope manifest schema: {payload.get('schema')!r}")
+    if payload.get("collection_role") != GENERAL_RAG_ROLE:
+        raise ValueError(
+            f"scope manifest is not for {GENERAL_RAG_ROLE}: {payload.get('collection_role')!r}"
+        )
+    expected = scope_manifest_payload(db_path)
+    if payload.get("selection_policy") != expected["selection_policy"]:
+        raise ValueError("scope manifest selection policy is not exact user scope")
+    if payload.get("datasets") != expected["datasets"]:
+        raise ValueError("scope manifest is stale or does not match indexed user datasets")
+    return payload, scope_manifest_sha256(payload)
 
 
 def deterministic_point_id(
@@ -711,6 +784,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dst", required=True)
     parser.add_argument("--source-db", type=Path, required=True)
     parser.add_argument("--contract-path", type=Path, required=True)
+    parser.add_argument("--scope-manifest", type=Path)
     parser.add_argument("--dataset", action="append", dest="datasets")
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     parser.add_argument(
@@ -736,12 +810,26 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--create and --dry-run are mutually exclusive")
     if not args.source_db.is_file():
         parser.error(f"source db not found: {args.source_db}")
+    if args.scope_manifest and args.datasets:
+        parser.error("--scope-manifest and --dataset are mutually exclusive")
 
-    datasets = (
-        resolve_datasets(args.source_db, args.datasets)
-        if args.datasets
-        else resolve_indexed_datasets(args.source_db)
-    )
+    scope_manifest: dict[str, Any] = {}
+    scope_manifest_digest = ""
+    if args.scope_manifest:
+        try:
+            scope_manifest, scope_manifest_digest = load_scope_manifest(
+                args.scope_manifest, args.source_db
+            )
+        except ValueError as exc:
+            parser.error(str(exc))
+        datasets = [
+            {"id": str(item["id"]), "name": str(item["name"])}
+            for item in scope_manifest["datasets"]
+        ]
+    elif args.datasets:
+        datasets = resolve_datasets(args.source_db, args.datasets)
+    else:
+        parser.error("--scope-manifest is required unless explicit --dataset is provided")
     if not datasets:
         parser.error("no indexed datasets found")
     plan = {
@@ -750,7 +838,9 @@ def main(argv: list[str] | None = None) -> int:
         "destination_collection": args.dst,
         "contract_path": str(args.contract_path),
         "datasets": datasets,
-        "scope": "selected" if args.datasets else "all_indexed_datasets",
+        "scope": "manifest" if args.scope_manifest else "selected",
+        "scope_manifest": str(args.scope_manifest or ""),
+        "scope_manifest_sha256": scope_manifest_digest,
         "limit_per_dataset": args.limit,
         "mutates_source": False,
     }
@@ -798,6 +888,8 @@ def main(argv: list[str] | None = None) -> int:
         else None
     )
     previous_progress = _read_json(progress_path)
+    if previous_progress and str(previous_progress.get("scope_manifest_sha256") or "") != scope_manifest_digest:
+        raise RuntimeError("resume checkpoint belongs to a different RAG scope manifest")
     completed_by_id = {
         str(item.get("dataset_id")): item
         for item in previous_progress.get("completed_datasets", [])
@@ -809,6 +901,7 @@ def main(argv: list[str] | None = None) -> int:
         "source_collection": args.src,
         "destination_collection": args.dst,
         "source_points_snapshot": source_points,
+        "scope_manifest_sha256": scope_manifest_digest,
         "datasets_total": len(datasets),
         "completed_datasets": [],
         "current_dataset": {},
@@ -898,9 +991,9 @@ def main(argv: list[str] | None = None) -> int:
         int(item["excluded_child_points"]) for item in results
     )
     child_points_total = sum(int(item["child_points_total"]) for item in results)
-    if source_points_read != source_points:
+    if source_points_read > source_points:
         raise RuntimeError(
-            f"incomplete source coverage: read={source_points_read}, source={source_points}"
+            f"selected source coverage exceeds collection: read={source_points_read}, source={source_points}"
         )
     report = {
         "schema": "les.rag.contract-sibling-result.v1",
@@ -909,7 +1002,11 @@ def main(argv: list[str] | None = None) -> int:
         "destination_collection": args.dst,
         "contract": contract,
         "datasets": results,
-        "source_points": source_points,
+        "scope_manifest": str(args.scope_manifest or ""),
+        "scope_manifest_sha256": scope_manifest_digest,
+        "source_collection_points": source_points,
+        "source_unselected_points": source_points - source_points_read,
+        "source_points": source_points_read,
         "source_points_read": source_points_read,
         "source_coverage": 1.0,
         "source_points_excluded": excluded_source_points,

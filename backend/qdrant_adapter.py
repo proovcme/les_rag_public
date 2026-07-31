@@ -851,6 +851,10 @@ class MetaDB:
                 "WHERE name='SMETA_SERVICE_Index' OR name='GESN_NORMS_2022_PDF' "
                 "OR name LIKE 'SMETA_RU_NORM_%'"
             )
+            conn.execute(
+                "UPDATE datasets SET dataset_scope='system', module_id='artel' "
+                "WHERE name='ARTEL_Index'"
+            )
 
     def ensure_system_datasets(self) -> list[str]:
         """Provision module-owned datasets only from the real runtime bootstrap.

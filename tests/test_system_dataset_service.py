@@ -17,6 +17,19 @@ def test_smeta_service_is_module_owned_system_dataset():
     assert dataset_identity("NORMATIVE_SERVICE_Index") == ("system", "normcontrol")
 
 
+def test_artel_index_is_owned_by_separate_artel_module():
+    spec = system_dataset_spec("ARTEL_Index")
+    assert spec is not None
+    assert spec.module_id == "artel"
+    assert dataset_identity("ARTEL_Index") == ("system", "artel")
+
+
+def test_les_bootstrap_does_not_provision_external_artel_dataset(tmp_path):
+    db = MetaDB(str(tmp_path / "meta.db"))
+    db.ensure_system_datasets()
+    assert "ARTEL_Index" not in {item.name for item in db.list_datasets()}
+
+
 def test_gesn_projection_is_system_but_project_table_is_user():
     assert dataset_identity("SMETA_RU_NORM_FSNB2022_Index") == ("system", "smeta")
     assert dataset_identity("GESN_NORMS_2022_PDF") == ("system", "smeta")

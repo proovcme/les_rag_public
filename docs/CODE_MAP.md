@@ -140,8 +140,12 @@ dense/RRF/rerank, retry сохраняет backend, evidence context снача�
 Read-only `tools/rag_index_contract_audit.py` проверяет point fingerprints и покрытие нового
 token/sanitation metadata; exit `1` означает, что старую коллекцию нельзя подписывать manifest-ом.
 
-**Sibling migration:** `tools/build_rag_contract_sibling.py` создаёт отдельную native dense+sparse
-коллекцию для всех indexed datasets по умолчанию. Старые vectors не копируются: payload text повторно
+**Sibling migration:** `tools/rag_scope_manifest.py` фиксирует exact identity всех индексированных
+пользовательских датасетов для роли `general_project_rag`; stale manifest и module-owned dataset
+блокируют build. `ARTEL_Index` канонически имеет `system/artel`: его knowledge остаётся внешней
+module-owned интеграцией и не provision'ится чистой установкой LES. `tools/build_rag_contract_sibling.py`
+создаёт отдельную native dense+sparse коллекцию только по этому manifest или явному test-only
+`--dataset`. Старые vectors не копируются: payload text повторно
 проходит общий final sanitation/token-budget gate и текущий embedder. Resume восстанавливает профиль
 из immutable generation contract и до сборки сверяет remote model/backend/CoreML package/seq_len/
 compute/fallback identity: совпадения размерности 1024 недостаточно. Progress пишется атомарно после
@@ -149,7 +153,8 @@ compute/fallback identity: совпадения размерности 1024 не
 перезаписываются из MetaDB; переживший миграцию legacy-domain `TABLE_SMETA` блокирует readiness.
 Пунктуационный/noise child без BM25-токенов не получает synthetic token:
 он попадает в audited exclusions с reason/hash; source/child/destination/exclusion accounting обязан
-сойтись. `tools/rag_generation_supervisor.py` запускает resumable build как bounded-retry launchd job,
+сойтись. Manifest SHA-256 входит в plan/progress/migration/readiness и обязан совпасть до activation.
+`tools/rag_generation_supervisor.py` запускает resumable build как bounded-retry launchd job,
 после полного отчёта строит FTS для physical generation, вызывает structural readiness, filtered
 live native RRF по каждому dataset и только затем activation. Readiness требует `FTS chunks ==
 destination points`; comma-separated build hosts не становятся одним invalid URL — live probe
