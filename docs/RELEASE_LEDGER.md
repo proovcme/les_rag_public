@@ -7,16 +7,24 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.16 (live baseline acceptance)
-номер сборки:              533     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.533 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.17 (runtime ownership reconciliation)
+номер сборки:              534     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.534 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.16 candidate
+dev implementation:       codex/legion-model-quality; 0.27.17 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.17 / build 534 — runtime ownership reconciliation
+>
+> Дата: 2026-08-01
+> Статус: local soft-update candidate; NSIS/EXE не собирается.
+> Stop lifecycle принимает потерянные PID только после exact loopback identity: `/api/version`
+> подтверждает тот же runtime path, UI health — Совушку, а 8050/8051 принадлежат Python-процессам.
+> Подтверждённый старый LES завершается автоматически; чужой владелец порта остаётся fail-closed.
 
 > 0.27.16 / build 533 — live baseline acceptance for soft updates
 >

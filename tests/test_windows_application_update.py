@@ -729,6 +729,45 @@ def test_windows_runtime_reports_early_proxy_exit_with_redacted_stderr(
     assert "<redacted>" in str(caught.value)
 
 
+def test_windows_runtime_adopts_and_stops_only_confirmed_live_les(monkeypatch, tmp_path):
+    terminated = []
+    monkeypatch.setattr(
+        windows_runtime,
+        "_listening_pids",
+        lambda ports: {8050: 101, 8051: 102} if ports == {8050, 8051} else {},
+    )
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda runtime: True)
+    monkeypatch.setattr(windows_runtime, "_process_name", lambda pid: "python.exe")
+    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminated.append)
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda port: True)
+
+    stopped = windows_runtime._stop_confirmed_live_runtime(
+        tmp_path / "runtime", {8050, 8051}
+    )
+
+    assert stopped == [101, 102]
+    assert terminated == [101, 102]
+
+
+def test_windows_runtime_never_adopts_ports_without_exact_live_identity(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        windows_runtime, "_listening_pids", lambda _ports: {8050: 101, 8051: 102}
+    )
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
+    monkeypatch.setattr(
+        windows_runtime,
+        "_terminate_pid",
+        lambda _pid: (_ for _ in ()).throw(AssertionError("foreign process terminated")),
+    )
+
+    assert (
+        windows_runtime._stop_confirmed_live_runtime(
+            tmp_path / "runtime", {8050, 8051}
+        )
+        == []
+    )
 def test_windows_update_ready_snapshot_checks_live_direct_pids(
     tmp_path, monkeypatch
 ):

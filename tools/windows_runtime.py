@@ -242,9 +242,77 @@ def _terminate_pid(pid: int) -> None:
     )
 
 
-def stop(state: Path) -> dict[str, Any]:
+def _listening_pids(ports: set[int]) -> dict[int, int]:
+    completed = subprocess.run(
+        ["netstat.exe", "-ano", "-p", "tcp"],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+        creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    result: dict[int, int] = {}
+    for raw in completed.stdout.decode("ascii", errors="ignore").splitlines():
+        fields = raw.split()
+        if len(fields) < 5 or fields[0].casefold() != "tcp" or fields[-2].upper() != "LISTENING":
+            continue
+        try:
+            port = int(fields[1].rsplit(":", 1)[-1])
+            pid = int(fields[-1])
+        except ValueError:
+            continue
+        if port in ports and pid > 0:
+            result[port] = pid
+    return result
+
+
+def _live_runtime_matches(runtime: Path) -> bool:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:8050/api/version", timeout=5) as response:  # noqa: S310
+            version = json.load(response)
+        with urllib.request.urlopen("http://127.0.0.1:8051/healthz", timeout=5) as response:  # noqa: S310
+            ui = json.load(response)
+        reported = Path(str(version.get("runtime_path") or "")).resolve()
+    except (OSError, ValueError, TypeError):
+        return False
+    return (
+        str(reported).casefold() == str(Path(runtime).resolve()).casefold()
+        and ui.get("status") == "ok"
+        and ui.get("service") == "sovushka"
+    )
+
+
+def _stop_confirmed_live_runtime(runtime: Path, ports: set[int]) -> list[int]:
+    listeners = _listening_pids(ports)
+    if not listeners or not _live_runtime_matches(runtime):
+        return []
+    if set(listeners) != ports:
+        raise RuntimeError("LES runtime identity is confirmed but not every runtime port has an owner")
+    pids = sorted(set(listeners.values()))
+    if any(_process_name(pid) not in {"python.exe", "pythonw.exe"} for pid in pids):
+        raise RuntimeError("LES runtime ports are not owned exclusively by Python processes")
+    for pid in pids:
+        _terminate_pid(pid)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if all(_port_free(port) for port in ports):
+            return pids
+        time.sleep(0.25)
+    raise RuntimeError("confirmed LES runtime processes did not release their ports")
+
+
+def stop(
+    state: Path,
+    *,
+    runtime: Path | None = None,
+    proxy_port: int = 8050,
+    ui_port: int = 8051,
+) -> dict[str, Any]:
     state_path = state / "logs" / "windows-light-state.json"
-    stopped: list[int] = []
+    ports = {proxy_port, ui_port}
+    stopped: list[int] = (
+        _stop_confirmed_live_runtime(runtime, ports) if runtime is not None else []
+    )
     if state_path.is_file():
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8-sig"))
@@ -254,7 +322,13 @@ def stop(state: Path) -> dict[str, Any]:
             pid = int(payload.get(key) or 0)
             if pid > 0:
                 _terminate_pid(pid)
-                stopped.append(pid)
+                if pid not in stopped:
+                    stopped.append(pid)
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline and not all(_port_free(port) for port in ports):
+        time.sleep(0.25)
+    if not all(_port_free(port) for port in ports):
+        raise RuntimeError("LES runtime stop completed but runtime ports remain occupied")
     return {"status": "stopped", "pids": stopped}
 
 
@@ -341,7 +415,7 @@ def start(
     ui_port: int = 8051,
 ) -> dict[str, Any]:
     _diagnostic("start_enter")
-    stop(state)
+    stop(state, runtime=runtime, proxy_port=proxy_port, ui_port=ui_port)
     _diagnostic("after_stop")
     if not _port_free(proxy_port) or not _port_free(ui_port):
         raise RuntimeError("LES runtime ports are occupied by an unowned process")
@@ -442,7 +516,12 @@ def main(argv: list[str] | None = None) -> int:
             ui_port=args.ui_port,
         )
         if args.command == "start"
-        else stop(args.state)
+        else stop(
+            args.state,
+            runtime=args.runtime,
+            proxy_port=args.proxy_port,
+            ui_port=args.ui_port,
+        )
     )
     print(json.dumps(payload, ensure_ascii=False))
     return 0
