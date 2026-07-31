@@ -5,9 +5,9 @@
 | Поле | Значение |
 |------|----------|
 | product_version | **0.25.1** |
-| build_number | **471** |
-| desktop_version | 5.1.471 |
-| base | `origin/main` @ `3b8eb35` (0.25.0 / build 470) |
+| build_number | **474** |
+| desktop_version | 5.1.474 |
+| base | `origin/main` @ `1fde2ea` (0.25.0 / build 473) |
 | branch | `feature/smeta-local-ollama-stability` |
 
 ## 0.25.1 — local Ollama/Qwen LSR stability (2026-07-29)
@@ -35,5 +35,7 @@
 
 | product_version | build | commit | note |
 |-----------------|-------|--------|------|
+| 0.25.0 | 473 | `1fde2ea` | почта вручную + лёгкая проверка выпуска |
+| 0.25.0 | 472 | `65aa9a9` | Outlook освобождён до разбора снимков |
 | 0.25.0 | 470 | `3b8eb35` | mail Outlook + Windows packaging поверх выпуска 0.25.0 |
 | 0.25.0 | 470 | `4f1a305` | полный исходный код и документация 0.25.0 |

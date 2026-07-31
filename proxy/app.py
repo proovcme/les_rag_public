@@ -54,7 +54,7 @@ from proxy.routers.datasets import DatasetRouterState, router as datasets_router
 from proxy.routers.diagnostics import DiagnosticsRouterState, router as diagnostics_router, set_diagnostics_state
 from proxy.routers.jobs import JobsRouterState, router as jobs_router, set_jobs_state
 from proxy.routers.logs import LogsRouterState, router as logs_router, set_logs_state
-from proxy.routers.mail import router as mail_router
+from proxy.routers.mail import recover_outlook_spool, router as mail_router
 from proxy.routers.rerank import (
     RERANKER_AVAILABLE,
     Reranker,
@@ -348,6 +348,9 @@ async def startup():
         asyncio.create_task(metrics_collector_loop())
         asyncio.create_task(metrics_loop())
         asyncio.create_task(mail_imap_autosync_loop())  # Е.Ж.И.К.: внутренний IMAP-сервис (MAIL_IMAP_POLL_SEC)
+        recovered_outlook = recover_outlook_spool()
+        if recovered_outlook:
+            logger.info("[INIT] Resumed %s durable Outlook spool item(s)", recovered_outlook)
         asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
     except Exception as e:
         logger.error("[INIT] Backend initialization failed: %s", e)

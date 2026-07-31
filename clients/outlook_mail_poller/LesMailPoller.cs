@@ -10,6 +10,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading;
 
 namespace LesMailPoller
 {
@@ -17,7 +18,9 @@ namespace LesMailPoller
     {
         private const int BatchLimit = 10;
         private const long RunBudgetMilliseconds = 12000;
+        private const int HardStopMilliseconds = 15000;
         private static Stopwatch RunClock = Stopwatch.StartNew();
+        private static Timer HardStopTimer;
         private const string InternetMessageIdSchema =
             "http://schemas.microsoft.com/mapi/proptag/0x1035001F";
 
@@ -76,6 +79,14 @@ namespace LesMailPoller
             if (args.Length > 0 && args[0] == "--self-test-cursor")
                 return CursorSelfTest();
             RunClock = Stopwatch.StartNew();
+            if (args.Length == 0)
+            {
+                HardStopTimer = new Timer(delegate
+                {
+                    Log("run forced stop duration_ms=" + RunClock.ElapsedMilliseconds);
+                    Environment.Exit(0);
+                }, null, HardStopMilliseconds, Timeout.Infinite);
+            }
             dynamic app;
             try
             {
@@ -123,6 +134,7 @@ namespace LesMailPoller
             }
             Log("run complete scanned=" + scanned + " registered=" + registered +
                 " duration_ms=" + RunClock.ElapsedMilliseconds);
+            if (HardStopTimer != null) HardStopTimer.Dispose();
             return 0;
         }
 

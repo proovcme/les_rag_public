@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import os
 import subprocess
@@ -122,6 +123,9 @@ class MailLegacyMigrationRequest(BaseModel):
     max_files: int = Field(default=5000, ge=1, le=50000)
     parse: bool = True
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
+
+
+OUTLOOK_COLLECTOR_TASK = "LES E.ZH.I.K. Outlook Collector"
 
 
 async def _mail_dataset_id(state: Any) -> tuple[str, bool]:
@@ -250,8 +254,9 @@ async def _maybe_parse_mail_dataset(state: Any, dataset_id: str, *, parse: bool,
 
 
 _mail_parse_tasks: dict[str, asyncio.Task] = {}
-_outlook_upload_queues: dict[str, asyncio.Queue[tuple[str, Path, str]]] = {}
+_outlook_upload_queues: dict[str, asyncio.Queue[Path]] = {}
 _outlook_upload_tasks: dict[str, asyncio.Task] = {}
+_outlook_queued_manifests: set[Path] = set()
 
 
 async def _parse_mailbox_until_idle(account_id: str, dataset_id: str) -> None:
@@ -291,8 +296,38 @@ def _schedule_mailbox_parse(account_id: str, dataset_id: str) -> None:
         )
 
 
+def _mail_state_root() -> Path:
+    return Path(os.getenv("LES_MAIL_STATE_ROOT", "storage/mail")).resolve()
+
+
+def _write_outlook_spool_manifest(path: Path, payload: dict[str, str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def _register_spooled_outlook_message(
+    registry: Any,
+    payload: dict[str, str],
+) -> tuple[dict[str, Any], bool]:
+    return registry.register_message(
+        account_id=payload["account_id"],
+        raw_path=payload["raw_path"],
+        relative_path=payload["relative_path"],
+        source_kind="outlook_classic",
+        native_id=payload["entry_id"],
+        internet_message_id=payload["internet_message_id"],
+        folder_native_id=payload["folder_id"],
+        folder_path=payload["folder_path"],
+        outlook_store_id=payload["store_id"],
+        outlook_entry_id=payload["entry_id"],
+        received_at=payload["received_at"],
+    )
+
+
 async def _drain_outlook_uploads(account_id: str, dataset_id: str) -> None:
-    """Move accepted Outlook snapshots into RAG without holding the COM caller."""
+    """Register durable spool files after the Outlook COM request has returned."""
     queue = _outlook_upload_queues[dataset_id]
     uploaded = False
     try:
@@ -300,24 +335,39 @@ async def _drain_outlook_uploads(account_id: str, dataset_id: str) -> None:
         registry = get_mail_registry()
         while True:
             try:
-                message_id, raw_path, relative_path = queue.get_nowait()
+                manifest_path = queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
+            registered: dict[str, Any] | None = None
             try:
+                payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+                raw_path = Path(payload["raw_path"]).resolve()
+                state_root = _mail_state_root()
+                if state_root != raw_path and state_root not in raw_path.parents:
+                    raise ValueError("Outlook spool points outside mail state root")
+                registered, _created = await asyncio.to_thread(
+                    _register_spooled_outlook_message,
+                    registry,
+                    payload,
+                )
+                registry.mark_indexed(registered["id"], status="queued")
                 doc_id = await state.backend.upload_file(
                     dataset_id,
                     raw_path,
-                    relative_path=relative_path,
+                    relative_path=payload["relative_path"],
                 )
-                registry.mark_indexed(message_id, rag_doc_id=doc_id, status="registered")
+                registry.mark_indexed(registered["id"], rag_doc_id=doc_id, status="registered")
+                manifest_path.unlink(missing_ok=True)
                 uploaded = True
             except Exception:
-                registry.mark_indexed(message_id, status="error")
+                if registered is not None:
+                    registry.mark_indexed(registered["id"], status="error")
                 logger.exception(
-                    "Outlook snapshot RAG registration failed",
-                    extra={"mail_message_id": message_id, "dataset_id": dataset_id},
+                    "Outlook spool registration failed",
+                    extra={"outlook_manifest": manifest_path.name, "dataset_id": dataset_id},
                 )
             finally:
+                _outlook_queued_manifests.discard(manifest_path)
                 queue.task_done()
     finally:
         _outlook_upload_tasks.pop(dataset_id, None)
@@ -325,21 +375,39 @@ async def _drain_outlook_uploads(account_id: str, dataset_id: str) -> None:
             _schedule_mailbox_parse(account_id, dataset_id)
 
 
-def _queue_outlook_upload(
+def _queue_outlook_spool_manifest(
     *,
     account_id: str,
     dataset_id: str,
-    message_id: str,
-    raw_path: Path,
-    relative_path: str,
+    manifest_path: Path,
 ) -> tuple[int, asyncio.Task]:
     queue = _outlook_upload_queues.setdefault(dataset_id, asyncio.Queue())
-    queue.put_nowait((message_id, raw_path, relative_path))
+    manifest_path = manifest_path.resolve()
+    if manifest_path not in _outlook_queued_manifests:
+        _outlook_queued_manifests.add(manifest_path)
+        queue.put_nowait(manifest_path)
     current = _outlook_upload_tasks.get(dataset_id)
     if current is None or current.done():
         current = asyncio.create_task(_drain_outlook_uploads(account_id, dataset_id))
         _outlook_upload_tasks[dataset_id] = current
     return queue.qsize(), current
+
+
+def recover_outlook_spool() -> int:
+    """Resume durable Outlook manifests left by a proxy restart."""
+    queued = 0
+    for manifest_path in _mail_state_root().glob("*/spool/*.json"):
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+            _queue_outlook_spool_manifest(
+                account_id=str(payload["account_id"]),
+                dataset_id=str(payload["dataset_id"]),
+                manifest_path=manifest_path,
+            )
+            queued += 1
+        except Exception:
+            logger.exception("Invalid Outlook spool manifest", extra={"manifest": manifest_path.name})
+    return queued
 
 
 async def _upload_fetched_mail(state: Any, fetched: list[Any]) -> tuple[str, bool, list[dict[str, Any]]]:
@@ -723,47 +791,66 @@ async def import_outlook_message(
         raise HTTPException(status_code=400, detail="empty mail message")
     account = await _ensure_outlook_store_account(store_id, store_label)
     digest = hashlib.sha256(raw).hexdigest()
-    root = Path(os.getenv("LES_MAIL_STATE_ROOT", "storage/mail")) / account["id"] / "raw"
+    root = _mail_state_root() / account["id"] / "raw"
     root.mkdir(parents=True, exist_ok=True)
     raw_path = root / f"{digest}{suffix}"
-    if not raw_path.exists():
-        raw_path.write_bytes(raw)
+    created_snapshot = not raw_path.exists()
+    if created_snapshot:
+        temporary = raw_path.with_name(f".{raw_path.name}.{uuid.uuid4().hex}.tmp")
+        temporary.write_bytes(raw)
+        os.replace(temporary, raw_path)
     relative_path = f"outlook/{account['id']}/{digest}{suffix}"
-    registry = get_mail_registry()
-    registered, created = registry.register_message(
-        account_id=account["id"],
-        raw_path=raw_path,
-        relative_path=relative_path,
-        source_kind="outlook_classic",
-        native_id=entry_id,
-        internet_message_id=internet_message_id,
-        folder_native_id=folder_id,
-        folder_path=folder_path,
-        outlook_store_id=store_id,
-        outlook_entry_id=entry_id,
-        received_at=received_at,
+    locator_digest = hashlib.sha256(f"{store_id}|{entry_id}|{folder_id}".encode("utf-8")).hexdigest()[:16]
+    manifest_path = root.parent / "spool" / f"{digest}-{locator_digest}.json"
+    _write_outlook_spool_manifest(
+        manifest_path,
+        {
+            "account_id": account["id"],
+            "dataset_id": account["dataset_id"],
+            "store_id": store_id,
+            "entry_id": entry_id,
+            "folder_id": folder_id,
+            "folder_path": folder_path,
+            "internet_message_id": internet_message_id,
+            "received_at": received_at,
+            "raw_path": str(raw_path),
+            "relative_path": relative_path,
+        },
     )
-    index_status = str(registered.get("index_status") or "pending")
-    queue_depth = 0
-    if created or index_status in {"pending", "error"}:
-        registry.mark_indexed(registered["id"], status="queued")
-        queue_depth, _task = _queue_outlook_upload(
-            account_id=account["id"],
-            dataset_id=account["dataset_id"],
-            message_id=registered["id"],
-            raw_path=raw_path,
-            relative_path=relative_path,
-        )
-        index_status = "queued"
+    queue_depth, _task = _queue_outlook_spool_manifest(
+        account_id=account["id"],
+        dataset_id=account["dataset_id"],
+        manifest_path=manifest_path,
+    )
     return {
         "status": "accepted",
-        "created": created,
+        "created": created_snapshot,
         "account_id": account["id"],
         "dataset_id": account["dataset_id"],
-        "message_id": registered["id"],
-        "index_status": index_status,
+        "snapshot_id": digest,
+        "index_status": "queued",
         "queue_depth": queue_depth,
     }
+
+
+@router.post("/collector/run")
+async def run_outlook_collector(
+    request: Request,
+    _admin=Depends(require_admin),
+):
+    _require_loopback(request)
+    if not sys.platform.startswith("win"):
+        raise HTTPException(status_code=501, detail="manual Outlook collection is available on Windows")
+    result = subprocess.run(
+        ["schtasks", "/run", "/tn", OUTLOOK_COLLECTOR_TASK],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=False,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=503, detail="could not start Outlook collector task")
+    return {"status": "started", "mode": "manual", "hard_limit_seconds": 15}
 
 
 @router.post("/messages/{message_id}/open")
