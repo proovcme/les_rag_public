@@ -132,6 +132,15 @@ uv run python tools/vps_patch.py apply-local --output dist/vps-patch `
   --state "$env:LOCALAPPDATA\LES"
 ```
 
+Обычный операторский путь — одна команда без ручного base/file-list и без UAC:
+
+```powershell
+uv run python tools/vps_patch.py update-local
+```
+
+Она читает deployed commit из установленного LES, строит bounded diff, применяет пакет и ждёт
+финальный `ready/failed`. Локальный контур никогда не вызывает `publish`, SSH или elevated task.
+
 `--installed-runtime` при сборке аттестует только побайтовые варианты файлов, нормализованное
 содержимое которых совпадает с Git ancestry. Это закрывает смешанный Windows EOL без ослабления
 смыслового base-check. Baseline preflight завершается до остановки и изменения runtime.

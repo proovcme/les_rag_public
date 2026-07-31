@@ -14,7 +14,6 @@ import json
 import os
 import shutil
 import sqlite3
-import subprocess
 import tempfile
 import zipfile
 from datetime import datetime, timezone
@@ -61,36 +60,6 @@ class BaselineError(RuntimeError):
     """The release baseline is missing, inconsistent or unsafe to provision."""
 
 
-def _repair_windows_file_acl(state_root: Path) -> None:
-    """Restore current-user access only for the immutable baseline allowlist."""
-    if os.name != "nt":
-        return
-    identity = "\\".join(
-        value for value in (os.getenv("USERDOMAIN", ""), os.getenv("USERNAME", "")) if value
-    )
-    if not identity:
-        raise BaselineError("cannot determine the Windows identity for baseline ACL repair")
-    for relative in REQUIRED_FILES:
-        target = state_root / Path(*relative.parts)
-        if not target.is_file():
-            continue
-        for command in (
-            ["takeown.exe", "/F", str(target)],
-            ["icacls.exe", str(target), "/inheritance:e", "/grant:r", f"{identity}:(F)", "/Q"],
-        ):
-            result = subprocess.run(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=30,
-                check=False,
-                creationflags=0x08000000,
-            )
-            if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "").strip()[-800:]
-                raise BaselineError(
-                    f"Windows ACL repair failed for {relative.as_posix()}: {detail}"
-                )
 
 
 def _json(path: Path) -> dict[str, Any]:
@@ -422,11 +391,6 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
         reason = "persistent smeta baseline is older than release payload: " + ", ".join(behind)
     except (BaselineError, OSError) as current_error:
         reason = str(current_error)
-        access_error = isinstance(current_error, PermissionError) or isinstance(
-            getattr(current_error, "__cause__", None), PermissionError
-        )
-        if access_error:
-            _repair_windows_file_acl(state_root)
 
     state_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")

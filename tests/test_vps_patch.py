@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import subprocess
@@ -37,6 +38,50 @@ def test_patch_allowlist_accepts_shared_console_free_runtime_launcher():
         == "tools/les_runtime_control.py"
     )
     assert "tools/les_runtime_control.py" in vps_patch_apply.ALLOWED_FILES
+
+
+def test_local_updater_uses_limited_task_without_elevation(tmp_path):
+    helper = tmp_path / "helper.py"
+    job = tmp_path / "job.json"
+    task_name, encoded = update_service._patch_task_command(helper, job, "patch-1")
+    command = base64.b64decode(encoded).decode("utf-16le")
+    assert task_name == "LES-Patch-patch-1"
+    assert "RunLevel Limited" in command
+    assert "RunLevel Highest" not in command
+    assert "-Verb RunAs" not in command
+
+
+def test_local_updater_reads_exact_installed_commit(tmp_path):
+    commit = "a" * 40
+    (tmp_path / ".les_deploy_stamp.json").write_text(
+        json.dumps({"deployed_commit": commit}), encoding="utf-8"
+    )
+    assert vps_patch._installed_commit(tmp_path) == commit
+
+
+def test_automatic_patch_files_keeps_only_runtime_allowlist(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    runtime_file = repo / "proxy" / "x.py"
+    runtime_file.parent.mkdir()
+    runtime_file.write_text("before\n", encoding="utf-8")
+    (repo / "README.md").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    runtime_file.write_text("after\n", encoding="utf-8")
+    (repo / "README.md").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    original = vps_patch.ROOT
+    vps_patch.ROOT = repo
+    try:
+        assert vps_patch._automatic_patch_files(base, target) == ["proxy/x.py"]
+    finally:
+        vps_patch.ROOT = original
 
 
 def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):

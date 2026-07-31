@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import base64
 import hashlib
 import json
 import os
@@ -12,6 +11,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -396,7 +396,6 @@ def apply_local(*, output: Path, runtime: Path, state: Path) -> dict:
         job,
         patch_id,
         python_executable=persistent_python,
-        run_level="Highest",
     )
     job_payload["helper_task_name"] = task_name
     job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -414,15 +413,8 @@ def apply_local(*, output: Path, runtime: Path, state: Path) -> dict:
         ),
         encoding="utf-8",
     )
-    elevation_script = (
-        "$ErrorActionPreference='Stop'; "
-        f"$args=@('-NoProfile','-NonInteractive','-EncodedCommand','{encoded}'); "
-        "$process=Start-Process -FilePath 'powershell.exe' -ArgumentList $args "
-        "-Verb RunAs -Wait -PassThru; exit $process.ExitCode"
-    )
-    elevated = base64.b64encode(elevation_script.encode("utf-16le")).decode("ascii")
     launched = subprocess.run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", elevated],
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
         cwd=str(update_dir),
         capture_output=True,
         text=True,
@@ -446,6 +438,69 @@ def apply_local(*, output: Path, runtime: Path, state: Path) -> dict:
     }
 
 
+def _installed_commit(runtime: Path) -> str:
+    stamp = Path(runtime) / ".les_deploy_stamp.json"
+    try:
+        payload = json.loads(stamp.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError(f"installed LES deploy stamp is unreadable: {stamp}") from exc
+    commit = str(payload.get("deployed_commit") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise ValueError("installed LES deploy stamp has no exact commit")
+    return commit
+
+
+def _automatic_patch_files(base: str, target: str) -> list[str]:
+    changed = subprocess.check_output(
+        ["git", "diff", "--name-only", f"{base}..{target}"], cwd=ROOT, text=True
+    ).splitlines()
+    selected: list[str] = []
+    for value in changed:
+        try:
+            selected.append(normalize_path(value))
+        except ValueError:
+            continue
+    if not selected:
+        raise ValueError("installed LES and target have no bounded runtime changes")
+    return sorted(set(selected))
+
+
+def wait_local_update(status_path: Path, *, timeout: float = 600.0) -> dict:
+    deadline = time.monotonic() + timeout
+    last: dict = {}
+    while time.monotonic() < deadline:
+        try:
+            last = json.loads(Path(status_path).read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, TypeError):
+            time.sleep(1.0)
+            continue
+        if last.get("state") in {"ready", "failed"}:
+            return last
+        time.sleep(2.0)
+    raise TimeoutError(f"local updater did not finish in {timeout:.0f}s; last status={last}")
+
+
+def update_local(*, output: Path, runtime: Path, state: Path, target: str = "HEAD") -> dict:
+    base = _installed_commit(runtime)
+    target_commit = subprocess.check_output(
+        ["git", "rev-parse", target], cwd=ROOT, text=True
+    ).strip()
+    files = _automatic_patch_files(base, target_commit)
+    package = build_patch(
+        base=base,
+        target=target_commit,
+        files=files,
+        output=output,
+        origin=DEFAULT_ORIGIN,
+        installed_runtime=runtime,
+    )
+    launched = apply_local(output=output, runtime=runtime, state=state)
+    status = wait_local_update(Path(launched["status"]))
+    if status.get("state") != "ready":
+        raise RuntimeError(f"local updater failed: {status.get('error') or status.get('message')}")
+    return {"ok": True, "mode": "update-local", "files": files, "package": package, "status": status}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -465,6 +520,11 @@ def main() -> int:
     local_cmd.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
     local_cmd.add_argument("--runtime", type=Path)
     local_cmd.add_argument("--state", type=Path)
+    update_cmd = sub.add_parser("update-local")
+    update_cmd.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
+    update_cmd.add_argument("--runtime", type=Path)
+    update_cmd.add_argument("--state", type=Path)
+    update_cmd.add_argument("--target", default="HEAD")
     args = parser.parse_args()
     if args.command == "build":
         print(
@@ -485,7 +545,7 @@ def main() -> int:
     elif args.command == "publish":
         publish(args.output, args.host, args.remote_root)
         print(json.dumps({"ok": True, "published": True}, ensure_ascii=False))
-    else:
+    elif args.command == "apply-local":
         default_runtime, default_state = _default_local_paths()
         print(
             json.dumps(
@@ -493,6 +553,20 @@ def main() -> int:
                     output=args.output,
                     runtime=args.runtime or default_runtime,
                     state=args.state or default_state,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+    else:
+        default_runtime, default_state = _default_local_paths()
+        print(
+            json.dumps(
+                update_local(
+                    output=args.output,
+                    runtime=args.runtime or default_runtime,
+                    state=args.state or default_state,
+                    target=args.target,
                 ),
                 ensure_ascii=False,
                 indent=2,

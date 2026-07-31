@@ -381,10 +381,7 @@ def _detached_task_command(
     *,
     prefix: str,
     python_executable: Path | None = None,
-    run_level: str = "Limited",
 ) -> tuple[str, str]:
-    if run_level not in {"Limited", "Highest"}:
-        raise ValueError("unsupported scheduled-task run level")
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", update_id)[:32] or "update"
     task_name = f"{prefix}-{safe_id}"
     python_executable = Path(python_executable or sys.executable)
@@ -398,7 +395,7 @@ def _detached_task_command(
         f"$action=New-ScheduledTaskAction -Execute {_ps_literal(str(python_executable))} "
         f"-Argument {_ps_literal(arguments)}; "
         "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
-        f"$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel {run_level}; "
+        "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
         "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null; "
         "Start-ScheduledTask -TaskName $name"
     )
@@ -412,7 +409,6 @@ def _patch_task_command(
     patch_id: str,
     *,
     python_executable: Path | None = None,
-    run_level: str = "Limited",
 ) -> tuple[str, str]:
     return _detached_task_command(
         helper,
@@ -420,7 +416,6 @@ def _patch_task_command(
         patch_id,
         prefix="LES-Patch",
         python_executable=python_executable,
-        run_level=run_level,
     )
 
 

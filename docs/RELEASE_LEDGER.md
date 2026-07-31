@@ -7,16 +7,24 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.12 (live Windows benchmark state binding)
-номер сборки:              529     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.529 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.13 (single-command local updater)
+номер сборки:              530     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.530 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.12 candidate
+dev implementation:       codex/legion-model-quality; 0.27.13 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.13 / build 530 — single-command Legion local updater
+>
+> Дата: 2026-08-01
+> Статус: local soft-update candidate; NSIS/EXE не собирается.
+> `tools/vps_patch.py update-local` читает exact deployed commit установленного LES, автоматически
+> выбирает bounded runtime-diff, строит и проверяет пакет, запускает только Limited updater и ждёт
+> конечный status. SSH, UAC, ACL mutation и ручной список файлов в локальном контуре отсутствуют.
 
 > 0.27.12 / build 529 — live Windows benchmark state binding
 >
