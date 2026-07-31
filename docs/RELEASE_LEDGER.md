@@ -7,16 +7,25 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.10 (local updater + baseline preflight)
-номер сборки:              527     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.527 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.11 (bounded Windows baseline ACL recovery)
+номер сборки:              528     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.528 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.10 candidate
+dev implementation:       codex/legion-model-quality; 0.27.11 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.11 / build 528 — bounded Windows baseline ACL recovery
+>
+> Дата: 2026-08-01
+> Статус: Legion local soft-update candidate; NSIS/EXE не собирается.
+> Local updater запускает только baseline-repair с `RunLevel Highest`. При доказанном
+> `PermissionError` он восстанавливает ownership/access строго для семи файлов immutable ФСНБ,
+> затем прежний связанный набор перемещается в recovery и заменяется полностью проверенным архивом.
+> Preflight по-прежнему завершается до остановки или изменения версии LES.
 
 > 0.27.10 / build 527 — local soft updater and fail-before-mutation baseline repair
 >

@@ -394,6 +394,7 @@ def apply_local(*, output: Path, runtime: Path, state: Path) -> dict:
         job,
         patch_id,
         python_executable=persistent_python,
+        run_level="Highest",
     )
     job_payload["helper_task_name"] = task_name
     job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
