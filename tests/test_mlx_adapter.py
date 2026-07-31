@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import time
 from types import SimpleNamespace
 
@@ -180,11 +181,15 @@ def test_force_unload_drops_everything(monkeypatch):
     manager = mlx_adapter.MLXMemoryManager("local-model")
     manager.model = object()
     manager.tokenizer = object()
+    manager.prompt_cache = object()
+    manager.prompt_cache_model_key = ("local-model", 1)
 
     manager.force_unload()
 
     assert manager.model is None
     assert manager.tokenizer is None
+    assert manager.prompt_cache is None
+    assert manager.prompt_cache_model_key is None
     assert cleared == [True]
 
 
@@ -224,6 +229,18 @@ def test_chat_template_fallback_keeps_tool_contract_without_loaded_tokenizer():
     assert '"name": "read_norm"' in prompt
     assert "<tool_call>" in prompt
     assert "Открой норму" in prompt
+
+
+def test_chat_template_can_render_stable_prefix_without_assistant_marker():
+    manager = mlx_adapter.MLXMemoryManager("local-model")
+
+    prompt = manager.apply_chat_template(
+        [{"role": "user", "content": "Открой норму"}],
+        add_generation_prompt=False,
+    )
+
+    assert "Открой норму" in prompt
+    assert not prompt.endswith("<|im_start|>assistant\n")
 
 
 # ── generate_text требует start() (event-loop guard) ──────────────────────────
@@ -330,3 +347,99 @@ async def test_stream_text_yields_real_chunks_metrics_and_clears_cache(monkeypat
     assert chunks[-1][1]["finish_reason"] == "stop"
     assert m.model is not None
     assert cleared == [True]
+
+
+def test_mlx_longest_prefix_cache_reuses_previous_chat_prefill(monkeypatch):
+    class Tokenizer:
+        @staticmethod
+        def encode(prompt):
+            return {
+                "first-prefix": [1, 2, 3],
+                "first": [1, 2, 3, 9],
+                "second-prefix": [1, 2, 3, 4, 5],
+                "second": [1, 2, 3, 4, 5, 9],
+            }[prompt]
+
+    class FakePromptCache:
+        def __init__(self):
+            self.entries = {}
+            self.nbytes = 0
+
+        def __len__(self):
+            return len(self.entries)
+
+        def fetch_nearest_cache(self, model, tokens):
+            best = []
+            for (entry_model, entry_tokens), cache in self.entries.items():
+                if entry_model != model:
+                    continue
+                if list(tokens[: len(entry_tokens)]) == list(entry_tokens):
+                    if len(entry_tokens) > len(best):
+                        best = list(entry_tokens)
+                        found = cache
+            if not best:
+                return None, list(tokens)
+            return copy.deepcopy(found), list(tokens[len(best) :])
+
+        def insert_cache(self, model, tokens, cache, *, cache_type):
+            assert cache_type == "assistant"
+            self.entries[(model, tuple(tokens))] = cache
+            self.nbytes = len(self.entries) * 100
+
+    raw_prompts = []
+    prefilled = []
+
+    def fake_raw(_model, _tokenizer, **kwargs):
+        prompt = list(kwargs["prompt"])
+        raw_prompts.append(prompt)
+        callback = kwargs["prompt_progress_callback"]
+        callback(0, len(prompt))
+        callback(len(prompt), len(prompt))
+        yield SimpleNamespace(text="ok")
+
+    monkeypatch.setattr(mlx_adapter, "_raw_stream_generate", fake_raw)
+    monkeypatch.setattr(
+        mlx_adapter,
+        "_prefill_prompt_cache",
+        lambda _model, tokens, _cache: prefilled.append(list(tokens)),
+    )
+    monkeypatch.setattr(
+        mlx_adapter,
+        "_make_prompt_cache",
+        lambda _model: [{"state": "empty"}],
+    )
+    cache = FakePromptCache()
+    first_stats = {}
+    assert [
+        item.text
+        for item in mlx_adapter._mlx_stream_generate(
+            object(),
+            Tokenizer(),
+            prompt="first",
+            max_tokens=4,
+            cache_prefix_prompt="first-prefix",
+            prompt_cache_store=cache,
+            prompt_cache_key="model",
+            cache_stats=first_stats,
+        )
+    ] == ["ok"]
+    second_stats = {}
+    assert [
+        item.text
+        for item in mlx_adapter._mlx_stream_generate(
+            object(),
+            Tokenizer(),
+            prompt="second",
+            max_tokens=4,
+            cache_prefix_prompt="second-prefix",
+            prompt_cache_store=cache,
+            prompt_cache_key="model",
+            cache_stats=second_stats,
+        )
+    ] == ["ok"]
+
+    assert prefilled == [[1, 2, 3], [4, 5]]
+    assert raw_prompts == [[9], [9]]
+    assert first_stats["cached_tokens"] == 0
+    assert second_stats["cached_tokens"] == 3
+    assert second_stats["cache_hit"] is True

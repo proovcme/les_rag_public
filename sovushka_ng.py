@@ -229,6 +229,7 @@ async def classic_chat_page(request: Request):
     from sovushka.pages.documents import build_documents
     from sovushka.pages.history import build_history
     from sovushka.pages.mail import build_mail
+    from sovushka.pages.rim import build_rim
     from sovushka.pages.samovar import build_samovar
     from sovushka.uikit.components import lazy_tab_panels
 
@@ -249,6 +250,7 @@ async def classic_chat_page(request: Request):
             admin_tabs=False,
             include_datasets=is_admin,
             include_documents=True,
+            include_rim=True,
             admin_link=is_admin,
             active_primary=(
                 "studio"
@@ -262,6 +264,7 @@ async def classic_chat_page(request: Request):
         tab_documents = tr.get("documents")
         tab_studio = tr.get("studio")
         tab_cad_bim = tr.get("cad_bim")
+        tab_rim = tr.get("rim")
         tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
@@ -279,6 +282,7 @@ async def classic_chat_page(request: Request):
             "Документы": tab_documents,
             "Студия": tab_studio,
             "CAD/BIM": tab_cad_bim,
+            "РИМ-смета": tab_rim,
             "Почта": tab_mail,
             "ИСТОРИЯ": tab_history,
         }.get(_last_tab) or tab_chat
@@ -309,6 +313,7 @@ async def classic_chat_page(request: Request):
                 *(([(tab_documents, lambda: build_documents(surface="documents"))] if tab_documents else [])),
                 *(([(tab_studio, lambda: build_documents(surface="studio"))] if tab_studio else [])),
                 *(([(tab_cad_bim, lambda: build_documents(surface="cad_bim"))] if tab_cad_bim else [])),
+                *(([(tab_rim, build_rim)] if tab_rim else [])),
                 *(([(tab_mail, build_mail)] if tab_mail else [])),
                 (tab_history, lambda: build_history(tabs, tab_chat)),
             ],

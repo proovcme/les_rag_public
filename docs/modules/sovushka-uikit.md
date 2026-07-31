@@ -29,7 +29,7 @@
 | Роль | Python/CSS-контракт | Варианты |
 |---|---|---|
 | Действие | `action_button`, `.sov-ui-button` | `primary`, `secondary`, `quiet`, `danger`; `compact`, `icon_only` |
-| Поле | `text_field`, `select_field`, `.sov-ui-input`, `.sov-ui-select` | text/select, label, placeholder, clearable; label+placeholder не перекрываются |
+| Поле | `text_field`, `select_field`, `.sov-ui-input`, `.sov-ui-select` | text/select, label, placeholder, clearable, multiple; label+placeholder не перекрываются |
 | Секция | `panel`, `.sov-ui-panel` | `plain`, `raised`, `inset` |
 | Заголовок секции | `section_heading` | title + optional detail |
 | Статус | `status_badge` | `ok`, `warn`, `error`, `blocked`, `muted` |
@@ -70,9 +70,15 @@ desktop и mobile smoke, keyboard/focus проверки и записи в `MOD
 
 Мигрированные поверхности: AppShell/Header, чат, evidence/source cards,
 `build_documents(surface=...)`, рабочая и конфигурационная почта, история
-диалогов, управление доступом В.О.Л.К., встроенный Qdrant visualizer, главная
+диалогов, управление доступом В.О.Л.К., встроенный Qdrant visualizer, диалоговая
+рабочая поверхность «РИМ-смета» (intake, ВОР, mapping, review, requirements,
+ЛСР, восстановление сохранённой сессии, live-таблица durable norm-mapping
+progress с пятсекундным read-only обновлением, активным typed-маршрутом
+`вид норм → сборник → раздел → таблица`, фактическим временем ходов Qwen и
+причиной последнего отклонённого перехода, а также две блокировки), главная
 поверхность «Конфигурация → Состояние» и реестр
-«Конфигурация → Датасеты». В Header
+«Конфигурация → Датасеты», а также операторская проверка ПД/РД по чек-листу
+в «Инструментах». В Header
 на всех операторских экранах есть постоянный переключатель «Чат · Студия ·
 Конфигурация» с иконками, активным состоянием и самостоятельным mobile
 контрактом. Эти три первичные поверхности не дублируются в ряду вторичных

@@ -94,12 +94,14 @@ def test_index_contract_is_versioned_and_detects_runtime_drift(monkeypatch, tmp_
     monkeypatch.setenv("RAG_CHUNK_SIZE", "900")
 
     payload = index_contract_payload()
-    assert payload["schema"] == "les.rag.index-contract.v2"
+    assert payload["schema"] == "les.rag.index-contract.v3"
     assert payload["document_embedding_mode"] == "raw-v1"
     assert payload["qdrant_schema"] == "named"
     assert payload["dense_vector_name"] == "dense"
     assert payload["sparse_vector_name"] == "bm25_sparse"
     assert payload["point_embedding_fingerprint"] == point_embedding_fingerprint()
+    assert payload["hierarchy_schema"] == "les.rag.hierarchy.v1"
+    assert payload["navigation_evidence_policy"] == "navigation_not_evidence"
     write_index_contract()
     assert index_contract_status()["compatible"] is True
 

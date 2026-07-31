@@ -9,6 +9,7 @@ the generic chat router.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -43,6 +44,67 @@ SMETA_DOCUMENT_HEARTBEAT_SEC = 15.0
 ModelExchange = Callable[[list[dict], list[dict]], dict[str, Any]]
 MappingModelExchange = Callable[[list[dict], dict[str, Any]], dict[str, Any]]
 TokenSink = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+def _source_fingerprint(path: Path) -> dict[str, Any]:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    stat = path.stat()
+    return {
+        "sha256": digest.hexdigest(),
+        "size": stat.st_size,
+    }
+
+
+def _checkpoint_path(root: Path, attachment_id: str) -> Path:
+    safe_id = "".join(
+        char for char in str(attachment_id)
+        if char.isalnum() or char in {"-", "_"}
+    )
+    if not safe_id:
+        raise ValueError("attachment_id has no safe checkpoint characters")
+    return root / ".checkpoints" / f"{safe_id}.json"
+
+
+def _load_document_checkpoint(
+    path: Path,
+    *,
+    source_fingerprint: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        envelope = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if envelope.get("schema") != "les.smeta-document-checkpoint.v1":
+        return None
+    if envelope.get("source_fingerprint") != source_fingerprint:
+        return None
+    agent_result = envelope.get("agent_result")
+    return dict(agent_result) if isinstance(agent_result, dict) else None
+
+
+def _write_document_checkpoint(
+    path: Path,
+    *,
+    source_fingerprint: dict[str, Any],
+    agent_result: dict[str, Any],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    envelope = {
+        "schema": "les.smeta-document-checkpoint.v1",
+        "source_fingerprint": source_fingerprint,
+        "agent_result": agent_result,
+    }
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(
+        json.dumps(envelope, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
+    temp.replace(path)
 
 
 @dataclass(frozen=True)
@@ -486,6 +548,13 @@ async def run_smeta_document_application(
 
     out_dir = Path(artifact_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    source_fingerprint = await asyncio.to_thread(_source_fingerprint, source_path)
+    checkpoint_path = _checkpoint_path(out_dir, attachment_id)
+    resume_agent_result = await asyncio.to_thread(
+        _load_document_checkpoint,
+        checkpoint_path,
+        source_fingerprint=source_fingerprint,
+    )
     stamp = f"{attachment_id}_{int(time.time() * 1000)}"
     xlsx_path = out_dir / f"LSR_{stamp}.xlsx"
     report_path = out_dir / f"LSR_{stamp}.json"
@@ -556,6 +625,13 @@ async def run_smeta_document_application(
         except Exception as error:  # progress telemetry must not abort the estimate
             logger.warning("[SMETA_DOCUMENT] progress bridge failed: %s", error)
 
+    def checkpoint(agent_result: dict[str, Any]) -> None:
+        _write_document_checkpoint(
+            checkpoint_path,
+            source_fingerprint=source_fingerprint,
+            agent_result=agent_result,
+        )
+
     try:
         agent_runner = build_smeta_agent_runner(
             agent_engine,
@@ -591,6 +667,8 @@ async def run_smeta_document_application(
             agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
             accumulate_task_state=(agent_engine == "qwen_agent" and document_batch_size == 1),
             require_global_review=True,
+            resume_agent_result=resume_agent_result,
+            batch_checkpoint=checkpoint,
         ))
         while True:
             try:
@@ -656,6 +734,7 @@ async def run_smeta_document_application(
         )
 
     await asyncio.to_thread(consume_read_attachment, attachment_id)
+    await asyncio.to_thread(checkpoint_path.unlink, missing_ok=True)
     summary = (workflow.get("lsr") or {}).get("summary") or {}
     status = str(summary.get("result_status") or "unknown")
     source_name = str(attachment_meta.get("original_name") or source_path.name)

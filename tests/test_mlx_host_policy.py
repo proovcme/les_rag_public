@@ -66,6 +66,41 @@ def test_messages_to_prompt_passes_openai_tools_to_qwen_template():
     assert captured["tools"] == tools
 
 
+def test_messages_to_prompt_can_render_reusable_message_boundary():
+    mlx_host = importlib.import_module("mlx_host")
+    captured = {}
+
+    class Engine:
+        def apply_chat_template(self, messages, **kwargs):
+            captured["kwargs"] = kwargs
+            return "stable-prefix"
+
+    prompt = mlx_host._messages_to_prompt(
+        [mlx_host.OAIMessage(role="user", content="Найди норму")],
+        Engine(),
+        add_generation_prompt=False,
+    )
+
+    assert prompt == "stable-prefix"
+    assert captured["kwargs"]["add_generation_prompt"] is False
+
+
+def test_stable_cache_prefix_excludes_compacted_agent_tail():
+    mlx_host = importlib.import_module("mlx_host")
+    messages = [
+        mlx_host.OAIMessage(role="system", content="contract"),
+        mlx_host.OAIMessage(role="user", content="immutable task"),
+        mlx_host.OAIMessage(role="assistant", content="old tool choice"),
+        mlx_host.OAIMessage(role="tool", content='{"ok":true}'),
+        mlx_host.OAIMessage(role="user", content="compacted working memory"),
+    ]
+
+    prefix = mlx_host._stable_cache_prefix_messages(messages)
+
+    assert [message.role for message in prefix] == ["system", "user"]
+    assert prefix[-1].content == "immutable task"
+
+
 def test_messages_to_prompt_preserves_tool_conversation_for_qwen_template():
     mlx_host = importlib.import_module("mlx_host")
     captured = {}
@@ -120,6 +155,46 @@ def test_qwen_xml_tool_calls_become_openai_native_calls():
     assert [call["function"]["name"] for call in message["tool_calls"]] == ["search_norms", "leave_unbound"]
     first_args = json.loads(message["tool_calls"][0]["function"]["arguments"])
     assert first_args == {"work_id": "w1", "queries": ["монтаж блока питания", "преобразователь"]}
+
+
+def test_oai_response_reports_reused_prompt_tokens():
+    mlx_host = importlib.import_module("mlx_host")
+
+    response = mlx_host._oai_response(
+        "готово",
+        "local-qwen",
+        prompt_tokens=1200,
+        cached_tokens=900,
+    )
+
+    assert response["usage"]["prompt_tokens"] == 1200
+    assert response["usage"]["prompt_tokens_details"]["cached_tokens"] == 900
+
+
+def test_oai_response_exposes_frame_profile_without_changing_openai_usage():
+    mlx_host = importlib.import_module("mlx_host")
+    profile = {
+        "prompt_tokens": 1200,
+        "cached_prompt_tokens": 900,
+        "uncached_prompt_tokens": 300,
+        "completion_tokens": 42,
+        "cache_hit_ratio": 0.75,
+        "ttft_sec": None,
+        "prefill_time_sec": 2.5,
+        "decode_time_sec": 4.0,
+        "total_time_sec": 6.7,
+    }
+
+    response = mlx_host._oai_response(
+        "готово",
+        "local-qwen",
+        prompt_tokens=1200,
+        cached_tokens=900,
+        generation_metrics=profile,
+    )
+
+    assert response["les_metrics"] == profile
+    assert response["usage"]["total_tokens"] == 1201
 
 
 def test_unload_peer_for_main_unloads_val(monkeypatch):

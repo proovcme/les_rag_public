@@ -8,6 +8,20 @@
 архивный Unified запускается только через `make test-legacy`, а ARTEL — в отдельном продукте.
 `make test-mail` отдельно содержит **61 тест**.
 
+`tests/test_artel_packaging.py` проверяет только границу продуктов: pinned
+Agnostis submodule, отсутствие tracked build outputs и LES↔ARTEL integration
+contracts. Это не release-gate самостоятельного ARTEL и не переносит его
+сборочную ответственность обратно в LES.
+
+`tests/test_checklist_*.py` и `tests/test_pp87_composition.py` проверяют импорт
+ПД/РД, evidence-guard, параметры, API/persist/report и UI-view checklist-review.
+Исторический checklist-chat не входит в активный контур и не может вернуть
+готовый ответ за модель.
+
+`tests/test_http_client_policy.py` проверяет scoped proxy-env contract:
+loopback всегда идёт напрямую, внешние/LAN/ZeroTier URL не лишаются proxy,
+а критические внутренние `httpx`-клиенты используют общий helper.
+
 Для updater общая suite **запрещена**: prepare/apply не вызывают `make test`, `make verify`,
 Tauri build или baseline. Единственный offline-гейт этого слоя — `make test-updater`; нативная
 Windows-приёмка после ручной установки — `tools/windows_updater_smoke.ps1`, максимум 90 секунд.
@@ -37,6 +51,8 @@ Windows-приёмка после ручной установки — `tools/win
   identity/API/UI contract и Mac updater. Никаких build/baseline/общей suite;
 - `make test-release-critical` — совместимый псевдоним `make test-integration`;
 - `make test-rag-core` — короткий обязательный RAG integrity-профиль;
+- `make test-legacy-full` — прежний repository-wide 3204-test прогон, только
+  opt-in диагностика; не release evidence;
 - `make smoke-active-artifacts` проверяет фактические active base/FSEM, SHA/count/provenance;
 - `make smoke-smeta-rerank` — fail-closed A/B живой цепочки active base → Qdrant/RRF → reranker;
 - `make smoke-basic-release` — живой HTTP/UI/product smoke. Эти проверки не подменяются зелёным pytest.
@@ -79,6 +95,8 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_project_summary_inventory.py` | 5 | MetaDB `documents` inventory for dataset file registers, extension/folder grouping, inventory prompt context, `что это за датасет` inventory intent, and explicit inventory intent distinct from broad project summary |
 | `tests/test_estimate_harness.py` | 74 | smeta model-first harness: norm search/tool loop, direct mass/volume slots, duplicate direct-quantity guard, scenario assumptions, Russian dialog state, norm applicability questions (`norm_questions`), and `search_norm.norm_navigation` for model-facing shortlist guidance |
 | `tests/test_smeta_core.py`, `tests/test_smeta_professional_review.py`, `tests/test_smeta_agent_runners.py`, `tests/test_smeta_chat_application_service.py`; live `tools/smeta_document_live_smoke.py` | focused + live model/XLSX | smeta-core boundaries: code cannot own norm binding; bind requires selected/applicable; invalid model output never falls back to top candidate; append-only row/global/user-lock revisions; conflict-validator не меняет решения и флагирует возможный cross-row double count; раздельный evidence budget; `unbound_evidence` обязан ссылаться на фактический tool trace; repeatable Qwen transport фиксирует seed, сортирует только model-authored запросы и использует local batch=5; Qwen ordinary-text получает same-model terminal recovery; обязательный model-owned cross-row review; автoрасчёт остаётся draft; финальный расчёт требует user lock; wrong-bind/unbound/coverage/unopened-card/unit/resource/price metrics; live smoke требует real ВОР→model tools→non-empty XLSX без fallback |
+| `tests/test_rim_*.py`, `tests/test_sovushka_uikit.py` | focused + isolated Mac UI/live model smoke | persistent owner-scoped RIM sessions and immutable parent graph; XLSX/CSV intake and mapping round-trip; typed FSNB nodes and strict adjacency; simple continue/ask/broaden/unbound phase tools; evidence refs only to shown fields; selected-vs-rejected conflict rejection; per-work scope without batch inheritance; strict table-scoped search→batch read→submit; accepted/rejected durable route trace; lifetime evidence vs bounded resume-slice; stable MLX prefix cache; unit-scoped bind schema; persisted model conflict + final agent audit; navigation-card vs structured-card evidence; questions with options; global review/mapping lock; authored scenario limits; canonical calculation requirements; mandatory recalculation after KAC/coefficient resolution; final lock/export/audit; responsive lazy RIM workbench |
+| `tests/test_rag_hierarchy.py`, `tests/test_rag_config.py`, `tests/test_rag_rrf_readiness.py` | offline contract | deterministic hierarchy ids/ancestors; navigation is never evidence; global evidence survives route miss; v3 contract/readiness requires hierarchy and navigation policy |
 | `tests/test_smeta_user_message_service.py` | focused | машинные smeta-статусы не попадают в обычный ответ; частичная сумма названа стоимостью рассчитанной части; автoрасчёт явно назван проверяемым черновиком и не выдаётся за финальную смету; рубли форматируются по-русски; covered/open строки описываются человеческим языком |
 | `tests/test_chat_attachment_service.py` | 3 | server-owned read attachments: opaque id/path containment, SHA/size validation, consume and TTL cleanup |
 | `tests/test_request_idempotency_service.py` | focused | внешний контракт ЛСР: пользовательское временное вложение, привязка ключа к файлу/телу/пользователю, replay готового ответа без второго model call, `409` на конкурентный или конфликтующий повтор |

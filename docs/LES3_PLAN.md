@@ -488,22 +488,20 @@
 > локальный ФОП + архетипы + learning-store (всегда, генерация офлайн) → опц. ЛЕС `/api/search` (память по проектам)
 > → опц. облако/локальная LLM (черновик спеки, vision). Любой вызов ЛЕС — best-effort с таймаутом; недоступен →
 > локальный fallback, не отказ (скелет уже так: `Agnostis.Api` отдаёт `unreachable/timeout`, аддин глотает ошибку).
-> Архитектура в `products/artel`: Revit-аддин `ARTEL.Revit.FamilyFactory` (.NET) → **самодостаточный** бэкенд
-> `Agnostis.Api` → [опц.] ЛЕС/облако. Упаковка в скелете: `MyVeras.Setup` (WPF) + `MyVeras.Setup.Wix` (MSI) +
-> `build-family-factory-revit.ps1` + `tools/build_artel_release.py`.
+> Каноническая архитектура и исходники находятся в `proovcme/Agnostis`;
+> `products/artel` — pinned submodule для проверки интеграции с LES, а не LES-owned
+> копия продукта. Revit-аддин и `Agnostis.Api` работают автономно, LES/облако
+> остаются опциональным обогащением. Build/installer scripts принадлежат Agnostis;
+> LES-side release builder удалён.
 > **Детерминированное ядро** (ФОП-резолв, геометрия-архетипы, компилятор плана, классификатор) — без ЛЕС и без
-> модели. Спецификация и conformance — на Python в LES-репо (оракул под `make verify`: `tools/artel_family_*`,
-> `tools/artel_archetype_classifier`, золотые планы в `products/artel/conformance/`), **порт на C# в `Agnostis.Api`**
-> для поставляемого пакета (нулевая зависимость от Python/ЛЕС в рантайме). C#-порт обязан воспроизводить золотые планы.
+> модели. Исторические Python-оракулы LES сохраняются только как интеграционный
+> контур; поставляемая реализация, conformance и её выпуск принадлежат Agnostis.
 > **Трек АРТЕЛЯ (приоритет генератора):**
 > 1. **W6.3** (знаниевый слой) — питает *опциональный* ретрив и локальный store; отдельной сессией.
 > 2. **W10.1→W10.2→W10.3** — спецификация → план действий Revit API → итеративный цикл (ядро ценности).
-> 3. **Упаковка Win+Revit** — полный дизайн пакета: [family-factory-package.md](../products/artel/docs/family-factory-package.md).
->    4 компонента: **морда (Electron)** + **локальный бэкенд (Python, несёт готовое ядро)** + **Revit-плагин (.NET)** +
->    **лёгкая модель** (качает установщик, опц.). Хаб вокруг бэкенда (Electron и плагин ходят в него по localhost, не
->    напрямую). Установщик — Inno Setup, один exe, качает Ollama+`minicpm-v`. Бэкенд — Python (не C#-порт): ядро уже
->    готово и проверено. C# `Agnostis.Api`/`MyVeras.*` — legacy, не путь.
-> Naming-долг (Agnostis/MyVeras → ARTEL) — механический ренейм после стабилизации контрактов (LES_PRODUCT_NOTE).
+> 3. **Упаковка Win+Revit** — выполняется из репозитория Agnostis; LES хранит только pinned submodule.
+>    Текущий состав, стек и naming проверяются по README/докам самого Agnostis;
+>    этот исторический roadmap больше не задаёт его product architecture.
 > BIM-чат/визуалайзер для АРТЕЛЯ — НЕ цель; держим как вспомогательный ретрив, не как продукт.
 
 - [~] **W10.1 Генератор спецификации семейства** · L `[dep]` — **детерминированная часть (структурированные техлисты) готова; LLM/vision-часть ждёт облако**

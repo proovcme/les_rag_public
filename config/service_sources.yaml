@@ -14,6 +14,7 @@ sources:
       - ${SMETA_BASE_INTEGRITY}
       - ${SMETA_BASE_SOURCE}
       - config/domain/gesn_seed.yaml
+      - config/domain/smeta_normative_catalog.json
     folders:
       - data/smeta_base
       - data/gesn_base
@@ -56,6 +57,7 @@ sources:
       - config/domain/nr_sp.yaml
       - config/domain/stesnennost.yaml
       - config/domain/smeta_ontology.yaml
+      - config/domain/smeta_normative_catalog.json
     folders:
       - config/domain
     accepted_files: ["*.yaml"]
@@ -250,3 +252,22 @@ sources:
       - "проверка заполнения граф"
     operator_action: "Нужен эталон расположения листа, рамки и основной надписи для строгой проверки граф."
     process_label: "Проверить эталон"
+
+  - id: pp87_composition
+    domain: normcontrol
+    label: "ПП РФ №87: состав проектной документации"
+    status_if_missing: degraded
+    paths:
+      - config/checklists/pp87_composition.yaml
+    folders:
+      - config/checklists
+    dataset_query:
+      domains: ["NTD_GENERAL", "NTD_LEGAL"]
+      name_contains: ["87", "Постановление Правительства"]
+    accepted_files: ["*.yaml", "*.pdf", "*.docx"]
+    needed_for:
+      - "сверка состава ПД по корпоративному перечню"
+      - "проверка обязательных разделов ПД"
+      - "ссылка на нормативное основание"
+    operator_action: "Локальный профиль состава установлен. Для цитирования добавь легальный текст ПП РФ №87 в нормативный датасет."
+    process_label: "Проверить состав ПД"

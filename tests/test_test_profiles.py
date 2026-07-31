@@ -27,12 +27,13 @@ def _dry_make(target: str) -> str:
     return completed.stdout
 
 
-def test_default_les_suite_excludes_historical_harness_and_artel() -> None:
+def test_current_les_gate_is_explicit_and_does_not_collect_the_old_full_suite() -> None:
     for target in ("verify", "test", "test-release", "test-architecture"):
         command = _dry_make(target)
-        assert "--ignore=tests/test_construction_harness.py" in command
-        assert "--ignore=tests/test_unified_real_v11.py" in command
-        assert "--ignore=tests/test_artel_fop_profile.py" in command
+        assert "tests/test_rim_session.py" in command
+        assert "tests/test_rag_hierarchy.py" in command
+        assert "tests/test_evidence_contract.py" in command
+        assert "testpaths" not in command
 
 
 def test_historical_harness_has_explicit_opt_in_profile() -> None:
@@ -42,6 +43,14 @@ def test_historical_harness_has_explicit_opt_in_profile() -> None:
     assert "tests/test_unified_real_v11.py" in command
     assert "--ignore=" not in command
     assert "-o addopts=" in command
+
+
+def test_previous_full_suite_is_legacy_opt_in_only() -> None:
+    command = _dry_make("test-legacy-full")
+
+    assert "python -m pytest -o addopts=" in command
+    assert "--ignore=tests/test_construction_harness.py" in command
+    assert "--ignore=tests/test_artel_fop_profile.py" in command
 
 
 def test_unit_and_integration_profiles_are_explicit_and_behavioral() -> None:
@@ -59,7 +68,7 @@ def test_release_profile_requires_real_active_artifact_smoke() -> None:
     command = _dry_make("test-release")
 
     assert "tools.smeta_release_baseline verify-root --root ." in command
-    assert "uv run python -m pytest --durations=20" in command
+    assert "tests/test_rim_session.py" in command
 
 
 def test_ship_profiles_require_active_artifact_and_live_runtime_smokes() -> None:

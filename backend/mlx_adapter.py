@@ -6,6 +6,7 @@ MLXMemoryManager — управление памятью Metal для LLM.
 Глобальный metal_semaphore — один движок на Metal в любой момент.
 """
 import asyncio
+import copy
 import gc
 import json
 import logging
@@ -34,45 +35,169 @@ def _mlx_load(model_path: str):
     return load(model_path)
 
 
-def _mlx_generate(model, tokenizer, *, prompt: str, max_tokens: int):
-    """Ленивый импорт mlx_lm.generate."""
-    from mlx_lm import generate
+def _new_prompt_cache():
+    """Bounded MLX-LM prefix cache; imported only on a Mac inference host."""
+    from mlx_lm.models.cache import LRUPromptCache
 
-    return generate(
-        model,
-        tokenizer,
-        prompt=prompt,
-        max_tokens=max_tokens,
-        verbose=False,
+    max_entries = max(1, int(os.getenv("MLX_PROMPT_CACHE_MAX_ENTRIES", "4")))
+    max_bytes = max(
+        64 * 1024 * 1024,
+        int(os.getenv("MLX_PROMPT_CACHE_MAX_BYTES", str(1024 * 1024 * 1024))),
     )
+    return LRUPromptCache(max_size=max_entries, max_bytes=max_bytes)
 
 
-def _mlx_stream_generate(model, tokenizer, *, prompt: str, max_tokens: int):
-    """Ленивый импорт настоящего токенного генератора MLX."""
+def _make_prompt_cache(model):
+    from mlx_lm.models.cache import make_prompt_cache
+
+    return make_prompt_cache(model)
+
+
+def _raw_stream_generate(model, tokenizer, **kwargs):
     from mlx_lm import stream_generate
 
+    return stream_generate(model, tokenizer, **kwargs)
+
+
+def _prefill_prompt_cache(model, tokens, prompt_cache) -> None:
+    """Advance an existing MLX cache through tokens without generating output."""
+    if not tokens:
+        return
+    import mlx.core as mx
+    from mlx_lm.generate import generate_step
+
+    for _ in generate_step(
+        mx.array(tokens, dtype=mx.uint32),
+        model,
+        max_tokens=0,
+        prompt_cache=prompt_cache,
+    ):
+        pass
+
+
+def _mlx_stream_generate(
+    model,
+    tokenizer,
+    *,
+    prompt: str,
+    max_tokens: int,
+    cache_prefix_prompt: str = "",
+    prompt_cache_store=None,
+    prompt_cache_key: object | None = None,
+    cache_stats: dict | None = None,
+):
+    """Generate with bounded longest-prefix reuse between HTTP chat turns."""
     prefill_started = time.perf_counter()
     progress_started = False
+    stats = cache_stats if cache_stats is not None else {}
+    prompt_tokens = tokenizer.encode(prompt)
+    if hasattr(prompt_tokens, "tolist"):
+        prompt_tokens = prompt_tokens.tolist()
+    prompt_tokens = [int(token) for token in prompt_tokens]
+    cache_key = prompt_cache_key if prompt_cache_key is not None else id(model)
+    prefix_tokens: list[int] = []
+    if cache_prefix_prompt:
+        encoded_prefix = tokenizer.encode(cache_prefix_prompt)
+        if hasattr(encoded_prefix, "tolist"):
+            encoded_prefix = encoded_prefix.tolist()
+        encoded_prefix = [int(token) for token in encoded_prefix]
+        common = 0
+        for left, right in zip(encoded_prefix, prompt_tokens):
+            if left != right:
+                break
+            common += 1
+        # Keep the generation suffix non-empty and cache only an exact prefix.
+        prefix_tokens = encoded_prefix[: min(common, max(0, len(prompt_tokens) - 1))]
+    cached_tokens = 0
+    prompt_cache = None
+    remaining_prefix = prefix_tokens
+    if prompt_cache_store is not None and prefix_tokens:
+        prompt_cache, remaining_prefix = prompt_cache_store.fetch_nearest_cache(
+            cache_key,
+            prefix_tokens,
+        )
+        if prompt_cache is not None:
+            cached_tokens = len(prefix_tokens) - len(remaining_prefix)
+    if prompt_cache is None:
+        prompt_cache = _make_prompt_cache(model)
+    if remaining_prefix:
+        _prefill_prompt_cache(model, remaining_prefix, prompt_cache)
+    if prompt_cache_store is not None and prefix_tokens:
+        snapshot = copy.deepcopy(prompt_cache)
+        snapshot_bytes = sum(
+            int(getattr(item, "nbytes", 0) or 0) for item in snapshot
+        )
+        prompt_cache_store.insert_cache(
+            cache_key,
+            prefix_tokens,
+            snapshot,
+            cache_type="assistant",
+        )
+        stats["cache_snapshot_bytes"] = snapshot_bytes
+        stats["cache_entries"] = len(prompt_cache_store)
+        stats["cache_bytes"] = int(prompt_cache_store.nbytes)
+        stats["cache_stored"] = len(prompt_cache_store) > 0
+    generation_tokens = prompt_tokens[len(prefix_tokens) :]
+    stats.update(
+        {
+            "prompt_tokens": len(prompt_tokens),
+            "cached_tokens": cached_tokens,
+            "cache_hit": cached_tokens > 0,
+        }
+    )
 
     def _prefill_progress(processed: int, total: int) -> None:
         nonlocal progress_started
         if not progress_started:
             progress_started = True
-            logger.info("[PREFILL] model=%s tokens=%s started", getattr(model, "model_type", type(model).__name__), total)
+            logger.info(
+                "[PREFILL] model=%s tokens=%s cached=%s started",
+                getattr(model, "model_type", type(model).__name__),
+                len(prompt_tokens),
+                cached_tokens,
+            )
         if processed >= total:
             logger.info(
-                "[PREFILL] model=%s tokens=%s completed=%.2fs",
+                "[PREFILL] model=%s tokens=%s cached=%s completed=%.2fs",
                 getattr(model, "model_type", type(model).__name__),
-                total,
+                len(prompt_tokens),
+                cached_tokens,
                 time.perf_counter() - prefill_started,
             )
 
-    return stream_generate(
+    return _raw_stream_generate(
         model,
         tokenizer,
-        prompt=prompt,
+        prompt=generation_tokens,
         max_tokens=max_tokens,
+        prompt_cache=prompt_cache,
         prompt_progress_callback=_prefill_progress,
+    )
+
+
+def _mlx_generate(
+    model,
+    tokenizer,
+    *,
+    prompt: str,
+    max_tokens: int,
+    cache_prefix_prompt: str = "",
+    prompt_cache_store=None,
+    prompt_cache_key: object | None = None,
+    cache_stats: dict | None = None,
+):
+    return "".join(
+        str(getattr(response, "text", "") or "")
+        for response in _mlx_stream_generate(
+            model,
+            tokenizer,
+            prompt=prompt,
+            max_tokens=max_tokens,
+            cache_prefix_prompt=cache_prefix_prompt,
+            prompt_cache_store=prompt_cache_store,
+            prompt_cache_key=prompt_cache_key,
+            cache_stats=cache_stats,
+        )
     )
 
 
@@ -102,6 +227,9 @@ class MLXMemoryManager:
         self.ttl_seconds   = ttl_seconds
         self.model         = None
         self.tokenizer     = None
+        self.prompt_cache  = None
+        self.prompt_cache_model_key = None
+        self.last_generation_metrics: dict = {}
         self.last_used     = 0.0
         self._lock         = None
         self._cleanup_task = None
@@ -152,6 +280,9 @@ class MLXMemoryManager:
     def _unload_model(self):
         """Выгружает только веса, токенизатор остаётся."""
         self.model = None
+        self.prompt_cache = None
+        self.prompt_cache_model_key = None
+        self.last_generation_metrics = {}
         gc.collect()
         _clear_metal_cache()
         logger.info(f"[TTL] Память Metal освобождена: {self.model_path}")
@@ -163,6 +294,9 @@ class MLXMemoryManager:
         """Полная выгрузка включая токенизатор (при смене модели)."""
         self.model     = None
         self.tokenizer = None
+        self.prompt_cache = None
+        self.prompt_cache_model_key = None
+        self.last_generation_metrics = {}
         gc.collect()
         _clear_metal_cache()
         logger.info(f"[SWITCH] Полная выгрузка: {self.model_path}")
@@ -184,6 +318,10 @@ class MLXMemoryManager:
             if self.tokenizer is None:
                 self.tokenizer = tokenizer
             logger.info(f"[LOAD] Готово: {self.model_path}")
+        model_key = (self.model_path, id(self.model))
+        if self.prompt_cache is None or self.prompt_cache_model_key != model_key:
+            self.prompt_cache = _new_prompt_cache()
+            self.prompt_cache_model_key = model_key
         self.last_used = time.time()
 
     def apply_chat_template(
@@ -191,6 +329,7 @@ class MLXMemoryManager:
         messages: list,
         enable_thinking: bool = True,
         tools: list[dict] | None = None,
+        add_generation_prompt: bool = True,
     ) -> str:
         """
         Применяет chat template токенизатора.
@@ -212,10 +351,14 @@ class MLXMemoryManager:
                 )
             for m in messages:
                 parts.append(f"<|im_start|>{m['role']}\n{m['content']}<|im_end|>")
-            parts.append("<|im_start|>assistant\n")
+            if add_generation_prompt:
+                parts.append("<|im_start|>assistant\n")
             return "\n".join(parts)
 
-        kwargs = {"tokenize": False, "add_generation_prompt": True}
+        kwargs = {
+            "tokenize": False,
+            "add_generation_prompt": add_generation_prompt,
+        }
         if tools:
             kwargs["tools"] = tools
         if not enable_thinking:
@@ -227,7 +370,13 @@ class MLXMemoryManager:
             kwargs.pop("enable_thinking", None)
             return self.tokenizer.apply_chat_template(messages, **kwargs)
 
-    async def generate_text(self, prompt: str, max_tokens: int = 2048) -> str:
+    async def generate_text(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        *,
+        cache_prefix_prompt: str = "",
+    ) -> str:
         if self._lock is None:
             raise RuntimeError("MLXMemoryManager не запущен — вызови start() внутри lifespan.")
 
@@ -235,11 +384,17 @@ class MLXMemoryManager:
             async with metal_semaphore:
                 def _run():
                     self._load_model_if_needed()
+                    cache_stats: dict = {}
+                    self.last_generation_metrics = cache_stats
                     return _mlx_generate(
                         self.model,
                         self.tokenizer,
                         prompt=prompt,
                         max_tokens=max_tokens,
+                        cache_prefix_prompt=cache_prefix_prompt,
+                        prompt_cache_store=self.prompt_cache,
+                        prompt_cache_key=self.prompt_cache_model_key,
+                        cache_stats=cache_stats,
                     )
                 try:
                     result = await asyncio.to_thread(_run)
@@ -258,7 +413,13 @@ class MLXMemoryManager:
                 result = result[:result.index(stop)]
         return result.strip()
 
-    async def stream_text(self, prompt: str, max_tokens: int = 2048):
+    async def stream_text(
+        self,
+        prompt: str,
+        max_tokens: int = 2048,
+        *,
+        cache_prefix_prompt: str = "",
+    ):
         """Стримит реальные токены MLX и финальные метрики генерации.
 
         Синхронный ``mlx_lm.stream_generate`` выполняется в worker thread, а
@@ -273,15 +434,21 @@ class MLXMemoryManager:
                 loop = asyncio.get_running_loop()
                 queue: asyncio.Queue = asyncio.Queue()
                 sentinel = object()
+                cache_stats: dict = {}
 
                 def _run():
                     try:
                         self._load_model_if_needed()
+                        self.last_generation_metrics = cache_stats
                         for response in _mlx_stream_generate(
                             self.model,
                             self.tokenizer,
                             prompt=prompt,
                             max_tokens=max_tokens,
+                            cache_prefix_prompt=cache_prefix_prompt,
+                            prompt_cache_store=self.prompt_cache,
+                            prompt_cache_key=self.prompt_cache_model_key,
+                            cache_stats=cache_stats,
                         ):
                             loop.call_soon_threadsafe(queue.put_nowait, response)
                     except BaseException as exc:  # передать ошибку в async consumer
@@ -298,7 +465,15 @@ class MLXMemoryManager:
                         if isinstance(item, BaseException):
                             raise item
                         metrics = {
-                            "prompt_tokens": int(getattr(item, "prompt_tokens", 0) or 0),
+                            "prompt_tokens": int(
+                                cache_stats.get("prompt_tokens")
+                                or getattr(item, "prompt_tokens", 0)
+                                or 0
+                            ),
+                            "cached_tokens": int(
+                                cache_stats.get("cached_tokens") or 0
+                            ),
+                            "cache_hit": bool(cache_stats.get("cache_hit")),
                             "prompt_tps": float(getattr(item, "prompt_tps", 0.0) or 0.0),
                             "generation_tokens": int(getattr(item, "generation_tokens", 0) or 0),
                             "generation_tps": float(getattr(item, "generation_tps", 0.0) or 0.0),

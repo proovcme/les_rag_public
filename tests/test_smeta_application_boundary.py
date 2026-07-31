@@ -7,28 +7,11 @@ from proxy.smeta_core.unit_contract import measure_units_compatible, norm_measur
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_application_is_the_only_public_runner_of_legacy_adapter(monkeypatch):
-    from proxy.services import estimate_harness_service
-
-    captured = {}
-
-    def fake_run(question, complete, *, max_steps):
-        captured.update(question=question, complete=complete, max_steps=max_steps)
-        return {"total_status": "partial"}
-
-    monkeypatch.setattr(estimate_harness_service, "run_estimate_harness", fake_run)
-    complete = lambda _messages: "{}"
-    result = application.run_smeta_workflow("сделай ЛСР", complete, max_steps=7)
-
-    assert captured == {"question": "сделай ЛСР", "complete": complete, "max_steps": 7}
-    assert result["application"] == application.SMETA_APPLICATION_ID
-
-
-def test_compatibility_workflow_delegates_to_application(monkeypatch):
+def test_dead_workflow_compatibility_runners_are_removed():
     from proxy.smeta_core import workflow
 
-    monkeypatch.setattr(application, "run_smeta_workflow", lambda *a, **k: {"application": "canonical"})
-    assert workflow.run_smeta_workflow("x", lambda _messages: "{}") == {"application": "canonical"}
+    assert not hasattr(application, "run_smeta_workflow")
+    assert not hasattr(workflow, "run_smeta_workflow")
 
 
 def test_all_production_smeta_entrypoints_use_application_facade():

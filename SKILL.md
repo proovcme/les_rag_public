@@ -167,9 +167,11 @@ deployed_at=datetime.now(timezone.utc).isoformat(timespec='seconds')))"
 
 Инвентарь — **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)**; аудит соответствия фактической
 архитектуре — **[docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md](docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md)**.
-`make verify` проверяет синтаксис и сбор коллекции; `make test-architecture` запускает текущий
-контур без 11 файлов feature-off Unified/Construction Harness; `make test` сохраняет полную
-регрессию вместе с историей. Базовый L1 HTTP-смоук — `make smoke-basic`
+`make verify` проверяет синтаксис и сбор короткой current-коллекции;
+`make test-architecture` совместим с `make test`. Прежняя полная repository-wide
+suite доступна только через `make test-legacy-full`, а исторический
+Unified/Construction Harness — через `make test-legacy`. Оба legacy-прогона не
+являются release-доказательством. Базовый L1 HTTP-смоук — `make smoke-basic`
 (`tools/basic_function_smoke.py`). Run before finalizing meaningful changes:
 
 ```bash

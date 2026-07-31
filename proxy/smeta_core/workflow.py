@@ -191,13 +191,6 @@ def _coverage_binding(row: dict[str, Any], work_id: str, selected_by: str) -> Co
         return None
 
 
-def run_smeta_workflow(question: str, complete, *, max_steps: int = 16) -> dict[str, Any]:
-    """Compatibility wrapper; use ``smeta_core.application`` for new callers."""
-    from proxy.smeta_core.application import run_smeta_workflow as run_application
-
-    return run_application(question, complete, max_steps=max_steps)
-
-
 def calculate_visible_rows(
     rows: list[dict[str, Any]],
     *,

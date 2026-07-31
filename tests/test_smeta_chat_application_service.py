@@ -134,10 +134,21 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
         {"original_name": "source.pdf", "sha256": "sha"},
     ))
     monkeypatch.setattr(service, "consume_read_attachment", consumed.append)
+    partial = {
+        "selections": {"w1": {"norm_code": "", "reason": "решение модели"}},
+        "remaining_work_ids": ["w2"],
+        "incomplete": True,
+    }
+
+    def fail_after_checkpoint(*_args, **kwargs):
+        assert kwargs["resume_agent_result"] is None
+        kwargs["batch_checkpoint"](partial)
+        raise RuntimeError("provider down")
+
     monkeypatch.setattr(
         service,
         "run_vor_document_workflow",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("provider down")),
+        fail_after_checkpoint,
     )
 
     result = await service.run_smeta_document_application(
@@ -155,6 +166,14 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
     assert result.crag == "ERROR"
     assert "Вложение сохранено" in result.answer
     assert consumed == []
+    checkpoint_path = (
+        tmp_path / "artifacts" / ".checkpoints" / "read_0123456789ab.json"
+    )
+    assert checkpoint_path.exists()
+    assert service._load_document_checkpoint(
+        checkpoint_path,
+        source_fingerprint=service._source_fingerprint(source),
+    ) == partial
 
 
 @pytest.mark.asyncio
@@ -431,7 +450,15 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
             return None
 
         def json(self):
-            return {"choices": [{"message": self._message}], "message": self._message}
+            return {
+                "choices": [{"message": self._message}],
+                "message": self._message,
+                "usage": {
+                    "prompt_tokens": 100,
+                    "completion_tokens": 20,
+                    "prompt_tokens_details": {"cached_tokens": 75},
+                },
+            }
 
     class Client:
         def __init__(self, **_kwargs):
@@ -475,6 +502,9 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
 
     assert result["content"] == "Я отвечу текстом"
     assert result["_les_model"] == "gemma4:12b"
+    assert result["_les_generation_metrics"]["prompt_tokens"] == 100
+    assert result["_les_generation_metrics"]["cached_prompt_tokens"] == 75
+    assert result["_les_generation_metrics"]["cache_hit_ratio"] == 0.75
     assert "tool_calls" not in result
     assert "_les_fallback_from" not in result
     assert "options" in bodies[0]
@@ -532,7 +562,11 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
         "qwen3.5:9b", "", True,
     ))
     monkeypatch.setattr(adapter.httpx, "Client", Client)
-    schema = {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]}
+    schema = {
+        "type": "object",
+        "properties": {"rows": {"type": "array", "maxItems": 1}},
+        "required": ["rows"],
+    }
 
     result = adapter._smeta_document_mapping_exchange(
         [{"role": "assistant", "content": "", "thinking": "model reasoning"}], schema,
@@ -548,6 +582,7 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     assert captured["body"]["options"]["num_ctx"] == 32768
     assert captured["body"]["options"]["temperature"] == 0.0
     assert captured["body"]["options"]["seed"] == 0
+    assert captured["body"]["options"]["num_predict"] == 2200
     assert result["_les_seed"] == 0
 
 
@@ -718,6 +753,48 @@ def test_mlx_native_tool_exchange_does_not_append_prose_prefill(monkeypatch):
     assert result["tool_calls"] == [{"id": "tool-1"}]
     assert captured["messages"] == messages
     assert captured["messages"][-1]["role"] == "user"
+
+
+def test_document_exchange_bounds_single_question_generation(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"tool_calls": [{"id": "question-1"}]}}]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            captured.update(kwargs["json"])
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "mlx", "http://127.0.0.1:8080", "http://127.0.0.1:8080/v1/chat/completions",
+        "local-tool-model", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Задай один вопрос"}],
+        [{"type": "function", "function": {"name": "ask_user"}}],
+    )
+
+    assert captured["max_tokens"] == 512
 
 
 @pytest.mark.asyncio

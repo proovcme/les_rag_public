@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from proxy.security import require_user
+from proxy.services import etm_price_service as etm
 from proxy.services import fgis_price_fetch_service as pf
 from proxy.services import fgis_price_service as fps
 
@@ -59,6 +60,22 @@ class PriceLookupBatch(BaseModel):
                 result.append(code)
                 seen.add(code)
         return result
+
+
+class EtmPriceItem(BaseModel):
+    code: str = Field(min_length=1, max_length=120)
+    material: str = Field(min_length=1, max_length=500)
+    unit: str = Field(min_length=1, max_length=40)
+
+
+class EtmPriceLookupBatch(BaseModel):
+    items: list[EtmPriceItem] = Field(min_length=1, max_length=500)
+    code_type: str = Field(default="etm", pattern="^(cli|etm|mnf)$")
+    manufacturer_code: Optional[str] = Field(default=None, max_length=120)
+    price_field: str = Field(
+        default="pricewnds",
+        pattern="^(price|pricewnds|price_tarif|price_retail)$",
+    )
 
 
 @router.get("/books")
@@ -127,6 +144,34 @@ async def prices_lookup_batch(req: PriceLookupBatch, _user=Depends(require_user)
         "missing": len(req.codes) - found,
         "rows": rows,
     }
+
+
+@router.get("/etm/status")
+async def prices_etm_status(_user=Depends(require_user)):
+    """Report ETM readiness without exposing credentials or a live session."""
+    return etm.configuration_status()
+
+
+@router.post("/etm/lookup-batch")
+async def prices_etm_lookup_batch(
+    req: EtmPriceLookupBatch,
+    _user=Depends(require_user),
+):
+    """Return provenance-bearing quotes; material selection remains model-owned."""
+    try:
+        return await asyncio.to_thread(
+            etm.get_client().collect_quotes,
+            [item.model_dump() for item in req.items],
+            code_type=req.code_type,
+            manufacturer_code=req.manufacturer_code,
+            price_field=req.price_field,
+        )
+    except etm.EtmNotConfiguredError as error:
+        raise HTTPException(503, str(error)) from error
+    except etm.EtmPriceError as error:
+        raise HTTPException(502, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
 
 
 @router.get("/search")

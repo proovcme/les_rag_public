@@ -1520,10 +1520,17 @@ async def _generate_with_llm_policy(
     *,
     prompt: str,
     max_tokens: int,
+    cache_prefix_prompt: str = "",
 ) -> tuple[str, list[str]]:
     async with _get_llm_policy_lock():
         unloaded_peer = _unload_peer_for(engine)
-        answer = await engine.generate_text(prompt=prompt, max_tokens=max_tokens)
+        generate_kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+        }
+        if cache_prefix_prompt:
+            generate_kwargs["cache_prefix_prompt"] = cache_prefix_prompt
+        answer = await engine.generate_text(**generate_kwargs)
     return _strip_think_tags(answer), unloaded_peer
 
 
@@ -1532,11 +1539,18 @@ async def _stream_with_llm_policy(
     *,
     prompt: str,
     max_tokens: int,
+    cache_prefix_prompt: str = "",
 ):
     """Сохраняет single-LLM policy, но отдаёт настоящие токены MLX."""
     async with _get_llm_policy_lock():
         _unload_peer_for(engine)
-        async for piece, metrics in engine.stream_text(prompt=prompt, max_tokens=max_tokens):
+        stream_kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "max_tokens": max_tokens,
+        }
+        if cache_prefix_prompt:
+            stream_kwargs["cache_prefix_prompt"] = cache_prefix_prompt
+        async for piece, metrics in engine.stream_text(**stream_kwargs):
             yield piece, metrics
 
 
@@ -1545,6 +1559,7 @@ def _messages_to_prompt(
     engine: "MLXMemoryManager",
     enable_thinking: bool = False,
     tools: list[dict[str, Any]] | None = None,
+    add_generation_prompt: bool = True,
 ) -> str:
     """
     Строит промпт через chat_template токенизатора движка.
@@ -1591,9 +1606,14 @@ def _messages_to_prompt(
             message["name"] = m.name
         msgs.append(message)
 
+    template_kwargs: dict[str, Any] = {
+        "enable_thinking": enable_thinking,
+    }
     if tools:
-        return engine.apply_chat_template(msgs, enable_thinking=enable_thinking, tools=tools)
-    return engine.apply_chat_template(msgs, enable_thinking=enable_thinking)
+        template_kwargs["tools"] = tools
+    if not add_generation_prompt:
+        template_kwargs["add_generation_prompt"] = False
+    return engine.apply_chat_template(msgs, **template_kwargs)
 
 
 _TOOL_CALL_BLOCK_RE = re.compile(
@@ -1641,10 +1661,23 @@ def _assistant_message(content: str) -> tuple[dict[str, Any], str]:
     }, "tool_calls"
 
 
-def _oai_response(content: str, model: str, prompt_tokens: int = 0) -> dict:
+def _oai_response(
+    content: str,
+    model: str,
+    prompt_tokens: int = 0,
+    cached_tokens: int = 0,
+    generation_metrics: dict | None = None,
+) -> dict:
     completion_tokens = len(content.split())
     message, finish_reason = _assistant_message(content)
-    return {
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    if cached_tokens > 0:
+        usage["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
+    response = {
         "id":      f"chatcmpl-les-{int(time.time())}",
         "object":  "chat.completion",
         "created": int(time.time()),
@@ -1654,12 +1687,11 @@ def _oai_response(content: str, model: str, prompt_tokens: int = 0) -> dict:
             "message":       message,
             "finish_reason": finish_reason,
         }],
-        "usage": {
-            "prompt_tokens":     prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens":      prompt_tokens + completion_tokens,
-        },
+        "usage": usage,
     }
+    if generation_metrics:
+        response["les_metrics"] = generation_metrics
+    return response
 
 
 # ── Системные эндпоинты ───────────────────────────────────────────────────────
@@ -1801,6 +1833,19 @@ async def generate_ollama(req: GenerateRequest):
     return {"model": req.model, "response": answer, "eval_count": len(answer.split())}
 
 
+def _stable_cache_prefix_messages(messages: list[OAIMessage]) -> list[OAIMessage]:
+    """Keep the immutable system/task prefix, excluding compacted agent history."""
+    stable: list[OAIMessage] = []
+    for message in messages:
+        role = str(message.role or "")
+        if role not in {"system", "user"}:
+            break
+        stable.append(message)
+        if role == "user":
+            break
+    return stable or list(messages[:1])
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(req: OAIChatRequest):
     """OpenAI-совместимый — основной для прокси и Roo Code."""
@@ -1808,6 +1853,17 @@ async def chat_completions(req: OAIChatRequest):
         raise HTTPException(503, "embed-only instance: генерация отключена (используй основной :8080)")
     engine = _get_engine(req.model or MAIN_MODEL)
     prompt = _messages_to_prompt(req.messages, engine, tools=req.tools)
+    # Agent working memory can compact or replace the recent tail between
+    # turns. Caching the entire previous transcript then yields no prefix hit.
+    # The system message plus initial user task are the durable shared prefix;
+    # keeping only that prefix also fits the bounded Mac cache comfortably.
+    stable_prefix_messages = _stable_cache_prefix_messages(req.messages)
+    cache_prefix_prompt = _messages_to_prompt(
+        stable_prefix_messages,
+        engine,
+        tools=req.tools,
+        add_generation_prompt=False,
+    )
     logger.info(
         "[GEN_START] model=%s stream=%s prompt_chars=%s max_tokens=%s loaded=%s",
         engine.model_path,
@@ -1848,6 +1904,7 @@ async def chat_completions(req: OAIChatRequest):
                     engine,
                     prompt=prompt,
                     max_tokens=req.max_tokens or 2048,
+                    cache_prefix_prompt=cache_prefix_prompt,
                 ):
                     final_metrics = metrics
                     if not piece:
@@ -1902,15 +1959,55 @@ async def chat_completions(req: OAIChatRequest):
 
         return StreamingResponse(stream_generator(), media_type="text/event-stream")
 
+    generation_started_at = time.perf_counter()
     try:
         answer, _ = await _generate_with_llm_policy(
             engine,
             prompt=prompt,
             max_tokens=req.max_tokens or 2048,
+            cache_prefix_prompt=cache_prefix_prompt,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-    return _oai_response(answer, engine.model_path)
+    generation_metrics = dict(
+        getattr(engine, "last_generation_metrics", {}) or {}
+    )
+    total_time_sec = max(0.0, time.perf_counter() - generation_started_at)
+    prompt_tokens = int(generation_metrics.get("prompt_tokens") or 0)
+    cached_tokens = int(generation_metrics.get("cached_tokens") or 0)
+    uncached_tokens = max(0, prompt_tokens - cached_tokens)
+    prompt_tps = float(generation_metrics.get("prompt_tps") or 0.0)
+    generation_tokens = int(
+        generation_metrics.get("generation_tokens") or len(answer.split())
+    )
+    generation_tps = float(generation_metrics.get("generation_tps") or 0.0)
+    profile = {
+        "prompt_tokens": prompt_tokens,
+        "cached_prompt_tokens": cached_tokens,
+        "uncached_prompt_tokens": uncached_tokens,
+        "completion_tokens": generation_tokens,
+        "cache_hit_ratio": round(cached_tokens / prompt_tokens, 6)
+        if prompt_tokens
+        else 0.0,
+        "ttft_sec": None,
+        "prefill_time_sec": round(uncached_tokens / prompt_tps, 4)
+        if prompt_tps > 0
+        else None,
+        "decode_time_sec": round(generation_tokens / generation_tps, 4)
+        if generation_tps > 0
+        else None,
+        "prompt_tps": round(prompt_tps, 4),
+        "generation_tps": round(generation_tps, 4),
+        "total_time_sec": round(total_time_sec, 4),
+        "measurement_mode": "nonstream_ttft_unavailable",
+    }
+    return _oai_response(
+        answer,
+        engine.model_path,
+        prompt_tokens=prompt_tokens,
+        cached_tokens=cached_tokens,
+        generation_metrics=profile,
+    )
 
 
 # ── Валидация (Т.О.С.К.А. v2) ────────────────────────────────────────────────

@@ -15,6 +15,7 @@ import httpx
 import psutil
 from fastapi import APIRouter, Depends
 
+from backend.http_client_policy import trust_env_for_url
 from backend.rag_config import rag_collection_name, rag_meta_db_path, rag_runtime_config
 from proxy.security import require_internal_or_admin
 
@@ -75,12 +76,18 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
 
     async def _chk_qdrant():
         qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(qdrant_url),
+            timeout=5.0,
+        ) as client:
             response = await client.get(f"{qdrant_url}/collections")
             response.raise_for_status()
             collections = response.json().get("result", {}).get("collections", [])
         total_points = 0
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(qdrant_url),
+            timeout=5.0,
+        ) as client:
             for collection in collections:
                 try:
                     response = await client.get(f"{qdrant_url}/collections/{collection['name']}")
@@ -97,7 +104,10 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
         llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         llm_model = os.getenv("LLM_MODEL", "?")
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(llm_url),
+                timeout=5.0,
+            ) as client:
                 response = await client.get(f"{llm_url}/api/health")
                 data = response.json()
             main_model = data.get("main_model", {})
@@ -157,7 +167,10 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     async def _chk_chat():
         started = time.time()
         llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(llm_url),
+            timeout=30.0,
+        ) as client:
             response = await client.get(f"{llm_url}/api/health")
         ms = (time.time() - started) * 1000
         ok = response.status_code == 200

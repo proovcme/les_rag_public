@@ -344,6 +344,63 @@ def _assistant_text(message: dict) -> str:
     reasoning = message.get("reasoning") or message.get("reasoning_content") or ""
     return _strip_think(str(reasoning))
 
+
+def _generation_profile(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize provider usage into one frame-level observability contract."""
+    explicit = payload.get("les_metrics")
+    if isinstance(explicit, dict):
+        return dict(explicit)
+    usage = payload.get("usage")
+    usage = dict(usage) if isinstance(usage, dict) else {}
+    prompt_details = usage.get("prompt_tokens_details")
+    prompt_details = (
+        dict(prompt_details) if isinstance(prompt_details, dict) else {}
+    )
+    prompt_tokens = int(
+        usage.get("prompt_tokens")
+        or payload.get("prompt_eval_count")
+        or 0
+    )
+    cached_tokens = int(prompt_details.get("cached_tokens") or 0)
+    completion_tokens = int(
+        usage.get("completion_tokens")
+        or payload.get("eval_count")
+        or 0
+    )
+    total_duration_ns = float(payload.get("total_duration") or 0.0)
+    prompt_duration_ns = float(payload.get("prompt_eval_duration") or 0.0)
+    eval_duration_ns = float(payload.get("eval_duration") or 0.0)
+    return {
+        "prompt_tokens": prompt_tokens,
+        "cached_prompt_tokens": cached_tokens,
+        "uncached_prompt_tokens": max(0, prompt_tokens - cached_tokens),
+        "completion_tokens": completion_tokens,
+        "cache_hit_ratio": round(cached_tokens / prompt_tokens, 6)
+        if prompt_tokens
+        else 0.0,
+        "ttft_sec": None,
+        "prefill_time_sec": (
+            round(prompt_duration_ns / 1_000_000_000.0, 4)
+            if prompt_duration_ns > 0
+            else None
+        ),
+        "decode_time_sec": (
+            round(eval_duration_ns / 1_000_000_000.0, 4)
+            if eval_duration_ns > 0
+            else None
+        ),
+        "total_time_sec": (
+            round(total_duration_ns / 1_000_000_000.0, 4)
+            if total_duration_ns > 0
+            else None
+        ),
+        "measurement_mode": (
+            "provider_usage_ttft_unavailable"
+            if usage
+            else "ollama_durations_ttft_unavailable"
+        ),
+    }
+
 def _mlx_prefill_no_think_messages(messages: list[dict[str, Any]], provider: str) -> list[dict[str, Any]]:
     """Local Qwen reasoning models need a final-answer prefill to avoid empty visible content."""
     if str(provider or "").lower() != "mlx":
@@ -387,6 +444,15 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
+    tool_names = {
+        str((tool.get("function") or {}).get("name") or "")
+        for tool in tools
+        if isinstance(tool, dict)
+    }
+    if tool_names and tool_names <= {"ask_user", "interpret_pending_answer"}:
+        # These schemas are tiny.  A large generation allowance only lets a
+        # local reasoning model spend minutes on a one-question transport call.
+        max_tokens = min(max_tokens, 512)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
@@ -452,6 +518,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             message = message if isinstance(message, dict) else {}
             message["_les_done_reason"] = payload.get("done_reason")
             message["_les_eval_count"] = payload.get("eval_count")
+            message["_les_generation_metrics"] = _generation_profile(payload)
             message.setdefault("_les_model", runtime.model)
             message.setdefault("_les_provider", runtime.provider)
             if applied_seed is not None:
@@ -474,6 +541,14 @@ def _smeta_document_mapping_exchange(
     """Serialize the same model's decisions with provider-enforced JSON schema."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS", 8000)
+    row_limit = int(
+        (((schema.get("properties") or {}).get("rows") or {}).get("maxItems"))
+        or 0
+    )
+    if row_limit == 1:
+        max_tokens = min(max_tokens, 2200)
+    elif 1 < row_limit <= 5:
+        max_tokens = min(max_tokens, 4800)
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
@@ -554,6 +629,9 @@ def _smeta_document_mapping_exchange(
                 raise RuntimeError("smeta provider returned invalid structured mapping JSON")
             parsed["_les_done_reason"] = response_payload.get("done_reason")
             parsed["_les_eval_count"] = response_payload.get("eval_count")
+            parsed["_les_generation_metrics"] = _generation_profile(
+                response_payload
+            )
             parsed["_les_model"] = runtime.model
             parsed["_les_provider"] = runtime.provider
             if applied_seed is not None:

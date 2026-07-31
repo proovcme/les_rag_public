@@ -48,12 +48,80 @@ def test_query_variants_translate_user_terms_to_normative_vocabulary():
     assert "монтаж кросса кроссировка линий панель коммутации" in _query_variants(
         "Монтаж патч-панели на 24 порта"
     )
+    assert "шкаф коммутационный оборудование связи" in _query_variants(
+        "Монтаж телекоммуникационного шкафа 42U"
+    )
+    assert _query_variants(
+        "Монтаж телекоммуникационного шкафа СКС",
+        stage="collection",
+    ) == [
+        "шкаф коммутационный оборудование связи",
+        "Монтаж телекоммуникационного шкафа СКС",
+    ]
 
 
 def test_unrelated_query_is_not_expanded():
     from proxy.smeta_core.norm_browser import _query_variants
 
     assert _query_variants("Кладка кирпичной стены") == ["Кладка кирпичной стены"]
+
+
+def test_collection_catalog_fuses_official_lexical_signal_with_rerank(
+    monkeypatch,
+):
+    from proxy.smeta_core import norm_browser
+
+    items = [
+        {
+            "key": code,
+            "title": title,
+            "purpose": f"Официальный сборник ГЭСНм {code}: {title}",
+            "typical_scope": [title],
+        }
+        for code, title in [
+            ("10", "Оборудование связи"),
+            (
+                "32",
+                "Оборудование предприятий электронной промышленности "
+                "и промышленности средств связи",
+            ),
+            ("40", "Дополнительное перемещение оборудования и материальных ресурсов"),
+            ("37", "Оборудование общего назначения"),
+            ("08", "Электротехнические установки"),
+            ("36", "Оборудование предприятий бытового обслуживания"),
+        ]
+    ]
+    monkeypatch.setattr(
+        norm_browser,
+        "browse_norm_catalog",
+        lambda **_kwargs: {
+            "items": items,
+            "source_integrity": {"ok": True},
+        },
+    )
+    wrong_order = ["40", "37", "32", "08", "36", "10"]
+
+    def rerank(_query, cards, **_kwargs):
+        by_code = {card["collection"]: card for card in cards}
+        return [by_code[code] for code in wrong_order], True, "ok"
+
+    monkeypatch.setattr(norm_browser, "_rerank_cards", rerank)
+
+    result = norm_browser.rank_norm_catalog_collections(
+        "монтаж телекоммуникационного шкафа 42U",
+        family="ГЭСНм",
+        limit=6,
+    )
+
+    assert result["cards"][0]["collection"] == "10"
+    assert result["cards"][0]["catalog_compass_rank"] == 1
+    assert result["retrieval_trace"]["fusion"] == (
+        "official_lexical_head_coverage_then_rerank"
+    )
+    assert result["retrieval_trace"]["signals"] == [
+        "official_catalog_lexical",
+        "rerank",
+    ]
 
 
 def test_variant_coverage_merge_keeps_each_variant_head_visible():
@@ -116,6 +184,195 @@ def test_typed_search_can_be_filtered_by_model_selected_family_and_collection(tm
     )
 
     assert [item["norm_code"] for item in cards] == ["ГЭСНм08-02-001-01"]
+
+
+def test_catalog_family_passports_distinguish_construction_from_equipment_installation(
+    tmp_path,
+):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСН:34-01-001-01",
+        name="Устройство опор",
+    )
+    _insert_norm(
+        conn,
+        key="ГЭСНм:10-01-001-01",
+        name="Монтаж оборудования связи",
+    )
+    conn.commit()
+    conn.close()
+
+    result = browse_norm_catalog(base_path=path)
+    by_family = {item["key"]: item for item in result["items"]}
+
+    assert "строительные работы" in by_family["ГЭСН"]["official_name"].casefold()
+    assert "монтаж оборудования" in by_family["ГЭСНм"]["official_name"].casefold()
+    assert "монтаж оборудования" in by_family["ГЭСНм"]["purpose"].casefold()
+    assert "пусконаладочные работы" in by_family["ГЭСН"]["not_for"]
+    assert by_family["ГЭСН"]["questions_to_ask"]
+    assert by_family["ГЭСНм"]["source_ref"].startswith("ФСНБ-2022")
+    assert by_family["ГЭСНм"]["node_id"] == "catalog:family:ГЭСНм"
+    assert by_family["ГЭСНм"]["parent_id"] == "catalog:root"
+    assert by_family["ГЭСНм"]["node_type"] == "family"
+    assert by_family["ГЭСНм"]["approval_basis"].endswith("№ 1046/пр")
+    assert by_family["ГЭСНм"]["navigation_url"] == "https://fsnb2022.ru/gesnm/"
+
+
+def test_catalog_collection_has_compact_human_title_from_typed_source(tmp_path):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСНм:10-01-001-01",
+        name="Монтаж оборудования связи",
+    )
+    conn.execute(
+        """
+        UPDATE norms
+        SET source_doc=?
+        WHERE norm_key='ГЭСНм:10-01-001-01'
+        """,
+        (
+            "Государственные элементные сметные нормы на монтаж оборудования<br/>"
+            "Сборник 10. Оборудование связи<br/>"
+            "Отдел 1. Городская телефонная связь",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    result = browse_norm_catalog(
+        family="ГЭСНм",
+        base_path=path,
+    )
+
+    assert result["level"] == "collection"
+    assert result["items"][0]["title"] == "Оборудование связи"
+    assert result["items"][0]["purpose"] == (
+        "Официальный сборник ГЭСНм 10: Оборудование связи"
+    )
+    assert result["items"][0]["source_ref"] == (
+        "ФСНБ-2022 · ГЭСНм, сборник 10 «Оборудование связи»"
+    )
+    assert result["items"][0]["node_id"] == "catalog:collection:ГЭСНм:10"
+    assert result["items"][0]["parent_id"] == "catalog:family:ГЭСНм"
+
+    scoped = browse_norm_catalog(
+        family="ГЭСНм",
+        collection="10",
+        base_path=path,
+    )
+    assert scoped["level"] == "section"
+    assert scoped["items"][0]["key"] == "10-01"
+    assert scoped["items"][0]["official_heading"] == (
+        "Отдел 1. Городская телефонная связь"
+    )
+    assert scoped["items"][0]["node_id"] == "catalog:section:ГЭСНм:10-01"
+    assert scoped["items"][0]["parent_id"] == (
+        "catalog:collection:ГЭСНм:10"
+    )
+    passport = scoped["collection_passport"]
+    assert passport["schema"] == "smeta_norm_collection_passport_v1"
+    assert passport["title"] == "Оборудование связи"
+    assert passport["representative_sections"] == [
+        "Отдел 1. Городская телефонная связь"
+    ]
+    assert passport["representative_units"] == ["100 м"]
+    assert passport["passport_role"] == "navigation_only"
+    assert passport["requires_full_norm_read"] is True
+
+
+def test_catalog_table_identity_includes_family_and_collection(tmp_path):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСН:08-02-001-01",
+        name="Конструкция правильного сборника",
+    )
+    conn.commit()
+    conn.close()
+
+    wrong_collection = browse_norm_catalog(
+        family="ГЭСН",
+        collection="34",
+        section="34-02",
+        table="08-02-001",
+        base_path=path,
+    )
+    correct_scope = browse_norm_catalog(
+        family="ГЭСН",
+        collection="08",
+        section="08-02",
+        table="08-02-001",
+        base_path=path,
+    )
+
+    assert wrong_collection["items"] == []
+    assert [item["norm_key"] for item in correct_scope["items"]] == [
+        "ГЭСН:08-02-001-01"
+    ]
+
+
+def test_catalog_requires_section_between_collection_and_table(tmp_path):
+    from proxy.smeta_core.norm_browser import browse_norm_catalog
+
+    path = tmp_path / "base.sqlite"
+    conn = _base(path)
+    _insert_norm(
+        conn,
+        key="ГЭСНм:10-04-067-04",
+        name="Шкаф коммутаторов",
+    )
+    conn.execute(
+        "UPDATE norms SET source_doc=? WHERE norm_key='ГЭСНм:10-04-067-04'",
+        (
+            "Сборник 10. Оборудование связи<br/>"
+            "Отдел 4. Радиосвязь и телевидение<br/>"
+            "Раздел 8. Аппаратно-студийное оборудование<br/>"
+            "Таблица ГЭСНм 10-04-067 Аппаратура цветного телевидения",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    sections = browse_norm_catalog(
+        family="ГЭСНм",
+        collection="10",
+        base_path=path,
+    )
+    tables = browse_norm_catalog(
+        family="ГЭСНм",
+        collection="10",
+        section="10-04",
+        base_path=path,
+    )
+    norms = browse_norm_catalog(
+        family="ГЭСНм",
+        collection="10",
+        section="10-04",
+        table="10-04-067",
+        base_path=path,
+    )
+
+    assert sections["level"] == "section"
+    assert sections["items"][0]["key"] == "10-04"
+    assert tables["level"] == "table"
+    assert tables["items"][0]["key"] == "10-04-067"
+    assert tables["items"][0]["hierarchy"] == [
+        "Отдел 4. Радиосвязь и телевидение",
+        "Раздел 8. Аппаратно-студийное оборудование",
+    ]
+    assert norms["level"] == "norm"
+    assert norms["items"][0]["norm_key"] == "ГЭСНм:10-04-067-04"
 
 
 def test_norm_card_exposes_resource_names_for_technology_audit(tmp_path):
@@ -236,6 +493,65 @@ def test_mass_triage_honors_explicit_rerank_request(monkeypatch, tmp_path):
 
     assert seen == queries
     assert all(item["retrieval_trace"]["reranked"] for item in results.values())
+
+
+def test_rim_reranks_lexical_only_shortlist_without_hidden_query_expansion(
+    monkeypatch,
+    tmp_path,
+):
+    from proxy.smeta_core import norm_browser
+
+    query = "шина заземления в шкафу"
+    lexical = [
+        {
+            "norm_key": f"l:{index}",
+            "norm_code": f"ГЭСНм10-01-00{index}-01",
+            "title": f"lex {index}",
+        }
+        for index in range(6)
+    ]
+    seen = []
+    monkeypatch.setattr(norm_browser, "_typed_cards", lambda *_args, **_kwargs: lexical)
+    monkeypatch.setattr(
+        norm_browser,
+        "_rag_cards_many",
+        lambda values, **_kwargs: {value: [] for value in values},
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "_query_variants",
+        lambda _query: (_ for _ in ()).throw(
+            AssertionError("RIM query expansion must remain disabled")
+        ),
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "_rerank_cards",
+        lambda value, cards, **_kwargs: (
+            seen.append((value, len(cards))) or cards,
+            True,
+            "ok",
+        ),
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "normative_base_integrity",
+        lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
+    )
+
+    result = norm_browser.browse_norms_many(
+        [query],
+        limit=5,
+        base_path=tmp_path / "base.sqlite",
+        rerank=True,
+        expand_queries=False,
+    )[query]
+
+    assert seen == [(query, 6)]
+    assert result["retrieval_trace"]["rerank_status"] == "ok"
+    assert result["retrieval_trace"]["reranked"] is True
+    assert result["retrieval_trace"]["query_variants"] == [query]
+    assert result["retrieval_trace"]["query_expansion"] is False
 
 
 def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_path):
@@ -433,8 +749,14 @@ def test_smeta_dense_requires_same_or_explicitly_verified_embedding_space(tmp_pa
         encoding="utf-8",
     )
     monkeypatch.setenv("EMBED_BACKEND", "coreml")
+    monkeypatch.delenv("LES_SMETA_NORM_EMBED_BACKEND", raising=False)
     monkeypatch.delenv("LES_SMETA_EMBEDDING_SPACE_ID", raising=False)
 
+    # The dedicated smeta generation is independent of the general RAG
+    # backend. Its active manifest defines the expected query backend.
+    assert _rag_dense_compatibility(base) == (True, "same_backend")
+
+    monkeypatch.setenv("LES_SMETA_NORM_EMBED_BACKEND", "coreml")
     compatible, reason = _rag_dense_compatibility(base)
     assert compatible is False
     assert "embedding_backend_mismatch" in reason
@@ -450,6 +772,29 @@ def test_smeta_dense_requires_same_or_explicitly_verified_embedding_space(tmp_pa
     monkeypatch.setenv("LES_SMETA_EMBEDDING_SPACE_ID", "qwen-space-v1")
 
     assert _rag_dense_compatibility(base) == (True, "verified_embedding_space")
+
+
+def test_smeta_dense_contract_uses_manifest_backend_when_general_rag_env_is_absent(
+    tmp_path,
+    monkeypatch,
+):
+    from proxy.smeta_core.norm_browser import _rag_dense_contract
+
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"base")
+    base.with_name("les_smeta_norm_rag_manifest.json").write_text(
+        json.dumps({"embedding_backend": "coreml"}),
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("EMBED_BACKEND", raising=False)
+    monkeypatch.delenv("LES_SMETA_NORM_EMBED_BACKEND", raising=False)
+
+    assert _rag_dense_contract(base) == (
+        True,
+        "same_backend",
+        "coreml",
+        "coreml",
+    )
 
 
 def test_norm_rag_projection_does_not_embed_incidental_resources(tmp_path):

@@ -1,0 +1,7 @@
+{
+  "_comment": "Ручные правки классификации kind поверх эвристики _classify_kind (T1.4). Формат: {item_id: {kind, comment}}. Применяется ПОСЛЕ эвристики (proxy/services/checklist_template_importer.py::import_checklist_template, параметр overrides). Использование: tools/build_checklist_template.py --overrides config/checklists/glorax_pd_2026_overrides.json",
+  "PD-OB-007": {
+    "kind": "manual_required",
+    "comment": "T1.4: эвристика ошибочно классифицирует как cross_section из-за слова 'соответствующих' в обороте 'учтен в соответствующих томах' (это прилагательное 'подходящих', не глагол сверки 'соответствует X'). Фактически пункт про полноту учёта перечня мероприятий СТУ по комплекту — экспертная проверка, оставлена manual_required."
+  }
+}

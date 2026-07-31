@@ -36,10 +36,10 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 **Историческое (контекст, НЕ текущая правда):** датированные саммари/хендоффы/репорты и заменённые планы сведены в **[`docs/archive/`](docs/archive/)** (`SESSION_SUMMARY_*`, `ROADMAP_LES_v2.0`, `DOCS_*AUDIT*`, хендоффы — см. `docs/archive/README.md`). На месте, но тоже историческое: `README_v2.0.md`, `LES_MASTER_DOC_v2_1.md`, `INFRASTRUCTURE_v2.0.md`, `RAG_MODERNIZATION_PLAN.md`, `ARTICLE_*.md`. Полезны для «почему так», но версии/решения могут устареть — сверяй с каноном и кодом (`/api/version`).
 
 ## Гейт проверки
-- **`make verify`** — офлайн: `compileall` (синтаксис) + `pytest --collect-only` канонической LES-сюиты, без живых сервисов. Гонять перед готовностью.
-- **`make test-architecture`** — совместимый псевдоним канонической LES-сюиты. Исторический Unified/Construction Harness запускается только явно через `make test-legacy`; ARTEL принадлежит отдельному продукту.
+- **`make verify`** — офлайн: `compileall` + `pytest --collect-only` короткого канонического contract/behavior gate, без живых сервисов. Гонять перед готовностью.
+- **`make test-architecture`** — совместимый псевдоним короткого канонического gate. Исторический Unified/Construction Harness запускается через `make test-legacy`; прежняя 3204-test suite — только через `make test-legacy-full`.
 - **`make test-mail`** — отдельный offline-профиль Е.Ж.И.К.: IMAP/registry/dedup/RAG/API/UI и статический Windows-sidecar contract. **`make test-mail-release`** добавляет Tauri compile-check; установленный classic Outlook подтверждается только живым Legion-гейтом.
-- **`make test`** — основная полная LES-сюита без 11 файлов выключенного Unified/Construction Harness и без `test_artel*`. Архивный профиль не является release-доказательством.
+- **`make test`** — короткий явно перечисленный contract/behavior gate. Прежний repository-wide прогон перенесён в `make test-legacy-full` и не является release-доказательством.
 - **Доменный гейт** (после правок retrieval/router и только при подключённом пользовательском
   корпусе с источниками набора): `uv run python tools/rag_golden_set.py --cases
   golden/domain_fire_hvac_set.json` — ожидается **16/16**. Пустой user-owned `les_rag` означает

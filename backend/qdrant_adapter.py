@@ -477,8 +477,12 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
         window_size = max(1, int(os.getenv("RAG_PARENT_WINDOW_CHUNKS", "4")))
     except ValueError:
         window_size = 4
+    from backend.rag_hierarchy import evidence_payload, navigation_payload
+
     last_heading = ""
     last_level = 0
+    heading_stack: list[tuple[int, str, str]] = []
+    navigation_nodes: dict[str, dict] = {}
     dataset_revision = current_dataset_revision_id(dataset_id)
     for chunk_ord, file_node in enumerate(file_nodes):
         payload = file_node.setdefault("payload", {})
@@ -499,6 +503,34 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
         heading, level = _section_heading_info(text)
         if heading:
             last_heading, last_level = heading, level
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            identity = "/".join([item[1] for item in heading_stack] + [heading])
+            nav_meta = navigation_payload(
+                dataset_id=dataset_id,
+                document_id=file_key,
+                identity=identity,
+                title=heading,
+                ancestor_ids=[item[2] for item in heading_stack],
+                depth=len(heading_stack) + 1,
+            )
+            heading_stack.append((level, heading, nav_meta["node_id"]))
+            navigation_nodes.setdefault(
+                nav_meta["node_id"],
+                {
+                    "text": heading,
+                    "payload": {
+                        **nav_meta,
+                        "dataset_id": dataset_id,
+                        "file_name": file_key,
+                        "section_heading": heading,
+                        "heading_level": level,
+                        "content_hash": _content_hash(
+                            f"navigation:{dataset_id}:{file_key}:{identity}"
+                        ),
+                    },
+                },
+            )
             payload.setdefault("section_heading", heading)
             payload.setdefault("heading_level", level)
         elif last_heading:
@@ -507,6 +539,16 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
             payload.setdefault("heading_inherited", True)
         else:
             payload.setdefault("section_heading", _section_heading(text))
+        hierarchy = evidence_payload(
+            dataset_id=dataset_id,
+            document_id=file_key,
+            identity=f"{payload.get('source_page') or ''}:{chunk_ord}:{payload['content_hash']}",
+            ancestor_ids=[item[2] for item in heading_stack],
+            depth=len(heading_stack) + 1,
+            node_kind="table_row" if payload.get("type") == "table_row" else "chunk",
+        )
+        for key, value in hierarchy.items():
+            payload.setdefault(key, value)
 
         source_page = payload.get("source_page") or payload.get("page") or payload.get("page_number")
         table_index = payload.get("table_index")
@@ -540,6 +582,7 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
             payload.setdefault("context_before", _compact_text(str(file_nodes[idx - 1].get("text") or "")))
         if idx + 1 < len(file_nodes) and file_nodes[idx + 1].get("payload", {}).get("parent_id") == parent_id:
             payload.setdefault("context_after", _compact_text(str(file_nodes[idx + 1].get("text") or "")))
+    file_nodes.extend(navigation_nodes.values())
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
 class EmbedClient:
@@ -3312,6 +3355,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         dataset_ids: Optional[List[str]] = None,
         top_k: int = 8,
         doc_filter: Optional[List[str]] = None,
+        node_roles: Optional[List[str]] = None,
+        ancestor_ids: Optional[List[str]] = None,
     ) -> List[Chunk]:
         """Qdrant-native dense+sparse hybrid over a named-vector collection.
 
@@ -3338,6 +3383,15 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             must.append(models.FieldCondition(key="dataset_id", match=models.MatchAny(any=dataset_ids)))
         if doc_filter:
             must.append(models.FieldCondition(key="file_name", match=models.MatchAny(any=doc_filter)))
+        if node_roles:
+            must.append(models.FieldCondition(key="node_role", match=models.MatchAny(any=node_roles)))
+        if ancestor_ids:
+            must.append(
+                models.FieldCondition(
+                    key="ancestor_ids",
+                    match=models.MatchAny(any=ancestor_ids),
+                )
+            )
         query_filter = models.Filter(must=must) if must else None
         prefetch_limit = max(top_k * 2, 24)
         results = await self.aclient.query_points(
@@ -3371,6 +3425,54 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             for p in results.points
             if len(p.payload.get("text", "")) >= 1
         ]
+
+    async def retrieve_native_hierarchical(
+        self,
+        query: str,
+        dataset_ids: Optional[List[str]] = None,
+        top_k: int = 8,
+        doc_filter: Optional[List[str]] = None,
+    ) -> List[Chunk]:
+        """Soft hierarchy: global evidence plus nav-routed descendant evidence.
+
+        Navigation hits only produce filters.  They never enter the returned
+        evidence pool, and the unfiltered global leg is always retained.
+        """
+        from backend.rag_hierarchy import reciprocal_rank_fuse
+
+        global_evidence = await self.retrieve_native_hybrid(
+            query,
+            dataset_ids=dataset_ids,
+            top_k=top_k,
+            doc_filter=doc_filter,
+            node_roles=["evidence"],
+        )
+        navigation = await self.retrieve_native_hybrid(
+            query,
+            dataset_ids=dataset_ids,
+            top_k=min(max(4, top_k // 2), 16),
+            doc_filter=doc_filter,
+            node_roles=["navigation"],
+        )
+        route_ids = [
+            str((item.meta or {}).get("node_id") or "")
+            for item in navigation
+            if str((item.meta or {}).get("node_id") or "")
+        ]
+        if not route_ids:
+            return global_evidence
+        descendant_evidence = await self.retrieve_native_hybrid(
+            query,
+            dataset_ids=dataset_ids,
+            top_k=top_k,
+            doc_filter=doc_filter,
+            node_roles=["evidence"],
+            ancestor_ids=route_ids,
+        )
+        return reciprocal_rank_fuse(
+            [global_evidence, descendant_evidence],
+            limit=top_k,
+        )
 
     async def retrieve_table_rows(
         self,

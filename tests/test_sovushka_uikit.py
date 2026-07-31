@@ -4,6 +4,12 @@ from types import SimpleNamespace
 import pytest
 
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
+from sovushka.pages.rim import (
+    _human_norm_source,
+    _human_source_ref,
+    _progress_codes_display,
+    _progress_result_display,
+)
 from sovushka.uikit import components as components_module
 from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS, tab_name
 from sovushka.uikit.states import feedback_state
@@ -231,6 +237,41 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert '"blocker": blocker' in chat
     assert "action_button(" in chat
     assert "text_field(" in documents
+
+
+def test_rim_surface_uses_uikit_and_exposes_auditable_workflow():
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+
+    assert 'tab_refs["rim"] = ui.tab("РИМ-смета"' in header
+    assert "build_rim" in shell
+    assert "sov-rim-question__choices" in rim
+    assert "await send_message()" in rim
+    assert "Сохранённая сессия" in rim
+    assert 'api_get("/api/rim/sessions?limit=100")' in rim
+    assert "if session_id not in session_options:" in rim
+    for primitive in (
+        "action_button(",
+        "panel(",
+        "section_heading(",
+        "status_badge(",
+        "render_feedback_state(",
+        "select_field(",
+        "text_field(",
+    ):
+        assert primitive in rim
+    for label in (
+        "ВОР",
+        "Кандидаты ГЭСН",
+        "Проверка",
+        "Недостающие данные",
+        "Черновики ЛСР",
+        "Финализация",
+    ):
+        assert label in rim
+    assert "sov-rim-page" in UIKIT_CSS
+    assert "@media (max-width: 520px)" in UIKIT_CSS
 
 
 def test_chat_ui_cannot_disable_required_reranker():
@@ -462,3 +503,83 @@ def test_uikit_registry_exposes_select_with_shared_control_contract():
         ".sov-tools-layer",
     ):
         assert contract in UIKIT_CSS
+
+
+def test_rim_source_locator_is_human_readable_without_losing_table_position():
+    hashed_source = (
+        "/private/tmp/les-rim/"
+        "c876eec5ef71e7a3253a88f22efe68c05956bfc2918a974d6a18c18e89a9d236.xlsx"
+        "#sheet=СКС;table=1;row=6"
+    )
+
+    assert _human_source_ref(hashed_source) == "лист «СКС» · строка 6"
+    assert (
+        _human_source_ref("/tmp/spec.xlsx#sheet=Лист1;row=17")
+        == "spec.xlsx · лист «Лист1» · строка 17"
+    )
+    assert (
+        _human_norm_source(
+            {
+                "normative_base_version": "ФСНБ-2022 изм. 14",
+                "norm_code": "ГЭСНм10-06-001-01",
+                "norm_source_ref": "fsnb.sqlite#guid=1",
+            }
+        )
+        == "ФСНБ-2022 изм. 14 · ГЭСНм10-06-001-01"
+    )
+
+
+def test_rim_ui_shows_durable_qwen_mapping_progress():
+    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+
+    assert "/mapping/progress" in rim
+    assert "Живой прогресс подбора норм Qwen" in rim
+    assert "Сохранено по строкам:" in rim
+    assert "source_display" in rim
+    assert "Маршрут ФСНБ" in rim
+    assert "route_display" in rim
+    assert "route_timing_display" in rim
+    assert "маршрутов принято/отклонено:" in rim
+
+
+def test_rim_progress_table_keeps_codes_and_model_reason_compact():
+    row = {
+        "candidate_count": 8,
+        "candidates": [
+            {"norm_code": "ГЭСНм10-01-001-01"},
+            {"norm_code": "ГЭСНм10-01-001-02"},
+            {"norm_code": "ГЭСНм10-01-001-03"},
+        ],
+        "stage_label": "Нужна повторная проверка",
+        "decision": {"reason": "длинное основание " * 20},
+        "blockers": [],
+    }
+
+    assert (
+        _progress_codes_display(row, "candidates", "candidate_count")
+        == "8 · ГЭСНм10-01-001-01, ГЭСНм10-01-001-02, …"
+    )
+    result = _progress_result_display(row)
+    assert result.startswith("Нужна повторная проверка · длинное основание")
+    assert result.endswith("…")
+
+
+def test_rim_progress_table_shows_rejected_route_error_and_qwen_time():
+    result = _progress_result_display(
+        {
+            "stage_label": "Переход отклонён; сохранён предыдущий путь",
+            "route_events": [
+                {
+                    "outcome": "rejected",
+                    "error": "selected node is also present in rejected_nodes",
+                    "model_wait_seconds": 133.49,
+                }
+            ],
+        }
+    )
+
+    assert result == (
+        "Переход отклонён; сохранён предыдущий путь · "
+        "selected node is also present in rejected_nodes · Qwen: 133.49 с"
+    )
+    assert len(result) < 210

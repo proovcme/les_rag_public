@@ -4,20 +4,334 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-29)
+## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.25.30 (bounded local smeta transport recovery)
-номер сборки:              503     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.503 (internal identity; code-only soft-update target)
-ветка выпуска:             codex/sovushka-ui-kit
-dev implementation:       codex/sovushka-ui-kit; 0.25.30 candidate
+версия продукта (SemVer):  0.27.1 (phase-batched resumable RIM)
+номер сборки:              518     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.518 (internal identity; code-only soft-update target)
+ветка выпуска:             codex/rim-dialog-mvp
+dev implementation:       codex/rim-dialog-mvp; 0.27.1 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
 
+> 0.27.1 / build 518 — phase-batched resumable RIM
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; runtime/Legion/indexes не изменены.
+> Norm agent планирует минимальную общую фазу и выполняет её сразу для
+> нескольких строк одним batch tool call. Каждая принятая terminal-строка
+> получает durable checkpoint до проверки следующей строки пакета. Короткие
+> model frames сохраняют exact selectable ids; полный norm read остаётся перед
+> bind. Завершённый typed route может быть повторно использован только явным
+> `reuse_norm_catalog_route` модели: переносится scope, но не норма и не
+> applicability. Global review строит connected conflict groups, пересматривает
+> только их bounded-пакеты и дословно сохраняет остальные решения в полной
+> immutable revision.
+>
+> 0.27.0 / build 517 — полный RIM draft и hierarchy contract v1
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; runtime/indexes не изменены.
+> Specification intake сохраняет checkpoint после каждого model-owned пакета,
+> norm mapping получает все строки, global review требует терминальную
+> резолюцию каждой строки. `unbound` остаётся в расчёте с пустыми денежными
+> полями и не блокирует остальные; globally reviewed mapping допускает только
+> автоматический `priced_draft`, финал по-прежнему требует user lock.
+>
+> Общий RAG получил `les.rag.index-contract.v3` и
+> `les.rag.hierarchy.v1`: navigation nodes маршрутизируют descendant leg, но
+> никогда не являются evidence; global evidence leg сохраняется всегда.
+> Активация требует отдельную blue/green v3 generation и live quality gate.
+> Прежняя repository-wide 3204-test suite по решению владельца перенесена в
+> `make test-legacy-full`; канонические `make verify`/`make test` используют
+> короткий явно перечисленный contract/behavior gate.
+
+> 0.26.8 / build 516 — typed FSNB route и durable success trace
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy.
+> FSNB-каталог теперь является конечным графом
+> `family → collection → section/department → table → norm`. После корневого
+> меню, сразу построенного кодом без отдельного LLM-вызова, Qwen выбирает один
+> из четырёх стабильных route-tools:
+> `continue/ask/broaden/unbound`. Код проверяет только реального родителя,
+> показанный child/evidence и model self-conflict; применимость остаётся
+> решением Qwen. Scope больше не наследуется между строками.
+>
+> `system`, route-tool schemas и исходный mapping packet побайтово стабильны
+> между уровнями; текущая фаза находится в единственном working-memory
+> snapshot в хвосте prompt. Старые tool-пары и универсальные последние события
+> остаются во внешнем audit. Профиль каждого кадра содержит prompt/cache tokens,
+> TTFT/prefill/decode/tool/total, число детей и размер working memory.
+>
+> Каждый accepted/rejected переход получает `trace_id/outcome`, сохраняется
+> после хода в checkpoint и после mapping — в immutable `agent_audit`.
+> Реальный Mac Qwen 3.5 9B выбрал `ГЭСНм`, затем самостоятельно выбрал
+> `сборник 10 «Оборудование связи»` по официальному паспорту и отверг сборник
+> 32. Кешированный второй ход повторно использовал `3024/5205` prompt tokens
+> (58,10%): 82,36 с холодный ход и 62,96 с второй ход. Первоначальный неверный
+> выбор сборника 32 оказался retrieval-регрессией: сборник 10 занимал восьмое
+> место и не попадал в видимые шесть. Stage-scoped словарь и fusion
+> `official_lexical_head_coverage_then_rerank` вернули 10 на первое место,
+> не закрепляя профессиональный выбор в коде.
+>
+> Живой ответ выбора сборника сначала был отклонён только из-за пяти
+> перечисленных rejected siblings при старом лимите четыре. Контракт v11
+> допускает до шести фактически показанных альтернатив; точный tool payload
+> повторно проигран детерминированным тестом и принят без изменения выбора
+> модели. До section/table/full-card и строки сметы этот прогон ещё не дошёл;
+> готовая норма или ЛСР не заявляются.
+
+> 0.26.7 / build 515 — resumable mapping, stable cache и fail-closed bind
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Lifetime evidence counters больше не блокируют новый bounded resume-slice:
+> checkpoint сохраняет уже выполненную работу, а продолжение получает
+> собственный search/read/card/time budget. Повтор уже открытой карточки,
+> исчерпание slice либо идентичный tool call сразу переводит Qwen к
+> terminal-сериализации только когда terminal evidence действительно
+> достаточно. Если `unbound` отклонён из-за отсутствующего второго поиска или
+> непрочитанной карточки, tool-loop снова открывается при наличии бюджета;
+> повтор инструмента не может преждевременно вернуть режим сериализации.
+> До появления search/read повтор каталога не форсирует недоказанный
+> `unbound`: active history пересобирается из task prefix + compact working
+> memory, где видны последние catalog steps и точный `next_action`. Отличающийся
+> model-authored `catalog_query` может заново построить shortlist семейства,
+> поэтому первая неудачная гипотеза о сборнике не запирает агента навсегда.
+> Уже подтверждённый, но ещё не обысканный scope помечается
+> `must_search_selected_scopes`: следующий допустимый ход — scoped batch search,
+> а не новый preview того же сборника.
+>
+> Structured mapping допускает `bind` только для открытой typed-карточки с
+> формально совместимым измерителем. `exact`, в котором сама модель указала
+> missing operation, unresolved condition или limited conclusion, не проходит
+> как непротиворечивое решение. Model self-conflicts сохраняются в revision.
+> После очистки успешного checkpoint остаётся SHA-защищённый `agent_audit`
+> с catalog/query/tool trace и lifetime evidence usage.
+>
+> MLX cache теперь фиксирует неизменяемый `system + initial user task`, поэтому
+> сжатие рабочей истории не обнуляет prefix hit. В живом Mac-прогоне cache
+> повторно использовал `3375/7578`, затем `4123/4642` prompt tokens; второй
+> prefill занял `5,90 с`.
+>
+> Живой resume реальных первых пяти строк `СКС.xlsx` завершил immutable
+> mapping revision `4207474a2815462ab169464a6656dc2e`: все 5 строк получили
+> model-owned terminal decision, три первых и пятая честно остались без нормы.
+> На четвёртой Qwen выбрала `ГЭСНм10-01-052-07`, но одновременно указала
+> missing operation; это зафиксировано как regression, а не принимается за
+> готовую смету. Повторная проверка строки открыла и отвергла четыре typed-нормы
+> ГЭСНм 08-03-572 как шкафы/распределительные пункты с краном, сваркой и
+> металлоконструкциями. Qwen затем сама уточнила гипотезу: подтвердила паспорт
+> ГЭСНм 20 как второй scope, но несколько раз повторила catalog preview вместо
+> обязательного scoped search. Harness не засчитал это как выполненный поиск и
+> не принял `unbound`. Mac-проверка остановлена на сохранённом ходе 47 из-за
+> swap 90–92%; checkpoint остаётся возобновляемым. Живой retrieval trace
+> объясняет неверный shortlist: `degraded_sparse_only` из-за
+> `embedding_backend_mismatch:coreml!=sentence_transformers`, при этом rerank
+> реально выполнялся. Поэтому результат пяти строк — проверяемый mapping draft
+> с блокерами, а не ЛСР; mapping lock и расчёт корректно не запускались.
+> Полная suite по решению владельца не запускалась; focused regressions зелёные.
+>
+> 0.26.6 / build 514 — видимый durable progress пяти строк РИМ
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Новый owner-scoped `GET /api/rim/sessions/{session_id}/mapping/progress`
+> показывает checkpoint после каждого tool call: выбранный scope, число
+> поисков, кандидатов и открытых typed-карточек, сохранённое решение и
+> terminal blocker по каждой строке. Это read-only проекция без новой ревизии
+> и без изменения выбора Qwen. NiceGUI обновляет только эту компактную таблицу
+> раз в пять секунд; проектный источник виден как файл/лист/строка, нормативный
+> — как редакция ФСНБ и шифр.
+>
+> На сохранённом реальном checkpoint `СКС.xlsx` проекция показала все 5 строк:
+> по 8 кандидатов, 6/4/4/4/4 открытых карточки и model-selected scopes
+> `ГЭСНм/10` + `ГЭСНм/08`. Два решения старого v3 contract помечены
+> `needs_revalidation`, три строки — `cards_opened`; checkpoint не изменён.
+>
+> 0.26.5 / build 513 — компактный terminal mapping и grounded resume
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Однострочная structured-сериализация разделена на decision-specific
+> `bind|covered_by|unbound`: короткий `unbound` больше не повторяет запросы,
+> коды карточек и bind-only technology contract, а получает provenance из
+> typed tool trace. Terminal-валидация отклоняет решение, которое само требует
+> продолжить поиск либо ссылается на неоткрытую норму/сборник; при смене
+> validation contract такое checkpoint-решение остаётся в tool trajectory и
+> снова становится pending.
+>
+> Живой resume `СКС.xlsx` сохранил первую строку после полной выгрузки Qwen и
+> продолжил со второй. Компактная сериализация второй строки заняла 135,66 с
+> вместо прежнего 4-минутного большого ответа, но выявила новый честный
+> regression-case: модель сослалась на неоткрытые кандидаты и написала
+> «требуется поиск». Решение сохранено как исторический tool result, но новый
+> v4-grounding contract не должен пропускать его в расчёт. До пяти строк и ЛСР
+> прогон ещё не завершён.
+
+> 0.26.4 / build 512 — resume знает актуальный бюджет и фазу evidence
+>
+> Дата: 2026-07-30
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Resume norm-mapping теперь сообщает Qwen authoritative остаток
+> search/read/card/time budget, оставшиеся `work_id` и компактный evidence
+> status. Старое `budget exhausted` не блокирует продолжение при увеличенном
+> бюджете; одинаковые строки рекомендуется вести batch-вызовом, а найденные,
+> но не открытые кандидаты переводят следующую фазу в `read_norms_batch`.
+> Structured transport timeout сохраняет checkpoint и не расходует попытку
+> schema-repair. Локальное строковое `"False"` нормализуется в boolean только
+> по JSON-schema поля инструмента.
+>
+> Живой пятистрочный прогон `СКС.xlsx` подтвердил восстановление после
+> process/model restart, source rows 6–10, модельный выбор `ГЭСНм → сборник
+> 10`, scoped batch search и полный typed read 12 карточек по шкафу. Карточки
+> оказались неприменимыми (кабели, телефонный шкаф, железнодорожная прокладка,
+> сосуды/аппараты), и код не принял ни одну норму. До сметы прогон не дошёл:
+> толстый checkpoint вырос до 1 126 516 байт, structured context — до 42 944
+> токенов, cold prefill занял 398,28 с, затем получен timeout 600 с. Это
+> сохранённый partial и вход для thin checkpoint/event-log v2, а не успешная
+> ЛСР. Профильные тесты зелёные; полная suite по решению владельца не
+> запускалась.
+
+> 0.26.3 / build 511 — длинный РИМ-диалог не теряет выполненные ходы
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Norm-mapping после каждого завершённого tool call сохраняет durable
+> revision-bound checkpoint: диалог, каталог/scope, search/read evidence,
+> принятые строки и следующий ход. Рестарт или timeout продолжает с последнего
+> результата, не повторяя уже выполненный поиск; checkpoint удаляется только
+> после immutable mapping-ревизии. Модельное уточнение ВОР больше не может
+> заменить `source_ref/source_refs/source_row` нормативной ссылкой: project
+> provenance наследуется из родительской VOR, нормативный источник остаётся
+> отдельным `norm_source_ref`. MLX Host кеширует стабильный message-prefix до
+> нового assistant-ответа; cache bounded и очищается при unload/switch.
+> Изолированный Qwen 3.5 9B probe повторно использовал `14 968` из `14 996`
+> prompt tokens: второй ход `2,24 с` после холодного `139,17 с`.
+> Пятистрочный СКС-прогон по явной команде остановлен и этой проверкой не
+> продолжался.
+>
+> 0.26.2 / build 510 — нормативный компас РИМ без скрытого выбора сборника
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Первый экран `browse_norm_catalog` теперь показывает Qwen паспорта пяти
+> семейств ФСНБ: официальное назначение, типовую область, исключения, вопросы,
+> нормативный акт и навигационный источник. Выбор семейства и сборника разделён:
+> модель обязана сохранить собственные `scope_reason` и `confidence`, а код
+> только проверяет трассу и существование выбранной области. Таблица
+> валидируется по полному typed identity `base_type + collection + table`;
+> воспроизведённая ошибка `ГЭСН 34 + 08-02-001` отклоняется до retrieval,
+> тогда как реальная `ГЭСН 08-02-001` читается в своём сборнике. После выбора
+> сборника Qwen получает вычисленный из активной SQLite паспорт: название,
+> характерные разделы/таблицы, единицы, исключения и вопросы. Это навигация,
+> а не вручную поддерживаемая база решений или расчётное evidence.
+> Данные пользовательской `нормативка_под_РИМ.xlsx` нормализованы в
+> версионируемый реестр с SHA: коэффициенты, Сплит-форма, ФСЭМ, КАЦ, НР и СП
+> показываются Qwen только на соответствующем этапе и не подменяют typed
+> расчётные источники. Специального правила `СКС → ГЭСНм 10` нет.
+> Живой Mac smoke на Qwen 3.5 9B подтвердил чтение компаса: `39.28 с`
+> открыть пять паспортов, `49.53 с` выбрать `ГЭСНм` с собственной причиной и
+> `114.32 с` выбрать сборник `10` внутри этой книги. До поиска конкретной нормы
+> smoke намеренно остановлен. Профильный гейт: `170 passed`; `make verify`:
+> `3146 collected`, syntax/import smoke зелёный. Полная suite по решению
+> владельца не запускалась.
+>
+> 0.26.1 / build 509 — Qwen видит строки спецификации и задаёт технический вопрос в UI
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Исправлено чтение вложенного `source_intake`: Qwen получает тип источника,
+> число позиций и bounded пакет из 5 actual rows, а уже разобранная
+> спецификация больше не
+> предлагает бессмысленный `inspect_file`. Административные вопросы о включении
+> всех строк и предпочтении прямых/аналоговых норм запрещены; модель спрашивает
+> один недостающий технический факт только после source-linked ВОР. Строгая
+> draft-schema требует `work_name`, `unit`, `quantity`, `quantity_origin` и
+> `source_ref`, поэтому преждевременный `unbound`/mapping-объект не сохраняется.
+> UI показывает owner-scoped сохранённые
+> сессии, восстанавливает актуальную вместо устаревшего ID и рендерит варианты
+> ответа кнопками. На реальной `СКС.xlsx` (70 позиций, 3 раздела) Mac Qwen 3.5
+> 9B сохранил первые 5 полных source-linked строк и спросил, входят ли монтаж и
+> подключение в ВОР или спецификация означает только поставку; desktop и 390 px
+> browser smoke прошли. Полная legacy/основная suite по решению владельца не
+> запускалась; использованы профильные тесты и `make verify`.
+>
+> 0.26.0 / build 508 — диалоговая РИМ-сессия с двумя пользовательскими lock
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/rim-dialog-mvp`; без runtime deploy,
+> Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Добавлены persistent owner-scoped сессии и immutable ревизии, XLSX/CSV
+> intake, черновик ВОР, mapping round-trip, global review, authored scenarios,
+> canonical РИМ-расчёт, requirements, audit/XLSX и lazy UI «РИМ-смета».
+> РИМ-агент использует только строгую model-selected scoped batch-цепочку
+> `browse_norm_catalog → search_norms_batch → read_norms_batch →
+> submit_lsr_mapping`; RAG-card служит навигацией, а расчёт допускает только
+> открытую карточку structured store. `questions_to_ask` превращаются Qwen в
+> один вопрос с кликабельными вариантами. Решение КАЦ/коэффициента требует
+> нового пересчёта до final lock. Восстановлен совместимый `Reranker` export,
+> без которого актуальный `proxy.app` не импортировался. Первый живой ход Mac Qwen 3.5 9B выбрал
+> catalog; полный однострочный live loop за пять минут не завершился и остаётся
+> performance gate.
+>
+> 0.25.34 / build 507 — loopback защищён от системного proxy без отключения интернета
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Общая URL-policy отключает `trust_env` только для localhost/127.0.0.0/8/::1.
+> Она применена к UI→proxy, lite bridge, local model warmup/runtime,
+> diagnostics, metrics и reranker. Внешние, LAN и ZeroTier URL продолжают
+> использовать обычную httpx proxy-policy; ETM/update/cloud не затронуты.
+>
+> 0.25.33 / build 506 — восстановлен Glorax checklist-review без code-owned ответа
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Восстановлены шаблоны ПД/РД, importer, formal/parametric/ПП РФ №87 checks,
+> evidence-guard, API/persist, решения инженера и XLSX/HTML/JSON. Рабочая
+> поверхность встроена в текущий UI KIT в «Инструментах»: evidence-статус
+> отделён от решения инженера. Старые `/nc` и checklist-chat не перенесены,
+> потому что создавали отдельный визуальный язык и code-owned финальный текст.
+>
+> 0.25.32 / build 505 — ARTEL отделён от LES без потери интеграционного контура
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Вторая LES-owned копия исходников заменена pinned git-submodule
+> `proovcme/Agnostis` на commit `0ecccf54362870a75ecaf96f99fb6129dfe3a0fa`.
+> LES сохраняет ARTEL Index/BIM-export интеграцию и contract-тесты, но больше
+> не содержит собственного ARTEL release builder и не определяет архитектуру
+> или выпуск самостоятельного Revit-продукта.
+>
+> 0.25.31 / build 504 — восстановлены resumable mapping и read-only ETM
+>
+> Дата: 2026-07-29
+> Статус: Mac-only candidate в `codex/recover-forgotten-branches`; без runtime
+> deploy, Legion, Tauri build, tag, GitHub Release, public feed и VPS.
+> Document→ЛСР атомарно checkpoint'ит принятые строки по SHA-256 вложения,
+> повторный запуск продолжает только оставшиеся `work_id`, structured JSON
+> сериализуется пакетами до 8 строк, а timeout не повторяет идентичный payload.
+> `tools/smeta_document_local_run.py` исполняет тот же контракт локально.
+> ETM adapter читает цены только по заданным кодам, переиспользует session,
+> соблюдает пакет 50 кодов/rate limit и возвращает provenance-bearing quotes;
+> выбор материалов остаётся за моделью или пользователем.
+>
 > 0.25.30 / build 503 — полезное ядро PR #8 без обхода model-owned контракта
 >
 > Дата: 2026-07-29

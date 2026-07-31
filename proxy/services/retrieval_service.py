@@ -710,7 +710,12 @@ async def retrieve_chat_chunks(
         return blocked_result("native_rrf_unavailable")
     _s = time.monotonic()
     try:
-        native_chunks = await rag_backend.retrieve_native_hybrid(
+        native_method = getattr(
+            rag_backend,
+            "retrieve_native_hierarchical",
+            rag_backend.retrieve_native_hybrid,
+        )
+        native_chunks = await native_method(
             retrieval_query,
             dataset_ids=dataset_ids,
             top_k=merged_top_k,
@@ -735,13 +740,21 @@ async def retrieve_chat_chunks(
         status="ok",
         resolved_dataset_ids=list(dataset_ids or []),
         scope_source=scope_source,
-        mode="qdrant_native_hybrid",
+        mode=(
+            "qdrant_native_hierarchical"
+            if hasattr(rag_backend, "retrieve_native_hierarchical")
+            else "qdrant_native_hybrid"
+        ),
         vector_count=len(native_chunks),
         lexical_count=0,
         merged_count=len(native_chunks),
         score_kind="qdrant_rrf",
         retrieval_channels=["dense", "qdrant_sparse"],
-        fusion="rrf",
+        fusion=(
+            "global_rrf+descendant_rrf"
+            if hasattr(rag_backend, "retrieve_native_hierarchical")
+            else "rrf"
+        ),
     )
     if effective_doc_filter:
         trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])

@@ -1,0 +1,6922 @@
+{
+  "name": "glorax_pd_2026",
+  "stage": "PD",
+  "title": "Чек_лист_входного_контроля_ПД_ГИПы_БУП",
+  "source_file_name": "Чек_лист_входного_контроля_ПД_ГИПы_БУП.xlsx",
+  "version": "",
+  "disciplines": [
+    "Общее",
+    "СПОЗУ",
+    "АР",
+    "КР",
+    "ЭОМ",
+    "ЭН",
+    " ВК и НВК",
+    "ОВиК",
+    "СС",
+    "ПБ2 (АППЗ)"
+  ],
+  "items": [
+    {
+      "id": "PD-OB-003",
+      "stage": "PD",
+      "discipline": "Общее",
+      "sheet_name": "Общее",
+      "row": 3,
+      "item_no": "1",
+      "section_path": [],
+      "criterion": "Приложен отчет об инженерно-геологических изысканиях",
+      "answer_cell": "C3",
+      "note_cell": "D3",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OB-004",
+      "stage": "PD",
+      "discipline": "Общее",
+      "sheet_name": "Общее",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [],
+      "criterion": "Приложен отчет об инженерно-геодезических изысканиях",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OB-005",
+      "stage": "PD",
+      "discipline": "Общее",
+      "sheet_name": "Общее",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [],
+      "criterion": "Приложен отчет об инженерно-гидрометеорологических изысканиях",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OB-006",
+      "stage": "PD",
+      "discipline": "Общее",
+      "sheet_name": "Общее",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [],
+      "criterion": "Приложен отчет об экологических изысканиях",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OB-007",
+      "stage": "PD",
+      "discipline": "Общее",
+      "sheet_name": "Общее",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [],
+      "criterion": "Перечень компенсирующих мероприятий СТУ учтен в соответствующих томах проектной документации",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required",
+      "comment": "T1.4: эвристика ошибочно классифицирует как cross_section из-за слова 'соответствующих' в обороте 'учтен в соответствующих томах' (это прилагательное 'подходящих', не глагол сверки 'соответствует X'). Фактически пункт про полноту учёта перечня мероприятий СТУ по комплекту — экспертная проверка, оставлена manual_required."
+    },
+    {
+      "id": "PD-SPOZU-004",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ПЗ ИРД (в части ГПЗУ) / ГПЗУ",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-005",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Концепция по благоустройству",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-007",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Отчет об инженерно-геодезических изысканиях"
+      ],
+      "criterion": "АГО",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-SPOZU-011",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие пирогов благоустройства ТЗ и техническому стандарту Glorax"
+      ],
+      "criterion": "Слои конструкций благоустройства соответствуют ТЗ.",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SPOZU-012",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 12,
+      "item_no": "10",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие пирогов благоустройства ТЗ и техническому стандарту Glorax"
+      ],
+      "criterion": "Материалы и технологии соответствуют техническому стандарту Glorax.",
+      "answer_cell": "C12",
+      "note_cell": "D12",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SPOZU-014",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 14,
+      "item_no": "12",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие элементов благоустройства концепции"
+      ],
+      "criterion": "Типы покрытий (тротуары, проезды) соответствуют концепции.",
+      "answer_cell": "C14",
+      "note_cell": "D14",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-015",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие элементов благоустройства концепции"
+      ],
+      "criterion": "Решения по озеленению соответствуют концепции.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-016",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие элементов благоустройства концепции"
+      ],
+      "criterion": "Ограждения территории соответствуют концепции.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-017",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие элементов благоустройства концепции"
+      ],
+      "criterion": "МАФ соответствуют концепции.",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-018",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие элементов благоустройства концепции"
+      ],
+      "criterion": "Площадки для отдыха, игр и спорта соответствуют концепции.",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-020",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие раздела СПОЗУ согласованным документам"
+      ],
+      "criterion": "Раздел СПОЗУ соответствует альбому АГО.",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SPOZU-021",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие раздела СПОЗУ согласованным документам"
+      ],
+      "criterion": "Раздел СПОЗУ соответствует ГПЗУ/ППТ.",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SPOZU-022",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие раздела СПОЗУ согласованным документам"
+      ],
+      "criterion": "Технико‑экономические показатели земельного участка соответствуют ГПЗУ и АГО.",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SPOZU-023",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие раздела СПОЗУ согласованным документам"
+      ],
+      "criterion": "Предоставлен расчет основных показателей СПОЗУ: всех площадок, озеленения и  парковочных м/м, в т.ч для МГН (М1-М4).",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SPOZU-024",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Соответствие раздела СПОЗУ согласованным документам"
+      ],
+      "criterion": "Предоставлен расчет накопления ТБО/КГО с количеством контейнеров.",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SPOZU-026",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Актуальность топографической съёмки"
+      ],
+      "criterion": "Срок давности топосъёмки не превышает допустимого по п. 5.1.20 СП 47.13330.2016.",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SPOZU-027",
+      "stage": "PD",
+      "discipline": "СПОЗУ",
+      "sheet_name": "СПОЗУ",
+      "row": 27,
+      "item_no": "25",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Актуальность топографической съёмки"
+      ],
+      "criterion": "Съёмка актуализована при изменениях рельефа/ситуации.",
+      "answer_cell": "C27",
+      "note_cell": "D27",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-004",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ПЗ/ПЗ ИРД",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-005",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Градостроительный план (для проверки санитарных зон, предельные высоты, дата град плана для понимания актуальной НД)",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-006",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчет инсоляции и КЕО",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-007",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчет вертикального транспорта",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-008",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 8,
+      "item_no": "6",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчет категории помещений",
+      "answer_cell": "C8",
+      "note_cell": "D8",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-009",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 9,
+      "item_no": "7",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчеты изоляции воздушного и ударного шума",
+      "answer_cell": "C9",
+      "note_cell": "D9",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-010",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 10,
+      "item_no": "8",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ОДИ",
+      "answer_cell": "C10",
+      "note_cell": "D10",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-011",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Раздел ПБ",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-012",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 12,
+      "item_no": "10",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "СТУ (в т.ч. список отклонений от НД)",
+      "answer_cell": "C12",
+      "note_cell": "D12",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-AR-013",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 13,
+      "item_no": "11",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Теплотехнический расчет",
+      "answer_cell": "C13",
+      "note_cell": "D13",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-014",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 14,
+      "item_no": "12",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Ссылка из Sarex на АГО и ОПР",
+      "answer_cell": "C14",
+      "note_cell": "D14",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-018",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёты для наружных стен, в т.ч. стен в грунте.",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-019",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 19,
+      "item_no": "17",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёты для всех видов покрытий.",
+      "answer_cell": "C19",
+      "note_cell": "D19",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-020",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёты для перекрытия над проездом.",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-021",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёты для пола по грунту.",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-022",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёты для внутренних стен.",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-023",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёты для элементов заполнения оконных и дверных проемов.",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-024",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёт или присутствует обоснование коэффициента теплотехнической однородности r для всех видов наружных стен.",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-025",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 25,
+      "item_no": "23",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Выполнены расчёт или присутствует обоснование коэффициента r для всех видов покрытий.",
+      "answer_cell": "C25",
+      "note_cell": "D25",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-026",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Теплотехнические расчёты\n(СП 230, раздел 5; СП 50, приложение Г)"
+      ],
+      "criterion": "Приведён расчёт одномерного влагопереноса для защиты от переувлажнения ограждающих  конструкций (СП 50, раздел 8).",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-028",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Акустические расчёты"
+      ],
+      "criterion": "Рассчитан индекс изоляции воздушного шума для ж/б стен и перегородок для помещений различного назначения.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-029",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Акустические расчёты"
+      ],
+      "criterion": "Предоставлен индекс изоляции воздушного шума для стен из СКЦ перегородок для помещений различного назначения.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-030",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 30,
+      "item_no": "28",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Акустические расчёты"
+      ],
+      "criterion": "Предоставлены расчеты для оценки изоляции от внешнего шума, создаваемого городским транспортом, при передаче его внутрь помещения через окно (при необходимости).",
+      "answer_cell": "C30",
+      "note_cell": "D30",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-031",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 31,
+      "item_no": "29",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Акустические расчёты"
+      ],
+      "criterion": "Рассчитан индекс изоляции воздушного и приведенные уровни ударного шума при передаче звука сверху вниз и снизу вверх для перекрытий помещений различного назначения.",
+      "answer_cell": "C31",
+      "note_cell": "D31",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-032",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 32,
+      "item_no": "30",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Акустические расчёты"
+      ],
+      "criterion": "Выполнен расчёт звукоизоляции нормируемых помещений от источников шума: ИТП, насосная, трансформаторная, венткамеры и тд.",
+      "answer_cell": "C32",
+      "note_cell": "D32",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-033",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 33,
+      "item_no": "31",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Акустические расчёты"
+      ],
+      "criterion": "Выполнены мероприятия по защите от шума в проекте, согласно расчетам.",
+      "answer_cell": "C33",
+      "note_cell": "D33",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-035",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 35,
+      "item_no": "33",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт лифтового оборудования"
+      ],
+      "criterion": "Выполнен расчёт скорости лифтов.",
+      "answer_cell": "C35",
+      "note_cell": "D35",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-036",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 36,
+      "item_no": "34",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт лифтового оборудования"
+      ],
+      "criterion": "Рассчитано необходимое количество лифтов.",
+      "answer_cell": "C36",
+      "note_cell": "D36",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-037",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 37,
+      "item_no": "35",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт лифтового оборудования"
+      ],
+      "criterion": "Предоставлен расчет провозной способности  и  соответствие нормативному интервалу движения лифтов.",
+      "answer_cell": "C37",
+      "note_cell": "D37",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-039",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 39,
+      "item_no": "37",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт для маломобильных групп населения (МГН) и пожаробезопасных зон (ПБЗ)"
+      ],
+      "criterion": "Приведено расчётное число МГН (М2–М4).",
+      "answer_cell": "C39",
+      "note_cell": "D39",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-040",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 40,
+      "item_no": "38",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт для маломобильных групп населения (МГН) и пожаробезопасных зон (ПБЗ)"
+      ],
+      "criterion": "Определено количество ПБЗ и внесены их обозначения на планах.",
+      "answer_cell": "C40",
+      "note_cell": "D40",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-042",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 42,
+      "item_no": "40",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт температурного поля ограждающих конструкций на соответствие санитарно-гигиеническим требованиям"
+      ],
+      "criterion": "Выполнен расчёт для зоны установки термовкладышей.",
+      "answer_cell": "C42",
+      "note_cell": "D42",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-AR-043",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 43,
+      "item_no": "41",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт температурного поля ограждающих конструкций на соответствие санитарно-гигиеническим требованиям"
+      ],
+      "criterion": "Выполнен  расчёт для зоны примыкания парапета к перекрытию (исключение промерзания и невыпадения конденсата).",
+      "answer_cell": "C43",
+      "note_cell": "D43",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-044",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 44,
+      "item_no": "42",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт температурного поля ограждающих конструкций на соответствие санитарно-гигиеническим требованиям"
+      ],
+      "criterion": "Выполнен расчёт для зоны установки светопрозрачных конструкций (по ГОСТ Р 56926).",
+      "answer_cell": "C44",
+      "note_cell": "D44",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-045",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 45,
+      "item_no": "43",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов в ПД: Расчёт температурного поля ограждающих конструкций на соответствие санитарно-гигиеническим требованиям"
+      ],
+      "criterion": "Выполнен расчёт для зоны установки наружных дверей (по ГОСТ Р 56926).",
+      "answer_cell": "C45",
+      "note_cell": "D45",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-047",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 47,
+      "item_no": "45",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Подземный паркинг"
+      ],
+      "criterion": "Толщина стяжки пола — не менее 80 мм.",
+      "answer_cell": "C47",
+      "note_cell": "D47",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "parametric"
+    },
+    {
+      "id": "PD-AR-048",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 48,
+      "item_no": "46",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Подземный паркинг"
+      ],
+      "criterion": "Предусмотрен водосборный лоток в проездах с приямками.",
+      "answer_cell": "C48",
+      "note_cell": "D48",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-050",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 50,
+      "item_no": "48",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Расположение корзин для кондиционеров"
+      ],
+      "criterion": "Места установки корзин соответствуют ОПР.",
+      "answer_cell": "C50",
+      "note_cell": "D50",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-AR-051",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 51,
+      "item_no": "49",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Расположение корзин для кондиционеров"
+      ],
+      "criterion": "Соблюдены требования ТЗ.",
+      "answer_cell": "C51",
+      "note_cell": "D51",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-052",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 52,
+      "item_no": "50",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Расположение корзин для кондиционеров"
+      ],
+      "criterion": "Учтена матрица продукта.",
+      "answer_cell": "C52",
+      "note_cell": "D52",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-054",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 54,
+      "item_no": "52",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Утеплитель (вендор‑лист)"
+      ],
+      "criterion": "Марка утеплителя соответствует вендор‑листу.",
+      "answer_cell": "C54",
+      "note_cell": "D54",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-055",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 55,
+      "item_no": "53",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Утеплитель (вендор‑лист)"
+      ],
+      "criterion": "Плотность утеплителя соответствует вендор‑листу.",
+      "answer_cell": "C55",
+      "note_cell": "D55",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-056",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 56,
+      "item_no": "54",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Утеплитель (вендор‑лист)"
+      ],
+      "criterion": "Толщина утеплителя соответствует теплотехническому расчету.",
+      "answer_cell": "C56",
+      "note_cell": "D56",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-058",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 58,
+      "item_no": "56",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Пироги кровли"
+      ],
+      "criterion": "Пирог кровли здания соответствует ТЗ.",
+      "answer_cell": "C58",
+      "note_cell": "D58",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-059",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 59,
+      "item_no": "57",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Пироги кровли"
+      ],
+      "criterion": "Пирог кровли стилобата соответствует ТЗ.",
+      "answer_cell": "C59",
+      "note_cell": "D59",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-061",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 61,
+      "item_no": "59",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Конструкции перегородок и армирование"
+      ],
+      "criterion": "Конструкции перегородок соответствуют ТЗ.",
+      "answer_cell": "C61",
+      "note_cell": "D61",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-062",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 62,
+      "item_no": "60",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Конструкции перегородок и армирование"
+      ],
+      "criterion": "Армирование соответствует ТЗ.",
+      "answer_cell": "C62",
+      "note_cell": "D62",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-064",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 64,
+      "item_no": "62",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Архитектурно‑планировочные решения"
+      ],
+      "criterion": "Планировка жилой части соответствует ОПР.",
+      "answer_cell": "C64",
+      "note_cell": "D64",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-065",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 65,
+      "item_no": "63",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Архитектурно‑планировочные решения"
+      ],
+      "criterion": "Планировка коммерческой части соответствует ОПР.",
+      "answer_cell": "C65",
+      "note_cell": "D65",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-066",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 66,
+      "item_no": "64",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Архитектурно‑планировочные решения"
+      ],
+      "criterion": "Планировка МОП соответствует ОПР.",
+      "answer_cell": "C66",
+      "note_cell": "D66",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-067",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 67,
+      "item_no": "65",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Архитектурно‑планировочные решения"
+      ],
+      "criterion": "Планировка паркинга соответствует ОПР.",
+      "answer_cell": "C67",
+      "note_cell": "D67",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-068",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 68,
+      "item_no": "66",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Архитектурно‑планировочные решения"
+      ],
+      "criterion": "Планировка комьюнити‑центров соответствует ОПР.",
+      "answer_cell": "C68",
+      "note_cell": "D68",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-069",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 69,
+      "item_no": "67",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Архитектурно‑планировочные решения"
+      ],
+      "criterion": "Все решения согласованы с ОПР.",
+      "answer_cell": "C69",
+      "note_cell": "D69",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-071",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 71,
+      "item_no": "69",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Квартирные двери"
+      ],
+      "criterion": "Квартирные двери соответствуют стандарту компании.",
+      "answer_cell": "C71",
+      "note_cell": "D71",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-072",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 72,
+      "item_no": "70",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Квартирные двери"
+      ],
+      "criterion": "Противопожарные двери соответствуют требованиям ПБ и СТУ.",
+      "answer_cell": "C72",
+      "note_cell": "D72",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-074",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 74,
+      "item_no": "72",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Трапы и приямки"
+      ],
+      "criterion": "Установлены трапы в ПУИ (пищеблок, душевые и т. д.).",
+      "answer_cell": "C74",
+      "note_cell": "D74",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-075",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 75,
+      "item_no": "73",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Трапы и приямки"
+      ],
+      "criterion": "Предусмотрены приямки в технических/инженерных помещениях.",
+      "answer_cell": "C75",
+      "note_cell": "D75",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-076",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 76,
+      "item_no": "74",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Трапы и приямки"
+      ],
+      "criterion": "Предусмотрены приямки в коридоре подвала.",
+      "answer_cell": "C76",
+      "note_cell": "D76",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-077",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 77,
+      "item_no": "75",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Трапы и приямки"
+      ],
+      "criterion": "Предусмотрены приямки в паркинге.",
+      "answer_cell": "C77",
+      "note_cell": "D77",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-AR-079",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 79,
+      "item_no": "77",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Наличие необходимых расчётов в ПД: Приведён расчёт инсоляции и коэффициента естественного освещения (ИКЕО).",
+      "answer_cell": "C79",
+      "note_cell": "D79",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-AR-080",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 80,
+      "item_no": "78",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Указаны категории помещений по взрывопожарной и пожарной опасности. Категории подтверждены расчетом.",
+      "answer_cell": "C80",
+      "note_cell": "D80",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-AR-081",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 81,
+      "item_no": "79",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Размер приямка в помещении ИТП соответствует требованиям СП 510, п. 7.16).",
+      "answer_cell": "C81",
+      "note_cell": "D81",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-082",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 82,
+      "item_no": "80",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Решётки над входными дверьми в коммерческие помещения соответствуют проектным требованиям.",
+      "answer_cell": "C82",
+      "note_cell": "D82",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-083",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 83,
+      "item_no": "81",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Ворота паркинга НЕ размещены над жилыми помещениями.",
+      "answer_cell": "C83",
+      "note_cell": "D83",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-AR-084",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 84,
+      "item_no": "82",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Козырьки над входом соответствуют требованиям СП 54, п. 5.21.",
+      "answer_cell": "C84",
+      "note_cell": "D84",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-AR-085",
+      "stage": "PD",
+      "discipline": "АР",
+      "sheet_name": "АР",
+      "row": 85,
+      "item_no": "83",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Кухня (в т.ч. кухня‑ниша, кухонная зона кухни‑столовой) НЕ размещена над жилыми комнатами",
+      "answer_cell": "C85",
+      "note_cell": "D85",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-004",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчетная модель в программе",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-005",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Строительное задание на лифты",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-006",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчетно-пояснительная записка",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-011",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнена расчётная модель в SCAD или ЛИРА САПР (в одной из указанных программ).",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-012",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 12,
+      "item_no": "10",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Уточнены нагрузки с учётом пирогов конструкций согласно разделу АР.",
+      "answer_cell": "C12",
+      "note_cell": "D12",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-013",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 13,
+      "item_no": "11",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены расчёты перемещений, деформаций и форм колебания конструкций.",
+      "answer_cell": "C13",
+      "note_cell": "D13",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-014",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 14,
+      "item_no": "12",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт устойчивости ростверка против всплытия на этапе строительства (ростверк на естественном основании).",
+      "answer_cell": "C14",
+      "note_cell": "D14",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-015",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнена схема расчёта нагрузок с указанием типов нагрузок и их параметров.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-016",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены расчёты огнестойкости для всех типов конструкций, класс огнестойкости соответсвует разделу ПБ/СТУ на объект.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-017",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчет повышенных снегоотложений (снеговых мешков). Построены схемы приложения нагрузок от повышенных снегоотложений",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-018",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены поля напряжений, эпюры внутренних усилий, поля армирования в конструкциях.",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-020",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Гидроизоляция и материалы"
+      ],
+      "criterion": "Марка бетона соответствует требованиям по водонепроницаемости для ростверка и наружных стен ниже уровня земли (W12).",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "parametric"
+    },
+    {
+      "id": "PD-KR-021",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Гидроизоляция и материалы"
+      ],
+      "criterion": "Используется гидрошпонка из ПВХ в рабочих и деформационных швах.",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-022",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Гидроизоляция и материалы"
+      ],
+      "criterion": "Используется инжектосистема в деформационных швах.",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-023",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Гидроизоляция и материалы"
+      ],
+      "criterion": "Выполнена наружная гидроизоляция бетонных поверхностей (наплавляемая в два слоя и обмазочная при уровне грунтовых вод ниже подошвы фундамента более чем на 1 м).",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-024",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Гидроизоляция и материалы"
+      ],
+      "criterion": "Используется металлическая краевая рейка для крепления наплавляемой гидроизоляции.",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-025",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 25,
+      "item_no": "23",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Гидроизоляция и материалы"
+      ],
+      "criterion": "Зазор между стеной и отгибом краевой рейки заполнен герметезирующей мастикой",
+      "answer_cell": "C25",
+      "note_cell": "D25",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-027",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 27,
+      "item_no": "25",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Геотехническое обоснование"
+      ],
+      "criterion": "Уточнена необходимость геотехнического обоснования с учётом категории сложности грунтов.",
+      "answer_cell": "C27",
+      "note_cell": "D27",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-028",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Геотехническое обоснование"
+      ],
+      "criterion": "Разработана геотехническая документация в соответствии с п. 4.19 СП 22.13330.2016 при III (сложной) категории грунтов.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-029",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Геотехническое обоснование"
+      ],
+      "criterion": "Выполнены расчёты в Plaxis для высотных зданий.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-KR-031",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 31,
+      "item_no": "29",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Термовкладыши"
+      ],
+      "criterion": "Используются термовкладыши в плитах типовых этажей.",
+      "answer_cell": "C31",
+      "note_cell": "D31",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-032",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 32,
+      "item_no": "30",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Термовкладыши"
+      ],
+      "criterion": "Используются термовкладыши по контуру внешней стены в зоне балкона/лоджии.",
+      "answer_cell": "C32",
+      "note_cell": "D32",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-033",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 33,
+      "item_no": "31",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Термовкладыши"
+      ],
+      "criterion": "Используются термовкладыши в конструкции парапета.",
+      "answer_cell": "C33",
+      "note_cell": "D33",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-035",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 35,
+      "item_no": "33",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Утеплитель"
+      ],
+      "criterion": "Используется экструдированный пенополистирол для деформационных швов фундаментной плиты, стен цоколя и в качестве термовкладышей в стенах, перекрытиях, парапете и т. д..",
+      "answer_cell": "C35",
+      "note_cell": "D35",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-036",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 36,
+      "item_no": "34",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Утеплитель"
+      ],
+      "criterion": "Используется минеральная плита для деформационных швов выше отметки 0,000 м.",
+      "answer_cell": "C36",
+      "note_cell": "D36",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-038",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 38,
+      "item_no": "36",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Расположение, количество и сечение железобетонных конструкций соответствует требованиям ОПР КР.",
+      "answer_cell": "C38",
+      "note_cell": "D38",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-039",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 39,
+      "item_no": "37",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Расположение свай выполнено преимущественно под вертикальными конструкциями здания.",
+      "answer_cell": "C39",
+      "note_cell": "D39",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-040",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 40,
+      "item_no": "38",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Расположение и размеры приямков для лифтов, соответствуют строительному заданию на лифты.",
+      "answer_cell": "C40",
+      "note_cell": "D40",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-KR-041",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 41,
+      "item_no": "39",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Глубина лифтовой шахты и высота технического помещения над шахтой соответствуют строительному заданию на лифты",
+      "answer_cell": "C41",
+      "note_cell": "D41",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-KR-042",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 42,
+      "item_no": "40",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Отсутствуют контурные балки по периметру наружных стен и на лоджиях.",
+      "answer_cell": "C42",
+      "note_cell": "D42",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-KR-043",
+      "stage": "PD",
+      "discipline": "КР",
+      "sheet_name": "КР",
+      "row": 43,
+      "item_no": "41",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Принята минимально возможная высота бетонного парапета с добором высоты металлическим ограждением.",
+      "answer_cell": "C43",
+      "note_cell": "D43",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-004",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Сводный план инженерных сетей",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-005",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Раздел ПБ",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-006",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "СТУ (в т.ч. список отклонений от НД)",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-EOM-007",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "АР или планы в томе ЭОМ",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-008",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 8,
+      "item_no": "6",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ПЗ ИРД (ТУ)",
+      "answer_cell": "C8",
+      "note_cell": "D8",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-012",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 12,
+      "item_no": "10",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчет электрических нагрузок, представлена таблица электрических нагрузок в формате excel, приведена сводная таблица нагрузок по ЖК.",
+      "answer_cell": "C12",
+      "note_cell": "D12",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EOM-013",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 13,
+      "item_no": "11",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Проведён расчёт сечений проводников по допустимому длительному току.",
+      "answer_cell": "C13",
+      "note_cell": "D13",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EOM-014",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 14,
+      "item_no": "12",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнена проверка сечений проводников по потерям напряжения.",
+      "answer_cell": "C14",
+      "note_cell": "D14",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-015",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Проведена проверка выбора аппаратов защиты по рабочему току.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-016",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт отключающей способности ЗКА по условиям трёхфазного КЗ на шинах панелей ВРУ/ГРЩ.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EOM-017",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Проведена проверка характеристик ЗКА на отключение по однофазному КЗ в максимально удалённой точке (для каждой панели ВРУ/ГРЩ).",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-018",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт освещённости на нормируемых поверхностях помещений.",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EOM-020",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Удельные нагрузки квартир и НПКИ"
+      ],
+      "criterion": "Удельные нагрузки квартир соответствуют  классу ЖК.",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-021",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Удельные нагрузки квартир и НПКИ"
+      ],
+      "criterion": "Удельные нагрузки НПКИ применены согласно их функционалу, принятому из согласованного ОПР.",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-023",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Технические условия от энергоснабжающей организации"
+      ],
+      "criterion": "Приложены актуальные ТУ на присоединение электроустановки объекта к сетям электроснабжения.",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-EOM-024",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Технические условия от энергоснабжающей организации"
+      ],
+      "criterion": "ТУ на присоединение электроустановки объекта к сетям электроснабжения размещены в составе тома проектной документации (как приложение).",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-EOM-026",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Внутренний контур заземления"
+      ],
+      "criterion": "Предусмотрен внутренний контур заземления в помещениях насосных.",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-027",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 27,
+      "item_no": "25",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Внутренний контур заземления"
+      ],
+      "criterion": "Выполнен контур заземления в венткамерах.",
+      "answer_cell": "C27",
+      "note_cell": "D27",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-028",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Внутренний контур заземления"
+      ],
+      "criterion": "Организован контур заземления в машинных помещениях.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-029",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Внутренний контур заземления"
+      ],
+      "criterion": "Имеется контур заземления в шахтах лифтов.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-030",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 30,
+      "item_no": "28",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Внутренний контур заземления"
+      ],
+      "criterion": "Отсутствуют контуры заземления в электрощитовых (согласно ПУЭ, гл. 1.7).",
+      "answer_cell": "C30",
+      "note_cell": "D30",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-032",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 32,
+      "item_no": "30",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Огнезащита кабельных линий"
+      ],
+      "criterion": "Обеспечена огнезащита транзитных кабельных линий, проходящих через паркинг (EI150).",
+      "answer_cell": "C32",
+      "note_cell": "D32",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-034",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 34,
+      "item_no": "32",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "В ИРД содержатся требования по световому ограждению здания.",
+      "answer_cell": "C34",
+      "note_cell": "D34",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-035",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 35,
+      "item_no": "33",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Применяется астрономическое реле времени в системах автоматического управления освещением.",
+      "answer_cell": "C35",
+      "note_cell": "D35",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EOM-036",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 36,
+      "item_no": "34",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Указанные в текстовой части способы прокладки кабелей соответствуют требованиям ТЗ.",
+      "answer_cell": "C36",
+      "note_cell": "D36",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-EOM-037",
+      "stage": "PD",
+      "discipline": "ЭОМ",
+      "sheet_name": "ЭОМ",
+      "row": 37,
+      "item_no": "35",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Для квартирных стояков применяются кабели/провода с алюминиевыми жилами (кроме классов ЖК Бизнес/Премиум).",
+      "answer_cell": "C37",
+      "note_cell": "D37",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-004",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Расчеты по выбору сечений кабельных линий и номиналов аппаратов защиты",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EN-005",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Сводный план инженерных сетей с сетями наружного освещения",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-006",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованная концепция благоустройства (в части наружного освещения)",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-009",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 9,
+      "item_no": "7",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Присутствует план сетей электроснабжения в составе сводного плана инженерных сетей ПЗУ.",
+      "answer_cell": "C9",
+      "note_cell": "D9",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-010",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 10,
+      "item_no": "8",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Проведён расчёт сечений проводников по допустимому длительному току.",
+      "answer_cell": "C10",
+      "note_cell": "D10",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EN-011",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Выполнена проверка сечений проводников по потерям напряжения.",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-012",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 12,
+      "item_no": "10",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Проведена проверка выбора аппаратов защиты по рабочему току.",
+      "answer_cell": "C12",
+      "note_cell": "D12",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-013",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 13,
+      "item_no": "11",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Проведена проверка характеристик защитно-коммутационных аппаратов на отключение по однофазному КЗ в максимально удалённой точке (для каждой панели ВРУ/ГРЩ).",
+      "answer_cell": "C13",
+      "note_cell": "D13",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-014",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 14,
+      "item_no": "12",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Выбор и расстановка осветительных приборов соответствуют утверждённой концепции благоустройства.",
+      "answer_cell": "C14",
+      "note_cell": "D14",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-EN-015",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "Выполнен расчёт освещённости на нормируемых поверхностях элементов благоустройства, а также расчет засветки окон.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-EN-016",
+      "stage": "PD",
+      "discipline": "ЭН",
+      "sheet_name": "ЭН",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "ВНУТРИПЛОЩАДОЧНОЕ ОСВЕЩЕНИЕ"
+      ],
+      "criterion": "В документации указано, что для прокладки наружных сетей ЭС применяются кабели с алюминиевыми жилами.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-004",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ПЗ ИРД (ТУ)",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-005",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Раздел ПБ",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-006",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "СТУ (в т.ч. список отклонений от норм)",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-007",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованное функциональное назначение коммерческих помещений",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-008",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 8,
+      "item_no": "6",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованный альбом ОПР",
+      "answer_cell": "C8",
+      "note_cell": "D8",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-009",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 9,
+      "item_no": "7",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованные ТЭПы",
+      "answer_cell": "C9",
+      "note_cell": "D9",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-010",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 10,
+      "item_no": "8",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованная квартирография",
+      "answer_cell": "C10",
+      "note_cell": "D10",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-011",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "АР или планы в томе ВК",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-015",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт расхода воды для ХВС по потребителям.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-016",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт расхода воды для ГВС по потребителям.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-017",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт внутреннего пожаротушения по потребителям.",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-018",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт наружного пожаротушения.",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-019",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 19,
+      "item_no": "17",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт расхода тепла для ГВС по потребителям.",
+      "answer_cell": "C19",
+      "note_cell": "D19",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-020",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт расхода воды для АУПТ (при наличии кладовых, паркинга, апартаментов и т. п.).",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-021",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Приложен план расстановки оросителей на самом удалённом расчётном участке (для АУПТ).",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-VK-022",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнены и приложены расчёты пропускной способности канализационных сетей.",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-023",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт расхода ливневого стока с кровли.",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-024",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчёт поверхностного стока.",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-025",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 25,
+      "item_no": "23",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен подбор насосных установок для ХВС.",
+      "answer_cell": "C25",
+      "note_cell": "D25",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-026",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен подбор насосных установок для АУПТ.",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-027",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 27,
+      "item_no": "25",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен подбор насосных установок для ВПВ.",
+      "answer_cell": "C27",
+      "note_cell": "D27",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-028",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен расчет требуемых напоров.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-029",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Выполнен и приложен подбор водомерных узлов.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-030",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 30,
+      "item_no": "28",
+      "section_path": [
+        "Раздел ВК",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Приложены актуальные ТУ на подключение к сетям",
+      "answer_cell": "C30",
+      "note_cell": "D30",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-VK-032",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 32,
+      "item_no": "30",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по системам ВК требованиям ТЗ и НТД, а также смежным разделам"
+      ],
+      "criterion": "Расположение стояков ВК соответствует требованиям ТЗ.",
+      "answer_cell": "C32",
+      "note_cell": "D32",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-VK-033",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 33,
+      "item_no": "31",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по системам ВК требованиям ТЗ и НТД, а также смежным разделам"
+      ],
+      "criterion": "Стояки ВК согласованы с планами АР/ОПР.",
+      "answer_cell": "C33",
+      "note_cell": "D33",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-VK-034",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 34,
+      "item_no": "32",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по системам ВК требованиям ТЗ и НТД, а также смежным разделам"
+      ],
+      "criterion": "Обеспечено объединение стояков у смежных квартир (согласно ТЗ).",
+      "answer_cell": "C34",
+      "note_cell": "D34",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-035",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 35,
+      "item_no": "33",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по системам ВК требованиям ТЗ и НТД, а также смежным разделам"
+      ],
+      "criterion": "Расположение патрубков для подключения пожарной техники на фасадах согласовано со смежниками",
+      "answer_cell": "C35",
+      "note_cell": "D35",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-VK-036",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 36,
+      "item_no": "34",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по системам ВК требованиям ТЗ и НТД, а также смежным разделам"
+      ],
+      "criterion": "Стояки ливневой канализации размещены за пределами квартир в шахтах с нормируемым пределом огнестойкости",
+      "answer_cell": "C36",
+      "note_cell": "D36",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-VK-038",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 38,
+      "item_no": "36",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по учету ресурсов требованиям ТЗ и ТУ, а также смежным разделам"
+      ],
+      "criterion": "Решения по водомерным узлам соответствуют требованиям ТЗ и ТУ.",
+      "answer_cell": "C38",
+      "note_cell": "D38",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-VK-039",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 39,
+      "item_no": "37",
+      "section_path": [
+        "Раздел ВК",
+        "Соответствие решений по учету ресурсов требованиям ТЗ и ТУ, а также смежным разделам"
+      ],
+      "criterion": "Счётчики холодной и горячей воды соответствуют требованиям ТЗ и смежным разделам.",
+      "answer_cell": "C39",
+      "note_cell": "D39",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-VK-041",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 41,
+      "item_no": "39",
+      "section_path": [
+        "Раздел ВК",
+        "Наружные поливочные краны"
+      ],
+      "criterion": "Предусмотрены наружные поливочные краны.",
+      "answer_cell": "C41",
+      "note_cell": "D41",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-042",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 42,
+      "item_no": "40",
+      "section_path": [
+        "Раздел ВК",
+        "Наружные поливочные краны"
+      ],
+      "criterion": "Расположение соответствует требованиям п. 11.18 СП 30.13330.2020.",
+      "answer_cell": "C42",
+      "note_cell": "D42",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-VK-044",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 44,
+      "item_no": "42",
+      "section_path": [
+        "Раздел ВК",
+        "Приямки в фундаментной плите"
+      ],
+      "criterion": "Предусмотрены приямки в технических помещениях.",
+      "answer_cell": "C44",
+      "note_cell": "D44",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-045",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 45,
+      "item_no": "43",
+      "section_path": [
+        "Раздел ВК",
+        "Приямки в фундаментной плите"
+      ],
+      "criterion": "Предусмотрены приямки в паркинге.",
+      "answer_cell": "C45",
+      "note_cell": "D45",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-046",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 46,
+      "item_no": "44",
+      "section_path": [
+        "Раздел ВК",
+        "Приямки в фундаментной плите"
+      ],
+      "criterion": "Предусмотрены приямки в коридоре подвала.",
+      "answer_cell": "C46",
+      "note_cell": "D46",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-047",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 47,
+      "item_no": "45",
+      "section_path": [
+        "Раздел ВК",
+        "Приямки в фундаментной плите"
+      ],
+      "criterion": "Размеры приямков соответствуют требованиям ТЗ и ТУ, а также смежным разделам",
+      "answer_cell": "C47",
+      "note_cell": "D47",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-VK-049",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 49,
+      "item_no": "47",
+      "section_path": [
+        "Раздел ВК",
+        "Водосточные воронки"
+      ],
+      "criterion": "Предусмотрены водосточные воронки.",
+      "answer_cell": "C49",
+      "note_cell": "D49",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-050",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 50,
+      "item_no": "48",
+      "section_path": [
+        "Раздел ВК",
+        "Водосточные воронки"
+      ],
+      "criterion": "Система внутреннего водостока выполнена отдельной системой со сбросом в ливневую канализацию в соответствии с ТЗ",
+      "answer_cell": "C50",
+      "note_cell": "D50",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-VK-051",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 51,
+      "item_no": "49",
+      "section_path": [
+        "Раздел ВК",
+        "Водосточные воронки"
+      ],
+      "criterion": "Количество и расположение водосточных воронок соответствует смежным разделам.",
+      "answer_cell": "C51",
+      "note_cell": "D51",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-VK-054",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 54,
+      "item_no": "52",
+      "section_path": [
+        "Раздел НВК",
+        "Вводы водопровода и выпуски канализации"
+      ],
+      "criterion": "Вводы водопровода соответствуют проектной документации ВК.",
+      "answer_cell": "C54",
+      "note_cell": "D54",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-055",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 55,
+      "item_no": "53",
+      "section_path": [
+        "Раздел НВК",
+        "Вводы водопровода и выпуски канализации"
+      ],
+      "criterion": "Вводы согласованы с другими инженерными сетями.",
+      "answer_cell": "C55",
+      "note_cell": "D55",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-056",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 56,
+      "item_no": "54",
+      "section_path": [
+        "Раздел НВК",
+        "Вводы водопровода и выпуски канализации"
+      ],
+      "criterion": "Вводы согласованы с отделом присоединений ДТЗ.",
+      "answer_cell": "C56",
+      "note_cell": "D56",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-057",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 57,
+      "item_no": "55",
+      "section_path": [
+        "Раздел НВК",
+        "Вводы водопровода и выпуски канализации"
+      ],
+      "criterion": "Выпуски канализации соответствуют проектной документации ВК.",
+      "answer_cell": "C57",
+      "note_cell": "D57",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-058",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 58,
+      "item_no": "56",
+      "section_path": [
+        "Раздел НВК",
+        "Вводы водопровода и выпуски канализации"
+      ],
+      "criterion": "Выпуски согласованы с другими инженерными сетями.",
+      "answer_cell": "C58",
+      "note_cell": "D58",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-059",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 59,
+      "item_no": "57",
+      "section_path": [
+        "Раздел НВК",
+        "Вводы водопровода и выпуски канализации"
+      ],
+      "criterion": "Выпуски согласованы с отделом присоединений ДТЗ.",
+      "answer_cell": "C59",
+      "note_cell": "D59",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-061",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 61,
+      "item_no": "59",
+      "section_path": [
+        "Раздел НВК",
+        "Колодцы и пожарные гидранты"
+      ],
+      "criterion": "Расположение колодцев совпадает с разделом ПЗУ.",
+      "answer_cell": "C61",
+      "note_cell": "D61",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-VK-062",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 62,
+      "item_no": "60",
+      "section_path": [
+        "Раздел НВК",
+        "Колодцы и пожарные гидранты"
+      ],
+      "criterion": "Отметки колодцев соответствуют разделу ПЗУ.",
+      "answer_cell": "C62",
+      "note_cell": "D62",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-VK-063",
+      "stage": "PD",
+      "discipline": " ВК и НВК",
+      "sheet_name": " ВК и НВК",
+      "row": 63,
+      "item_no": "61",
+      "section_path": [
+        "Раздел НВК",
+        "Колодцы и пожарные гидранты"
+      ],
+      "criterion": "Расположение пожарных гидрантов соответствует разделу ПЗУ.",
+      "answer_cell": "C63",
+      "note_cell": "D63",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-OVIK-004",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ПЗ ИРД (ТУ)",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-005",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Сводный план инженерных сетей",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-006",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Раздел ПБ",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-007",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "СТУ (в т.ч. список отклонений от НД)",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-008",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 8,
+      "item_no": "6",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованное функциональное назначение коммерческих помещений",
+      "answer_cell": "C8",
+      "note_cell": "D8",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-009",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 9,
+      "item_no": "7",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованный альбом ОПР",
+      "answer_cell": "C9",
+      "note_cell": "D9",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-010",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 10,
+      "item_no": "8",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованные ТЭПы",
+      "answer_cell": "C10",
+      "note_cell": "D10",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-011",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованная квартирография",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-012",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 12,
+      "item_no": "10",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "АР или планы в томе ОВ (для проверки техн. помещений и ниш)",
+      "answer_cell": "C12",
+      "note_cell": "D12",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-016",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "Отопление",
+        "Климатические и метеорологические условия"
+      ],
+      "criterion": "Указаны сведения о климатических условиях района строительства.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-017",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "Отопление",
+        "Климатические и метеорологические условия"
+      ],
+      "criterion": "Указаны расчётные параметры наружного воздуха в соответствии с регионом строительства объекта.",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-019",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 19,
+      "item_no": "17",
+      "section_path": [
+        "Отопление",
+        "Параметры теплоносителя"
+      ],
+      "criterion": "Параметры теплоносителя для систем отопления совпадают с требованиями ТЗ и ТУ.",
+      "answer_cell": "C19",
+      "note_cell": "D19",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-020",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "Отопление",
+        "Параметры теплоносителя"
+      ],
+      "criterion": "Параметры теплоносителя для теплоснабжения вентиляции и ВТЗ соответствуют требованиям ТЗ и ТУ.",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-OVIK-022",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Проведены и приложены теплотехнические расчёты по всем типам ограждающих конструкций (наружные и внутренние стены, перекрытия и покрытия, полы по грунту, окна, двери, ворота)",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-023",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Проведены расчёты коэффициента теплотехнической однородности r (по СП 230, раздел 5 и СП 50, приложение Г) для наружных стен (учтены кронштейны, профильная труба НФС, противопожарная рассечка, тарельчатые дюбеля для утеплителя и т.д.).",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-024",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Проведён и приложен в формате Excel укрупнённый расчёт тепловых потерь по форме Заказчика (c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-025",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 25,
+      "item_no": "23",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Приложены планы/разрезы АР.",
+      "answer_cell": "C25",
+      "note_cell": "D25",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-026",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Приложены ОПР с согласованным функционалом коммерческих помещений.",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-027",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 27,
+      "item_no": "25",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Составлена сводная таблица нагрузок по системам.",
+      "answer_cell": "C27",
+      "note_cell": "D27",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-028",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "В таблицу включены нагрузки по потребителям.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-029",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Указаны нагрузки по ИТП.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-030",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 30,
+      "item_no": "28",
+      "section_path": [
+        "Отопление",
+        "Наличие необходимых расчётов и приложений"
+      ],
+      "criterion": "Приложены актуальные ТУ на подключение к сетям.",
+      "answer_cell": "C30",
+      "note_cell": "D30",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-032",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 32,
+      "item_no": "30",
+      "section_path": [
+        "Отопление",
+        "Системы отопления и магистрали"
+      ],
+      "criterion": "Тип системы отопления соответствует требованиям ТЗ.",
+      "answer_cell": "C32",
+      "note_cell": "D32",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-OVIK-033",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 33,
+      "item_no": "31",
+      "section_path": [
+        "Отопление",
+        "Системы отопления и магистрали"
+      ],
+      "criterion": "Расположение магистралей совпадает с требованиями ТЗ.",
+      "answer_cell": "C33",
+      "note_cell": "D33",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-OVIK-035",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 35,
+      "item_no": "33",
+      "section_path": [
+        "Отопление",
+        "Отопительные приборы"
+      ],
+      "criterion": "Типы отопительных приборов соответствуют требованиям ТЗ.",
+      "answer_cell": "C35",
+      "note_cell": "D35",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-OVIK-036",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 36,
+      "item_no": "34",
+      "section_path": [
+        "Отопление",
+        "Отопительные приборы"
+      ],
+      "criterion": "Подключение отопительных приборов квартир обеспечено в соответствии с требованиями ТЗ.",
+      "answer_cell": "C36",
+      "note_cell": "D36",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-OVIK-038",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 38,
+      "item_no": "36",
+      "section_path": [
+        "Отопление",
+        "Индивидуальный учёт тепла"
+      ],
+      "criterion": "В текстовой части тома ПД содержатся сведения об индивидуальном учёте тепла (для коллекторных систем).",
+      "answer_cell": "C38",
+      "note_cell": "D38",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-039",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 39,
+      "item_no": "37",
+      "section_path": [
+        "Отопление",
+        "Индивидуальный учёт тепла"
+      ],
+      "criterion": "Решение по учёту тепла соответствует требованиям ТЗ.",
+      "answer_cell": "C39",
+      "note_cell": "D39",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-OVIK-042",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 42,
+      "item_no": "40",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложена ТВО для квартир по форме Заказчика (в формате Excel c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C42",
+      "note_cell": "D42",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-043",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 43,
+      "item_no": "41",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложена ТВО для МОП по форме Заказчика (в формате Excel c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C43",
+      "note_cell": "D43",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-044",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 44,
+      "item_no": "42",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложена ТВО для коммерческих помещений по форме Заказчика (в формате Excel c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C44",
+      "note_cell": "D44",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-045",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 45,
+      "item_no": "43",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложена ТВО для паркинга (при наличии).",
+      "answer_cell": "C45",
+      "note_cell": "D45",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-046",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 46,
+      "item_no": "44",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены расчёты воздухообмена на ассимиляцию вредностей для помещений автостоянок(при наличии).",
+      "answer_cell": "C46",
+      "note_cell": "D46",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-047",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 47,
+      "item_no": "45",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен и приложен расчет температуры приточного воздуха (с учетом совмещения системы с воздушным отоплением).",
+      "answer_cell": "C47",
+      "note_cell": "D47",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-048",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 48,
+      "item_no": "46",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены и приложены расчёты воздухообмена для помещений медицинских кабинетов (при отсутствии ТХ по укрупненной форме Заказчика).",
+      "answer_cell": "C48",
+      "note_cell": "D48",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-049",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 49,
+      "item_no": "47",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены и приложены расчёты воздухообмена для помещений ОФП (при отсутствии ТХ по укрупненной форме Заказчика).",
+      "answer_cell": "C49",
+      "note_cell": "D49",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-050",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 50,
+      "item_no": "48",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены и приложены расчёты воздухообмена для предприятий общественного питания (при отсутствии ТХ по укрупненной форме Заказчика).",
+      "answer_cell": "C50",
+      "note_cell": "D50",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-051",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 51,
+      "item_no": "49",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен и приложен расчет воздухообмена для бассейнов (при наличии).",
+      "answer_cell": "C51",
+      "note_cell": "D51",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-052",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 52,
+      "item_no": "50",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены и приложены расчёты систем ПДВ",
+      "answer_cell": "C52",
+      "note_cell": "D52",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-053",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 53,
+      "item_no": "51",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены и приложены аэродинамические расчёты общеобменных систем по форме Зказчика (в формате Excel c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C53",
+      "note_cell": "D53",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-054",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 54,
+      "item_no": "52",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнены и приложены аэродинамические расчёты систем ПДВ по форме Зказчика (в формате Excel c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C54",
+      "note_cell": "D54",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-055",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 55,
+      "item_no": "53",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Составлена сводная таблица нагрузок по системам.",
+      "answer_cell": "C55",
+      "note_cell": "D55",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-056",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 56,
+      "item_no": "54",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Нагрузки по потребителям включены в таблицу.",
+      "answer_cell": "C56",
+      "note_cell": "D56",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-057",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 57,
+      "item_no": "55",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Указаны нагрузки по ИТП.",
+      "answer_cell": "C57",
+      "note_cell": "D57",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-058",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 58,
+      "item_no": "56",
+      "section_path": [
+        "Вентиляция",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложена таблица ХОВС.",
+      "answer_cell": "C58",
+      "note_cell": "D58",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-060",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 60,
+      "item_no": "58",
+      "section_path": [
+        "Вентиляция",
+        "Система общеобменной вентиляции"
+      ],
+      "criterion": "Указаны пределы огнестойкости воздуховодов.",
+      "answer_cell": "C60",
+      "note_cell": "D60",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-061",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 61,
+      "item_no": "59",
+      "section_path": [
+        "Вентиляция",
+        "Система общеобменной вентиляции"
+      ],
+      "criterion": "Предусмотрена тепловая изоляция воздуховодов на кровле.",
+      "answer_cell": "C61",
+      "note_cell": "D61",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-OVIK-062",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 62,
+      "item_no": "60",
+      "section_path": [
+        "Вентиляция",
+        "Система общеобменной вентиляции"
+      ],
+      "criterion": "Изоляция воздуховодов на кровле принята из минеральной ваты.",
+      "answer_cell": "C62",
+      "note_cell": "D62",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-OVIK-063",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 63,
+      "item_no": "61",
+      "section_path": [
+        "Вентиляция",
+        "Система общеобменной вентиляции"
+      ],
+      "criterion": "Обеспечено окожушивание теплоизолированных воздуховодов на кровле сталью.",
+      "answer_cell": "C63",
+      "note_cell": "D63",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-OVIK-064",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 64,
+      "item_no": "62",
+      "section_path": [
+        "Вентиляция",
+        "Система общеобменной вентиляции"
+      ],
+      "criterion": "Количество шахт систем общеобменной вытяжной вентиляции и их расположение на планах соответствует ОПР",
+      "answer_cell": "C64",
+      "note_cell": "D64",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-OVIK-065",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 65,
+      "item_no": "63",
+      "section_path": [
+        "Вентиляция",
+        "Система общеобменной вентиляции"
+      ],
+      "criterion": "Применены вентиляторы крышного исполнения со стаканами с шумоглушителями.",
+      "answer_cell": "C65",
+      "note_cell": "D65",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-067",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 67,
+      "item_no": "65",
+      "section_path": [
+        "Вентиляция",
+        "Система противодымной вентиляции"
+      ],
+      "criterion": "Указаны пределы огнестойкости воздуховодов вытяжных и приточных систем ПДВ.",
+      "answer_cell": "C67",
+      "note_cell": "D67",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-068",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 68,
+      "item_no": "66",
+      "section_path": [
+        "Вентиляция",
+        "Система противодымной вентиляции"
+      ],
+      "criterion": "Системы подпора, работающие на закрытую и открытую двери в зонах ПБ, объединены",
+      "answer_cell": "C68",
+      "note_cell": "D68",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-069",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 69,
+      "item_no": "67",
+      "section_path": [
+        "Вентиляция",
+        "Система противодымной вентиляции"
+      ],
+      "criterion": "Предусмотрены крышные радиальные вентиляторы для систем дымоудаления.",
+      "answer_cell": "C69",
+      "note_cell": "D69",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-070",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 70,
+      "item_no": "68",
+      "section_path": [
+        "Вентиляция",
+        "Система противодымной вентиляции"
+      ],
+      "criterion": "Предусмотрены осевые вентиляторы крышного исполнения для систем подпора и компенсации.",
+      "answer_cell": "C70",
+      "note_cell": "D70",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-OVIK-073",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 73,
+      "item_no": "71",
+      "section_path": [
+        "Кондиционирование",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт теплопритоков в редактируемом формате (в формате Excel c сохранением расчетных зависимостей в ячейках).",
+      "answer_cell": "C73",
+      "note_cell": "D73",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-OVIK-074",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 74,
+      "item_no": "72",
+      "section_path": [
+        "Кондиционирование",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложены листы подбора оборудования",
+      "answer_cell": "C74",
+      "note_cell": "D74",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-075",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 75,
+      "item_no": "73",
+      "section_path": [
+        "Кондиционирование",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Приложена таблица ХОВС.",
+      "answer_cell": "C75",
+      "note_cell": "D75",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-OVIK-077",
+      "stage": "PD",
+      "discipline": "ОВиК",
+      "sheet_name": "ОВиК",
+      "row": 77,
+      "item_no": "75",
+      "section_path": [
+        "Прочее"
+      ],
+      "criterion": "Параметры внутреннего воздуха, указанные в ТЧ, соответствуют требованиям ТЗ.",
+      "answer_cell": "C77",
+      "note_cell": "D77",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SS-004",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ПЗ ИРД (ТУ)",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-005",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "СТУ (в т.ч. список отклонений от НД)",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-SS-006",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Сводный план инженерных сетей с сетями наружного освещения",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-007",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 7,
+      "item_no": "5",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "АР или планы в томе СС (для проверки техн. помещений и ниш)",
+      "answer_cell": "C7",
+      "note_cell": "D7",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-008",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 8,
+      "item_no": "6",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Разделы ПБ (ПБ1, ПБ2, ПБ3)",
+      "answer_cell": "C8",
+      "note_cell": "D8",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-009",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 9,
+      "item_no": "7",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "ТУ от РСО",
+      "answer_cell": "C9",
+      "note_cell": "D9",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-SS-010",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 10,
+      "item_no": "8",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Планы  и экспликация помещений в томе СС, дизайн-проект в части задания для СС",
+      "answer_cell": "C10",
+      "note_cell": "D10",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-011",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованная концепция благоустройства",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-015",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт мощности усилителей оборудования сети ПВ.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SS-016",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт нагрузки абонентских трансформаторов сети ПВ.",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SS-017",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен электроакустический расчёт системы оповещения согласно ТУ ГОиЧС (ГКУ «ГМЦ», ГКУ «Объект № 58» и т. п. в зависимости от региона) — при наличии требований.",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SS-018",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчет ИБП для всех систем",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SS-019",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 19,
+      "item_no": "17",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчет видеоархива",
+      "answer_cell": "C19",
+      "note_cell": "D19",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-SS-021",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "ТУ оператора сетей связи"
+      ],
+      "criterion": "Приложены актуальные ТУ на телефонизацию, интернет, РТ.",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-SS-022",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "ТУ оператора сетей связи"
+      ],
+      "criterion": "ТУ на интернет и иные услуги связи - действительны.",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-024",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Указано количество корпусов зданий.",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-025",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 25,
+      "item_no": "23",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Указано количество секций в каждом корпусе.",
+      "answer_cell": "C25",
+      "note_cell": "D25",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-026",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Указано количество квартир в зданиях.",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-027",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 27,
+      "item_no": "25",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Указаны данные об автостоянках (с количеством машино‑мест).",
+      "answer_cell": "C27",
+      "note_cell": "D27",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-028",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Описано разделение зданий на пожарные отсеки.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-029",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Указаны помещения с возможным одновременным пребыванием 50 и более человек.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-030",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 30,
+      "item_no": "28",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта"
+      ],
+      "criterion": "Точки ввода в здание наружных сетей соответствуют принятым решениям по внутренним сетям",
+      "answer_cell": "C30",
+      "note_cell": "D30",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-032",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 32,
+      "item_no": "30",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система охранного телевидения"
+      ],
+      "criterion": "Описаны решения по системе охранного телевидения (СОТ), предоставлены принципиальные схемы и планы размещения оконечного оборудования СОТ",
+      "answer_cell": "C32",
+      "note_cell": "D32",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-033",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 33,
+      "item_no": "31",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система охранного телевидения"
+      ],
+      "criterion": "Оборудование СОТ соответствует ТЗ и вендор‑листу.",
+      "answer_cell": "C33",
+      "note_cell": "D33",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SS-035",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 35,
+      "item_no": "33",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система контроля и управления доступом (СКУД)"
+      ],
+      "criterion": "Отражена в схеме размещение оборудования в точках прохода/проезда и расположение активного оборудования",
+      "answer_cell": "C35",
+      "note_cell": "D35",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-036",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 36,
+      "item_no": "34",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система контроля и управления доступом (СКУД)"
+      ],
+      "criterion": "Размещение оборудования и организация системы соответствует требованиям ТЗ.",
+      "answer_cell": "C36",
+      "note_cell": "D36",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-037",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 37,
+      "item_no": "35",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система контроля и управления доступом (СКУД)"
+      ],
+      "criterion": "Приведены решения по системе контроля и управления доступом (СКУД), предоставлены принципиальные схемы и планы размещения оконечного оборудования",
+      "answer_cell": "C37",
+      "note_cell": "D37",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-038",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 38,
+      "item_no": "36",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система контроля и управления доступом (СКУД)"
+      ],
+      "criterion": "Приведены решения по IP‑домофонии.",
+      "answer_cell": "C38",
+      "note_cell": "D38",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-039",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 39,
+      "item_no": "37",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система контроля и управления доступом (СКУД)"
+      ],
+      "criterion": "Оборудование СКУД соответствует ТЗ и вендор‑листу.",
+      "answer_cell": "C39",
+      "note_cell": "D39",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SS-041",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 41,
+      "item_no": "39",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Оборудование точек прохода/проезда"
+      ],
+      "criterion": "Предусмотрены решения для концепции «Закрытый двор».",
+      "answer_cell": "C41",
+      "note_cell": "D41",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-042",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 42,
+      "item_no": "40",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Оборудование точек прохода/проезда"
+      ],
+      "criterion": "Размещение оборудования точек прохода/проезда соответствует требованиям ТЗ.",
+      "answer_cell": "C42",
+      "note_cell": "D42",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-044",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 44,
+      "item_no": "42",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Автоматизированная система контроля и учёта"
+      ],
+      "criterion": "Приведены решения по АСКУ электрической энергии.",
+      "answer_cell": "C44",
+      "note_cell": "D44",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-045",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 45,
+      "item_no": "43",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Автоматизированная система контроля и учёта"
+      ],
+      "criterion": "Приведены решения по АСКУ тепловой энергии.",
+      "answer_cell": "C45",
+      "note_cell": "D45",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-046",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 46,
+      "item_no": "44",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Автоматизированная система контроля и учёта"
+      ],
+      "criterion": "Приведены решения по АСКУ ХВС.",
+      "answer_cell": "C46",
+      "note_cell": "D46",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-047",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 47,
+      "item_no": "45",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Автоматизированная система контроля и учёта"
+      ],
+      "criterion": "Приведены решения по АСКУ ГВС.",
+      "answer_cell": "C47",
+      "note_cell": "D47",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-048",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 48,
+      "item_no": "46",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Автоматизированная система контроля и учёта"
+      ],
+      "criterion": "Приведены решения по АСКУ ХС холодоснабжение.",
+      "answer_cell": "C48",
+      "note_cell": "D48",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-049",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 49,
+      "item_no": "47",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Автоматизированная система контроля и учёта"
+      ],
+      "criterion": "Размещение оборудования и организация системы соответствует требованиям ТЗ.",
+      "answer_cell": "C49",
+      "note_cell": "D49",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-051",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 51,
+      "item_no": "49",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система коллективного приема телевидения (СКПТ)"
+      ],
+      "criterion": "Описаны решения по СКПТ, предоставлены принципиальные схемы и планы размещения оконечного оборудования",
+      "answer_cell": "C51",
+      "note_cell": "D51",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-052",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 52,
+      "item_no": "50",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система коллективного приема телевидения (СКПТ)"
+      ],
+      "criterion": "Размещение оборудования и организация системы соответствует требованиям ТЗ.",
+      "answer_cell": "C52",
+      "note_cell": "D52",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-054",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 54,
+      "item_no": "52",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система двухсторонней связи с МГН"
+      ],
+      "criterion": "Описаны решения по системе двухсторонней связи с МГН, предоставлены принципиальные схемы и планы размещения оконечного оборудования",
+      "answer_cell": "C54",
+      "note_cell": "D54",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-055",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 55,
+      "item_no": "53",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Система двухсторонней связи с МГН"
+      ],
+      "criterion": "Размещение оборудования и организация системы соответствует требованиям ТЗ.",
+      "answer_cell": "C55",
+      "note_cell": "D55",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-057",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 57,
+      "item_no": "55",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Диспетчеризация инженерных систем"
+      ],
+      "criterion": "Описаны решения по ДИС, предоставлены принципиальные схемы и планы размещения оконечного оборудования",
+      "answer_cell": "C57",
+      "note_cell": "D57",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-058",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 58,
+      "item_no": "56",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Диспетчеризация инженерных систем"
+      ],
+      "criterion": "Размещение оборудования и организация системы соответствует требованиям ТЗ.",
+      "answer_cell": "C58",
+      "note_cell": "D58",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    },
+    {
+      "id": "PD-SS-060",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 60,
+      "item_no": "58",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "ТУ на оповещение по сигналам ГОиЧС в наличии и актуально.",
+      "answer_cell": "C60",
+      "note_cell": "D60",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-SS-061",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 61,
+      "item_no": "59",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Оборудование АСКУЭ и АСКУВТХ соответствует ТЗ и вендор‑листу.",
+      "answer_cell": "C61",
+      "note_cell": "D61",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-SS-062",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 62,
+      "item_no": "60",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Проверка наличия задания на электроснабжение",
+      "answer_cell": "C62",
+      "note_cell": "D62",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-SS-063",
+      "stage": "PD",
+      "discipline": "СС",
+      "sheet_name": "СС",
+      "row": 63,
+      "item_no": "61",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "Проверка наличия системы контроля загазованности в подземном паркинге",
+      "answer_cell": "C63",
+      "note_cell": "D63",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-004",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 4,
+      "item_no": "2",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованные СТУ",
+      "answer_cell": "C4",
+      "note_cell": "D4",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "presence"
+    },
+    {
+      "id": "PD-PB2-005",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 5,
+      "item_no": "3",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованный альбом ОПР",
+      "answer_cell": "C5",
+      "note_cell": "D5",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-006",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 6,
+      "item_no": "4",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ"
+      ],
+      "criterion": "Согласованные смежные разделы проекта (АР, ОВ, ВК, АУПТ, СКУД)",
+      "answer_cell": "C6",
+      "note_cell": "D6",
+      "allowed_answers": [
+        "Да",
+        "Нет"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-010",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 10,
+      "item_no": "8",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен электроакустический расчёт системы оповещения и управления эвакуацией (СОУЭ).",
+      "answer_cell": "C10",
+      "note_cell": "D10",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-PB2-011",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 11,
+      "item_no": "9",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Наличие необходимых расчётов:"
+      ],
+      "criterion": "Выполнен расчёт горючей массы.",
+      "answer_cell": "C11",
+      "note_cell": "D11",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "calculation"
+    },
+    {
+      "id": "PD-PB2-013",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 13,
+      "item_no": "11",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указано количество корпусов зданий.",
+      "answer_cell": "C13",
+      "note_cell": "D13",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-014",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 14,
+      "item_no": "12",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указано количество секций в каждом корпусе.",
+      "answer_cell": "C14",
+      "note_cell": "D14",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-015",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 15,
+      "item_no": "13",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указано количество квартир в зданиях.",
+      "answer_cell": "C15",
+      "note_cell": "D15",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-016",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 16,
+      "item_no": "14",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указаны данные об автостоянках (с количеством машино‑мест).",
+      "answer_cell": "C16",
+      "note_cell": "D16",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-017",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 17,
+      "item_no": "15",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указано разделение зданий на пожарные отсеки.",
+      "answer_cell": "C17",
+      "note_cell": "D17",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-018",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 18,
+      "item_no": "16",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указаны помещения с возможным одновременным пребыванием 50 и более человек.",
+      "answer_cell": "C18",
+      "note_cell": "D18",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-019",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 19,
+      "item_no": "17",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указана степень огнестойкости здания (по СП 118.13330.2022).",
+      "answer_cell": "C19",
+      "note_cell": "D19",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-020",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 20,
+      "item_no": "18",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указан класс конструктивной пожарной опасности здания.",
+      "answer_cell": "C20",
+      "note_cell": "D20",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-021",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 21,
+      "item_no": "19",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указан класс пожарной опасности строительных конструкций.",
+      "answer_cell": "C21",
+      "note_cell": "D21",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-022",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 22,
+      "item_no": "20",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Указаны классы функциональной пожарной опасности зданий, сооружений и пожарных отсеков.",
+      "answer_cell": "C22",
+      "note_cell": "D22",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-023",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 23,
+      "item_no": "21",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "В документации выполнены структурные схемы технических систем (средств) противопожарной защиты здания",
+      "answer_cell": "C23",
+      "note_cell": "D23",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-024",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 24,
+      "item_no": "22",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Производитель, тип и марка примененного оборудования соответствует вендор-листу и техническому заданию",
+      "answer_cell": "C24",
+      "note_cell": "D24",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-PB2-025",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 25,
+      "item_no": "23",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Разработаны решения по автоматизации алгоритмов управления установками противодымной вентиляции и внутреннего противопожарного водопровода",
+      "answer_cell": "C25",
+      "note_cell": "D25",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-026",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 26,
+      "item_no": "24",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Краткая характеристика объекта с ТЭП и пожарно‑техническими показателями"
+      ],
+      "criterion": "Тип системы оповещения и управления эвакуацией (СОУЭ) соответствует указанному в СТУ",
+      "answer_cell": "C26",
+      "note_cell": "D26",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "cross_section"
+    },
+    {
+      "id": "PD-PB2-028",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 28,
+      "item_no": "26",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Описание автостоянок (при наличии паркинга)"
+      ],
+      "criterion": "Указано количество машино‑мест в паркинге.",
+      "answer_cell": "C28",
+      "note_cell": "D28",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-029",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 29,
+      "item_no": "27",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Описание автостоянок (при наличии паркинга)"
+      ],
+      "criterion": "Указаны способы хранения автомобилей.",
+      "answer_cell": "C29",
+      "note_cell": "D29",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-030",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 30,
+      "item_no": "28",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Описание автостоянок (при наличии паркинга)"
+      ],
+      "criterion": "Указаны пожарно‑технические характеристики паркинга.",
+      "answer_cell": "C30",
+      "note_cell": "D30",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-031",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 31,
+      "item_no": "29",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Описание автостоянок (при наличии паркинга)"
+      ],
+      "criterion": "В документации выполнены структурные схемы технических систем (средств) противопожарной защиты автостоянки",
+      "answer_cell": "C31",
+      "note_cell": "D31",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "manual_required"
+    },
+    {
+      "id": "PD-PB2-033",
+      "stage": "PD",
+      "discipline": "ПБ2 (АППЗ)",
+      "sheet_name": "ПБ2 (АППЗ)",
+      "row": 33,
+      "item_no": "31",
+      "section_path": [
+        "ИСХОДНАЯ ДОКУМЕНТАЦИЯ",
+        "Прочее"
+      ],
+      "criterion": "В томе указано место размещения центрального пожарного поста.",
+      "answer_cell": "C33",
+      "note_cell": "D33",
+      "allowed_answers": [
+        "Да",
+        "Нет",
+        "Не требуется"
+      ],
+      "kind": "spatial_visual"
+    }
+  ]
+}

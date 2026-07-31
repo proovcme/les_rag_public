@@ -1438,6 +1438,144 @@ html {
   line-height: 1.5;
 }
 
+/* Checklist review: dense engineering workbench, not a dashboard.
+   Existing surfaces and controls carry the hierarchy; accent is reserved for
+   the one primary action and semantic states. */
+.sov-checklist {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sov-ui-space-4);
+}
+
+.sov-checklist__head,
+.sov-checklist__run,
+.sov-checklist__reports,
+.sov-checklist-dialog__actions {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sov-ui-space-2);
+}
+
+.sov-checklist__head {
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.sov-checklist__setup {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-checklist__field,
+.sov-checklist-dialog__input {
+  width: 100%;
+  min-width: 0;
+}
+
+.sov-checklist__run {
+  flex-wrap: wrap;
+}
+
+.sov-checklist__status,
+.sov-checklist__reports-label,
+.sov-checklist-dialog__meta,
+.sov-checklist-dialog__note {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.45;
+}
+
+.sov-checklist__summary {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sov-ui-space-2);
+  flex-wrap: wrap;
+}
+
+.sov-checklist__reports {
+  flex-wrap: wrap;
+}
+
+.sov-checklist__table {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-control);
+}
+
+.sov-checklist__table .q-table th {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 700;
+}
+
+.sov-checklist__table .q-table td {
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  vertical-align: top;
+}
+
+.sov-checklist__table .q-table tbody tr {
+  cursor: pointer;
+}
+
+.sov-checklist__table .q-table tbody tr:focus-within,
+.sov-checklist__table .q-table tbody tr:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--card-bg));
+}
+
+.sov-checklist-dialog {
+  width: min(720px, calc(100vw - 32px));
+  max-height: min(86vh, 820px);
+  overflow-y: auto;
+  gap: var(--sov-ui-space-3) !important;
+}
+
+.sov-checklist-dialog__title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.35;
+  text-wrap: balance;
+}
+
+.sov-checklist-dialog__evidence {
+  width: 100%;
+  min-width: 0;
+  gap: var(--sov-ui-space-2) !important;
+}
+
+.sov-checklist-dialog__source {
+  width: 100%;
+  padding: var(--sov-ui-space-2) var(--sov-ui-space-3);
+  overflow-wrap: anywhere;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-control);
+  background: var(--bg-mod);
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.5;
+}
+
+.sov-checklist-dialog__details {
+  width: 100%;
+  color: var(--text);
+}
+
+.sov-checklist-dialog__actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
 /* Configuration home: one readiness passport, then readable working contours.
    Secondary and risky tools stay in disclosures instead of competing with status. */
 .sov-config-page {
@@ -2894,13 +3032,261 @@ html {
   }
 }
 
+.sov-rim-page {
+  width: 100%;
+  max-width: 1680px;
+  margin: 0 auto;
+  padding: var(--sov-ui-space-4);
+  gap: var(--sov-ui-space-4) !important;
+}
+
+.sov-rim-hero,
+.sov-rim-intake,
+.sov-rim-dialog,
+.sov-rim-workspace {
+  width: 100%;
+}
+
+.sov-rim-hero__head,
+.sov-rim-dialog__head {
+  width: 100%;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-rim-hero__actions,
+.sov-rim-actions {
+  align-items: center;
+  gap: var(--sov-ui-space-2);
+}
+
+.sov-rim-session-select {
+  width: min(100%, 420px);
+  margin-top: var(--sov-ui-space-3);
+}
+
+.sov-rim-status-strip {
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-rim-status-strip__badges {
+  align-items: center;
+  gap: var(--sov-ui-space-2);
+}
+
+.sov-rim-status-strip__meta,
+.sov-rim-panel-summary,
+.sov-rim-intake__status {
+  min-width: 0;
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  overflow-wrap: anywhere;
+}
+
+.sov-rim-status-strip__meta {
+  font-family: var(--sov-ui-font-code);
+  font-variant-numeric: tabular-nums;
+}
+
+.sov-rim-intake,
+.sov-rim-dialog,
+.sov-rim-workspace {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-rim-intake__fields {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-rim-field,
+.sov-rim-lock-note,
+.sov-rim-scenario-reason {
+  width: 100%;
+  min-width: 0;
+}
+
+.sov-rim-upload {
+  min-height: var(--sov-ui-hit);
+  border: 1px dashed color-mix(in srgb, var(--accent) 34%, var(--border));
+  border-radius: var(--sov-ui-radius-control);
+  background: color-mix(in srgb, var(--accent) 3%, var(--card-bg));
+}
+
+.sov-rim-upload .q-uploader__header {
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.sov-rim-upload .q-uploader__list {
+  min-height: 56px;
+  color: var(--dim);
+  background: var(--card-bg);
+}
+
+.sov-rim-question {
+  width: 100%;
+  min-height: 72px;
+  padding: var(--sov-ui-space-3);
+  gap: var(--sov-ui-space-1) !important;
+  border-left: 3px solid var(--accent);
+  border-radius: var(--sov-ui-radius-control);
+  background: var(--bg-mod);
+}
+
+.sov-rim-question__title {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.sov-rim-question__reason,
+.sov-rim-question__options {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.45;
+}
+
+.sov-rim-question__choices {
+  align-items: center;
+  gap: var(--sov-ui-space-2) !important;
+}
+
+.sov-rim-dialog__log {
+  width: 100%;
+  max-height: 240px;
+  overflow-y: auto;
+  gap: var(--sov-ui-space-2) !important;
+}
+
+.sov-rim-dialog__message {
+  max-width: min(760px, 90%);
+  padding: var(--sov-ui-space-2) var(--sov-ui-space-3);
+  border-radius: var(--sov-ui-radius-control);
+  color: var(--text);
+  background: var(--bg-mod);
+  text-wrap: pretty;
+}
+
+.sov-rim-dialog__message--user {
+  align-self: flex-end;
+  background: color-mix(in srgb, var(--accent) 10%, var(--card-bg));
+}
+
+.sov-rim-dialog__message--assistant {
+  align-self: flex-start;
+}
+
+.sov-rim-composer {
+  width: 100%;
+  min-width: 0;
+  align-items: flex-end;
+  gap: var(--sov-ui-space-2);
+}
+
+.sov-rim-composer__field {
+  min-width: 240px;
+  flex: 1 1 auto;
+}
+
+.sov-rim-tabs {
+  width: 100%;
+  min-height: var(--sov-ui-hit);
+  color: var(--dim);
+  border-bottom: var(--sov-ui-border);
+}
+
+.sov-rim-tab-panels {
+  width: 100%;
+  min-width: 0;
+  color: var(--text);
+  background: transparent;
+}
+
+.sov-rim-tab-panels .q-tab-panel {
+  padding: var(--sov-ui-space-3) 0 0;
+}
+
+.sov-rim-table {
+  width: 100%;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sov-rim-table .q-table__container {
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-card);
+}
+
+.sov-rim-mapping-edit {
+  display: grid;
+  grid-template-columns: minmax(160px, .4fr) minmax(260px, 1fr) auto;
+  align-items: end;
+  gap: var(--sov-ui-space-3);
+  margin-top: var(--sov-ui-space-3);
+}
+
+.sov-rim-issue-list {
+  width: 100%;
+  gap: var(--sov-ui-space-2) !important;
+}
+
+.sov-rim-issue {
+  width: 100%;
+  min-width: 0;
+  align-items: flex-start;
+  gap: var(--sov-ui-space-2);
+  padding: var(--sov-ui-space-2);
+  border-radius: var(--sov-ui-radius-control);
+  background: var(--bg-mod);
+}
+
+.sov-rim-issue__text {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1100px) {
+  .sov-checklist__setup {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .sov-mail-workbench {
     grid-template-columns: minmax(190px, .7fr) minmax(260px, .9fr) minmax(300px, 1.35fr);
   }
 }
 
 @media (max-width: 900px) {
+  .sov-checklist__setup {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sov-checklist__head,
+  .sov-checklist__run {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-checklist__head .sov-ui-button--icon {
+    align-self: flex-end;
+  }
+  .sov-checklist__run .sov-ui-button,
+  .sov-checklist-dialog__actions .sov-ui-button {
+    width: 100%;
+  }
+  .sov-checklist-dialog__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
   .sov-ui-shell {
     max-width: 100vw;
     overflow-x: clip;
@@ -3296,6 +3682,49 @@ html {
   .sov-access-form__actions .sov-ui-button,
   .sov-access-key-row__actions .sov-ui-button {
     width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .sov-rim-intake__fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sov-rim-mapping-edit {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 520px) {
+  .sov-rim-page {
+    padding: var(--sov-ui-space-2);
+  }
+
+  .sov-rim-hero__head,
+  .sov-rim-dialog__head,
+  .sov-rim-status-strip,
+  .sov-rim-composer,
+  .sov-rim-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sov-rim-hero__actions .sov-ui-button,
+  .sov-rim-actions .sov-ui-button,
+  .sov-rim-composer .sov-ui-button {
+    width: 100%;
+  }
+
+  .sov-rim-intake__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sov-rim-dialog__message {
+    max-width: 100%;
+  }
+
+  .sov-rim-tabs {
+    overflow-x: auto;
   }
 }
 

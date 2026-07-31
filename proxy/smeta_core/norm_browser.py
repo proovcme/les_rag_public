@@ -47,6 +47,12 @@ _RUSSIAN_SUFFIXES = tuple(sorted({
     "ам", "ям", "ах", "ях", "ка", "ки", "ку", "я", "а", "ы", "и", "у",
 }, key=len, reverse=True))
 
+_CATALOG_COMPASS_STOP_WORDS = frozenset({
+    "для", "или", "при", "это", "что", "как", "под", "над", "без", "все",
+    "работ", "работы", "монтаж", "установка", "установки", "сборник",
+    "официальный", "типичный", "типовые", "оборудование",
+})
+
 
 def _base_path() -> Path:
     from proxy.smeta_core.base_registry import active_base
@@ -90,6 +96,276 @@ def _json_list(value: Any) -> list[str]:
     except (TypeError, ValueError, json.JSONDecodeError):
         return []
     return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+@lru_cache(maxsize=1)
+def _normative_catalog_metadata() -> dict[str, Any]:
+    """Load model-visible base taxonomy; it explains scope but never selects it."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "config"
+        / "domain"
+        / "smeta_normative_catalog.json"
+    )
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _plain_source_text(value: Any) -> str:
+    text = re.sub(r"<br\s*/?>", "\n", str(value or ""), flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return " ".join(text.replace("&nbsp;", " ").split())
+
+
+def _source_lines(value: Any) -> list[str]:
+    text = re.sub(r"<br\s*/?>", "\n", str(value or ""), flags=re.IGNORECASE)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return [
+        " ".join(line.replace("&nbsp;", " ").split()).strip()
+        for line in text.splitlines()
+        if " ".join(line.replace("&nbsp;", " ").split()).strip()
+    ]
+
+
+def _collection_title(source_doc: Any, collection: str) -> str:
+    """Extract the official collection heading from typed provenance."""
+    text = _plain_source_text(source_doc)
+    collection_number = str(int(collection)) if collection.isdigit() else collection
+    pattern = re.compile(
+        rf"(?:Государственные [^.]+?\.\s*)?Сборник\s+0*{re.escape(collection_number)}\.\s*"
+        r"(.+?)(?=\s+(?:Сборник|Отдел|Раздел|Подраздел|Таблица)\s+|\Z)",
+        re.IGNORECASE,
+    )
+    match = pattern.search(text)
+    return " ".join(match.group(1).split()).strip(" .") if match else ""
+
+
+def _family_catalog_item(row: sqlite3.Row) -> dict[str, Any]:
+    family = str(row["key"] or "")
+    metadata = (
+        (_normative_catalog_metadata().get("families") or {}).get(family)
+        if family
+        else None
+    )
+    item = dict(row)
+    if isinstance(metadata, dict):
+        item.update({
+            "official_name": str(metadata.get("official_name") or ""),
+            "purpose": str(metadata.get("purpose") or ""),
+            "typical_scope": [
+                str(value)
+                for value in (metadata.get("typical_scope") or [])
+                if str(value).strip()
+            ],
+            "not_for": [
+                str(value)
+                for value in (metadata.get("not_for") or [])
+                if str(value).strip()
+            ],
+            "questions_to_ask": [
+                str(value)
+                for value in (metadata.get("questions_to_ask") or [])
+                if str(value).strip()
+            ],
+            "navigation_url": str(metadata.get("navigation_url") or ""),
+            "approval_basis": str(metadata.get("approval_basis") or ""),
+            "calculation_use": str(metadata.get("calculation_use") or ""),
+            "source_ref": str(metadata.get("source_ref") or ""),
+        })
+    item.update({
+        "node_id": f"catalog:family:{family}",
+        "parent_id": "catalog:root",
+        "node_type": "family",
+        "cipher": family,
+        "edition": "ФСНБ-2022",
+    })
+    return item
+
+
+def _collection_catalog_item(row: sqlite3.Row, *, family: str) -> dict[str, Any]:
+    item = dict(row)
+    key = str(row["key"] or "")
+    title = _collection_title(row["source_example"], key)
+    item.update({
+        "node_id": f"catalog:collection:{family}:{key}",
+        "parent_id": f"catalog:family:{family}",
+        "node_type": "collection",
+        "cipher": key,
+        "edition": "ФСНБ-2022",
+        "title": title,
+        "purpose": (
+            f"Официальный сборник {family} {key}: {title}"
+            if title
+            else f"Официальный сборник {family} {key}"
+        ),
+        "typical_scope": [title] if title else [],
+        "source_ref": (
+            f"ФСНБ-2022 · {family}, сборник {key}"
+            + (f" «{title}»" if title else "")
+        ),
+    })
+    return item
+
+
+def _collection_passport(
+    conn: sqlite3.Connection,
+    *,
+    family: str,
+    collection: str,
+) -> dict[str, Any]:
+    """Build one bounded navigation passport from the active typed edition."""
+    rows = conn.execute(
+        """
+        SELECT bare_code, norm_name, norm_unit, source_doc
+        FROM norms
+        WHERE base_type=? AND substr(bare_code,1,2)=?
+        ORDER BY bare_code
+        LIMIT 48
+        """,
+        (family, collection),
+    ).fetchall()
+    if not rows:
+        return {}
+    title = _collection_title(rows[0]["source_doc"], collection)
+    sections: list[str] = []
+    table_examples: list[str] = []
+    units: list[str] = []
+    for row in rows:
+        unit = " ".join(str(row["norm_unit"] or "").split()).strip()
+        if unit and unit not in units:
+            units.append(unit)
+        for line in _source_lines(row["source_doc"]):
+            if re.match(r"^(?:Отдел|Раздел|Подраздел)\s+", line, re.IGNORECASE):
+                if line not in sections:
+                    sections.append(line)
+            if line.casefold().startswith("таблица ") and line not in table_examples:
+                table_examples.append(line)
+    family_meta = (
+        (_normative_catalog_metadata().get("families") or {}).get(family)
+        or {}
+    )
+    return {
+        "schema": "smeta_norm_collection_passport_v1",
+        "family": family,
+        "collection": collection,
+        "title": title,
+        "purpose": (
+            f"Навигация по официальному сборнику {family} {collection}"
+            + (f" «{title}»" if title else "")
+        ),
+        "representative_sections": sections[:6],
+        "representative_tables": table_examples[:4],
+        "representative_units": units[:8],
+        "family_exclusions": [
+            str(value)
+            for value in (family_meta.get("not_for") or [])
+            if str(value).strip()
+        ][:4],
+        "scope_questions": [
+            str(value)
+            for value in (family_meta.get("questions_to_ask") or [])
+            if str(value).strip()
+        ][:4],
+        "source_ref": (
+            f"ФСНБ-2022 · {family}, сборник {collection}"
+            + (f" «{title}»" if title else "")
+        ),
+        "passport_role": "navigation_only",
+        "requires_scoped_search": True,
+        "requires_full_norm_read": True,
+    }
+
+
+def _catalog_heading(source_doc: Any, *prefixes: str) -> str:
+    """Return the first official hierarchy heading with one of the prefixes."""
+    normalized = tuple(prefix.casefold() for prefix in prefixes)
+    for line in _source_lines(source_doc):
+        if line.casefold().startswith(normalized):
+            return line
+    return ""
+
+
+def _section_code(value: Any, *, collection: str = "") -> str:
+    """Normalize the encoded FSNB child below a collection (for example 10-04)."""
+    digits = re.sub(r"\D", "", str(value or ""))[:4]
+    if len(digits) == 2 and collection:
+        digits = f"{collection}{digits}"
+    if len(digits) != 4:
+        return ""
+    return f"{digits[:2]}-{digits[2:]}"
+
+
+def _section_catalog_item(row: sqlite3.Row, *, family: str) -> dict[str, Any]:
+    item = dict(row)
+    key = str(row["key"] or "")
+    official_heading = _catalog_heading(row["source_example"], "Отдел ", "Раздел ")
+    title = re.sub(
+        r"^(?:Отдел|Раздел)\s+\d+[.]?\s*",
+        "",
+        official_heading,
+        flags=re.IGNORECASE,
+    ).strip()
+    item.update({
+        "node_id": f"catalog:section:{family}:{key}",
+        "parent_id": f"catalog:collection:{family}:{key[:2]}",
+        "node_type": "section",
+        "cipher": key,
+        "edition": "ФСНБ-2022",
+        "section_code": key,
+        "navigation_kind": "section",
+        "official_heading": official_heading,
+        "title": title or official_heading or key,
+        "purpose": official_heading or f"Официальный раздел {family} {key}",
+        "source_ref": (
+            f"ФСНБ-2022 · {family}, раздел каталога {key}"
+            + (f" «{title}»" if title else "")
+        ),
+    })
+    return item
+
+
+def _table_catalog_item(row: sqlite3.Row, *, family: str) -> dict[str, Any]:
+    item = dict(row)
+    key = str(row["key"] or "")
+    table_heading = _catalog_heading(row["source_example"], "Таблица ")
+    title = re.sub(
+        rf"^Таблица\s+(?:{re.escape(family)}\s*)?{re.escape(key)}\s*",
+        "",
+        table_heading,
+        flags=re.IGNORECASE,
+    ).strip()
+    hierarchy = [
+        line
+        for line in _source_lines(row["source_example"])
+        if re.match(r"^(?:Отдел|Раздел|Подраздел)\s+", line, re.IGNORECASE)
+    ]
+    norm_name_examples = [
+        " ".join(value.split())
+        for value in str(row["norm_names"] or "").split("\x1f")
+        if " ".join(value.split())
+    ][:16]
+    item.update({
+        "node_id": f"catalog:table:{family}:{key}",
+        "parent_id": f"catalog:section:{family}:{key[:5]}",
+        "node_type": "table",
+        "cipher": key,
+        "edition": "ФСНБ-2022",
+        "table_code": key,
+        "navigation_kind": "table",
+        "official_heading": table_heading,
+        "title": title or table_heading or key,
+        "purpose": table_heading or f"Официальная таблица {family} {key}",
+        "hierarchy": hierarchy,
+        "norm_name_examples": norm_name_examples,
+        "source_ref": (
+            f"ФСНБ-2022 · {family}, таблица {key}"
+            + (f" «{title}»" if title else "")
+        ),
+    })
+    return item
 
 
 def _card(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
@@ -181,7 +457,7 @@ def _retrieval_vocabulary() -> tuple[dict[str, Any], ...]:
     return tuple(rule for rule in (rules or []) if isinstance(rule, dict))
 
 
-def _query_variants(query: str) -> list[str]:
+def _query_variants(query: str, *, stage: str = "norm") -> list[str]:
     """Expose documented user-language → normative-language search variants."""
     original = " ".join(str(query or "").split()).strip()
     if not original:
@@ -189,6 +465,13 @@ def _query_variants(query: str) -> list[str]:
     low = original.casefold().replace("ё", "е")
     expansions_found: list[str] = []
     for rule in _retrieval_vocabulary():
+        stages = {
+            str(value or "").strip().casefold()
+            for value in (rule.get("stages") or [])
+            if str(value or "").strip()
+        }
+        if stages and str(stage or "").strip().casefold() not in stages:
+            continue
         triggers = [str(value or "").casefold().replace("ё", "е") for value in rule.get("match_any") or []]
         expansions = [rule.get("query")] if rule.get("query") else list(rule.get("queries") or [])
         if any(trigger and trigger in low for trigger in triggers):
@@ -200,6 +483,37 @@ def _query_variants(query: str) -> list[str]:
     # Normative-language variants lead retrieval; the untouched user query is
     # retained as the final recall channel and remains visible in trace.
     return list(dict.fromkeys([*expansions_found, original]))
+
+
+def _catalog_compass_roots(value: object) -> set[str]:
+    """Normalize official catalog identity without adding a selected cipher."""
+    roots = set()
+    for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", str(value or "").casefold()):
+        normalized = token.replace("ё", "е")
+        if len(normalized) < 4 or normalized in _CATALOG_COMPASS_STOP_WORDS:
+            continue
+        roots.add(normalized[:7] if len(normalized) > 7 else normalized)
+    return roots
+
+
+def catalog_compass_score(query: str, item: dict[str, Any]) -> float:
+    """Score overlap with official node text; navigation only, never selection."""
+    query_roots = _catalog_compass_roots(query)
+    catalog_roots = _catalog_compass_roots(
+        " ".join([
+            str(item.get("title") or ""),
+            str(item.get("purpose") or ""),
+            " ".join(str(value) for value in (item.get("typical_scope") or [])),
+        ])
+    )
+    if not query_roots or not catalog_roots:
+        return 0.0
+    overlap = query_roots & catalog_roots
+    if not overlap:
+        return 0.0
+    catalog_coverage = len(overlap) / len(catalog_roots)
+    query_coverage = len(overlap) / len(query_roots)
+    return round((2.0 * catalog_coverage) + query_coverage, 6)
 
 
 @lru_cache(maxsize=8)
@@ -251,16 +565,28 @@ def _rag_index_mode(base_path: Path) -> str:
     return str(payload.get("index_mode") or "hybrid")
 
 
-def _rag_dense_compatibility(base_path: Path) -> tuple[bool, str]:
-    """Dense is usable only in a proven query/document embedding space."""
+def _rag_dense_contract(base_path: Path) -> tuple[bool, str, str, str]:
+    """Resolve the dedicated query backend from the active smeta generation.
+
+    The general RAG ``EMBED_BACKEND`` belongs to the user-document index and is
+    not evidence about the separately built smeta sibling index.  The active
+    smeta manifest owns that immutable identity.  An explicit smeta override is
+    allowed only when the manifest proves both backends share one embedding
+    space; the HTTP embedding client still validates the backend actually used.
+    """
     try:
         payload = json.loads(_rag_manifest_path(base_path).read_text(encoding="utf-8"))
     except Exception:
-        return False, "manifest_missing_or_invalid"
+        return False, "manifest_missing_or_invalid", "", ""
     built_backend = str(payload.get("embedding_backend") or "").strip().lower()
-    query_backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+    query_backend = (
+        os.getenv("LES_SMETA_NORM_EMBED_BACKEND", "").strip().lower()
+        or built_backend
+    )
+    if not built_backend:
+        return False, "embedding_backend_missing", "", query_backend
     if built_backend == query_backend:
-        return True, "same_backend"
+        return True, "same_backend", built_backend, query_backend
     verified_space = str(payload.get("embedding_space_id") or "").strip()
     expected_space = os.getenv("LES_SMETA_EMBEDDING_SPACE_ID", "").strip()
     if (
@@ -269,8 +595,18 @@ def _rag_dense_compatibility(base_path: Path) -> tuple[bool, str]:
         and expected_space
         and verified_space == expected_space
     ):
-        return True, "verified_embedding_space"
-    return False, f"embedding_backend_mismatch:{built_backend or 'missing'}!={query_backend}"
+        return True, "verified_embedding_space", built_backend, query_backend
+    return (
+        False,
+        f"embedding_backend_mismatch:{built_backend}!={query_backend or 'missing'}",
+        built_backend,
+        query_backend,
+    )
+
+
+def _rag_dense_compatibility(base_path: Path) -> tuple[bool, str]:
+    compatible, reason, _built_backend, _query_backend = _rag_dense_contract(base_path)
+    return compatible, reason
 
 
 def _rag_cards_many(
@@ -307,7 +643,12 @@ def _rag_cards_many(
                 trace.update({"status": "degraded_sparse_only", "reason": "collection_missing", "collection": collection})
             return out
         index_mode = _rag_index_mode(base_path)
-        dense_compatible, dense_reason = _rag_dense_compatibility(base_path)
+        (
+            dense_compatible,
+            dense_reason,
+            index_embedding_backend,
+            query_embedding_backend,
+        ) = _rag_dense_contract(base_path)
         embedding_ms = 0.0
         dense_vectors: list[Any] = [None] * len(queries)
         sparse_mode = index_mode in {"sparse_only", "building_dense"} or not dense_compatible
@@ -315,6 +656,7 @@ def _rag_cards_many(
             embed = EmbedClient(
                 os.getenv("MLX_URL", "http://127.0.0.1:8080"),
                 model=embedding_model,
+                backend=query_embedding_backend,
             )
             embedding_started = perf_counter()
             dense_vectors = embed.encode_sync([prepare_query_for_embedding(query) for query in queries])
@@ -356,6 +698,8 @@ def _rag_cards_many(
                 "dense_compatible": dense_compatible,
                 "collection": collection,
                 "embedding_model": embedding_model,
+                "index_embedding_backend": index_embedding_backend,
+                "query_embedding_backend": query_embedding_backend,
                 "rehydrated_counts": rehydrated_counts,
                 "missing_norm_keys": missing_counts,
                 "embedding_ms": embedding_ms,
@@ -421,6 +765,7 @@ def _rerank_cards(
     cards: list[dict[str, Any]],
     *,
     limit: int,
+    fuse_with_input: bool = True,
 ) -> tuple[list[dict[str, Any]], bool, str]:
     """Fuse cross-encoder order with hybrid retrieval and expose transport failure."""
     if os.getenv("LES_SMETA_NORM_RERANK", "true").strip().casefold() not in {
@@ -478,6 +823,10 @@ def _rerank_cards(
     reordered = [cards[index] for index in valid_order]
     used = set(valid_order)
     reordered.extend(card for index, card in enumerate(cards) if index not in used)
+    if not fuse_with_input:
+        # An official catalog is ordered by code, not by relevance.  Its input
+        # order must never be treated as an independent ranking signal.
+        return reordered[:limit], True, "ok"
     # A cross-encoder is a second relevance signal, not an oracle. Preserve
     # the independent typed+dense+sparse RRF evidence by fusing both complete
     # rankings. This prevents a technically healthy but semantically weak
@@ -575,11 +924,18 @@ def browse_norm_catalog(
     *,
     family: str = "",
     collection: str = "",
+    section: str = "",
     table: str = "",
     limit: int = 100,
     base_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Navigate typed identity without guessing: family -> collection -> table -> norms."""
+    """Navigate typed FSNB identity without skipping hierarchy levels.
+
+    The public ``section`` level is the encoded child below a collection, for
+    example ``10-04``.  The official source may call that node ``Отдел 4`` and
+    may contain additional textual ``Раздел``/``Подраздел`` headings.  Those
+    official labels remain visible on table nodes.
+    """
     path = Path(base_path) if base_path is not None else _base_path()
     integrity = normative_base_integrity(base_path=path)
     if not path.exists():
@@ -592,10 +948,22 @@ def browse_norm_catalog(
     bounded_limit = max(1, min(int(limit), 1000))
     family_value = str(family or "").strip()
     collection_value = re.sub(r"\D", "", str(collection or ""))[:2]
+    section_value = _section_code(section, collection=collection_value)
     table_value = re.sub(r"[^0-9-]", "", str(table or "")).strip("-")
     conn = _connect_base_readonly(path)
     conn.row_factory = sqlite3.Row
     try:
+        current_node = {
+            "node_id": "catalog:root",
+            "parent_id": "",
+            "node_type": "root",
+            "cipher": "ФСНБ",
+            "title": "Федеральная сметная нормативная база",
+            "description": "Официальная иерархия видов сметных норм",
+            "source_ref": "ФСНБ-2022",
+            "edition": "ФСНБ-2022",
+        }
+        collection_passport: dict[str, Any] = {}
         if not family_value:
             level = "family"
             rows = conn.execute(
@@ -612,41 +980,387 @@ def browse_norm_catalog(
                 "GROUP BY substr(bare_code,1,2) ORDER BY key LIMIT ?",
                 (family_value, bounded_limit),
             ).fetchall()
+        elif not section_value and not table_value:
+            level = "section"
+            rows = conn.execute(
+                "SELECT substr(bare_code,1,5) key, count(*) norm_count, "
+                "sum(resource_count) resource_count, min(source_doc) source_example FROM norms "
+                "WHERE base_type=? AND substr(bare_code,1,2)=? "
+                "GROUP BY substr(bare_code,1,5) ORDER BY key LIMIT ?",
+                (family_value, collection_value, bounded_limit),
+            ).fetchall()
+            collection_passport = _collection_passport(
+                conn,
+                family=family_value,
+                collection=collection_value,
+            )
         elif not table_value:
             level = "table"
             rows = conn.execute(
                 "SELECT substr(bare_code,1,9) key, count(*) norm_count, "
-                "sum(resource_count) resource_count, min(source_doc) source_example FROM norms "
+                "sum(resource_count) resource_count, min(source_doc) source_example, "
+                "group_concat(norm_name, char(31)) norm_names FROM norms "
                 "WHERE base_type=? AND substr(bare_code,1,2)=? "
+                "AND substr(bare_code,1,5)=? "
                 "GROUP BY substr(bare_code,1,9) ORDER BY key LIMIT ?",
-                (family_value, collection_value, bounded_limit),
+                (family_value, collection_value, section_value, bounded_limit),
             ).fetchall()
         else:
             level = "norm"
             normalized_table = table_value[:9]
+            if collection_value and not normalized_table.startswith(
+                f"{collection_value}-"
+            ):
+                return {
+                    "schema": "smeta_norm_catalog_v1",
+                    "level": level,
+                    "selection_owner": "model_or_user",
+                    "filters": {
+                        "family": family_value,
+                        "collection": collection_value,
+                        "section": section_value,
+                        "table": normalized_table,
+                    },
+                    "source_integrity": integrity,
+                    "items": [],
+                }
+            if section_value and not normalized_table.startswith(
+                f"{section_value}-"
+            ):
+                return {
+                    "schema": "smeta_norm_catalog_v1",
+                    "level": level,
+                    "selection_owner": "model_or_user",
+                    "filters": {
+                        "family": family_value,
+                        "collection": collection_value,
+                        "section": section_value,
+                        "table": normalized_table,
+                    },
+                    "source_integrity": integrity,
+                    "items": [],
+                }
             rows = conn.execute(
-                "SELECT * FROM norms WHERE base_type=? AND substr(bare_code,1,9)=? "
+                "SELECT * FROM norms WHERE base_type=? "
+                "AND substr(bare_code,1,2)=? AND substr(bare_code,1,9)=? "
                 "ORDER BY bare_code LIMIT ?",
-                (family_value, normalized_table, bounded_limit),
+                (family_value, collection_value, normalized_table, bounded_limit),
             ).fetchall()
+            norm_items = []
+            for row in rows:
+                card = _card(conn, row)
+                norm_code = str(card.get("norm_code") or row["bare_code"] or "")
+                card.update({
+                    "node_id": str(card.get("norm_key") or ""),
+                    "parent_id": f"catalog:table:{family_value}:{normalized_table}",
+                    "node_type": "norm",
+                    "cipher": norm_code,
+                    "edition": "ФСНБ-2022",
+                })
+                norm_items.append(card)
             return {
                 "schema": "smeta_norm_catalog_v1",
                 "level": level,
+                "current_node": {
+                    "node_id": f"catalog:table:{family_value}:{normalized_table}",
+                    "parent_id": f"catalog:section:{family_value}:{normalized_table[:5]}",
+                    "node_type": "table",
+                    "cipher": normalized_table,
+                    "title": normalized_table,
+                    "description": "Официальная таблица ФСНБ",
+                    "source_ref": f"ФСНБ-2022 · {family_value}, таблица {normalized_table}",
+                    "edition": "ФСНБ-2022",
+                },
                 "selection_owner": "model_or_user",
-                "filters": {"family": family_value, "collection": collection_value, "table": normalized_table},
+                "filters": {
+                    "family": family_value,
+                    "collection": collection_value,
+                    "section": section_value,
+                    "table": normalized_table,
+                },
                 "source_integrity": integrity,
-                "items": [_card(conn, row) for row in rows],
+                "items": norm_items,
             }
-        return {
+        if level == "family":
+            items = [_family_catalog_item(row) for row in rows]
+        elif level == "collection":
+            items = [
+                _collection_catalog_item(row, family=family_value)
+                for row in rows
+            ]
+        elif level == "section":
+            items = [
+                _section_catalog_item(row, family=family_value)
+                for row in rows
+            ]
+        elif level == "table":
+            items = [
+                _table_catalog_item(row, family=family_value)
+                for row in rows
+            ]
+        else:
+            items = [dict(row) for row in rows]
+        result = {
             "schema": "smeta_norm_catalog_v1",
             "level": level,
+            "current_node": current_node,
             "selection_owner": "model_or_user",
-            "filters": {"family": family_value, "collection": collection_value, "table": table_value},
+            "filters": {
+                "family": family_value,
+                "collection": collection_value,
+                "section": section_value,
+                "table": table_value,
+            },
             "source_integrity": integrity,
-            "items": [dict(row) for row in rows],
+            "items": items,
         }
+        if level == "collection":
+            result["current_node"] = {
+                "node_id": f"catalog:family:{family_value}",
+                "parent_id": "catalog:root",
+                "node_type": "family",
+                "cipher": family_value,
+                "title": family_value,
+                "description": "Официальный вид сметных норм",
+                "source_ref": f"ФСНБ-2022 · {family_value}",
+                "edition": "ФСНБ-2022",
+            }
+        elif level == "section":
+            result["current_node"] = {
+                "node_id": f"catalog:collection:{family_value}:{collection_value}",
+                "parent_id": f"catalog:family:{family_value}",
+                "node_type": "collection",
+                "cipher": collection_value,
+                "title": str(collection_passport.get("title") or collection_value),
+                "description": str(
+                    collection_passport.get("purpose")
+                    or "Официальный сборник ФСНБ"
+                ),
+                "source_ref": str(
+                    collection_passport.get("source_ref")
+                    or f"ФСНБ-2022 · {family_value}, сборник {collection_value}"
+                ),
+                "edition": "ФСНБ-2022",
+            }
+        elif level == "table":
+            result["current_node"] = {
+                "node_id": f"catalog:section:{family_value}:{section_value}",
+                "parent_id": f"catalog:collection:{family_value}:{collection_value}",
+                "node_type": "section",
+                "cipher": section_value,
+                "title": section_value,
+                "description": "Официальный раздел каталога ФСНБ",
+                "source_ref": f"ФСНБ-2022 · {family_value}, раздел каталога {section_value}",
+                "edition": "ФСНБ-2022",
+            }
+        if collection_passport:
+            result["collection_passport"] = collection_passport
+        return result
     finally:
         conn.close()
+
+
+def rank_norm_catalog_collections(
+    query: str,
+    *,
+    family: str,
+    limit: int = 8,
+    base_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Rank official collection nodes before searching individual norms.
+
+    This is a bounded typed catalog graph, not a professional selector:
+    ``family -> collection`` edges and their official titles/sections only
+    produce a model-visible navigation menu.  Norm evidence is still retrieved
+    later by a scoped ``search_norms_batch`` and hydrated from typed SQLite.
+    """
+    started = perf_counter()
+    catalog = browse_norm_catalog(
+        family=family,
+        limit=1000,
+        base_path=base_path,
+    )
+    catalog_items = [
+        item for item in (catalog.get("items") or []) if isinstance(item, dict)
+    ]
+    cards: list[dict[str, Any]] = []
+    for item in catalog_items:
+        collection = str(item.get("key") or "")
+        if not collection:
+            continue
+        source_lines = _source_lines(item.get("source_example"))
+        cards.append({
+            **item,
+            "norm_key": f"catalog_collection:{family}:{collection}",
+            "norm_code": f"{family}:{collection}",
+            "family": family,
+            "collection": collection,
+            "navigation_kind": "collection",
+            "title": str(item.get("title") or item.get("purpose") or ""),
+            "work_steps": [
+                str(item.get("purpose") or ""),
+                *source_lines[:12],
+            ],
+        })
+    ranked, reranked, rerank_status = _rerank_cards(
+        str(query or ""),
+        cards,
+        limit=max(1, min(len(cards), 100)),
+        fuse_with_input=False,
+    )
+    query_variants = _query_variants(query, stage="collection") or [str(query or "")]
+    rerank_rank = {
+        str(card.get("collection") or ""): rank
+        for rank, card in enumerate(ranked, start=1)
+    }
+    compass_scores = {
+        str(card.get("collection") or ""): max(
+            catalog_compass_score(variant, card)
+            for variant in query_variants
+        )
+        for card in cards
+    }
+    compass_order = sorted(
+        (
+            collection
+            for collection, score in compass_scores.items()
+            if collection and score > 0.0
+        ),
+        key=lambda collection: (
+            -compass_scores[collection],
+            collection,
+        ),
+    )
+    compass_rank = {
+        collection: rank
+        for rank, collection in enumerate(compass_order, start=1)
+    }
+    by_collection = {
+        str(card.get("collection") or ""): card for card in cards
+    }
+    # Protect exact official catalog heads from a semantically plausible but
+    # wrong cross-encoder order. This is candidate coverage, not a selected
+    # collection: the model still receives and compares the bounded menu.
+    fused_collections = list(
+        dict.fromkeys([
+            *compass_order,
+            *(
+                str(card.get("collection") or "")
+                for card in ranked
+                if str(card.get("collection") or "")
+            ),
+        ])
+    )[: max(1, min(int(limit), 100))]
+    visible_cards = []
+    for rank, collection in enumerate(fused_collections, start=1):
+        card = by_collection[collection]
+        visible_cards.append({
+            key: value
+            for key, value in {
+                **card,
+                "catalog_rank": rank,
+                "rerank_rank": rerank_rank.get(collection),
+                "catalog_compass_rank": compass_rank.get(collection),
+                "catalog_compass_score": compass_scores.get(collection, 0.0),
+            }.items()
+            if key not in {"norm_key", "norm_code", "work_steps"}
+        })
+    return {
+        "schema": "smeta_norm_catalog_graph_v1",
+        "level": "collection",
+        "family": family,
+        "selection_owner": "model_or_user",
+        "cards": visible_cards,
+        "source_integrity": catalog.get("source_integrity"),
+        "retrieval_trace": {
+            "retrieval_policy": "typed_catalog_lexical_rrf_rerank",
+            "graph_route": ["family", "collection"],
+            "catalog_nodes": len(cards),
+            "returned_candidates": len(visible_cards),
+            "reranked": reranked,
+            "rerank_status": rerank_status,
+            "query_variants": query_variants,
+            "fusion": "official_lexical_head_coverage_then_rerank",
+            "signals": ["official_catalog_lexical", "rerank"],
+            "tool_total_ms": round((perf_counter() - started) * 1000, 2),
+        },
+    }
+
+
+def rank_norm_catalog_tables(
+    query: str,
+    *,
+    family: str,
+    collection: str,
+    section: str,
+    limit: int = 12,
+    base_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Rank typed table nodes only inside one model-selected section."""
+    started = perf_counter()
+    catalog = browse_norm_catalog(
+        family=family,
+        collection=collection,
+        section=section,
+        limit=1000,
+        base_path=base_path,
+    )
+    cards: list[dict[str, Any]] = []
+    for item in catalog.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        table_code = str(item.get("key") or "")
+        if not table_code:
+            continue
+        cards.append({
+            **item,
+            "norm_key": f"catalog_table:{family}:{table_code}",
+            "norm_code": f"{family}:{table_code}",
+            "family": family,
+            "collection": collection,
+            "section": _section_code(section, collection=collection),
+            "navigation_kind": "table",
+            "work_steps": [
+                str(item.get("purpose") or ""),
+                *[str(value) for value in (item.get("hierarchy") or [])],
+                *[
+                    str(value)
+                    for value in (item.get("norm_name_examples") or [])[:12]
+                ],
+            ],
+        })
+    ranked, reranked, rerank_status = _rerank_cards(
+        str(query or ""),
+        cards,
+        limit=max(1, min(int(limit), 100)),
+        fuse_with_input=False,
+    )
+    visible_cards = []
+    for rank, card in enumerate(ranked, start=1):
+        visible_cards.append({
+            key: value
+            for key, value in {**card, "catalog_rank": rank}.items()
+            if key not in {"norm_key", "norm_code", "work_steps"}
+        })
+    return {
+        "schema": "smeta_norm_catalog_graph_v1",
+        "level": "table",
+        "family": family,
+        "collection": collection,
+        "section": _section_code(section, collection=collection),
+        "selection_owner": "model_or_user",
+        "cards": visible_cards,
+        "source_integrity": catalog.get("source_integrity"),
+        "retrieval_trace": {
+            "retrieval_policy": "typed_catalog_graph_then_rerank",
+            "graph_route": ["family", "collection", "section", "table"],
+            "catalog_nodes": len(cards),
+            "returned_candidates": len(visible_cards),
+            "reranked": reranked,
+            "rerank_status": rerank_status,
+            "tool_total_ms": round((perf_counter() - started) * 1000, 2),
+        },
+    }
 
 
 def browse_norms(query: str, *, limit: int = 8, base_path: str | Path | None = None) -> dict[str, Any]:
@@ -702,6 +1416,7 @@ def browse_norms_many(
     collections: list[str] | tuple[str, ...] | None = None,
     table_codes: list[str] | tuple[str, ...] | None = None,
     rerank: bool | None = None,
+    expand_queries: bool = True,
 ) -> dict[str, dict[str, Any]]:
     tool_started = perf_counter()
     bounded_limit = max(1, min(int(limit), 50))
@@ -763,7 +1478,14 @@ def browse_norms_many(
     # The configured cross-encoder owns batching. A document with many rows
     # must receive the same retrieval contract as a one-row query.
     rerank_enabled = bool(rerank) if rerank is not None else True
-    variants_by_query = {query: _query_variants(query) for query in clean_queries}
+    variants_by_query = {
+        query: (
+            _query_variants(query)
+            if expand_queries
+            else [query]
+        )
+        for query in clean_queries
+    }
     all_variants = list(dict.fromkeys(
         variant for query in clean_queries for variant in variants_by_query.get(query) or [query]
     ))
@@ -817,21 +1539,21 @@ def browse_norms_many(
         rerank_status = "not_attempted"
         if rag_cards:
             backend = f"{backend}+smeta_norm_qdrant_hybrid"
-            if rerank_enabled:
-                rerank_started = perf_counter()
-                cards, reranked, rerank_status = _rerank_cards(
-                    query,
-                    fused,
-                    limit=bounded_limit,
-                )
-                rerank_ms += (perf_counter() - rerank_started) * 1000
-                if reranked:
-                    backend = f"{backend}+bge_rerank_rrf"
-                else:
-                    backend = f"{backend}+rerank_{rerank_status}"
+        if rerank_enabled:
+            rerank_started = perf_counter()
+            cards, reranked, rerank_status = _rerank_cards(
+                query,
+                fused,
+                limit=bounded_limit,
+            )
+            rerank_ms += (perf_counter() - rerank_started) * 1000
+            if reranked:
+                backend = f"{backend}+bge_rerank_rrf"
             else:
-                rerank_status = "disabled_by_caller"
-                backend = f"{backend}+rerank_deferred"
+                backend = f"{backend}+rerank_{rerank_status}"
+        else:
+            rerank_status = "disabled_by_caller"
+            backend = f"{backend}+rerank_deferred"
         out[query] = {
             "schema": "smeta_norm_browse_v1",
             "query": query,
@@ -850,6 +1572,7 @@ def browse_norms_many(
                 "rag": dict(rag_trace),
                 "filters": {"base_types": list(clean_base_types), "collections": list(clean_collections)},
                 "query_variants": query_variants,
+                "query_expansion": bool(expand_queries),
                 "embedding_ms": float(rag_trace.get("embedding_ms") or 0.0),
                 "retrieval_ms": float(rag_trace.get("retrieval_ms") or 0.0),
                 "rerank_ms": round(rerank_ms, 2),
