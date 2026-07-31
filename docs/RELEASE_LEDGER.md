@@ -7,16 +7,30 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.5 (reviewed sibling creation gate)
-номер сборки:              522     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.522 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.6 (reproducible Qwen/Gemma model-quality harness)
+номер сборки:              523     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.523 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.5 candidate
+dev implementation:       codex/legion-model-quality; 0.27.6 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.6 / build 523 — reproducible Qwen/Gemma model-quality harness
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; installed runtime не изменён.
+> `tools/smeta_model_quality_benchmark.py` запускает оба локальных Ollama-профиля через один
+> canonical XLSX/PDF→ЛСР workflow с одинаковыми system skill, request, corpus, tools, seed,
+> context/token limits и `batch_size=1`. Каждый профиль сохраняет готовый XLSX, полный workflow JSON,
+> per-row analysis и JSONL tool events; одинаковое cooperative-прерывание доказывает durable resume.
+> Норма/единица/объём/provenance проверяются структурно, а профессиональная правильность нормы не
+> self-judge'ится: без явного `les.smeta.qrels.v1` с совпадающим `source_sha256` она фиксируется как
+> `not_adjudicated`. Manifest сохраняет hashes prompt/tool contract, model digests и Qdrant aliases.
+> Интеграционный гейт также закрыл потерю `valid_model_rows` на conflict-only global review:
+> полный сохранённый mapping больше не отвергается document boundary как ноль валидных строк.
 
 > 0.27.5 / build 522 — reviewed sibling creation gate
 >

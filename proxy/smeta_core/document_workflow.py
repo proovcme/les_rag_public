@@ -4822,6 +4822,13 @@ def _run_global_norm_review(
 
     reviewed = {
         "selections": reviewed_selections,
+        # The conflict-only review preserves every non-conflicting decision and
+        # replaces only model-reviewed packet decisions.  Keep the structural
+        # completion counter aligned with that full terminal mapping; otherwise
+        # the document boundary falsely reports zero valid rows after review.
+        "valid_model_rows": len(reviewed_selections),
+        "remaining_work_ids": [],
+        "incomplete": False,
         "opened_cards": {},
         "browse_trace": {},
         "query_trace": [],

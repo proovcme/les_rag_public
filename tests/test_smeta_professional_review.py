@@ -436,7 +436,7 @@ def test_document_workflow_creates_global_review_and_draft_calculation(tmp_path,
 
     def batch_runner(work_rows, **_kwargs):
         calls.append(work_rows)
-        if work_rows[0].get("review_phase") == "global_cross_row_review":
+        if work_rows[0].get("review_phase") == "conflict_group_review":
             assert all("current_decision" in row for row in work_rows)
             compact = work_rows[1]["opened_norm_cards"][0]
             assert "resources" not in compact
@@ -461,7 +461,10 @@ def test_document_workflow_creates_global_review_and_draft_calculation(tmp_path,
             }
         return {
             "selections": {
-                "w1": {"norm_code": "", "reason": "первичный unbound"},
+                "w1": {
+                    "norm_code": "ГЭСН01-01-001-01",
+                    "reason": "первичный bind с конфликтом двойного учёта",
+                },
                 "w2": {
                     "norm_code": "ГЭСН01-01-001-01",
                     "reason": "первичный bind",

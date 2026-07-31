@@ -82,6 +82,11 @@ immutable lock-ревизию и только затем отдельный фи
 `possible_duplicate_norm_binding`: validator ничего не меняет, а требует у global review или
 пользователя явной проверки coverage и двойного учёта. Неразрешённый warning остаётся в draft.
 
+Conflict-only global review возвращает полный terminal mapping вместе с согласованным
+`valid_model_rows`; техническая граница документа не может трактовать сохранённые model-owned
+решения как ноль валидных строк. Счётчик вычисляется только из ключей уже принятого mapping и не
+выбирает, не исправляет и не удаляет профессиональные решения модели.
+
 ## Точки входа
 
 - `proxy.smeta_core.application` — единственная публичная application-граница смет: model-first
@@ -96,6 +101,16 @@ immutable lock-ревизию и только затем отдельный фи
   импортируются production workflow.
   Последовательный quick-тест запускается так:
   `uv run python tools/smeta_agent_benchmark.py <путь-к-ВОР.xlsx> --engine qwen_agent --phase quick --batch-size 1`.
+- `tools/smeta_model_quality_benchmark.py` — воспроизводимый live A/B двух локальных Ollama-моделей
+  на полном каноническом XLSX/PDF→ЛСР workflow. Профили получают один request/system skill, corpus,
+  tools, seed, context/token limits, `batch_size=1`, scoped search и global review. Harness проверяет
+  реальный durable resume через одинаковое cooperative-прерывание, сохраняет по каждому профилю
+  `result.xlsx`, полный `workflow.json`, `analysis.json` и `tool-events.jsonl`. Формальная целостность
+  нормы/единицы/объёма/provenance отделена от профессиональной правильности: без явного
+  `les.smeta.qrels.v1` с совпадающим полным `source_sha256` последняя остаётся
+  `not_adjudicated`, а не угадывается кодом или моделью. Manifest фиксирует SHA-256 фактического
+  system prompt и полного tool contract, digests моделей и активные Qdrant aliases/point counts.
+  Запуск: `uv run python tools/smeta_model_quality_benchmark.py <ВОР.xlsx>`.
 - `proxy.services.smeta_chat_application_service` — application flows ordinary smeta и PDF→ЛСР:
   безопасно открывает одноразовое вложение, координирует RAG/model/progress, сохраняет artifact/trace
   и возвращает response envelope. Профессиональных решений не принимает.

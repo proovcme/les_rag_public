@@ -23,6 +23,8 @@
 
 ## Алгоритм-доки (детерминированные ядра, 0 LLM)
 
+- **Reproducible smeta model-quality A/B:** `tools/smeta_model_quality_benchmark.py` запускает Qwen и Gemma через один canonical native Ollama document workflow с одинаковыми prompt/tool/corpus/seed/limits и `batch_size=1`. Harness проверяет durable checkpoint/resume, сохраняет workflow JSON, XLSX и tool-event JSONL, считает per-row completion/integrity/latency/repeats и оставляет профессиональную правильность `not_adjudicated` без явного `les.smeta.qrels.v1`; код не выбирает и не исправляет нормы.
+
 Канон логики, которую LLM не трогает (числа/преобразования считает код, ADR-11). Читать
 перед правкой соответствующего сервиса:
 - **[ALGO-rag-best-practices.md](ALGO-rag-best-practices.md)** — рабочий стандарт LES для RAG/NotebookLM-подхода: датасет как source guide, navigation != evidence, model reader-pass, tool-loop, source refs, missing/blockers и golden checks на НС.
