@@ -7,16 +7,23 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.14 (runtime-only automatic patch selection)
-номер сборки:              531     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.531 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.15 (target-tool baseline preflight)
+номер сборки:              532     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.532 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.14 candidate
+dev implementation:       codex/legion-model-quality; 0.27.15 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.15 / build 532 — target-tool baseline preflight
+>
+> Дата: 2026-08-01
+> Статус: local soft-update candidate; NSIS/EXE не собирается.
+> Если пакет обновляет baseline provisioner, preflight запускает checksum-verified target tool из
+> staged payload, а не устаревший installed helper. Runtime ещё не остановлен и не изменён.
 
 > 0.27.14 / build 531 — runtime-only automatic patch selection
 >

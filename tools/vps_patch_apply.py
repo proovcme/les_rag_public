@@ -319,10 +319,15 @@ def _start_runtime(runtime: Path, state: Path) -> None:
     )
 
 
-def _verify_smeta_baseline(runtime: Path, state: Path) -> None:
+def _verify_smeta_baseline(
+    runtime: Path, state: Path, *, staged_runtime: Path | None = None
+) -> None:
     """Repair/verify the bundled immutable FSNB base before accepting a patch."""
     python = state / ".venv" / "Scripts" / "python.exe"
     tool = runtime / "tools" / "smeta_release_baseline.py"
+    staged_tool = (staged_runtime or Path()) / "tools" / "smeta_release_baseline.py"
+    if staged_runtime is not None and staged_tool.is_file():
+        tool = staged_tool
     archive = runtime / "installers" / "windows" / "baseline" / "LES-smeta-baseline.zip"
     missing = [str(path) for path in (python, tool, archive) if not path.is_file()]
     if missing:
@@ -493,7 +498,7 @@ def apply_job(job_path: Path) -> int:
                 patch_id=patch_id,
                 message="Проверяю и подключаю базу ФСНБ до изменения версии LES",
             )
-            _verify_smeta_baseline(runtime, state)
+            _verify_smeta_baseline(runtime, state, staged_runtime=stage / "runtime")
 
             stamp_path = runtime / ".les_deploy_stamp.json"
             backup = _reusable_backup(backup_root, manifest)

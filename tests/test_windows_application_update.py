@@ -211,6 +211,31 @@ def test_soft_updater_verifies_bundled_smeta_baseline_with_persistent_python(
     assert captured["kwargs"]["environment"]["LES_WINDOWS_STATE_ROOT"] == str(state)
 
 
+def test_soft_updater_preflights_with_staged_baseline_tool(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    staged_runtime = tmp_path / "stage/runtime"
+    state = tmp_path / "state"
+    python = state / ".venv/Scripts/python.exe"
+    installed_tool = runtime / "tools/smeta_release_baseline.py"
+    staged_tool = staged_runtime / "tools/smeta_release_baseline.py"
+    archive = runtime / "installers/windows/baseline/LES-smeta-baseline.zip"
+    for path in (python, installed_tool, staged_tool, archive):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"fixture")
+    captured = {}
+    monkeypatch.setattr(
+        windows_update_engine,
+        "run_bounded",
+        lambda arguments, **_kwargs: captured.setdefault("arguments", arguments) and 0,
+    )
+
+    vps_patch_apply._verify_smeta_baseline(
+        runtime, state, staged_runtime=staged_runtime
+    )
+
+    assert captured["arguments"][1] == str(staged_tool)
+
+
 def test_windows_updater_accepts_powershell_utf8_bom_job(tmp_path, monkeypatch):
     runtime, state, job = _prepared_job(tmp_path)
     job.write_text(job.read_text(encoding="utf-8"), encoding="utf-8-sig")
