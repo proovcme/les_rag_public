@@ -103,7 +103,11 @@ def _patch_windows_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(vps_patch_apply, "_stop_runtime", lambda _runtime, _state: None)
     monkeypatch.setattr(vps_patch_apply, "_stop_desktop", lambda: None)
     monkeypatch.setattr(vps_patch_apply, "_start_runtime", lambda _runtime, _state: None)
-    monkeypatch.setattr(vps_patch_apply, "_verify_smeta_baseline", lambda _runtime, _state: None)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_verify_smeta_baseline",
+        lambda _runtime, _state, **_kwargs: None,
+    )
     monkeypatch.setattr(
         vps_patch_apply, "start_desktop", lambda _runtime, patch_id: f"task-{patch_id}"
     )
