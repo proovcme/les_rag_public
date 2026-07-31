@@ -768,6 +768,32 @@ def test_windows_runtime_never_adopts_ports_without_exact_live_identity(
         )
         == []
     )
+
+
+def test_windows_runtime_uses_standard_tskill_fallback_for_confirmed_les(
+    monkeypatch,
+):
+    commands = []
+    tskill_used = {"value": False}
+
+    def run(command, **_kwargs):
+        commands.append(command)
+        if command[0] == "tskill.exe":
+            tskill_used["value"] = True
+        return subprocess.CompletedProcess(command, 0)
+
+    times = iter((0.0, 4.0, 8.0, 9.0))
+    monkeypatch.setattr(windows_runtime.subprocess, "run", run)
+    monkeypatch.setattr(
+        windows_runtime,
+        "_process_name",
+        lambda _pid: "" if tskill_used["value"] else "python.exe",
+    )
+    monkeypatch.setattr(windows_runtime.time, "monotonic", lambda: next(times))
+
+    windows_runtime._terminate_pid(101)
+
+    assert [command[0] for command in commands] == ["taskkill.exe", "tskill.exe"]
 def test_windows_update_ready_snapshot_checks_live_direct_pids(
     tmp_path, monkeypatch
 ):

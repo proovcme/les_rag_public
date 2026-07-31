@@ -232,14 +232,24 @@ def _terminate_pid(pid: int) -> None:
     name = _process_name(pid)
     if name not in {"python.exe", "pythonw.exe"}:
         return
-    subprocess.run(
+    for command in (
         ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-        creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
-    )
+        ["tskill.exe", str(pid)],
+    ):
+        subprocess.run(
+            command,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
+        )
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            if not _process_name(pid):
+                return
+            time.sleep(0.1)
+    raise RuntimeError(f"confirmed LES process {pid} could not be terminated")
 
 
 def _listening_pids(ports: set[int]) -> dict[int, int]:

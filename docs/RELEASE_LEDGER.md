@@ -7,16 +7,23 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.17 (runtime ownership reconciliation)
-номер сборки:              534     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.534 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.18 (confirmed-process termination fallback)
+номер сборки:              535     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.535 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.17 candidate
+dev implementation:       codex/legion-model-quality; 0.27.18 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.18 / build 535 — confirmed-process termination fallback
+>
+> Дата: 2026-08-01
+> Статус: local soft-update candidate; NSIS/EXE не собирается.
+> После exact LES identity gate runtime stop использует стандартные `taskkill` и `tskill` последовательно,
+> проверяя фактическое завершение PID. Оба механизма работают без UAC; неподтверждённые PID запрещены.
 
 > 0.27.17 / build 534 — runtime ownership reconciliation
 >
