@@ -1,6 +1,7 @@
 from proxy.services.rim_scenario_service import (
     calculation_rows_for_scenario,
     requirements_from_calculation,
+    reviewed_mapping_scenario,
     validate_authored_scenarios,
 )
 
@@ -180,3 +181,37 @@ def test_resource_row_without_price_becomes_blocking_kac_requirement():
     assert requirements[0]["resource_code"] == "01.7.15.01-0011"
     assert requirements[0]["severity"] == "blocking"
     assert requirements[0]["source_refs"] == ["spec.xlsx#row=14"]
+
+
+def test_unbound_row_is_visible_and_does_not_block_other_scenario_rows():
+    mappings = [
+        _mapping_rows()[0],
+        {
+            "mapping_row_id": "m-unbound",
+            "work_id": "w2",
+            "selection_status": "conflict",
+            "selection_kind": "unbound",
+            "reason": "После двух поисков применимая норма не подтверждена",
+            "unbound_evidence": {"queries_used": ["q1", "q2"]},
+        },
+    ]
+    projected = reviewed_mapping_scenario(
+        mappings,
+        mapping_revision_id="mapping-revision-123",
+    )
+    scenario_set = validate_authored_scenarios(
+        _work_rows(),
+        mappings,
+        [projected],
+    )
+
+    assert scenario_set["issues"] == []
+    rows = calculation_rows_for_scenario(
+        _work_rows(),
+        mappings,
+        scenario_set["scenarios"][0],
+    )
+    assert rows[0]["norm_code"] == "ГЭСНм10-01-001-01"
+    assert rows[1]["selection_kind"] == "unbound"
+    assert rows[1]["norm_code"] is None
+    assert rows[1]["unbound_reason"]

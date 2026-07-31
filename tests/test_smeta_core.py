@@ -352,7 +352,11 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     names = [(item.get("function") or {}).get("name") for item in tools]
 
     assert names == [
-        "browse_norm_catalog", "search_norms_batch", "read_norms_batch", "submit_lsr_mapping",
+        "browse_norm_catalog",
+        "reuse_norm_catalog_route",
+        "search_norms_batch",
+        "read_norms_batch",
+        "submit_lsr_mapping",
     ]
     catalog_item = tools[0]["function"]["parameters"]["properties"]["items"]["items"]
     assert "table" in catalog_item["properties"]
@@ -364,7 +368,7 @@ def test_batch_agent_exposes_only_rag_read_and_model_submission_tools():
     assert "comparison_reason" not in catalog_item["properties"]
     assert catalog_item["properties"]["confidence"]["enum"] == ["low", "medium", "high"]
     assert "limit" not in catalog_item["properties"]
-    search_item = tools[1]["function"]["parameters"]["properties"]["items"]["items"]
+    search_item = tools[2]["function"]["parameters"]["properties"]["items"]["items"]
     assert "table_codes" in search_item["properties"]
     assert not {"search_norms", "read_norm", "bind_norm", "finish_norm_selection"}.intersection(names)
     submit = tools[-1]["function"]["parameters"]["properties"]["rows"]["items"]
@@ -478,10 +482,10 @@ def test_catalog_reaches_official_table_scope_and_suppresses_repeated_page(monke
             "resource_count": 30,
             "source_example": "Таблица ГЭСН 15-04-001",
         }],
-        "next_action": (
-            "choose a family, collection and official table; then call "
-            "search_norms_batch with table_codes to receive every row of that table"
-        ),
+            "next_action": (
+                "choose a family, collection, section and official table; then call "
+                "search_norms_batch with table_codes to receive every row of that table"
+            ),
     }
 
 
@@ -741,7 +745,7 @@ def test_rim_catalog_must_search_and_read_first_collection_before_expanding(
     before_search = session.execute("browse_norm_catalog", select_second, turn=2)
 
     assert before_search["rows"][0]["error"] == (
-        "selected collection must be searched before scope expansion"
+        "selected collection path must be completed before scope expansion"
     )
     assert session.selected_collections["w1"] == {("гэснм", "10")}
 
@@ -860,26 +864,35 @@ def test_rim_family_catalog_allows_distinct_model_authored_refinement_query(
     )
     queries_seen = []
 
-    def browse_many(queries, **_kwargs):
-        queries_seen.extend(queries)
+    def rank_collections(query, **_kwargs):
+        queries_seen.append(query)
         return {
-            query: {
-                "cards": [{
-                    "norm_code": "ГЭСНм10-01-001-01",
-                    "title": "Оборудование связи",
-                }],
-                "retrieval_trace": {"rerank_status": "ok"},
-            }
-            for query in queries
+            "cards": [{
+                "node_id": "catalog:collection:ГЭСНм:10",
+                "parent_id": "catalog:family:ГЭСНм",
+                "node_type": "collection",
+                "cipher": "10",
+                "title": "Оборудование связи",
+            }],
+            "retrieval_trace": {"rerank_status": "ok"},
         }
 
-    monkeypatch.setattr(workflow, "browse_norms_many", browse_many)
+    monkeypatch.setattr(
+        workflow,
+        "rank_norm_catalog_collections",
+        rank_collections,
+    )
     session = workflow.SmetaNormToolSession(
         [{"work_id": "w1", "title": "Монтаж блока", "unit": "шт", "quantity": 1}],
         candidate_limit=4,
         require_scoped_search=True,
     )
     session.family_catalog_seen.add("w1")
+    session.selected_base_types["w1"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "Монтаж оборудования связи",
+        "confidence": "medium",
+    }
     session.catalog_seen.add(("w1", "гэснм", "", ""))
     session.catalog_trace.append({
         "work_id": "w1",
@@ -887,13 +900,38 @@ def test_rim_family_catalog_allows_distinct_model_authored_refinement_query(
         "filters": {"family": "ГЭСНм", "collection": "", "table": ""},
         "catalog_query": "блок розеток",
     })
+    family_node = {
+        "node_id": "catalog:family:ГЭСНм",
+        "parent_id": "catalog:root",
+        "node_type": "family",
+        "cipher": "ГЭСНм",
+        "title": "Монтаж оборудования",
+        "purpose": "Монтаж оборудования и его закрепление.",
+    }
+    session.catalog_node_registry["w1"][family_node["node_id"]] = family_node
+    session.catalog_menus["w1"]["catalog:root"] = [family_node]
 
     refined = session.execute(
-        "browse_norm_catalog",
+        "continue_norm_catalog",
         {"items": [{
             "work_id": "w1",
-            "family": "ГЭСНм",
-            "scope_reason": "Ищу монтаж оборудования связи",
+            "current_node_id": "catalog:root",
+            "selected_node_id": family_node["node_id"],
+            "evidence": [{
+                "source_node_id": family_node["node_id"],
+                "field": "purpose",
+                "claim": "Монтаж оборудования.",
+            }],
+            "rejected_nodes": [],
+            "work_features": {
+                "domain": "связь",
+                "system": "СКС",
+                "equipment": "блок",
+                "operation": "монтаж",
+                "assembly_state": "factory_assembled",
+                "installation_context": "в помещении",
+                "unknowns": [],
+            },
             "catalog_query": "оборудование связи",
             "confidence": "medium",
         }]},
@@ -901,8 +939,8 @@ def test_rim_family_catalog_allows_distinct_model_authored_refinement_query(
     )
 
     assert queries_seen == ["оборудование связи"]
-    assert refined["rows"][0]["level"] == "base_type_selected"
-    assert refined["rows"][0]["items"][0]["key"] == "10"
+    assert refined["rows"][0]["level"] == "collection"
+    assert refined["rows"][0]["items"][0]["cipher"] == "10"
 
 
 def test_mapping_transport_does_not_rewrite_model_decision():
@@ -1444,7 +1482,7 @@ def test_batch_agent_resume_requires_read_before_more_search(monkeypatch):
         )
 
 
-def test_batch_agent_resume_requires_search_for_selected_unsought_scope():
+def test_batch_agent_resume_requires_navigation_for_selected_collection():
     from proxy.smeta_core import document_workflow as workflow
 
     rows = [{
@@ -1491,12 +1529,17 @@ def test_batch_agent_resume_requires_search_for_selected_unsought_scope():
             and "smeta_norm_agent_working_memory_v1"
             in str(message.get("content") or "")
         )
-        assert working_memory["must_search_selected_scopes"] == [{
+        assert working_memory["must_navigate_selected_scopes"] == [{
             "work_id": "w1",
             "base_type": "ГЭСНм",
             "collection": "20",
+            "selected_sections": [],
+            "next_action": (
+                "select a section if none is selected, then select one "
+                "official table from that section"
+            ),
         }]
-        assert "call search_norms_batch for it now" in (
+        assert "only phase section_select" in (
             working_memory["instruction"]
         )
         raise RuntimeError("selected scope search requirement inspected")
@@ -1513,6 +1556,286 @@ def test_batch_agent_resume_requires_search_for_selected_unsought_scope():
             resume_checkpoint=checkpoint,
             require_scoped_search=True,
         )
+
+
+def test_phase_scheduler_batches_all_rows_at_the_earliest_phase(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+    ]
+    original_execute = workflow.SmetaNormToolSession.execute
+    root_calls = []
+
+    def execute(session, name, args, *, turn):
+        if name == "browse_norm_catalog" and all(
+            set(item) == {"work_id"}
+            for item in args.get("items") or []
+        ):
+            work_ids = [item["work_id"] for item in args["items"]]
+            root_calls.append(work_ids)
+            session.family_catalog_seen.update(work_ids)
+            return {"ok": True, "rows": [
+                {"work_id": work_id, "ok": True, "items": []}
+                for work_id in work_ids
+            ]}
+        return original_execute(session, name, args, turn=turn)
+
+    monkeypatch.setattr(workflow.SmetaNormToolSession, "execute", execute)
+
+    def inspect_batch(messages, tools):
+        memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        assert memory["active_phase"] == "family_select"
+        assert memory["active_work_ids"] == ["w1", "w2"]
+        assert [tool["function"]["name"] for tool in tools] == [
+            "continue_norm_catalog",
+            "ask_norm_catalog_fact",
+            "broaden_norm_catalog",
+            "unbound_norm_catalog",
+        ]
+        raise RuntimeError("same-phase batch inspected")
+
+    with pytest.raises(RuntimeError, match="same-phase batch inspected"):
+        workflow._run_batch_norm_agent(
+            rows,
+            inspect_batch,
+            candidate_limit=4,
+            max_turns=1,
+            require_scoped_search=True,
+        )
+    assert root_calls == [["w1", "w2"]]
+
+
+def test_submit_checkpoints_each_accepted_row_before_the_next():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+    ]
+    snapshots = []
+    session = workflow.SmetaNormToolSession(rows, candidate_limit=3)
+
+    def checkpoint(work_id, _selection):
+        snapshots.append((work_id, list(session.accepted_rows)))
+
+    session.decision_checkpoint = checkpoint
+    for work_id in ("w1", "w2"):
+        session.query_trace.extend([
+            {"work_id": work_id, "queries": [f"{work_id} literal"], "filters": {}},
+            {"work_id": work_id, "queries": [f"{work_id} technology"], "filters": {}},
+        ])
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [
+            {
+                "work_id": work_id,
+                "decision": "unbound",
+                "reason": "Защищаемой нормы нет.",
+                "unbound_evidence": {
+                    "queries_used": [
+                        f"{work_id} literal",
+                        f"{work_id} technology",
+                    ],
+                    "opened_norm_codes": [],
+                    "rejection_reasons": ["Нет применимой открытой карточки."],
+                    "coverage_checked": "Покрытие соседней работой не подтверждено.",
+                },
+            }
+            for work_id in ("w1", "w2")
+        ]},
+        turn=1,
+    )
+
+    assert result == {"ok": True, "rows": 2}
+    assert snapshots == [
+        ("w1", ["w1"]),
+        ("w2", ["w1", "w2"]),
+    ]
+
+
+def test_model_can_reuse_typed_route_cache_without_reusing_norm_decision():
+    from proxy.smeta_core import document_workflow as workflow
+
+    route = {
+        "cache_id": "route:гэснм:10:10-04:10-04-067",
+        "source_work_id": "old-1",
+        "family": "ГЭСНм",
+        "collection": "10",
+        "section": "10-04",
+        "table_code": "10-04-067",
+        "source": "typed_catalog_trace",
+    }
+    session = workflow.SmetaNormToolSession(
+        [{
+            "work_id": "w1",
+            "title": "Монтаж шкафа",
+            "unit": "шт",
+            "quantity": 1,
+            "route_evidence_cache": [route],
+        }],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+
+    result = session.execute(
+        "reuse_norm_catalog_route",
+        {"items": [{
+            "work_id": "w1",
+            "cache_id": route["cache_id"],
+            "reason": "Та же функциональная система и операция монтажа.",
+            "confidence": "high",
+        }]},
+        turn=2,
+    )
+
+    assert result["rows"][0]["level"] == "norm_search"
+    assert session.selected_tables["w1"] == {
+        ("гэснм", "10", "10-04-067")
+    }
+    assert session.candidates["w1"] == {}
+    assert session.accepted_rows == {}
+    assert session.catalog_trace[-1]["selection_owner"] == "model"
+
+
+def test_resume_fingerprint_ignores_growing_transport_route_cache():
+    from proxy.smeta_core import document_workflow as workflow
+
+    source = {
+        "work_id": "w1",
+        "title": "Монтаж шкафа",
+        "unit": "шт",
+        "quantity": 1,
+    }
+    before = workflow.SmetaNormToolSession(
+        [source],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    state = before.checkpoint_state()
+    after = workflow.SmetaNormToolSession(
+        [{
+            **source,
+            "task_state": {"completed_rows": 0},
+            "route_evidence_cache": [{
+                "cache_id": "route:гэснм:10:10-04:10-04-067",
+                "source_work_id": "old-1",
+                "family": "ГЭСНм",
+                "collection": "10",
+                "section": "10-04",
+                "table_code": "10-04-067",
+            }],
+        }],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+
+    after.restore_checkpoint_state(state)
+
+    assert after.work_fingerprint() == before.work_fingerprint()
+
+
+def test_compact_catalog_menu_keeps_exact_ids_and_bounds_payload():
+    from proxy.smeta_core import document_workflow as workflow
+
+    menu = [
+        {
+            "node_id": f"node-{index}",
+            "parent_id": "root",
+            "node_type": "collection",
+            "cipher": f"{index:02d}",
+            "title": f"Сборник {index}",
+            "hierarchy": ["large", "payload"],
+            "norm_name_examples": ["large", "payload"],
+        }
+        for index in range(20)
+    ]
+
+    compact = workflow._compact_catalog_menu_for_model(menu, limit=6)
+
+    assert len(compact) == 6
+    assert compact[0]["node_id"] == "node-0"
+    assert "hierarchy" not in compact[0]
+    assert "norm_name_examples" not in compact[0]
+
+
+def test_global_review_runs_only_connected_conflict_groups(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+        {"work_id": "w3", "title": "Работа 3", "unit": "шт", "quantity": 1},
+    ]
+    initial = {
+        "selections": {
+            work_id: {"norm_code": f"Н-{work_id}", "reason": f"initial-{work_id}"}
+            for work_id in ("w1", "w2", "w3")
+        },
+        "opened_cards": {},
+        "browse_trace": {},
+        "query_trace": [],
+        "catalog_trace": [],
+        "model_trace": [],
+        "agent_trace": {},
+    }
+    conflict = {
+        "conflict_id": "c1",
+        "code": "possible_duplicate_norm_binding",
+        "severity": "warning",
+        "work_ids": ["w1", "w2"],
+        "claim": "Проверить возможное дублирование.",
+        "evidence": {},
+    }
+    detections = iter([[conflict], []])
+    monkeypatch.setattr(
+        workflow,
+        "detect_professional_conflicts",
+        lambda *_args, **_kwargs: next(detections),
+    )
+    reviewed_packets = []
+
+    def batch_runner(packet_rows, **_kwargs):
+        reviewed_packets.append([row["work_id"] for row in packet_rows])
+        return {
+            "selections": {
+                row["work_id"]: {
+                    **row["current_decision"],
+                    "reason": f"reviewed-{row['work_id']}",
+                }
+                for row in packet_rows
+            },
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [],
+            "agent_trace": {},
+        }
+
+    result = workflow._run_global_norm_review(
+        rows,
+        initial,
+        lambda _messages, _tools: {},
+        mapping_exchange=None,
+        candidate_limit=4,
+        max_turns=4,
+        progress=None,
+        user_request="review",
+        batch_runner=batch_runner,
+    )
+
+    assert reviewed_packets == [["w1", "w2"]]
+    assert result["selections"]["w1"]["reason"] == "reviewed-w1"
+    assert result["selections"]["w2"]["reason"] == "reviewed-w2"
+    assert result["selections"]["w3"] == initial["selections"]["w3"]
+    assert result["agent_trace"]["global_review"]["preserved_work_ids"] == ["w3"]
 
 
 def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
@@ -2530,6 +2853,65 @@ def test_batch_agent_has_configurable_transport_turn_budget():
             max_turns=2,
         )
     assert calls == 2
+
+
+def test_native_batch_resume_restores_in_progress_typed_checkpoint():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+    ]
+    session = workflow.SmetaNormToolSession(
+        [rows[0]],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session.family_catalog_seen.add("w1")
+    resume = {
+        "selections": {},
+        "resume_state": {
+            "schema": "smeta_norm_agent_resume_v1",
+            "conversation": [
+                {"role": "system", "content": "system"},
+                {"role": "user", "content": "task"},
+            ],
+            "tool_session": session.checkpoint_state(),
+            "model_trace": [],
+            "context_metrics": [],
+            "next_turn": 7,
+            "structured_mapping_attempts": 0,
+            "focus_serialization_pending": False,
+            "validation_contract_version": (
+                workflow.MAPPING_VALIDATION_CONTRACT_VERSION
+            ),
+        },
+    }
+
+    def inspect_resume(messages, _tools):
+        memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        assert memory["active_phase"] == "family_select"
+        raise RuntimeError("in-progress batch checkpoint restored")
+
+    with pytest.raises(
+        RuntimeError,
+        match="in-progress batch checkpoint restored",
+    ):
+        workflow._run_native_norm_agent(
+            rows,
+            inspect_resume,
+            candidate_limit=4,
+            max_turns=8,
+            batch_size=1,
+            resume_result=resume,
+            require_scoped_search=True,
+        )
 
 
 def test_batch_agent_stops_on_identical_deterministic_tool_call():

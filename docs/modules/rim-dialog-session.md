@@ -1,6 +1,6 @@
 # Диалоговая РИМ-сессия
 
-Статус: реализован Mac-кандидат 0.26.8. Модуль расширяет `smeta_core`, не создаёт
+Статус: реализован dev-кандидат 0.27.1. Модуль расширяет `smeta_core`, не создаёт
 второй сметный движок и не меняет профессиональные решения модели или сметчика.
 
 ## Поток
@@ -10,8 +10,9 @@ XLSX/CSV
   → immutable source intake
   → ВОР revision
   → Qwen scope и batch catalog/search/read/submit
-  → mapping revision → deterministic global review → user mapping lock
-  → model/user-authored scenario
+  → mapping revision → same-model global review
+  → automatic monetary draft → optional user mapping lock
+  → model/user-authored scenario либо canonical reviewed projection
   → canonical RIM calculator → requirements
   → КАЦ/коэффициенты/уточнения → обязательный пересчёт
   → priced draft → user final lock → XLSX + audit
@@ -21,7 +22,8 @@ XLSX/CSV
 ревизий. Запрос с устаревшим `expected_parent_revision_id` отклоняется, сессии
 изолированы по владельцу, а административный доступ остаётся явным.
 
-Долгий norm-mapping после каждого выполненного tool call атомарно сохраняет
+Долгий norm-mapping после каждого выполненного tool call и после каждой отдельно
+принятой terminal-строки атомарно сохраняет
 в `rim_agent_checkpoints` server-produced checkpoint: полный диалог, catalog /
 search / opened-card trace, принятые строки, remaining `work_id` и следующий
 ход. Checkpoint привязан к SHA-проверяемому payload и точной immutable
@@ -51,6 +53,12 @@ Lifetime-счётчики сохраняются в checkpoint и финальн
 Одинаковая фаза нескольких строк должна исполняться одним batch-вызовом. Если
 кандидаты уже есть, а карточки не открыты, следующий вызов по этой строке —
 `read_norms_batch`, а не дальнейшее расширение каталога.
+
+Завершённый typed-маршрут `family→collection→section→table` становится
+`route_evidence_cache`. Он не применяется автоматически: Qwen сама вызывает
+`reuse_norm_catalog_route`, указывает конкретный `cache_id` и объясняет применимость
+для каждой новой строки. Код переносит только scope навигации; выбранная норма,
+аналог и applicability не копируются, а обязательные search/read выполняются заново.
 
 Повторное открытие уже прочитанной typed-карточки не расходует budget и
 немедленно переводит Qwen к terminal-сериализации. То же происходит при
@@ -116,6 +124,21 @@ Mapping lock и final lock — разные пользовательские р�
 requirement не обновляет старую расчётную трассу и не разрешает финализацию:
 новый `priced_draft` появляется только после повторного детерминированного
 расчёта.
+
+Ни одна строка источника не обрезается transport-лимитом. Specification intake
+обрабатывается моделью пакетами по пять строк и после каждого пакета сохраняет
+`vor_draft` checkpoint; norm mapping получает все строки ВОР. Глобальная
+проверка строит connected conflict groups и повторно вызывает модель только для
+них, сохраняя остальные решения дословно. Итоговая revision требует ровно одно
+терминальное `bind|covered_by|unbound` для каждого `work_id`. `unbound` остаётся
+видимой строкой с пустыми денежными полями,
+причиной и provenance и не блокирует расчёт остальных строк.
+
+Расчёт разрешён для `mapping_globally_reviewed` и создаёт только
+`priced_draft`; финал по-прежнему требует пользовательский `mapping_locked`.
+`POST /api/rim/sessions/{id}/recalculate` без `scenario_id` строит canonical
+projection уже проверенных решений, не выбирая норм кодом. Resolved КАЦ и
+коэффициенты читаются из durable requirements при следующем пересчёте.
 
 ## Строгий нормативный контракт
 
@@ -201,11 +224,11 @@ mapping lock и расчёт.
 следующий ответ интерпретируется относительно этого вопроса, а не запускает
 новый workflow.
 
-Для локальной Qwen 3.5 9B преобразование спецификации начинается с bounded
-transport-пакета в 5 исходных позиций. В первом действии доступен только
-`draft_work_schedule`; вопрос разрешается после сохранения source-linked
-черновика. Это ограничение транспортного контекста, а не автоматический выбор
-работ кодом.
+Для локальной Qwen 3.5 9B преобразование спецификации идёт последовательными
+bounded transport-пакетами по 5 исходных позиций. В каждом пакете доступен
+только `draft_work_schedule`, а checkpoint хранит принятые model-owned строки
+и следующий offset. Вопрос разрешается после сохранения полного source-linked
+черновика. Это ограничение контекста, а не автоматический выбор работ кодом.
 
 MLX Host сохраняет bounded KV/prefix cache для побайтово стабильного начала:
 общий `system`, неизменяемые схемы четырёх route-tools и исходный mapping packet.

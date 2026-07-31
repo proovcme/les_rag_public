@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from proxy.routers.rim import _resolved_calculation_inputs
 from proxy.routers.rim import router
 from proxy.security import RequestUser, require_user
 from proxy.smeta_core.application import get_rim_session_store, set_rim_session_store
@@ -283,3 +284,36 @@ def test_rim_api_calculates_only_an_authored_scenario(tmp_path):
     assert calculated.status_code == 200, calculated.text
     assert calculated.json()["trace"]["summary"]["bound_rows"] == 1
     assert calculated.json()["trace"]["coverage"][0]["validation"]["norm_quantity"] == 0.61
+def test_resolved_requirements_feed_typed_recalculation_inputs():
+    result = _resolved_calculation_inputs(
+        [
+            {
+                "kind": "kac",
+                "status": "resolved",
+                "resource_code": "01.7.15.01-0011",
+                "resolution": {"current_price": 125.5},
+            },
+            {
+                "kind": "coefficient",
+                "status": "resolved",
+                "resolution": {
+                    "k_ozp": 1.15,
+                    "k_em": 1.05,
+                    "coefficient_basis": "СП 000",
+                },
+            },
+            {
+                "kind": "kac",
+                "status": "open",
+                "resource_code": "ignored",
+                "resolution": {"price": 999},
+            },
+        ]
+    )
+
+    assert result == {
+        "kac_map": {"01.7.15.01-0011": 125.5},
+        "k_ozp": 1.15,
+        "k_em": 1.05,
+        "coefficient_basis": "СП 000",
+    }

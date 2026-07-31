@@ -1,5 +1,19 @@
 # ROADMAP_TO_V1.md
 
+## 0.27.0 — hierarchical RAG + complete RIM draft (dev candidate)
+
+- ✅ RIM intake/mapping не обрезает source rows на 5/30: VOR draft
+  checkpoint'ит model-owned batches, mapping получает полную immutable ВОР.
+- ✅ Global review требует одно `bind|covered_by|unbound` на строку. `unbound`
+  остаётся видимой строкой с null-стоимостью и не блокирует рассчитанные строки.
+- ✅ Globally reviewed mapping создаёт автоматический `priced_draft`; финал
+  требует отдельный user lock. Resolved typed КАЦ/коэффициенты входят в пересчёт.
+- ✅ Contract v3 добавляет deterministic navigation/evidence hierarchy,
+  parallel global + descendant native RRF и evidence-only fusion до общего
+  rerank/context expansion.
+- ⏳ Runtime остаётся на прежней generation. Нужны blue/green v3 sibling build,
+  corpus quality gate и явная activation.
+
 # ЛЕС v1.0 — дорожная карта до стабильной локальной версии
 
 Статус: рабочий roadmap ветки `main`; актуализирован 2026-07-27. Текущая версия и фактический

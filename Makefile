@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
+.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
 
 PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
@@ -11,11 +11,12 @@ WINDOWS_SHELL_ARGS ?=
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
-FOCUS_TESTS ?= tests/test_sovushka_chat.py tests/test_static_assets.py tests/test_smeta_chat_service.py tests/test_estimate_harness.py tests/test_profile_resolver.py tests/test_doc_review_gost_21_101_2026.py tests/test_doc_review_chat_tool.py tests/test_title_block_extract.py tests/test_service_source_registry.py
+FOCUS_TESTS ?= tests/test_rim_agent_turn.py tests/test_rim_session.py tests/test_rim_scenarios.py tests/test_rim_api.py tests/test_rag_hierarchy.py tests/test_rag_config.py tests/test_rag_rrf_readiness.py tests/test_smeta_application_boundary.py
 RAG_CORE_TESTS ?= tests/test_datasets_router.py tests/test_rag_config.py tests/test_qdrant_adapter_parse.py tests/test_build_rag_contract_sibling.py tests/test_system_dataset_service.py tests/test_retrieval_quality_service.py tests/test_retrieval_service.py tests/test_saferag_service.py tests/test_source_excerpts.py tests/test_evidence_packet_service.py tests/test_rag_golden_set.py tests/test_rag_index_contract_audit.py tests/test_notebook_study_service.py
 RELEASE_CRITICAL_TESTS ?= tests/test_fgis_full_update.py tests/test_smeta_release_baseline.py tests/test_qdrant_collection_layout.py tests/test_datasets_router.py tests/test_rag_config.py tests/test_document_explorer_service.py tests/test_process_status.py
 UNIT_TESTS ?= tests/test_answer_contract_service.py tests/test_candidate_selection_service.py tests/test_evidence_contract.py tests/test_numeric_provenance.py tests/test_publication_check.py tests/test_query_router.py tests/test_smeta_resource_normalizer.py
 INTEGRATION_TESTS ?= tests/test_smeta_structured_base.py tests/test_smeta_norm_browser.py tests/test_smeta_rerank_ab_probe.py $(RELEASE_CRITICAL_TESTS)
+CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) tests/test_test_profiles.py tests/test_software_versions.py)
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py
 ARTEL_TESTS := $(wildcard tests/test_artel*.py)
 ARCHITECTURE_EXCLUDED_TESTS := $(LEGACY_ARCHITECTURE_TESTS) $(ARTEL_TESTS)
@@ -29,13 +30,14 @@ SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
 
 help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
-	@echo "make test         — каноническая LES-сюита без legacy Unified Harness и отдельного ARTEL"
+	@echo "make test         — короткий канонический contract/behavior gate"
 	@echo "make test-unit    — быстрые hermetic unit-тесты чистых вычислительных/контрактных функций"
 	@echo "make test-integration — поведенческие тесты временных SQLite/Parquet/API/release-артефактов"
-	@echo "make test-release — полная LES-сюита + smoke реальных active-артефактов"
+	@echo "make test-release — канонический contract/behavior gate + smoke active-артефактов"
 	@echo "make test-release-critical — совместимый псевдоним make test-integration"
-	@echo "make test-architecture — совместимый псевдоним канонической LES-сюиты"
+	@echo "make test-architecture — совместимый псевдоним короткого канонического gate"
 	@echo "make test-legacy — отдельный opt-in прогон исторического Unified/Construction Harness"
+	@echo "make test-legacy-full — прежняя 3204-test suite; только opt-in диагностика"
 	@echo "make test-focused — быстрые профильные pytest; переопредели FOCUS_TESTS='tests/test_x.py ...'"
 	@echo "make test-rag-core — обязательный offline integrity-гейт RAG-ядра"
 	@echo "make test-mail      — обязательный offline профиль Е.Ж.И.К. (IMAP/registry/RAG/API/UI/Windows static)"
@@ -73,11 +75,11 @@ version-sync:
 verify:
 	uv run python tools/sync_version_contract.py --check
 	uv run python -m compileall -q $(PKGS)
-	uv run python -m pytest --collect-only -q $(ARCHITECTURE_IGNORE_ARGS)
-	@echo "OK — verify зелёный (синтаксис + импорт-смоук). Полные тесты: make test."
+	uv run python -m pytest --collect-only -q $(CURRENT_TESTS)
+	@echo "OK — verify зелёный (синтаксис + импорт-смоук current gate)."
 
 test:
-	uv run python -m pytest --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
+	uv run python -m pytest -q --durations=20 $(CURRENT_TESTS)
 
 test-unit:
 	uv run python -m pytest -q --durations=15 $(UNIT_TESTS)
@@ -91,10 +93,13 @@ test-release: test smoke-active-artifacts
 test-release-critical: test-integration
 
 test-architecture:
-	uv run python -m pytest --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
+	$(MAKE) test
 
 test-legacy:
 	uv run python -m pytest -o addopts= --durations=20 $(LEGACY_ARCHITECTURE_TESTS)
+
+test-legacy-full:
+	uv run python -m pytest -o addopts= --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
 
 test-focused:
 	uv run python -m pytest $(FOCUS_TESTS)

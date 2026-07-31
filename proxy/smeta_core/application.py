@@ -4,35 +4,18 @@ Callers enter the smeta module here.  The model owns decomposition, norm and
 resource decisions; the functions below only connect that model-owned result to
 typed validation, calculation, revision persistence and rendering.
 
-``estimate_harness_service`` is still used behind this boundary while its tool
-loop is being split into smaller services.  It is an implementation adapter,
-not a second application entrypoint.
+The persistent RIM session is the only estimate orchestration boundary.
 """
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 SMETA_APPLICATION_ID = "smeta_application_v1"
 _RIM_SESSION_STORE: Any | None = None
-
-
-def run_smeta_workflow(
-    question: str,
-    complete: Callable[[list[dict[str, str]]], str],
-    *,
-    max_steps: int = 16,
-) -> dict[str, Any]:
-    """Run the model-first smeta tool loop through one public boundary."""
-    from proxy.services.estimate_harness_service import run_estimate_harness
-
-    result = run_estimate_harness(question, complete, max_steps=max_steps)
-    if isinstance(result, dict):
-        result.setdefault("application", SMETA_APPLICATION_ID)
-    return result
 
 
 def calculate_visible_rows(*args: Any, **kwargs: Any) -> dict[str, Any]:

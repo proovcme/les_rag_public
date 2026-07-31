@@ -73,7 +73,7 @@ EMBEDDING_PROFILES: dict[str, EmbeddingProfile] = {
 RAW_QUERY_EMBEDDING_MODE = "raw-v1"
 QWEN_RETRIEVAL_QUERY_EMBEDDING_MODE = "qwen-retrieval-v1"
 QWEN_RETRIEVAL_INSTRUCTION = "Given a search query, retrieve relevant passages from the selected corpus"
-INDEX_CONTRACT_SCHEMA = "les.rag.index-contract.v2"
+INDEX_CONTRACT_SCHEMA = "les.rag.index-contract.v3"
 DOCUMENT_EMBEDDING_MODE = "raw-v1"
 CHUNKER_REVISION = "structure-aware-final-budget-v2"
 
@@ -262,6 +262,10 @@ def index_contract_payload() -> dict[str, Any]:
         or "bm25_sparse",
         "sparse_tokenizer_revision": os.getenv("RAG_SPARSE_TOKENIZER_REVISION", "les-bm25-v1"),
         "point_embedding_fingerprint": point_embedding_fingerprint(),
+        "hierarchy_schema": "les.rag.hierarchy.v1",
+        "hierarchy_builder": "deterministic-heading-stack-v1",
+        "hierarchy_retrieval": "soft-global-plus-descendant-rrf-v1",
+        "navigation_evidence_policy": "navigation_not_evidence",
     }
     if payload["embedding_backend"] == "coreml":
         payload.update(

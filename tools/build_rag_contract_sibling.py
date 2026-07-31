@@ -280,6 +280,10 @@ def _ensure_destination(client: Any, args: argparse.Namespace) -> bool:
         "file_name",
         "embedding_fingerprint",
         "migration_source_point_id",
+        "node_role",
+        "node_id",
+        "ancestor_ids",
+        "hierarchy_parent_id",
     ):
         client.create_payload_index(
             args.dst,
@@ -384,6 +388,7 @@ def _migrate_dataset(
 ) -> dict[str, Any]:
     from backend.qdrant_adapter import (
         QdrantLlamaIndexAdapter,
+        _apply_context_metadata_to_nodes,
         _content_hash,
         _embedding_cache_descriptor,
         _embedding_cache_fingerprint,
@@ -538,6 +543,11 @@ def _migrate_dataset(
                 }
             ],
             chunking=chunking,
+        )
+        _apply_context_metadata_to_nodes(
+            nodes,
+            dataset["id"],
+            str(source_payload.get("file_name") or source_payload.get("doc_name") or point.id),
         )
         if not nodes:
             dropped += 1

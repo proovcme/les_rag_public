@@ -794,6 +794,11 @@ def test_adapter_adds_parent_and_neighbor_context_metadata():
     assert first["context_after"] == "Второй фрагмент с продолжением."
     assert second["context_before"].startswith("## Глава 1")
     assert first["context_kind"] == "markdown_window"
+    assert first["node_role"] == "evidence"
+    assert second["ancestor_ids"] == first["ancestor_ids"]
+    assert len(nodes) == 3
+    assert nodes[2]["payload"]["node_role"] == "navigation"
+    assert nodes[2]["payload"]["evidence_admissible"] is False
 
 
 def test_adapter_builds_mail_profile_nodes_with_attachment_payload(tmp_path, monkeypatch):

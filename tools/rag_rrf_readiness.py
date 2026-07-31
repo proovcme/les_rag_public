@@ -170,9 +170,11 @@ def audit_rrf_readiness(
         and exclusion_accounting_ok
     )
     schema_ok = bool(
-        contract.get("schema") == "les.rag.index-contract.v2"
+        contract.get("schema") == "les.rag.index-contract.v3"
         and contract.get("collection") == collection
         and contract.get("qdrant_schema") == "named"
+        and contract.get("hierarchy_schema") == "les.rag.hierarchy.v1"
+        and contract.get("navigation_evidence_policy") == "navigation_not_evidence"
         and fingerprint
     )
     all_datasets_ready = bool(dataset_reports) and all(

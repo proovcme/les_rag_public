@@ -6,6 +6,23 @@ from proxy.services import rim_agent_turn_service
 from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
 
 
+def test_rim_mapping_transport_keeps_all_vor_rows():
+    rows = [
+        {
+            "work_id": f"w-{index:03d}",
+            "work_name": f"Работа {index}",
+            "unit": "шт.",
+            "quantity": index,
+        }
+        for index in range(1, 71)
+    ]
+
+    result = rim_agent_turn_service._work_rows(rows)
+
+    assert len(result) == 70
+    assert result[-1]["work_id"] == "w-070"
+
+
 def _create_vor(store):
     created = store.create_session(owner_id="tester")
     return store.save_vor_revision(
@@ -124,7 +141,7 @@ def test_specification_turn_reads_nested_intake_and_opens_question(monkeypatch, 
     assert session["pending_question"]["options"] == ["в лотке", "в трубе", "открыто"]
 
 
-def test_specification_intake_batch_is_bounded_to_five_rows(tmp_path):
+def test_specification_intake_batches_all_rows_without_loss(tmp_path):
     store = RimSessionStore(tmp_path)
     created = store.create_session(owner_id="tester")
     store.save_intake(
@@ -147,28 +164,73 @@ def test_specification_intake_batch_is_bounded_to_five_rows(tmp_path):
         },
     )
 
-    def exchange(messages, _tools):
-        payload = json.loads(messages[-1]["content"])
-        work_items = payload["session_context"]["intake"]["work_items"]
-        assert [item["work_id"] for item in work_items] == [
-            "source-001",
-            "source-002",
-            "source-003",
-            "source-004",
-            "source-005",
-        ]
-        assert payload["session_context"]["intake"]["remaining_work_item_count"] == 2
-        raise RuntimeError("transport boundary verified")
+    seen_batches = []
 
-    with pytest.raises(RuntimeError, match="transport boundary verified"):
-        rim_agent_turn_service.run_rim_agent_turn(
-            store,
-            created.session["session_id"],
-            owner_id="tester",
-            user_message="Подготовь ВОР",
-            exchange=exchange,
-            mapping_exchange=lambda *_args: {},
-        )
+    def exchange(messages, tools):
+        payload = json.loads(messages[-1]["content"])
+        tool_names = [tool["function"]["name"] for tool in tools]
+        if tool_names == ["ask_user"]:
+            return {
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "ask_user",
+                            "arguments": {
+                                "question_kind": "physical_installation",
+                                "text": "Как выполняется монтаж?",
+                                "reason": "Условие влияет на норму",
+                                "work_ids": ["source-001"],
+                                "options": ["открыто", "скрыто"],
+                            },
+                        }
+                    }
+                ]
+            }
+        work_items = payload["session_context"]["intake"]["work_items"]
+        seen_batches.append([item["work_id"] for item in work_items])
+        return {
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "draft_work_schedule",
+                        "arguments": {
+                            "rows": [
+                                {
+                                    "work_id": item["work_id"],
+                                    "section_name": "Монтаж",
+                                    "work_name": f"Монтаж {item['title']}",
+                                    "unit": item["unit"],
+                                    "quantity": item["quantity"],
+                                    "quantity_origin": "source_explicit",
+                                    "source_ref": item["source_refs"][0],
+                                }
+                                for item in work_items
+                            ]
+                        },
+                    }
+                }
+            ]
+        }
+
+    result = rim_agent_turn_service.run_rim_agent_turn(
+        store,
+        created.session["session_id"],
+        owner_id="tester",
+        user_message="Подготовь ВОР",
+        exchange=exchange,
+        mapping_exchange=lambda *_args: {},
+    )
+
+    assert seen_batches == [
+        ["source-001", "source-002", "source-003", "source-004", "source-005"],
+        ["source-006", "source-007"],
+    ]
+    vor = store.revision_payload(
+        created.session["session_id"],
+        result["vor_revision_id"],
+        owner_id="tester",
+    )
+    assert len(vor["payload"]["rows"]) == 7
 
 
 def test_single_action_returns_structured_validation_error_for_one_repair():
@@ -681,6 +743,24 @@ def test_mapping_turn_resumes_durable_checkpoint_and_clears_it_on_success(
         "_run_batch_norm_agent",
         resumed,
     )
+    monkeypatch.setattr(
+        rim_agent_turn_service,
+        "_run_global_norm_review",
+        lambda _rows, initial, *_args, **_kwargs: {
+            **initial,
+            "professional_conflicts": [],
+        },
+    )
+    monkeypatch.setattr(
+        rim_agent_turn_service.smeta_application,
+        "calculate_visible_rows_revision",
+        lambda *_args, **_kwargs: {
+            "schema": "rim_lsr_trace_v1",
+            "summary": {"known_amount": 1000.0},
+            "sections": [],
+            "blockers": [],
+        },
+    )
     result = rim_agent_turn_service.run_rim_agent_turn(
         store,
         vor.session["session_id"],
@@ -691,6 +771,8 @@ def test_mapping_turn_resumes_durable_checkpoint_and_clears_it_on_success(
     )
 
     assert result["resumed_from_checkpoint"] is True
+    assert result["pricing_revision_id"]
+    assert result["artifact"]["xlsx"].endswith("export?kind=draft")
     assert (
         store.load_agent_checkpoint(
             vor.session["session_id"],

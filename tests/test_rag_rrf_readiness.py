@@ -40,12 +40,14 @@ class FakeClient:
 
 def _contract():
     return {
-        "schema": "les.rag.index-contract.v2",
+        "schema": "les.rag.index-contract.v3",
         "collection": "clean-v2",
         "qdrant_schema": "named",
         "dense_vector_name": "dense",
         "sparse_vector_name": "bm25_sparse",
         "point_embedding_fingerprint": "fp",
+        "hierarchy_schema": "les.rag.hierarchy.v1",
+        "navigation_evidence_policy": "navigation_not_evidence",
     }
 
 

@@ -253,8 +253,8 @@ def _validate_mapping_rows(
             else:
                 issues.append(
                     {
-                        "code": "norm_confirmation_required",
-                        "severity": "blocking",
+                        "code": "norm_unbound",
+                        "severity": "warning",
                         "row": index,
                         "work_id": work_id,
                     }
@@ -309,6 +309,53 @@ def _validate_mapping_rows(
                     "row": index,
                     "work_id": work_id,
                     "norm_key": norm_key,
+                }
+            )
+    return issues
+
+
+def _mapping_completeness_issues(
+    mapping_rows: list[dict[str, Any]],
+    work_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Validate one terminal model decision for every visible VOR row.
+
+    Candidate rows may coexist with a terminal decision, but a globally reviewed
+    revision must resolve every source row exactly once as bind, covered_by or
+    unbound.  This is structural validation only; it does not choose a norm.
+    """
+    terminal_by_work: dict[str, list[dict[str, Any]]] = {}
+    for row in mapping_rows:
+        work_id = str(row.get("work_id") or "").strip()
+        kind = str(row.get("selection_kind") or "direct").strip()
+        status = str(row.get("selection_status") or "candidate").strip()
+        is_terminal = (
+            kind in {"covered_by", "unbound"}
+            or status in {"accepted", "selected"}
+        )
+        if work_id and is_terminal:
+            terminal_by_work.setdefault(work_id, []).append(row)
+
+    issues: list[dict[str, Any]] = []
+    for work_id in sorted(work_ids):
+        decisions = terminal_by_work.get(work_id, [])
+        if not decisions:
+            issues.append(
+                {
+                    "code": "mapping_work_resolution_missing",
+                    "severity": "blocking",
+                    "work_id": work_id,
+                }
+            )
+        elif len(decisions) > 1:
+            issues.append(
+                {
+                    "code": "mapping_work_resolution_duplicate",
+                    "severity": "blocking",
+                    "work_id": work_id,
+                    "mapping_row_ids": [
+                        str(item.get("mapping_row_id") or "") for item in decisions
+                    ],
                 }
             )
     return issues
@@ -1047,6 +1094,8 @@ class RimSessionStore:
             vor_rows = self._current_vor_rows(conn, row)
             work_ids = {str(item.get("work_id") or "") for item in vor_rows}
             issues = _validate_mapping_rows(mapping_rows, work_ids)
+            if revision_kind == "mapping_global_review":
+                issues.extend(_mapping_completeness_issues(mapping_rows, work_ids))
             review_conflicts = list(conflicts or [])
             payload = {
                 "schema": "rim_mapping_revision_v1",
@@ -1194,11 +1243,17 @@ class RimSessionStore:
                 conn, safe_id, owner_id=_owner_id(owner_id), allow_admin=allow_admin
             )
             self._require_expected_parent(row, expected_parent_revision_id)
-            if row["mapping_status"] != "mapping_locked":
-                raise RimSessionConflict("scenario generation requires mapping_locked")
+            if row["mapping_status"] not in {
+                "mapping_globally_reviewed",
+                "mapping_locked",
+            }:
+                raise RimSessionConflict(
+                    "scenario generation requires mapping_globally_reviewed or mapping_locked"
+                )
             parent = row["head_revision_id"]
             payload = {
                 **scenario_set,
+                "mapping_revision_id": row["current_mapping_revision_id"],
                 "mapping_lock_revision_id": row["mapping_lock_revision_id"],
             }
             revision_id = self._insert_revision(
@@ -1386,13 +1441,19 @@ class RimSessionStore:
                 conn, safe_id, owner_id=_owner_id(owner_id), allow_admin=allow_admin
             )
             self._require_expected_parent(row, expected_parent_revision_id)
-            if row["mapping_status"] != "mapping_locked":
-                raise RimSessionConflict("pricing requires mapping_locked")
+            if row["mapping_status"] not in {
+                "mapping_globally_reviewed",
+                "mapping_locked",
+            }:
+                raise RimSessionConflict(
+                    "pricing requires mapping_globally_reviewed or mapping_locked"
+                )
             parent = row["head_revision_id"]
             payload = {
                 "schema": "rim_pricing_revision_v1",
                 "trace": trace,
                 "requirements": normalized,
+                "mapping_revision_id": row["current_mapping_revision_id"],
                 "mapping_lock_revision_id": row["mapping_lock_revision_id"],
                 "change_note": str(change_note or ""),
             }

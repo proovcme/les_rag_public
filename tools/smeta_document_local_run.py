@@ -116,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
             max_agent_turns=args.max_turns,
             resume_agent_result=resume_result,
             batch_checkpoint=checkpoint,
+            require_scoped_search=True,
         )
     except KeyboardInterrupt:
         print(f"\nОстановлено. Продолжение использует checkpoint: {checkpoint_path}")

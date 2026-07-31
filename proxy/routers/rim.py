@@ -30,6 +30,7 @@ from proxy.services.rim_agent_turn_service import run_rim_agent_turn
 from proxy.services.rim_scenario_service import (
     calculation_rows_for_scenario,
     requirements_from_calculation,
+    reviewed_mapping_scenario,
     validate_authored_scenarios,
 )
 from proxy.services.rim_session_xlsx_service import render_session_lsr_xlsx
@@ -185,7 +186,7 @@ class GenerateScenariosRequest(RevisionRequest):
 
 
 class CalculateScenarioRequest(RevisionRequest):
-    scenario_id: str
+    scenario_id: str = ""
     title: str = "ЛСР РИМ"
     book: str | None = None
     kac_map: dict[str, float] = Field(default_factory=dict)
@@ -202,6 +203,54 @@ class AgentActionRequest(BaseModel):
 
 class AgentTurnRequest(BaseModel):
     message: str = ""
+
+
+def _resolved_calculation_inputs(
+    requirements: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Translate only typed, resolved calculator inputs from durable requirements."""
+    kac_map: dict[str, float] = {}
+    k_ozp: float | None = None
+    k_em: float | None = None
+    coefficient_basis = ""
+    for requirement in requirements:
+        if str(requirement.get("status") or "") != "resolved":
+            continue
+        resolution = (
+            dict(requirement.get("resolution") or {})
+            if isinstance(requirement.get("resolution"), dict)
+            else {}
+        )
+        kind = str(requirement.get("kind") or "")
+        if kind == "kac":
+            resource_code = str(requirement.get("resource_code") or "").strip()
+            raw_price = next(
+                (
+                    resolution[key]
+                    for key in ("current_price", "price", "value")
+                    if resolution.get(key) is not None
+                ),
+                None,
+            )
+            if resource_code and raw_price is not None:
+                price = float(raw_price)
+                if price < 0:
+                    raise RimSessionConflict("resolved KAC price cannot be negative")
+                kac_map[resource_code] = price
+        if kind in {"coefficient", "coefficient_basis"}:
+            if resolution.get("k_ozp") is not None:
+                k_ozp = float(resolution["k_ozp"])
+            if resolution.get("k_em") is not None:
+                k_em = float(resolution["k_em"])
+            coefficient_basis = str(
+                resolution.get("coefficient_basis") or coefficient_basis
+            )
+    return {
+        "kac_map": kac_map,
+        "k_ozp": k_ozp,
+        "k_em": k_em,
+        "coefficient_basis": coefficient_basis,
+    }
 
 
 def _workflow_payloads(
@@ -762,6 +811,44 @@ async def calculate_scenario(
         session, work_rows, mapping_rows, scenario_payload = _workflow_payloads(
             session_id, user=user
         )
+        if (
+            (not scenario_payload or session.get("scenario_status") != "ready")
+            and not req.scenario_id
+            and session.get("mapping_status")
+            in {"mapping_globally_reviewed", "mapping_locked"}
+        ):
+            projected = reviewed_mapping_scenario(
+                mapping_rows,
+                mapping_revision_id=str(session.get("current_mapping_revision_id") or ""),
+            )
+            scenario_set = validate_authored_scenarios(
+                work_rows,
+                mapping_rows,
+                [projected],
+                max_combinations=1,
+            )
+            blocking = [
+                item
+                for item in scenario_set.get("issues") or []
+                if str(item.get("severity") or "") == "blocking"
+            ]
+            if blocking:
+                raise RimSessionConflict(
+                    "globally reviewed mapping cannot produce a complete draft scenario"
+                )
+            scenario_result = _store().save_scenario_revision(
+                session_id,
+                owner_id=_actor(user),
+                scenario_set=scenario_set,
+                expected_parent_revision_id=(
+                    req.expected_parent_revision_id or session["head_revision_id"]
+                ),
+                created_by="model",
+                allow_admin=_allow_admin(user),
+            )
+            session = scenario_result.session
+            scenario_payload = scenario_set
+            req.scenario_id = str(projected["scenario_id"])
         if not scenario_payload or session.get("scenario_status") != "ready":
             raise RimSessionConflict("a ready authored scenario set is required")
         scenario = next(
@@ -775,24 +862,46 @@ async def calculate_scenario(
         if scenario is None:
             raise RimSessionNotFound("RIM scenario not found")
         rows = calculation_rows_for_scenario(work_rows, mapping_rows, scenario)
+        resolved_inputs = _resolved_calculation_inputs(
+            list(session.get("requirements") or [])
+        )
+        effective_kac_map = {
+            **resolved_inputs["kac_map"],
+            **req.kac_map,
+        }
         trace = smeta_application.calculate_visible_rows_revision(
             rows,
             selected_by=str(scenario.get("authored_by") or "model"),
             created_by="user",
-            parent_revision_id=session["mapping_lock_revision_id"],
+            parent_revision_id=(
+                session["mapping_lock_revision_id"]
+                or session["current_mapping_revision_id"]
+            ),
             change_note=f"Расчёт сценария {req.scenario_id}",
             revision_root=str(_session_root(session_id) / "calculations"),
             title=req.title,
             book=req.book or session.get("pricebook_id") or None,
-            kac_map=req.kac_map,
-            k_ozp=req.k_ozp,
-            k_em=req.k_em,
-            coefficient_basis=req.coefficient_basis,
+            kac_map=effective_kac_map,
+            k_ozp=(
+                resolved_inputs["k_ozp"]
+                if resolved_inputs["k_ozp"] is not None and req.k_ozp == 1.0
+                else req.k_ozp
+            ),
+            k_em=(
+                resolved_inputs["k_em"]
+                if resolved_inputs["k_em"] is not None and req.k_em == 1.0
+                else req.k_em
+            ),
+            coefficient_basis=(
+                req.coefficient_basis
+                or resolved_inputs["coefficient_basis"]
+            ),
         )
         trace["rim_session"] = {
             "session_id": session_id,
             "vor_revision_id": session["current_vor_revision_id"],
             "mapping_lock_revision_id": session["mapping_lock_revision_id"],
+            "mapping_revision_id": session["current_mapping_revision_id"],
             "scenario_revision_id": session["current_scenario_revision_id"],
             "scenario_id": req.scenario_id,
             "normative_base_version": session["normative_base_version"],
@@ -807,7 +916,7 @@ async def calculate_scenario(
             trace=trace,
             requirements=requirements,
             expected_parent_revision_id=(
-                req.expected_parent_revision_id or session["head_revision_id"]
+                session["head_revision_id"]
             ),
             created_by="user",
             change_note=f"Сценарий {req.scenario_id}",

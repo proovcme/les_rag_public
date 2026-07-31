@@ -14,7 +14,17 @@ from uuid import uuid4
 from proxy.services.prompt_registry_service import smeta_native_skill_prompt
 from proxy.services.rim_agent_action_service import model_tool_specs, validate_model_action
 from proxy.services.rim_knowledge_service import model_reference_for_session
-from proxy.smeta_core.document_workflow import _run_batch_norm_agent
+from proxy.services.rim_scenario_service import (
+    calculation_rows_for_scenario,
+    requirements_from_calculation,
+    reviewed_mapping_scenario,
+    validate_authored_scenarios,
+)
+from proxy.smeta_core import application as smeta_application
+from proxy.smeta_core.document_workflow import (
+    _run_batch_norm_agent,
+    _run_global_norm_review,
+)
 from proxy.smeta_core.rim_session import RimSessionConflict, RimSessionStore
 
 
@@ -22,6 +32,7 @@ Exchange = Callable[[list[dict[str, Any]], list[dict[str, Any]]], dict[str, Any]
 MappingExchange = Callable[[list[dict[str, Any]], dict[str, Any]], dict[str, Any]]
 _INTAKE_WORK_ITEM_BATCH_SIZE = 5
 _NORM_MAPPING_CHECKPOINT = "norm_mapping"
+_VOR_DRAFT_CHECKPOINT = "vor_draft"
 _IMMUTABLE_PROJECT_SOURCE_FIELDS = (
     "source_ref",
     "source_refs",
@@ -178,7 +189,7 @@ def _work_rows(vor_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 or ([row.get("source_ref")] if row.get("source_ref") else [])
             ),
         }
-        for row in vor_rows[:30]
+        for row in vor_rows
     ]
 
 
@@ -250,6 +261,24 @@ def _preserve_project_source_provenance(
             )
         preserved.append(bound)
     return preserved
+
+
+def _merge_vor_row_revisions(
+    previous_rows: list[dict[str, Any]],
+    revised_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Replace revised source rows without dropping untouched visible rows."""
+    revised_by_id = {
+        str(row.get("work_id") or ""): row
+        for row in revised_rows
+        if str(row.get("work_id") or "")
+    }
+    merged = [
+        revised_by_id.pop(str(row.get("work_id") or ""), row)
+        for row in previous_rows
+    ]
+    merged.extend(revised_by_id.values())
+    return _preserve_project_source_provenance(previous_rows, merged)
 
 
 def _mapping_rows(
@@ -449,7 +478,7 @@ def run_rim_agent_turn(
             revised = store.save_vor_revision(
                 session_id,
                 owner_id=owner_id,
-                rows=_preserve_project_source_provenance(
+                rows=_merge_vor_row_revisions(
                     list(vor.get("rows") or []),
                     revised_rows,
                 ),
@@ -500,40 +529,117 @@ def run_rim_agent_turn(
             or "auto"
         )
         work_items = list(intake.get("work_items") or [])
-        visible_work_items = work_items[:_INTAKE_WORK_ITEM_BATCH_SIZE]
         intake_actions = (
             {"draft_work_schedule"}
             if declared_source_kind == "specification"
             else None
         )
-        action, model_message = _single_action(
-            session=session,
-            context={
-                "intake": {
-                    "source_kind": declared_source_kind,
-                    "work_item_count": len(work_items),
-                    "work_items": visible_work_items,
-                    "remaining_work_item_count": max(
-                        0, len(work_items) - len(visible_work_items)
-                    ),
-                    "issues": list(intake.get("issues") or [])[:20],
-                },
-                "instruction": (
-                    "The workbook was already inspected by code. Do not request inspect_file. "
-                    "Every uploaded source row is in scope by default. Never ask whether to include "
-                    "all rows, whether to process the remaining rows later, or whether exact versus "
-                    "analog norms should be preferred: norm-search strategy belongs to the model. "
-                    "For a specification, the first required action is a source-linked VOR draft "
-                    "for the visible items. Preserve unresolved technical facts in row notes or "
-                    "assumptions; the harness will request one question only after saving the draft. "
-                    "This is not norm mapping: do not mark rows unbound, claim a norm was not found, "
-                    "or propose search families. Use only actual source work_ids."
-                ),
-            },
-            user_message=user_message,
-            exchange=exchange,
-            only_actions=intake_actions,
+        intake_revision_id = str(session.get("head_revision_id") or "")
+        draft_checkpoint = store.load_agent_checkpoint(
+            session_id,
+            owner_id=owner_id,
+            checkpoint_kind=_VOR_DRAFT_CHECKPOINT,
+            base_revision_id=intake_revision_id,
+            allow_admin=allow_admin,
         )
+        checkpoint_payload = dict((draft_checkpoint or {}).get("payload") or {})
+        accumulated_rows = list(checkpoint_payload.get("rows") or [])
+        next_offset = int(checkpoint_payload.get("next_offset") or 0)
+        action: dict[str, Any] = {}
+        model_message: dict[str, Any] = {}
+        if declared_source_kind == "specification":
+            while next_offset < len(work_items):
+                visible_work_items = work_items[
+                    next_offset : next_offset + _INTAKE_WORK_ITEM_BATCH_SIZE
+                ]
+                action, model_message = _single_action(
+                    session=session,
+                    context={
+                        "intake": {
+                            "source_kind": declared_source_kind,
+                            "work_item_count": len(work_items),
+                            "batch_start": next_offset,
+                            "work_items": visible_work_items,
+                            "remaining_work_item_count": max(
+                                0,
+                                len(work_items)
+                                - next_offset
+                                - len(visible_work_items),
+                            ),
+                            "issues": list(intake.get("issues") or [])[:20],
+                        },
+                        "instruction": (
+                            "The workbook was already inspected by code. Every uploaded source row "
+                            "is in scope by default. Never ask whether to process remaining rows; "
+                            "norm-search strategy belongs to the model. Draft source-linked VOR "
+                            "operations for every item in this batch and only this batch. Preserve "
+                            "unresolved technical facts in notes. This is not norm mapping. Derived "
+                            "work_ids are allowed only when they cite visible source_ref values."
+                        ),
+                    },
+                    user_message=user_message,
+                    exchange=exchange,
+                    only_actions=intake_actions,
+                )
+                if action["action"] != "draft_work_schedule":
+                    raise RimSessionConflict(
+                        "specification intake requires a source-linked VOR draft"
+                    )
+                batch_rows = _preserve_project_source_provenance(
+                    visible_work_items,
+                    list(action["arguments"].get("rows") or []),
+                )
+                expected_refs = {
+                    str(ref or "").strip()
+                    for item in visible_work_items
+                    for ref in (
+                        list(item.get("source_refs") or [])
+                        or ([item.get("source_ref")] if item.get("source_ref") else [])
+                    )
+                    if str(ref or "").strip()
+                }
+                resolved_refs = {
+                    str(ref or "").strip()
+                    for item in batch_rows
+                    for ref in (
+                        list(item.get("source_refs") or [])
+                        or ([item.get("source_ref")] if item.get("source_ref") else [])
+                    )
+                    if str(ref or "").strip()
+                }
+                if not expected_refs or not expected_refs.issubset(resolved_refs):
+                    raise RimSessionConflict(
+                        "VOR draft batch must preserve every visible source_ref"
+                    )
+                accumulated_rows.extend(batch_rows)
+                next_offset += len(visible_work_items)
+                store.save_agent_checkpoint(
+                    session_id,
+                    owner_id=owner_id,
+                    checkpoint_kind=_VOR_DRAFT_CHECKPOINT,
+                    base_revision_id=intake_revision_id,
+                    payload={
+                        "schema": "rim_vor_draft_checkpoint_v1",
+                        "next_offset": next_offset,
+                        "rows": accumulated_rows,
+                        "source_work_item_count": len(work_items),
+                    },
+                    allow_admin=allow_admin,
+                )
+        else:
+            action, model_message = _single_action(
+                session=session,
+                context={
+                    "intake": intake,
+                    "instruction": (
+                        "The workbook was already inspected by code. Continue with the one "
+                        "state-valid action supported by this source kind."
+                    ),
+                },
+                user_message=user_message,
+                exchange=exchange,
+                only_actions=intake_actions,
+            )
         if action["action"] == "ask_user":
             result = store.open_question(
                 session_id,
@@ -558,18 +664,33 @@ def run_rim_agent_turn(
         result = store.save_vor_revision(
             session_id,
             owner_id=owner_id,
-            rows=list(action["arguments"].get("rows") or []),
+            rows=(
+                accumulated_rows
+                if declared_source_kind == "specification"
+                else list(action["arguments"].get("rows") or [])
+            ),
             expected_parent_revision_id=session["head_revision_id"],
             created_by="model",
             change_note="Черновик ВОР из спецификации",
+            allow_admin=allow_admin,
+        )
+        saved_draft_rows = (
+            accumulated_rows
+            if declared_source_kind == "specification"
+            else list(action["arguments"].get("rows") or [])
+        )
+        store.clear_agent_checkpoint(
+            session_id,
+            owner_id=owner_id,
+            checkpoint_kind=_VOR_DRAFT_CHECKPOINT,
             allow_admin=allow_admin,
         )
         question_action, question_message = _single_action(
             session=result.session,
             context={
                 "vor_draft": {
-                    "row_count": len(action["arguments"].get("rows") or []),
-                    "rows": list(action["arguments"].get("rows") or [])[:30],
+                    "row_count": len(saved_draft_rows),
+                    "rows": saved_draft_rows[:30],
                     "source_work_item_count": len(work_items),
                 },
                 "instruction": (
@@ -754,15 +875,127 @@ def run_rim_agent_turn(
                     "agent_trace": result.get("agent_trace") or {},
                     "resumed_from_checkpoint": bool(stored_checkpoint),
                 }
+        reviewed_result = _run_global_norm_review(
+            work_rows,
+            result,
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=4,
+            max_turns=64,
+            progress=None,
+            user_request=user_message,
+            batch_runner=None,
+        )
+        if bool(reviewed_result.get("requires_user_input")):
+            raise RimSessionConflict(
+                "global model review requires a project fact before draft calculation"
+            )
+        reviewed_rows = _mapping_rows(work_rows, reviewed_result)
+        reviewed = store.save_mapping_revision(
+            session_id,
+            owner_id=owner_id,
+            mapping_rows=reviewed_rows,
+            expected_parent_revision_id=revision.revision_id,
+            created_by="model",
+            revision_kind="mapping_global_review",
+            conflicts=list(reviewed_result.get("professional_conflicts") or []),
+            agent_audit={
+                "schema": "rim_global_review_agent_audit_v1",
+                "catalog_trace": list(reviewed_result.get("catalog_trace") or []),
+                "query_trace": list(reviewed_result.get("query_trace") or []),
+                "agent_trace": dict(reviewed_result.get("agent_trace") or {}),
+            },
+            change_note="Mandatory same-model cross-row global review",
+            allow_admin=allow_admin,
+        )
+        blocking_review_issues = [
+            item
+            for item in reviewed.issues
+            if str(item.get("severity") or "") == "blocking"
+        ]
+        if blocking_review_issues:
+            return {
+                **reviewed.as_dict(),
+                "mapping_revision_id": reviewed.revision_id,
+                "message": (
+                    "Глобальная модельная ревизия сохранена, но структурные "
+                    "blockers не позволяют построить денежный draft."
+                ),
+                "agent_trace": reviewed_result.get("agent_trace") or {},
+            }
+        projected = reviewed_mapping_scenario(
+            reviewed_rows,
+            mapping_revision_id=reviewed.revision_id,
+        )
+        scenario_set = validate_authored_scenarios(
+            work_rows,
+            reviewed_rows,
+            [projected],
+            max_combinations=1,
+        )
+        if any(
+            str(item.get("severity") or "") == "blocking"
+            for item in scenario_set.get("issues") or []
+        ):
+            raise RimSessionConflict(
+                "globally reviewed mapping cannot produce a complete draft scenario"
+            )
+        scenario_result = store.save_scenario_revision(
+            session_id,
+            owner_id=owner_id,
+            scenario_set=scenario_set,
+            expected_parent_revision_id=reviewed.revision_id,
+            created_by="model",
+            allow_admin=allow_admin,
+        )
+        calculation_rows = calculation_rows_for_scenario(
+            work_rows,
+            reviewed_rows,
+            scenario_set["scenarios"][0],
+        )
+        trace = smeta_application.calculate_visible_rows_revision(
+            calculation_rows,
+            selected_by="model",
+            created_by="model",
+            parent_revision_id=reviewed.revision_id,
+            change_note="Automatic draft after mandatory global review",
+            revision_root=str(store.root / "files" / session_id / "calculations"),
+            title="ЛСР РИМ — автоматический черновик",
+            book=str(session.get("pricebook_id") or "") or None,
+        )
+        trace["rim_session"] = {
+            "session_id": session_id,
+            "vor_revision_id": vor_revision_id,
+            "mapping_revision_id": reviewed.revision_id,
+            "scenario_revision_id": scenario_result.revision_id,
+            "scenario_id": projected["scenario_id"],
+            "normative_base_version": session.get("normative_base_version") or "",
+            "pricebook_id": session.get("pricebook_id") or "",
+            "region_code": session.get("region_code") or "",
+            "price_period": session.get("price_period") or "",
+        }
+        priced = store.save_pricing_revision(
+            session_id,
+            owner_id=owner_id,
+            trace=trace,
+            requirements=requirements_from_calculation(trace),
+            expected_parent_revision_id=scenario_result.revision_id,
+            created_by="model",
+            change_note="Automatic monetary draft",
+            allow_admin=allow_admin,
+        )
         return {
-            **revision.as_dict(),
-            "mapping_revision_id": revision.revision_id,
+            **priced.as_dict(),
+            "mapping_revision_id": reviewed.revision_id,
+            "scenario_revision_id": scenario_result.revision_id,
+            "pricing_revision_id": priced.revision_id,
+            "artifact": {
+                "title": "ЛСР РИМ — черновик",
+                "xlsx": f"/api/rim/sessions/{session_id}/export?kind=draft",
+            },
             "agent_action": question_action,
-            "message": (
-                "Кандидаты и модельный черновик mapping сохранены. "
-                "Для расчёта нужна пользовательская проверка и global review."
-            ),
-            "agent_trace": result.get("agent_trace") or {},
+            "message": "Глобальная ревизия и денежный черновик ЛСР готовы.",
+            "agent_trace": reviewed_result.get("agent_trace") or {},
             "resumed_from_checkpoint": bool(stored_checkpoint),
         }
 

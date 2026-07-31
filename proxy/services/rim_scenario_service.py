@@ -12,16 +12,45 @@ from typing import Any
 from uuid import uuid4
 
 
+def reviewed_mapping_scenario(
+    mapping_rows: list[dict[str, Any]],
+    *,
+    mapping_revision_id: str,
+) -> dict[str, Any]:
+    """Project globally reviewed terminal bindings into one calculation scenario."""
+    selections = [
+        {
+            "work_id": str(item.get("work_id") or ""),
+            "mapping_row_id": str(item.get("mapping_row_id") or ""),
+        }
+        for item in mapping_rows
+        if str(item.get("selection_status") or "") in {"accepted", "selected"}
+        and str(item.get("selection_kind") or "") not in {"covered_by", "unbound"}
+    ]
+    return {
+        "schema": "rim_scenario_v1",
+        "scenario_id": f"reviewed-{str(mapping_revision_id or '')[:16]}",
+        "title": "Основной вариант глобальной проверки",
+        "authored_by": "model",
+        "compatibility_reason": (
+            "Детерминированная проекция единственных терминальных решений "
+            "глобально проверенной модельной ревизии"
+        ),
+        "selections": selections,
+    }
+
+
 def theoretical_combination_count(
     work_rows: list[dict[str, Any]],
     mapping_rows: list[dict[str, Any]],
 ) -> int:
     """Return the candidate-space size without materialising a Cartesian product."""
-    covered = {
+    non_priced = {
         str(item.get("work_id") or "")
         for item in mapping_rows
         if str(item.get("selection_kind") or "") == "covered_by"
         or str(item.get("covered_by_work_id") or "")
+        or str(item.get("selection_kind") or "") == "unbound"
     }
     counts: Counter[str] = Counter()
     for item in mapping_rows:
@@ -29,12 +58,12 @@ def theoretical_combination_count(
         if status not in {"accepted", "selected"}:
             continue
         work_id = str(item.get("work_id") or "")
-        if work_id and work_id not in covered:
+        if work_id and work_id not in non_priced:
             counts[work_id] += 1
     total = 1
     for work in work_rows:
         work_id = str(work.get("work_id") or "")
-        if work_id in covered:
+        if work_id in non_priced:
             continue
         count = counts.get(work_id, 0)
         if count == 0:
@@ -59,13 +88,14 @@ def validate_authored_scenarios(
         and str(item.get("mapping_row_id") or "")
     }
     all_work_ids = {str(item.get("work_id") or "") for item in work_rows if str(item.get("work_id") or "")}
-    covered = {
+    non_priced = {
         str(item.get("work_id") or "")
         for item in mapping_rows
         if str(item.get("selection_kind") or "") == "covered_by"
         or str(item.get("covered_by_work_id") or "")
+        or str(item.get("selection_kind") or "") == "unbound"
     }
-    required_work_ids = all_work_ids - covered
+    required_work_ids = all_work_ids - non_priced
     theoretical = theoretical_combination_count(work_rows, mapping_rows)
     issues: list[dict[str, Any]] = []
     normalized: list[dict[str, Any]] = []
@@ -207,7 +237,7 @@ def calculation_rows_for_scenario(
         work_id = str(work.get("work_id") or "")
         mapping = selected.get(work_id)
         if mapping is None:
-            coverage = next(
+            terminal = next(
                 (
                     item
                     for item in mapping_rows
@@ -215,12 +245,14 @@ def calculation_rows_for_scenario(
                     and (
                         str(item.get("selection_kind") or "") == "covered_by"
                         or str(item.get("covered_by_work_id") or "")
+                        or str(item.get("selection_kind") or "") == "unbound"
                     )
                 ),
                 None,
             )
-            if coverage is None:
+            if terminal is None:
                 raise ValueError(f"scenario has no mapping or coverage for {work_id}")
+            is_unbound = str(terminal.get("selection_kind") or "") == "unbound"
             rows.append(
                 {
                     "work_id": work_id,
@@ -229,10 +261,18 @@ def calculation_rows_for_scenario(
                     "unit": work.get("unit"),
                     "section": work.get("section_name") or work.get("section"),
                     "source_ref": work.get("source_ref"),
-                    "covered_by_work_id": coverage.get("covered_by_work_id"),
-                    "coverage_reason": coverage.get("reason"),
-                    "coverage_selected_by": coverage.get("edited_by") or "model",
-                    "source_refs": coverage.get("source_refs") or work.get("source_refs") or [],
+                    "source_row": work.get("source_row"),
+                    "selection_kind": "unbound" if is_unbound else "covered_by",
+                    "norm_code": None,
+                    "norm_reason": terminal.get("reason") if is_unbound else "",
+                    "unbound_reason": terminal.get("reason") if is_unbound else "",
+                    "unbound_evidence": (
+                        terminal.get("unbound_evidence") or {} if is_unbound else {}
+                    ),
+                    "covered_by_work_id": terminal.get("covered_by_work_id"),
+                    "coverage_reason": terminal.get("reason") if not is_unbound else "",
+                    "coverage_selected_by": terminal.get("edited_by") or "model",
+                    "source_refs": terminal.get("source_refs") or work.get("source_refs") or [],
                 }
             )
             continue

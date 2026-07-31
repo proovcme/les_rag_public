@@ -4,19 +4,51 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-07-30)
+## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.26.8 (RIM typed FSNB route)
-номер сборки:              516     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.516 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.1 (phase-batched resumable RIM)
+номер сборки:              518     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.518 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.26.8 candidate
+dev implementation:       codex/rim-dialog-mvp; 0.27.1 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
 ```
+
+> 0.27.1 / build 518 — phase-batched resumable RIM
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; runtime/Legion/indexes не изменены.
+> Norm agent планирует минимальную общую фазу и выполняет её сразу для
+> нескольких строк одним batch tool call. Каждая принятая terminal-строка
+> получает durable checkpoint до проверки следующей строки пакета. Короткие
+> model frames сохраняют exact selectable ids; полный norm read остаётся перед
+> bind. Завершённый typed route может быть повторно использован только явным
+> `reuse_norm_catalog_route` модели: переносится scope, но не норма и не
+> applicability. Global review строит connected conflict groups, пересматривает
+> только их bounded-пакеты и дословно сохраняет остальные решения в полной
+> immutable revision.
+>
+> 0.27.0 / build 517 — полный RIM draft и hierarchy contract v1
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; runtime/indexes не изменены.
+> Specification intake сохраняет checkpoint после каждого model-owned пакета,
+> norm mapping получает все строки, global review требует терминальную
+> резолюцию каждой строки. `unbound` остаётся в расчёте с пустыми денежными
+> полями и не блокирует остальные; globally reviewed mapping допускает только
+> автоматический `priced_draft`, финал по-прежнему требует user lock.
+>
+> Общий RAG получил `les.rag.index-contract.v3` и
+> `les.rag.hierarchy.v1`: navigation nodes маршрутизируют descendant leg, но
+> никогда не являются evidence; global evidence leg сохраняется всегда.
+> Активация требует отдельную blue/green v3 generation и live quality gate.
+> Прежняя repository-wide 3204-test suite по решению владельца перенесена в
+> `make test-legacy-full`; канонические `make verify`/`make test` используют
+> короткий явно перечисленный contract/behavior gate.
 
 > 0.26.8 / build 516 — typed FSNB route и durable success trace
 >

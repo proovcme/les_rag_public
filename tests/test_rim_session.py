@@ -312,3 +312,74 @@ def test_vor_validation_preserves_bad_rows_as_issues(tmp_path):
     )
     assert len(revision["payload"]["rows"]) == 1
     assert Path(store.db_path).is_file()
+
+
+def test_global_review_requires_terminal_resolution_for_every_vor_row(tmp_path):
+    store = RimSessionStore(tmp_path)
+    created = store.create_session(owner_id="tester")
+    vor = store.save_vor_revision(
+        created.session["session_id"],
+        owner_id="tester",
+        rows=[
+            *_vor_rows(),
+            {
+                **_vor_rows()[0],
+                "work_id": "vor-002",
+                "work_name": "Неподобранная работа",
+                "source_ref": "spec.xlsx#sheet=СКС#row=15",
+            },
+        ],
+        expected_parent_revision_id=created.revision_id,
+    )
+    reviewed = store.save_mapping_revision(
+        created.session["session_id"],
+        owner_id="tester",
+        mapping_rows=_mapping_rows(),
+        revision_kind="mapping_global_review",
+        expected_parent_revision_id=vor.revision_id,
+    )
+
+    assert reviewed.session["mapping_status"] == "mapping_globally_reviewed"
+    assert any(
+        issue["code"] == "mapping_work_resolution_missing"
+        and issue["work_id"] == "vor-002"
+        for issue in reviewed.issues
+    )
+    with pytest.raises(RimSessionConflict, match="blocking structural issues"):
+        store.lock_mapping(
+            created.session["session_id"],
+            owner_id="tester",
+            review_note="Проверено",
+            expected_parent_revision_id=reviewed.revision_id,
+        )
+
+
+def test_pricing_draft_is_allowed_after_complete_global_review_without_user_lock(
+    tmp_path,
+):
+    store = RimSessionStore(tmp_path)
+    vor = _create_with_vor(store)
+    reviewed = store.save_mapping_revision(
+        vor.session["session_id"],
+        owner_id="tester",
+        mapping_rows=_mapping_rows(),
+        revision_kind="mapping_global_review",
+        expected_parent_revision_id=vor.revision_id,
+    )
+    priced = store.save_pricing_revision(
+        vor.session["session_id"],
+        owner_id="tester",
+        trace={"schema": "rim_lsr_trace_v1", "summary": {"known_amount": 1000}},
+        requirements=[],
+        expected_parent_revision_id=reviewed.revision_id,
+        created_by="model",
+    )
+
+    assert priced.session["pricing_status"] == "priced_draft"
+    with pytest.raises(RimSessionConflict, match="requires mapping_locked"):
+        store.finalize(
+            vor.session["session_id"],
+            owner_id="tester",
+            review_note="Нельзя финализировать без lock",
+            expected_parent_revision_id=priced.revision_id,
+        )
