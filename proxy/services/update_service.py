@@ -380,10 +380,11 @@ def _detached_task_command(
     update_id: str,
     *,
     prefix: str,
+    python_executable: Path | None = None,
 ) -> tuple[str, str]:
     safe_id = re.sub(r"[^A-Za-z0-9_-]", "-", update_id)[:32] or "update"
     task_name = f"{prefix}-{safe_id}"
-    python_executable = Path(sys.executable)
+    python_executable = Path(python_executable or sys.executable)
     pythonw = python_executable.with_name("pythonw.exe")
     if pythonw.is_file():
         python_executable = pythonw
@@ -402,12 +403,19 @@ def _detached_task_command(
     return task_name, encoded
 
 
-def _patch_task_command(helper: Path, job: Path, patch_id: str) -> tuple[str, str]:
+def _patch_task_command(
+    helper: Path,
+    job: Path,
+    patch_id: str,
+    *,
+    python_executable: Path | None = None,
+) -> tuple[str, str]:
     return _detached_task_command(
         helper,
         f'"{helper}" --job "{job}"',
         patch_id,
         prefix="LES-Patch",
+        python_executable=python_executable,
     )
 
 

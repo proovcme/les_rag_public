@@ -32,6 +32,7 @@ ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
     "tools/vps_patch_apply.py",
+    "tools/smeta_release_baseline.py",
     "tools/windows_update_engine.py",
     "tools/windows_runtime.py",
     "tools/windows_env_doctor.py",
@@ -484,6 +485,15 @@ def apply_job(job_path: Path) -> int:
             stage = Path(stage_dir)
             _stage_payload(bundle, manifest, stage, runtime)
 
+            write_status(
+                status,
+                state="preflight",
+                stage="smeta_baseline",
+                patch_id=patch_id,
+                message="Проверяю и подключаю базу ФСНБ до изменения версии LES",
+            )
+            _verify_smeta_baseline(runtime, state)
+
             stamp_path = runtime / ".les_deploy_stamp.json"
             backup = _reusable_backup(backup_root, manifest)
             if backup is None:
@@ -535,7 +545,6 @@ def apply_job(job_path: Path) -> int:
             patch_id=patch_id,
             message="Проверяю и подключаю базу ФСНБ",
         )
-        _verify_smeta_baseline(runtime, state)
         stamp_tmp = stamp_path.with_suffix(".tmp")
         stamp_tmp.write_text(json.dumps(_stamp(manifest), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         os.replace(stamp_tmp, stamp_path)

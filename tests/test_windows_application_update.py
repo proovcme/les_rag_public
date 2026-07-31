@@ -150,6 +150,32 @@ def test_windows_updater_applies_atomically_without_build_or_test(tmp_path, monk
     assert (backup / "files" / "app" / "les-desktop.exe").read_bytes() == b"old desktop"
 
 
+def test_soft_updater_rejects_failed_baseline_preflight_before_runtime_mutation(
+    tmp_path, monkeypatch
+):
+    runtime, state, job = _prepared_job(tmp_path)
+    stopped = []
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_verify_smeta_baseline",
+        lambda *_args: (_ for _ in ()).throw(PermissionError("baseline ACL")),
+    )
+    monkeypatch.setattr(
+        vps_patch_apply, "_stop_runtime", lambda *_args: stopped.append(True)
+    )
+    monkeypatch.setattr(vps_patch_apply, "remove_task", lambda _name: None)
+
+    assert vps_patch_apply.apply_job(job) == 1
+
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(encoding="utf-8")
+    )
+    assert stopped == []
+    assert status["stage"] == "rejected"
+    assert (runtime / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
+    assert (runtime.parent / "les-desktop.exe").read_bytes() == b"old desktop"
+
+
 def test_soft_updater_verifies_bundled_smeta_baseline_with_persistent_python(
     tmp_path, monkeypatch
 ):

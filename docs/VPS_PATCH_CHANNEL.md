@@ -123,6 +123,19 @@ make prepare-windows-update \
 uv run python tools/vps_patch.py publish --output dist/vps-patch
 ```
 
+Для локального Legion публикация и SSH не нужны. Проверенный пакет применяется штатным detached
+updater из persistent LES Python:
+
+```powershell
+uv run python tools/vps_patch.py apply-local --output dist/vps-patch `
+  --runtime "$env:LOCALAPPDATA\Programs\LES\runtime" `
+  --state "$env:LOCALAPPDATA\LES"
+```
+
+`--installed-runtime` при сборке аттестует только побайтовые варианты файлов, нормализованное
+содержимое которых совпадает с Git ancestry. Это закрывает смешанный Windows EOL без ослабления
+смыслового base-check. Baseline preflight завершается до остановки и изменения runtime.
+
 Обе prepare-команды запускают только `make test-updater`. Этот target делегирует
 единому переносимому entrypoint `uv run python tools/platform_release_gate.py updater`,
 поэтому тот же профиль работает на Legion без GNU Make. Entry point сам создаёт

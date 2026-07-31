@@ -7,16 +7,27 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.9 (smeta baseline acceptance gate)
-номер сборки:              526     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.526 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.10 (local updater + baseline preflight)
+номер сборки:              527     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.527 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.9 candidate
+dev implementation:       codex/legion-model-quality; 0.27.10 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
+следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.10 / build 527 — local soft updater and fail-before-mutation baseline repair
+>
+> Дата: 2026-08-01
+> Статус: Legion local soft-update candidate; NSIS/EXE не собирается.
+> `tools/vps_patch.py apply-local` проверяет локальные `latest.json`/ZIP/SHA и запускает тот же
+> detached Windows updater через persistent LES Python без SSH. Builder принимает
+> `--installed-runtime`: дополнительный base SHA разрешается только при точном совпадении
+> нормализованного содержимого с Git ancestry. ФСНБ archive полностью распаковывается и
+> валидируется до остановки и изменения runtime; недоступный старый связанный набор атомарно
+> перемещается в recovery и заменяется целиком. Провал preflight оставляет версию LES неизменной.
 
 > 0.27.9 / build 526 — fail-closed smeta baseline acceptance
 >

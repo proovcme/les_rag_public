@@ -394,15 +394,6 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     backup_root = state_root / "storage" / "recovery" / f"smeta_baseline_{stamp}"
     backed_up: list[str] = []
-    for relative in REQUIRED_FILES:
-        source = state_root / Path(*relative.parts)
-        if not source.is_file():
-            continue
-        target = backup_root / Path(*relative.parts)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
-        backed_up.append(relative.as_posix())
-
     with tempfile.TemporaryDirectory(prefix="les-smeta-repair-", dir=state_root) as temporary:
         staging = Path(temporary)
         with zipfile.ZipFile(archive) as bundle:
@@ -418,11 +409,36 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             minimum_fsem_rows=int(archive_status["minimum_fsem_rows"]),
             minimum_price_rows=int(archive_status["minimum_pricebook_rows"]),
         )
-        for relative in REQUIRED_FILES:
-            source = staging / Path(*relative.parts)
-            target = state_root / Path(*relative.parts)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            os.replace(source, target)
+        installed: list[PurePosixPath] = []
+        try:
+            # Same-volume moves preserve the previous files without requiring
+            # read access to a malformed Windows ACL. The replacement is fully
+            # extracted and validated before this transaction starts.
+            for relative in REQUIRED_FILES:
+                source = state_root / Path(*relative.parts)
+                if not source.is_file():
+                    continue
+                target = backup_root / Path(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(source, target)
+                backed_up.append(relative.as_posix())
+            for relative in REQUIRED_FILES:
+                source = staging / Path(*relative.parts)
+                target = state_root / Path(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.replace(source, target)
+                installed.append(relative)
+        except OSError:
+            for relative in reversed(installed):
+                (state_root / Path(*relative.parts)).unlink(missing_ok=True)
+            for value in reversed(backed_up):
+                relative = PurePosixPath(value)
+                saved = backup_root / Path(*relative.parts)
+                target = state_root / Path(*relative.parts)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if saved.is_file():
+                    os.replace(saved, target)
+            raise
     return {
         **validation,
         "action": "repaired",

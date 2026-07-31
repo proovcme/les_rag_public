@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Build and publish a bounded LES runtime patch for the VPS HTTPS origin."""
+"""Build, publish, or locally apply a bounded LES runtime patch."""
 
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,6 +27,7 @@ ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
     "tools/vps_patch_apply.py",
+    "tools/smeta_release_baseline.py",
     "tools/windows_update_engine.py",
     "tools/windows_runtime.py",
     "tools/windows_env_doctor.py",
@@ -143,7 +147,13 @@ def desktop_payload(
     )
 
 
-def accepted_file_hashes(base_commit: str, target_commit: str, path: str) -> tuple[list[str], bool]:
+def accepted_file_hashes(
+    base_commit: str,
+    target_commit: str,
+    path: str,
+    *,
+    installed_runtime: Path | None = None,
+) -> tuple[list[str], bool]:
     """Hashes of every committed file state on the bounded release ancestry.
 
     A user may have installed any earlier VPS patch.  Accepting only the full-release base and the
@@ -156,14 +166,26 @@ def accepted_file_hashes(base_commit: str, target_commit: str, path: str) -> tup
         text=True,
     ).split()
     hashes: set[str] = set()
+    committed_states: list[bytes] = []
     missing = False
     for commit in [base_commit, *commits]:
         data = git_bytes(commit, path)
         if data is None:
             missing = True
             continue
+        committed_states.append(data)
         hashes.add(sha256_bytes(data))
         hashes.add(sha256_bytes(windows_runtime_bytes(data)))
+    if installed_runtime is not None:
+        installed = Path(installed_runtime) / Path(path)
+        if installed.is_file():
+            installed_data = installed.read_bytes()
+            normalized_installed = installed_data.replace(b"\r\n", b"\n")
+            if any(
+                normalized_installed == state.replace(b"\r\n", b"\n")
+                for state in committed_states
+            ):
+                hashes.add(sha256_bytes(installed_data))
     return sorted(hashes), missing
 
 
@@ -175,6 +197,7 @@ def build_patch(
     output: Path,
     origin: str,
     desktop_manifest: Path | None = None,
+    installed_runtime: Path | None = None,
 ) -> dict:
     base_commit = subprocess.check_output(["git", "rev-parse", base], cwd=ROOT, text=True).strip()
     target_commit = subprocess.check_output(["git", "rev-parse", target], cwd=ROOT, text=True).strip()
@@ -192,7 +215,12 @@ def build_patch(
         if before == after:
             continue
         payload[path] = after
-        accepted_hashes, accepted_missing = accepted_file_hashes(base_commit, target_commit, path)
+        accepted_hashes, accepted_missing = accepted_file_hashes(
+            base_commit,
+            target_commit,
+            path,
+            installed_runtime=installed_runtime,
+        )
         entries.append(
             {
                 "scope": "runtime",
@@ -265,6 +293,149 @@ def publish(output: Path, host: str, remote_root: str) -> None:
     subprocess.run(["ssh", host, remote], check=True)
 
 
+def _default_local_paths() -> tuple[Path, Path]:
+    local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+    if not local_app_data:
+        raise ValueError("LOCALAPPDATA is unavailable; pass --runtime and --state explicitly")
+    root = Path(local_app_data)
+    return root / "Programs" / "LES" / "runtime", root / "LES"
+
+
+def _read_local_feed(output: Path) -> tuple[dict, dict, Path]:
+    feed_path = Path(output).resolve() / "latest.json"
+    try:
+        feed = json.loads(feed_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError(f"local patch feed is unreadable: {feed_path}") from exc
+    patch = feed.get("patch")
+    if feed.get("schema") != FEED_SCHEMA or not isinstance(patch, dict) or patch.get("schema") != SCHEMA:
+        raise ValueError("local patch feed or manifest schema is unsupported")
+    patch_id = str(patch.get("patch_id") or "")
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", patch_id):
+        raise ValueError("local patch id is unsafe")
+    archive_name = Path(urlparse(str(feed.get("archive_url") or "")).path).name
+    archive = feed_path.parent / archive_name
+    expected_sha = str(feed.get("archive_sha256") or "").lower()
+    expected_bytes = feed.get("archive_bytes")
+    if (
+        not archive_name
+        or not archive.is_file()
+        or not re.fullmatch(r"[0-9a-f]{64}", expected_sha)
+        or not isinstance(expected_bytes, int)
+        or isinstance(expected_bytes, bool)
+        or archive.stat().st_size != expected_bytes
+        or sha256_file(archive) != expected_sha
+    ):
+        raise ValueError("local patch archive is missing or fails SHA-256/size verification")
+    return feed, patch, archive
+
+
+def apply_local(*, output: Path, runtime: Path, state: Path) -> dict:
+    """Launch the normal Windows soft updater from a verified local package."""
+    from proxy.services import update_service
+
+    runtime = Path(runtime).resolve()
+    state = Path(state).resolve()
+    persistent_python = state / ".venv" / "Scripts" / "python.exe"
+    if not runtime.is_dir() or not (runtime / "tools" / "windows_runtime.py").is_file():
+        raise ValueError(f"installed LES runtime is incomplete: {runtime}")
+    if not persistent_python.is_file():
+        raise ValueError(f"persistent LES Python is missing: {persistent_python}")
+    feed, patch, source_archive = _read_local_feed(output)
+    patch_id = str(patch["patch_id"])
+    update_dir = state / "artifacts" / "updates" / "local" / patch_id
+    update_dir.mkdir(parents=True, exist_ok=True)
+    archive = update_dir / "patch.zip"
+    shutil.copy2(source_archive, archive)
+    if sha256_file(archive) != str(feed["archive_sha256"]).lower():
+        archive.unlink(missing_ok=True)
+        raise ValueError("staged local patch archive fails SHA-256 verification")
+
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            bundled = json.loads(bundle.read("manifest.json"))
+            if bundled != patch:
+                raise ValueError("manifest inside local archive does not match latest.json")
+            expected = {
+                "manifest.json",
+                *(
+                    f"payload/@app/{entry['path']}"
+                    if str(entry.get("scope") or "runtime") == "app"
+                    else f"payload/{entry['path']}"
+                    for entry in bundled.get("files") or []
+                ),
+            }
+            if set(bundle.namelist()) != expected:
+                raise ValueError("local patch archive contains undeclared or missing payload files")
+            helper, _, _ = update_service._stage_vps_patch_launcher(
+                bundle,
+                bundled,
+                runtime=runtime,
+                root=update_dir,
+            )
+    except (zipfile.BadZipFile, KeyError, ValueError, TypeError) as exc:
+        raise ValueError(f"local patch archive is invalid: {exc}") from exc
+
+    status = state / "artifacts" / "updates" / "vps-patch-status.json"
+    status.parent.mkdir(parents=True, exist_ok=True)
+    job = update_dir / "job.json"
+    job_payload = {
+        "runtime_root": str(runtime),
+        "state_root": str(state),
+        "archive": str(archive),
+        "archive_sha256": str(feed["archive_sha256"]).lower(),
+        "status_path": str(status),
+        "patch_id": patch_id,
+        "helper_task_name": "",
+    }
+    job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    task_name, encoded = update_service._patch_task_command(
+        helper,
+        job,
+        patch_id,
+        python_executable=persistent_python,
+    )
+    job_payload["helper_task_name"] = task_name
+    job.write_text(json.dumps(job_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    status.write_text(
+        json.dumps(
+            {
+                "schema": "les.vps-patch-status.v1",
+                "state": "starting",
+                "stage": "local_verified",
+                "patch_id": patch_id,
+                "message": "Local soft package verified; updater task is starting",
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    launched = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
+        cwd=str(update_dir),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+        creationflags=0x08000000,
+    )
+    if launched.returncode != 0:
+        detail = (launched.stderr or launched.stdout or "").strip()[-2000:]
+        raise RuntimeError(f"Windows failed to launch the local updater task: {detail}")
+    return {
+        "ok": True,
+        "mode": "local",
+        "patch_id": patch_id,
+        "target_commit": patch.get("target_commit"),
+        "product_version": patch.get("product_version"),
+        "build_number": patch.get("build_number"),
+        "task_name": task_name,
+        "job": str(job),
+        "status": str(status),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -275,10 +446,15 @@ def main() -> int:
     build.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
     build.add_argument("--origin", default=DEFAULT_ORIGIN)
     build.add_argument("--desktop-manifest", type=Path)
+    build.add_argument("--installed-runtime", type=Path)
     publish_cmd = sub.add_parser("publish")
     publish_cmd.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
     publish_cmd.add_argument("--host", default="root@185.185.71.196")
     publish_cmd.add_argument("--remote-root", default="/var/www/les-updates")
+    local_cmd = sub.add_parser("apply-local")
+    local_cmd.add_argument("--output", type=Path, default=ROOT / "dist" / "vps-patch")
+    local_cmd.add_argument("--runtime", type=Path)
+    local_cmd.add_argument("--state", type=Path)
     args = parser.parse_args()
     if args.command == "build":
         print(
@@ -290,14 +466,28 @@ def main() -> int:
                     output=args.output,
                     origin=args.origin,
                     desktop_manifest=args.desktop_manifest,
+                    installed_runtime=args.installed_runtime,
                 ),
                 ensure_ascii=False,
                 indent=2,
             )
         )
-    else:
+    elif args.command == "publish":
         publish(args.output, args.host, args.remote_root)
         print(json.dumps({"ok": True, "published": True}, ensure_ascii=False))
+    else:
+        default_runtime, default_state = _default_local_paths()
+        print(
+            json.dumps(
+                apply_local(
+                    output=args.output,
+                    runtime=args.runtime or default_runtime,
+                    state=args.state or default_state,
+                ),
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     return 0
 
 
