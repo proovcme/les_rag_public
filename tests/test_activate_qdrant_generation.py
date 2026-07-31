@@ -1,5 +1,6 @@
 import json
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,6 +10,7 @@ from tools.activate_qdrant_generation import (
     _restore_lexical_alias,
     alias_contract,
     alias_manifest,
+    archive_physical_collection,
     has_physical_alias_blocker,
     mark_generation_job_activated,
 )
@@ -162,3 +164,44 @@ def test_existing_qdrant_alias_is_not_mistaken_for_physical_blocker():
         target="physical_v2",
         existing_aliases={},
     ) is True
+
+
+def test_legacy_physical_collection_is_snapshotted_and_recovered_before_handoff():
+    class Client:
+        def __init__(self):
+            self.recovery = None
+
+        def count(self, collection, exact):
+            assert exact is True
+            return SimpleNamespace(count=128189)
+
+        def collection_exists(self, collection):
+            assert collection == "les_rag_legacy_v2"
+            return False
+
+        def create_snapshot(self, collection, wait):
+            assert (collection, wait) == ("les_rag", True)
+            return SimpleNamespace(name="legacy.snapshot")
+
+        def recover_snapshot(self, collection, **kwargs):
+            self.recovery = (collection, kwargs)
+            return True
+
+    client = Client()
+    result = archive_physical_collection(
+        client,
+        source="les_rag",
+        archive="les_rag_legacy_v2",
+        qdrant_url="http://127.0.0.1:6333",
+    )
+
+    assert result == {
+        "collection": "les_rag_legacy_v2",
+        "points": 128189,
+        "snapshot": "legacy.snapshot",
+        "resumed": False,
+    }
+    assert client.recovery[0] == "les_rag_legacy_v2"
+    assert client.recovery[1]["location"].endswith(
+        "/collections/les_rag/snapshots/legacy.snapshot"
+    )

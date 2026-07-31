@@ -19,6 +19,7 @@ from tools.build_rag_contract_sibling import (
     resolve_indexed_datasets,
     sparse_vector_or_exclusion,
     validate_embedding_health,
+    verify_embedding_runtime_identity,
     verify_embedding_runtime,
 )
 
@@ -240,3 +241,50 @@ def test_embedding_health_preflight_rejects_same_size_wrong_model():
     health["embed_model"]["fallback_enabled"] = True
     with pytest.raises(RuntimeError, match="fallback_enabled"):
         validate_embedding_health(health, contract=contract)
+
+
+def test_ollama_embedding_identity_uses_installed_model_tags(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "models": [
+                    {"name": "bge-m3:latest", "digest": "sha256:verified"}
+                ]
+            }
+
+    monkeypatch.setattr("httpx.get", lambda url, timeout: Response())
+
+    assert verify_embedding_runtime_identity(
+        "http://127.0.0.1:11434",
+        contract={
+            "embedding_backend": "ollama",
+            "embedding_api_model": "bge-m3:latest",
+        },
+    ) == {
+        "status": "passed",
+        "backend": "ollama",
+        "model": "bge-m3:latest",
+        "digest": "sha256:verified",
+    }
+
+
+def test_ollama_embedding_identity_rejects_wrong_installed_model(monkeypatch):
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"models": [{"name": "other:latest"}]}
+
+    monkeypatch.setattr("httpx.get", lambda url, timeout: Response())
+    with pytest.raises(RuntimeError, match="expected Ollama model"):
+        verify_embedding_runtime_identity(
+            "http://127.0.0.1:11434",
+            contract={
+                "embedding_backend": "ollama",
+                "embedding_api_model": "bge-m3:latest",
+            },
+        )

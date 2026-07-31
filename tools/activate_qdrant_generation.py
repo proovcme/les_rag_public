@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
@@ -176,6 +177,58 @@ def has_physical_alias_blocker(
     )
 
 
+def archive_physical_collection(
+    client: Any,
+    *,
+    source: str,
+    archive: str,
+    qdrant_url: str,
+) -> dict[str, Any]:
+    """Clone a legacy physical alias blocker before converting it to an alias."""
+    if not archive or archive in {source}:
+        raise ValueError("legacy archive collection name is invalid")
+    source_points = int(client.count(source, exact=True).count)
+    if source_points <= 0:
+        raise ValueError("legacy physical collection is empty")
+    if client.collection_exists(archive):
+        archive_points = int(client.count(archive, exact=True).count)
+        if archive_points != source_points:
+            raise ValueError(
+                f"legacy archive count mismatch: {archive_points} != {source_points}"
+            )
+        return {"collection": archive, "points": archive_points, "resumed": True}
+    snapshot = client.create_snapshot(source, wait=True)
+    snapshot_name = str(getattr(snapshot, "name", "") or "")
+    if not snapshot_name:
+        raise RuntimeError("Qdrant did not create a legacy collection snapshot")
+    location = (
+        qdrant_url.rstrip("/")
+        + "/collections/"
+        + urllib.parse.quote(source, safe="")
+        + "/snapshots/"
+        + urllib.parse.quote(snapshot_name, safe="")
+    )
+    recovered = client.recover_snapshot(
+        archive,
+        location=location,
+        priority=models.SnapshotPriority.SNAPSHOT,
+        wait=True,
+    )
+    if recovered is not True:
+        raise RuntimeError("Qdrant rejected legacy collection recovery")
+    archive_points = int(client.count(archive, exact=True).count)
+    if archive_points != source_points:
+        raise RuntimeError(
+            f"legacy archive count mismatch: {archive_points} != {source_points}"
+        )
+    return {
+        "collection": archive,
+        "points": archive_points,
+        "snapshot": snapshot_name,
+        "resumed": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--alias", required=True)
@@ -193,6 +246,11 @@ def main() -> int:
         "--drop-empty-alias-placeholder",
         action="store_true",
         help="delete a zero-point collection that blocks creation of the stable alias",
+    )
+    parser.add_argument(
+        "--archive-physical-alias-as",
+        default="",
+        help="clone a non-empty legacy physical alias blocker before alias activation",
     )
     args = parser.parse_args()
 
@@ -235,6 +293,8 @@ def main() -> int:
         contract=contract_source_payload,
     )
     existing = {item.alias_name: item.collection_name for item in client.get_aliases().aliases}
+    previous_target = existing.get(args.alias)
+    legacy_archive: dict[str, Any] | None = None
     if has_physical_alias_blocker(
         client,
         alias=args.alias,
@@ -242,12 +302,24 @@ def main() -> int:
         existing_aliases=existing,
     ):
         placeholder_points = int(client.count(args.alias, exact=True).count)
-        if placeholder_points or not args.drop_empty_alias_placeholder:
+        if placeholder_points and args.archive_physical_alias_as:
+            if args.archive_physical_alias_as == args.target:
+                raise ValueError("legacy archive cannot be the activation target")
+            legacy_archive = archive_physical_collection(
+                client,
+                source=args.alias,
+                archive=args.archive_physical_alias_as,
+                qdrant_url=args.qdrant_url,
+            )
+            previous_target = args.archive_physical_alias_as
+            client.delete_collection(args.alias)
+        elif placeholder_points or not args.drop_empty_alias_placeholder:
             raise ValueError(
                 "stable alias is blocked by a physical collection: "
                 f"{args.alias} ({placeholder_points} points)"
             )
-        client.delete_collection(args.alias)
+        else:
+            client.delete_collection(args.alias)
     operations: list[models.AliasOperations] = []
     if args.alias in existing:
         operations.append(
@@ -263,7 +335,6 @@ def main() -> int:
         for path in (args.contract_destination, args.manifest_destination)
         if path is not None
     }
-    previous_target = existing.get(args.alias)
     lexical_index = None
     lexical_promoted = False
     try:
@@ -326,7 +397,16 @@ def main() -> int:
             _restore_file(path, previous)
         raise
 
-    print(json.dumps({"status": "activated", "alias": args.alias, "target": args.target}))
+    print(
+        json.dumps(
+            {
+                "status": "activated",
+                "alias": args.alias,
+                "target": args.target,
+                "legacy_archive": legacy_archive,
+            }
+        )
+    )
     if args.job_state_path:
         mark_generation_job_activated(
             args.job_state_path,

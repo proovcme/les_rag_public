@@ -7,16 +7,28 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.3 (ACL-safe isolated Windows prepare)
-номер сборки:              520     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.520 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.4 (Legion resumable RAG v3 transition)
+номер сборки:              521     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.521 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.3 candidate
+dev implementation:       codex/legion-model-quality; 0.27.4 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.4 / build 521 — resumable Legion RAG v3 transition
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; установленный Legion остаётся 0.25.26 / 499 после успешного
+> автоматического rollback не прошедшего contract-v3 smoke.
+> Generation supervisor теперь несёт явный Windows Ollama embedding profile и проверяет
+> фактически установленную model tag/digest до re-embed. Одноразовый переход от legacy
+> физической `les_rag` к stable alias разрешён только с явным archive generation: исходная
+> коллекция сначала клонируется через Qdrant snapshot/recovery с точным count gate; при
+> провале activation rollback alias указывает на проверенный архив. Ручное удаление,
+> переподписание v2 manifest и in-place reindex не используются.
 
 > 0.27.3 / build 520 — ACL-safe isolated Windows prepare
 >

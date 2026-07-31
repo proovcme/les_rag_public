@@ -54,11 +54,16 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--state-path", type=Path, required=True)
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     parser.add_argument("--embed-url", default="http://127.0.0.1:8081")
+    parser.add_argument("--embed-backend", default="")
+    parser.add_argument("--embedding-model", default="")
+    parser.add_argument("--embedding-api-model", default="")
+    parser.add_argument("--rag-chunk-unit", choices=("chars", "tokens"), default="")
+    parser.add_argument("--archive-physical-alias-as", default="")
     parser.add_argument("--max-failures", type=int, default=12)
 
 
 def _worker_arguments(args: argparse.Namespace) -> list[str]:
-    return [
+    result = [
         "--src", args.src,
         "--dst", args.dst,
         "--alias", args.alias,
@@ -74,6 +79,16 @@ def _worker_arguments(args: argparse.Namespace) -> list[str]:
         "--embed-url", args.embed_url,
         "--max-failures", str(args.max_failures),
     ]
+    for option, value in (
+        ("--embed-backend", args.embed_backend),
+        ("--embedding-model", args.embedding_model),
+        ("--embedding-api-model", args.embedding_api_model),
+        ("--rag-chunk-unit", args.rag_chunk_unit),
+        ("--archive-physical-alias-as", args.archive_physical_alias_as),
+    ):
+        if value:
+            result.extend((option, value))
+    return result
 
 
 def render_launchd_plist(
@@ -109,6 +124,14 @@ def _run_stage(state: dict[str, Any], state_path: Path, stage: str, command: lis
 
 
 def run(args: argparse.Namespace) -> int:
+    for name, value in (
+        ("EMBED_BACKEND", args.embed_backend),
+        ("EMBEDDING_MODEL", args.embedding_model),
+        ("EMBED_MODEL", args.embedding_api_model),
+        ("RAG_CHUNK_UNIT", args.rag_chunk_unit),
+    ):
+        if value:
+            os.environ[name] = value
     state = _read_json(args.state_path)
     failures = int(state.get("failures") or 0)
     state.update(
@@ -172,11 +195,7 @@ def run(args: argparse.Namespace) -> int:
                 "--report-path", str(args.readiness_report),
             ],
         )
-        _run_stage(
-            state,
-            args.state_path,
-            "activation",
-            [
+        activation = [
                 str(python),
                 str(ROOT / "tools/activate_qdrant_generation.py"),
                 "--alias", args.alias,
@@ -189,7 +208,16 @@ def run(args: argparse.Namespace) -> int:
                 "--lexical-source-collection", args.dst,
                 "--job-state-path", str(args.state_path),
                 "--drop-empty-alias-placeholder",
-            ],
+            ]
+        if args.archive_physical_alias_as:
+            activation.extend(
+                ("--archive-physical-alias-as", args.archive_physical_alias_as)
+            )
+        _run_stage(
+            state,
+            args.state_path,
+            "activation",
+            activation,
         )
     except Exception as exc:  # noqa: BLE001 - subprocess preserves exact exit in the log
         failures += 1

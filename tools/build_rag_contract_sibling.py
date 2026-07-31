@@ -137,6 +137,46 @@ def verify_embedding_runtime_identity(
 ) -> dict[str, Any]:
     import httpx
 
+    if str(contract.get("embedding_backend") or "").strip().lower() == "ollama":
+        response = httpx.get(url.rstrip("/") + "/api/tags", timeout=20.0)
+        response.raise_for_status()
+        payload = response.json()
+        models = payload.get("models") if isinstance(payload, dict) else None
+        expected = str(
+            contract.get("embedding_api_model")
+            or contract.get("embedding_model")
+            or ""
+        ).strip()
+
+        def _tag(value: Any) -> str:
+            return str(value or "").strip().casefold().removesuffix(":latest")
+
+        matching = next(
+            (
+                item
+                for item in models or []
+                if isinstance(item, dict)
+                and _tag(item.get("name") or item.get("model")) == _tag(expected)
+            ),
+            None,
+        )
+        if not expected or matching is None:
+            available = sorted(
+                str(item.get("name") or item.get("model") or "")
+                for item in models or []
+                if isinstance(item, dict)
+            )
+            raise RuntimeError(
+                f"embedding runtime identity mismatch: expected Ollama model "
+                f"{expected!r}, available={available}"
+            )
+        return {
+            "status": "passed",
+            "backend": "ollama",
+            "model": str(matching.get("name") or matching.get("model") or expected),
+            "digest": str(matching.get("digest") or ""),
+        }
+
     response = httpx.get(url.rstrip("/") + "/api/health", timeout=20.0)
     response.raise_for_status()
     payload = response.json()
