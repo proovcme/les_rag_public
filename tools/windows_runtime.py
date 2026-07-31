@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import socket
 import subprocess
 import time
@@ -285,21 +286,51 @@ def _spawn(
         stderr.close()
 
 
-def _wait_url(url: str, timeout: int) -> bool:
+def _redacted_tail(path: Path, *, limit: int = 2000) -> str:
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")[-limit:]
+    except OSError:
+        return ""
+    return re.sub(
+        r"(?i)(api[_-]?key|token|password|secret)(\s*[=:]\s*)[^\s,;]+",
+        r"\1\2<redacted>",
+        text,
+    ).strip()
+
+
+def _wait_process_url(
+    process: subprocess.Popen[bytes],
+    url: str,
+    timeout: int,
+    *,
+    label: str,
+    stderr_path: Path,
+) -> None:
     deadline = time.monotonic() + timeout
     attempts = 0
     while time.monotonic() < deadline:
         attempts += 1
+        code = process.poll()
+        if code is not None:
+            detail = _redacted_tail(stderr_path)
+            raise RuntimeError(
+                f"{label} exited before readiness (code={code}): "
+                f"{detail or 'no stderr output'}"
+            )
         try:
             with urllib.request.urlopen(url, timeout=3) as response:  # noqa: S310
                 if response.status == 200:
-                    return True
+                    return
         except Exception:
             pass
         if attempts == 1 or attempts % 10 == 0:
             _diagnostic("wait_url", url=url, attempts=attempts)
         time.sleep(0.5)
-    return False
+    detail = _redacted_tail(stderr_path)
+    raise RuntimeError(
+        f"{label} remained alive but did not answer {url} within {timeout}s: "
+        f"{detail or 'no stderr output'}"
+    )
 
 
 def start(
@@ -324,6 +355,8 @@ def start(
     _diagnostic("after_environment", environment_keys=len(environment))
     logs = state / "logs"
     processes: list[subprocess.Popen[bytes]] = []
+    proxy_stderr = logs / "windows-light-proxy.err.log"
+    ui_stderr = logs / "windows-light-ui.err.log"
     try:
         proxy = _spawn(
             python,
@@ -331,7 +364,7 @@ def start(
             runtime=runtime,
             environment=environment,
             stdout_path=logs / "windows-light-proxy.out.log",
-            stderr_path=logs / "windows-light-proxy.err.log",
+            stderr_path=proxy_stderr,
         )
         processes.append(proxy)
         _diagnostic("after_proxy_spawn", proxy_pid=proxy.pid)
@@ -341,7 +374,7 @@ def start(
             runtime=runtime,
             environment=environment,
             stdout_path=logs / "windows-light-ui.out.log",
-            stderr_path=logs / "windows-light-ui.err.log",
+            stderr_path=ui_stderr,
         )
         processes.append(ui)
         _diagnostic("after_ui_spawn", ui_pid=ui.pid)
@@ -349,10 +382,20 @@ def start(
         # not a process-readiness endpoint. It can exceed a short socket
         # timeout on a cold Windows start. Exact health is checked by the
         # transaction smoke after the server is reachable.
-        if not _wait_url(f"http://127.0.0.1:{proxy_port}/api/version", 60):
-            raise RuntimeError("proxy did not answer /api/version within 60s")
-        if not _wait_url(f"http://127.0.0.1:{ui_port}/healthz", 30):
-            raise RuntimeError("UI did not answer /healthz within 30s")
+        _wait_process_url(
+            proxy,
+            f"http://127.0.0.1:{proxy_port}/api/version",
+            60,
+            label="proxy",
+            stderr_path=proxy_stderr,
+        )
+        _wait_process_url(
+            ui,
+            f"http://127.0.0.1:{ui_port}/healthz",
+            30,
+            label="UI",
+            stderr_path=ui_stderr,
+        )
         payload = {
             "status": "started",
             "provider": environment["LES_LLM_PROVIDER"],

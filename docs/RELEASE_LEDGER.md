@@ -7,16 +7,25 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.7 (manifest-locked general RAG product boundary)
-номер сборки:              524     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.524 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.8 (fail-closed Windows startup evidence)
+номер сборки:              525     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.525 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.7 candidate
+dev implementation:       codex/legion-model-quality; 0.27.8 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.8 / build 525 — fail-closed Windows startup evidence
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; первый prepared `0.27.7/524` был корректно откачен до installed
+> `0.25.26/499`, потому что новый proxy не открыл `/api/version` за 60 секунд; user data untouched.
+> `windows_runtime.py` теперь различает ранний exit child PID и живой timeout, переносит bounded
+> stderr tail в updater status и redacts ключи/token/password/secret. Повторный apply без точной
+> первичной причины запрещён; диагностика стала частью updater automation, а не ручным чтением logs.
 
 > 0.27.7 / build 524 — manifest-locked general RAG product boundary
 >

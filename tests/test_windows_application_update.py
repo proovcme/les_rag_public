@@ -569,6 +569,32 @@ def test_windows_runtime_rejects_oversized_env_before_reading_it(tmp_path):
         windows_runtime.runtime_environment(runtime, state)
 
 
+def test_windows_runtime_reports_early_proxy_exit_with_redacted_stderr(
+    tmp_path, monkeypatch
+):
+    stderr = tmp_path / "proxy.err.log"
+    stderr.write_text(
+        "RuntimeError: contract mismatch token=super-secret", encoding="utf-8"
+    )
+
+    class Exited:
+        def poll(self):
+            return 7
+
+    monkeypatch.setattr(windows_runtime.time, "sleep", lambda _seconds: None)
+    with pytest.raises(RuntimeError, match="code=7") as caught:
+        windows_runtime._wait_process_url(
+            Exited(),
+            "http://127.0.0.1:8050/api/version",
+            1,
+            label="proxy",
+            stderr_path=stderr,
+        )
+    assert "contract mismatch" in str(caught.value)
+    assert "super-secret" not in str(caught.value)
+    assert "<redacted>" in str(caught.value)
+
+
 def test_windows_update_ready_snapshot_checks_live_direct_pids(
     tmp_path, monkeypatch
 ):
