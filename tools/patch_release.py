@@ -349,6 +349,7 @@ def remote_apply_prepared_update(
     *,
     host: str,
     repo_root: str,
+    branch: str,
     version: str,
     build_number: int,
     commit: str,
@@ -371,6 +372,8 @@ def remote_apply_prepared_update(
                 str(build_number),
                 "-BuildCommit",
                 commit,
+                "-Branch",
+                branch,
                 "-RepoRoot",
                 repo_root,
             ]

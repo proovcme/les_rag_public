@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools import patch_release
+from tools import patch_release, platform_release_gate
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -161,6 +161,61 @@ def test_windows_patch_release_creates_missing_tracking_branch():
     assert '"${Branch}:refs/remotes/origin/${Branch}"' in source
     assert '@("checkout", "-b", $Branch, "refs/remotes/origin/$Branch")' in source
     assert '@("pull", "--ff-only", "origin", $Branch)' in source
+
+
+def test_portable_updater_gate_matches_make_profile(monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        platform_release_gate,
+        "run",
+        lambda command, **_kwargs: calls.append(list(command)),
+    )
+
+    platform_release_gate.updater()
+
+    assert calls[0][-2:] == ["tools/sync_version_contract.py", "--check"]
+    assert calls[1][3:6] == ["-m", "py_compile", "tools/windows_runtime.py"]
+    assert calls[2][3:6] == ["-m", "pytest", "-q"]
+    assert calls[2][6] == "--basetemp"
+    assert set(calls[2][8:]) == set(platform_release_gate.UPDATER_BEHAVIOR_TESTS)
+
+
+def test_prepared_update_preserves_requested_branch(monkeypatch):
+    calls: list[list[str]] = []
+
+    def fake_output(command):
+        calls.append(list(command))
+        return '{"status":"applied","commit":"abc123"}'
+
+    monkeypatch.setattr(patch_release, "output", fake_output)
+    monkeypatch.setattr(
+        patch_release,
+        "verify_remote_production_persistence",
+        lambda **_kwargs: {"status": "ok"},
+    )
+
+    result = patch_release.remote_apply_prepared_update(
+        host="legion",
+        repo_root=r"C:\Users\Oleg\les_rag",
+        branch="codex/legion-model-quality",
+        version="0.27.1",
+        build_number=518,
+        commit="abc123",
+    )
+
+    branch_index = calls[0].index("-Branch")
+    assert calls[0][branch_index + 1] == "codex/legion-model-quality"
+    assert result["status"] == "applied"
+
+
+def test_apply_prepared_update_job_uses_branch_parameter():
+    source = (ROOT / "tools/windows_apply_prepared_update.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "[Parameter(Mandatory = $true)][string]$Branch" in source
+    assert "branch = $Branch" in source
+    assert 'branch = "codex/sovushka-ui-kit"' not in source
 
 
 def test_remote_build_bootstraps_branch_before_versioned_script(monkeypatch):

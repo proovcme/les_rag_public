@@ -85,6 +85,11 @@ smoke фактических active-артефактов и live runtime. Сме
 prompt: каждый `bind` содержит полный technology/overlap evidence, `unbound` — проверяемый search/read
 trace, а ресурсное действие — явный `basis_ref`. Это формальный гейт полноты, а не кодовый выбор нормы.
 
+> **0.27.2 intake correction:** `smeta/rim-dialog` сохраняет служебный
+> `visible_row_number` в audit/source trace, но не считает его смысловым
+> assumption/blocker; валидность строки определяется только реальными
+> допущениями извлечения.
+
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
 | smeta/core | model-first PDF/XLSX→ЛСР: общий `SmetaNormToolSession` исполняет catalog/search/read/submit, показывает модели typed identity, scope, unit compatibility, operations/resource preview и matched query. Phase scheduler группирует все строки одной минимальной фазы в batch tool call; каждая принятая terminal-строка checkpoint'ится отдельно. Короткие меню и compact cards ограничивают frame, полная карточка читается перед bind. `reuse_norm_catalog_route` применяется только явным решением модели и переносит verified scope без нормы/applicability. `candidate_evaluations` сохраняет модельное сравнение открытых норм; Python проверяет только форму/provenance. `SmetaAgentRunner` даёт одинаковый skill движкам native, Qwen-Agent/Ollama и Google ADK/Gemini. Structured mapping ограничен 8 строками на JSON-вызов и после timeout не повторяет идентичный payload. Terminal mapping сразу показывается через SSE `smeta_row`. `unbound_evidence` сверяется только по реальной tool trajectory. После строк conflict-only validator строит connected groups; та же модель пересматривает только конфликтные группы, а остальные решения дословно входят в полную immutable global-review revision. Код нормы не исправляет: автoрасчёт `priced_draft`, пользовательский lock создаёт отдельную финальную ревизию. ETM adapter читает только явно заданные коды и возвращает provenance-bearing КАЦ quotes; материал по API не выбирает. Search/read/card/time budgets и expert metrics находятся в `professional_review.py`; `smeta_mapping_quality.py` готовит human annotation queue и считает только завершённую разметку. Google требует явное согласие и key, без fallback; default остаётся native до профессионального golden-гейта | `proxy/smeta_core/{application,contracts,integrity,norm_browser,source_intake,document_workflow,professional_review,calculator,resource_normalizer,lsr_renderer,workflow,unit_contract}.py`, `proxy/services/{smeta_agent_runner_service,smeta_chat_application_service,smeta_chat_adapter_service,etm_price_service,prompt_registry_service,rim_lsr_trace_service,rim_trace_xlsx_service,smeta_user_message_service,fsem_machinist_service}.py`, `proxy/routers/{chat,chat_history,prices,settings}.py`, `sovushka/{components/header.py,pages/chat.py}`, `tools/{smeta_agent_benchmark,smeta_document_local_run,smeta_mapping_quality}.py`, `skills/smeta/{SKILL.md,references/document-mapping-agent.md,references/gesn-storage.md}` | [SMETA_MODULE_EXPLAINED.md](SMETA_MODULE_EXPLAINED.md) · [modules/smeta-core.md](modules/smeta-core.md) | ✅ |
@@ -708,5 +713,11 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 Поток (формулы/шаги, 0 LLM где про числа) · Статус-vs-код (что сверено) · Грабли/границы · Тесты
 ```
 
+> **0.27.2 Windows updater contract:** `ops/vps-patch` и `ops/test` используют
+> единый переносимый `tools/platform_release_gate.py updater`: на Windows он не
+> требует GNU Make, сам создаёт доступный pytest temp, а prepared hard-job
+> сохраняет exact `codex/*` branch. `start-light.ps1` нормализует дублированные
+> `Path`/`PATH` до запуска дочернего Python.
+>
 > Канон 0-LLM ядер — `docs/ALGO-*.md` (по кирпичу). Этот индекс их агрегирует; при добавлении/правке
 > модуля — обнови строку здесь и поставь честный статус (✅/🟡/🗄/📋).

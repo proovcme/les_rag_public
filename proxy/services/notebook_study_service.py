@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Awaitable, Callable, Iterable
 
 from proxy.services.notebook_service import build_dataset_notebook
@@ -317,9 +317,9 @@ def _plan_id(prefix: str, *parts: str) -> str:
 
 def _file_group(file_name: str, role: str = "") -> str:
     """Return a corpus-derived grouping key without assuming a document taxonomy."""
-    parent = Path(str(file_name or "").replace("\\", "/")).parent
-    if str(parent) not in {"", "."}:
-        return str(parent)
+    parent = PurePosixPath(str(file_name or "").replace("\\", "/")).parent
+    if parent.as_posix() not in {"", "."}:
+        return parent.as_posix()
     return str(role or "документы без папки")
 
 

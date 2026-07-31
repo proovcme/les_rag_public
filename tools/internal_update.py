@@ -235,6 +235,7 @@ def apply_update(*, hosts: set[str], legion_host: str, legion_root: str) -> dict
             legion = patch_release.remote_apply_prepared_update(
                 host=legion_host,
                 repo_root=legion_root,
+                branch=BRANCH,
                 version=str(contract["product_version"]),
                 build_number=int(contract["build_number"]),
                 commit=commit,

@@ -7,16 +7,26 @@
 ## Текущее состояние (2026-07-31)
 
 ```
-версия продукта (SemVer):  0.27.1 (phase-batched resumable RIM)
-номер сборки:              518     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.518 (internal identity; code-only soft-update target)
-ветка выпуска:             codex/rim-dialog-mvp
-dev implementation:       codex/rim-dialog-mvp; 0.27.1 candidate
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.25 / 498 at c0cca4b481a8
+версия продукта (SemVer):  0.27.2 (Legion update gate + RIM intake correction)
+номер сборки:              519     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.519 (internal identity; code-only soft-update target)
+ветка выпуска:             codex/legion-model-quality
+dev implementation:       codex/legion-model-quality; 0.27.2 candidate
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          hard install replaces app tree; soft package replaces bounded files
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.25 / 498, c0cca4b481a8
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.25.26 / 499
 ```
+
+> 0.27.2 / build 519 — системный Legion updater-гейт и корректный RIM intake
+>
+> Дата: 2026-07-31
+> Статус: dev candidate; установленный Legion остаётся 0.25.26 / 499, update не применён.
+> Windows updater получил единый переносимый Python entrypoint вместо зависимости
+> от отсутствующего на Legion GNU Make, workspace-local pytest temp, exact branch
+> propagation в hard job и защиту `start-light.ps1` от дублированных `Path`/`PATH`.
+> Импорт полной ВОР больше не считает служебный `visible_row_number` смысловым
+> допущением: исходный XLSX даёт 70 валидных строк, provenance строки сохраняется.
 
 > 0.27.1 / build 518 — phase-batched resumable RIM
 >

@@ -104,6 +104,10 @@ def test_start_light_uses_direct_console_free_python_processes():
 
     assert "function Resolve-LesPython" in text
     assert "function Start-LesPythonProcess" in text
+    assert "function Normalize-LesProcessPathEnvironment" in text
+    assert "Normalize-LesProcessPathEnvironment" in text
+    assert '[Environment]::SetEnvironmentVariable(' in text
+    assert '"PATH"' in text
     assert '@("pythonw.exe", "python.exe")' in text
     assert "Start-Process -FilePath $LesPython" in text
     assert '"-m", "uvicorn", "proxy_server:app"' in text

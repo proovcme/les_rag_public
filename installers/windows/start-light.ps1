@@ -72,7 +72,35 @@ function Resolve-LesPython {
   throw "LES Python environment is not ready: $environment"
 }
 
+function Normalize-LesProcessPathEnvironment {
+  # Windows environment names are case-insensitive, but a parent process can
+  # still pass both Path and PATH in its raw environment block. Windows
+  # PowerShell 5.1 Start-Process then fails while building its environment
+  # dictionary ("Key in dictionary: 'Path' ... 'PATH'"). Recreate the process
+  # value under one canonical key before starting LES children.
+  $processPath = [Environment]::GetEnvironmentVariable(
+    "Path",
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    "PATH",
+    $null,
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    "Path",
+    $null,
+    [EnvironmentVariableTarget]::Process
+  )
+  [Environment]::SetEnvironmentVariable(
+    "Path",
+    $processPath,
+    [EnvironmentVariableTarget]::Process
+  )
+}
+
 function Start-LesPythonProcess([string[]]$PythonArgs, [string]$StdOut, [string]$StdErr) {
+  Normalize-LesProcessPathEnvironment
   Start-Process -FilePath $LesPython `
     -ArgumentList $PythonArgs `
     -WorkingDirectory $Root `

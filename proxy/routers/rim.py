@@ -95,6 +95,11 @@ def _vor_lines(intake: dict[str, Any]) -> list[dict[str, Any]]:
     for index, item in enumerate(intake.get("work_items") or [], 1):
         refs = list(item.get("source_refs") or [])
         assumptions = list(item.get("assumptions") or [])
+        blocking_assumptions = [
+            assumption
+            for assumption in assumptions
+            if not str(assumption).startswith("visible_row_number:")
+        ]
         result.append(
             {
                 "schema": "rim_vor_line_v1",
@@ -111,7 +116,7 @@ def _vor_lines(intake: dict[str, Any]) -> list[dict[str, Any]]:
                 "source_refs": refs,
                 "quantity_origin": "source_explicit",
                 "quantity_formula": "",
-                "status": "invalid" if assumptions else "valid",
+                "status": "invalid" if blocking_assumptions else "valid",
                 "assumptions": assumptions,
             }
         )

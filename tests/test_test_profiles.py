@@ -100,3 +100,13 @@ def test_platform_gate_is_behavioral_and_platform_specific() -> None:
     assert "tests/test_parse_admission_windows.py" in windows
     assert "tests/test_installer_macos.py" in macos
     assert windows.isdisjoint(macos)
+
+
+def test_windows_portable_current_gate_matches_core_make_profile() -> None:
+    current = set(platform_release_gate.CURRENT_LES_TESTS)
+
+    assert "tests/test_rim_session.py" in current
+    assert "tests/test_rag_hierarchy.py" in current
+    assert "tests/test_evidence_contract.py" in current
+    assert "tests/test_test_profiles.py" in current
+    assert not any("unified_" in test for test in current)

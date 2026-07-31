@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from proxy.routers.rim import _resolved_calculation_inputs
+from proxy.routers.rim import _resolved_calculation_inputs, _vor_lines
 from proxy.routers.rim import router
 from proxy.security import RequestUser, require_user
 from proxy.smeta_core.application import get_rim_session_store, set_rim_session_store
@@ -16,6 +16,25 @@ def _client(tmp_path):
         role="user", holder="api-tester", source="api_key"
     )
     return TestClient(app)
+
+def test_vor_lines_does_not_treat_visible_row_number_as_blocking_assumption():
+    rows = _vor_lines(
+        {
+            "work_items": [
+                {
+                    "work_id": "vor-0001",
+                    "title": "Rack installation",
+                    "unit": "pcs",
+                    "quantity": 2,
+                    "source_refs": ["source.xlsx#row=6"],
+                    "assumptions": ["visible_row_number:984"],
+                }
+            ]
+        }
+    )
+
+    assert rows[0]["status"] == "valid"
+    assert rows[0]["assumptions"] == ["visible_row_number:984"]
 
 
 def test_rim_api_runs_vor_mapping_and_two_lock_flow(tmp_path):

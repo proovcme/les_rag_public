@@ -142,6 +142,12 @@ def test_target_file_plan_spreads_reads_across_actual_file_groups():
     assert "X/alpha/two.pdf" in [item["file_name"] for item in plan]
 
 
+def test_target_file_group_is_platform_independent():
+    from proxy.services import notebook_study_service as svc
+
+    assert svc._file_group(r"X\alpha\one.pdf") == "X/alpha"
+
+
 def test_target_file_plan_ignores_stale_or_invented_reader_file_names():
     notebook = _notebook()
     memory = notebook["typed_memory"]

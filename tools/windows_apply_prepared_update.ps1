@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory = $true)][string]$Version,
   [Parameter(Mandatory = $true)][int]$BuildNumber,
   [Parameter(Mandatory = $true)][string]$BuildCommit,
+  [Parameter(Mandatory = $true)][string]$Branch,
   [string]$RepoRoot = "C:\Users\Oleg\les_rag",
   [string]$CacheRoot = ""
 )
@@ -46,7 +47,7 @@ $JobPath = Join-Path $CacheRoot "hard-update-job.json"
   build_number = $BuildNumber
   desktop_version = [string]$Prepared.desktop_version
   target_commit = $BuildCommit
-  branch = "codex/sovushka-ui-kit"
+  branch = $Branch
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $JobPath -Encoding utf8
 
 & (Join-Path $RepoRoot "tools\windows_production_deploy.ps1") -Job $JobPath

@@ -122,7 +122,11 @@ make prepare-windows-update \
 uv run python tools/vps_patch.py publish --output dist/vps-patch
 ```
 
-Обе prepare-команды запускают только `make test-updater` (обычно около секунды).
+Обе prepare-команды запускают только `make test-updater`. Этот target делегирует
+единому переносимому entrypoint `uv run python tools/platform_release_gate.py updater`,
+поэтому тот же профиль работает на Legion без GNU Make. Entry point сам создаёт
+доступный pytest `--basetemp` внутри workspace; оператор не воспроизводит список
+тестов вручную.
 Нативная сборка shell выполняется отдельно и только если менялся Tauri; apply её не
 повторяет. Builder принимает только явно перечисленные файлы. Публикация сначала загружает `.part`, затем
 атомарно переименовывает архив и в последнюю очередь `latest.json`, поэтому клиент не увидит
@@ -138,6 +142,13 @@ manifest раньше полного архива.
 
 ```bash
 make test-updater
+
+# прямой эквивалент для Windows без GNU Make
+uv run python tools/platform_release_gate.py updater
+
+# переносимые эквиваленты обязательных verify/test текущего LES
+uv run python tools/platform_release_gate.py current-verify
+uv run python tools/platform_release_gate.py current-test
 
 powershell -NoProfile -File tools/windows_updater_smoke.ps1 \
   -ExpectedVersion 0.25.22 -ExpectedBuild 495 -ExpectedCommit <sha>
@@ -156,3 +167,9 @@ bounded поэтапные пробы (не более трёх минут пр�
 локального installer без публикации. После его приёмки обычные изменения
 доставляются мягким package; hard install остаётся живым пользовательским путём
 для полного выпуска или восстановления повреждённого дерева приложения.
+
+Prepared hard-update принимает имя ветки явно и переносит его в job/deploy stamp;
+тестовая `codex/*` ветка не может быть записана как `codex/sovushka-ui-kit` по
+жёстко заданному значению. `start-light.ps1` перед `Start-Process` нормализует
+унаследованные `Path`/`PATH` в один process key, иначе Windows PowerShell 5.1
+может упасть ещё до старта Python при сборке регистронезависимого словаря.
