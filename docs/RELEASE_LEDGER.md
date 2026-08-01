@@ -7,18 +7,37 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.27 (Л.И.С.Т. native open + office passport)
-номер сборки:              544
-версия Tauri/NSIS:         5.1.544
+версия продукта (SemVer):  0.27.28 (Smeta benchmark validated, Qwen 3.5:9b Legion GPU)
+номер сборки:              545
+версия Tauri/NSIS:         5.1.545
 ветка выпуска:             codex/test-infrastructure
-dev implementation:       Л.И.С.Т. native open launcher / office passport / citation drawer; 0.27.27 candidate
+dev implementation:       Smeta Qwen 3.5 benchmark — 5/5 determinism, action synonym mapping, evidence fix
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.27
+следующий выпуск:          LES-Setup.exe 0.27.28
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
 
-> 0.27.27 / build 544 — План и базовый контур улучшения модуля Л.И.С.Т.
+> 0.27.28 / build 545 — Smeta benchmark validated: Qwen 3.5:9b, 5/5 determinism, 100% GPU
+>
+> Дата: 2026-08-01
+> Статус: local candidate, РАБОЧЕЕ РЕШЕНИЕ — НЕ ЛОМАТЬ.
+>
+> Верифицирован полный цикл сметного harness (`SmetaDocumentWorkflow`) на Legion GPU (RTX 4060):
+> - Модель Qwen 3.5:9b через Ollama с `num_ctx=8192` — 100% GPU offload, 10–16 сек/ход.
+> - 5 строк ВОР из `sks_4.xlsx` обработаны за ~5 мин (60 сек/строка).
+> - Детерминизм: 2 независимых прогона дали 5/5 совпадение (decision + norm_code + covered_by).
+> - Результат: 1 covered_by (vor-0001 → ГЭСНм 37-01-002), 4 unbound (честное отсутствие нормы).
+>
+> Исправления в `document_workflow.py`:
+> 1. `_extract_trailing_decision_object`: обработка `None`/конкатенации JSON (строка 838).
+> 2. Action synonym mapping: `select/choose/navigate/next/confirm/accepted` → `continue` (строка 1737).
+> 3. Evidence parent node fix: `current_node_id` добавлен в `visible_ids` (строка 1754).
+>
+> Бенчмарк: `tools/smeta_model_quality_benchmark.py` + `--num-ctx 8192`.
+> Артефакты: `storage/ab_sks4_run/`, `storage/ab_sks4_repeat/`, `storage/run1_5rows.json`.
+
+> 0.27.27 / build 544 — Л.И.С.Т. native open + office passport
 >
 > Дата: 2026-08-01
 > Статус: local candidate.

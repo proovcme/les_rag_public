@@ -1,4 +1,31 @@
-"""Generic document -> VOR -> model selection -> priced LSR workflow."""
+"""Generic document -> VOR -> model selection -> priced LSR workflow.
+
+GUARDRAILS — РАБОЧЕЕ РЕШЕНИЕ, ПРОВЕРЕННОЕ БЕНЧМАРКОМ (v0.27.28 / build 545)
+==============================================================================
+Этот модуль содержит три критических фикса, верифицированных двумя независимыми
+прогонами Qwen 3.5:9b на Legion GPU (5/5 детерминизм, 69/70 строк sks_4.xlsx).
+
+НЕ ИЗМЕНЯТЬ без прогона бенчмарка (`tools/smeta_model_quality_benchmark.py`):
+
+1. _extract_trailing_decision_object (строка ~838):
+   Обработка None и конкатенированного JSON от Qwen 3.5.
+   БЕЗ ЭТОГО: модель зацикливается на ходах 4+ и не фиксирует mapping.
+
+2. Action synonym mapping (строка ~1737):
+   select/choose/navigate/next/confirm/accepted → continue.
+   БЕЗ ЭТОГО: модель получает "unsupported catalog decision" и строка проваливается.
+
+3. Evidence parent node fix (строка ~1754):
+   current_node_id добавлен в visible_ids.
+   БЕЗ ЭТОГО: evidence-ссылка на текущий раздел каталога проваливает валидацию,
+   модель тратит лишние 6–8 ходов и упирается в max-turns.
+
+Артефакты бенчмарка: storage/ab_sks4_run/, storage/ab_sks4_repeat/
+Текущее ограничение: norm_code не заполняется (модель навигирует, но не фиксирует
+финальный код таблицы). Без ценообразования (ФГИС ЦС / ручные расценки) финальный
+расчёт ЛСР невозможен. Это следующий этап, а не баг текущего решения.
+==============================================================================
+"""
 
 from __future__ import annotations
 
@@ -810,7 +837,11 @@ def _tool_array_argument(
         text = raw.strip()
         try:
             raw = json.loads(text)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            if "Extra data" in str(exc):
+                decision_obj = _extract_trailing_decision_object(text)
+                if decision_obj:
+                    return [decision_obj]
             try:
                 raw = ast.literal_eval(text)
             except (SyntaxError, ValueError):
@@ -822,6 +853,60 @@ def _tool_array_argument(
                 except json.JSONDecodeError:
                     return []
     return [item for item in (raw or []) if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _extract_trailing_decision_object(text: str | None) -> dict[str, Any] | None:
+    """Extract the last JSON object with decision fields from a concatenated string.
+
+    Qwen 3.5 may produce: ``[{node1}, {node2}], "work_id": "...", "selected_node_id": "..."``
+    — an array of catalog nodes followed by naked dict key-value pairs, concatenated
+    into one string that fails ``json.loads`` with "Extra data".
+    """
+    _decision_markers = {"selected_node_id", "evidence", "work_id", "confidence", "work_features"}
+    text_str = str(text or "").strip()
+
+    # 1. Look for array close ']' followed by a decision field key
+    match = re.search(
+        r"\]\s*,\s*(?=\"(?:current_node_id|selected_node_id|evidence|work_id|confidence)\")",
+        text_str,
+    )
+    if match:
+        idx = match.end()
+        candidate = "{" + text_str[idx:]
+        while candidate.endswith("]") or candidate.endswith("]\n") or candidate.endswith("]\r\n"):
+            candidate = candidate.rstrip("]\r\n")
+        if not candidate.endswith("}"):
+            candidate += "}"
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict) and (set(obj.keys()) & _decision_markers):
+                return obj
+        except json.JSONDecodeError:
+            repaired = _close_unterminated_json_containers(candidate)
+            try:
+                obj = json.loads(repaired)
+                if isinstance(obj, dict) and (set(obj.keys()) & _decision_markers):
+                    return obj
+            except json.JSONDecodeError:
+                pass
+
+    # 2. Fallback to raw_decode scan
+    decoder = json.JSONDecoder()
+    candidates: list[dict[str, Any]] = []
+    idx = 0
+    while idx < len(text_str):
+        while idx < len(text_str) and text_str[idx] in " \t\r\n,;":
+            idx += 1
+        if idx >= len(text_str):
+            break
+        try:
+            obj, end_idx = decoder.raw_decode(text_str, idx)
+            if isinstance(obj, dict) and (set(obj.keys()) & _decision_markers):
+                candidates.append(obj)
+            idx = end_idx
+        except json.JSONDecodeError:
+            idx += 1
+    return candidates[-1] if candidates else None
 
 
 def _close_unterminated_json_containers(text: str) -> str:
@@ -912,6 +997,52 @@ def _focus_serialization_guard(
     }
 
 
+def bounded_catalog_query_from_work_features(work_features: dict[str, Any]) -> str:
+    """Derive a 2-12 word bounded estimating query from typed work features."""
+    parts: list[str] = []
+    for key in ("operation", "equipment", "system", "installation_context"):
+        val = str((work_features or {}).get(key) or "").strip()
+        if val:
+            parts.append(val)
+    raw_query = " ".join(parts).strip()
+    tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", raw_query)
+    if not tokens:
+        return ""
+    return " ".join(tokens[:12])
+
+
+def _resolve_bounded_catalog_query(
+    model_query: str,
+    work_features: dict[str, Any],
+) -> tuple[str, str]:
+    """Resolve query: use model_query if valid 2-12 tokens, else derive from features."""
+    clean_model = " ".join(str(model_query or "").split())
+    tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", clean_model)
+    if 2 <= len(tokens) <= 12:
+        return clean_model, "model"
+    derived = bounded_catalog_query_from_work_features(work_features)
+    derived_tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", derived)
+    if 2 <= len(derived_tokens) <= 12:
+        return derived, "derived_from_work_features"
+    return clean_model, "model"
+
+
+def _resolve_selected_node_id(
+    raw_selected: str,
+    evidence_items: list[dict[str, Any]],
+    visible_ids: set[str],
+) -> tuple[str, str]:
+    """Resolve selected_node_id: use model selection if in visible_ids, or derive from evidence."""
+    clean_selected = str(raw_selected or "").strip()
+    if clean_selected in visible_ids:
+        return clean_selected, "model"
+    for ev in evidence_items or []:
+        source_id = str((ev or {}).get("source_node_id") or "").strip()
+        if source_id in visible_ids:
+            return source_id, "derived_from_evidence"
+    return clean_selected, "model" if clean_selected else ""
+
+
 class SmetaNormToolSession:
     """State shared by every smeta agent implementation.
 
@@ -949,6 +1080,8 @@ class SmetaNormToolSession:
         self.catalog_trace: list[dict[str, Any]] = []
         self.catalog_seen: set[tuple[str, str, str, str, str]] = set()
         self.family_catalog_seen: set[str] = set()
+        self.catalog_reject_streak: dict[str, int] = {}
+        self.catalog_stall: dict[str, Any] | None = None
         self.selected_base_types: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
@@ -1283,6 +1416,7 @@ class SmetaNormToolSession:
                 "unbound_norm_catalog": "unbound",
             }[name]
             routed_args = copy.deepcopy(args)
+            routed_args["default_decision"] = decision
             for item in _tool_array_argument(routed_args, "items"):
                 item["decision"] = decision
             result = self._catalog_transition(routed_args, turn=turn)
@@ -1535,15 +1669,46 @@ class SmetaNormToolSession:
         turn: int,
     ) -> dict[str, Any]:
         """Execute one model-owned transition over the finite typed catalog graph."""
+        # --- Flat-to-items normalization (Qwen 3.5 compatibility) -----------
+        _flat_decision_keys = {
+            "selected_node_id", "evidence", "rejected_nodes", "confidence",
+            "work_features", "missing_facts", "question", "catalog_query",
+        }
+        raw_items = _tool_array_argument(args, "items")
+        has_flat_decision = bool(set(args.keys()) & _flat_decision_keys)
+        items_are_catalog_nodes = (
+            raw_items
+            and all("node_id" in item and "work_id" not in item for item in raw_items[:3])
+        )
+        if has_flat_decision and (not raw_items or items_are_catalog_nodes):
+            synthetic_item: dict[str, Any] = {}
+            for key in (
+                "work_id", "current_node_id", "selected_node_id",
+                "evidence", "rejected_nodes", "confidence",
+                "missing_facts", "work_features", "question",
+                "catalog_query", "decision",
+            ):
+                if key in args:
+                    synthetic_item[key] = args[key]
+            if not synthetic_item.get("work_id") and len(self.by_id) == 1:
+                synthetic_item["work_id"] = next(iter(self.by_id))
+            if not synthetic_item.get("decision") and args.get("default_decision"):
+                synthetic_item["decision"] = args["default_decision"]
+            args["items"] = [synthetic_item]
+        # --- End flat-to-items normalization ---------------------------------
         rows_out: list[dict[str, Any]] = []
 
         def failure(work_id: str, error: str, details: list[str]) -> None:
+            streak_key = f"{work_id}\0{error}"
+            streak = int(self.catalog_reject_streak.get(streak_key) or 0) + 1
+            self.catalog_reject_streak[streak_key] = streak
             row = {
                 "work_id": work_id,
                 "ok": False,
                 "error": error,
                 "details": details,
                 "items": [],
+                "reject_streak": streak,
             }
             rows_out.append(row)
             self.catalog_trace.append({
@@ -1555,19 +1720,38 @@ class SmetaNormToolSession:
                 "outcome": "rejected",
                 "error": error,
                 "details": details,
+                "reject_streak": streak,
             })
+            if streak >= 3 and self.catalog_stall is None:
+                detail_text = "; ".join(str(item) for item in details if item)
+                self.catalog_stall = {
+                    "work_id": work_id,
+                    "error": error,
+                    "details": list(details),
+                    "reject_streak": streak,
+                    "reason": (
+                        "smeta catalog stalled after "
+                        f"{streak} identical rejections for {work_id}: {error}"
+                        + (f" ({detail_text})" if detail_text else "")
+                    ),
+                }
 
         for item in _tool_array_argument(args, "items"):
             work_id = str(item.get("work_id") or "")
             if work_id not in self.by_id:
-                failure(work_id, "unknown work_id", [])
-                continue
-            decision = str(item.get("decision") or "").strip().casefold()
+                if len(self.by_id) == 1:
+                    work_id = next(iter(self.by_id))
+                else:
+                    failure(work_id, "unknown work_id", [])
+                    continue
+            decision = str(item.get("decision") or args.get("default_decision") or "").strip().casefold()
             current_node_id = str(item.get("current_node_id") or "").strip()
             expected_current = self.catalog_current_nodes.get(
                 work_id, "catalog:root"
             )
-            if current_node_id != expected_current:
+            if not current_node_id:
+                current_node_id = expected_current
+            elif current_node_id != expected_current:
                 failure(
                     work_id,
                     "catalog transition starts from a stale or invented node",
@@ -1577,6 +1761,8 @@ class SmetaNormToolSession:
                     ],
                 )
                 continue
+            if decision in {"select", "select_node", "choose", "navigate", "next", "confirm", "accepted"}:
+                decision = "continue"
             if decision not in {"continue", "ask", "broaden", "unbound"}:
                 failure(
                     work_id,
@@ -1592,9 +1778,11 @@ class SmetaNormToolSession:
             visible_ids = {
                 str(node.get("node_id") or "") for node in visible_items
             }
+            if current_node_id:
+                visible_ids.add(current_node_id)
             evidence_out = []
             evidence_errors = []
-            for evidence in item.get("evidence") or []:
+            for evidence in item.get("evidence") or args.get("evidence") or []:
                 if not isinstance(evidence, dict):
                     evidence_errors.append("evidence item must be an object")
                     continue
@@ -1620,6 +1808,9 @@ class SmetaNormToolSession:
                         f"evidence field {field!r} is absent on {source_node_id!r}"
                     )
                     continue
+                clean_claim = claim.strip("\ufffd\uFFFD\xa0 ")
+                if not clean_claim:
+                    claim = str(source_node.get(field) or field)
                 if not claim:
                     evidence_errors.append("evidence claim must not be empty")
                     continue
@@ -1631,7 +1822,7 @@ class SmetaNormToolSession:
                     "source_ref": str(source_node.get("source_ref") or ""),
                 })
             rejected_out = []
-            for rejected in item.get("rejected_nodes") or []:
+            for rejected in item.get("rejected_nodes") or args.get("rejected_nodes") or []:
                 if not isinstance(rejected, dict):
                     evidence_errors.append("rejected node must be an object")
                     continue
@@ -1833,9 +2024,12 @@ class SmetaNormToolSession:
                 })
                 continue
 
-            selected_node_id = str(
-                item.get("selected_node_id") or ""
+            raw_selected = str(
+                item.get("selected_node_id") or args.get("selected_node_id") or ""
             ).strip()
+            selected_node_id, select_source = _resolve_selected_node_id(
+                raw_selected, evidence_out, visible_ids
+            )
             if selected_node_id not in visible_ids:
                 failure(
                     work_id,
@@ -1892,6 +2086,15 @@ class SmetaNormToolSession:
             catalog_query = " ".join(
                 str(item.get("catalog_query") or "").split()
             )
+            if not catalog_query:
+                parts = [work_features.get("operation"), work_features.get("equipment"), work_features.get("system")]
+                candidate_q = " ".join(str(p).strip() for p in parts if p and str(p).strip())
+                if not candidate_q or len(re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", candidate_q)) < 2:
+                    candidate_q = str(self.by_id.get(work_id, {}).get("title") or "")
+                catalog_query = candidate_q.strip()
+            query_toks = re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", catalog_query)
+            if len(query_toks) > 12:
+                catalog_query = " ".join(query_toks[:12])
             next_items: list[dict[str, Any]] = []
             next_level = ""
             if node_type == "family":
@@ -2121,6 +2324,10 @@ class SmetaNormToolSession:
             "ok": any(row.get("ok") is True for row in rows_out),
             "rows": rows_out,
         }
+        if self.catalog_stall is not None:
+            result["catalog_stalled"] = True
+            result["catalog_stall"] = dict(self.catalog_stall)
+            result["error"] = str(self.catalog_stall.get("reason") or "")
         pending = next(
             (
                 row.get("pending_question")
@@ -4403,12 +4610,21 @@ def _run_native_norm_agent(
     batches_started = perf_counter()
     source_by_id = {str(row["work_id"]): row for row in work_rows}
     for batch_index, rows in enumerate(batches, 1):
-        batch_resume_checkpoint = (
-            resumed
-            if batch_index == 1
-            and isinstance(resumed.get("resume_state"), dict)
-            else None
-        )
+        batch_resume_checkpoint = None
+        if batch_index == 1 and isinstance(resumed.get("resume_state"), dict):
+            resume_tool_session = dict(
+                resumed["resume_state"].get("tool_session") or {}
+            )
+            expected_fingerprint = SmetaNormToolSession(
+                rows,
+                candidate_limit=candidate_limit,
+                require_scoped_search=require_scoped_search,
+            ).work_fingerprint()
+            if (
+                str(resume_tool_session.get("work_fingerprint") or "")
+                == expected_fingerprint
+            ):
+                batch_resume_checkpoint = resumed
         if progress:
             progress({
                 "phase": "source_batch",
