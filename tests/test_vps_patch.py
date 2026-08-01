@@ -88,6 +88,50 @@ def test_automatic_patch_files_keeps_only_runtime_allowlist(tmp_path):
         vps_patch.ROOT = original
 
 
+def test_update_local_bootstraps_offline_runtime_with_persistent_python(
+    tmp_path, monkeypatch
+):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "state"
+    python = state / ".venv/Scripts/python.exe"
+    launcher = tmp_path / "repo/tools/windows_runtime.py"
+    runtime.mkdir()
+    python.parent.mkdir(parents=True)
+    launcher.parent.mkdir(parents=True)
+    python.write_bytes(b"fixture")
+    launcher.write_bytes(b"fixture")
+    live = iter((False, True))
+    captured = {}
+    monkeypatch.setattr(vps_patch, "ROOT", tmp_path / "repo")
+    monkeypatch.setattr(vps_patch, "_local_runtime_live", lambda _runtime: next(live))
+    monkeypatch.setattr(
+        vps_patch.subprocess,
+        "run",
+        lambda arguments, **kwargs: (
+            captured.update(arguments=arguments, kwargs=kwargs)
+            or subprocess.CompletedProcess(arguments, 0, "ready", "")
+        ),
+    )
+
+    assert vps_patch._ensure_local_runtime_live(runtime, state) is True
+    assert captured["arguments"][0] == str(python)
+    assert captured["arguments"][1] == str(launcher)
+    assert captured["arguments"][2] == "start"
+
+
+def test_update_local_does_not_restart_already_live_runtime(tmp_path, monkeypatch):
+    monkeypatch.setattr(vps_patch, "_local_runtime_live", lambda _runtime: True)
+    monkeypatch.setattr(
+        vps_patch.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("live runtime restarted")
+        ),
+    )
+
+    assert vps_patch._ensure_local_runtime_live(tmp_path / "runtime", tmp_path / "state") is False
+
+
 def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()

@@ -16,6 +16,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
+from urllib.request import urlopen
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -482,8 +483,60 @@ def wait_local_update(status_path: Path, *, timeout: float = 600.0) -> dict:
     raise TimeoutError(f"local updater did not finish in {timeout:.0f}s; last status={last}")
 
 
+def _local_runtime_live(runtime: Path) -> bool:
+    try:
+        with urlopen("http://127.0.0.1:8050/api/version", timeout=5) as response:  # noqa: S310
+            payload = json.load(response)
+    except (OSError, ValueError, TypeError):
+        return False
+    reported = str(payload.get("runtime_path") or "")
+    return bool(
+        reported
+        and str(Path(reported).resolve()).casefold()
+        == str(Path(runtime).resolve()).casefold()
+    )
+
+
+def _ensure_local_runtime_live(runtime: Path, state: Path) -> bool:
+    """Bootstrap an offline installed LES as the current user before soft-update preflight."""
+    if _local_runtime_live(runtime):
+        return False
+    python = Path(state) / ".venv" / "Scripts" / "python.exe"
+    launcher = ROOT / "tools" / "windows_runtime.py"
+    missing = [str(path) for path in (python, launcher) if not path.is_file()]
+    if missing:
+        raise RuntimeError("local LES bootstrap is incomplete: " + ", ".join(missing))
+    environment = dict(os.environ)
+    environment["LES_WINDOWS_STATE_ROOT"] = str(state)
+    result = subprocess.run(
+        [
+            str(python),
+            str(launcher),
+            "start",
+            "--runtime",
+            str(runtime),
+            "--state",
+            str(state),
+        ],
+        cwd=str(runtime),
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=150,
+        check=False,
+        creationflags=0x08000000 if os.name == "nt" else 0,
+    )
+    if result.returncode != 0 or not _local_runtime_live(runtime):
+        detail = (result.stderr or result.stdout or "").strip()[-1200:]
+        raise RuntimeError(f"local LES bootstrap failed: {detail or result.returncode}")
+    return True
+
+
 def update_local(*, output: Path, runtime: Path, state: Path, target: str = "HEAD") -> dict:
     base = _installed_commit(runtime)
+    bootstrapped = _ensure_local_runtime_live(runtime, state)
     target_commit = subprocess.check_output(
         ["git", "rev-parse", target], cwd=ROOT, text=True
     ).strip()
@@ -500,7 +553,14 @@ def update_local(*, output: Path, runtime: Path, state: Path, target: str = "HEA
     status = wait_local_update(Path(launched["status"]))
     if status.get("state") != "ready":
         raise RuntimeError(f"local updater failed: {status.get('error') or status.get('message')}")
-    return {"ok": True, "mode": "update-local", "files": files, "package": package, "status": status}
+    return {
+        "ok": True,
+        "mode": "update-local",
+        "bootstrapped_runtime": bootstrapped,
+        "files": files,
+        "package": package,
+        "status": status,
+    }
 
 
 def main() -> int:
