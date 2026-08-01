@@ -323,7 +323,7 @@ def _verify_smeta_baseline(
     runtime: Path, state: Path, *, staged_runtime: Path | None = None
 ) -> None:
     """Repair/verify the bundled immutable FSNB base before accepting a patch."""
-    if _live_smeta_baseline_ready():
+    if _wait_live_smeta_baseline_ready():
         return
     python = state / ".venv" / "Scripts" / "python.exe"
     tool = runtime / "tools" / "smeta_release_baseline.py"
@@ -382,6 +382,15 @@ def _live_smeta_baseline_ready() -> bool:
         and isinstance(resources, list)
         and resources
     )
+
+
+def _wait_live_smeta_baseline_ready(*, timeout: float = 90.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if _live_smeta_baseline_ready():
+            return True
+        time.sleep(2)
+    return False
 
 
 def _json_url(url: str, timeout: float = 5) -> dict[str, Any]:

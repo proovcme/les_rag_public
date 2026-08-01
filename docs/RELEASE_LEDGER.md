@@ -7,16 +7,25 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.19 (offline runtime bootstrap)
-номер сборки:              536     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.536 (internal identity; code-only soft-update target)
+версия продукта (SemVer):  0.27.20 (post-reboot Qdrant bootstrap)
+номер сборки:              537     (отдельно от версии продукта)
+версия Tauri/NSIS:         5.1.537 (internal identity; code-only soft-update target)
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.19 candidate
+dev implementation:       codex/legion-model-quality; 0.27.20 candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
 следующий выпуск:          local soft package preflights baseline before runtime mutation
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
 ```
+
+> 0.27.20 / build 537 — post-reboot Qdrant bootstrap
+>
+> Дата: 2026-08-01
+> Статус: local soft-update candidate; NSIS/EXE не собирается.
+> `update-local` проверяет Docker engine, при необходимости запускает Docker Desktop и штатный
+> persistent `les-light-qdrant`, ждёт `/collections`, затем поднимает installed LES и выполняет
+> полную live acceptance с bounded ожиданием post-reboot readiness. Контейнер/volume не
+> пересоздаются и пользовательский индекс не меняется.
 
 > 0.27.19 / build 536 — offline runtime bootstrap before soft update
 >

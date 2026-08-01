@@ -132,6 +132,39 @@ def test_update_local_does_not_restart_already_live_runtime(tmp_path, monkeypatc
     assert vps_patch._ensure_local_runtime_live(tmp_path / "runtime", tmp_path / "state") is False
 
 
+def test_update_local_starts_existing_qdrant_container_after_reboot(
+    tmp_path, monkeypatch
+):
+    docker = tmp_path / "docker.exe"
+    docker.write_bytes(b"fixture")
+    live = iter((False, True))
+    commands = []
+
+    def run(arguments, **_kwargs):
+        commands.append(arguments)
+        if arguments[1:3] == ["ps", "-a"]:
+            return subprocess.CompletedProcess(arguments, 0, "container-id\n", "")
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(vps_patch, "_qdrant_live", lambda: next(live))
+    monkeypatch.setattr(vps_patch, "_docker_cli", lambda: docker)
+    monkeypatch.setattr(vps_patch.subprocess, "run", run)
+
+    assert vps_patch._ensure_local_qdrant() is True
+    assert any(arguments[1:] == ["start", "les-light-qdrant"] for arguments in commands)
+
+
+def test_update_local_keeps_already_live_qdrant(monkeypatch):
+    monkeypatch.setattr(vps_patch, "_qdrant_live", lambda: True)
+    monkeypatch.setattr(
+        vps_patch,
+        "_docker_cli",
+        lambda: (_ for _ in ()).throw(AssertionError("Docker probed for live Qdrant")),
+    )
+
+    assert vps_patch._ensure_local_qdrant() is False
+
+
 def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
