@@ -1068,9 +1068,9 @@ def build_documents(*, surface: str = "documents") -> None:
             _render_status_error()
             return
         if data.get("status") == "opened":
-            ui.notify("Файл открыт системно", type="positive")
+            ui.notify("Файл открыт в системном приложении", type="positive")
         else:
-            ui.notify(str(data.get("status") or "Не удалось открыть файл"), type="warning")
+            ui.notify(str(data.get("error") or data.get("status") or "Не удалось открыть файл"), type="warning")
 
     async def _open_native_file_name(file_name: str, doc_id: str = "") -> None:
         doc_id = str(doc_id or "").strip()

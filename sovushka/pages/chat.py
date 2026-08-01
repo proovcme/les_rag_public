@@ -1854,15 +1854,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         '</div>'
                     )
                 if item.get("source_ref"):
+                    source_ref_val = str(item.get("source_ref") or "")
                     with ui.row().classes("gap-2 items-center flex-wrap").style("margin-top:6px;"):
-                        citation_text = f"{title}\n{item.get('snippet') or item.get('source_ref') or ''}".strip()
+                        citation_text = f"{title}\n{item.get('snippet') or source_ref_val}".strip()
                         _copy_button("Цитату", citation_text, icon="o_format_quote", classes="sov-answer-act")
+                        
+                        async def _do_native_open(ref_path=source_ref_val) -> None:
+                            data = await api_post(f"/api/documents/open-native-by-ref?path={quote(ref_path, safe='')}")
+                            if isinstance(data, dict) and data.get("status") == "opened":
+                                ui.notify("Файл открыт в системном приложении", type="positive")
+                            else:
+                                err_msg = str((data or {}).get("error") or "Не удалось открыть файл в системе")
+                                ui.notify(err_msg, type="warning")
+
+                        ui.button("Открыть в системе", on_click=_do_native_open).classes("sov-answer-act")
                         if item.get("viewer_url"):
-                            ui.link("Открыть отдельно", str(item["viewer_url"])).props(
-                                "target=_blank"
-                            ).classes("sov-answer-act")
+                            ui.link("Просмотр", str(item["viewer_url"])).props("target=_blank").classes("sov-answer-act")
                         if item.get("open_url"):
-                            ui.link("Оригинал", str(item["open_url"])).props("target=_blank").classes("sov-answer-act")
+                            ui.link("Скачать", str(item["open_url"])).props("target=_blank").classes("sov-answer-act")
                         else:
                             ui.label(str(item.get("unavailable_reason") or "Открытие недоступно")).classes(
                                 "src-tag src-tag-warn"

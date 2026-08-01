@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ЛЕС",
-  "version": "5.1.537",
+  "version": "5.1.544",
   "identifier": "me.ovc.les",
   "build": {
     "frontendDist": "../web"
@@ -43,6 +43,10 @@
       "minimumSystemVersion": "13.0"
     },
     "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "windows-installer-hooks.nsh"

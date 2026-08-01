@@ -7,16 +7,86 @@
 ## Текущее состояние (2026-08-01)
 
 ```
-версия продукта (SemVer):  0.27.20 (post-reboot Qdrant bootstrap)
-номер сборки:              537     (отдельно от версии продукта)
-версия Tauri/NSIS:         5.1.537 (internal identity; code-only soft-update target)
-ветка выпуска:             codex/legion-model-quality
-dev implementation:       codex/legion-model-quality; 0.27.20 candidate
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.27.8 / 525
+версия продукта (SemVer):  0.27.27 (Л.И.С.Т. native open + office passport)
+номер сборки:              544
+версия Tauri/NSIS:         5.1.544
+ветка выпуска:             codex/test-infrastructure
+dev implementation:       Л.И.С.Т. native open launcher / office passport / citation drawer; 0.27.27 candidate
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          local soft package preflights baseline before runtime mutation
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.8 / 525
+следующий выпуск:          LES-Setup.exe 0.27.27
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.27 / build 544 — План и базовый контур улучшения модуля Л.И.С.Т.
+>
+> Дата: 2026-08-01
+> Статус: local candidate.
+> Реализован кроссплатформенный запуск оригинальных документов `native_open_service.py`
+> (Windows `os.startfile`/cmd start, macOS `open`, Linux `xdg-open`) с проверкой `path_guard` и
+> роутером `POST /api/documents/open-native-by-ref`. В встроенный просмотрщик `file_viewer_service`
+> добавлена кнопка «Открыть в системе». Создан сервис паспортизации офисных файлов
+> `office_passport_service.py` (`list.office_passport.v1`) для XLSX, DOCX, PPTX, EML, CSV.
+> Карточка источника в чате `answer_render.py` и `sovushka/pages/chat.py` получила
+> интерактивные действия нативного системного открытия оригинала.
+> Тесты: `tests/test_native_open_service.py`, `tests/test_office_passport_service.py`.
+
+> 0.27.26 / build 543 — Family transition без `catalog_query` больше не крутит пустые turns
+>
+> Дата: 2026-08-01
+> Статус: local candidate.
+> Ollama иногда доставляет `continue_norm_catalog` с `work_features`, но без
+> `catalog_query`. `SmetaNormToolSession` теперь выводит bounded query
+> (2–12 токенов) из model-authored `operation/equipment/system` и пишет
+> `catalog_query_source=derived_from_work_features` в audit. Три одинаковых
+> catalog reject подряд дают soft-stop `incomplete_blocker=catalog_stalled`
+> (с trace/details, без raise, который раньше затирал checkpoint). Timed smoke:
+> `--allow-single-profile`. Тесты: `tests/test_smeta_catalog_query_derive.py`.
+
+> 0.27.25 / build 542 — Стандартизация и автоматизация тестовой инфраструктуры
+>
+> Дата: 2026-08-01
+> Статус: local candidate.
+> Реализована единая система автоматизированного тестирования:
+> 1. Модульные тесты `tests/test_unit_core_business.py` (чистая бизнес-логика без сети/БД).
+> 2. Автономные smoke-тесты `tests/test_smoke_offline.py` (FastAPI TestClient, health, version, config, scenario).
+> 3. Единая утилита запуска `tools/test_runner.py` (режимы: all, unit, smoke, coverage, ci).
+> 4. Команды Makefile: `test`, `test-unit`, `test-smoke`, `test-coverage`, `test-ci`.
+> 5. Выгрузка отчётов `artifacts/junit-report.xml` и `artifacts/coverage_report.txt`.
+> 6. Руководство по локальному запуску и CI `docs/TESTING_GUIDE.md` и шаблон `env.test.example`.
+> Resume между batch_size=1 больше не тащит fingerprint прошлой строки
+> (`checkpoint belongs to another work revision`). На Windows
+> `select_reranker_cls` / A/B default = `sentence_transformers` с fail-closed
+> preflight; MLX `:8080` не используется. Interrupt в A/B по умолчанию выключен
+> (`--interrupt-after-rows 0`).
+
+> 0.27.23 / build 540 — A/B stage-trace, parent-card hydration, Excel/PDF object skeleton
+>
+> Дата: 2026-08-01
+> Статус: local candidate.
+> Backlog: [BACKLOG_RAG_EXCEL_PDF.md](BACKLOG_RAG_EXCEL_PDF.md). Вместо golden/ranx как
+> главного gate — live Gemma↔Qwen A/B с `stage_latency` (catalog/search/read/bind/llm) в
+> `analysis.json` + `tool-events.jsonl`. Retrieval после rerank крепит `les.parent_card.v1`
+> по `parent_id`. Skeleton: `spreadsheet_object_model` / `document_object_model`. Setup
+> `preflight-install` убивает все `les-desktop` и LES-removed/purge до чистой установки.
+
+> 0.27.22 / build 539 — Setup/Uninstall как AnythingLLM, без «ошибка 1»
+>
+> Дата: 2026-08-01
+> Статус: local candidate; нужен rebuild NSIS.
+> Пользовательский контур: `LES-Setup.exe` / «Параметры → Приложения», док
+> [WINDOWS_DESKTOP.md](WINDOWS_DESKTOP.md). Hooks останавливают LES best-effort через
+> `les-setup-helpers.ps1` (всегда exit 0), предлагают wipe данных, ставят WebView2
+> bootstrapper/winget, пишут недостающие Ollama/Docker в `setup-deps-missing.txt` вместо abort.
+
+> 0.27.21 / build 538 — lifecycle stop identity + soft-update honesty
+>
+> Дата: 2026-08-01
+> Статус: local candidate; installed Legion tree patched in place after clean NSIS install.
+> `stop-light` / `windows_runtime.stop` больше не убивают foreign port owners и не режут stale
+> state PID; soft `update-local` блокирует unknown runtime paths и не чинит baseline скрытым
+> `repair` (только live mechanical+RRF или fail→hard recovery). `windows_clean_install` честно
+> сообщает результат docker rm/volume rm и останавливает desktop только по path под app root.
 
 > 0.27.20 / build 537 — post-reboot Qdrant bootstrap
 >

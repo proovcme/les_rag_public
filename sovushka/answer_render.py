@@ -271,6 +271,7 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
                     except (TypeError, ValueError):
                         pass
             viewer_url = f"/lite-api/rag/file/viewer?{urlencode(params)}"
+    native_open_url = f"/api/documents/open-native-by-ref?path={quote(file_part)}" if item.get("has_ref") and file_part else ""
     # Нормативные/расчётные refs вида "ГЭСН-2022#06-..." или "ГОСТ...#clause=..."
     # не являются локальными файлами. Не пугаем оператора техническим предупреждением: ref остаётся
     # в copy_text, а drawer просто показывает название источника и цитату/сниппет.
@@ -278,9 +279,12 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
         "location": location,
         "open_url": open_url,
         "viewer_url": viewer_url,
+        "native_open_url": native_open_url,
         "is_pdf": file_part.lower().endswith(".pdf"),
         "unavailable_reason": unavailable_reason,
         "copy_text": source_ref if source_ref else item.get("file", ""),
+        "stamp_status": source.get("pdf_stamp_status") or source.get("stamp_status") if isinstance(source, dict) else "",
+        "sheet_number": source.get("pdf_sheet_number") or source.get("sheet_number") if isinstance(source, dict) else "",
     })
     return item
 

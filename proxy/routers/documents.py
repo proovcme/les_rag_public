@@ -14,6 +14,7 @@ from fastapi.responses import Response
 
 from proxy.security import require_admin, require_user
 from proxy.services.document_explorer_service import explorer
+from proxy.services.native_open_service import open_native_file
 from proxy.services.pdf_contour_service import audit_pdf, render_page_preview
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
@@ -185,17 +186,25 @@ async def open_document_native(
     source_path = _resolved_document_source(document)
     if source_path is None:
         raise HTTPException(status_code=404, detail="document has no source_path")
-    try:
-        completed = subprocess.run(["open", str(source_path)], check=False, timeout=5)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"open failed: {type(exc).__name__}: {exc}") from exc
-    return {
-        "status": "opened" if completed.returncode == 0 else "open_failed",
-        "doc_id": doc_id,
-        "file_name": document.get("file_name") or "",
-        "source_path": source_path.as_posix(),
-        "returncode": completed.returncode,
-    }
+    
+    result = open_native_file(source_path)
+    result["doc_id"] = doc_id
+    return result
+
+
+@router.post("/open-native-by-ref")
+async def open_document_native_by_ref(
+    path: str = Query(..., min_length=1),
+    _user=Depends(require_user),
+):
+    """Open an original file by source path or source_ref using OS native association."""
+    file_part = path.partition("#")[0].strip()
+    result = open_native_file(file_part)
+    if result["status"] == "not_found":
+        raise HTTPException(status_code=404, detail=result["error"])
+    if result["status"] == "forbidden":
+        raise HTTPException(status_code=403, detail=result["error"])
+    return result
 
 
 @router.get("/by-id/{doc_id}/chunks")
