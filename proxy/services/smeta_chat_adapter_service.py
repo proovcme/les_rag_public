@@ -269,6 +269,21 @@ def _smeta_model_runtime(env_name: str) -> LlmRuntime:
             )
     return runtime
 
+def _loads_json_dict(raw: str) -> dict[str, Any] | None:
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        cleaned = re.sub(r",\s*([}\]])", r"\1", text)
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
@@ -280,11 +295,27 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     end = raw.rfind("}")
     if start < 0 or end <= start:
         return None
-    try:
-        parsed = json.loads(raw[start:end + 1])
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return _loads_json_dict(raw[start:end + 1])
+
+
+def _extract_mapping_json(text: str) -> dict[str, Any] | None:
+    """Prefer a JSON object that carries mapping rows (not arbitrary prose braces)."""
+    parsed = _extract_json_object(text)
+    if isinstance(parsed, dict) and ("rows" in parsed or "mapping" in parsed):
+        return parsed
+    raw = str(text or "")
+    for marker in ('"rows"', "'rows'", '"mapping"', "'mapping'"):
+        idx = raw.find(marker)
+        if idx < 0:
+            continue
+        start = raw.rfind("{", 0, idx)
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            continue
+        candidate = _loads_json_dict(raw[start:end + 1])
+        if isinstance(candidate, dict) and ("rows" in candidate or "mapping" in candidate):
+            return candidate
+    return None
 
 def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: int = 3) -> list[dict[str, Any]]:
     parsed = _extract_json_object(text)
@@ -534,6 +565,15 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     raise RuntimeError("smeta provider failed after tool XML parse retries")
 
 
+def _parse_mapping_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    visible_text = _assistant_text(message)
+    parsed = _extract_mapping_json(visible_text)
+    if parsed is not None:
+        return parsed
+    thinking_text = _strip_think(str(message.get("thinking") or ""))
+    return _extract_mapping_json(thinking_text)
+
+
 def _smeta_document_mapping_exchange(
     messages: list[dict[str, Any]], schema: dict[str, Any],
 ) -> dict[str, Any]:
@@ -543,14 +583,16 @@ def _smeta_document_mapping_exchange(
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
+    # Extra attempts after the first empty/invalid JSON — transport only.
+    mapping_retries = max(0, _env_int("LES_SMETA_DOCUMENT_MAPPING_RETRIES", 2))
     if native_ollama:
-        body = {
+        base_body = {
             "model": runtime.model,
             "messages": _ollama_native_messages(messages),
             "format": schema,
             "stream": False,
-            # Do not set think=false: current Qwen/Gemma Ollama templates can
-            # silently ignore `format` when thinking is explicitly disabled.
+            # First attempt omits think=false: some Qwen/Gemma templates ignore
+            # `format` when thinking is explicitly disabled. Later retries set it.
             "options": {
                 "temperature": 0.0,
                 "seed": seed,
@@ -563,7 +605,7 @@ def _smeta_document_mapping_exchange(
             ollama_root = ollama_root[:-3]
         chat_url = f"{ollama_root}/api/chat"
     else:
-        body = {
+        base_body = {
             "model": runtime.model,
             "messages": messages,
             "temperature": 0.0,
@@ -574,81 +616,82 @@ def _smeta_document_mapping_exchange(
             },
         }
         if applied_seed is not None:
-            body["seed"] = applied_seed
-        body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+            base_body["seed"] = applied_seed
+        base_body = _cloud_body_for_model(base_body, runtime.model, runtime.provider)
         chat_url = runtime.chat_url
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    last_message: dict[str, Any] = {}
+    last_payload: dict[str, Any] = {}
+    last_visible = ""
+    used_seed = applied_seed
     try:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
-            response = client.post(chat_url, headers=headers, json=body)
-            response.raise_for_status()
-            response_payload = response.json()
-            message = (
-                response_payload.get("message", {})
-                if native_ollama
-                else response_payload.get("choices", [{}])[0].get("message", {})
-            )
-            message = message if isinstance(message, dict) else {}
-            # Prefer content. On long Ollama/Qwen conversations the model often
-            # spends the whole budget in `thinking` and leaves content empty —
-            # then retry once with think=false so `format` lands in content.
-            visible_text = _assistant_text(message)
-            parsed = _extract_json_object(visible_text)
-            if parsed is None:
-                thinking_text = _strip_think(str(message.get("thinking") or ""))
-                parsed = _extract_json_object(thinking_text)
-                if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
-                    parsed = None
-            if parsed is None and native_ollama and "think" not in body:
-                retry_body = dict(body)
-                retry_body["think"] = False
-                # Truncation often burns the budget on thinking; give the retry
-                # more room for the JSON object itself.
-                if str(response_payload.get("done_reason") or "") == "length":
-                    options = dict(retry_body.get("options") or {})
-                    options["num_predict"] = max(int(options.get("num_predict") or max_tokens), max_tokens * 2)
-                    retry_body["options"] = options
-                logger.warning(
-                    "[SMETA_DOCUMENT] empty mapping content; retrying once with think=false "
-                    "done_reason=%r eval_count=%r thinking_chars=%s num_predict=%s",
-                    response_payload.get("done_reason"),
-                    response_payload.get("eval_count"),
-                    len(str(message.get("thinking") or "")),
-                    (retry_body.get("options") or {}).get("num_predict"),
-                )
-                response = client.post(chat_url, headers=headers, json=retry_body)
+            for attempt in range(mapping_retries + 1):
+                body = dict(base_body)
+                if attempt > 0 and native_ollama:
+                    options = dict(body.get("options") or {})
+                    options["seed"] = int(seed) + attempt
+                    # Truncation often burns the budget on thinking.
+                    options["num_predict"] = max(
+                        int(options.get("num_predict") or max_tokens),
+                        max_tokens * 2 if attempt == 1 else max_tokens,
+                    )
+                    body["options"] = options
+                    body["think"] = False
+                    nudge = {
+                        "role": "user",
+                        "content": (
+                            "Previous response was not valid JSON for the required schema. "
+                            "Return only one JSON object with a top-level rows array for "
+                            "remaining_work_ids. No prose, no XML, no markdown fences."
+                        ),
+                    }
+                    body["messages"] = list(body.get("messages") or []) + [nudge]
+                    used_seed = int(options["seed"])
+                    logger.warning(
+                        "[SMETA_DOCUMENT] invalid mapping JSON; retry %s/%s seed=%s "
+                        "think=false num_predict=%s",
+                        attempt,
+                        mapping_retries,
+                        used_seed,
+                        options.get("num_predict"),
+                    )
+                response = client.post(chat_url, headers=headers, json=body)
                 response.raise_for_status()
                 response_payload = response.json()
-                message = response_payload.get("message", {})
-                message = message if isinstance(message, dict) else {}
-                visible_text = _assistant_text(message)
-                parsed = _extract_json_object(visible_text)
-                if parsed is None:
-                    parsed = _extract_json_object(_strip_think(str(message.get("thinking") or "")))
-                    if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
-                        parsed = None
-            if parsed is None:
-                raw_preview = " ".join(str(message.get("content") or "").split())[:800]
-                visible_preview = " ".join(str(visible_text or "").split())[:800]
-                thinking_preview = " ".join(str(message.get("thinking") or "").split())[:400]
-                logger.warning(
-                    "[SMETA_DOCUMENT] invalid mapping preview done_reason=%r eval_count=%r "
-                    "keys=%r raw=%r visible=%r thinking=%r",
-                    response_payload.get("done_reason"),
-                    response_payload.get("eval_count"),
-                    sorted(message.keys()),
-                    raw_preview,
-                    visible_preview,
-                    thinking_preview,
+                last_payload = response_payload if isinstance(response_payload, dict) else {}
+                message = (
+                    last_payload.get("message", {})
+                    if native_ollama
+                    else (last_payload.get("choices") or [{}])[0].get("message", {})
                 )
-                raise RuntimeError("smeta provider returned invalid structured mapping JSON")
-            parsed["_les_done_reason"] = response_payload.get("done_reason")
-            parsed["_les_eval_count"] = response_payload.get("eval_count")
-            parsed["_les_model"] = runtime.model
-            parsed["_les_provider"] = runtime.provider
-            if applied_seed is not None:
-                parsed["_les_seed"] = applied_seed
-            return parsed
+                last_message = message if isinstance(message, dict) else {}
+                last_visible = _assistant_text(last_message)
+                parsed = _parse_mapping_message(last_message)
+                if parsed is not None:
+                    parsed["_les_done_reason"] = last_payload.get("done_reason")
+                    parsed["_les_eval_count"] = last_payload.get("eval_count")
+                    parsed["_les_model"] = runtime.model
+                    parsed["_les_provider"] = runtime.provider
+                    if used_seed is not None:
+                        parsed["_les_seed"] = used_seed
+                    if attempt > 0:
+                        parsed["_les_mapping_retries"] = attempt
+                    return parsed
+            raw_preview = " ".join(str(last_message.get("content") or "").split())[:800]
+            visible_preview = " ".join(str(last_visible or "").split())[:800]
+            thinking_preview = " ".join(str(last_message.get("thinking") or "").split())[:400]
+            logger.warning(
+                "[SMETA_DOCUMENT] invalid mapping preview done_reason=%r eval_count=%r "
+                "keys=%r raw=%r visible=%r thinking=%r",
+                last_payload.get("done_reason"),
+                last_payload.get("eval_count"),
+                sorted(last_message.keys()),
+                raw_preview,
+                visible_preview,
+                thinking_preview,
+            )
+            raise RuntimeError("smeta provider returned invalid structured mapping JSON")
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] structured mapping exchange failed: %s", error)
         if isinstance(error, httpx.HTTPStatusError):

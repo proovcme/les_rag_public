@@ -116,9 +116,12 @@ immutable lock-ревизию и только затем отдельный фи
   код не подставляет другую норму. После расчёта в artifact/ответе пишется
   `mapping_fingerprint` (digest привязок) и предупреждение о возможном разбросе fresh-run.
   При низком покрытии (много unbound) чат и шапка XLSX явно говорят, что сумма — только по
-  привязанным строкам, не итог ведомости. Опциональный `missing_rows_pass`
+  привязанным строкам, не итог ведомости.   Опциональный `missing_rows_pass`
   (`LES_SMETA_DOCUMENT_MISSING_PASS`, default on для local Ollama/Qwen) даёт модели второй
-  шанс только по незакрытым `work_id`; уже выбранные нормы immutable.
+  шанс только по незакрытым `work_id`; уже выбранные нормы immutable. Финальный
+  structured-mapping JSON ретраится (`LES_SMETA_DOCUMENT_MAPPING_RETRIES`); при soft-accept
+  битый/пустой JSON закрывает remaining как unbound (норма не выбирается), а сбой
+  missing-rows pass не затирает уже собранный черновик.
   Qwen-Agent по умолчанию получает одну активную строку и накопленный `task_state` общей задачи.
   Ordinary-text завершение получает ограниченный same-model terminal recovery; отсутствие или
   расхождение `unbound_evidence` с tool trace отклоняет только transport-пакет, не решение модели.

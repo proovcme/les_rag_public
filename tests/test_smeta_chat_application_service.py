@@ -732,7 +732,54 @@ def test_smeta_document_mapping_exchange_retries_think_false_when_content_empty(
     assert len(posts) == 2
     assert "think" not in posts[0]
     assert posts[1]["think"] is False
+    assert posts[1]["options"]["seed"] == 1
     assert result["rows"][0]["reason"] == "from-retry"
+    assert result["_les_mapping_retries"] == 1
+    assert result["_les_seed"] == 1
+
+
+def test_smeta_document_mapping_exchange_raises_after_retries(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    posts = []
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"content": "not json at all"}, "done_reason": "stop"}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, *_args, **kwargs):
+            posts.append(kwargs.get("json") or {})
+            return Response()
+
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MAPPING_RETRIES", "2")
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    with pytest.raises(RuntimeError, match="invalid structured mapping JSON"):
+        adapter._smeta_document_mapping_exchange(
+            [{"role": "user", "content": "build mapping"}],
+            {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
+        )
+
+    assert len(posts) == 3
+    assert posts[1]["options"]["seed"] == 1
+    assert posts[2]["options"]["seed"] == 2
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

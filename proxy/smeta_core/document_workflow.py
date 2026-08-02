@@ -2109,6 +2109,40 @@ def _run_batch_norm_agent(
     previous_call_signature = ""
     duplicate_feedback_signature = ""
 
+    def _soft_unbound_rows_for_transport_failure(
+        remaining: list[str],
+        *,
+        transport_error: str,
+    ) -> list[dict[str, Any]]:
+        """Close remaining rows as unbound without choosing a norm (soft-accept only)."""
+        rows: list[dict[str, Any]] = []
+        for work_id in remaining:
+            allowed = session._allowed_unbound_evidence(work_id)
+            queries = [str(q) for q in (allowed.get("queries_used") or []) if str(q).strip()]
+            if len(queries) < 2:
+                title = str((session.by_id.get(work_id) or {}).get("title") or work_id).strip()
+                queries = [title or work_id, f"{title or work_id} ФСНБ"]
+            opened = [
+                str(code)
+                for code in (allowed.get("opened_norm_codes") or [])
+                if str(code).strip()
+            ]
+            rows.append({
+                "work_id": work_id,
+                "decision": "unbound",
+                "reason": "structured mapping transport failed; left unbound",
+                "unbound_evidence": {
+                    "queries_used": queries[:8],
+                    "opened_norm_codes": opened[:12],
+                    "rejection_reasons": [transport_error[:300]],
+                    "coverage_checked": str(
+                        allowed.get("coverage_checked")
+                        or "not checked; structured mapping transport failed"
+                    ),
+                },
+            })
+        return rows
+
     def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
         if mapping_exchange is None:
             raise RuntimeError(reason)
@@ -2130,14 +2164,38 @@ def _run_batch_norm_agent(
             "content": json.dumps(request, ensure_ascii=False),
         })
         started = perf_counter()
-        payload = mapping_exchange(conversation, schema) or {}
-        wait_ms = round((perf_counter() - started) * 1000, 2)
-        rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
-        if not rows:
-            raise RuntimeError(
-                "smeta model returned no rows in structured mapping response: "
-                + " ".join(str(payload.get("content") or "").split())[:300]
+        transport_fallback = False
+        try:
+            payload = mapping_exchange(conversation, schema) or {}
+            rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
+            if not rows:
+                raise RuntimeError(
+                    "smeta model returned no rows in structured mapping response: "
+                    + " ".join(str(payload.get("content") or "").split())[:300]
+                )
+        except Exception as mapping_error:
+            if not soft_accept:
+                raise
+            transport_error = (
+                f"{type(mapping_error).__name__}: {mapping_error}"
             )
+            logger.warning(
+                "[SMETA_DOCUMENT] structured mapping failed under soft_accept; "
+                "closing %s remaining rows as unbound: %s",
+                len(remaining),
+                transport_error[:240],
+            )
+            rows = _soft_unbound_rows_for_transport_failure(
+                remaining,
+                transport_error=transport_error,
+            )
+            payload = {
+                "rows": rows,
+                "_les_mapping_transport_fallback": True,
+                "_les_model": "soft_accept_transport",
+            }
+            transport_fallback = True
+        wait_ms = round((perf_counter() - started) * 1000, 2)
         assistant_message = {
             "role": "assistant",
             "content": json.dumps({"rows": rows}, ensure_ascii=False, default=str),
@@ -2153,9 +2211,14 @@ def _run_batch_norm_agent(
             "turn": turn,
             "assistant": assistant_message,
             "model_wait_ms": wait_ms,
-            "transport": "structured_mapping",
+            "transport": (
+                "structured_mapping_soft_unbound"
+                if transport_fallback else
+                "structured_mapping"
+            ),
             "trigger": reason,
             "seed": payload.get("_les_seed"),
+            "transport_fallback": transport_fallback,
         })
         return {
             "id": f"structured-mapping-{turn}",
@@ -3168,31 +3231,48 @@ def run_vor_document_workflow(
                 1,
                 int(os.getenv("LES_SMETA_DOCUMENT_MISSING_PASS_TURNS", str(max_agent_turns)) or max_agent_turns),
             )
-            agent_result = _run_missing_rows_pass(
-                query_rows,
-                agent_result,
-                exchange,
-                mapping_exchange=mapping_exchange,
-                candidate_limit=candidate_limit,
-                max_turns=missing_turns,
-                batch_size=batch_size,
-                progress=progress,
-                user_request=user_request,
-                batch_runner=agent_batch_runner,
-                soft_accept=bool(soft_accept),
-            )
-            current_revision = MappingRevision(
-                mapping_run_id=mapping_run_id,
-                revision_kind="missing_rows_pass",
-                decisions=dict(agent_result.get("selections") or {}),
-                source_rows=tuple(work_rows),
-                professional_conflicts=tuple(agent_result.get("professional_conflicts") or ()),
-                parent_revision_id=current_revision.revision_id,
-                mapping_status="mapping_missing_pass",
-                change_note="Model-owned pass over previously unbound rows only",
-                calculation_context=dict(initial_revision.calculation_context),
-            )
-            current_revision_path = save_mapping_revision(current_revision, root=revision_dir)
+            try:
+                agent_result = _run_missing_rows_pass(
+                    query_rows,
+                    agent_result,
+                    exchange,
+                    mapping_exchange=mapping_exchange,
+                    candidate_limit=candidate_limit,
+                    max_turns=missing_turns,
+                    batch_size=batch_size,
+                    progress=progress,
+                    user_request=user_request,
+                    batch_runner=agent_batch_runner,
+                    soft_accept=bool(soft_accept),
+                )
+            except Exception as missing_error:
+                # Keep the first mapping draft — second pass is best-effort.
+                logger.warning(
+                    "[SMETA_DOCUMENT] missing_rows_pass failed; keeping prior draft: %s",
+                    f"{type(missing_error).__name__}: {missing_error}"[:240],
+                )
+                if progress:
+                    progress({
+                        "phase": "missing_rows_pass",
+                        "status": "failed",
+                        "label": (
+                            "Смета: второй проход не завершён, сохраняю черновик "
+                            f"({type(missing_error).__name__})"
+                        ),
+                    })
+            else:
+                current_revision = MappingRevision(
+                    mapping_run_id=mapping_run_id,
+                    revision_kind="missing_rows_pass",
+                    decisions=dict(agent_result.get("selections") or {}),
+                    source_rows=tuple(work_rows),
+                    professional_conflicts=tuple(agent_result.get("professional_conflicts") or ()),
+                    parent_revision_id=current_revision.revision_id,
+                    mapping_status="mapping_missing_pass",
+                    change_note="Model-owned pass over previously unbound rows only",
+                    calculation_context=dict(initial_revision.calculation_context),
+                )
+                current_revision_path = save_mapping_revision(current_revision, root=revision_dir)
     mapping_run = {
         "schema": "smeta_mapping_run_v1",
         "mapping_run_id": mapping_run_id,

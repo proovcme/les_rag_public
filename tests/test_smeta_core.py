@@ -2146,6 +2146,58 @@ def test_batch_agent_does_not_coerce_model_after_prose(monkeypatch):
     assert calls == 1
 
 
+def test_soft_accept_unbound_fallback_when_mapping_json_fails(monkeypatch):
+    """Invalid structured mapping JSON must not kill the draft under soft_accept."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+
+    def exchange(_messages, _tools):
+        return {
+            "content": "Поиск завершён.",
+            "_les_done_reason": "stop",
+            "tool_calls": [_native_call(
+                "search", "search_norms_batch", items=[{
+                    "work_id": "w1",
+                    "queries": ["буквальный поиск", "нормативная формулировка"],
+                }],
+            )],
+        }
+
+    calls = {"n": 0}
+
+    def mapping_exchange(_messages, _schema):
+        calls["n"] += 1
+        raise RuntimeError("smeta provider returned invalid structured mapping JSON")
+
+    # First exchange does search; second ends without tools → forces mapping.
+    turns = {"n": 0}
+
+    def exchange_then_end(messages, tools):
+        turns["n"] += 1
+        if turns["n"] == 1:
+            return exchange(messages, tools)
+        return {"content": "готово", "_les_done_reason": "stop"}
+
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Монтаж БАП", "unit": "шт", "quantity": 16}],
+        exchange_then_end,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        soft_accept=True,
+    )
+
+    assert calls["n"] == 1
+    assert result["selections"]["w1"]["norm_code"] == ""
+    assert "transport failed" in result["selections"]["w1"]["reason"]
+    assert any(
+        item.get("transport") == "structured_mapping_soft_unbound"
+        for item in result["model_trace"]
+    )
+
+
 def test_batch_agent_serializes_same_model_decision_after_prose(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 

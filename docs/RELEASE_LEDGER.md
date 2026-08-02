@@ -4,11 +4,21 @@
 
 | Поле | Значение |
 |------|----------|
-| product_version | **0.25.12** |
-| build_number | **485** |
-| desktop_version | 5.1.485 |
+| product_version | **0.25.13** |
+| build_number | **486** |
+| desktop_version | 5.1.486 |
 | base | `origin/main` @ `1fde2ea` (0.25.0 / build 473) |
 | branch | `feature/smeta-local-ollama-stability` |
+
+## 0.25.13 — structured mapping JSON transport resilience (2026-08-02)
+
+**Зачем:** после evidence-ходов Qwen отдавал пустой/битый JSON на финальном
+`format`-вызове → `invalid structured mapping JSON` ронял всю ЛСР (в т.ч. на
+последней строке после ~9 мин работы).
+
+**Что вошло:** ретраи mapping JSON (`seed+n` / `think=false` /
+`LES_SMETA_DOCUMENT_MAPPING_RETRIES`); при soft-accept — unbound fallback без
+выбора нормы; missing-rows pass best-effort (ошибка не затирает черновик).
 
 ## 0.25.12 — LSR coverage gate + missing-rows pass (2026-08-02)
 
