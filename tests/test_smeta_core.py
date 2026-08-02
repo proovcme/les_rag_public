@@ -2309,6 +2309,45 @@ def test_repeated_honest_unbound_without_trace_becomes_visible_candidate():
     assert selection["precalculation_blockers"][0]["memory_eligible"] is False
 
 
+def test_post_budget_unbound_promotes_candidate_instead_of_hard_fail(monkeypatch):
+    """Local Ollama burns max_turns=10 then must not re-arm evidence repair forever."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    monkeypatch.setenv("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "2")
+    monkeypatch.setenv("LES_SMETA_CANDIDATE_DRAFT_MODE", "on")
+
+    def exchange(_messages, _tools):
+        return {"content": "сериализую решение"}
+
+    def mapping_exchange(_messages, _schema):
+        return {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "Применимая норма не найдена после проверки",
+            "unbound_evidence": {
+                "rejection_reasons": ["подходящей карточки нет"],
+                "coverage_checked": "покрытие соседними строками не подтверждено",
+            },
+        }]}
+
+    result = workflow._run_batch_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+        require_scoped_search=False,
+    )
+
+    selection = result["selections"]["w1"]
+    assert selection["review_status"] == "model_batch_candidate"
+    assert selection["norm_code"] == ""
+    assert selection["precalculation_blockers"][0]["code"] == "model_candidate_unbound"
+
+
 def test_unbound_provenance_is_aligned_only_to_real_tool_trace(monkeypatch):
     from proxy.smeta_core import document_workflow as workflow
 

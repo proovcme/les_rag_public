@@ -862,6 +862,85 @@ def _candidate_draft_enabled() -> bool:
     }
 
 
+def _last_structured_mapping_rows(
+    model_trace: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Recover the latest model-authored mapping rows from the agent trace."""
+    for item in reversed(model_trace or []):
+        if str(item.get("transport") or "") != "structured_mapping":
+            continue
+        assistant = item.get("assistant") or {}
+        raw = assistant.get("content")
+        payload: Any
+        if isinstance(raw, dict):
+            payload = raw
+        else:
+            try:
+                payload = json.loads(str(raw or "") or "{}")
+            except json.JSONDecodeError:
+                continue
+        if not isinstance(payload, dict):
+            continue
+        rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
+        if rows:
+            return [dict(row) for row in rows if isinstance(row, dict)]
+    return []
+
+
+def _promote_terminal_unbound_candidates(
+    session: "SmetaNormToolSession",
+    *,
+    last_submit_result: dict[str, Any],
+    model_trace: list[dict[str, Any]],
+) -> bool:
+    """Second submit for honest unbound rows when the finite loop ends early.
+
+    Preserves the model decision as ``model_batch_candidate`` without inventing
+    search evidence. Returns True when every remaining hard failure was promoted.
+    """
+    if not _candidate_draft_enabled():
+        return False
+    errors = [
+        error
+        for error in (last_submit_result.get("errors") or [])
+        if isinstance(error, dict)
+    ]
+    if not errors:
+        return False
+    unbound_ids = []
+    for error in errors:
+        work_id = str(error.get("work_id") or "").strip()
+        if (
+            str(error.get("error") or "") != "invalid unbound_evidence"
+            or not work_id
+            or session.candidate_draft_attempts.get(f"unbound:{work_id}", 0) < 1
+        ):
+            return False
+        unbound_ids.append(work_id)
+    rows = [
+        row
+        for row in _last_structured_mapping_rows(model_trace)
+        if str(row.get("work_id") or "") in unbound_ids
+        and str(row.get("decision") or "") == "unbound"
+    ]
+    if len(rows) != len(unbound_ids):
+        return False
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": rows},
+        turn=max(
+            (
+                int(item.get("turn") or 0)
+                for item in model_trace
+                if isinstance(item, dict)
+            ),
+            default=0,
+        )
+        + 1,
+    )
+    return bool(result.get("ok")) and not session.remaining_work_ids
+
+
 def _candidate_draft_errors(errors: list[str]) -> bool:
     """True only for professional/audit contradictions, never hard evidence faults."""
     if not errors:
@@ -6622,6 +6701,7 @@ def _run_batch_norm_agent(
             "duplicate_feedback_signature": duplicate_feedback_signature,
             "structured_mapping_attempts": structured_mapping_attempts,
             "evidence_repair_turns_remaining": evidence_repair_turns_remaining,
+            "evidence_repair_granted": evidence_repair_granted,
             "last_submit_result": copy.deepcopy(last_submit_result),
             "focus_serialization_pending": focus_serialization_pending,
             "focus_serialization_reason": focus_serialization_reason,
@@ -6842,6 +6922,14 @@ def _run_batch_norm_agent(
         int(resume_state.get("evidence_repair_turns_remaining") or 0)
         if not validation_contract_changed else 0
     )
+    # Grant the post-budget evidence-repair window at most once. Re-arming it on
+    # every failed unbound submit kept forced remapping from running, so the
+    # candidate-draft second submit never happened before the finite loop ended.
+    evidence_repair_granted = bool(
+        resume_state.get("evidence_repair_granted")
+    ) and not validation_contract_changed
+    if evidence_repair_turns_remaining > 0:
+        evidence_repair_granted = True
     finalization_turns = (
         math.ceil(max(1, len(by_id)) / mapping_rows_per_call) + 1
         if mapping_exchange is not None else 0
@@ -7174,11 +7262,13 @@ def _run_batch_norm_agent(
                     focus_serialization_pending = False
                     previous_call_signature = ""
                     duplicate_feedback_signature = ""
-                    if turn >= max_turns:
-                        evidence_repair_turns_remaining = max(
-                            evidence_repair_turns_remaining,
-                            evidence_repair_turn_budget,
-                        )
+                    if (
+                        turn >= max_turns
+                        and evidence_repair_turn_budget > 0
+                        and not evidence_repair_granted
+                    ):
+                        evidence_repair_turns_remaining = evidence_repair_turn_budget
+                        evidence_repair_granted = True
             submitted = dict(session.accepted_rows) if session.complete else None
         tool_time_sec = round(max(0.0, perf_counter() - tools_started), 4)
         if model_trace:
@@ -7245,6 +7335,29 @@ def _run_batch_norm_agent(
                 },
             )
     if last_submit_result and not last_submit_result.get("ok"):
+        promoted = _promote_terminal_unbound_candidates(
+            session,
+            last_submit_result=last_submit_result,
+            model_trace=model_trace,
+        )
+        if promoted and session.complete:
+            return session.result(
+                model_trace=model_trace,
+                agent_trace={
+                    "mode": "model_batch_rag_tools",
+                    "turns": len(model_trace),
+                    "context_metrics": context_metrics,
+                    "status": "candidate_draft_promoted",
+                    "seed": next(
+                        (
+                            item.get("seed")
+                            for item in model_trace
+                            if item.get("seed") is not None
+                        ),
+                        None,
+                    ),
+                },
+            )
         errors = json.dumps(
             (last_submit_result.get("errors") or [])[:8],
             ensure_ascii=False,

@@ -7,16 +7,28 @@
 ## Текущее состояние (2026-08-02)
 
 ```
-версия продукта (SemVer):  0.27.38
-номер сборки:              555
-версия Tauri/NSIS:         5.1.555
+версия продукта (SemVer):  0.27.39
+номер сборки:              556
+версия Tauri/NSIS:         5.1.556
 ветка выпуска:             fix/xlsx-intake-ko-vo
-dev implementation:       Ollama diag + START/STOP + Ко-во intake поверх 0.27.35
+dev implementation:       unbound candidate promote + Ollama diag + START/STOP + Ко-во
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
-следующий выпуск:          LES-Setup.exe 0.27.38
+следующий выпуск:          LES-Setup.exe 0.27.39
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.39 / build 556 — unbound candidate-draft after bounded repair (no RuntimeError)
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.38.
+>
+> **Что вошло:**
+> 1. Post-budget evidence-repair окно выдаётся один раз: повторный re-arm на каждом
+>    `invalid unbound_evidence` не давал второму submit стать `model_batch_candidate`
+>    на локальном Ollama (`max_turns=10`) и ронял ЛСР RuntimeError.
+> 2. Если конечный loop всё же завершился только honest unbound reject — один
+>    terminal re-submit продвигает видимый candidate без выдуманных queries.
 
 > 0.27.38 / build 555 — /api/diag: Ollama tags instead of MLX /api/health
 >

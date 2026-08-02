@@ -33,6 +33,13 @@ row `model_batch_candidate`, adds `model_candidate_unbound`, and keeps it
 ineligible for Memory. A positive reference to an opened card, an invalid
 cross-row link, or fabricated evidence still remains a hard contradiction.
 
+Post-budget evidence repair (`LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS`) is
+granted once. Re-arming it on every failed unbound submit prevented the
+candidate-draft second serialization on local Ollama (`max_turns=10`) and
+ended in `RuntimeError: … after bounded repair`. If the finite loop still
+ends with only `invalid unbound_evidence` after one reject, LES performs one
+terminal re-submit to promote the visible candidate without inventing queries.
+
 > Единый человеко-машинный паспорт всего модуля —
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
