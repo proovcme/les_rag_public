@@ -7,16 +7,26 @@
 ## Текущее состояние (2026-08-02)
 
 ```
-версия продукта (SemVer):  0.27.37
-номер сборки:              554
-версия Tauri/NSIS:         5.1.554
+версия продукта (SemVer):  0.27.38
+номер сборки:              555
+версия Tauri/NSIS:         5.1.555
 ветка выпуска:             fix/xlsx-intake-ko-vo
-dev implementation:       LES START/STOP ownership + Ко-во intake поверх 0.27.35
+dev implementation:       Ollama diag + START/STOP + Ко-во intake поверх 0.27.35
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
-следующий выпуск:          LES-Setup.exe 0.27.37
+следующий выпуск:          LES-Setup.exe 0.27.38
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.38 / build 555 — /api/diag: Ollama tags instead of MLX /api/health
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.37.
+>
+> **Что вошло:**
+> 1. При `LES_LLM_PROVIDER=ollama` диагностика бьёт `/api/tags`, а не MLX `/api/health`
+>    (Ollama отдаёт `404 page not found` → ложный «Ошибка» на карточке Ollama).
+> 2. Карта Д.И.А.Г.Н.О.З. читает статусы `Ollama` / `Ollama latency`.
 
 > 0.27.37 / build 554 — LES START/STOP: own system-python+venv uvicorn
 >

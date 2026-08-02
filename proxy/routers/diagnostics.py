@@ -100,7 +100,33 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
 
     await _check("Qdrant :6333", _chk_qdrant())
 
+    def _active_provider() -> str:
+        return (os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx")
+
     async def _chk_llm():
+        provider = _active_provider()
+        if provider == "ollama":
+            base = os.getenv(
+                "OLLAMA_BASE_URL",
+                os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+            ).rstrip("/")
+            model = os.getenv("OLLAMA_MODEL") or os.getenv("LLM_MODEL") or "?"
+            try:
+                async with httpx.AsyncClient(
+                    trust_env=trust_env_for_url(base),
+                    timeout=5.0,
+                ) as client:
+                    response = await client.get(f"{base}/api/tags")
+                    response.raise_for_status()
+                    data = response.json()
+                models = data.get("models") if isinstance(data, dict) else None
+                count = len(models) if isinstance(models, list) else 0
+                if count <= 0:
+                    return "warn", "Ollama · 0 моделей", "UP", f"model={model}"
+                return "ok", f"Ollama · {count} моделей", "UP", f"model={model}"
+            except Exception as e:
+                return "err", "DOWN", "UP", str(e)[:120]
+
         llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         llm_model = os.getenv("LLM_MODEL", "?")
         try:
@@ -120,7 +146,8 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
         except Exception as e:
             return "err", "?", "loaded", str(e)
 
-    await _check("MLX Backend", _chk_llm())
+    _llm_check_name = "Ollama" if _active_provider() == "ollama" else "MLX Backend"
+    await _check(_llm_check_name, _chk_llm())
 
     async def _chk_ram():
         vm = psutil.virtual_memory()
@@ -166,6 +193,27 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
 
     async def _chk_chat():
         started = time.time()
+        provider = _active_provider()
+        if provider == "ollama":
+            base = os.getenv(
+                "OLLAMA_BASE_URL",
+                os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+            ).rstrip("/")
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(base),
+                timeout=30.0,
+            ) as client:
+                response = await client.get(f"{base}/api/tags")
+            ms = (time.time() - started) * 1000
+            ok = response.status_code == 200
+            status = "ok" if ok and ms < 5000 else ("warn" if ok else "err")
+            return (
+                status,
+                f"{ms:.0f} ms",
+                "<5000 ms",
+                "Ollama tags OK" if ok else f"HTTP {response.status_code}",
+            )
+
         llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         async with httpx.AsyncClient(
             trust_env=trust_env_for_url(llm_url),
@@ -174,10 +222,11 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
             response = await client.get(f"{llm_url}/api/health")
         ms = (time.time() - started) * 1000
         ok = response.status_code == 200
-        status = "ok" if ms < 5000 else ("warn" if ms < 15000 else "err")
+        status = "ok" if ok and ms < 5000 else ("warn" if ok and ms < 15000 else ("err" if not ok else "warn"))
         return status, f"{ms:.0f} ms", "<5000 ms", "MLX health OK" if ok else f"HTTP {response.status_code}"
 
-    await _check("MLX latency", _chk_chat())
+    _latency_check_name = "Ollama latency" if _active_provider() == "ollama" else "MLX latency"
+    await _check(_latency_check_name, _chk_chat())
 
     async def _chk_net():
         def _ping():
