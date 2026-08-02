@@ -1,30 +1,14 @@
 """Generic document -> VOR -> model selection -> priced LSR workflow.
 
-GUARDRAILS — РАБОЧЕЕ РЕШЕНИЕ, ПРОВЕРЕННОЕ БЕНЧМАРКОМ (v0.27.28 / build 545)
-==============================================================================
-Этот модуль содержит три критических фикса, верифицированных двумя независимыми
-прогонами Qwen 3.5:9b на Legion GPU (5/5 детерминизм, 69/70 строк sks_4.xlsx).
+The estimating model owns professional choices.  LES provides typed catalog
+tools, validates evidence and units, calculates deterministically, and returns
+actionable diagnostics so the same model can repair malformed decisions.
 
-НЕ ИЗМЕНЯТЬ без прогона бенчмарка (`tools/smeta_model_quality_benchmark.py`):
-
-1. _extract_trailing_decision_object (строка ~838):
-   Обработка None и конкатенированного JSON от Qwen 3.5.
-   БЕЗ ЭТОГО: модель зацикливается на ходах 4+ и не фиксирует mapping.
-
-2. Action synonym mapping (строка ~1737):
-   select/choose/navigate/next/confirm/accepted → continue.
-   БЕЗ ЭТОГО: модель получает "unsupported catalog decision" и строка проваливается.
-
-3. Evidence parent node fix (строка ~1754):
-   current_node_id добавлен в visible_ids.
-   БЕЗ ЭТОГО: evidence-ссылка на текущий раздел каталога проваливает валидацию,
-   модель тратит лишние 6–8 ходов и упирается в max-turns.
-
-Артефакты бенчмарка: storage/ab_sks4_run/, storage/ab_sks4_repeat/
-Текущее ограничение: norm_code не заполняется (модель навигирует, но не фиксирует
-финальный код таблицы). Без ценообразования (ФГИС ЦС / ручные расценки) финальный
-расчёт ЛСР невозможен. Это следующий этап, а не баг текущего решения.
-==============================================================================
+Flexible interpretation is explicitly reversible:
+``balanced`` repairs only unambiguous aliases to cards opened by the model;
+``legacy`` retains the former permissive Gemini resolver for rollback;
+``off`` disables interpretation.  Change this module only with the protected
+five-row Qwen benchmark required by ``AGENTS.md``.
 """
 
 from __future__ import annotations
@@ -77,6 +61,7 @@ Progress = Callable[[dict[str, Any]], None]
 AgentBatchRunner = Callable[..., dict[str, Any]]
 Checkpoint = Callable[[dict[str, Any]], None]
 DecisionCheckpoint = Callable[[str, dict[str, Any]], None]
+WorkContextEnricher = Callable[[dict[str, Any]], dict[str, Any]]
 
 _COMPRESSIBLE_TOOL_RESULTS = frozenset({
     "browse_norm_catalog",
@@ -89,7 +74,7 @@ _COMPRESSIBLE_TOOL_RESULTS = frozenset({
     "read_norms_batch",
 })
 _RIM_MAX_READ_CARDS_PER_CALL = 2
-MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-unit-scoped-mapping-v12"
+MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-unit-scoped-mapping-v15"
 _PHASE_ORDER = (
     "family_root",
     "family_select",
@@ -113,6 +98,15 @@ def _mapping_chunk_size() -> int:
         return max(0, int(raw))
     except ValueError:
         return 8
+
+
+def _mapping_evidence_repair_turns() -> int:
+    """Bounded TypeChat-style return from invalid terminal JSON to tools."""
+    raw = os.getenv("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "4").strip()
+    try:
+        return max(0, min(8, int(raw)))
+    except ValueError:
+        return 4
 
 
 def _is_timeout_error(error: BaseException) -> bool:
@@ -579,8 +573,21 @@ def _compact_catalog_menu_for_model(
     items: list[dict[str, Any]],
     *,
     limit: int = 12,
+    phase: str = "",
 ) -> list[dict[str, Any]]:
     """Keep exact selectable ids and short evidence fields in the model frame."""
+    evidence_fields = (
+        {
+            "node_id", "parent_id", "node_type", "cipher", "title",
+            "official_name", "source_ref", "norm_count", "navigation_score",
+        }
+        if phase in {"section_select", "table_select"}
+        else {
+            "node_id", "parent_id", "node_type", "cipher", "title",
+            "official_name", "purpose", "typical_scope", "not_for",
+            "source_ref", "norm_count", "navigation_score",
+        }
+    )
     compact: list[dict[str, Any]] = []
     for item in items[: max(1, int(limit))]:
         if not isinstance(item, dict):
@@ -588,21 +595,7 @@ def _compact_catalog_menu_for_model(
         compact.append({
             key: copy.deepcopy(value)
             for key, value in item.items()
-            if key
-            in {
-                "node_id",
-                "parent_id",
-                "node_type",
-                "cipher",
-                "title",
-                "official_name",
-                "purpose",
-                "typical_scope",
-                "not_for",
-                "source_ref",
-                "norm_count",
-                "navigation_score",
-            }
+            if key in evidence_fields
             and value not in (None, "", [])
         })
     return compact
@@ -635,7 +628,9 @@ def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
-def _technology_check_errors(item: dict[str, Any]) -> list[str]:
+def _technology_check_errors(
+    item: dict[str, Any], *, work_id: str = "",
+) -> list[str]:
     """Validate bind evidence shape without judging the model's applicability conclusion."""
     errors: list[str] = []
     selection_kind = str(item.get("selection_kind") or "")
@@ -673,6 +668,12 @@ def _technology_check_errors(item: dict[str, Any]) -> list[str]:
         errors.append("technology_check.overlap_resolution is required")
     if not [value for value in (check.get("conditions_checked") or []) if str(value).strip()]:
         errors.append("technology_check.conditions_checked must describe checked conditions")
+    if work_id and work_id in {
+        str(value).strip()
+        for value in (check.get("overlaps_with_work_ids") or [])
+        if str(value).strip()
+    }:
+        errors.append("technology_check.overlaps_with_work_ids cannot contain its own work_id")
     if str(check.get("conclusion") or "") not in {"applicable", "applicable_with_limitations"}:
         errors.append("technology_check.conclusion must be applicable|applicable_with_limitations")
     if selection_kind == "exact" and (
@@ -687,11 +688,29 @@ def _technology_check_errors(item: dict[str, Any]) -> list[str]:
     return errors
 
 
+_EXACT_MATCH_NOISE = frozenset({
+    "монтаж", "монтажа", "установка", "установки", "установке",
+    "оборудование", "оборудования", "работа", "работы", "шт", "штука",
+    "помещение", "помещения", "масса", "массой", "цвет", "размер",
+})
+
+
+def _distinctive_exact_terms(value: object) -> set[str]:
+    """Return coarse lexical anchors used only to validate an ``exact`` claim."""
+    terms: set[str] = set()
+    for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", str(value or "").casefold()):
+        if len(token) < 4 or token in _EXACT_MATCH_NOISE or token.isdigit():
+            continue
+        terms.add(token[:4] if len(token) > 4 else token)
+    return terms
+
+
 def _candidate_evaluation_errors(
     item: dict[str, Any],
     *,
     candidates_for_work: dict[str, dict[str, Any]],
     opened_for_work: dict[str, dict[str, Any]],
+    source_work: dict[str, Any] | None = None,
 ) -> list[str]:
     """Validate model-owned comparison trace without judging which norm should win."""
     evaluations = item.get("candidate_evaluations")
@@ -713,6 +732,7 @@ def _candidate_evaluation_errors(
     evaluated_codes: set[str] = set()
     evaluation_signatures: dict[str, tuple[Any, ...]] = {}
     selected_evaluations = 0
+    selected_evaluation: dict[str, Any] | None = None
     allowed = {
         "operation_match": {"exact", "partial", "none", "unknown"},
         "object_match": {"exact", "partial", "none", "unknown"},
@@ -766,10 +786,95 @@ def _candidate_evaluation_errors(
         decision = str(evaluation.get("decision") or "")
         if code == selected_code and decision == "selected":
             selected_evaluations += 1
+            selected_evaluation = evaluation
 
     if selected_evaluations != 1:
         errors.append("candidate_evaluations must mark the submitted norm exactly once as selected")
+    elif selected_evaluation is not None:
+        selection_kind = str(item.get("selection_kind") or "")
+        operation_match = str(selected_evaluation.get("operation_match") or "")
+        object_match = str(selected_evaluation.get("object_match") or "")
+        unit_match = str(selected_evaluation.get("unit_match") or "")
+        scope_match = str(selected_evaluation.get("scope_match") or "")
+        if (
+            operation_match == "none"
+            or object_match == "none"
+            or unit_match == "conflict"
+            or scope_match == "foreign"
+        ):
+            errors.append(
+                "selected candidate contradicts bind: operation/object cannot be "
+                "none, unit cannot conflict, and scope cannot be foreign"
+            )
+        if selection_kind == "exact" and (
+            operation_match != "exact"
+            or object_match != "exact"
+            or scope_match != "exact"
+            or unit_match not in {"compatible", "convertible"}
+        ):
+            errors.append(
+                "selection_kind exact requires exact operation, object and scope "
+                "matches plus a compatible or convertible unit"
+            )
+        if selection_kind == "exact":
+            selected_card = opened_for_work.get(selected_code) or {}
+            source_terms = _distinctive_exact_terms(" ".join(
+                str((source_work or {}).get(name) or "")
+                for name in ("title", "note")
+            ))
+            card_terms = _distinctive_exact_terms(" ".join([
+                str(selected_card.get("title") or selected_card.get("norm_name") or ""),
+                *[
+                    str(value)
+                    for value in (selected_card.get("work_steps") or [])
+                    if str(value).strip()
+                ],
+            ]))
+            if source_terms and card_terms and source_terms.isdisjoint(card_terms):
+                errors.append(
+                    "selection_kind exact is unsupported by opened evidence: "
+                    "the source object and selected card share no distinctive term"
+                )
     return errors
+
+
+_CANDIDATE_DRAFT_ERROR_PREFIXES = (
+    "selection_kind exact contradicts analog applicability or limitations",
+    "selection_kind analog contradicts exact applicability",
+    "selection_kind exact contradicts missing operations",
+    "selected candidate contradicts bind",
+    "selection_kind exact requires exact operation",
+    "selection_kind exact is unsupported by opened evidence",
+    "technology_check.overlaps_with_work_ids cannot contain its own work_id",
+    "candidate_evaluations[",
+    "candidate_evaluations must mark the submitted norm exactly once as selected",
+)
+
+
+def _candidate_draft_enabled() -> bool:
+    """Allow a repeated, typed model choice to remain a visible draft.
+
+    Setting ``LES_SMETA_CANDIDATE_DRAFT_MODE=off`` restores the strict v14
+    rejection loop without changing the model-owned mapping or catalog data.
+    """
+    return os.getenv("LES_SMETA_CANDIDATE_DRAFT_MODE", "on").strip().casefold() not in {
+        "0", "false", "no", "off",
+    }
+
+
+def _candidate_draft_errors(errors: list[str]) -> bool:
+    """True only for professional/audit contradictions, never hard evidence faults."""
+    if not errors:
+        return False
+    for error in errors:
+        text = str(error)
+        if text.startswith("candidate_evaluations[") and not text.endswith(
+            ".candidate_code was not opened through read_norms_batch"
+        ):
+            return False
+        if not any(text.startswith(prefix) for prefix in _CANDIDATE_DRAFT_ERROR_PREFIXES):
+            return False
+    return True
 
 
 def _normalize_search_queries_transport(item: dict[str, Any]) -> list[str]:
@@ -814,9 +919,8 @@ def _tool_arguments(call: dict[str, Any]) -> dict[str, Any]:
     if isinstance(raw, dict):
         return raw
     text = str(raw or "{}").strip()
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
+    parsed = _parse_json_transport(text)
+    if parsed is None:
         try:
             parsed = ast.literal_eval(text)
         except (SyntaxError, ValueError):
@@ -842,17 +946,54 @@ def _tool_array_argument(
                 decision_obj = _extract_trailing_decision_object(text)
                 if decision_obj:
                     return [decision_obj]
+                parsed_transport = _parse_json_transport(text)
+                if parsed_transport is not None:
+                    raw = parsed_transport
+                    continue
             try:
                 raw = ast.literal_eval(text)
             except (SyntaxError, ValueError):
-                repaired = _close_unterminated_json_containers(text)
-                if repaired == text:
-                    return []
-                try:
-                    raw = json.loads(repaired)
-                except json.JSONDecodeError:
+                raw = _parse_json_transport(text)
+                if raw is None:
                     return []
     return [item for item in (raw or []) if isinstance(item, dict)] if isinstance(raw, list) else []
+
+
+def _nested_array_transport(value: Any) -> Any:
+    """Unwrap a valid JSON/Python array serialized inside a string field."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    parsed = _parse_json_transport(text)
+    if parsed is None:
+        try:
+            parsed = ast.literal_eval(text)
+        except (SyntaxError, ValueError):
+            return value
+    return parsed if isinstance(parsed, list) else value
+
+
+def _one_item_tool_transport(
+    args: dict[str, Any],
+    *,
+    array_fields: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Accept Qwen's flat spelling of a one-item batch tool call."""
+    normalized = copy.deepcopy(args)
+    items = _tool_array_argument(normalized, "items")
+    if not items and str(normalized.get("work_id") or "").strip():
+        item = {
+            key: value
+            for key, value in normalized.items()
+            if key not in {"items", "default_decision"}
+        }
+        normalized["items"] = [item]
+        items = normalized["items"]
+    for item in items:
+        for field in array_fields:
+            if field in item:
+                item[field] = _nested_array_transport(item[field])
+    return normalized
 
 
 def _extract_trailing_decision_object(text: str | None) -> dict[str, Any] | None:
@@ -941,6 +1082,31 @@ def _close_unterminated_json_containers(text: str) -> str:
     return text + "".join("]" if opener == "[" else "}" for opener in reversed(stack))
 
 
+def _parse_json_transport(text: str) -> Any | None:
+    """Parse JSON after one unambiguous delimiter-only transport repair.
+
+    This accepts missing trailing containers and at most two superfluous
+    trailing closing delimiters.  It never changes strings, keys, values or
+    array members, so professional meaning remains model-owned.
+    """
+    source = str(text or "").strip()
+    if not source:
+        return None
+    for candidate in dict.fromkeys((source, _close_unterminated_json_containers(source))):
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+    try:
+        parsed, end = json.JSONDecoder().raw_decode(source)
+    except json.JSONDecodeError:
+        return None
+    remainder = source[end:].strip()
+    if remainder and len(remainder) <= 2 and all(char in "]}" for char in remainder):
+        return parsed
+    return None
+
+
 def _tool_bool(value: Any, default: bool = False) -> bool:
     if value is None:
         return default
@@ -956,12 +1122,38 @@ def _tool_string_list(value: Any) -> list[str]:
     values = value if isinstance(value, list) else [value]
     return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
-def resolve_extracted_norm_code_flexible(
+_FLEXIBLE_RESOLVER_MODES = {"balanced", "legacy", "off"}
+_NORM_REFERENCE_RE = re.compile(
+    r"(?:(ГЭСН(?:мр|м|п|р)?)\s*[:№]?\s*)?(\d{2}-\d{2}(?:-\d{3}(?:-\d{2})?)?)",
+    re.IGNORECASE,
+)
+_POSITIVE_APPLICABILITY_RE = re.compile(
+    r"\b(?:подходит|применим\w*|покрывает|соответствует|выбран\w*|использовать|относится\s+к)\b",
+    re.IGNORECASE,
+)
+_NEGATIVE_APPLICABILITY_RE = re.compile(
+    r"(?:\bне\s+(?:подходит|применим\w*|покрывает|соответствует|содержит|относится)\b|"
+    r"\b(?:нет|не\s+найден\w*|отсутств\w*|чуж\w*)\b)",
+    re.IGNORECASE,
+)
+
+
+def _flexible_resolver_mode(explicit: str | None = None) -> str:
+    raw = str(
+        explicit
+        if explicit is not None
+        else os.getenv("LES_SMETA_FLEXIBLE_RESOLVER_MODE", "balanced")
+    ).strip().casefold()
+    return raw if raw in _FLEXIBLE_RESOLVER_MODES else "balanced"
+
+
+def _legacy_resolve_extracted_norm_code(
     item: dict[str, Any],
-    by_id: dict[str, Any] | None = None,
-    opened_cards: Any = None,
+    *,
+    by_id: dict[str, Any] | None,
+    opened_cards: Any,
 ) -> dict[str, Any]:
-    """Flexible Code Resolver: extract table/norm codes from model reasoning and map to leaf norm."""
+    """Preserve the v0.27.29 Gemini resolver as an explicit rollback mode."""
     if not isinstance(item, dict):
         return item
 
@@ -1069,6 +1261,138 @@ def resolve_extracted_norm_code_flexible(
             opened_cards[work_id][leaf_code] = synthetic_card
             opened_cards[work_id][extracted_table] = synthetic_card
 
+    return item
+
+
+def _model_norm_references(text: str) -> list[dict[str, str]]:
+    references: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for match in _NORM_REFERENCE_RE.finditer(str(text or "")):
+        family = str(match.group(1) or "").strip()
+        bare_code = str(match.group(2) or "").strip()
+        key = (family.casefold(), bare_code)
+        if not bare_code or key in seen:
+            continue
+        seen.add(key)
+        references.append({"family": family, "bare_code": bare_code})
+    return references
+
+
+def _unique_opened_cards(opened_cards: Any, work_id: str) -> dict[str, dict[str, Any]]:
+    if not isinstance(opened_cards, dict):
+        return {}
+    raw = opened_cards.get(work_id) or {}
+    if isinstance(raw, list):
+        values = {
+            str(card.get("norm_code") or card.get("cipher") or "").strip(): card
+            for card in raw
+            if isinstance(card, dict)
+        }
+    elif isinstance(raw, dict):
+        values = raw
+    else:
+        return {}
+    unique: dict[str, dict[str, Any]] = {}
+    for alias, card in values.items():
+        if not isinstance(card, dict):
+            continue
+        code = str(card.get("norm_code") or card.get("cipher") or alias).strip()
+        key = gesn_service._norm_key(code)
+        if code and key and key not in unique:
+            unique[key] = card
+    return unique
+
+
+def _opened_matches_for_references(
+    references: list[dict[str, str]],
+    opened: dict[str, dict[str, Any]],
+) -> list[str]:
+    matches: list[str] = []
+    for norm_key, card in opened.items():
+        card_code = str(card.get("norm_code") or card.get("cipher") or "").strip()
+        card_family, _, card_bare = norm_key.partition(":")
+        for reference in references:
+            family = str(reference.get("family") or "").casefold()
+            bare = str(reference.get("bare_code") or "")
+            family_matches = not family or card_family.casefold() == family
+            bare_matches = card_bare == bare or card_bare.startswith(bare + "-")
+            if family_matches and bare_matches and card_code:
+                matches.append(card_code)
+                break
+    return list(dict.fromkeys(matches))
+
+
+def _reason_suggests_positive_applicability(reason: str) -> bool:
+    text = str(reason or "").strip()
+    return bool(
+        text
+        and _POSITIVE_APPLICABILITY_RE.search(text)
+        and not _NEGATIVE_APPLICABILITY_RE.search(text)
+    )
+
+
+def resolve_extracted_norm_code_flexible(
+    item: dict[str, Any],
+    by_id: dict[str, Any] | None = None,
+    opened_cards: Any = None,
+    *,
+    mode: str | None = None,
+) -> dict[str, Any]:
+    """Interpret imperfect model mapping without inventing a decision.
+
+    ``balanced`` repairs a missing/aliased ``norm_code`` only when the model
+    submitted ``decision=bind`` and its prose resolves to exactly one card that
+    the same model already opened.  Negative decisions remain negative, while
+    matching opened cards are returned as an audit hint for bounded model
+    clarification.  ``legacy`` preserves the aggressive Gemini resolver for an
+    operator-controlled rollback; ``off`` is a byte-light bypass.
+    """
+    if not isinstance(item, dict):
+        return item
+    selected_mode = _flexible_resolver_mode(mode)
+    if selected_mode == "off":
+        return item
+    if selected_mode == "legacy":
+        return _legacy_resolve_extracted_norm_code(
+            item,
+            by_id=by_id,
+            opened_cards=opened_cards,
+        )
+
+    work_id = str(item.get("work_id") or "")
+    decision = str(item.get("decision") or "").strip().casefold()
+    reason = str(item.get("reason") or item.get("coverage_reason") or "")
+    current_code = str(item.get("norm_code") or "").strip()
+    references = _model_norm_references(" ".join((current_code, reason)))
+    opened = _unique_opened_cards(opened_cards, work_id)
+    matches = _opened_matches_for_references(references, opened)
+
+    interpretation = {
+        "mode": "balanced",
+        "decision_preserved": decision,
+        "references": references,
+        "matched_opened_codes": matches,
+        "reason_suggests_positive_applicability": _reason_suggests_positive_applicability(reason),
+        "repair": "none",
+    }
+
+    if decision == "bind":
+        resolved_current = _resolve_norm_code_transport(
+            current_code,
+            {
+                str(card.get("norm_code") or card.get("cipher") or key): card
+                for key, card in opened.items()
+            },
+        )
+        if resolved_current:
+            if resolved_current != current_code:
+                item["norm_code"] = resolved_current
+                interpretation["repair"] = "normalized_opened_norm_alias"
+        elif len(matches) == 1:
+            item["norm_code"] = matches[0]
+            interpretation["repair"] = "resolved_unique_opened_model_reference"
+
+    item["_les_flexible_interpretation"] = interpretation
     return item
 
 
@@ -1241,6 +1565,7 @@ class SmetaNormToolSession:
         self.query_trace: list[dict[str, Any]] = []
         self.accepted_rows: dict[str, dict[str, Any]] = {}
         self.invalid_submission_attempts: dict[str, int] = {}
+        self.candidate_draft_attempts: dict[str, int] = {}
         self.tool_trajectory: list[dict[str, Any]] = []
         self.route_evidence_cache: dict[str, dict[str, Any]] = {}
         for row in work_rows:
@@ -1259,6 +1584,7 @@ class SmetaNormToolSession:
                 if key not in {
                     "task_state",
                     "route_evidence_cache",
+                    "memory_advisory",
                 }
             }
             for work_id, row in self.by_id.items()
@@ -1309,6 +1635,7 @@ class SmetaNormToolSession:
             "query_trace": copy.deepcopy(self.query_trace),
             "accepted_rows": copy.deepcopy(self.accepted_rows),
             "invalid_submission_attempts": dict(self.invalid_submission_attempts),
+            "candidate_draft_attempts": dict(self.candidate_draft_attempts),
             "tool_trajectory": copy.deepcopy(self.tool_trajectory),
             "route_evidence_cache": copy.deepcopy(self.route_evidence_cache),
         }
@@ -1437,6 +1764,13 @@ class SmetaNormToolSession:
                 state.get("invalid_submission_attempts") or {}
             ).items()
         }
+        self.candidate_draft_attempts = {
+            str(key): int(value)
+            for key, value in dict(
+                state.get("candidate_draft_attempts") or {}
+            ).items()
+            if str(key) in known
+        }
         self.tool_trajectory = copy.deepcopy(
             list(state.get("tool_trajectory") or [])
         )
@@ -1539,9 +1873,22 @@ class SmetaNormToolSession:
         elif name == "reuse_norm_catalog_route":
             result = self._reuse_catalog_route(args, turn=turn)
         elif name == "search_norms_batch":
-            result = self._search(args, turn=turn)
+            result = self._search(
+                _one_item_tool_transport(
+                    args,
+                    array_fields=(
+                        "queries", "base_types", "collections", "table_codes",
+                    ),
+                ),
+                turn=turn,
+            )
         elif name == "read_norms_batch":
-            result = self._read(args)
+            result = self._read(
+                _one_item_tool_transport(
+                    args,
+                    array_fields=("norm_codes",),
+                )
+            )
         elif name == "submit_lsr_mapping":
             result = self._submit(args)
         else:
@@ -1810,6 +2157,37 @@ class SmetaNormToolSession:
             if not synthetic_item.get("decision") and args.get("default_decision"):
                 synthetic_item["decision"] = args["default_decision"]
             args["items"] = [synthetic_item]
+        for transport_item in _tool_array_argument(args, "items"):
+            for field in ("evidence", "rejected_nodes", "missing_facts"):
+                if field in transport_item:
+                    transport_item[field] = _nested_array_transport(
+                        transport_item[field]
+                    )
+            selected_node_id = str(
+                transport_item.get("selected_node_id") or ""
+            ).strip()
+            evidence = transport_item.get("evidence")
+            if selected_node_id and isinstance(evidence, list):
+                # Qwen may compare several visible nodes and serialize the
+                # selected node's evidence later in the same array. Ordering is
+                # transport, not judgment: preserve every model-authored item
+                # while moving exact selected-node evidence to the front.
+                transport_item["evidence"] = [
+                    *[
+                        entry for entry in evidence
+                        if isinstance(entry, dict)
+                        and str(entry.get("source_node_id") or "").strip()
+                        == selected_node_id
+                    ],
+                    *[
+                        entry for entry in evidence
+                        if not (
+                            isinstance(entry, dict)
+                            and str(entry.get("source_node_id") or "").strip()
+                            == selected_node_id
+                        )
+                    ],
+                ]
         # --- End flat-to-items normalization ---------------------------------
         rows_out: list[dict[str, Any]] = []
 
@@ -1897,7 +2275,12 @@ class SmetaNormToolSession:
                 visible_ids.add(current_node_id)
             evidence_out = []
             evidence_errors = []
-            for evidence in item.get("evidence") or args.get("evidence") or []:
+            evidence_values = (
+                item.get("evidence")
+                if "evidence" in item
+                else args.get("evidence") or []
+            )
+            for evidence in evidence_values or []:
                 if not isinstance(evidence, dict):
                     evidence_errors.append("evidence item must be an object")
                     continue
@@ -1914,6 +2297,23 @@ class SmetaNormToolSession:
                         f"evidence node {source_node_id!r} was not shown in the current menu"
                     )
                     continue
+                # Normalize evidence field aliases authored by LLM engines
+                if field == "title_and_purpose":
+                    if "purpose" in source_node and source_node.get("purpose"):
+                        field = "purpose"
+                    elif "title" in source_node and source_node.get("title"):
+                        field = "title"
+                elif field in ("heading", "official_heading", "name"):
+                    if "official_heading" in source_node and source_node.get("official_heading"):
+                        field = "official_heading"
+                    elif "title" in source_node and source_node.get("title"):
+                        field = "title"
+                elif field in ("scope", "description"):
+                    if "typical_scope" in source_node and source_node.get("typical_scope"):
+                        field = "typical_scope"
+                    elif "purpose" in source_node and source_node.get("purpose"):
+                        field = "purpose"
+
                 if field not in source_node or source_node.get(field) in (
                     None,
                     "",
@@ -1937,7 +2337,12 @@ class SmetaNormToolSession:
                     "source_ref": str(source_node.get("source_ref") or ""),
                 })
             rejected_out = []
-            for rejected in item.get("rejected_nodes") or args.get("rejected_nodes") or []:
+            rejected_values = (
+                item.get("rejected_nodes")
+                if "rejected_nodes" in item
+                else args.get("rejected_nodes") or []
+            )
+            for rejected in rejected_values or []:
                 if not isinstance(rejected, dict):
                     evidence_errors.append("rejected node must be an object")
                     continue
@@ -4077,14 +4482,31 @@ class SmetaNormToolSession:
         proposed: dict[str, dict[str, Any]] = {}
         errors: list[dict[str, Any]] = []
         for item in rows:
+            raw_model_item = copy.deepcopy(item)
             work_id = str(item.get("work_id") or "")
             if work_id not in self.by_id or work_id in proposed or work_id in self.accepted_rows:
                 errors.append({"work_id": work_id, "error": "unknown or duplicate work_id"})
                 continue
             resolve_extracted_norm_code_flexible(item, by_id=self.by_id, opened_cards=self.opened)
+            resolver_trace = dict(item.pop("_les_flexible_interpretation", {}) or {})
             decision = str(item.get("decision") or "")
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
+                if (
+                    resolver_trace.get("matched_opened_codes")
+                    and resolver_trace.get("reason_suggests_positive_applicability") is True
+                ):
+                    errors.append({
+                        "work_id": work_id,
+                        "error": "unbound decision conflicts with the model's positive norm reference",
+                        "details": [
+                            "The prose says that an already opened typed card is applicable, "
+                            "but decision=unbound. Confirm bind/covered_by/unbound explicitly; "
+                            "LES will preserve the corrected model decision."
+                        ],
+                        "resolver_hint": resolver_trace,
+                    })
+                    continue
                 evidence = self._align_unbound_evidence_to_trace(
                     work_id,
                     dict(item.get("unbound_evidence") or {}),
@@ -4094,7 +4516,18 @@ class SmetaNormToolSession:
                     reason=reason,
                     evidence=evidence,
                 )
-                if evidence_errors:
+                unbound_attempt_key = f"unbound:{work_id}"
+                accept_unbound_candidate = (
+                    _candidate_draft_enabled()
+                    and bool(reason)
+                    and self.candidate_draft_attempts.get(unbound_attempt_key, 0) >= 1
+                    and bool(evidence_errors)
+                )
+                if evidence_errors and not accept_unbound_candidate:
+                    if _candidate_draft_enabled() and reason:
+                        self.candidate_draft_attempts[unbound_attempt_key] = (
+                            self.candidate_draft_attempts.get(unbound_attempt_key, 0) + 1
+                        )
                     errors.append({
                         "work_id": work_id,
                         "error": "invalid unbound_evidence",
@@ -4107,6 +4540,29 @@ class SmetaNormToolSession:
                         ))[:12],
                     })
                     continue
+                if accept_unbound_candidate:
+                    proposed[work_id] = {
+                        "norm_code": "",
+                        "selection_kind": str(item.get("selection_kind") or ""),
+                        "analog_limitations": list(item.get("analog_limitations") or []),
+                        "reason": reason,
+                        # Only real trajectory-aligned evidence survives. Missing
+                        # searches stay missing and visible in the blocker below.
+                        "unbound_evidence": evidence,
+                        "review_status": "model_batch_candidate",
+                        "candidate_validation_errors": list(evidence_errors),
+                        "resource_bindings": [],
+                        "precalculation_blockers": [{
+                            "code": "model_candidate_unbound",
+                            "work_id": work_id,
+                            "reason": "; ".join(evidence_errors),
+                            "severity": "warning",
+                            "memory_eligible": False,
+                        }],
+                        "resolver_trace": resolver_trace,
+                        "model_mapping_raw": raw_model_item,
+                    }
+                    continue
                 proposed[work_id] = {
                     "norm_code": "",
                     "selection_kind": str(item.get("selection_kind") or ""),
@@ -4114,11 +4570,25 @@ class SmetaNormToolSession:
                     "reason": reason,
                     "unbound_evidence": evidence,
                     "review_status": "model_batch_unbound", "resource_bindings": [],
+                    "resolver_trace": resolver_trace,
+                    "model_mapping_raw": raw_model_item,
                 }
                 continue
             if decision == "covered_by":
                 covered_by = str(item.get("covered_by_work_id") or "")
                 reason = str(item.get("reason") or "").strip()
+                if not covered_by or covered_by == work_id or covered_by not in self.by_id:
+                    errors.append({
+                        "work_id": work_id,
+                        "error": "covered_by requires another existing source work_id",
+                        "details": [
+                            "Do not point a row to itself. If the prose names an opened norm, "
+                            "confirm bind and provide its technology check; otherwise choose "
+                            "a real neighboring work_id or unbound."
+                        ],
+                        "resolver_hint": resolver_trace,
+                    })
+                    continue
                 proposed[work_id] = {
                     "norm_code": "",
                     "selection_kind": str(item.get("selection_kind") or ""),
@@ -4127,6 +4597,8 @@ class SmetaNormToolSession:
                     "coverage_reason": reason,
                     "reason": reason,
                     "review_status": "model_batch_covered", "resource_bindings": [],
+                    "resolver_trace": resolver_trace,
+                    "model_mapping_raw": raw_model_item,
                 }
                 continue
             if decision != "bind":
@@ -4136,11 +4608,12 @@ class SmetaNormToolSession:
             opened_for_work = self.opened.get(work_id, {})
             opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
             opened_card = opened_for_work.get(opened_code) if opened_code else None
-            bind_errors = _technology_check_errors(item)
+            bind_errors = _technology_check_errors(item, work_id=work_id)
             bind_errors.extend(_candidate_evaluation_errors(
                 item,
                 candidates_for_work=self.candidates.get(work_id, {}),
                 opened_for_work=opened_for_work,
+                source_work=self.by_id.get(work_id),
             ))
             if not str(item.get("reason") or "").strip():
                 bind_errors.append("reason is required")
@@ -4155,7 +4628,19 @@ class SmetaNormToolSession:
                 bind_errors.append(
                     "selected typed card unit is incompatible with the source work unit"
                 )
-            if bind_errors:
+            candidate_validation_errors: list[str] = []
+            semantic_draft_errors = _candidate_draft_errors(bind_errors)
+            accept_as_candidate = (
+                _candidate_draft_enabled()
+                and opened_card is not None
+                and self.candidate_draft_attempts.get(work_id, 0) >= 1
+                and semantic_draft_errors
+            )
+            if bind_errors and not accept_as_candidate:
+                if _candidate_draft_enabled() and opened_card is not None and semantic_draft_errors:
+                    self.candidate_draft_attempts[work_id] = (
+                        self.candidate_draft_attempts.get(work_id, 0) + 1
+                    )
                 errors.append({
                     "work_id": work_id,
                     "error": "incomplete bind evidence",
@@ -4167,6 +4652,8 @@ class SmetaNormToolSession:
                     ))[:12],
                 })
                 continue
+            if accept_as_candidate:
+                candidate_validation_errors = list(bind_errors)
             code = str((opened_card or {}).get("norm_code") or requested_code)
             if self.require_scoped_search and opened_card is None:
                 errors.append({
@@ -4190,6 +4677,14 @@ class SmetaNormToolSession:
                 })
                 continue
             blockers = []
+            if candidate_validation_errors:
+                blockers.append({
+                    "code": "model_candidate_mapping",
+                    "work_id": work_id,
+                    "reason": "; ".join(candidate_validation_errors),
+                    "severity": "warning",
+                    "memory_eligible": False,
+                })
             if code and opened_card is None:
                 blockers.append({
                     "code": "norm_card_not_opened", "work_id": work_id,
@@ -4215,9 +4710,16 @@ class SmetaNormToolSession:
                 ],
                 "nr_sp_rule_id": str(item.get("nr_sp_rule_id") or ""),
                 "reason": str(item.get("reason") or ""),
-                "review_status": "model_batch",
+                "review_status": (
+                    "model_batch_candidate"
+                    if candidate_validation_errors
+                    else "model_batch"
+                ),
+                "candidate_validation_errors": candidate_validation_errors,
                 "resource_bindings": _model_resource_bindings(work_id, item, self.by_id[work_id]),
                 "precalculation_blockers": blockers,
+                "resolver_trace": resolver_trace,
+                "model_mapping_raw": raw_model_item,
             }
         for work_id, selection in proposed.items():
             self.accepted_rows[work_id] = selection
@@ -5309,6 +5811,10 @@ def _phase_norm_tools(
     phase: str,
     *,
     include_route_cache: bool = False,
+    active_work_ids: list[str] | None = None,
+    current_node_ids: dict[str, str] | None = None,
+    visible_child_node_ids: dict[str, list[str]] | None = None,
+    visible_evidence_fields: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Expose only schemas usable in the current checkpoint phase."""
     all_tools = {
@@ -5347,6 +5853,7 @@ def _phase_norm_tools(
         item_schema = (
             browse["function"]["parameters"]["properties"]["items"]["items"]
         )
+        items_schema = browse["function"]["parameters"]["properties"]["items"]
         source_properties = dict(item_schema.get("properties") or {})
         fields = phase_fields[phase]
         item_schema["properties"] = {
@@ -5354,6 +5861,37 @@ def _phase_norm_tools(
             for name in fields
             if name in source_properties
         }
+        if active_work_ids:
+            item_schema["properties"]["work_id"]["enum"] = list(active_work_ids)
+            items_schema["minItems"] = 1
+            items_schema["maxItems"] = len(active_work_ids)
+        current_nodes = list(dict.fromkeys(
+            str((current_node_ids or {}).get(work_id) or "").strip()
+            for work_id in (active_work_ids or [])
+            if str((current_node_ids or {}).get(work_id) or "").strip()
+        ))
+        if current_nodes and "current_node_id" in item_schema["properties"]:
+            item_schema["properties"]["current_node_id"]["enum"] = current_nodes
+        visible_nodes = list(dict.fromkeys(
+            str(node_id).strip()
+            for work_id in (active_work_ids or [])
+            for node_id in ((visible_child_node_ids or {}).get(work_id) or [])
+            if str(node_id).strip()
+        ))
+        if visible_nodes and "selected_node_id" in item_schema["properties"]:
+            item_schema["properties"]["selected_node_id"]["enum"] = visible_nodes
+        if visible_nodes and "evidence" in item_schema["properties"]:
+            item_schema["properties"]["evidence"]["items"]["properties"][
+                "source_node_id"
+            ]["enum"] = visible_nodes
+            if visible_evidence_fields:
+                item_schema["properties"]["evidence"]["items"]["properties"][
+                    "field"
+                ]["enum"] = list(dict.fromkeys(visible_evidence_fields))
+        if visible_nodes and "rejected_nodes" in item_schema["properties"]:
+            item_schema["properties"]["rejected_nodes"]["items"]["properties"][
+                "node_id"
+            ]["enum"] = visible_nodes
         item_schema["required"] = (
             ["work_id"]
             if phase == "family_root"
@@ -5448,15 +5986,22 @@ def _phase_norm_tools(
             continue_fields = [
                 *common_fields,
                 "selected_node_id",
-                "work_features",
-                "catalog_query",
             ]
+            if phase == "family_select":
+                continue_fields.extend(["work_features", "catalog_query"])
+            elif phase == "section_select":
+                continue_fields.append("catalog_query")
+            split_continue_required = [*common_fields, "selected_node_id"]
+            if phase == "family_select":
+                split_continue_required.extend(["work_features", "catalog_query"])
+            elif phase == "section_select":
+                split_continue_required.append("catalog_query")
             route_specs = (
                 (
                     "continue_norm_catalog",
                     "Select one exact shown child using official evidence.",
                     continue_fields,
-                    [*common_fields, "selected_node_id"],
+                    split_continue_required,
                 ),
                 (
                     "ask_norm_catalog_fact",
@@ -5504,6 +6049,12 @@ def _phase_norm_tools(
                 route_item.pop("allOf", None)
                 route_item["properties"]["evidence"]["minItems"] = 1
                 route_item["properties"]["rejected_nodes"]["maxItems"] = 6
+                if active_work_ids:
+                    route_items_schema = (
+                        route_tool["function"]["parameters"]["properties"]["items"]
+                    )
+                    route_items_schema["minItems"] = 1
+                    route_items_schema["maxItems"] = len(active_work_ids)
                 tools.append(route_tool)
             if phase != "family_root" and include_route_cache:
                 tools.append(all_tools["reuse_norm_catalog_route"])
@@ -5575,6 +6126,15 @@ def _run_batch_norm_agent(
     if not skill_prompt:
         raise RuntimeError("canonical smeta skill is unavailable")
     system_prompt = skill_prompt
+    def visible_work_items(work_ids: list[str] | None = None) -> list[dict[str, Any]]:
+        """Keep scoped navigation focused without losing the full session state."""
+        if not require_scoped_search:
+            return list(by_id.values())
+        selected_ids = work_ids or _phase_work_ids(
+            session, _norm_agent_phase(session)
+        )
+        return [by_id[work_id] for work_id in selected_ids if work_id in by_id]
+
     initial_conversation: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},
         {
@@ -5582,7 +6142,7 @@ def _run_batch_norm_agent(
             "content": json.dumps(
                 {
                     "user_request": str(user_request or "").strip(),
-                    "work_items": list(by_id.values()),
+                    "work_items": visible_work_items(),
                     "batch_contract": (
                         "Use tools only for work_id values present in work_items. Each item's neighbor_context is "
                         "navigation for overlap/coverage; do not search or submit those neighboring work_ids here. "
@@ -5592,6 +6152,13 @@ def _run_batch_norm_agent(
                             "choices and evidence. Never skip family→collection→section→table, "
                             "and never invent a code."
                             if require_scoped_search
+                            else ""
+                        )
+                        + (
+                            " memory_advisory contains prior reviewed project episodes, "
+                            "not evidence for this row. Use it to navigate or compare, then "
+                            "open current typed cards before deciding."
+                            if any(row.get("memory_advisory") for row in by_id.values())
                             else ""
                         )
                     ),
@@ -5679,16 +6246,35 @@ def _run_batch_norm_agent(
         evidence_markers = (
             "requires at least two distinct query or scoped-search strategies",
             "without an opened typed card",
+            "was not opened through read_norms_batch",
+            "requires opening at least one shown alternative",
+            "selected candidate contradicts bind",
+            "selection_kind exact requires exact operation, object and scope",
+            "selection_kind exact is unsupported by opened evidence",
         )
+        errors = [
+            error for error in (result.get("errors") or [])
+            if isinstance(error, dict)
+        ]
         missing_evidence = any(
             any(
                 marker in str(detail)
                 for marker in evidence_markers
             )
-            for error in (result.get("errors") or [])
-            if isinstance(error, dict)
+            for error in errors
             for detail in (error.get("details") or [])
         )
+        if not missing_evidence:
+            # Balanced interpretation can see that the model's prose names a
+            # norm positively, but it deliberately cannot open that card or
+            # change covered_by/unbound into bind.  This is an evidence error,
+            # not a JSON-shape error: return the same model to typed tools.
+            missing_evidence = any(
+                bool((error.get("resolver_hint") or {}).get("references"))
+                and not bool((error.get("resolver_hint") or {}).get("matched_opened_codes"))
+                and (error.get("resolver_hint") or {}).get("reason_suggests_positive_applicability") is True
+                for error in errors
+            )
         if not missing_evidence:
             return False
         remaining = session.evidence_remaining()
@@ -5723,7 +6309,14 @@ def _run_batch_norm_agent(
         must_navigate_scopes = []
         pending_candidates: dict[str, dict[str, dict[str, Any]]] = {}
         pending_opened: dict[str, dict[str, dict[str, Any]]] = {}
-        for work_id in session.remaining_work_ids:
+        memory_phase = _norm_agent_phase(session)
+        active_work_ids = _phase_work_ids(session, memory_phase)
+        memory_work_ids = (
+            active_work_ids
+            if require_scoped_search
+            else session.remaining_work_ids
+        )
+        for work_id in memory_work_ids:
             candidate_cards = {
                 str((card or {}).get("norm_code") or code): card
                 for code, card in (session.candidates.get(work_id) or {}).items()
@@ -5804,8 +6397,6 @@ def _run_batch_norm_agent(
                         "section": table_code[:5],
                         "table_code": table_code,
                     })
-        memory_phase = _norm_agent_phase(session)
-        active_work_ids = _phase_work_ids(session, memory_phase)
         focus_work_id = (
             next(
                 (work_id for work_id in must_read if work_id in active_work_ids),
@@ -5813,7 +6404,7 @@ def _run_batch_norm_agent(
             )
             or (active_work_ids[0] if active_work_ids else "")
         )
-        for work_id in session.remaining_work_ids:
+        for work_id in memory_work_ids:
             candidate_cards = pending_candidates[work_id]
             opened_cards = pending_opened[work_id]
             latest_candidate_codes = next(
@@ -5852,6 +6443,7 @@ def _run_batch_norm_agent(
                         ),
                         [],
                     )),
+                    phase=memory_phase,
                 ) if work_id in active_work_ids else [],
                 "selected_base_types": list(
                     (session.selected_base_types.get(work_id) or {}).values()
@@ -5947,6 +6539,21 @@ def _run_batch_norm_agent(
                 )
             )
         )
+        if require_scoped_search and len(conversation) >= 2:
+            try:
+                focused_request = json.loads(
+                    str(conversation[1].get("content") or "{}")
+                )
+            except json.JSONDecodeError:
+                focused_request = {
+                    "user_request": str(user_request or "").strip(),
+                }
+            focused_request["work_items"] = visible_work_items(active_work_ids)
+            conversation[1]["content"] = json.dumps(
+                focused_request,
+                ensure_ascii=False,
+                default=str,
+            )
         conversation.append({
             "role": "user",
             "content": json.dumps(
@@ -5958,7 +6565,11 @@ def _run_batch_norm_agent(
                     "active_phase_instruction": smeta_phase_instruction(
                         memory_phase
                     ),
-                    "remaining_work_ids": session.remaining_work_ids,
+                    "remaining_work_ids": memory_work_ids,
+                    "deferred_work_count": max(
+                        0,
+                        len(session.remaining_work_ids) - len(memory_work_ids),
+                    ),
                     "focus_work_id": focus_work_id,
                     "active_work_ids": active_work_ids,
                     "work_evidence_status": work_evidence_status,
@@ -6010,6 +6621,7 @@ def _run_batch_norm_agent(
             "previous_call_signature": previous_call_signature,
             "duplicate_feedback_signature": duplicate_feedback_signature,
             "structured_mapping_attempts": structured_mapping_attempts,
+            "evidence_repair_turns_remaining": evidence_repair_turns_remaining,
             "last_submit_result": copy.deepcopy(last_submit_result),
             "focus_serialization_pending": focus_serialization_pending,
             "focus_serialization_reason": focus_serialization_reason,
@@ -6071,6 +6683,14 @@ def _run_batch_norm_agent(
         schema = _mapping_output_schema(
             serialize_ids,
             allowed_bind_codes=allowed_bind_codes,
+            allowed_coverage_targets={
+                work_id: [
+                    target_work_id
+                    for target_work_id in by_id
+                    if target_work_id != work_id
+                ]
+                for work_id in serialize_ids
+            },
         )
         request = {
             "trigger": reason,
@@ -6095,9 +6715,22 @@ def _run_batch_norm_agent(
                 work_id for work_id in remaining
                 if work_id not in serialize_ids
             ],
-            # Ollama explicitly recommends grounding a structured-output call
-            # with the same schema in the prompt as well as in `format`.
-            "output_schema": schema,
+            # The complete schema is already provider-enforced through Ollama's
+            # ``format`` field. Repeating its several kilobytes in the prompt
+            # can leave an 8K local context with too little room to close JSON.
+            "output_schema": {
+                "delivery": "provider_enforced_json_schema",
+                "root": "rows",
+                "work_ids": serialize_ids,
+                "decisions": ["bind", "covered_by", "unbound"],
+                "instruction": (
+                    "The provider enforces the complete field-level schema; "
+                    "fill every required field and return JSON only. For bind, "
+                    "matched_operations, conditions_checked and overlap_resolution "
+                    "must be non-empty, and candidate_evaluations must mark the "
+                    "submitted norm exactly once as selected."
+                ),
+            },
             "validation_feedback": (
                 copy.deepcopy(last_submit_result.get("errors") or [])
                 if last_submit_result and not last_submit_result.get("ok")
@@ -6117,11 +6750,29 @@ def _run_batch_norm_agent(
                 "explicitly present in a returned title, work step, resource, unit "
                 "or source_ref."
             ),
+            "interpretation_help": (
+                "LES tolerates harmless field/alias mistakes and can resolve a norm "
+                "code mentioned in your prose only to a unique typed card that you "
+                "already opened. It never creates evidence or changes your decision. "
+                "Do not default to unbound because serialization is difficult: when "
+                "an opened card is professionally applicable, choose bind and use its "
+                "exact norm_code from typed_bind_options."
+            ),
         }
         conversation.append({
             "role": "user",
             "content": json.dumps(request, ensure_ascii=False),
         })
+        mapping_frame_profile = _model_request_shape(conversation, [])
+        mapping_frame_profile["mapping_schema_bytes"] = len(
+            json.dumps(
+                schema,
+                ensure_ascii=False,
+                sort_keys=True,
+                default=str,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
         started = perf_counter()
         try:
             payload = mapping_exchange(conversation, schema) or {}
@@ -6135,6 +6786,7 @@ def _run_batch_norm_agent(
                 "trigger": reason,
                 "serialize_work_ids": serialize_ids,
                 "error": str(error),
+                "frame_profile": mapping_frame_profile,
             })
             if _is_timeout_error(error):
                 blocker = {
@@ -6172,6 +6824,7 @@ def _run_batch_norm_agent(
             "trigger": reason,
             "serialize_work_ids": serialize_ids,
             "seed": payload.get("_les_seed"),
+            "frame_profile": mapping_frame_profile,
         })
         return {
             "id": f"structured-mapping-{turn}",
@@ -6182,14 +6835,35 @@ def _run_batch_norm_agent(
     mapping_rows_per_call = (
         mapping_chunk if mapping_chunk > 0 else max(1, len(by_id))
     )
+    evidence_repair_turn_budget = (
+        _mapping_evidence_repair_turns() if mapping_exchange is not None else 0
+    )
+    evidence_repair_turns_remaining = (
+        int(resume_state.get("evidence_repair_turns_remaining") or 0)
+        if not validation_contract_changed else 0
+    )
     finalization_turns = (
         math.ceil(max(1, len(by_id)) / mapping_rows_per_call) + 1
         if mapping_exchange is not None else 0
     )
+    post_repair_finalization_turns = 2 if evidence_repair_turn_budget else 0
     start_turn = max(1, int(resume_state.get("next_turn") or 1))
-    for turn in range(start_turn, max_turns + finalization_turns + 1):
+    for turn in range(
+        start_turn,
+        # After semantic repair tools the same model still needs one terminal
+        # serialization turn plus one cheap schema-repair turn.  These do not
+        # expand the evidence budget.
+        max_turns
+        + finalization_turns
+        + evidence_repair_turn_budget
+        + post_repair_finalization_turns
+        + 1,
+    ):
         started = perf_counter()
-        forced_mapping = turn > max_turns or focus_serialization_pending
+        forced_mapping = (
+            (turn > max_turns and evidence_repair_turns_remaining <= 0)
+            or focus_serialization_pending
+        )
         active_phase = _norm_agent_phase(session)
         if (
             require_scoped_search
@@ -6217,6 +6891,39 @@ def _run_batch_norm_agent(
             _phase_norm_tools(
                 active_phase,
                 include_route_cache=bool(session.route_evidence_cache),
+                active_work_ids=_phase_work_ids(session, active_phase),
+                current_node_ids={
+                    work_id: str(session.catalog_current_nodes.get(work_id) or "")
+                    for work_id in _phase_work_ids(session, active_phase)
+                },
+                visible_child_node_ids={
+                    work_id: [
+                        str(child.get("node_id") or "")
+                        for child in (
+                            session.catalog_menus.get(work_id, {}).get(
+                                session.catalog_current_nodes.get(work_id) or "",
+                                [],
+                            )
+                        )
+                        if str(child.get("node_id") or "")
+                    ]
+                    for work_id in _phase_work_ids(session, active_phase)
+                },
+                visible_evidence_fields=list(dict.fromkeys(
+                    field
+                    for work_id in _phase_work_ids(session, active_phase)
+                    for child in (
+                        session.catalog_menus.get(work_id, {}).get(
+                            session.catalog_current_nodes.get(work_id) or "",
+                            [],
+                        )
+                    )
+                    for field in (
+                        "title", "official_name", "purpose", "typical_scope",
+                        "not_for", "source_ref", "cipher", "norm_count",
+                    )
+                    if child.get(field) not in (None, "", [])
+                )),
             )
             if require_scoped_search
             else [
@@ -6467,6 +7174,11 @@ def _run_batch_norm_agent(
                     focus_serialization_pending = False
                     previous_call_signature = ""
                     duplicate_feedback_signature = ""
+                    if turn >= max_turns:
+                        evidence_repair_turns_remaining = max(
+                            evidence_repair_turns_remaining,
+                            evidence_repair_turn_budget,
+                        )
             submitted = dict(session.accepted_rows) if session.complete else None
         tool_time_sec = round(max(0.0, perf_counter() - tools_started), 4)
         if model_trace:
@@ -6489,6 +7201,10 @@ def _run_batch_norm_agent(
             structured_mapping_attempts = 0
             focus_serialization_pending = False
             focus_serialization_reason = ""
+        if not forced_mapping and turn > max_turns:
+            evidence_repair_turns_remaining = max(
+                0, evidence_repair_turns_remaining - 1
+            )
         emit_checkpoint(next_turn=turn + 1)
         if pending_user_question is not None:
             partial = session.result(
@@ -6999,6 +7715,7 @@ def _mapping_output_schema(
     remaining_work_ids: list[str],
     *,
     allowed_bind_codes: dict[str, list[str]] | None = None,
+    allowed_coverage_targets: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """Build a compact decision-specific transport schema for local models.
 
@@ -7042,11 +7759,15 @@ def _mapping_output_schema(
         if "reason" in selected:
             selected["reason"]["maxLength"] = 480
         if "analog_limitations" in selected:
-            selected["analog_limitations"]["maxItems"] = 4
+            selected["analog_limitations"].setdefault("maxItems", 4)
             selected["analog_limitations"]["items"]["maxLength"] = 180
         if "candidate_evaluations" in selected:
             evaluations = selected["candidate_evaluations"]
             evaluations["maxItems"] = 3
+            evaluations["description"] = (
+                "Evaluate opened candidates only. Exactly one entry must use "
+                "decision=selected and its candidate_code must equal norm_code."
+            )
             evaluation_properties = evaluations["items"]["properties"]
             evaluation_properties["reason"]["maxLength"] = 280
             evaluation_properties["foreign_resources"]["maxItems"] = 5
@@ -7060,7 +7781,10 @@ def _mapping_output_schema(
             ):
                 technology_properties[name]["maxItems"] = 6
                 technology_properties[name]["items"]["maxLength"] = 180
+            technology_properties["matched_operations"]["minItems"] = 1
+            technology_properties["conditions_checked"]["minItems"] = 1
             technology_properties["overlap_resolution"]["maxLength"] = 240
+            technology_properties["overlap_resolution"]["minLength"] = 1
         return {
             "type": "object",
             "properties": selected,
@@ -7069,20 +7793,63 @@ def _mapping_output_schema(
         }
 
     bind_variants: list[dict[str, Any]] = []
+    bind_property_names = (
+        "norm_code", "selection_kind", "applicability",
+        "analog_limitations", "candidate_evaluations",
+        "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
+    )
+    bind_required = (
+        "norm_code", "selection_kind", "applicability",
+        "analog_limitations", "candidate_evaluations",
+        "technology_check", "reason",
+    )
+
+    def append_bind_variants(
+        *,
+        work_ids: list[str] | None = None,
+        codes: list[str] | None = None,
+    ) -> None:
+        norm_override = (
+            {"norm_code": {"type": "string", "enum": codes}}
+            if codes is not None
+            else {}
+        )
+        exact_limitations = copy.deepcopy(properties["analog_limitations"])
+        exact_limitations["maxItems"] = 0
+        analog_limitations = copy.deepcopy(properties["analog_limitations"])
+        analog_limitations["minItems"] = 1
+        bind_variants.extend([
+            variant(
+                "bind",
+                bind_property_names,
+                bind_required,
+                work_ids=work_ids,
+                property_overrides={
+                    **norm_override,
+                    "selection_kind": {"type": "string", "enum": ["exact"]},
+                    "applicability": {"type": "string", "enum": ["exact"]},
+                    "analog_limitations": exact_limitations,
+                },
+            ),
+            variant(
+                "bind",
+                bind_property_names,
+                bind_required,
+                work_ids=work_ids,
+                property_overrides={
+                    **norm_override,
+                    "selection_kind": {"type": "string", "enum": ["analog"]},
+                    "applicability": {
+                        "type": "string",
+                        "enum": ["close_analog", "weak_analog"],
+                    },
+                    "analog_limitations": analog_limitations,
+                },
+            ),
+        ])
+
     if allowed_bind_codes is None:
-        bind_variants.append(variant(
-            "bind",
-            (
-                "norm_code", "selection_kind", "applicability",
-                "analog_limitations", "candidate_evaluations",
-                "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
-            ),
-            (
-                "norm_code", "selection_kind", "applicability",
-                "analog_limitations", "candidate_evaluations",
-                "technology_check", "reason",
-            ),
-        ))
+        append_bind_variants()
     else:
         for row_work_id in remaining_work_ids:
             codes = list(dict.fromkeys(
@@ -7090,30 +7857,30 @@ def _mapping_output_schema(
                 for code in (allowed_bind_codes.get(row_work_id) or [])
                 if str(code).strip()
             ))
-            if not codes:
-                continue
-            bind_variants.append(variant(
-                "bind",
-                (
-                    "norm_code", "selection_kind", "applicability",
-                    "analog_limitations", "candidate_evaluations",
-                    "technology_check", "nr_sp_rule_id", "resource_actions", "reason",
-                ),
-                (
-                    "norm_code", "selection_kind", "applicability",
-                    "analog_limitations", "candidate_evaluations",
-                    "technology_check", "reason",
-                ),
-                work_ids=[row_work_id],
-                property_overrides={
-                    "norm_code": {"type": "string", "enum": codes},
-                },
-            ))
-    covered_by = variant(
-        "covered_by",
-        ("covered_by_work_id", "reason"),
-        ("covered_by_work_id", "reason"),
-    )
+            if codes:
+                append_bind_variants(work_ids=[row_work_id], codes=codes)
+    covered_by_variants: list[dict[str, Any]] = []
+    for row_work_id in remaining_work_ids:
+        targets = list(dict.fromkeys(
+            str(target).strip()
+            for target in (
+                (allowed_coverage_targets or {}).get(row_work_id)
+                if allowed_coverage_targets is not None
+                else remaining_work_ids
+            )
+            if str(target).strip() and str(target).strip() != row_work_id
+        ))
+        if not targets:
+            continue
+        covered_by_variants.append(variant(
+            "covered_by",
+            ("covered_by_work_id", "reason"),
+            ("covered_by_work_id", "reason"),
+            work_ids=[row_work_id],
+            property_overrides={
+                "covered_by_work_id": {"type": "string", "enum": targets},
+            },
+        ))
     unbound = variant(
         "unbound",
         ("unbound_evidence", "reason"),
@@ -7141,7 +7908,7 @@ def _mapping_output_schema(
     unbound_evidence["additionalProperties"] = False
 
     parameters["properties"]["rows"]["items"] = {
-        "oneOf": [*bind_variants, covered_by, unbound],
+        "oneOf": [*bind_variants, *covered_by_variants, unbound],
     }
     parameters["properties"]["rows"]["minItems"] = 1
     parameters["properties"]["rows"]["maxItems"] = max(1, len(remaining_work_ids))
@@ -7318,6 +8085,7 @@ def run_vor_document_workflow(
     resume_agent_result: dict[str, Any] | None = None,
     batch_checkpoint: Checkpoint | None = None,
     require_scoped_search: bool = False,
+    work_context_enricher: WorkContextEnricher | None = None,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     intake = intake_vor_document(path)
@@ -7326,6 +8094,22 @@ def run_vor_document_workflow(
         raise RuntimeError(
             "в исходном документе не распознаны строки с наименованием, единицей измерения и количеством"
         )
+    if work_context_enricher is not None:
+        for row in work_rows:
+            try:
+                enrichment = work_context_enricher(dict(row)) or {}
+            except Exception:
+                enrichment = {}
+            if not isinstance(enrichment, dict):
+                continue
+            # The adjacent module may provide hints and typed route DTOs only;
+            # it cannot seed opened cards or overwrite source facts.
+            advisory = enrichment.get("memory_advisory")
+            routes = enrichment.get("route_evidence_cache")
+            if isinstance(advisory, list) and advisory:
+                row["memory_advisory"] = copy.deepcopy(advisory[:8])
+            if isinstance(routes, list) and routes:
+                row["route_evidence_cache"] = copy.deepcopy(routes[:8])
     query_rows: list[dict[str, Any]] = []
     for index, row in enumerate(work_rows):
         neighbors = []

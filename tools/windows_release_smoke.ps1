@@ -321,18 +321,20 @@ try {
   if ($smokeSeedPath) {
     Remove-Item -LiteralPath $smokeSeedPath -Force -ErrorAction SilentlyContinue
   }
-  $json = $result | ConvertTo-Json -Depth 10
-  $json | Set-Content -LiteralPath $ReportPath -Encoding UTF8
-  Write-Output $json
-
   if ($runtimeState -and (Test-Path -LiteralPath $StopScript)) {
     try {
       & $StopScript -ProxyPort ([int]$runtimeState.proxy_port) -UiPort ([int]$runtimeState.ui_port) | Out-Null
-    } catch { }
+    } catch {
+      $result.runtime_cleanup_error = $_.Exception.Message
+      $result.ok = $false
+    }
   }
   if ($bootstrapProcess -and -not $bootstrapProcess.HasExited) {
     Stop-Process -Id $bootstrapProcess.Id -Force -ErrorAction SilentlyContinue
   }
+  $json = $result | ConvertTo-Json -Depth 10
+  $json | Set-Content -LiteralPath $ReportPath -Encoding UTF8
+  Write-Output $json
 }
 
 if (-not $result.ok) { exit 1 }

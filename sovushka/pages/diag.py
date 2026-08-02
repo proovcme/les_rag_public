@@ -9,7 +9,7 @@ import sys
 import time
 from nicegui import ui
 
-from sovushka.state import state, api_get, api_post, add_log, active_llm_provider
+from sovushka.state import state, api_get, api_post, api_put, add_log, active_llm_provider
 from sovushka.config import MLX_URL
 from sovushka.components.charts import _html, esc
 from sovushka.uikit.components import (
@@ -17,6 +17,9 @@ from sovushka.uikit.components import (
     action_button,
     panel,
     section_heading,
+    select_field,
+    status_badge,
+    render_feedback_state,
 )
 
 
@@ -289,6 +292,46 @@ def build_diag():
             )
             diag_map = _html(_build_diag_map_html([])).classes("w-full")
 
+        # Memory is an explicitly controlled adjacent module. Configuration is
+        # persisted for the next controlled proxy start; this page never restarts it.
+        with ui.expansion(
+            "Память проектов",
+            icon="o_psychology_alt",
+        ).classes("sov-config-disclosure w-full"):
+            section_heading(
+                "Memory Core",
+                "Накопленная память помогает навигации, но не заменяет RAG, источники или расчёт сметы.",
+            )
+            with ui.row().classes("w-full items-center gap-3"):
+                memory_status_badge = status_badge("Загрузка…", "muted")
+                memory_counts_label = ui.label("").classes("sov-ui-section-detail")
+            with ui.row().classes("w-full gap-3"):
+                memory_mode_select = select_field(
+                    {"off": "Выключена", "shadow": "Только накопление", "on": "Включена"},
+                    value="off",
+                    label="Режим памяти",
+                    classes="grow",
+                )
+                memory_recall_select = select_field(
+                    {"off": "Не использовать", "advisory": "Подсказки", "route_reuse": "Маршруты смет (опасный)"},
+                    value="off",
+                    label="Память смет",
+                    classes="grow",
+                )
+            memory_capture_switch = ui.switch(
+                "Сохранять успешные опубликованные сметы", value=True
+            ).props('aria-label="Сохранять успешные опубликованные сметы"')
+            ui.label(
+                "Переиспользование маршрутов не выбирает норму и включается только после отдельного подтверждения."
+            ).classes("sov-ui-section-detail")
+            memory_feedback = ui.column().classes("w-full")
+            memory_save_btn = action_button(
+                "Сохранить настройки",
+                icon="o_save",
+                on_click=lambda: asyncio.create_task(save_memory_config()),
+                variant="secondary",
+            )
+
         # ── Детали последней проверки ────────────
         with ui.expansion(
             "Детали последней проверки",
@@ -349,11 +392,65 @@ def build_diag():
 
         # Таймер для начальной загрузки бэкапов
         ui.timer(0.1, lambda: asyncio.create_task(load_backups()), once=True)
+        ui.timer(0.1, lambda: asyncio.create_task(load_memory_config()), once=True)
 
     # ── Вспомогательные функции диагностики ──────────
 
     STATUS_ICON  = {"ok": "✓", "warn": "⚠", "err": "✗"}
     STATUS_COLOR = {"ok": "var(--ok)", "warn": "var(--warn)", "err": "var(--err)"}
+
+    async def load_memory_config():
+        payload = await api_get("/api/memory/status")
+        memory_feedback.clear()
+        if not isinstance(payload, dict):
+            memory_status_badge.set_text("Недоступна")
+            with memory_feedback:
+                render_feedback_state("error", detail="Не удалось прочитать настройки Memory Core.")
+            return
+        mode = str(payload.get("mode") or "off")
+        memory_mode_select.value = mode
+        memory_recall_select.value = str(payload.get("smeta_recall_mode") or "off")
+        memory_capture_switch.value = bool(payload.get("smeta_capture_enabled", True))
+        memory_status_badge.set_text({"off": "Выключена", "shadow": "Накопление", "on": "Включена"}.get(mode, mode))
+        memory_counts_label.set_text(
+            f"Трасс смет: {int(payload.get('smeta_traces') or 0)} · конфликтов: {int(payload.get('open_conflicts') or 0)}"
+        )
+
+    async def save_memory_config():
+        mode = str(memory_mode_select.value or "off")
+        recall = str(memory_recall_select.value or "off")
+        if mode != "on" and recall != "off":
+            ui.notify("Подсказки памяти доступны только в режиме «Включена».", type="warning")
+            return
+        if recall == "route_reuse":
+            with ui.dialog() as dialog, panel(variant="raised", classes="q-pa-md"):
+                section_heading(
+                    "Подтвердите переиспользование маршрутов",
+                    "Memory передаст модели только путь каталога. Норму, применимость и расчёт модель проверит заново.",
+                )
+                with ui.row().classes("justify-end gap-2"):
+                    action_button("Отмена", on_click=lambda: dialog.submit(False), variant="quiet")
+                    action_button("Подтверждаю", on_click=lambda: dialog.submit(True), variant="danger")
+            dialog.open()
+            if not await dialog:
+                return
+        memory_save_btn.props("disabled")
+        try:
+            result = await api_put("/api/memory/config", {
+                "mode": mode,
+                "smeta_capture": bool(memory_capture_switch.value),
+                "smeta_recall": recall,
+            })
+            memory_feedback.clear()
+            with memory_feedback:
+                if result:
+                    ui.label(
+                        "Настройки сохранены. Они применятся после штатного перезапуска Л.Е.С."
+                    ).classes("sov-ui-section-detail")
+                else:
+                    render_feedback_state("error", detail="Настройки не сохранены.")
+        finally:
+            memory_save_btn.props(remove="disabled")
 
     async def load_backups():
         data = await api_get("/api/backup/status")

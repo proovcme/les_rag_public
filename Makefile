@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-unit test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
+.PHONY: version-sync verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
 
 PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
@@ -15,8 +15,10 @@ FOCUS_TESTS ?= tests/test_rim_agent_turn.py tests/test_rim_session.py tests/test
 RAG_CORE_TESTS ?= tests/test_datasets_router.py tests/test_rag_config.py tests/test_qdrant_adapter_parse.py tests/test_build_rag_contract_sibling.py tests/test_system_dataset_service.py tests/test_retrieval_quality_service.py tests/test_retrieval_service.py tests/test_saferag_service.py tests/test_source_excerpts.py tests/test_evidence_packet_service.py tests/test_rag_golden_set.py tests/test_rag_index_contract_audit.py tests/test_notebook_study_service.py
 RELEASE_CRITICAL_TESTS ?= tests/test_fgis_full_update.py tests/test_smeta_release_baseline.py tests/test_qdrant_collection_layout.py tests/test_datasets_router.py tests/test_rag_config.py tests/test_document_explorer_service.py tests/test_process_status.py
 UNIT_TESTS ?= tests/test_answer_contract_service.py tests/test_candidate_selection_service.py tests/test_evidence_contract.py tests/test_numeric_provenance.py tests/test_publication_check.py tests/test_query_router.py tests/test_smeta_resource_normalizer.py
+MEMORY_TESTS ?= tests/test_memory_core.py tests/test_memory_api.py tests/test_memory_ui_contract.py tests/test_smeta_memory_isolation.py
+SMETA_DOCUMENT_TESTS ?= tests/test_smeta_chat_application_service.py tests/test_ks_forms_service.py tests/test_rim_coverage_header.py tests/test_forms_templates.py tests/test_command_service.py
 INTEGRATION_TESTS ?= tests/test_smeta_structured_base.py tests/test_smeta_norm_browser.py tests/test_smeta_rerank_ab_probe.py $(RELEASE_CRITICAL_TESTS)
-CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) tests/test_test_profiles.py tests/test_software_versions.py)
+CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) $(MEMORY_TESTS) $(SMETA_DOCUMENT_TESTS) tests/test_test_profiles.py tests/test_software_versions.py)
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py
 ARTEL_TESTS := $(wildcard tests/test_artel*.py)
 ARCHITECTURE_EXCLUDED_TESTS := $(LEGACY_ARCHITECTURE_TESTS) $(ARTEL_TESTS)
@@ -83,6 +85,15 @@ test:
 
 test-unit:
 	uv run python -m pytest -q --durations=15 $(UNIT_TESTS)
+
+test-smoke:
+	uv run python tools/test_runner.py smoke
+
+test-coverage:
+	uv run python tools/test_runner.py coverage
+
+test-ci:
+	uv run python tools/test_runner.py ci
 
 test-integration:
 	uv run python -m pytest -q --durations=15 $(INTEGRATION_TESTS)

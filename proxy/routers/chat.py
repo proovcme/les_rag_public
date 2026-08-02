@@ -183,6 +183,19 @@ async def lock_smeta_mapping(
             out_report=report_path,
             revision_root=SMETA_REVISION_ROOT,
         )
+        # Explicit user lock is the external feedback signal for episodic
+        # Memory.  It promotes an already captured project trace; Memory off or
+        # a missing trace remains a fail-open no-op.
+        try:
+            from proxy.services.memory_port import get_memory_port
+
+            get_memory_port().confirm_smeta_revision(
+                revision_id,
+                locked.revision_id,
+                req.review_note,
+            )
+        except Exception as memory_error:
+            logger.warning("[MEMORY] smeta lock feedback skipped: %s", memory_error)
     except FileNotFoundError as error:
         raise HTTPException(404, "Mapping-ревизия не найдена") from error
     except ValueError as error:
@@ -3211,14 +3224,57 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if cmd_res and cmd_res.get("rewrite"):
             req.question = cmd_res["rewrite"]
         elif cmd_res is not None:
+            cmd_payload = dict(cmd_res.get("command") or {})
+            if cmd_payload.get("action") == "generate_filled_form":
+                from proxy.services.ks_forms_chat_service import answer_ks_forms_query
+
+                ks_res = await asyncio.to_thread(
+                    answer_ks_forms_query,
+                    f"собери {cmd_payload.get('form_id')}",
+                    project_id=int(pid) if pid else None,
+                    session_id=str(req.session_id or ""),
+                    fmt=str(cmd_payload.get("fmt") or "xlsx"),
+                )
+                return {
+                    "answer": ks_res.get("answer") or cmd_res["answer"],
+                    "crag_status": "DETERMINISTIC",
+                    "sources": [],
+                    "query_route": _profile_route(
+                        "ks_forms", "filled" if ks_res.get("ok") else "clarify"
+                    ),
+                    "validation": {"enabled": False, "reason": "deterministic_ks_forms"},
+                    "command": ks_res.get("command") or cmd_payload,
+                }
             return {
                 "answer": cmd_res["answer"],
                 "crag_status": "DETERMINISTIC",
                 "sources": [],
                 "query_route": _profile_route("command", (cmd_res.get("command") or {}).get("action")),
                 "validation": {"enabled": False, "reason": "deterministic_command"},
-                "command": cmd_res.get("command"),
+                "command": cmd_payload,
             }
+
+    from proxy.services.ks_forms_chat_service import (
+        answer_ks_forms_query,
+        is_ks_forms_query,
+    )
+    if is_ks_forms_query(req.question):
+        ks_res = await asyncio.to_thread(
+            answer_ks_forms_query,
+            req.question,
+            project_id=int(pid) if pid else None,
+            session_id=str(req.session_id or ""),
+        )
+        return {
+            "answer": ks_res.get("answer") or "",
+            "crag_status": "DETERMINISTIC",
+            "sources": [],
+            "query_route": _profile_route(
+                "ks_forms", "filled" if ks_res.get("ok") else "clarify"
+            ),
+            "validation": {"enabled": False, "reason": "deterministic_ks_forms"},
+            "command": ks_res.get("command"),
+        }
 
     def _mode_reply(
         answer: str,
@@ -3303,6 +3359,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if req.attachment_id and _smeta_request_needs_lsr_output(req.question):
             document_result = await run_smeta_document_application(
                 attachment_id=req.attachment_id,
+                project_id=req.project_id,
                 user_request=req.question,
                 token_sink=token_sink,
                 artifact_dir=_SMETA_ARTIFACT_DIR,

@@ -48,6 +48,13 @@ _BASE_PREFIX_RE = re.compile(
     r"^(ГЭСНМР|ГЭСНМ|ГЭСНП|ГЭСНР|ГЭСН|ФЕРМР|ФЕРМ|ФЕРП|ФЕРР|ФЕР|ТЕРМР|ТЕРМ|ТЕРП|ТЕРР|ТЕР)",
     re.I,
 )
+_TYPOGRAPHIC_DASHES = str.maketrans({
+    "‐": "-", "‑": "-", "‒": "-", "–": "-", "—": "-", "−": "-",
+})
+
+
+def _norm_transport_text(code: Any) -> str:
+    return str(code or "").translate(_TYPOGRAPHIC_DASHES).strip().upper().replace(" ", "")
 
 
 def _f(value: Any) -> float:
@@ -111,7 +118,7 @@ def _base_type(prefix: Any, *, default: str = "ГЭСН") -> str:
 
 
 def _split_norm_ref(code: Any, *, default_base: str = "ГЭСН") -> tuple[str, str]:
-    s = str(code or "").strip().upper().replace(" ", "")
+    s = _norm_transport_text(code)
     prefix = _BASE_PREFIX_RE.match(s)
     base_type = _base_type(prefix.group(1) if prefix else "", default=default_base)
     bare = _BARE_NORM_RE.search(s)
@@ -119,7 +126,7 @@ def _split_norm_ref(code: Any, *, default_base: str = "ГЭСН") -> tuple[str, 
 
 
 def _has_explicit_base_prefix(code: Any) -> bool:
-    return bool(_BASE_PREFIX_RE.match(str(code or "").strip().upper().replace(" ", "")))
+    return bool(_BASE_PREFIX_RE.match(_norm_transport_text(code)))
 
 
 def _norm_code(code: Any) -> str:

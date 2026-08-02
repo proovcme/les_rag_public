@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from proxy.services.rim_mapping_progress_service import build_mapping_progress
+from proxy.smeta_core.document_workflow import MAPPING_VALIDATION_CONTRACT_VERSION
 
 
 def _vor_rows() -> list[dict[str, object]]:
@@ -93,7 +94,7 @@ def _checkpoint(*, validation_version: str) -> dict[str, object]:
 
 
 def test_mapping_progress_exposes_all_five_durable_rows_and_readable_sources():
-    checkpoint = _checkpoint(validation_version="grounded-unit-scoped-mapping-v11")
+    checkpoint = _checkpoint(validation_version=MAPPING_VALIDATION_CONTRACT_VERSION)
 
     result = build_mapping_progress(_vor_rows(), checkpoint)
 
@@ -137,7 +138,7 @@ def test_mapping_progress_marks_old_contract_decision_for_revalidation_without_m
 
 
 def test_mapping_progress_exposes_active_typed_route_success_and_rejected_attempt():
-    checkpoint = _checkpoint(validation_version="grounded-unit-scoped-mapping-v11")
+    checkpoint = _checkpoint(validation_version=MAPPING_VALIDATION_CONTRACT_VERSION)
     resume = checkpoint["payload"]["resume_state"]
     tool_session = resume["tool_session"]
     tool_session["accepted_rows"] = {}

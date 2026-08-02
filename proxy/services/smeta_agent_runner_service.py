@@ -80,6 +80,7 @@ def _requires_evidence_continuation(feedback: dict[str, Any] | None) -> bool:
     """Return true only when terminal repair cannot succeed without another tool read/search."""
     evidence_markers = (
         "was not opened through read_norms_batch",
+        "not present in the opened structured cards",
         "requires opening at least one shown alternative",
         "cards not opened through tools",
         "opened_norm_codes must include a read_norms_batch card",
@@ -100,34 +101,40 @@ def _qwen_terminal_schema(
 ) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
     """Constrain recovery to executed facts and, on retry, the model's prior decision type."""
     remaining = session.remaining_work_ids
-    schema = _mapping_output_schema(remaining)
-    row_schema = schema["properties"]["rows"]["items"]
-    evidence_schema = row_schema["properties"]["unbound_evidence"]
     allowed_by_work = {
         work_id: session._allowed_unbound_evidence(work_id)
         for work_id in remaining
     }
-    allowed_queries = list(dict.fromkeys(
-        str(query)
-        for evidence in allowed_by_work.values()
-        for query in (evidence.get("queries_used") or [])
-        if str(query)
-    ))
-    allowed_codes = list(dict.fromkeys(
-        str(code)
-        for evidence in allowed_by_work.values()
-        for code in (evidence.get("opened_norm_codes") or [])
-        if str(code)
-    ))
-    if allowed_queries:
-        evidence_schema["properties"]["queries_used"]["items"]["enum"] = allowed_queries
-    if allowed_codes:
-        evidence_schema["properties"]["opened_norm_codes"]["items"]["enum"] = allowed_codes
-        row_schema["properties"]["candidate_evaluations"]["items"]["properties"][
-            "candidate_code"
-        ]["enum"] = allowed_codes
-    else:
-        evidence_schema["properties"]["opened_norm_codes"]["maxItems"] = 0
+    allowed_bind_codes = {
+        work_id: [
+            str(code)
+            for code in (evidence.get("opened_norm_codes") or [])
+            if str(code)
+        ]
+        for work_id, evidence in allowed_by_work.items()
+    }
+    schema = _mapping_output_schema(
+        remaining,
+        # Before the first recovery Qwen must still be able to express a bind
+        # decision so the strict session can tell it which evidence is missing.
+        # Once at least one typed card is open, provider-side JSON is narrowed
+        # to those factual codes as well.
+        allowed_bind_codes=(
+            allowed_bind_codes
+            if any(allowed_bind_codes.values())
+            else None
+        ),
+        allowed_coverage_targets={
+            work_id: [
+                target_work_id
+                for target_work_id in session.by_id
+                if target_work_id != work_id
+            ]
+            for work_id in remaining
+        },
+    )
+    row_union = schema["properties"]["rows"]["items"]
+    variants = list(row_union.get("oneOf") or [])
 
     feedback_errors = list((validation_feedback or {}).get("errors") or [])
     invalid_unbound_ids = {
@@ -142,25 +149,35 @@ def _qwen_terminal_schema(
     }
     if len(remaining) == 1 and remaining[0] in invalid_unbound_ids:
         # The first structured response already made the professional unbound
-        # decision.  The retry only makes its missing transport fields mandatory.
-        row_schema["properties"]["decision"]["enum"] = ["unbound"]
-        required = list(row_schema.get("required") or [])
-        if "unbound_evidence" not in required:
-            required.append("unbound_evidence")
-        row_schema["required"] = required
+        # decision. The retry preserves it while asking for compact evidence;
+        # executed queries and codes remain in the immutable tool trace.
+        row_union["oneOf"] = [
+            variant for variant in variants
+            if (variant.get("properties") or {}).get("decision", {}).get("enum") == ["unbound"]
+        ]
     elif len(remaining) == 1 and remaining[0] in incomplete_bind_ids:
         # The professional bind already exists. This retry only requires the
-        # fields that the ordinary function call or first JSON response omitted.
-        row_schema["properties"]["decision"]["enum"] = ["bind"]
-        required = list(row_schema.get("required") or [])
-        for field in (
-            "norm_code", "selection_kind", "applicability",
-            "analog_limitations", "candidate_evaluations", "technology_check",
-        ):
-            if field not in required:
-                required.append(field)
-        row_schema["required"] = required
+        # complete bind variant, constrained to cards the same model opened.
+        row_union["oneOf"] = [
+            variant for variant in variants
+            if (variant.get("properties") or {}).get("decision", {}).get("enum") == ["bind"]
+        ]
     return schema, allowed_by_work
+
+
+def _qwen_agent_function_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """Adapt a canonical tool schema to Qwen-Agent 0.0.34's root-key limit.
+
+    The shared session still executes and validates the original LES contract;
+    this facade changes only provider-side serialization and keeps all nested
+    constraints intact.
+    """
+    payload = copy.deepcopy(schema)
+    return {
+        "type": "object",
+        "properties": dict(payload.get("properties") or {}),
+        "required": list(payload.get("required") or []),
+    }
 
 
 def _cancelled(cancel_check: CancelCheck) -> None:
@@ -241,8 +258,12 @@ class QwenAgentSmetaRunner:
             ],
             "format": schema,
             "stream": False,
+            "think": False,
             "options": {
-                "temperature": 0.0,
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "top_k": 20,
+                "min_p": 0.0,
                 "num_predict": 4096,
                 "num_ctx": 32768,
             },
@@ -300,7 +321,7 @@ class QwenAgentSmetaRunner:
                 function = specification["function"]
                 self.name = str(function["name"])
                 self.description = str(function.get("description") or "")
-                self.parameters = dict(function["parameters"])
+                self.parameters = _qwen_agent_function_schema(function["parameters"])
                 super().__init__()
 
             def call(self, params: str | dict[str, Any], **_: Any) -> str:
@@ -372,7 +393,10 @@ class QwenAgentSmetaRunner:
                 "use_raw_api": True,
                 "max_input_tokens": 32768,
                 "max_tokens": 4096,
-                "temperature": 0.0,
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "top_k": 20,
+                "min_p": 0.0,
                 # Ollama's OpenAI-compatible endpoint controls thinking through
                 # the documented OpenAI field, not the native `/api/chat`
                 # `think` flag. Without this, Qwen-Agent receives an empty

@@ -8,6 +8,7 @@ import inspect
 import json
 import re
 import time
+from pathlib import Path
 from typing import Optional
 
 from nicegui import context, ui
@@ -312,7 +313,8 @@ def _attachment_chat_payload(attachment: dict) -> dict:
     payload: dict = {}
     if mode in {"quick", "index"}:
         payload["dataset_ids"] = [str(attachment["id"])]
-    if mode == "read" and attachment.get("text"):
+    if mode == "read":
+        attachment = {**attachment, "text": attachment.get("text") or ""}
         payload["attachment_id"] = str(attachment["id"])
         name = str(attachment.get("name") or "вложение").strip() or "вложение"
         payload["attachment_context"] = f"Файл: {name}\n\n{str(attachment['text']).strip()}"
@@ -3488,11 +3490,39 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             (предпросмотр + скачивание кнопками), а не принудительный диалог сохранения."""
             fid = cmd.get("form_id")
             fmt = cmd.get("fmt", "xlsx")
-            gen = await api_post(f"/api/forms/{fid}/generate", {"fmt": fmt})
+            if cmd.get("download"):
+                nm = (
+                    cmd.get("filename")
+                    or (Path(str(cmd.get("path") or "")).name if cmd.get("path") else "")
+                    or f"{fid}.{fmt}"
+                )
+                if "." not in str(nm).rsplit("/", 1)[-1]:
+                    nm = f"{nm}.{fmt}"
+                _register_file_artifact(nm, cmd["download"], _kind_from_name(nm))
+                ui.notify(
+                    f"Документ создан: {cmd.get('title', fid)} ({fmt}) — в панели «Файлы»",
+                    type="positive",
+                )
+                return
+            body: dict = {"fmt": fmt}
+            if cmd.get("source"):
+                body["source"] = cmd["source"]
+            if cmd.get("project_id") is not None:
+                body["project_id"] = cmd["project_id"]
+            sid = state.get("session_id") or ""
+            if sid:
+                body["session_id"] = sid
+            gen = await api_post(f"/api/forms/{fid}/generate", body)
             if not isinstance(gen, dict) or not gen.get("download"):
                 ui.notify(last_api_error_text("Не удалось создать документ"), type="negative")
                 return
-            nm = cmd.get("title") or gen.get("path", fid).rsplit("/", 1)[-1] or f"{fid}.{fmt}"
+            nm = (
+                gen.get("filename")
+                or gen.get("path", "").rsplit("/", 1)[-1]
+                or f"{fid}.{fmt}"
+            )
+            if "." not in str(nm).rsplit("/", 1)[-1]:
+                nm = f"{nm}.{fmt}"
             _register_file_artifact(nm, gen["download"], _kind_from_name(nm))
             ui.notify(f"Документ создан: {cmd.get('title', fid)} ({fmt}) — в панели «Файлы»", type="positive")
 
@@ -3564,7 +3594,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             add_log(f"[AI] Формат:{out_mode} CRAG:{crag or 'N/A'} src:{len(srcs)}")
             # W11.17: команда «создать документ» → генерируем форму и скачиваем файл.
             cmd = d.get("command") or {}
-            if cmd.get("action") == "generate_form" and cmd.get("form_id"):
+            if cmd.get("action") in {"generate_form", "generate_filled_form"} and cmd.get("form_id"):
                 asyncio.create_task(_gen_form_from_command(cmd))
             # (панель «Задачи и объёмы» убрана из чата)
 

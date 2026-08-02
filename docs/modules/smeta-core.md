@@ -1,5 +1,38 @@
 # Smeta Core — единое сметное ядро
 
+## PR #8 accepted with production corrections (v0.27.35)
+
+The useful local-Qwen transport and document-output work from public PR #8 is
+ported on top of the current tree rather than merged wholesale. Mapping JSON
+accepts trailing commas and schema output placed in Ollama's `thinking` field;
+a length retry uses compact context while preserving the model-owned decision.
+Typographic dashes and display aliases are transport-normalized only against an
+already opened typed card. Code still does not choose or replace a norm.
+
+Filled KS-2/KS-3 exports from LSR are always marked
+`draft_from_lsr_not_execution_fact`; KS-6а reads only confirmed journal rows of
+the explicit project. Low-coverage LSR workbooks label their total as the cost
+of the bound part. Global newest-artifact fallback and code-owned demotion of a
+model decision from the prototype are intentionally excluded.
+
+## Candidate-draft boundary (v0.27.34)
+
+Qwen receives one bounded repair turn when its selected opened typed card
+contradicts its own applicability audit. If the same model still submits a
+professionally questionable but structurally valid choice, LES preserves that
+choice as `model_batch_candidate`, calculates the visible draft, and attaches
+`model_candidate_mapping` with the exact validation reasons. Missing/unopened
+typed references, incompatible units, malformed evidence and invalid work
+links remain hard failures. `LES_SMETA_CANDIDATE_DRAFT_MODE=off` restores the
+strict rejection loop; `LES_SMETA_FLEXIBLE_RESOLVER_MODE=legacy` remains the
+separate Gemini-compatible rollback for transport interpretation.
+
+The same visible-candidate boundary applies to a repeated honest `unbound`
+whose search trace is incomplete: LES stores no invented queries, marks the
+row `model_batch_candidate`, adds `model_candidate_unbound`, and keeps it
+ineligible for Memory. A positive reference to an opened card, an invalid
+cross-row link, or fabricated evidence still remains a hard contradiction.
+
 > Единый человеко-машинный паспорт всего модуля —
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.

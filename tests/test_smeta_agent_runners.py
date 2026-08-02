@@ -8,6 +8,7 @@ from proxy.services.smeta_agent_runner_service import (
     GoogleAdkSmetaRunner,
     QwenAgentSmetaRunner,
     _google_function_schema,
+    _qwen_agent_function_schema,
     _qwen_terminal_schema,
     _requires_evidence_continuation,
     normalize_smeta_agent_engine,
@@ -231,7 +232,20 @@ def test_qwen_returns_to_tools_when_structured_bind_needs_opened_comparison(monk
 
     monkeypatch.setattr(qwen_agent.agents, "FnCallAgent", FakeAgent)
     runner = QwenAgentSmetaRunner()
-    monkeypatch.setattr(runner, "_structured_terminal_mapping", lambda **_kwargs: _mapping_args())
+    def incomplete_mapping(**_kwargs):
+        mapping = _mapping_args()
+        mapping["rows"][0]["candidate_evaluations"].append({
+            "candidate_code": alternative,
+            "operation_match": "partial",
+            "object_match": "exact",
+            "unit_match": "compatible",
+            "scope_match": "partial",
+            "foreign_resources": [],
+            "decision": "rejected",
+            "reason": "альтернатива ещё не открыта",
+        })
+        return mapping
+    monkeypatch.setattr(runner, "_structured_terminal_mapping", incomplete_mapping)
 
     result = runner.run_batch(
         [WORK], candidate_limit=4, max_turns=6, progress=None, user_request="сделай смету",
@@ -255,10 +269,15 @@ def test_qwen_recovery_retry_requires_evidence_for_models_existing_unbound_decis
         "errors": [{"work_id": "w1", "error": "invalid unbound_evidence"}],
     })
 
-    row = schema["properties"]["rows"]["items"]
+    variants = schema["properties"]["rows"]["items"]["oneOf"]
+    assert len(variants) == 1
+    row = variants[0]
     assert row["properties"]["decision"]["enum"] == ["unbound"]
     assert "unbound_evidence" in row["required"]
-    assert row["properties"]["unbound_evidence"]["properties"]["queries_used"]["items"]["enum"] == [
+    assert set(row["properties"]["unbound_evidence"]["properties"]) == {
+        "rejection_reasons", "coverage_checked",
+    }
+    assert allowed["w1"]["queries_used"] == [
         "монтаж блока", "установка блока ФСНБ",
     ]
     assert allowed["w1"]["opened_norm_codes"] == []
@@ -272,13 +291,56 @@ def test_qwen_recovery_retry_requires_complete_existing_bind_decision():
         "errors": [{"work_id": "w1", "error": "incomplete bind evidence"}],
     })
 
-    row = schema["properties"]["rows"]["items"]
+    session.opened["w1"][CODE] = {
+        "norm_code": CODE,
+        "title": "Монтаж блока",
+        "measure_unit": "шт",
+    }
+    schema, _allowed = _qwen_terminal_schema(session, {
+        "ok": False,
+        "errors": [{"work_id": "w1", "error": "incomplete bind evidence"}],
+    })
+    variants = schema["properties"]["rows"]["items"]["oneOf"]
+    assert len(variants) == 2
+    assert {
+        tuple(variant["properties"]["selection_kind"]["enum"])
+        for variant in variants
+    } == {("exact",), ("analog",)}
+    row = next(
+        variant for variant in variants
+        if variant["properties"]["selection_kind"]["enum"] == ["exact"]
+    )
     assert row["properties"]["decision"]["enum"] == ["bind"]
     assert {
         "norm_code", "selection_kind", "applicability",
         "analog_limitations", "candidate_evaluations", "technology_check",
     }.issubset(row["required"])
     assert "required" in row["properties"]["technology_check"]
+
+
+def test_qwen_agent_facade_keeps_nested_contract_and_removes_only_root_extras():
+    canonical = {
+        "type": "object",
+        "properties": {
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {"work_id": {"type": "string"}},
+                    "required": ["work_id"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["items"],
+        "additionalProperties": False,
+    }
+
+    facade = _qwen_agent_function_schema(canonical)
+
+    assert set(facade) == {"type", "properties", "required"}
+    assert facade["properties"]["items"]["items"]["additionalProperties"] is False
+    assert canonical["additionalProperties"] is False
 
 
 def test_qwen_resumes_tools_only_when_terminal_repair_needs_new_evidence():

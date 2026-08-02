@@ -454,7 +454,11 @@ def test_windows_runtime_stop_does_not_kill_stale_state_pids(monkeypatch, tmp_pa
     terminated = []
     monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: {})
     monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
-    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminated.append)
+    monkeypatch.setattr(
+        windows_runtime,
+        "_terminate_pid",
+        lambda pid, *, image_confirmed=False: terminated.append(pid),
+    )
     monkeypatch.setattr(windows_runtime, "_port_free", lambda _port: True)
 
     result = windows_runtime.stop(state, runtime=tmp_path / "runtime")
@@ -471,6 +475,27 @@ def test_windows_runtime_stop_reports_foreign_port_owner(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="foreign_port_owner"):
         windows_runtime.stop(tmp_path / "LES", runtime=tmp_path / "runtime")
+
+
+def test_confirmed_windows_runtime_stop_does_not_recheck_owned_process_image(monkeypatch, tmp_path):
+    terminated = []
+    ports = {8050: 55, 8051: 56}
+    monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: ports)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: True)
+    monkeypatch.setattr(windows_runtime, "_process_name", lambda _pid: "pythonw.exe")
+    monkeypatch.setattr(
+        windows_runtime,
+        "_terminate_pid",
+        lambda pid, *, image_confirmed=False: terminated.append((pid, image_confirmed)),
+    )
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda _port: True)
+
+    stopped = windows_runtime._stop_confirmed_live_runtime(
+        tmp_path / "runtime", {8050, 8051}
+    )
+
+    assert stopped == [55, 56]
+    assert terminated == [(55, True), (56, True)]
 
 
 def test_windows_updater_process_hygiene_is_behaviorally_enforced():
@@ -732,7 +757,11 @@ def test_windows_runtime_adopts_and_stops_only_confirmed_live_les(monkeypatch, t
     )
     monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda runtime: True)
     monkeypatch.setattr(windows_runtime, "_process_name", lambda pid: "python.exe")
-    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminated.append)
+    monkeypatch.setattr(
+        windows_runtime,
+        "_terminate_pid",
+        lambda pid, *, image_confirmed=False: terminated.append(pid),
+    )
     monkeypatch.setattr(windows_runtime, "_port_free", lambda port: True)
 
     stopped = windows_runtime._stop_confirmed_live_runtime(
@@ -776,7 +805,7 @@ def test_windows_runtime_uses_standard_tskill_fallback_for_confirmed_les(
             tskill_used["value"] = True
         return subprocess.CompletedProcess(command, 0)
 
-    times = iter((0.0, 4.0, 8.0, 9.0))
+    times = iter((0.0, 11.0, 12.0, 13.0))
     monkeypatch.setattr(windows_runtime.subprocess, "run", run)
     monkeypatch.setattr(
         windows_runtime,
@@ -788,6 +817,20 @@ def test_windows_runtime_uses_standard_tskill_fallback_for_confirmed_les(
     windows_runtime._terminate_pid(101)
 
     assert [command[0] for command in commands] == ["taskkill.exe", "tskill.exe"]
+
+
+def test_windows_runtime_process_name_ignores_localized_tasklist_miss(monkeypatch):
+    monkeypatch.setattr(
+        windows_runtime.subprocess,
+        "run",
+        lambda *_args, **_kwargs: subprocess.CompletedProcess(
+            [], 0, stdout=b"\x88\x8d\x94\x8e: no task\r\n"
+        ),
+    )
+
+    assert windows_runtime._process_name(101) == ""
+
+
 def test_windows_update_ready_snapshot_checks_live_direct_pids(
     tmp_path, monkeypatch
 ):

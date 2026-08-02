@@ -23,6 +23,7 @@ develop-eggs/
 dist/
 desktop/tauri/node_modules/
 desktop/tauri/src-tauri/target/
+desktop/tauri/src-tauri/gen/
 desktop/tauri/src-tauri/resources/runtime/
 desktop/tauri/src-tauri/resources/bootstrap.sh
 downloads/
@@ -51,6 +52,7 @@ Thumbs.db
 
 # Generated local workbench exports
 .codex_tmp/
+.pytest-*/
 qdrant_visualizer/data.js
 scratch/
 

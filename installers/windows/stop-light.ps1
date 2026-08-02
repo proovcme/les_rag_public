@@ -34,7 +34,9 @@ if (-not $RuntimeRoot) {
 
 $python = $null
 if ($StateRoot) {
-  foreach ($name in @("pythonw.exe", "python.exe")) {
+  # Lifecycle helpers must be awaited by PowerShell. pythonw.exe is correct
+  # for the long-lived UI/proxy, but returns immediately when invoked here.
+  foreach ($name in @("python.exe", "pythonw.exe")) {
     $candidate = Join-Path $StateRoot ".venv\Scripts\$name"
     if (Test-Path -LiteralPath $candidate) { $python = $candidate; break }
   }

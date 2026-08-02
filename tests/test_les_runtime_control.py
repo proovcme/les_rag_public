@@ -170,6 +170,23 @@ def test_parse_tasklist_memory_processes_windows_csv():
     assert processes[1].command == "python.exe"
 
 
+def test_memory_process_parsers_accept_missing_stdout():
+    assert runtime_control._parse_ps_memory_processes(None) == []
+    assert runtime_control._parse_tasklist_memory_processes(None) == []
+
+
+def test_windows_stop_wrapper_delegates_to_owned_runtime_stop_only():
+    from pathlib import Path
+
+    source = (Path(__file__).parents[1] / "scripts" / "windows" / "LES-STOP.ps1").read_text(
+        encoding="utf-8",
+    )
+    assert "stop-light.ps1" in source
+    assert "Stop-Port" not in source
+    assert "Get-NetTCPConnection" not in source
+    assert "Stop-Process" not in source
+
+
 def test_memory_processes_missing_platform_command_returns_empty(monkeypatch):
     monkeypatch.setattr(runtime_control.platform, "system", lambda: "Windows")
     monkeypatch.setattr(

@@ -83,8 +83,10 @@ from proxy.routers.updates import router as updates_router
 from proxy.routers.service_sources import router as service_sources_router
 from proxy.routers.speckle import cad_bim_router
 from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
+from proxy.routers.memory import router as memory_router
 from proxy.services.job_service import JobService
 from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
+from proxy.services.memory_runtime_service import initialize_memory_runtime, shutdown_memory_runtime
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -332,6 +334,7 @@ async def startup():
     global rag_backend
     init_db()
     seed_admin_key()
+    await initialize_memory_runtime(llm_semaphore)
     interrupted_jobs = job_service.mark_interrupted_active_jobs("proxy startup")
     if interrupted_jobs:
         logger.info("[INIT] Marked %s stale active job(s) as interrupted", interrupted_jobs)
@@ -537,7 +540,9 @@ def create_app():
     fastapi_app.include_router(rerank_router)
     fastapi_app.include_router(status_page_router)
     fastapi_app.include_router(chat_router)
+    fastapi_app.include_router(memory_router)
     fastapi_app.on_event("startup")(startup)
+    fastapi_app.on_event("shutdown")(shutdown_memory_runtime)
     fastapi_app.middleware("http")(track_errors)
     _app = fastapi_app
     return _app

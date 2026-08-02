@@ -106,6 +106,14 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
         "models_used": ["gpt-5.4"],
         "model_fallbacks": [],
         "model_calls": 1,
+        "mapping_fingerprint": {
+            "schema": "les.smeta_mapping_fingerprint.v1",
+            "digest": "4f53cda18c2b",
+            "entries": [],
+            "bound_rows": 0,
+            "open_rows": 0,
+            "repair_collection_demotions": [],
+        },
     }
     assert workflow_call["candidate_limit"] == 12
     assert workflow_call["batch_size"] == 0
@@ -508,9 +516,12 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "tool_calls" not in result
     assert "_les_fallback_from" not in result
     assert "options" in bodies[0]
-    assert bodies[0]["options"]["num_predict"] == 1800
+    assert bodies[0]["options"]["num_predict"] == 4096
     assert bodies[0]["options"]["num_ctx"] == 32768
-    assert bodies[0]["options"]["temperature"] == 0.0
+    assert bodies[0]["options"]["temperature"] == 0.7
+    assert bodies[0]["options"]["top_p"] == 0.8
+    assert bodies[0]["options"]["top_k"] == 20
+    assert bodies[0]["options"]["min_p"] == 0.0
     assert bodies[0]["options"]["seed"] == 0
     assert result["_les_seed"] == 0
     assert bodies[0]["think"] is False
@@ -577,10 +588,12 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     assert captured["url"] == "http://127.0.0.1:11434/api/chat"
     assert captured["body"]["format"] == schema
     assert "tools" not in captured["body"]
-    assert "think" not in captured["body"]
+    assert captured["body"]["think"] is False
     assert captured["body"]["messages"][0]["thinking"] == "model reasoning"
     assert captured["body"]["options"]["num_ctx"] == 32768
-    assert captured["body"]["options"]["temperature"] == 0.0
+    assert captured["body"]["options"]["temperature"] == 0.7
+    assert captured["body"]["options"]["top_p"] == 0.8
+    assert captured["body"]["options"]["top_k"] == 20
     assert captured["body"]["options"]["seed"] == 0
     assert captured["body"]["options"]["num_predict"] == 2200
     assert result["_les_seed"] == 0
@@ -634,7 +647,35 @@ def test_document_mapping_exchange_strips_inline_thinking(monkeypatch):
     assert result["rows"][0]["reason"] == "model"
 
 
-def test_document_mapping_exchange_retries_ollama_without_thinking(monkeypatch):
+def test_mapping_parser_tolerates_trailing_comma_without_changing_values():
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    parsed = adapter._extract_mapping_json(
+        'prefix {"note":"not mapping"} '
+        '{"rows":[{"work_id":"w1","decision":"bind",'
+        '"norm_code":"ГЭСНм:11-04-027-01",}],}'
+    )
+    assert parsed == {
+        "rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": "ГЭСНм:11-04-027-01",
+        }],
+    }
+
+
+def test_mapping_parser_accepts_schema_object_from_thinking_field():
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    parsed = adapter._parse_mapping_message({
+        "content": "",
+        "thinking": '{"rows":[{"work_id":"w1","decision":"unbound","reason":"model"}]}',
+    })
+    assert parsed is not None
+    assert parsed["rows"][0]["decision"] == "unbound"
+
+
+def test_document_mapping_exchange_retries_length_without_thinking(monkeypatch):
     from proxy.services import smeta_chat_adapter_service as adapter
 
     requests = []
@@ -664,7 +705,7 @@ def test_document_mapping_exchange_retries_ollama_without_thinking(monkeypatch):
         def post(self, _url, **kwargs):
             body = kwargs["json"]
             requests.append(body)
-            if body.get("think") is False:
+            if len(requests) == 2:
                 return Response({
                     "message": {
                         "content": (
@@ -687,16 +728,33 @@ def test_document_mapping_exchange_retries_ollama_without_thinking(monkeypatch):
     ))
     monkeypatch.setattr(adapter.httpx, "Client", Client)
 
+    huge_history = "tool-history " * 4000
+    final_request = "mapping for w1"
     result = adapter._smeta_document_mapping_exchange(
-        [{"role": "user", "content": "mapping"}],
+        [
+            {"role": "system", "content": huge_history},
+            {"role": "user", "content": "inspect candidates"},
+            {"role": "assistant", "content": "I choose unbound for w1"},
+            {"role": "tool", "content": huge_history},
+            {"role": "user", "content": final_request},
+        ],
         {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
     )
 
     assert result["rows"][0]["reason"] == "retry"
     assert len(requests) == 2
-    assert "think" not in requests[0]
+    assert requests[0]["think"] is False
     assert requests[1]["think"] is False
     assert requests[1]["options"]["num_predict"] == 16000
+    assert sum(
+        len(str(message.get("content") or ""))
+        for message in requests[1]["messages"]
+    ) < len(huge_history)
+    assert requests[1]["messages"][-1]["content"] == final_request
+    assert any(
+        "I choose unbound for w1" in str(message.get("content") or "")
+        for message in requests[1]["messages"]
+    )
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

@@ -15,14 +15,30 @@ from typing import Any
 
 # Назначение документов — чтобы машина «понимала», что это такое (краткая суть).
 _DOC_PURPOSE = {
+    "ks2": "акт о приёмке выполненных работ; экспорт из ЛСР всегда помечается черновиком",
+    "ks3": "справка о стоимости; накопительные суммы требуют истории проекта",
+    "ks6a": "журнал учёта выполненных работ только из confirmed объёмов проекта",
     "spec_gost21110": "перечень оборудования, изделий и материалов для комплектации и монтажа",
     "vor": "наименования и объёмы строительно-монтажных работ (основа для сметы)",
     "smeta_lsr": "стоимость работ и затрат по объекту (локальный сметный расчёт)",
     "aosr": "освидетельствование скрытых работ перед закрытием (исполнительная документация)",
 }
 
+_FILLED_FORM_SOURCES = {
+    "ks2": "last_lsr",
+    "ks3": "last_lsr",
+    "ks6a": "field_journal",
+}
+
 # Реестр команд. kind: form | rewrite | info | help.
 COMMANDS: tuple[dict[str, Any], ...] = (
+    {"cmd": "/кс-2", "aliases": ("/кс2", "/ks2"), "kind": "filled_form", "form": "ks2",
+     "title": "КС-2 (черновик из ЛСР)", "desc": "Проектный черновик КС-2 из ЛСР текущей сессии"},
+    {"cmd": "/кс-3", "aliases": ("/кс3", "/ks3"), "kind": "filled_form", "form": "ks3",
+     "title": "КС-3 (черновик за период)", "desc": "Черновик КС-3 без вымышленных накопительных итогов"},
+    {"cmd": "/кс-6а", "aliases": ("/кс-6a", "/кс6а", "/кс6a", "/ks6a"),
+     "kind": "filled_form", "form": "ks6a", "title": "КС-6а (confirmed объёмы)",
+     "desc": "КС-6а из подтверждённого журнала выбранного проекта"},
     {"cmd": "/спецификация", "aliases": ("/спека", "/spec"), "kind": "form", "form": "spec_gost21110",
      "title": "Спецификация (ГОСТ 21.110)", "desc": "Бланк спецификации оборудования/материалов"},
     {"cmd": "/вор", "aliases": ("/ведомость",), "kind": "form", "form": "vor",
@@ -72,13 +88,22 @@ def _explain_doc(form_id: str) -> str:
     purpose = _DOC_PURPOSE.get(form_id, "")
     cols = d.get("columns", []) or []
     parts = [f"**{title}**"]
+    if form_id in _FILLED_FORM_SOURCES:
+        if form_id == "ks6a":
+            parts.append("Заполняется только из confirmed журнала выбранного проекта.")
+        else:
+            parts.append(
+                "Экспорт из ЛСР создаётся только как явно помеченный черновик; "
+                "он не подтверждает фактическое выполнение."
+            )
     if purpose:
         parts.append(f"Назначение: {purpose}.")
     if basis:
         parts.append(f"Основание: {basis}.")
     if cols:
         parts.append("Графы: " + " · ".join(cols) + ".")
-    parts.append("⚠️ Это ПУСТОЙ бланк (шаблон, без данных проекта) — xlsx скачается; docx/html — Инструменты → Формы.")
+    if form_id not in _FILLED_FORM_SOURCES:
+        parts.append("⚠️ Это ПУСТОЙ бланк (шаблон, без данных проекта) — xlsx скачается; docx/html — Инструменты → Формы.")
     if form_id in ("vor", "spec_gost21110"):
         build = ("«сделай ВОР из спецификации»" if form_id == "vor"
                  else "индексируй спецификации и спроси по ним")
@@ -111,6 +136,19 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
                 "command": {"action": "unknown"}}
 
     kind = entry["kind"]
+    if kind == "filled_form":
+        form_id = entry["form"]
+        return {
+            "answer": _explain_doc(form_id),
+            "command": {
+                "action": "generate_filled_form",
+                "form_id": form_id,
+                "fmt": "xlsx",
+                "title": entry["title"],
+                "source": _FILLED_FORM_SOURCES[form_id],
+                "project_id": project_id,
+            },
+        }
     if kind == "rewrite":
         return {"rewrite": entry["rewrite"]}
     if kind == "stripslash":  # «/режим облако» → «режим облако» → ловит NL-канал (с аргументом)

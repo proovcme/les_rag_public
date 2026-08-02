@@ -192,6 +192,23 @@ async def api_post(path: str, data: Optional[dict] = None, base: Optional[str] =
         return None
 
 
+async def api_put(path: str, data: Optional[dict] = None, base: Optional[str] = None) -> Optional[dict]:
+    from sovushka.config import PROXY_URL
+    if base is None:
+        base = PROXY_URL
+    try:
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=180.0) as client:
+            response = await client.put(
+                f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers()
+            )
+            response.raise_for_status()
+            _api_success()
+            return response.json()
+    except Exception as error:
+        _api_error("PUT", path, error)
+        return None
+
+
 async def active_llm_provider() -> str:
     settings = await api_get("/api/settings")
     if isinstance(settings, dict):

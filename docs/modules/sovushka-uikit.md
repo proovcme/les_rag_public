@@ -237,6 +237,12 @@ neon-контраст не используется.
 
 ## Границы
 
+Filled КС commands use the same chat backend as the API: a ready download is
+registered directly in the Files panel and keeps its `.xlsx` extension. A PDF
+attachment in `read` mode is forwarded by `attachment_id` even when local text
+extraction is empty, so the document workflow can process it server-side.
+No new UI component was introduced for this behavior.
+
 - Не добавляет JavaScript/CSS-зависимости.
 - Не скрывает `MISSING/BLOCKED` и не создаёт источники.
 - Не меняет RAG, выбор модели или права API.

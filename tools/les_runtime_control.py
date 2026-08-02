@@ -232,9 +232,9 @@ def _is_protected_process(command: str) -> bool:
     return any(f"/{protected}" in command for protected in PROTECTED_PROCESS_NAMES)
 
 
-def _parse_ps_memory_processes(output: str) -> list[MemoryProcess]:
+def _parse_ps_memory_processes(output: str | None) -> list[MemoryProcess]:
     processes: list[MemoryProcess] = []
-    for line in output.splitlines():
+    for line in (output or "").splitlines():
         parts = line.strip().split(None, 3)
         if len(parts) < 4:
             continue
@@ -259,9 +259,9 @@ def _parse_ps_memory_processes(output: str) -> list[MemoryProcess]:
     return sorted(processes, key=lambda item: item.rss_mb, reverse=True)
 
 
-def _parse_tasklist_memory_processes(output: str) -> list[MemoryProcess]:
+def _parse_tasklist_memory_processes(output: str | None) -> list[MemoryProcess]:
     processes: list[MemoryProcess] = []
-    for row in csv.reader(output.splitlines()):
+    for row in csv.reader((output or "").splitlines()):
         if len(row) < 5 or row[1].strip().lower() == "pid":
             continue
         image_name, pid_raw, _session_name, _session_num, mem_raw = row[:5]

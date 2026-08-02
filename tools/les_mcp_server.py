@@ -66,8 +66,42 @@ def les_project_summary(dataset_ids: list[str]) -> dict[str, Any]:
     return build_project_summary(dataset_ids, storage_root=_STORAGE)
 
 
-def les_form_generate(form_id: str, fmt: str = "xlsx", project_id: int | None = None) -> dict[str, Any]:
-    """Сгенерировать типовую форму (spec_gost21110 / vor / smeta_lsr / aosr) в html/xlsx/docx."""
+def les_form_generate(
+    form_id: str,
+    fmt: str = "xlsx",
+    project_id: int | None = None,
+    source: str = "",
+    session_id: str = "",
+    assembled: dict | None = None,
+) -> dict[str, Any]:
+    """Сгенерировать типовую или заполненную форму проекта."""
+    fid = str(form_id or "").strip().casefold()
+    src = str(source or "").strip().casefold()
+    if fid in {"ks2", "ks3", "ks6a"} and src in {"last_lsr", "field_journal"}:
+        from proxy.services.ks_forms_service import build_ks_document
+
+        try:
+            out = build_ks_document(
+                fid,
+                fmt=fmt,
+                project_id=project_id,
+                session_id=session_id,
+                assembled=assembled,
+                source=src,
+            )
+        except Exception as error:
+            return {"ok": False, "form_id": form_id, "error": str(error)}
+        return {
+            "ok": True,
+            "form_id": form_id,
+            "fmt": fmt,
+            "path": out.get("path"),
+            "html": out.get("html"),
+            "filled": out.get("filled"),
+            "source": out.get("source"),
+            "document_status": out.get("document_status"),
+            "draft": bool(out.get("draft")),
+        }
     from proxy.services.forms_service import generate
 
     out = generate(form_id, fmt, project_id=project_id)
@@ -278,10 +312,11 @@ def les_price_browse(query: str, book: str | None = None, limit: int = 20) -> di
 
 def les_smeta_save(assembled: dict, project_id: int, form_id: str = "vor",
                    fmt: str = "xlsx", doc_code: str = "") -> dict[str, Any]:
-    """ДЕЙСТВИЕ: собранную смету (выход les_lsr_assemble) → документ ВОР/ЛСР в проект.
+    """ДЕЙСТВИЕ: собранную смету (выход les_lsr_assemble) → документ в проект.
 
     Композ: les_lsr_assemble → les_smeta_save. assembled — словарь с positions[]+summary{}.
-    Создаёт НОВЫЙ файл (storage/projects/<id>/smeta), не перезаписывает; form_id: vor|smeta_lsr.
+    Создаёт НОВЫЙ файл (storage/projects/<id>/smeta), не перезаписывает;
+    form_id: vor|smeta_lsr|ks2|ks3. КС из assembled сохраняет статус черновика из ЛСР.
     """
     from proxy.services.les_action_service import save_smeta
 
@@ -316,7 +351,7 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_bor": ("Свод ВОР из спецификаций", les_bor),
     "les_spec_to_bor": ("ВОР работ из спецификации (форма 9)", les_spec_to_bor),
     "les_project_summary": ("Сводка проекта: ТЭП/стадии/состав", les_project_summary),
-    "les_form_generate": ("Генерация формы: спецификация/ВОР/смета/АОСР", les_form_generate),
+    "les_form_generate": ("Генерация формы: спецификация/ВОР/смета/АОСР/КС-2/КС-3/КС-6а", les_form_generate),
     "les_price_lookup": ("Цена ФГИС ЦС по коду ресурса (Сплит-форма)", les_price_lookup),
     "les_price_lookup_batch": ("Пакет цен ФГИС ЦС по кодам ресурсов (один вызов)", les_price_lookup_batch),
     "les_price_browse": ("Кандидаты ресурсов ФГИС по наименованию/коду; без автопривязки", les_price_browse),
@@ -328,7 +363,7 @@ TOOLS: dict[str, tuple[str, Any]] = {
     "les_table_agg": ("Агрегация по таблицам с группировкой (сумма по разделам/типу)", les_table_agg),
     "les_gesn_fetch": ("Дотянуть норму ГЭСН-2022 из API smetnoedelo в базу (квота)", les_gesn_fetch),
     # action-инструменты (Ярус 3): меняют состояние (документ/журнал)
-    "les_smeta_save": ("ДЕЙСТВИЕ: собранную смету → документ ВОР/ЛСР в проект (assemble→save)", les_smeta_save),
+    "les_smeta_save": ("ДЕЙСТВИЕ: собранную смету → ВОР/ЛСР/КС-2/КС-3 в проект (assemble→save)", les_smeta_save),
     "les_journal_append": ("ДЕЙСТВИЕ: дописать запись в журнал работ (pending, idempotent)", les_journal_append),
 }
 

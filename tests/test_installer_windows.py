@@ -60,6 +60,41 @@ def test_bootstrap_ps1_is_utf8_bom(tmp_path):
     assert nsi.read_bytes()[:3] == b"\xef\xbb\xbf"
 
 
+def test_windows_bootstrap_reports_the_installed_runtime_root():
+    bootstrap = (
+        build_windows_installer.ROOT
+        / "installers"
+        / "windows"
+        / "app"
+        / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert "$env:LES_RUNTIME_HOME = $Root" in bootstrap
+    assert "$env:LES_REPO_ROOT = $Root" in bootstrap
+
+
+def test_windows_release_smoke_reports_cleanup_failures_before_success():
+    smoke = (
+        build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    stop_call = smoke.index("& $StopScript")
+    cleanup_error = smoke.index("$result.runtime_cleanup_error", stop_call)
+    report_write = smoke.index("Set-Content -LiteralPath $ReportPath", cleanup_error)
+    assert stop_call < cleanup_error < report_write
+
+
+def test_windows_stop_helper_prefers_waitable_python():
+    stop = (
+        build_windows_installer.ROOT
+        / "installers"
+        / "windows"
+        / "stop-light.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert 'foreach ($name in @("python.exe", "pythonw.exe"))' in stop
+
+
 def test_windows_desktop_installer_stops_les_and_offers_data_wipe():
     """AnythingLLM-style Setup/Uninstall: stop app, optional full data wipe."""
     hooks = (

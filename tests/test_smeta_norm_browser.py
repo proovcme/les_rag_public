@@ -707,6 +707,16 @@ def test_rrf_uses_typed_norm_identity_not_display_code():
     assert {item["norm_key"] for item in cards} == {"ГЭСН:01", "ФЕР:01"}
 
 
+def test_rrf_equal_scores_have_stable_casefold_tie_break():
+    from proxy.smeta_core.norm_browser import _rrf_cards
+
+    first = {"norm_key": "а:01", "norm_code": "B"}
+    second = {"norm_key": "А:01", "norm_code": "A"}
+    expected = [item["norm_key"] for item in _rrf_cards([second], [first], limit=5)]
+    actual = [item["norm_key"] for item in _rrf_cards([first], [second], limit=5)]
+    assert actual == expected
+
+
 def test_rag_manifest_rejects_embedding_or_base_mismatch(tmp_path):
     from proxy.smeta_core.norm_browser import _rag_manifest_status
 

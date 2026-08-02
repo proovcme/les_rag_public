@@ -7,16 +7,62 @@
 ## Текущее состояние (2026-08-02)
 
 ```
-версия продукта (SemVer):  0.27.29 (Flexible Code Resolver: Model Intent + Code Resolution)
-номер сборки:              546
-версия Tauri/NSIS:         5.1.546
+версия продукта (SemVer):  0.27.35 (PR #8 accepted + corrected)
+номер сборки:              552
+версия Tauri/NSIS:         5.1.552
 ветка выпуска:             codex/legion-model-quality
-dev implementation:       Flexible Code Resolver — automatic norm code extraction from model reasoning into money calculation
+dev implementation:       Memory Core v1 — RAG memory & safe smeta traces infrastructure
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.29
+следующий выпуск:          LES-Setup.exe 0.27.35
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.35 / build 552 — public PR #8 accepted with production corrections
+>
+> Дата: 2026-08-02
+> Статус: local release candidate; Windows installer and isolated live smoke are green.
+>
+> **Что вошло:**
+> 1. Полезные изменения PR #8 перенесены выборочно поверх текущих Memory/UI/RIM/LIST-наработок; прямой merge старого дерева не делался.
+> 2. Qwen structured mapping терпит trailing comma и JSON в Ollama `thinking`; повтор после output-length использует compact context и сохраняет выбор модели.
+> 3. КС-2/КС-3 из ЛСР явно маркируются черновиком, а КС-6а читает только confirmed-журнал явного `project_id`; cross-project/global fallback удалён.
+> 4. В XLSX закрыта formula injection, а низкое покрытие сметы видимо помечает сумму как стоимость только привязанной части.
+> 5. Windows LES-STOP делегирует canonical owned-runtime stop и не убивает чужой процесс по совпавшему порту.
+> 6. Не приняты опасные прототипные части: фабрикация soft-unbound поисков, code-owned демоушен решения и global newest-artifact lookup.
+> 7. Живой Qwen gate достиг 5/5 durable checkpoints: 4 model-owned bind и 1 честный unbound-candidate; неполная unbound-трасса не фабрикуется и не попадает в Memory. Checkpoint: `storage/ab_verify_pr8_02735/20260802T152535Z-c876bb92d5e4`.
+> 8. Windows bootstrap передаёт фактический installed root через `LES_RUNTIME_HOME`/`LES_REPO_ROOT`, поэтому `/api/version.runtime_path` и owned-process stop больше не наследуют macOS default. Изолированный live smoke: UI 200, версия 0.27.35, 49 818 норм, 504 891 ресурсов, 1 576 ФСЭМ, native dense+sparse RRF и тестовая индексация зелёные; Outlook collector отдельно degraded как недоступный на хосте.
+> 9. Owned-runtime stop использует уже подтверждённые live identity, полный набор портов и Python image; локализованное OEM-сообщение `tasklist` об отсутствующем PID распознаётся по CSV-контракту, а lifecycle helper запускается через ожидаемый PowerShell `python.exe`, не асинхронный `pythonw.exe`. Smoke записывает зелёный отчёт только после успешной уборки; чужие владельцы портов и stale PID остаются fail-closed.
+
+> 0.27.34 / build 551 — Qwen candidate drafts + verified Memory learning
+>
+> Дата: 2026-08-02
+> Статус: local candidate; пятистрочный живой Qwen gate выполняется.
+>
+> **Что вошло:**
+> 1. После одного bounded repair повторный выбор открытой typed-нормы сохраняется как `model_batch_candidate`; выбор модели не переписывается, расчёт остаётся видимым `priced_partial`.
+> 2. Несовместимые единицы, неоткрытая карточка, сломанная ссылка и malformed evidence остаются hard failures.
+> 3. Candidate draft не захватывается Memory; advisory/route reuse читают только `accepted_project|verified_pattern` того же проекта.
+> 4. Пользовательский mapping lock уже является сигналом обучения: он подтверждает сохранённые trace, после чего Qwen получает их как `is_evidence=false` подсказку/маршрут.
+> 5. Откат: `LES_SMETA_CANDIDATE_DRAFT_MODE=off`; Gemini-compatible interpretation: `LES_SMETA_FLEXIBLE_RESOLVER_MODE=legacy`; весь Memory: `LES_MEMORY_MODE=off`.
+>
+> 0.27.33 / build 550 — Memory Core v1 + текущий ускоренный UI + LIST
+>
+> Дата: 2026-08-02
+> Статус: собранный local candidate; выпуск заблокирован модельным smeta quality gate.
+>
+> **Что вошло:**
+> 1. Модуль `proxy/memory_core/` (SQLite хранилище `MemoryStore`, `SmetaTraceStore`, `contracts.py`, `validation.py`, `conflicts.py`).
+> 2. Границы и порты `proxy/services/` (`MemoryPort`, `NullMemoryPort`, `memory_rag_adapter.py`, `memory_smeta_observer.py`, `smeta_memory_adapter.py`).
+> 3. Root-admin API `proxy/routers/memory.py` (`/api/memory/status`, `/config`, `/entries`, `/review`, `/promote`) и панель «Память проектов» в `sovushka/pages/diag.py`.
+> 4. Строгий post-success RAG capture, durable queue и single local low-priority worker; обычный LLM/RAG-текст остаётся candidate.
+> 5. Read-only capture опубликованных `priced_draft|priced_final` смет; без `project_id` записи нет, typed route/edition не угадываются.
+> 6. В сборке сохранён текущий UI с уже имеющимися ускорениями; отдельная UI-ветка не вливалась. LIST v0.27.27 и parent-card hydration сохранены, object-model skeletons честно остаются groundwork.
+> 7. Memory/API/UI/smeta-isolation tests: 18/18 PASSED; LIST/object-model focused tests: 12/12 PASSED.
+> 8. Сметный модуль `proxy/smeta_core/` v0.3 Stable не изменялся.
+> 9. Windows NSIS собран как `dist/LES-Setup.exe`; итоговые размер и SHA-256 фиксируются во внешнем handoff после упаковки, чтобы ledger внутри архива не создавал самоссылочную контрольную сумму.
+> 10. Portable current gate: 375 collected; 366 passed, 9 skipped. Дополнительные installer/smoke/unit/LIST проверки зелёные.
+> 11. Обязательный `smeta_model_quality_benchmark` не принят: после двух строк Qwen вернул mapping, не прошедший bounded schema repair. Отчёт: `storage/ab_verify/20260802T104438Z-c876bb92d5e4`. Это не Memory-регрессия (`proxy/smeta_core/` diff пуст), но до зелёного повторного прогона кандидат не считать production release.
 
 > 0.27.29 / build 546 — Flexible Code Resolver (Модель задает суть → Код подтягивает норму и считает рубли)
 >

@@ -1027,6 +1027,26 @@ def test_mapping_transport_does_not_rewrite_model_decision():
     assert _normalize_mapping_row_transport(decision) == decision
 
 
+def test_tool_transport_repairs_only_missing_or_extra_trailing_delimiters():
+    from proxy.smeta_core.document_workflow import _tool_arguments, _tool_array_argument
+
+    missing = {"function": {"arguments": '{"items":[{"work_id":"w1"}]'}}
+    extra = {"function": {"arguments": '{"items":[{"work_id":"w1"}]}}'}}
+    assert _tool_arguments(missing) == {"items": [{"work_id": "w1"}]}
+    assert _tool_arguments(extra) == {"items": [{"work_id": "w1"}]}
+    assert _tool_array_argument(
+        {"rows": '[{"work_id":"w1","decision":"unbound"}]]'}, "rows"
+    ) == [{"work_id": "w1", "decision": "unbound"}]
+
+
+def test_norm_transport_accepts_typographic_dashes_without_changing_card():
+    from proxy.smeta_core.document_workflow import _resolve_norm_code_transport
+
+    canonical = "ГЭСНм11-04-027-01"
+    available = {canonical: {"norm_code": canonical}}
+    assert _resolve_norm_code_transport("ГЭСНм 11–04—027−01", available) == canonical
+
+
 def test_terminal_rejects_bind_without_complete_technology_evidence():
     from proxy.smeta_core import document_workflow as workflow
 
@@ -2117,7 +2137,13 @@ def test_norm_card_resources_are_model_opt_in_without_losing_internal_card():
 
 
 def test_tool_array_transport_unwraps_qwen_double_serialization():
-    from proxy.smeta_core.document_workflow import _tool_arguments, _tool_array_argument, _tool_bool
+    from proxy.smeta_core.document_workflow import (
+        _nested_array_transport,
+        _one_item_tool_transport,
+        _tool_arguments,
+        _tool_array_argument,
+        _tool_bool,
+    )
 
     args = {
         "items": '[{"work_id":"w1","norm_codes":["ГЭСН67-01-003-01"]}]',
@@ -2132,6 +2158,30 @@ def test_tool_array_transport_unwraps_qwen_double_serialization():
     assert _tool_array_argument({"items": json.dumps(args["items"])}, "items") == _tool_array_argument(args, "items")
     python_call = {"function": {"arguments": "{'items': '[{\"work_id\": \"w1\"}]'}"}}
     assert _tool_arguments(python_call)["items"].startswith("[")
+    assert _nested_array_transport(
+        '[{"source_node_id":"catalog:family:ГЭСНм","field":"title","claim":"Монтаж"}]'
+    ) == [{
+        "source_node_id": "catalog:family:ГЭСНм",
+        "field": "title",
+        "claim": "Монтаж",
+    }]
+    assert _nested_array_transport("не массив") == "не массив"
+    assert _one_item_tool_transport(
+        {
+            "work_id": "w1",
+            "query": "монтаж шкафа",
+            "base_types": '["ГЭСНм"]',
+            "collections": '["37"]',
+            "table_codes": '["37-01-002"]',
+        },
+        array_fields=("base_types", "collections", "table_codes"),
+    )["items"] == [{
+        "work_id": "w1",
+        "query": "монтаж шкафа",
+        "base_types": ["ГЭСНм"],
+        "collections": ["37"],
+        "table_codes": ["37-01-002"],
+    }]
 
 
 def test_tool_array_transport_accepts_qwen_mapping_alias_only_when_declared():
@@ -2229,6 +2279,34 @@ def test_batch_agent_rejects_unbound_without_two_traced_searches(monkeypatch):
     assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == [
         "буквальный поиск", "нормативная формулировка",
     ]
+
+
+def test_repeated_honest_unbound_without_trace_becomes_visible_candidate():
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Общее изделие", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    row = {
+        "work_id": "w1",
+        "decision": "unbound",
+        "reason": "Модель не нашла защищаемую привязку",
+        "unbound_evidence": {},
+    }
+
+    first = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=1)
+    second = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=2)
+
+    assert first["ok"] is False
+    assert second["ok"] is True
+    selection = session.accepted_rows["w1"]
+    assert selection["review_status"] == "model_batch_candidate"
+    assert selection["norm_code"] == ""
+    assert selection["unbound_evidence"]["queries_used"] == []
+    assert selection["precalculation_blockers"][0]["code"] == "model_candidate_unbound"
+    assert selection["precalculation_blockers"][0]["memory_eligible"] is False
 
 
 def test_unbound_provenance_is_aligned_only_to_real_tool_trace(monkeypatch):
@@ -2446,10 +2524,15 @@ def test_forced_mapping_serializes_large_result_in_transport_chunks(monkeypatch)
 
     def mapping_exchange(_messages, schema):
         variants = schema["properties"]["rows"]["items"]["oneOf"]
-        work_ids = variants[0]["properties"]["work_id"]["enum"]
-        assert all(
-            variant["properties"]["work_id"]["enum"] == work_ids
+        variant_work_ids = [
+            variant["properties"]["work_id"]["enum"]
             for variant in variants
+        ]
+        work_ids = max(variant_work_ids, key=len)
+        assert all(set(values).issubset(work_ids) for values in variant_work_ids)
+        assert all(
+            any(work_id in values for values in variant_work_ids)
+            for work_id in work_ids
         )
         mapping_batches.append(list(work_ids))
         return {"rows": [
@@ -2728,6 +2811,257 @@ def test_terminal_rejects_exact_bind_that_declares_missing_operations():
     assert session.accepted_rows == {}
 
 
+def test_terminal_rejects_exact_bind_when_model_marks_selected_object_none():
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "ГЭСНм37-01-002-05"
+    session = workflow.SmetaNormToolSession(
+        [{
+            "work_id": "w1",
+            "title": "Шкаф напольный телекоммуникационный",
+            "unit": "шт.",
+            "quantity": 2,
+        }],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    card = {
+        "norm_code": code,
+        "title": "Монтаж сосудов без механизмов массой до 1 т",
+        "measure_unit": "шт.",
+        "work_steps": ["Монтаж сосуда"],
+    }
+    session.candidates["w1"][code] = card
+    session.opened["w1"][code] = card
+    evaluations = _candidate_evaluations(code)
+    evaluations[0]["object_match"] = "none"
+
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": code,
+            "selection_kind": "exact",
+            "applicability": "exact",
+            "analog_limitations": [],
+            "candidate_evaluations": evaluations,
+            "technology_check": _technology_check(),
+            "reason": "Модель назвала норму точной, но сама отвергла объект",
+        }]},
+        turn=1,
+    )
+
+    assert result["ok"] is False
+    assert any(
+        "selected candidate contradicts bind" in detail
+        for detail in result["errors"][0]["details"]
+    )
+    assert session.accepted_rows == {}
+
+
+def test_terminal_rejects_exact_bind_without_source_card_object_anchor():
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "ГЭСНм37-01-002-05"
+    session = workflow.SmetaNormToolSession(
+        [{
+            "work_id": "w1",
+            "title": "Шкаф напольный телекоммуникационный",
+            "unit": "шт.",
+            "quantity": 2,
+        }],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    card = {
+        "norm_code": code,
+        "title": "Монтаж сосудов без механизмов массой до 1 т",
+        "measure_unit": "шт.",
+        "work_steps": ["Монтаж сосуда"],
+    }
+    session.candidates["w1"][code] = card
+    session.opened["w1"][code] = card
+
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": code,
+            "selection_kind": "exact",
+            "applicability": "exact",
+            "analog_limitations": [],
+            "candidate_evaluations": _candidate_evaluations(code),
+            "technology_check": _technology_check(),
+            "reason": "Модель объявила разные объекты точным совпадением",
+        }]},
+        turn=1,
+    )
+
+    assert result["ok"] is False
+    assert any(
+        "share no distinctive term" in detail
+        for detail in result["errors"][0]["details"]
+    )
+    assert session.accepted_rows == {}
+
+
+def test_terminal_rejects_self_overlap_in_technology_check():
+    from proxy.smeta_core import document_workflow as workflow
+
+    assert (
+        "technology_check.overlaps_with_work_ids cannot contain its own work_id"
+        in workflow._technology_check_errors(
+            {
+                "selection_kind": "exact",
+                "applicability": "exact",
+                "analog_limitations": [],
+                "technology_check": _technology_check(
+                    overlaps_with_work_ids=["w1"],
+                ),
+            },
+            work_id="w1",
+        )
+    )
+
+
+def test_repeated_typed_semantic_conflict_becomes_visible_candidate_draft():
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "GESNm37-01-002-05"
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "telecommunication cabinet", "unit": "pcs", "quantity": 2}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    card = {
+        "norm_code": code,
+        "title": "installation of vessels without mechanisms",
+        "measure_unit": "pcs",
+        "work_steps": ["installation of vessel"],
+    }
+    session.candidates["w1"][code] = card
+    session.opened["w1"][code] = card
+    evaluations = _candidate_evaluations(code)
+    evaluations[0]["object_match"] = "none"
+    row = {
+        "work_id": "w1",
+        "decision": "bind",
+        "norm_code": code,
+        "selection_kind": "exact",
+        "applicability": "exact",
+        "analog_limitations": [],
+        "candidate_evaluations": evaluations,
+        "technology_check": _technology_check(),
+        "reason": "the model insists on this opened typed card",
+    }
+
+    first = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=1)
+    second = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=2)
+
+    assert first["ok"] is False
+    assert second["ok"] is True
+    selection = session.accepted_rows["w1"]
+    assert selection["norm_code"] == code
+    assert selection["review_status"] == "model_batch_candidate"
+    assert selection["candidate_validation_errors"]
+    assert selection["precalculation_blockers"][0]["code"] == "model_candidate_mapping"
+    assert selection["precalculation_blockers"][0]["memory_eligible"] is False
+
+
+def test_repeated_hard_unit_conflict_never_becomes_candidate_draft():
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "GESNm10-01-001-01"
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "cable", "unit": "m", "quantity": 10}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    card = {
+        "norm_code": code,
+        "title": "equipment installation",
+        "measure_unit": "pcs",
+        "work_steps": ["installation"],
+    }
+    session.candidates["w1"][code] = card
+    session.opened["w1"][code] = card
+    row = {
+        "work_id": "w1",
+        "decision": "bind",
+        "norm_code": code,
+        "selection_kind": "exact",
+        "applicability": "exact",
+        "analog_limitations": [],
+        "candidate_evaluations": _candidate_evaluations(code),
+        "technology_check": _technology_check(),
+        "reason": "model choice",
+    }
+
+    first = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=1)
+    second = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=2)
+
+    assert first["ok"] is False
+    assert second["ok"] is False
+    assert session.accepted_rows == {}
+    assert any(
+        "unit is incompatible" in detail
+        for detail in second["errors"][0]["details"]
+    )
+
+
+def test_repeated_comparison_serialization_conflict_becomes_candidate_draft():
+    from proxy.smeta_core import document_workflow as workflow
+
+    selected_code = "GESNm11-07-001-05"
+    unopened_code = "GESNm11-07-001-02"
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "cable organizer", "unit": "pcs", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    selected_card = {
+        "norm_code": selected_code,
+        "title": "measurement circuit panel",
+        "measure_unit": "pcs",
+        "work_steps": ["installation"],
+    }
+    session.candidates["w1"][selected_code] = selected_card
+    session.candidates["w1"][unopened_code] = {
+        "norm_code": unopened_code,
+        "title": "air supply unit",
+        "measure_unit": "pcs",
+    }
+    session.opened["w1"][selected_code] = selected_card
+    evaluations = _candidate_evaluations(selected_code, decision="rejected")
+    evaluations.append(_candidate_evaluations(unopened_code, decision="rejected")[0])
+    row = {
+        "work_id": "w1",
+        "decision": "bind",
+        "norm_code": selected_code,
+        "selection_kind": "exact",
+        "applicability": "exact",
+        "analog_limitations": [],
+        "candidate_evaluations": evaluations,
+        "technology_check": _technology_check(),
+        "reason": "model selected the opened typed card despite comparison serialization",
+    }
+
+    first = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=1)
+    second = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=2)
+
+    assert first["ok"] is False
+    assert second["ok"] is True
+    selection = session.accepted_rows["w1"]
+    assert selection["norm_code"] == selected_code
+    assert selection["review_status"] == "model_batch_candidate"
+    assert any(
+        "must mark the submitted norm" in detail
+        for detail in selection["candidate_validation_errors"]
+    )
+
+
 def test_structured_mapping_schema_excludes_unit_incompatible_bind_codes():
     from proxy.smeta_core import document_workflow as workflow
 
@@ -2740,10 +3074,23 @@ def test_structured_mapping_schema_excludes_unit_incompatible_bind_codes():
         variant
         for variant in variants
         if variant["properties"]["decision"]["enum"] == ["bind"]
+        and variant["properties"]["selection_kind"]["enum"] == ["exact"]
     )
 
     assert bind["properties"]["work_id"]["enum"] == ["w1"]
     assert bind["properties"]["norm_code"]["enum"] == ["ГЭСНм10-01-001-01"]
+    assert bind["properties"]["applicability"]["enum"] == ["exact"]
+    assert bind["properties"]["analog_limitations"]["maxItems"] == 0
+    analog = next(
+        variant
+        for variant in variants
+        if variant["properties"]["decision"]["enum"] == ["bind"]
+        and variant["properties"]["selection_kind"]["enum"] == ["analog"]
+    )
+    assert analog["properties"]["applicability"]["enum"] == [
+        "close_analog", "weak_analog",
+    ]
+    assert analog["properties"]["analog_limitations"]["minItems"] == 1
 
     no_bind_schema = workflow._mapping_output_schema(
         ["w1"],
@@ -2753,6 +3100,34 @@ def test_structured_mapping_schema_excludes_unit_incompatible_bind_codes():
         variant["properties"]["decision"]["enum"] != ["bind"]
         for variant in no_bind_schema["properties"]["rows"]["items"]["oneOf"]
     )
+
+
+def test_structured_mapping_schema_excludes_impossible_self_coverage():
+    from proxy.smeta_core import document_workflow as workflow
+
+    one_row = workflow._mapping_output_schema(
+        ["w1"],
+        allowed_bind_codes={"w1": []},
+        allowed_coverage_targets={"w1": []},
+    )
+    assert [
+        variant["properties"]["decision"]["enum"]
+        for variant in one_row["properties"]["rows"]["items"]["oneOf"]
+    ] == [["unbound"]]
+
+    two_rows = workflow._mapping_output_schema(
+        ["w1", "w2"],
+        allowed_bind_codes={"w1": [], "w2": []},
+        allowed_coverage_targets={"w1": ["w2"], "w2": ["w1"]},
+    )
+    covered = [
+        variant
+        for variant in two_rows["properties"]["rows"]["items"]["oneOf"]
+        if variant["properties"]["decision"]["enum"] == ["covered_by"]
+    ]
+    assert len(covered) == 2
+    assert covered[0]["properties"]["work_id"]["enum"] == ["w1"]
+    assert covered[0]["properties"]["covered_by_work_id"]["enum"] == ["w2"]
 
 
 def test_batch_agent_does_not_force_extra_read_after_model_submits_norm(monkeypatch):
@@ -3218,6 +3593,75 @@ def test_batch_agent_returns_to_tools_when_unbound_needs_more_evidence(monkeypat
     assert set(
         result["selections"]["w1"]["unbound_evidence"]["queries_used"]
     ) == {"буквальный поиск", "нормативная формулировка"}
+
+
+def test_batch_agent_returns_to_tools_after_terminal_budget_for_positive_unopened_reference(
+    monkeypatch,
+):
+    """A semantic validation error needs tools, not another JSON-only guess."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setenv("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "1")
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    exchange_calls = 0
+    mapping_calls = 0
+
+    def exchange(messages, _tools):
+        nonlocal exchange_calls
+        exchange_calls += 1
+        if exchange_calls == 1:
+            return {"content": "Готов зафиксировать решение."}
+        working_memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        assert working_memory["last_submit_validation"][0]["resolver_hint"][
+            "reason_suggests_positive_applicability"
+        ] is True
+        return {"tool_calls": [_native_call(
+            "search-after-terminal-validation",
+            "search_norms_batch",
+            items=[{
+                "work_id": "w1",
+                "queries": ["монтаж шкафа", "установка оборудования"],
+            }],
+        )]}
+
+    def mapping_exchange(_messages, _schema):
+        nonlocal mapping_calls
+        mapping_calls += 1
+        if mapping_calls == 1:
+            return {"rows": [{
+                "work_id": "w1",
+                "decision": "covered_by",
+                "covered_by_work_id": "w1",
+                "reason": "Норма ГЭСНм 11-04-027 подходит для монтажа",
+            }]}
+        return {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "После двух проверенных поисков применимая карточка не найдена",
+            "unbound_evidence": _unbound_evidence(
+                queries=["монтаж шкафа", "установка оборудования"]
+            ),
+        }]}
+
+    result = workflow._run_batch_norm_agent(
+        [{"work_id": "w1", "title": "Шкаф", "unit": "шт", "quantity": 1}],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+    )
+
+    assert exchange_calls == 2
+    assert mapping_calls == 2
+    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
 
 
 def test_batch_agent_structures_model_decision_at_tool_turn_budget(monkeypatch):

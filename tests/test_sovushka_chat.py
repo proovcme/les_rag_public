@@ -393,6 +393,15 @@ def test_attachment_payload_passes_read_context():
     }
 
 
+def test_attachment_payload_keeps_read_pdf_without_extracted_text():
+    assert _attachment_chat_payload(
+        {"id": "read_pdf_123", "mode": "read", "name": "ВОР.pdf"}
+    ) == {
+        "attachment_id": "read_pdf_123",
+        "attachment_context": "Файл: ВОР.pdf\n\n",
+    }
+
+
 def test_attachment_source_label_uses_filename():
     assert _attachment_source_label("Файл: ТЗ.docx\n\nТекст файла") == "attachment:ТЗ.docx"
     assert _attachment_source_label("Текст без имени") == "attachment"

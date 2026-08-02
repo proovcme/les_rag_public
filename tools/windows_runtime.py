@@ -218,7 +218,9 @@ def _process_name(pid: int) -> str:
         creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
     )
     text = completed.stdout.decode("utf-8", errors="replace").strip()
-    if not text or text.startswith("INFO:"):
+    # A real `/FO CSV` process row is quoted. The localized "no tasks"
+    # message is not, and its OEM bytes are not reliably UTF-8-decodable.
+    if not text or not text.lstrip().startswith('"'):
         return ""
     try:
         return next(csv.reader([text]))[0].casefold()
@@ -226,11 +228,11 @@ def _process_name(pid: int) -> str:
         return ""
 
 
-def _terminate_pid(pid: int) -> None:
+def _terminate_pid(pid: int, *, image_confirmed: bool = False) -> None:
     if pid <= 0:
         return
     name = _process_name(pid)
-    if name not in {"python.exe", "pythonw.exe"}:
+    if not image_confirmed and name not in {"python.exe", "pythonw.exe"}:
         return
     for command in (
         ["taskkill.exe", "/PID", str(pid), "/T", "/F"],
@@ -244,7 +246,7 @@ def _terminate_pid(pid: int) -> None:
             check=False,
             creationflags=CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
-        deadline = time.monotonic() + 3
+        deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if not _process_name(pid):
                 return
@@ -302,7 +304,10 @@ def _stop_confirmed_live_runtime(runtime: Path, ports: set[int]) -> list[int]:
     if any(_process_name(pid) not in {"python.exe", "pythonw.exe"} for pid in pids):
         raise RuntimeError("LES runtime ports are not owned exclusively by Python processes")
     for pid in pids:
-        _terminate_pid(pid)
+        # The live API identity, complete port set, and Python image were all
+        # checked above. Do not let a second transient tasklist read turn a
+        # confirmed shutdown into a half-stopped proxy/UI pair.
+        _terminate_pid(pid, image_confirmed=True)
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
         if all(_port_free(port) for port in ports):

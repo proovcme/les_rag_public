@@ -125,6 +125,8 @@ try {
   Fail "не удалось загрузить модуль состояния Windows: $($_.Exception.Message)" "windows_state_helper_failed"
 }
 Set-Location $Root
+$env:LES_RUNTIME_HOME = $Root
+$env:LES_REPO_ROOT = $Root
 
 # Code is replaceable; state survives NSIS/Tauri updates. Junctions preserve the
 # existing relative-path contracts used by Python without coupling data to an app version.

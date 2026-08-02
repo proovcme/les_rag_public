@@ -50,6 +50,7 @@ from proxy.services.saferag_service import (
     source_names,
 )
 from proxy.services.table_query_service import maybe_answer_table_query
+from proxy.services.memory_port import get_memory_port
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +326,19 @@ async def _execute_chat_evidence_application(
     status=None,
     table_result=None
 ):
+    memory_project_id = 0
+    project_memory_advisory = ""
+    try:
+        memory_project_id = int(getattr(req, "project_id", 0) or 0)
+        if memory_project_id > 0:
+            project_memory_advisory = get_memory_port().recall_project_advisory(
+                memory_project_id, str(req.question or "")
+            )
+    except Exception as memory_error:  # Memory is advisory and fail-open.
+        logger.warning("[MEMORY] advisory recall skipped: %s", memory_error)
+        memory_project_id = 0
+        project_memory_advisory = ""
+
     # Карты тем/разделов остаются навигацией для модели. Production chat-path
     # физически не делает topic/file prefetch до первого модельного хода.
     requested_topic_doc_filter = list(topic_doc_filter or [])
@@ -1344,6 +1358,7 @@ async def _execute_chat_evidence_application(
                         + ("Выбранные документы: " + "; ".join(target_doc_filter) + ".\n\n" if target_doc_filter else "")
                         + (f"{session_block}\n\n" if session_block else "")
                         + (f"{memory_block}\n\n" if memory_block else "")
+                        + (f"{project_memory_advisory}\n\n" if project_memory_advisory else "")
                         + f"Вопрос: {req.question}\n\n"
                         "/no_think\n"
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
@@ -1363,6 +1378,7 @@ async def _execute_chat_evidence_application(
                         "notebook_navigation": len(notebook_study_prompt),
                         "session_memory": len(session_block),
                         "working_memory": len(memory_block),
+                        "project_memory_advisory": len(project_memory_advisory),
                         "question": len(req.question),
                         "user_total": len(user_prompt),
                         "messages_total": sum(len(str(message.get("content") or "")) for message in messages),
@@ -1730,6 +1746,41 @@ async def _execute_chat_evidence_application(
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
                 # подсветки. Вьювер АТЛАС поллит /api/cad-bim/highlight и перекрашивает.
+                # The only ordinary-RAG write hook. It runs after a successful
+                # response is complete and performs at most a durable queue INSERT.
+                try:
+                    evidence_sources = list(
+                        ((final_evidence_packet.get("evidence") or {}).get("sources") or [])
+                    )
+                    memory_refs = [
+                        {
+                            "ref_id": str(item.get("id") or ""),
+                            "doc_id": str(item.get("doc_id") or item.get("doc_name") or ""),
+                            "locator": json.dumps(
+                                item.get("locator") or {}, ensure_ascii=False, sort_keys=True
+                            ),
+                            "source_revision": str(item.get("source_version") or ""),
+                            "is_evidence": bool(item.get("is_evidence")),
+                            "snippet_sha256": "",
+                        }
+                        for item in evidence_sources
+                        if isinstance(item, dict) and item.get("is_evidence")
+                    ]
+                    get_memory_port().enqueue_rag_turn(
+                        memory_project_id,
+                        {
+                            "question": str(req.question or ""),
+                            "answer": answer,
+                            "crag_status": crag_status,
+                            "query_route": query_route_payload,
+                            "evidence_refs": memory_refs,
+                            "retrieval_fingerprint": focused_fingerprint,
+                            "cache_hit": False,
+                        },
+                    )
+                except Exception as memory_error:  # queue pressure cannot fail chat
+                    logger.warning("[MEMORY] grounded turn enqueue skipped: %s", memory_error)
+
                 cad_bim_ids, cad_bim_import_id = extract_highlight(
                     getattr(chunk, "content", "") or "" for chunk in chunks
                 )

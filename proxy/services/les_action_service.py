@@ -23,7 +23,7 @@ from typing import Any
 PROJECTS_ROOT = Path("storage/projects")
 
 # Формы-документы, в которые умеем разложить собранную смету (бланк ВОР/ЛСР).
-_SMETA_FORMS = {"vor", "smeta_lsr"}
+_SMETA_FORMS = {"vor", "smeta_lsr", "ks2", "ks3"}
 
 
 def _projects_root() -> Path:
@@ -45,12 +45,16 @@ def _fmt_qty(value: float) -> str:
 
 # ── 1. les_smeta_save: собранная смета → документ (ВОР/ЛСР) в проект ──
 
-def _smeta_rows(assembled: dict[str, Any]) -> list[list[str]]:
+def _smeta_rows(assembled: dict[str, Any], form_id: str = "vor") -> list[list[str]]:
     """Позиции собранной сметы → строки бланка (ВОР-колонки + строка ИТОГО).
 
     Колонки ВОР: № п/п | Наименование работ | Ед. изм. | Количество | Обоснование | Примечание.
     «Всего по позиции» кладём в Примечание — числовой результат сборки виден в документе.
     """
+    if str(form_id or "").strip().casefold() in {"ks2", "ks3"}:
+        from proxy.services.ks_forms_service import rows_for_form
+
+        return rows_for_form(form_id, assembled=assembled)
     rows: list[list[str]] = []
     for i, pos in enumerate(assembled.get("positions") or [], 1):
         total = _f(pos.get("total"))
@@ -105,7 +109,9 @@ def save_smeta(
     if resolved is None:
         raise ValueError(f"Форма {form_id!r} не найдена")
     if resolved.get("columns"):
-        resolved["rows"] = _smeta_rows(assembled)
+        resolved["rows"] = _smeta_rows(assembled, form_id=form_id)
+    if form_id in {"ks2", "ks3"}:
+        resolved["document_status"] = "draft_from_lsr_not_execution_fact"
 
     out_dir = _projects_root() / str(int(project_id)) / "smeta"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -122,7 +128,12 @@ def save_smeta(
     tmpl = (descriptor.get("templates") or {}).get(fmt)
     tmpl_path = Path(tmpl) if tmpl else None
     if fmt == "xlsx":
-        forms_service.render_xlsx(resolved, out_path, tmpl_path)
+        if form_id == "ks2":
+            from proxy.services.ks2_xlsx_render import render_ks2_xlsx
+
+            render_ks2_xlsx(resolved, out_path)
+        else:
+            forms_service.render_xlsx(resolved, out_path, tmpl_path)
     else:
         forms_service.render_docx(resolved, out_path, tmpl_path)
 

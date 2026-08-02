@@ -273,6 +273,27 @@ def _smeta_model_runtime(env_name: str) -> LlmRuntime:
             )
     return runtime
 
+def _loads_json_dict(raw: str) -> dict[str, Any] | None:
+    """Parse a JSON object with one harmless local-model repair.
+
+    A trailing comma before a closing bracket/brace does not change meaning and
+    is a common Qwen transport blemish.  Semantic values, codes and decisions
+    are never rewritten here.
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        cleaned = re.sub(r",\s*([}\]])", r"\1", text)
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _extract_json_object(text: str) -> dict[str, Any] | None:
     raw = str(text or "").strip()
     if not raw:
@@ -284,11 +305,27 @@ def _extract_json_object(text: str) -> dict[str, Any] | None:
     end = raw.rfind("}")
     if start < 0 or end <= start:
         return None
-    try:
-        parsed = json.loads(raw[start:end + 1])
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    return _loads_json_dict(raw[start:end + 1])
+
+
+def _extract_mapping_json(text: str) -> dict[str, Any] | None:
+    """Find the mapping object without mistaking prose braces for the result."""
+    parsed = _extract_json_object(text)
+    if isinstance(parsed, dict) and ("rows" in parsed or "mapping" in parsed):
+        return parsed
+    raw = str(text or "")
+    for marker in ('"rows"', "'rows'", '"mapping"', "'mapping'"):
+        marker_at = raw.find(marker)
+        if marker_at < 0:
+            continue
+        start = raw.rfind("{", 0, marker_at)
+        end = raw.rfind("}")
+        if start < 0 or end <= start:
+            continue
+        candidate = _loads_json_dict(raw[start : end + 1])
+        if isinstance(candidate, dict) and ("rows" in candidate or "mapping" in candidate):
+            return candidate
+    return None
 
 def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: int = 3) -> list[dict[str, Any]]:
     parsed = _extract_json_object(text)
@@ -419,6 +456,16 @@ def _smeta_document_seed() -> int:
     return _env_int("LES_SMETA_DOCUMENT_SEED", 0)
 
 
+def _qwen_non_thinking_sampling() -> dict[str, float | int]:
+    """Official Qwen non-thinking profile; greedy decoding causes repetition."""
+    return {
+        "temperature": _env_float("LES_SMETA_DOCUMENT_TEMPERATURE", 0.7),
+        "top_p": _env_float("LES_SMETA_DOCUMENT_TOP_P", 0.8),
+        "top_k": _env_int("LES_SMETA_DOCUMENT_TOP_K", 20),
+        "min_p": _env_float("LES_SMETA_DOCUMENT_MIN_P", 0.0),
+    }
+
+
 def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Translate the shared conversation to Ollama's native message contract."""
     native: list[dict[str, Any]] = []
@@ -443,7 +490,7 @@ def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
-    max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 1800)
+    max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 4096)
     tool_names = {
         str((tool.get("function") or {}).get("name") or "")
         for tool in tools
@@ -469,7 +516,7 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             # it back in conversation history with the tool call.
             "think": _env_bool("LES_SMETA_DOCUMENT_THINK", False),
             "options": {
-                "temperature": 0.0,
+                **_qwen_non_thinking_sampling(),
                 "seed": seed,
                 "num_predict": max_tokens,
                 # The Ollama default can be only 4K. Agent/tool workflows need
@@ -490,7 +537,8 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             # Qwen's tool_calls entirely.
             "messages": messages,
             "tools": tools,
-            "temperature": 0.0,
+            "temperature": _qwen_non_thinking_sampling()["temperature"],
+            "top_p": _qwen_non_thinking_sampling()["top_p"],
             "max_tokens": max_tokens,
             "parallel_tool_calls": True,
         }
@@ -535,6 +583,63 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
         raise RuntimeError(f"smeta provider {type(error).__name__}: {error}") from error
 
 
+def _compact_mapping_retry_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Keep the model-owned draft while dropping exhausted tool history.
+
+    This is a transport repair only: the final user request still contains the
+    provider-enforced work ids and typed options, while the latest assistant
+    turn preserves the model's own intended decision.  No norm is selected or
+    rewritten here.
+    """
+    final_user: dict[str, Any] | None = None
+    latest_assistant: dict[str, Any] | None = None
+    for message in reversed(messages):
+        role = str(message.get("role") or "")
+        if final_user is None and role == "user":
+            final_user = message
+            continue
+        if final_user is not None and role == "assistant":
+            latest_assistant = message
+            break
+
+    compact: list[dict[str, Any]] = [{
+        "role": "system",
+        "content": (
+            "Serialize the model-owned smeta decision into the enforced JSON schema. "
+            "Preserve the chosen decision and norm exactly; do not make a new "
+            "professional choice. Return JSON only."
+        ),
+    }]
+    if latest_assistant is not None:
+        assistant_copy = {
+            key: value
+            for key, value in latest_assistant.items()
+            if key in {"role", "content", "thinking", "tool_calls"}
+        }
+        for key in ("content", "thinking"):
+            value = str(assistant_copy.get(key) or "")
+            if len(value) > 12000:
+                assistant_copy[key] = value[-12000:]
+        compact.append(assistant_copy)
+    if final_user is not None:
+        compact.append({
+            "role": "user",
+            "content": str(final_user.get("content") or ""),
+        })
+    return compact
+
+
+def _parse_mapping_message(message: dict[str, Any]) -> dict[str, Any] | None:
+    parsed = _extract_mapping_json(_assistant_text(message))
+    if parsed is not None:
+        return parsed
+    # Some Ollama/Qwen templates place the schema-constrained object in the
+    # dedicated thinking field even when visible content is empty.
+    return _extract_mapping_json(_strip_think(str(message.get("thinking") or "")))
+
+
 def _smeta_document_mapping_exchange(
     messages: list[dict[str, Any]], schema: dict[str, Any],
 ) -> dict[str, Any]:
@@ -558,10 +663,12 @@ def _smeta_document_mapping_exchange(
             "messages": _ollama_native_messages(messages),
             "format": schema,
             "stream": False,
-            # Do not set think=false: current Qwen/Gemma Ollama templates can
-            # silently ignore `format` when thinking is explicitly disabled.
+            # Qwen documents non-thinking function calls with sampled decoding.
+            # If a particular Ollama template loses the schema, the bounded
+            # fallback below retries once with thinking enabled.
+            "think": False,
             "options": {
-                "temperature": 0.0,
+                **_qwen_non_thinking_sampling(),
                 "seed": seed,
                 "num_predict": max_tokens,
                 "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
@@ -598,22 +705,29 @@ def _smeta_document_mapping_exchange(
                 else response_payload.get("choices", [{}])[0].get("message", {})
             )
             message = message if isinstance(message, dict) else {}
-            parsed = _extract_json_object(_assistant_text(message))
-            if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
-                parsed = None
+            parsed = _parse_mapping_message(message)
             if parsed is None and native_ollama:
                 retry_body = dict(body)
-                retry_body["think"] = False
-                if str(response_payload.get("done_reason") or "") == "length":
+                length_limited = (
+                    str(response_payload.get("done_reason") or "") == "length"
+                )
+                # A length-truncated JSON object needs more output room, not a
+                # hidden reasoning trace that competes for the same context.
+                retry_body["think"] = not length_limited
+                if length_limited:
                     options = dict(retry_body.get("options") or {})
                     options["num_predict"] = max(
                         int(options.get("num_predict") or max_tokens),
                         max_tokens * 2,
                     )
                     retry_body["options"] = options
+                    retry_body["messages"] = _ollama_native_messages(
+                        _compact_mapping_retry_messages(messages)
+                    )
                 logger.warning(
                     "[SMETA_DOCUMENT] structured mapping missing; retrying once "
-                    "without thinking done_reason=%r eval_count=%r",
+                    "think=%r done_reason=%r eval_count=%r",
+                    retry_body["think"],
                     response_payload.get("done_reason"),
                     response_payload.get("eval_count"),
                 )
@@ -622,9 +736,7 @@ def _smeta_document_mapping_exchange(
                 response_payload = response.json()
                 message = response_payload.get("message", {})
                 message = message if isinstance(message, dict) else {}
-                parsed = _extract_json_object(_assistant_text(message))
-                if parsed is not None and "rows" not in parsed and "mapping" not in parsed:
-                    parsed = None
+                parsed = _parse_mapping_message(message)
             if parsed is None:
                 raise RuntimeError("smeta provider returned invalid structured mapping JSON")
             parsed["_les_done_reason"] = response_payload.get("done_reason")

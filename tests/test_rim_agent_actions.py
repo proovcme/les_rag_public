@@ -686,7 +686,15 @@ def test_rim_norm_session_requires_catalog_scope_before_batch_search(monkeypatch
 
 
 def test_rim_phase_exposes_simple_route_tools_instead_of_conditional_union():
-    tools = document_workflow._phase_norm_tools("section_select")
+    tools = document_workflow._phase_norm_tools(
+        "section_select",
+        active_work_ids=["w1"],
+        current_node_ids={"w1": "catalog:collection:ГЭСНм:10"},
+        visible_child_node_ids={
+            "w1": ["catalog:section:ГЭСНм:10:10-01"],
+        },
+        visible_evidence_fields=["title", "source_ref"],
+    )
     names = [tool["function"]["name"] for tool in tools]
 
     assert names == [
@@ -704,14 +712,36 @@ def test_rim_phase_exposes_simple_route_tools_instead_of_conditional_union():
     ]
     assert "selected_node_id" in continue_item["required"]
     assert "catalog_query" in continue_item["properties"]
-    assert "catalog_query" not in continue_item["required"]
-    serialized = json.dumps(tools, ensure_ascii=False, sort_keys=True)
-    for phase in ("family_select", "collection", "table_select"):
-        assert json.dumps(
-            document_workflow._phase_norm_tools(phase),
-            ensure_ascii=False,
-            sort_keys=True,
-        ) == serialized
+    assert "catalog_query" in continue_item["required"]
+    items_schema = tools[0]["function"]["parameters"]["properties"]["items"]
+    assert items_schema["maxItems"] == 1
+    assert continue_item["properties"]["work_id"]["enum"] == ["w1"]
+    assert continue_item["properties"]["current_node_id"]["enum"] == [
+        "catalog:collection:ГЭСНм:10",
+    ]
+    assert continue_item["properties"]["selected_node_id"]["enum"] == [
+        "catalog:section:ГЭСНм:10:10-01",
+    ]
+    assert continue_item["properties"]["evidence"]["items"]["properties"][
+        "source_node_id"
+    ]["enum"] == ["catalog:section:ГЭСНм:10:10-01"]
+    assert continue_item["properties"]["evidence"]["items"]["properties"][
+        "field"
+    ]["enum"] == ["title", "source_ref"]
+    assert continue_item["properties"]["rejected_nodes"]["items"]["properties"][
+        "node_id"
+    ]["enum"] == ["catalog:section:ГЭСНм:10:10-01"]
+
+    family_continue = document_workflow._phase_norm_tools("family_select")[0][
+        "function"
+    ]["parameters"]["properties"]["items"]["items"]
+    assert {"work_features", "catalog_query"}.issubset(family_continue["required"])
+
+    for phase in ("collection", "table_select"):
+        route_continue = document_workflow._phase_norm_tools(phase)[0]["function"][
+            "parameters"
+        ]["properties"]["items"]["items"]
+        assert "catalog_query" not in route_continue["required"]
 
 
 def test_family_phase_does_not_block_on_known_or_unknown_assembly_state():
@@ -793,32 +823,43 @@ def test_collection_route_accepts_model_choice_with_five_rejected_siblings(
     result = session.execute(
         "continue_norm_catalog",
         {
-            "items": [{
-                "work_id": work_id,
-                "current_node_id": family_id,
-                "selected_node_id": selected_id,
-                "evidence": [{
-                    "source_node_id": selected_id,
-                    "field": "title",
-                    "claim": "Оборудование связи",
-                }],
-                "rejected_nodes": [
+            "work_id": work_id,
+            "current_node_id": family_id,
+            "selected_node_id": selected_id,
+            "evidence": json.dumps(
+                [
+                    {
+                        "source_node_id": "catalog:collection:ГЭСНм:37",
+                        "field": "title",
+                        "claim": "Оборудование общего назначения",
+                    },
+                    {
+                        "source_node_id": selected_id,
+                        "field": "title",
+                        "claim": "Оборудование связи",
+                    },
+                ],
+                ensure_ascii=False,
+            ),
+            "rejected_nodes": json.dumps([
                     {
                         "node_id": child["node_id"],
                         "reason": f"{child['title']} не соответствует СКС",
                     }
                     for child in children
                     if child["node_id"] != selected_id
-                ],
-                "confidence": "high",
-                "missing_facts": [],
-            }]
+                ], ensure_ascii=False),
+            "confidence": "high",
+            "missing_facts": "[]",
         },
         turn=2,
     )
 
     assert result["rows"][0]["ok"] is True
     assert result["rows"][0]["route_decision"]["selected_node_id"] == selected_id
+    assert result["rows"][0]["route_decision"]["evidence"][0][
+        "source_node_id"
+    ] == selected_id
     assert session.selected_collections[work_id] == {("гэснм", "10")}
 
 

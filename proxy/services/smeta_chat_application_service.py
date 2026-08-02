@@ -25,7 +25,10 @@ from proxy.services.chat_attachment_service import (
     consume_read_attachment,
     resolve_read_attachment,
 )
-from proxy.services.smeta_user_message_service import format_document_lsr_message
+from proxy.services.smeta_user_message_service import (
+    build_mapping_fingerprint,
+    format_document_lsr_message,
+)
 from proxy.services.smeta_artifact_service import (
     build_checked_rim_form_from_visible_rows,
     build_smeta_artifact,
@@ -485,6 +488,7 @@ async def run_smeta_direct_application(
 async def run_smeta_document_application(
     *,
     attachment_id: str,
+    project_id: int | None = None,
     user_request: str,
     model_exchange: ModelExchange | None = None,
     model_mapping_exchange: MappingModelExchange | None = None,
@@ -632,6 +636,41 @@ async def run_smeta_document_application(
             agent_result=agent_result,
         )
 
+    work_context_enricher = None
+    if project_id is not None and int(project_id or 0) > 0:
+        from proxy.memory_core.contracts import MemoryMode, SmetaRecallMode
+        from proxy.services.memory_port import get_memory_port
+
+        memory_port = get_memory_port()
+        memory_recall_enabled = (
+            memory_port.get_mode() == MemoryMode.ON
+            and memory_port.get_smeta_recall_mode() != SmetaRecallMode.OFF
+        )
+    else:
+        memory_recall_enabled = False
+
+    if memory_recall_enabled:
+        from proxy.services.memory_rag_adapter import normalized_knowledge_edition
+        from proxy.services.smeta_memory_adapter import SmetaMemoryAdapter
+        from proxy.smeta_core.base_registry import active_base
+
+        memory_adapter = SmetaMemoryAdapter()
+        active_edition = normalized_knowledge_edition(active_base().get("edition"))
+
+        def enrich_work_from_memory(work: dict[str, Any]) -> dict[str, Any]:
+            features = {
+                "title": str(work.get("title") or ""),
+                "unit": str(work.get("unit") or ""),
+                "function": str(work.get("function") or work.get("note") or ""),
+                "knowledge_edition": active_edition,
+            }
+            return {
+                "memory_advisory": memory_adapter.advisory(int(project_id), features),
+                "route_evidence_cache": memory_adapter.route_cache(int(project_id), features),
+            }
+
+        work_context_enricher = enrich_work_from_memory
+
     try:
         agent_runner = build_smeta_agent_runner(
             agent_engine,
@@ -669,6 +708,7 @@ async def run_smeta_document_application(
             require_global_review=True,
             resume_agent_result=resume_agent_result,
             batch_checkpoint=checkpoint,
+            work_context_enricher=work_context_enricher,
         ))
         while True:
             try:
@@ -738,7 +778,18 @@ async def run_smeta_document_application(
     summary = (workflow.get("lsr") or {}).get("summary") or {}
     status = str(summary.get("result_status") or "unknown")
     source_name = str(attachment_meta.get("original_name") or source_path.name)
-    answer = format_document_lsr_message(source_name, summary)
+    intake = workflow.get("intake") if isinstance(workflow.get("intake"), dict) else {}
+    work_rows = list(intake.get("work_items") or intake.get("rows") or [])
+    selections = workflow.get("selections") if isinstance(workflow.get("selections"), dict) else {}
+    mapping_fingerprint = build_mapping_fingerprint(
+        work_rows=work_rows,
+        selections=selections,
+    )
+    answer = format_document_lsr_message(
+        source_name,
+        summary,
+        fingerprint=mapping_fingerprint,
+    )
     model_steps = [
         str((item.get("assistant") or {}).get("model") or "").strip()
         for item in (workflow.get("model_trace") or [])
@@ -771,6 +822,7 @@ async def run_smeta_document_application(
         "rim_trace": json.loads(
             json.dumps(workflow.get("lsr") or {}, ensure_ascii=False, default=str)
         ),
+        "mapping_fingerprint": mapping_fingerprint,
         "approval": {
             "status": summary.get("approval_status") or "auto_draft",
             "mapping_revision_id": (workflow.get("mapping_run") or {}).get(
@@ -784,6 +836,22 @@ async def run_smeta_document_application(
             ),
         },
     }
+    try:
+        from proxy.services.memory_smeta_observer import observe_published_smeta
+
+        captured_memory_traces = await asyncio.to_thread(
+            observe_published_smeta,
+            project_id=project_id,
+            attachment_id=attachment_id,
+            source_sha256=str(source_fingerprint.get("sha256") or ""),
+            user_request=user_request,
+            workflow=workflow,
+        )
+        if captured_memory_traces:
+            logger.info("[MEMORY] captured %s published smeta trace(s)", captured_memory_traces)
+    except Exception as memory_error:  # Memory cannot alter a published estimate.
+        logger.warning("[MEMORY] smeta observer skipped: %s", memory_error)
+        captured_memory_traces = 0
     return SmetaDocumentApplicationResult(
         answer=answer,
         operation="smeta_document_lsr",
@@ -799,6 +867,7 @@ async def run_smeta_document_application(
                 "source_sha256": attachment_meta.get("sha256"),
                 "result_status": status,
                 "summary": summary,
+                "mapping_fingerprint": mapping_fingerprint,
                 "model_provider": model_provider,
                 "agent_engine": agent_engine,
                 "model_requested": model_name,
