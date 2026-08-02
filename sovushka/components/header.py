@@ -143,7 +143,7 @@ def build_header(
                     tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
                 if include_documents and "documents" not in tab_refs:
                     tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
-                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_document")
+                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_note")
                     tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
                 if include_mail and "mail" not in tab_refs:
                     tab_refs["mail"] = ui.tab("Почта", icon="o_mail")

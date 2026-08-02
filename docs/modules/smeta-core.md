@@ -108,7 +108,17 @@ immutable lock-ревизию и только затем отдельный фи
   и tool JSON от смешивания/обрыва, но не выбирает нормы и не дробит общую immutable-ревизию.
   Оба document exchange используют `temperature=0`; локальный повторяемый профиль дополнительно
   передаёт `LES_SMETA_DOCUMENT_SEED` (default `0`) и сохраняет seed в trace. Нормализованные
-  model-authored запросы и пакетные tool-вызовы сортируются перед retrieval без изменения scope.
+  model-authored запросы и пакетные tool-вызовы сортируются перед retrieval без изменения scope;
+  RRF tie-break и compact cards стабильны по identity/`norm_code`. Submit отклоняет floating
+  reject opened close-analog и соседних шифров одной таблицы без mismatch/критерия различия —
+  без code-side выбора нормы и без replay прошлого mapping.   Bind на `ГЭСНр`/`ГЭСНмр` без
+  маркеров ремонта/замены в тексте строки ВОР hard-demote в unbound (даже при soft-accept);
+  код не подставляет другую норму. После расчёта в artifact/ответе пишется
+  `mapping_fingerprint` (digest привязок) и предупреждение о возможном разбросе fresh-run.
+  При низком покрытии (много unbound) чат и шапка XLSX явно говорят, что сумма — только по
+  привязанным строкам, не итог ведомости. Опциональный `missing_rows_pass`
+  (`LES_SMETA_DOCUMENT_MISSING_PASS`, default on для local Ollama/Qwen) даёт модели второй
+  шанс только по незакрытым `work_id`; уже выбранные нормы immutable.
   Qwen-Agent по умолчанию получает одну активную строку и накопленный `task_state` общей задачи.
   Ordinary-text завершение получает ограниченный same-model terminal recovery; отсутствие или
   расхождение `unbound_evidence` с tool trace отклоняет только transport-пакет, не решение модели.

@@ -312,6 +312,144 @@ def _technology_check_errors(item: dict[str, Any]) -> list[str]:
     return errors
 
 
+# Repair-collection codes (ГЭСНр / ГЭСНмр) are valid only when the VOR row itself
+# signals repair/replacement. Code demotes such binds to unbound — it never picks
+# a replacement norm (ADR / estimate integrity).
+_REPAIR_COLLECTION_PREFIXES = ("ГЭСНмр", "ГЭСНр", "ФЕРмр", "ФЕРр", "ТЕРмр", "ТЕРр")
+_REPAIR_INTENT_MARKERS = (
+    "ремонт", "замен", "восстанов", "усилен", "переборк", "реконструк",
+    "капремонт", "кап.ремонт", "текущ.ремонт", "восстановлен",
+)
+
+
+def _is_repair_collection_code(code: Any) -> bool:
+    text = str(code or "").strip()
+    return any(text.startswith(prefix) for prefix in _REPAIR_COLLECTION_PREFIXES)
+
+
+def _work_row_has_repair_intent(work_row: dict[str, Any] | None) -> bool:
+    if not isinstance(work_row, dict):
+        return False
+    parts = [
+        work_row.get("title"),
+        work_row.get("name"),
+        work_row.get("work"),
+        work_row.get("description"),
+        work_row.get("official_name"),
+        work_row.get("source_text"),
+    ]
+    blob = " ".join(str(part or "") for part in parts).casefold().replace("ё", "е")
+    return any(marker in blob for marker in _REPAIR_INTENT_MARKERS)
+
+
+def _repair_collection_without_intent_errors(
+    work_row: dict[str, Any] | None,
+    norm_code: Any,
+) -> list[str]:
+    """Structural gate: repair collection requires repair intent in the VOR row."""
+    code = str(norm_code or "").strip()
+    if not code or not _is_repair_collection_code(code):
+        return []
+    if _work_row_has_repair_intent(work_row):
+        return []
+    return [
+        f"repair collection {code} requires repair/replacement intent in the VOR row "
+        "(ремонт/замена/восстановление/…); bind demoted to unbound — code does not pick another norm"
+    ]
+
+
+def _cipher_table_stem(code: str) -> tuple[str, str]:
+    """Split display code into table stem + row suffix for neighbor detection."""
+    text = str(code or "").strip()
+    if "-" not in text:
+        return text.casefold(), ""
+    head, tail = text.rsplit("-", 1)
+    return head.casefold(), tail.casefold()
+
+
+def _same_table_neighbor(code_a: str, code_b: str) -> bool:
+    """True when two opened codes share a table stem and differ only by row suffix."""
+    left = str(code_a or "").strip()
+    right = str(code_b or "").strip()
+    if not left or not right or left.casefold() == right.casefold():
+        return False
+    stem_a, suffix_a = _cipher_table_stem(left)
+    stem_b, suffix_b = _cipher_table_stem(right)
+    return bool(stem_a and stem_a == stem_b and suffix_a and suffix_b and suffix_a != suffix_b)
+
+
+_DIFFERENTIATION_MARKERS = (
+    "креплени", "размер", "единиц", "измерител", "диаметр", "сечени", "мощност",
+    "материал", "состав", "технолог", "отлич", "несовпад", "вместо", "толщин",
+    "длин", "ширин", "высот", "тип ", "марку", "марки",
+)
+
+
+def _has_technology_mismatch(evaluation: dict[str, Any]) -> bool:
+    """Structural mismatch signals — code does not pick a winner, only checks form."""
+    if str(evaluation.get("operation_match") or "") == "none":
+        return True
+    if str(evaluation.get("object_match") or "") == "none":
+        return True
+    if str(evaluation.get("unit_match") or "") == "conflict":
+        return True
+    if str(evaluation.get("scope_match") or "") in {"foreign", "none"}:
+        return True
+    foreign = [
+        str(value).strip()
+        for value in (evaluation.get("foreign_resources") or [])
+        if str(value).strip()
+    ]
+    return bool(foreign)
+
+
+def _has_differentiation_reason(reason: str) -> bool:
+    text = str(reason or "").casefold()
+    return any(marker in text for marker in _DIFFERENTIATION_MARKERS)
+
+
+def _floating_reject_errors(
+    evaluation: dict[str, Any],
+    *,
+    prefix: str,
+    selected_code: str,
+    candidate_code: str,
+) -> list[str]:
+    """Reject floating dismissals of opened close analogs / table neighbors.
+
+    Does not choose a norm: requires the model to record a mismatch or an
+    explicit differentiation criterion when rejecting an opened card.
+    """
+    if str(evaluation.get("decision") or "") != "rejected":
+        return []
+    if _has_technology_mismatch(evaluation):
+        return []
+    reason = str(evaluation.get("reason") or "").strip()
+    if _has_differentiation_reason(reason):
+        return []
+    neighbor = _same_table_neighbor(selected_code, candidate_code)
+    if neighbor:
+        return [
+            f"{prefix}: table-neighbor reject of {candidate_code} vs {selected_code} "
+            "needs unit/technology mismatch or an explicit differentiation reason "
+            "(крепление/размер/единица/состав/…)"
+        ]
+    # Soft matches on an opened alternative without any hard mismatch look like
+    # a random close_analog flip between fresh runs.
+    soft = (
+        str(evaluation.get("operation_match") or "") in {"exact", "partial", "unknown"}
+        and str(evaluation.get("object_match") or "") in {"exact", "partial", "unknown"}
+        and str(evaluation.get("unit_match") or "") in {"compatible", "convertible", "unknown"}
+        and str(evaluation.get("scope_match") or "") in {"exact", "partial", "unknown"}
+    )
+    if soft:
+        return [
+            f"{prefix}: rejected opened candidate {candidate_code} needs unit/technology "
+            "mismatch or an explicit differentiation reason (not a floating close-analog reject)"
+        ]
+    return []
+
+
 def _candidate_evaluation_errors(
     item: dict[str, Any],
     *,
@@ -399,6 +537,13 @@ def _candidate_evaluation_errors(
             selected_evaluations += 1
         elif decision in {"rejected", "uncertain"}:
             compared_alternatives += 1
+        if code in opened_codes and code != selected_code:
+            errors.extend(_floating_reject_errors(
+                evaluation,
+                prefix=prefix,
+                selected_code=selected_code,
+                candidate_code=code,
+            ))
 
     if selected_evaluations != 1:
         errors.append("candidate_evaluations must mark the submitted norm exactly once as selected")
@@ -941,8 +1086,23 @@ class SmetaNormToolSession:
         return result
 
     def _read(self, args: dict[str, Any]) -> dict[str, Any]:
+        items = sorted(
+            (
+                item
+                for item in _tool_array_argument(args, "items")
+                if isinstance(item, dict)
+            ),
+            key=lambda item: (
+                str(item.get("work_id") or ""),
+                json.dumps(
+                    _normalize_norm_codes_transport(item),
+                    ensure_ascii=False,
+                    sort_keys=True,
+                ),
+            ),
+        )
         rows_out = []
-        for item in _tool_array_argument(args, "items"):
+        for item in items:
             work_id = str(item.get("work_id") or "")
             cards = []
             include_resources = _tool_bool(item.get("include_resources"), False)
@@ -1061,6 +1221,36 @@ class SmetaNormToolSession:
             opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
             opened_card = opened_for_work.get(opened_code) if opened_code else None
             code = str((opened_card or {}).get("norm_code") or requested_code)
+            # Hard demote even under soft_accept: wrong repair collection must not
+            # price a new/mount VOR row (fresh-run money swing source).
+            repair_errors = _repair_collection_without_intent_errors(
+                self.by_id.get(work_id), code,
+            )
+            if repair_errors:
+                proposed[work_id] = {
+                    "norm_code": "",
+                    "selection_kind": str(item.get("selection_kind") or ""),
+                    "analog_limitations": list(item.get("analog_limitations") or []),
+                    "reason": repair_errors[0],
+                    "unbound_evidence": {
+                        "queries_used": [],
+                        "opened_norm_codes": [code] if code else [],
+                        "rejection_reasons": list(repair_errors),
+                        "coverage_checked": "repair collection rejected without VOR repair intent",
+                    },
+                    "review_status": "model_batch_unbound",
+                    "resource_bindings": [],
+                    "precalculation_blockers": [
+                        {
+                            "code": "repair_collection_without_intent",
+                            "work_id": work_id,
+                            "reason": detail,
+                            "rejected_norm_code": code,
+                        }
+                        for detail in repair_errors
+                    ],
+                }
+                continue
             blockers = [
                 {
                     "code": "incomplete_bind_evidence",
@@ -1529,6 +1719,210 @@ def _run_native_norm_agent(
         },
     }
     return merged
+
+
+def _selection_is_open(selection: dict[str, Any] | None) -> bool:
+    """True when the row has no norm and is not covered by another row."""
+    if not isinstance(selection, dict):
+        return True
+    if str(selection.get("norm_code") or "").strip():
+        return False
+    if str(selection.get("covered_by_work_id") or "").strip():
+        return False
+    return True
+
+
+def _merge_missing_pass_selections(
+    locked: dict[str, dict[str, Any]],
+    reviewed: dict[str, dict[str, Any]],
+    *,
+    open_work_ids: set[str],
+) -> dict[str, dict[str, Any]]:
+    """Keep every previously bound/covered decision; only replace previously open rows."""
+    merged = {str(work_id): dict(selection) for work_id, selection in locked.items()}
+    for work_id, selection in reviewed.items():
+        wid = str(work_id)
+        if wid not in open_work_ids:
+            continue
+        if not isinstance(selection, dict):
+            continue
+        merged[wid] = dict(selection)
+    return merged
+
+
+def _run_missing_rows_pass(
+    work_rows: list[dict[str, Any]],
+    base_result: dict[str, Any],
+    exchange: Exchange,
+    *,
+    mapping_exchange: MappingExchange | None,
+    candidate_limit: int,
+    max_turns: int,
+    batch_size: int,
+    progress: Progress | None,
+    user_request: str,
+    batch_runner: AgentBatchRunner | None,
+    soft_accept: bool = False,
+) -> dict[str, Any]:
+    """Second model pass only for unbound rows; bound norms stay immutable."""
+    base_selections = {
+        str(work_id): dict(selection)
+        for work_id, selection in (base_result.get("selections") or {}).items()
+        if isinstance(selection, dict)
+    }
+    open_ids = {
+        str(row["work_id"])
+        for row in work_rows
+        if _selection_is_open(base_selections.get(str(row["work_id"])))
+    }
+    if not open_ids:
+        return base_result
+
+    locked_neighbors: list[dict[str, Any]] = []
+    for row in work_rows:
+        wid = str(row["work_id"])
+        if wid in open_ids:
+            continue
+        selection = base_selections.get(wid) or {}
+        locked_neighbors.append({
+            "work_id": wid,
+            "title": str(row.get("title") or "")[:240],
+            "decision": _decision_name(selection),
+            "norm_code": str(selection.get("norm_code") or ""),
+            "covered_by_work_id": str(selection.get("covered_by_work_id") or ""),
+            "locked": True,
+        })
+
+    missing_rows: list[dict[str, Any]] = []
+    for row in work_rows:
+        wid = str(row["work_id"])
+        if wid not in open_ids:
+            continue
+        missing_rows.append({
+            **row,
+            "review_phase": "missing_rows_pass",
+            "current_decision": {
+                "decision": _decision_name(base_selections.get(wid) or {}),
+                **dict(base_selections.get(wid) or {}),
+            },
+            "locked_neighbor_decisions": locked_neighbors[:24],
+        })
+
+    if progress:
+        progress({
+            "phase": "missing_rows_pass",
+            "status": "started",
+            "label": f"Смета: второй проход по {len(missing_rows)} незакрытым строкам",
+            "rows": len(missing_rows),
+            "locked_rows": len(work_rows) - len(missing_rows),
+        })
+
+    pass_request = (
+        f"{user_request}\n\n"
+        "MISSING-ROWS PASS ONLY. Decide only for work_id values in this package. "
+        "locked_neighbor_decisions already have norms or coverage and are immutable — "
+        "do not change them and do not resubmit those work_id values. "
+        "Prefer a defensible mount/install bind when evidence supports it; "
+        "otherwise submit unbound. Do not bind repair collections (ГЭСНр/ГЭСНмр) "
+        "unless the VOR title itself signals repair/replacement."
+    )
+    if batch_runner is not None:
+        reviewed = batch_runner(
+            missing_rows,
+            candidate_limit=candidate_limit,
+            max_turns=max_turns,
+            progress=progress,
+            user_request=pass_request,
+        )
+    else:
+        reviewed = _run_native_norm_agent(
+            missing_rows,
+            exchange,
+            mapping_exchange=mapping_exchange,
+            candidate_limit=candidate_limit,
+            max_turns=max_turns,
+            batch_size=batch_size,
+            progress=progress,
+            user_request=pass_request,
+            soft_accept=soft_accept,
+        )
+
+    merged_selections = _merge_missing_pass_selections(
+        base_selections,
+        reviewed.get("selections") or {},
+        open_work_ids=open_ids,
+    )
+    newly_bound = sum(
+        1
+        for wid in open_ids
+        if str((merged_selections.get(wid) or {}).get("norm_code") or "").strip()
+        and not str((base_selections.get(wid) or {}).get("norm_code") or "").strip()
+    )
+    still_open = sum(1 for wid in open_ids if _selection_is_open(merged_selections.get(wid)))
+
+    after_opened = dict(base_result.get("opened_cards") or {})
+    for work_id, cards in (reviewed.get("opened_cards") or {}).items():
+        if str(work_id) not in open_ids:
+            continue
+        after_opened[str(work_id)] = [
+            *(after_opened.get(str(work_id)) or []),
+            *(cards or []),
+        ]
+    combined_browse = {
+        str(work_id): [
+            *((base_result.get("browse_trace") or {}).get(work_id) or []),
+            *((reviewed.get("browse_trace") or {}).get(work_id) or []),
+        ]
+        for work_id in {
+            *(base_result.get("browse_trace") or {}).keys(),
+            *(reviewed.get("browse_trace") or {}).keys(),
+        }
+    }
+    if progress:
+        progress({
+            "phase": "missing_rows_pass",
+            "status": "done",
+            "label": (
+                f"Смета: второй проход закрыл ещё {newly_bound}, "
+                f"осталось незакрытых {still_open}"
+            ),
+            "newly_bound": newly_bound,
+            "still_open": still_open,
+        })
+    return {
+        **reviewed,
+        "selections": merged_selections,
+        "opened_cards": after_opened,
+        "browse_trace": combined_browse,
+        "query_trace": [
+            *(base_result.get("query_trace") or []),
+            *({**item, "review_phase": "missing_rows_pass"} for item in (reviewed.get("query_trace") or [])),
+        ],
+        "catalog_trace": [
+            *(base_result.get("catalog_trace") or []),
+            *({**item, "review_phase": "missing_rows_pass"} for item in (reviewed.get("catalog_trace") or [])),
+        ],
+        "model_trace": [
+            *(base_result.get("model_trace") or []),
+            *({**item, "review_phase": "missing_rows_pass"} for item in (reviewed.get("model_trace") or [])),
+        ],
+        "professional_conflicts": list(
+            reviewed.get("professional_conflicts")
+            or base_result.get("professional_conflicts")
+            or []
+        ),
+        "valid_model_rows": len(merged_selections),
+        "agent_trace": {
+            "mode": "row_mapping_then_missing_rows_pass",
+            "base": base_result.get("agent_trace") or {},
+            "missing_rows_pass": {
+                **(reviewed.get("agent_trace") or {}),
+                "open_before": len(open_ids),
+                "newly_bound": newly_bound,
+                "still_open": still_open,
+            },
+        },
+    }
 
 
 def _run_global_norm_review(
@@ -2296,7 +2690,14 @@ def _batch_norm_tools() -> list[dict[str, Any]]:
             },
             "foreign_resources": string_array,
             "decision": {"type": "string", "enum": ["selected", "rejected", "uncertain"]},
-            "reason": {"type": "string"},
+            "reason": {
+                "type": "string",
+                "description": (
+                    "For rejected opened close-analogs or same-table neighbors (…-01 vs …-02), "
+                    "state a unit/technology mismatch or an explicit differentiation criterion "
+                    "(крепление/размер/единица/состав); do not float between fresh runs."
+                ),
+            },
         },
         "required": [
             "candidate_code", "operation_match", "object_match", "unit_match", "scope_match",
@@ -2662,10 +3063,14 @@ def run_vor_document_workflow(
     accumulate_task_state: bool = False,
     require_global_review: bool = True,
     soft_accept: bool | None = None,
+    missing_rows_pass: bool | None = None,
 ) -> dict[str, Any]:
     """Run the generic workflow for a supported table-like VOR document."""
     if soft_accept is None:
         soft_accept = _env_flag("LES_SMETA_DOCUMENT_SOFT_ACCEPT", default=False)
+    if missing_rows_pass is None:
+        # Default on: second model pass only for unbound rows (bound stay locked).
+        missing_rows_pass = _env_flag("LES_SMETA_DOCUMENT_MISSING_PASS", default=True)
     intake = intake_vor_document(path)
     work_rows = [dict(item) for item in intake.get("work_items") or []]
     if not work_rows:
@@ -2752,6 +3157,42 @@ def run_vor_document_workflow(
             calculation_context=dict(initial_revision.calculation_context),
         )
         current_revision_path = save_mapping_revision(current_revision, root=revision_dir)
+    if missing_rows_pass:
+        before_open = sum(
+            1
+            for row in work_rows
+            if _selection_is_open((agent_result.get("selections") or {}).get(str(row["work_id"])))
+        )
+        if before_open:
+            missing_turns = max(
+                1,
+                int(os.getenv("LES_SMETA_DOCUMENT_MISSING_PASS_TURNS", str(max_agent_turns)) or max_agent_turns),
+            )
+            agent_result = _run_missing_rows_pass(
+                query_rows,
+                agent_result,
+                exchange,
+                mapping_exchange=mapping_exchange,
+                candidate_limit=candidate_limit,
+                max_turns=missing_turns,
+                batch_size=batch_size,
+                progress=progress,
+                user_request=user_request,
+                batch_runner=agent_batch_runner,
+                soft_accept=bool(soft_accept),
+            )
+            current_revision = MappingRevision(
+                mapping_run_id=mapping_run_id,
+                revision_kind="missing_rows_pass",
+                decisions=dict(agent_result.get("selections") or {}),
+                source_rows=tuple(work_rows),
+                professional_conflicts=tuple(agent_result.get("professional_conflicts") or ()),
+                parent_revision_id=current_revision.revision_id,
+                mapping_status="mapping_missing_pass",
+                change_note="Model-owned pass over previously unbound rows only",
+                calculation_context=dict(initial_revision.calculation_context),
+            )
+            current_revision_path = save_mapping_revision(current_revision, root=revision_dir)
     mapping_run = {
         "schema": "smeta_mapping_run_v1",
         "mapping_run_id": mapping_run_id,
@@ -2761,6 +3202,9 @@ def run_vor_document_workflow(
         "current_mapping_revision_path": str(current_revision_path),
         "global_review_revision_id": (
             current_revision.revision_id if current_revision.revision_kind == "global_review" else ""
+        ),
+        "missing_rows_pass_revision_id": (
+            current_revision.revision_id if current_revision.revision_kind == "missing_rows_pass" else ""
         ),
         "mapping_status": current_revision.mapping_status,
         "approval_status": "auto_draft",

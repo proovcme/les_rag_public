@@ -1,4 +1,6 @@
 from proxy.services.smeta_user_message_service import (
+    build_mapping_fingerprint,
+    coverage_gate,
     format_document_lsr_message,
     format_rub,
 )
@@ -100,3 +102,95 @@ def test_partial_lsr_message_uses_singular_for_one_covered_position():
 
 def test_format_rub_uses_spaces_and_decimal_comma():
     assert format_rub(290765.73) == "290 765,73 руб."
+
+
+def test_coverage_gate_marks_low_coverage_and_reframes_money():
+    gate = coverage_gate({
+        "input_rows": 19,
+        "bound_rows": 6,
+        "covered_rows": 0,
+        "open_rows": 13,
+    })
+    assert gate["low_coverage"] is True
+    message = format_document_lsr_message(
+        "ВОР.pdf",
+        {
+            "input_rows": 19,
+            "bound_rows": 6,
+            "open_rows": 13,
+            "total_without_vat": 17229.5,
+            "total_with_vat": 21020.0,
+            "result_status": "priced_draft",
+            "approval_status": "auto_draft",
+        },
+    )
+    assert "Покрытие низкое" in message
+    assert "не итог сметы" in message
+    assert "Сумма только по 6 из 19 привязанных строк" in message
+    assert "Стоимость рассчитанного черновика" not in message
+
+
+def test_coverage_gate_ok_when_mostly_bound():
+    gate = coverage_gate({
+        "input_rows": 19,
+        "bound_rows": 16,
+        "covered_rows": 0,
+        "open_rows": 3,
+    })
+    assert gate["low_coverage"] is False
+
+
+def test_mapping_fingerprint_digest_stable_and_message_warns():
+    fp = build_mapping_fingerprint(
+        work_rows=[
+            {"work_id": "w1", "title": "Монтаж"},
+            {"work_id": "w2", "title": "Окраска"},
+        ],
+        selections={
+            "w1": {"norm_code": "ГЭСНм08-02-409-09", "precalculation_blockers": []},
+            "w2": {
+                "norm_code": "",
+                "precalculation_blockers": [{
+                    "code": "repair_collection_without_intent",
+                    "rejected_norm_code": "ГЭСНр63-03-008-02",
+                }],
+            },
+        },
+    )
+    assert fp["schema"] == "les.smeta_mapping_fingerprint.v1"
+    assert fp["bound_rows"] == 1
+    assert fp["open_rows"] == 1
+    assert len(fp["repair_collection_demotions"]) == 1
+    again = build_mapping_fingerprint(
+        work_rows=[
+            {"work_id": "w1", "title": "Монтаж"},
+            {"work_id": "w2", "title": "Окраска"},
+        ],
+        selections={
+            "w1": {"norm_code": "ГЭСНм08-02-409-09", "precalculation_blockers": []},
+            "w2": {
+                "norm_code": "",
+                "precalculation_blockers": [{
+                    "code": "repair_collection_without_intent",
+                    "rejected_norm_code": "ГЭСНр63-03-008-02",
+                }],
+            },
+        },
+    )
+    assert again["digest"] == fp["digest"]
+
+    message = format_document_lsr_message(
+        "ВОР.pdf",
+        {
+            "input_rows": 2,
+            "bound_rows": 1,
+            "open_rows": 1,
+            "total_without_vat": 100,
+            "result_status": "priced_draft",
+            "approval_status": "auto_draft",
+        },
+        fingerprint=fp,
+    )
+    assert "Ремонтные сборники" in message
+    assert fp["digest"] in message
+    assert "Повторный прогон" in message

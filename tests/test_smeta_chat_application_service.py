@@ -49,6 +49,16 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
             "schema": "smeta_vor_pdf_workflow_v1",
             "agent_trace": {},
             "model_trace": [{"turn": 1}],
+            "intake": {
+                "work_items": [
+                    {"work_id": "w1", "title": "Работа"},
+                    {"work_id": "w2", "title": "Другая"},
+                ],
+            },
+            "selections": {
+                "w1": {"norm_code": "ГЭСН01", "precalculation_blockers": []},
+                "w2": {"norm_code": "", "precalculation_blockers": []},
+            },
             "lsr": {
                 "summary": {
                     "result_status": "priced_partial",
@@ -82,31 +92,22 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
     assert result.operation == "smeta_document_lsr"
     assert result.crag == "PARTIAL"
     assert "Из 19 позиций рассчитаны 16" in result.answer
+    assert "Повторный прогон" in result.answer
     assert result.extra["artifact"]["mode"] == "xlsx"
     assert result.extra["artifact"]["rim_trace"]["positions"][0]["selected_by"] == "model"
-    assert result.extra["retrieval_trace"] == {
-        "mode": "smeta_document",
-        "schema": "smeta_vor_pdf_workflow_v1",
-        "zero_state": True,
-        "previous_revision_read": False,
-        "source_sha256": "source-sha",
-        "result_status": "priced_partial",
-        "summary": {
-            "result_status": "priced_partial",
-            "input_rows": 19,
-            "bound_rows": 16,
-            "open_rows": 3,
-            "total_without_vat": 100,
-            "total_with_vat": 122,
-        },
-        "model_provider": "openai",
-        "agent_engine": "native",
-        "model_requested": "gpt-5.4",
-        "model": "gpt-5.4",
-        "models_used": ["gpt-5.4"],
-        "model_fallbacks": [],
-        "model_calls": 1,
-    }
+    fp = result.extra["artifact"]["mapping_fingerprint"]
+    assert fp["schema"] == "les.smeta_mapping_fingerprint.v1"
+    assert fp["digest"]
+    assert fp["digest"] in result.answer
+    trace = result.extra["retrieval_trace"]
+    assert trace["mapping_fingerprint"]["digest"] == fp["digest"]
+    assert trace["mode"] == "smeta_document"
+    assert trace["schema"] == "smeta_vor_pdf_workflow_v1"
+    assert trace["source_sha256"] == "source-sha"
+    assert trace["result_status"] == "priced_partial"
+    assert trace["summary"]["bound_rows"] == 16
+    assert trace["model"] == "gpt-5.4"
+    assert trace["model_calls"] == 1
     assert workflow_call["candidate_limit"] == 12
     assert workflow_call["batch_size"] == 0
     saved_trace = json.loads(Path(result.extra["artifact"]["files"]["trace_path"]).read_text())
@@ -487,6 +488,91 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "model" not in bodies[0]["messages"][1]
     assert bodies[0]["messages"][1]["tool_calls"][0]["id"] == "call-1"
     assert urls == ["http://127.0.0.1:11434/api/chat"]
+
+
+def test_document_exchange_retries_ollama_tool_xml_parse_500(monkeypatch):
+    """Qwen/Ollama may return HTTP 500 on drifted tool XML; retry with seed+n."""
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    bodies = []
+    calls = {"n": 0}
+
+    class BadResponse:
+        status_code = 500
+        text = '{"error":"XML syntax error on line 8: element <function> closed by </parameter>"}'
+        reason_phrase = "Internal Server Error"
+
+        def raise_for_status(self):
+            raise adapter.httpx.HTTPStatusError(
+                "500", request=adapter.httpx.Request("POST", "http://x"), response=self,
+            )
+
+        def json(self):
+            return {"error": "XML syntax error"}
+
+    class GoodResponse:
+        status_code = 200
+        text = ""
+        reason_phrase = "OK"
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{"id": "call-ok", "function": {"name": "search_norms_batch"}}],
+                },
+                "done_reason": "stop",
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            bodies.append(kwargs["json"])
+            calls["n"] += 1
+            return BadResponse() if calls["n"] == 1 else GoodResponse()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Собери ЛСР"}],
+        [{"type": "function", "function": {"name": "search_norms_batch"}}],
+    )
+
+    assert calls["n"] == 2
+    assert bodies[0]["options"]["seed"] == 0
+    assert bodies[1]["options"]["seed"] == 1
+    assert bodies[1]["think"] is False
+    assert bodies[1]["messages"][-1]["role"] == "user"
+    assert "transport parser error" in bodies[1]["messages"][-1]["content"]
+    assert result["tool_calls"][0]["id"] == "call-ok"
+    assert result["_les_xml_parse_retries"] == 1
+    assert result["_les_seed"] == 1
+
+
+def test_is_ollama_tool_xml_parse_error_helper():
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    assert adapter._is_ollama_tool_xml_parse_error(
+        500,
+        '{"error":"XML syntax error on line 8: element <function> closed by </parameter>"}',
+    )
+    assert not adapter._is_ollama_tool_xml_parse_error(500, "model not found")
+    assert not adapter._is_ollama_tool_xml_parse_error(400, "XML syntax error")
 
 
 def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):

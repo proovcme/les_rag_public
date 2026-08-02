@@ -38,15 +38,28 @@ def _technology_check(**overrides):
 
 
 def _candidate_evaluations(code, *, decision="selected"):
+    if decision == "selected":
+        return [{
+            "candidate_code": code,
+            "operation_match": "exact",
+            "object_match": "exact",
+            "unit_match": "compatible",
+            "scope_match": "exact",
+            "foreign_resources": [],
+            "decision": decision,
+            "reason": "модель сравнила открытую карточку с исходной работой",
+        }]
+    # Rejected alternatives must carry a mismatch or differentiation criterion —
+    # floating close-analog rejects are rejected by transport validation.
     return [{
         "candidate_code": code,
-        "operation_match": "exact",
-        "object_match": "exact",
+        "operation_match": "none",
+        "object_match": "partial",
         "unit_match": "compatible",
-        "scope_match": "exact",
+        "scope_match": "partial",
         "foreign_resources": [],
         "decision": decision,
-        "reason": "модель сравнила открытую карточку с исходной работой",
+        "reason": "состав работ и технология не покрывают исходную операцию",
     }]
 
 
@@ -684,7 +697,7 @@ def test_terminal_requires_model_owned_comparison_for_opened_alternatives(monkey
             **_candidate_evaluations(codes[1], decision="rejected")[0],
             "operation_match": "partial",
             "scope_match": "partial",
-            "reason": "вторая карточка покрывает только часть операции",
+            "reason": "вторая карточка отличается по составу работ: покрывает только часть операции",
         },
     ]
     accepted = session.execute(
@@ -728,6 +741,260 @@ def test_candidate_comparison_tolerates_only_semantically_identical_duplicates()
         conflicting, candidates_for_work=cards, opened_for_work=cards,
     )
     assert any("conflicts with an earlier evaluation" in error for error in errors)
+
+
+def test_missing_pass_merge_keeps_bound_norms():
+    from proxy.smeta_core import document_workflow as workflow
+
+    locked = {
+        "w1": {"norm_code": "ГЭСНм34-01-071-01", "reason": "bound"},
+        "w2": {"norm_code": "", "reason": "open"},
+    }
+    reviewed = {
+        "w1": {"norm_code": "ГЭСН00-00-000-00", "reason": "should be ignored"},
+        "w2": {"norm_code": "ГЭСНм08-02-409-09", "reason": "new bind"},
+        "w3": {"norm_code": "ГЭСН15-01-001-01", "reason": "unknown id ignored via open set"},
+    }
+    merged = workflow._merge_missing_pass_selections(
+        locked, reviewed, open_work_ids={"w2"},
+    )
+    assert merged["w1"]["norm_code"] == "ГЭСНм34-01-071-01"
+    assert merged["w2"]["norm_code"] == "ГЭСНм08-02-409-09"
+    assert "w3" not in merged
+
+
+def test_missing_rows_pass_only_runs_on_open_rows(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    calls = {}
+
+    def fake_agent(rows, exchange, **kwargs):
+        calls["rows"] = [str(r["work_id"]) for r in rows]
+        calls["request"] = kwargs.get("user_request") or ""
+        return {
+            "selections": {
+                "w2": {"norm_code": "ГЭСНм08-02-409-09", "reason": "bound in pass"},
+                "w1": {"norm_code": "SHOULD_NOT_APPLY", "reason": "tamper"},
+            },
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [{"turn": 1}],
+            "agent_trace": {"mode": "test"},
+            "valid_model_rows": 1,
+        }
+
+    monkeypatch.setattr(workflow, "_run_native_norm_agent", fake_agent)
+    base = {
+        "selections": {
+            "w1": {"norm_code": "ГЭСН17-01-010-01", "reason": "locked"},
+            "w2": {"norm_code": "", "reason": "open"},
+        },
+        "opened_cards": {},
+        "browse_trace": {},
+        "query_trace": [],
+        "catalog_trace": [],
+        "model_trace": [],
+        "agent_trace": {"mode": "base"},
+        "valid_model_rows": 1,
+    }
+    work_rows = [
+        {"work_id": "w1", "title": "Люк"},
+        {"work_id": "w2", "title": "Гофра"},
+    ]
+    result = workflow._run_missing_rows_pass(
+        work_rows,
+        base,
+        exchange=lambda *_a, **_k: {},
+        mapping_exchange=None,
+        candidate_limit=4,
+        max_turns=4,
+        batch_size=1,
+        progress=None,
+        user_request="Сделай ЛСР",
+        batch_runner=None,
+        soft_accept=True,
+    )
+    assert calls["rows"] == ["w2"]
+    assert "MISSING-ROWS PASS ONLY" in calls["request"]
+    assert result["selections"]["w1"]["norm_code"] == "ГЭСН17-01-010-01"
+    assert result["selections"]["w2"]["norm_code"] == "ГЭСНм08-02-409-09"
+    assert result["agent_trace"]["missing_rows_pass"]["newly_bound"] == 1
+
+
+def test_repair_collection_bind_demoted_without_vor_repair_intent(monkeypatch):
+    """ГЭСНр on mount/new VOR row → unbound; code does not pick another norm."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    code = "ГЭСНр66-01-023-02"
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "typed_sqlite_fts", "cards": [
+            {"norm_code": code, "title": "Замена скоб", "measure_unit": "шт", "base_type": "ГЭСНр"},
+        ]} for query in queries
+    })
+    monkeypatch.setattr(workflow.nr_sp_service, "candidates", lambda **_kwargs: [])
+    monkeypatch.setattr(workflow.gesn_service, "get_norm", lambda _code, **_kwargs: {
+        "name": "Замена скоб", "unit": "шт", "work_steps": ["Замена"], "resources": [],
+        "base_type": "ГЭСНр",
+    })
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж Скоб металлических однолапковых", "unit": "шт", "quantity": 320}],
+        candidate_limit=4,
+        soft_accept=True,
+    )
+    session.execute(
+        "search_norms_batch",
+        {"items": [{"work_id": "w1", "query": "скобы", "search_intent": "source_literal"}]},
+        turn=1,
+    )
+    session.execute(
+        "read_norms_batch",
+        {"items": [{"work_id": "w1", "norm_code": code}]},
+        turn=2,
+    )
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": code,
+            "selection_kind": "analog",
+            "applicability": "close_analog",
+            "analog_limitations": ["ремонтная норма"],
+            "technology_check": _technology_check(),
+            "candidate_evaluations": _candidate_evaluations(code),
+            "reason": "ближайший аналог по скобам",
+        }]},
+        turn=3,
+    )
+    assert result == {"ok": True, "rows": 1}
+    row = session.accepted_rows["w1"]
+    assert row["norm_code"] == ""
+    assert row["review_status"] == "model_batch_unbound"
+    assert any(
+        b.get("code") == "repair_collection_without_intent"
+        for b in row["precalculation_blockers"]
+    )
+
+
+def test_repair_collection_bind_allowed_with_vor_repair_intent():
+    from proxy.smeta_core import document_workflow as workflow
+
+    assert workflow._repair_collection_without_intent_errors(
+        {"title": "Замена металлических ходовых скоб"},
+        "ГЭСНр66-01-023-02",
+    ) == []
+    assert workflow._repair_collection_without_intent_errors(
+        {"title": "Монтаж скоб"},
+        "ГЭСНр66-01-023-02",
+    )
+    assert workflow._repair_collection_without_intent_errors(
+        {"title": "Монтаж скоб"},
+        "ГЭСНм08-02-409-09",
+    ) == []
+
+
+def test_floating_close_analog_reject_requires_mismatch_or_criterion():
+    from proxy.smeta_core import document_workflow as workflow
+
+    codes = ["ГЭСН15-01-001-01", "ГЭСН15-01-001-02"]
+    cards = {code: {"norm_code": code} for code in codes}
+    floating = {
+        "norm_code": codes[0],
+        "candidate_evaluations": [
+            *_candidate_evaluations(codes[0]),
+            {
+                "candidate_code": codes[1],
+                "operation_match": "exact",
+                "object_match": "exact",
+                "unit_match": "compatible",
+                "scope_match": "exact",
+                "foreign_resources": [],
+                "decision": "rejected",
+                "reason": "не подходит",
+            },
+        ],
+    }
+    errors = workflow._candidate_evaluation_errors(
+        floating, candidates_for_work=cards, opened_for_work=cards,
+    )
+    assert any("table-neighbor reject" in error or "floating" in error for error in errors)
+
+    grounded = {
+        "norm_code": codes[0],
+        "candidate_evaluations": [
+            *_candidate_evaluations(codes[0]),
+            {
+                "candidate_code": codes[1],
+                "operation_match": "exact",
+                "object_match": "exact",
+                "unit_match": "compatible",
+                "scope_match": "exact",
+                "foreign_resources": [],
+                "decision": "rejected",
+                "reason": "отличие по креплению и размеру сечения",
+            },
+        ],
+    }
+    assert workflow._candidate_evaluation_errors(
+        grounded, candidates_for_work=cards, opened_for_work=cards,
+    ) == []
+
+
+def test_rrf_equal_scores_tie_break_by_identity():
+    from proxy.smeta_core.norm_browser import _rrf_cards
+
+    left = [{"norm_key": "B:2", "norm_code": "02", "title": "b"}]
+    right = [{"norm_key": "A:1", "norm_code": "01", "title": "a"}]
+    # Same single-rank contribution → equal RRF score; order must follow identity.
+    ordered = _rrf_cards(left, right, limit=5)
+    assert [card["norm_key"] for card in ordered] == ["A:1", "B:2"]
+
+
+def test_search_batch_items_processed_in_stable_work_id_order(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    def fake_browse(queries, **_kwargs):
+        return {
+            str(query): {
+                "backend": "test",
+                "cards": [{"norm_code": "ГЭСН01-01-001-01", "title": "t", "measure_unit": "шт"}],
+                "source_integrity": {},
+            }
+            for query in queries
+        }
+
+    monkeypatch.setattr(workflow, "browse_norms_many", fake_browse)
+    session = workflow.SmetaNormToolSession(
+        [
+            {"work_id": "w2", "title": "Вторая", "unit": "шт", "quantity": 1},
+            {"work_id": "w1", "title": "Первая", "unit": "шт", "quantity": 1},
+        ],
+        candidate_limit=3,
+    )
+    result = session.execute(
+        "search_norms_batch",
+        {
+            "items": [
+                {
+                    "work_id": "w2",
+                    "query": "вторая",
+                    "scope_mode": "global",
+                    "search_intent": "source_literal",
+                },
+                {
+                    "work_id": "w1",
+                    "query": "первая",
+                    "scope_mode": "global",
+                    "search_intent": "source_literal",
+                },
+            ]
+        },
+        turn=1,
+    )
+    assert result["ok"] is True
+    assert [row["work_id"] for row in result["rows"]] == ["w1", "w2"]
 
 
 def test_read_norm_resources_are_not_truncated_at_thirty(monkeypatch):
