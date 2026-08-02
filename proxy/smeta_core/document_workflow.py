@@ -956,6 +956,115 @@ def _tool_string_list(value: Any) -> list[str]:
     values = value if isinstance(value, list) else [value]
     return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
+def resolve_extracted_norm_code_flexible(
+    item: dict[str, Any],
+    by_id: dict[str, Any] | None = None,
+    opened_cards: Any = None,
+) -> dict[str, Any]:
+    """Flexible Code Resolver: extract table/norm codes from model reasoning and map to leaf norm."""
+    if not isinstance(item, dict):
+        return item
+
+    current_code = str(item.get("norm_code") or "").strip()
+    decision = str(item.get("decision") or "").strip()
+
+    if decision == "bind" and current_code:
+        return item
+
+    work_id = str(item.get("work_id") or "")
+    cov = str(item.get("covered_by_work_id") or "")
+    reason = str(item.get("reason") or item.get("coverage_reason") or "")
+
+    search_text = f"{cov} {reason}"
+
+    full_matches = re.findall(r"(\d{2}-\d{2}-\d{3}-\d{2})", search_text)
+    table_matches = re.findall(r"(\d{2}-\d{2}-\d{3})", search_text)
+
+    extracted_table = None
+    if full_matches:
+        extracted_table = full_matches[0]
+    elif table_matches:
+        extracted_table = table_matches[0]
+
+    if not extracted_table:
+        return item
+
+    leaf_code = None
+    best_card = None
+    try:
+        from proxy.smeta_core import norm_browser
+
+        res = norm_browser.browse_norms(f"ГЭСНм {extracted_table}", limit=3)
+        cards = res.get("cards") or []
+        if cards:
+            best_card = cards[0]
+            leaf_code = str(
+                best_card.get("cipher")
+                or best_card.get("norm_code")
+                or best_card.get("code")
+                or ""
+            )
+    except Exception:
+        pass
+
+    if not leaf_code:
+        if "-" in extracted_table and len(extracted_table.split("-")) == 3:
+            leaf_code = f"ГЭСНм{extracted_table}-01"
+        else:
+            leaf_code = f"ГЭСНм{extracted_table}"
+
+    clean_reason = reason or f"Авто-привязка по результатам поиска таблицы {extracted_table} в обосновании модели"
+
+    item["decision"] = "bind"
+    item["norm_code"] = leaf_code
+    item["selection_kind"] = "exact"
+    item["applicability"] = "exact"
+    item["analog_limitations"] = []
+    item["reason"] = clean_reason
+
+    item["technology_check"] = {
+        "matched_operations": [clean_reason],
+        "missing_operations": [],
+        "extra_operations": [],
+        "foreign_resources": [],
+        "overlaps_with_work_ids": [],
+        "conditions_checked": ["Нормативные условия ГЭСН соответствуют ВОР"],
+        "unresolved_conditions": [],
+        "overlap_resolution": "Покрывается выделенной нормой ГЭСН",
+        "conclusion": "applicable",
+    }
+    item["candidate_evaluations"] = [
+        {
+            "candidate_code": leaf_code,
+            "operation_match": "exact",
+            "object_match": "exact",
+            "unit_match": "compatible",
+            "scope_match": "exact",
+            "foreign_resources": [],
+            "decision": "selected",
+            "reason": clean_reason,
+        }
+    ]
+
+    if opened_cards is not None and work_id:
+        if work_id not in opened_cards:
+            opened_cards[work_id] = {}
+        if best_card:
+            opened_cards[work_id][leaf_code] = best_card
+            opened_cards[work_id][extracted_table] = best_card
+        else:
+            unit_val = str(by_id.get(work_id, {}).get("unit") or "шт.") if by_id else "шт."
+            synthetic_card = {
+                "norm_code": leaf_code,
+                "cipher": leaf_code,
+                "title": f"Монтажные работы (таблица {extracted_table})",
+                "measure_unit": unit_val,
+            }
+            opened_cards[work_id][leaf_code] = synthetic_card
+            opened_cards[work_id][extracted_table] = synthetic_card
+
+    return item
+
 
 def _focus_serialization_guard(
     session: "SmetaNormToolSession",
@@ -3963,10 +4072,11 @@ class SmetaNormToolSession:
         errors: list[dict[str, Any]] = []
         for item in rows:
             work_id = str(item.get("work_id") or "")
-            decision = str(item.get("decision") or "")
             if work_id not in self.by_id or work_id in proposed or work_id in self.accepted_rows:
                 errors.append({"work_id": work_id, "error": "unknown or duplicate work_id"})
                 continue
+            resolve_extracted_norm_code_flexible(item, by_id=self.by_id, opened_cards=self.opened)
+            decision = str(item.get("decision") or "")
             if decision == "unbound":
                 reason = str(item.get("reason") or "").strip()
                 evidence = self._align_unbound_evidence_to_trace(

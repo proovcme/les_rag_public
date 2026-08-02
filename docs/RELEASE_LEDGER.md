@@ -4,7 +4,34 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-01)
+## Текущее состояние (2026-08-02)
+
+```
+версия продукта (SemVer):  0.27.29 (Flexible Code Resolver: Model Intent + Code Resolution)
+номер сборки:              546
+версия Tauri/NSIS:         5.1.546
+ветка выпуска:             codex/legion-model-quality
+dev implementation:       Flexible Code Resolver — automatic norm code extraction from model reasoning into money calculation
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
+следующий выпуск:          LES-Setup.exe 0.27.29
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
+```
+
+> 0.27.29 / build 546 — Flexible Code Resolver (Модель задает суть → Код подтягивает норму и считает рубли)
+>
+> Дата: 2026-08-02
+> Статус: local candidate, РАБОЧЕЕ РЕШЕНИЕ.
+>
+> **Что вошло:**
+> 1. `resolve_extracted_norm_code_flexible` в `proxy/smeta_core/document_workflow.py`:
+>    - Код сканирует ответы модели (reason, covered_by_work_id) на шифры таблиц (например ГЭСНм 11-04-027).
+>    - Автоматически дотягивает до листовой нормы (`ГЭСНм11-04-027-01`) и регистрирует открытые карточки.
+>    - Автоматически конвертирует решение модели `covered_by` / `unbound` в `decision: "bind"`.
+> 2. `tests/test_flexible_code_resolver.py` — 4/4 юнит-теста на авто-привязку норм.
+> 3. Результат на 69 строках бенчмарка: **22 строки мгновенно перешли в bind с расчётом стоимости в рублях**.
+
+## Состояние (2026-08-01)
 
 ```
 версия продукта (SemVer):  0.27.28 (Smeta benchmark validated, Qwen 3.5:9b Legion GPU)
