@@ -7,16 +7,27 @@
 ## Текущее состояние (2026-08-02)
 
 ```
-версия продукта (SemVer):  0.27.35 (PR #8 accepted + corrected)
-номер сборки:              552
-версия Tauri/NSIS:         5.1.552
-ветка выпуска:             codex/legion-model-quality
-dev implementation:       Memory Core v1 — RAG memory & safe smeta traces infrastructure
+версия продукта (SemVer):  0.27.36
+номер сборки:              553
+версия Tauri/NSIS:         5.1.553
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       XLSX intake: Ко-во + deep header поверх 0.27.35
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
-Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.35
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.36
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.36 / build 553 — XLSX intake: Ко-во + deep header
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.35.
+>
+> **Что вошло:**
+> 1. Печатный сметный расчёт с длинной шапкой договора и колонкой `Ко-во` больше не
+>    падает на `не распознаны строки…` (header scan 48 строк; aliases `ко-во`/`колич`).
+> 2. Служебная строка «Материалы | Работа» под split-колонками цен пропускается.
+> 3. Регрессионный тест osipenko-like layout.
 
 > 0.27.35 / build 552 — public PR #8 accepted with production corrections
 >

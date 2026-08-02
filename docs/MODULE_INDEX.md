@@ -92,6 +92,9 @@ smoke фактических active-артефактов и live runtime. Сме
 prompt: каждый `bind` содержит полный technology/overlap evidence, `unbound` — проверяемый search/read
 trace, а ресурсное действие — явный `basis_ref`. Это формальный гейт полноты, а не кодовый выбор нормы.
 
+> **0.27.36 intake:** печатный сметный расчёт — header scan 48 строк, quantity aliases
+> `Ко-во`/`колич`, skip layout-строки «Материалы|Работа» (`source_intake`).
+>
 > **0.27.2 intake correction:** `smeta/rim-dialog` сохраняет служебный
 > `visible_row_number` в audit/source trace, но не считает его смысловым
 > assumption/blocker; валидность строки определяется только реальными

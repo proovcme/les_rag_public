@@ -3862,6 +3862,38 @@ def test_xlsx_vor_intake_preserves_all_rows_and_sheet_provenance(tmp_path):
     assert intake["work_items"][1]["quantity"] == 1200.0
 
 
+def test_xlsx_estimate_intake_reads_ko_vo_header_below_contract_preamble(tmp_path):
+    """Printed сметный расчёт: long title block + «Ко-во» quantity column."""
+    import openpyxl
+
+    from proxy.smeta_core.source_intake import intake_vor_document
+
+    source = tmp_path / "Сметный_расчет_№1.xlsx"
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Сметный расчет"
+    for _ in range(17):
+        sheet.append([None])
+    sheet.append([
+        "№ п/п", "Обоснование", "Наименование работ и затрат", "Ед. изм.",
+        "Ко-во", "Цена за ед.  руб.", "Стоимость, руб.",
+    ])
+    sheet.append(["Материалы", "Работа", "Материалы", "Работа", "Общая стоимость"])
+    sheet.append(list(range(1, 11)))
+    sheet.append([1, "Договорная цена", "Кабельный ввод IP68", "шт.", 3, 0, 0])
+    sheet.append([2, '- " -', "DIN-рейка, 35мм", "м.", 5, 0, 0])
+    workbook.save(source)
+
+    intake = intake_vor_document(source)
+
+    assert intake["work_item_count"] == 2
+    assert intake["work_items"][0]["title"] == "Кабельный ввод IP68"
+    assert intake["work_items"][0]["unit"] == "шт."
+    assert intake["work_items"][0]["quantity"] == 3.0
+    assert intake["work_items"][1]["quantity"] == 5.0
+    assert not any(issue.get("code") == "vor_header_not_found" for issue in intake["issues"])
+
+
 
 
 
