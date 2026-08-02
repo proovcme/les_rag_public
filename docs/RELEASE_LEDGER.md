@@ -7,16 +7,27 @@
 ## Текущее состояние (2026-08-02)
 
 ```
-версия продукта (SemVer):  0.27.36
-номер сборки:              553
-версия Tauri/NSIS:         5.1.553
+версия продукта (SemVer):  0.27.37
+номер сборки:              554
+версия Tauri/NSIS:         5.1.554
 ветка выпуска:             fix/xlsx-intake-ko-vo
-dev implementation:       XLSX intake: Ко-во + deep header поверх 0.27.35
+dev implementation:       LES START/STOP ownership + Ко-во intake поверх 0.27.35
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
-следующий выпуск:          LES-Setup.exe 0.27.36
+следующий выпуск:          LES-Setup.exe 0.27.37
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.37 / build 554 — LES START/STOP: own system-python+venv uvicorn
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.35 / 0.27.36.
+>
+> **Что вошло:**
+> 1. `Test-LesOwnedProcess` признаёт LES-owned: CommandLine/exe в RuntimeRoot или parent
+>    под RuntimeRoot\.venv (system `python`+uvicorn и NiceGUI re-exec `sovushka_ng.py`).
+> 2. `LES-START.bat` делает stop→start на явных 8050/8051, а не уезжает на свободный порт.
+> 3. Чужой владелец порта по-прежнему fail-closed (`foreign_port_owner`).
 
 > 0.27.36 / build 553 — XLSX intake: Ко-во + deep header
 >

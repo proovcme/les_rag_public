@@ -307,6 +307,10 @@ def test_windows_stop_uses_persisted_dynamic_ports():
     assert "foreign_port_owner" in text
     assert "function Stop-LesConfirmedPortProcess" in runtime
     assert "Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue" not in runtime
+    # System python + repo\.venv\uvicorn / NiceGUI re-exec must still count as LES-owned.
+    assert "commandUnderRuntime" in runtime
+    assert "IndexOf($runtime" in runtime
+    assert "ParentProcessId" in runtime
 
 
 def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned():
