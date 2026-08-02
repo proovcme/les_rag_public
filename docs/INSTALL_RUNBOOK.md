@@ -8,6 +8,10 @@ human at a real Mac/Windows box, an Apple/Microsoft signature, or a VM is marked
 Audience: Олег. Build box = your dev Mac. Target = the clean machine the app
 ships to.
 
+**Windows для пользователя (не этот runbook):** установка / удаление / обновление
+через `LES-Setup.exe` и «Параметры → Приложения» — [WINDOWS_DESKTOP.md](WINDOWS_DESKTOP.md).
+Машинный lifecycle — [ALGO-windows-lifecycle.md](ALGO-windows-lifecycle.md).
+
 ---
 
 ## 0. What's automated vs. what isn't

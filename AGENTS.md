@@ -64,11 +64,11 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 - **НЕ дёргать сервисы** (launchd: qdrant/mlx/proxy/sovushka/pauk) без явной нужды — это живой рантайм. Рестарты — `tools/les_runtime_control.py` / `lesctl.py`, осознанно.
 - **Деструктивное — запрещено без явной просьбы** (Guardrails в [SKILL.md](SKILL.md)): не удалять `data/qdrant/`, `data/les_meta_qwen.db`, `storage/`, `RAG_Content/`; не запускать полный реиндекс; беречь таблицу `structured_rules`; `VALIDATOR_BACKEND=rules` — текущий стабильный дефолт.
 - **MLX/память:** модели TTL-выгружаются, metal-семафор; не ломать `backend/mlx_adapter.py` логику памяти.
-- **Сметный pipeline (`proxy/smeta_core/document_workflow.py`) — РАБОЧЕЕ РЕШЕНИЕ (v0.27.28):**
-  Модуль содержит три верифицированных фикса (trailing decision parse, action synonym mapping,
-  evidence parent node). **НЕ ИЗМЕНЯТЬ** без прогона бенчмарка:
+- **Сметный модуль (`proxy/smeta_core/document_workflow.py`) — ПРИЗНАН СТАБИЛЬНЫМ v0.3 (v0.27.29):**
+  Сметное ядро содержит верифицированные механизмы (Flexible Code Resolver `resolve_extracted_norm_code_flexible`, масштабируемую конвертацию единиц `units_compatible`, допуск открытых карточек `actually_opened` для `unbound`).
+  **ЗАПРЕЩЕНО ИЗМЕНЯТЬ БЕЗ ПРЯМОГО УКАЗАНИЯ И ПРОГОНА БЕНЧМАРКА:**
   `uv run python tools/smeta_model_quality_benchmark.py tests/fixtures/sks_4.xlsx --profile qwen=qwen3.5:9b --allow-single-profile --max-turns 10 --candidate-limit 6 --num-ctx 8192 --interrupt-after-rows 5 --out-dir storage/ab_verify`.
-  Ожидается 5/5 строк с решениями (covered_by / unbound). Детали защищённых участков — в docstring модуля.
+  Ожидается 5/5 строк с решениями (covered_by / unbound / bind) и корректная гибридная авто-привязка норм. Детали защищённых участков — в docstring модуля.
 - Правка движка CAD/BIM (`frontend/cad_bim_viewer/`) — отдельная Vite-сборка, не править собранный `dist/`.
 
 ## Что НЕ читать (токены/секреты)

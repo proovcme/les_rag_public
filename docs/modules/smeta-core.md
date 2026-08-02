@@ -4,7 +4,7 @@
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
 
-> **Статус 2026-07-31: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
+> **Статус 2026-08-02: ✅ СМЕТНЫЙ МОДУЛЬ ПРИЗНАН СТАБИЛЬНЫМ v0.3 (v0.27.29).** Канонический PDF→ЛСР путь —
 > model-owned evidence loop, immutable построчный mapping, обязательная глобальная модельная ревизия,
 > автoчерновик и отдельный пользовательский lock перед финальным расчётом.
 > Архитектурное решение и судьба экспериментальных веток зафиксированы в
@@ -72,6 +72,12 @@ tool-loop с точным validation feedback, сама выбирает evidenc
 детерминированный запрос после первой попытки и сохраняет уже принятые строки. Для локальной
 диагностики тот же контракт доступен через `tools/smeta_document_local_run.py`.
 
+При document-level resume внутренний `tool_session` применяется к первой незавершённой строке
+только при точном совпадении её `work_fingerprint`. Если checkpoint уже завершил предыдущую строку,
+её immutable selection сохраняется, а следующая строка начинает чистый tool-session. Live benchmark
+можно продолжить в том же каталоге через `--resume-run <run_root>`; source SHA, профиль модели и весь
+fixed contract проверяются до продолжения.
+
 Отдельных обязательных resource-review, impact-review, dominant-review и `finish_norm_selection` нет.
 После построчного mapping conflict-validator строит связанные компоненты по общим `work_id`.
 Модель получает только эти группы пакетами до `LES_SMETA_GLOBAL_REVIEW_ROWS` строк (default 8);
@@ -110,7 +116,8 @@ Conflict-only global review возвращает полный terminal mapping �
   `les.smeta.qrels.v1` с совпадающим полным `source_sha256` последняя остаётся
   `not_adjudicated`, а не угадывается кодом или моделью. Manifest фиксирует SHA-256 фактического
   system prompt и полного tool contract, digests моделей и активные Qdrant aliases/point counts.
-  Запуск: `uv run python tools/smeta_model_quality_benchmark.py <ВОР.xlsx>`.
+  Запуск: `uv run python tools/smeta_model_quality_benchmark.py <ВОР.xlsx>`; продолжение сохранённого
+  прогона: та же команда и параметры плюс `--resume-run <run_root>`.
 - `proxy.services.smeta_chat_application_service` — application flows ordinary smeta и PDF→ЛСР:
   безопасно открывает одноразовое вложение, координирует RAG/model/progress, сохраняет artifact/trace
   и возвращает response envelope. Профессиональных решений не принимает.

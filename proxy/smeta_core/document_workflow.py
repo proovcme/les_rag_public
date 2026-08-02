@@ -978,7 +978,7 @@ def resolve_extracted_norm_code_flexible(
     search_text = f"{cov} {reason}"
 
     full_matches = re.findall(r"(\d{2}-\d{2}-\d{3}-\d{2})", search_text)
-    table_matches = re.findall(r"(\d{2}-\d{2}-\d{3})", search_text)
+    table_matches = re.findall(r"(\d{2}-\d{2}-\d{3}|\d{2}-\d{2})", search_text)
 
     extracted_table = None
     if full_matches:
@@ -1008,10 +1008,16 @@ def resolve_extracted_norm_code_flexible(
         pass
 
     if not leaf_code:
-        if "-" in extracted_table and len(extracted_table.split("-")) == 3:
-            leaf_code = f"ГЭСНм{extracted_table}-01"
+        parts = extracted_table.split("-")
+        prefix = "ГЭСНр" if "ГЭСНр" in search_text or "ГЭСНр" in reason else "ГЭСНм"
+        if len(parts) == 4:
+            leaf_code = f"{prefix}{extracted_table}"
+        elif len(parts) == 3:
+            leaf_code = f"{prefix}{extracted_table}-01"
+        elif len(parts) == 2:
+            leaf_code = f"{prefix}{extracted_table}-001-01"
         else:
-            leaf_code = f"ГЭСНм{extracted_table}"
+            leaf_code = f"{prefix}{extracted_table}"
 
     clean_reason = reason or f"Авто-привязка по результатам поиска таблицы {extracted_table} в обосновании модели"
 
@@ -4465,6 +4471,7 @@ class SmetaNormToolSession:
             )
         if (
             not has_valid_catalog_terminal
+            and not actually_opened
             and len(unique_queries) < 2
             and len(executed_search_signatures) < 2
         ):

@@ -496,6 +496,41 @@ def _catalog_compass_roots(value: object) -> set[str]:
     return roots
 
 
+_UNIT_DIMENSIONS: dict[str, str] = {
+    "т": "weight",
+    "кг": "weight",
+    "тонн": "weight",
+    "тонна": "weight",
+    "м": "linear",
+    "п.м": "linear",
+    "мп": "linear",
+    "пог.м": "linear",
+    "погонный метр": "linear",
+    "км": "linear",
+    "м2": "area",
+    "м²": "area",
+    "100 м2": "area",
+    "100 м²": "area",
+    "м3": "volume",
+    "м³": "volume",
+    "100 м3": "volume",
+    "100 м³": "volume",
+    "шт": "piece",
+    "компл": "piece",
+    "комплект": "piece",
+    "ед": "piece",
+    "порт": "piece",
+    "точка": "piece",
+}
+
+_DIMENSION_INCOMPATIBLE_WORDS: dict[str, tuple[str, ...]] = {
+    "weight": ("деревян", "кирпич", "гипсокартон", "градирни"),
+    "linear": ("кирпич", "монолитные бетонные", "градирни"),
+    "area": ("градирни",),
+    "volume": ("оборудование связи", "приборы", "автоматизированные системы"),
+}
+
+
 def catalog_compass_score(query: str, item: dict[str, Any]) -> float:
     """Score overlap with official node text; navigation only, never selection."""
     query_roots = _catalog_compass_roots(query)
@@ -513,7 +548,27 @@ def catalog_compass_score(query: str, item: dict[str, Any]) -> float:
         return 0.0
     catalog_coverage = len(overlap) / len(catalog_roots)
     query_coverage = len(overlap) / len(query_roots)
-    return round((2.0 * catalog_coverage) + query_coverage, 6)
+    score = (2.0 * catalog_coverage) + query_coverage
+
+    q_lower = f" {query.casefold()} "
+    item_text = " ".join([
+        str(item.get("title") or ""),
+        str(item.get("purpose") or ""),
+        " ".join(str(v) for v in (item.get("typical_scope") or [])),
+    ]).casefold()
+
+    # Material contradiction check: only penalize if work explicitly specifies ONE material and node is another
+    is_explicitly_wooden = any(w in q_lower for w in ("деревян", "брус", "доск", "бревн", "фанер", "дсп", "двп"))
+    is_explicitly_metallic = any(w in q_lower for w in ("металл", "сталь", "профиль", "швеллер", "двутавр", "уголок"))
+
+    if is_explicitly_metallic and not is_explicitly_wooden:
+        if "деревян" in item_text:
+            score *= 0.1
+    elif is_explicitly_wooden and not is_explicitly_metallic:
+        if "металл" in item_text:
+            score *= 0.1
+
+    return round(score, 6)
 
 
 @lru_cache(maxsize=8)

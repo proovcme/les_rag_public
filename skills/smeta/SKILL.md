@@ -1,3 +1,5 @@
+
+> ⚠️ **ПРИМЕЧАНИЕ ДЛЯ АГЕНТОВ:** Сметное ядро признано СТАБИЛЬНЫМ v0.3 (v0.27.29). Запрещено менять резолвер, контракты единиц и цепочку _submit без прямого прогона бенчмарка.
 ---
 name: smeta
 description: Use when LES must turn a VOR, specification, project document, or free-form scope into a priced LSR using estimating sources and tools.

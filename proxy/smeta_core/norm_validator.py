@@ -52,22 +52,32 @@ def _norm_measure(value: Any) -> tuple[float, str]:
 
 
 def _convert_quantity(quantity: float, source_unit: str, target_unit: str) -> float | None:
-    if source_unit == target_unit:
-        return quantity
+    source_factor, source_base = _norm_measure(source_unit)
+    target_factor, target_base = _norm_measure(target_unit)
+
+    if source_base == target_base and target_factor > 0:
+        return quantity * (source_factor / target_factor)
+
     factor = {
         ("кг", "т"): 0.001,
         ("т", "кг"): 1000.0,
         ("м", "км"): 0.001,
         ("км", "м"): 1000.0,
-    }.get((source_unit, target_unit))
-    return quantity * factor if factor is not None else None
+    }.get((source_base, target_base))
+
+    if factor is not None and target_factor > 0:
+        return quantity * (source_factor / target_factor) * factor
+
+    return None
 
 
 def units_compatible(source_unit: str, norm_measure: str) -> bool:
     """Formal convertibility only; no semantic norm applicability decision."""
-    _, target_unit = _norm_measure(norm_measure)
-    source = _canon_unit(source_unit)
-    return bool(source and target_unit and _convert_quantity(1.0, source, target_unit) is not None)
+    source_base = _canon_unit(source_unit)
+    _, target_base = _norm_measure(norm_measure)
+    if not source_base or not target_base:
+        return False
+    return _convert_quantity(1.0, source_unit, norm_measure) is not None
 
 
 def validate_binding(work: WorkItem, binding: NormBinding) -> dict[str, Any]:
