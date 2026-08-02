@@ -487,11 +487,23 @@ class SentenceTransformerReranker:
 
 
 def select_reranker_cls():
-    """ADR-3: cross_encoder — дефолт; llm — устаревший путь на время миграции."""
-    backend = os.getenv("RERANKER_BACKEND", "cross_encoder").strip().lower()
-    if backend == "llm":
+    """ADR-3: Windows production default is local sentence-transformers.
+
+    Mac/dev may keep MLX ``cross_encoder`` (/v1/rerank). Explicit
+    ``RERANKER_BACKEND`` always wins. ``llm`` remains a migration escape hatch.
+    """
+    import sys
+
+    configured = os.getenv("RERANKER_BACKEND", "").strip().lower()
+    if not configured:
+        configured = (
+            "sentence_transformers"
+            if sys.platform.startswith("win")
+            else "cross_encoder"
+        )
+    if configured == "llm":
         return Reranker
-    if backend == "sentence_transformers":
+    if configured == "sentence_transformers":
         return SentenceTransformerReranker
     return CrossEncoderReranker
 

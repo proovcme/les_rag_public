@@ -250,6 +250,10 @@ class QwenAgentSmetaRunner:
         try:
             with httpx.Client(timeout=300.0) as client:
                 response = client.post(f"{ollama_root}/api/chat", json=body)
+                if response.status_code >= 400:
+                    body_fallback = dict(body)
+                    body_fallback["format"] = "json"
+                    response = client.post(f"{ollama_root}/api/chat", json=body_fallback)
                 response.raise_for_status()
                 payload = response.json()
         except Exception as error:

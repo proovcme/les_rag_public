@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 
 import pytest
@@ -7,7 +8,9 @@ import pytest
 from tools.smeta_model_quality_benchmark import (
     _model_environment,
     _parse_profiles,
+    _validate_resume_manifest,
     analyze_result,
+    stage_latency_summary,
 )
 
 
@@ -20,6 +23,52 @@ def test_profiles_require_distinct_explicit_model_labels():
         _parse_profiles(["local=a", "local=b"])
     with pytest.raises(ValueError, match="at least two"):
         _parse_profiles(["local=a"])
+
+
+def test_resume_manifest_requires_same_source_profile_and_fixed_contract():
+    args = argparse.Namespace(
+        request="estimate",
+        candidate_limit=6,
+        max_turns=10,
+        seed=314159,
+        num_ctx=8192,
+        tool_max_tokens=1800,
+        mapping_max_tokens=8000,
+        interrupt_after_rows=45,
+    )
+    manifest = {
+        "schema": "les.smeta.model-quality-benchmark.v1",
+        "source": {"sha256": "abc"},
+        "profiles": [{"label": "qwen", "model": "qwen3.5:9b"}],
+        "fixed_contract": {
+            "request": "estimate",
+            "candidate_limit": 6,
+            "max_turns": 10,
+            "batch_size": 1,
+            "seed": 314159,
+            "num_ctx": 8192,
+            "tool_max_tokens": 1800,
+            "mapping_max_tokens": 8000,
+            "require_scoped_search": True,
+            "require_global_review": True,
+            "interrupt_after_rows": 45,
+        },
+    }
+    _validate_resume_manifest(
+        manifest,
+        source_sha="abc",
+        profiles=[("qwen", "qwen3.5:9b")],
+        args=args,
+    )
+
+    manifest["fixed_contract"]["num_ctx"] = 32768
+    with pytest.raises(ValueError, match="num_ctx"):
+        _validate_resume_manifest(
+            manifest,
+            source_sha="abc",
+            profiles=[("qwen", "qwen3.5:9b")],
+            args=args,
+        )
 
 
 def test_model_environment_is_identical_and_restored(monkeypatch):
@@ -37,6 +86,8 @@ def test_model_environment_is_identical_and_restored(monkeypatch):
         assert os.environ["OLLAMA_MODEL"] == "gemma4:12b"
         assert os.environ["LES_SMETA_DOCUMENT_SEED"] == "17"
         assert os.environ["LES_SMETA_DOCUMENT_THINK"] == "false"
+        if os.name == "nt":
+            assert os.environ["RERANKER_BACKEND"] == "sentence_transformers"
     assert os.environ["OLLAMA_MODEL"] == "before"
     assert "LES_SMETA_DOCUMENT_MODEL" not in os.environ
 
@@ -139,3 +190,40 @@ def test_analysis_separates_calculation_integrity_from_professional_qrels():
     assert rows["w3"]["status"] == "missing"
     assert analysis["summary"]["empty_or_zero_rows"] == 1
     assert analysis["summary"]["professionally_adjudicated_rows"] == 1
+
+
+def test_stage_latency_summary_groups_tool_trajectory():
+    result = {
+        "agent_trace": {
+            "tool_trajectory": [
+                {"tool": "browse_norm_catalog", "elapsed_ms": 100},
+                {"tool": "browse_norm_catalog", "elapsed_ms": 200},
+                {"tool": "search_norms_batch", "elapsed_ms": 50},
+                {"tool": "read_norms_batch", "elapsed_ms": 80},
+                {"tool": "submit_lsr_mapping", "elapsed_ms": 10},
+            ],
+        },
+        "model_trace": [{"elapsed_ms": 1000}, {"elapsed_ms": 2000}],
+        "catalog_trace": [{"phase": "catalog_browse"}],
+        "query_trace": [{"phase": "batch_search"}],
+        "browse_trace": {"w1": [{}]},
+    }
+    summary = stage_latency_summary(result)
+    assert summary["schema"] == "les.smeta.stage-latency.v1"
+    assert summary["stages"]["catalog"]["count"] == 2
+    assert summary["stages"]["catalog"]["total_ms"] == 300
+    assert summary["stages"]["catalog"]["p50_ms"] == 150
+    assert summary["stages"]["search"]["count"] == 1
+    assert summary["stages"]["llm"]["p95_ms"] == 1950.0
+    assert summary["model_turns"] == 2
+    analysis = analyze_result(
+        {
+            "intake": {"work_items": []},
+            "selections": {},
+            "lsr": {},
+            **result,
+        },
+        row_timings={},
+    )
+    assert analysis["stage_latency"]["stages"]["bind"]["count"] == 1
+    assert "stage_latency" in analysis["summary"]

@@ -456,13 +456,24 @@ def _automatic_patch_files(base: str, target: str) -> list[str]:
         ["git", "diff", "--name-only", f"{base}..{target}"], cwd=ROOT, text=True
     ).splitlines()
     selected: list[str] = []
+    blocked: list[str] = []
     for value in changed:
-        if PurePosixPath(value.replace("\\", "/")).parts[:1] == ("docs",):
+        parts = PurePosixPath(value.replace("\\", "/")).parts
+        # Docs/tests/build-only paths are excluded by policy; anything else that
+        # is not on the soft-update allowlist blocks the package (ALGO §5.3).
+        if parts[:1] in {("docs",), ("tests",)}:
+            continue
+        if parts[:1] == (".github",) or parts[:2] == ("desktop", "tauri"):
             continue
         try:
             selected.append(normalize_path(value))
-        except ValueError:
-            continue
+        except ValueError as exc:
+            blocked.append(f"{value} ({exc})")
+    if blocked:
+        raise ValueError(
+            "unknown runtime paths block the soft-update package: "
+            + "; ".join(blocked[:20])
+        )
     if not selected:
         raise ValueError("installed LES and target have no bounded runtime changes")
     return sorted(set(selected))

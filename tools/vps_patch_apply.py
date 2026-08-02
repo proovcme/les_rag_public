@@ -322,36 +322,13 @@ def _start_runtime(runtime: Path, state: Path) -> None:
 def _verify_smeta_baseline(
     runtime: Path, state: Path, *, staged_runtime: Path | None = None
 ) -> None:
-    """Repair/verify the bundled immutable FSNB base before accepting a patch."""
+    """Accept a live mechanical+RRF baseline; never silently repair during soft update."""
+    del runtime, state, staged_runtime  # identity kept for call-site compatibility
     if _wait_live_smeta_baseline_ready():
         return
-    python = state / ".venv" / "Scripts" / "python.exe"
-    tool = runtime / "tools" / "smeta_release_baseline.py"
-    staged_tool = (staged_runtime or Path()) / "tools" / "smeta_release_baseline.py"
-    if staged_runtime is not None and staged_tool.is_file():
-        tool = staged_tool
-    archive = runtime / "installers" / "windows" / "baseline" / "LES-smeta-baseline.zip"
-    missing = [str(path) for path in (python, tool, archive) if not path.is_file()]
-    if missing:
-        raise RuntimeError("smeta baseline provisioner is incomplete: " + ", ".join(missing))
-    environment = dict(os.environ)
-    environment["LES_WINDOWS_STATE_ROOT"] = str(state)
-    windows_update_engine.run_bounded(
-        [
-            str(python),
-            str(tool),
-            "repair",
-            "--archive",
-            str(archive),
-            "--state-root",
-            str(state),
-        ],
-        cwd=runtime,
-        log_root=state / "logs" / "updates" / "soft-update",
-        name="smeta-baseline",
-        timeout=300,
-        environment=environment,
-        max_working_set_mb=768,
+    raise RuntimeError(
+        "baseline_unreadable: soft update requires a live mechanical+RRF smeta "
+        "baseline; use hard recovery or clean install instead of hidden repair"
     )
 
 
@@ -402,7 +379,10 @@ def evaluate_process_hygiene(
     runtime_state: dict[str, Any],
     process_snapshot: dict[str, Any],
 ) -> dict[str, Any]:
-    if runtime_state.get("process_contract") != "direct_python_no_console_v1":
+    if runtime_state.get("process_contract") not in {
+        "direct_python_no_console_v1",
+        "direct_python_no_console_v2",
+    }:
         raise RuntimeError("runtime process contract is not console-clean")
     required = {
         "proxy_pid": runtime_state.get("proxy_pid"),

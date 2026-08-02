@@ -68,22 +68,54 @@ def test_automatic_patch_files_keeps_only_runtime_allowlist(tmp_path):
     runtime_file = repo / "proxy" / "x.py"
     runtime_file.parent.mkdir()
     runtime_file.write_text("before\n", encoding="utf-8")
-    (repo / "README.md").write_text("before\n", encoding="utf-8")
     docs_file = repo / "docs" / "runtime.md"
     docs_file.parent.mkdir()
     docs_file.write_text("before\n", encoding="utf-8")
+    tests_file = repo / "tests" / "test_x.py"
+    tests_file.parent.mkdir()
+    tests_file.write_text("before\n", encoding="utf-8")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
     subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
     base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     runtime_file.write_text("after\n", encoding="utf-8")
-    (repo / "README.md").write_text("after\n", encoding="utf-8")
     docs_file.write_text("after\n", encoding="utf-8")
+    tests_file.write_text("after\n", encoding="utf-8")
     subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
     target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
     original = vps_patch.ROOT
     vps_patch.ROOT = repo
     try:
         assert vps_patch._automatic_patch_files(base, target) == ["proxy/x.py"]
+    finally:
+        vps_patch.ROOT = original
+
+
+def test_automatic_patch_files_blocks_unknown_runtime_paths(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    runtime_file = repo / "proxy" / "x.py"
+    runtime_file.parent.mkdir()
+    runtime_file.write_text("before\n", encoding="utf-8")
+    (repo / "README.md").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    runtime_file.write_text("after\n", encoding="utf-8")
+    (repo / "README.md").write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    original = vps_patch.ROOT
+    vps_patch.ROOT = repo
+    try:
+        try:
+            vps_patch._automatic_patch_files(base, target)
+            raise AssertionError("unknown runtime path must block soft package")
+        except ValueError as exc:
+            assert "unknown runtime paths block" in str(exc)
+            assert "README.md" in str(exc)
     finally:
         vps_patch.ROOT = original
 

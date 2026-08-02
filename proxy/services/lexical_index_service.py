@@ -51,6 +51,7 @@ class RetrievalTrace:
     fusion: str = "none"
     rerank: dict[str, Any] = field(default_factory=dict)
     retry: dict[str, Any] = field(default_factory=dict)
+    parent_hydration: dict[str, Any] = field(default_factory=dict)
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -74,6 +75,7 @@ class RetrievalTrace:
             "fusion": self.fusion,
             "rerank": self.rerank,
             "retry": self.retry,
+            "parent_hydration": self.parent_hydration,
         }
 
 

@@ -188,6 +188,77 @@ def test_sequential_row_mapping_resumes_checkpoint_without_repeating_completed_r
     assert result["incomplete"] is False
 
 
+def test_native_batch_resume_drops_completed_previous_batch_tool_session(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Первая работа", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Вторая работа", "unit": "шт", "quantity": 1},
+    ]
+    completed = {
+        "norm_code": "",
+        "reason": "решение w1",
+        "review_status": "model_batch_unbound",
+    }
+    previous_session = workflow.SmetaNormToolSession(
+        [rows[0]],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    seen = []
+
+    def run_pending(work_rows, _exchange, **kwargs):
+        seen.append((str(work_rows[0]["work_id"]), kwargs["resume_checkpoint"]))
+        return {
+            "selections": {
+                "w2": {
+                    "norm_code": "",
+                    "reason": "решение w2",
+                    "review_status": "model_batch_unbound",
+                },
+            },
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [],
+            "valid_model_rows": 1,
+            "agent_trace": {"engine": "test"},
+        }
+
+    monkeypatch.setattr(workflow, "_run_batch_norm_agent", run_pending)
+    result = workflow._run_native_norm_agent(
+        rows,
+        lambda _messages, _tools: {},
+        candidate_limit=4,
+        max_turns=4,
+        batch_size=1,
+        resume_result={
+            "selections": {"w1": completed},
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [],
+            "resume_state": {
+                "schema": "smeta_norm_agent_resume_v1",
+                "tool_session": previous_session.checkpoint_state(),
+            },
+        },
+        require_scoped_search=True,
+    )
+
+    assert seen == [("w2", None)]
+    assert result["selections"] == {
+        "w1": completed,
+        "w2": {
+            "norm_code": "",
+            "reason": "решение w2",
+            "review_status": "model_batch_unbound",
+        },
+    }
+
+
 def test_terminal_mapping_emits_only_completed_row_payload():
     from proxy.smeta_core import document_workflow as workflow
 

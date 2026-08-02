@@ -2,7 +2,13 @@
 
 import pytest
 
-from backend.reranker import CrossEncoderReranker, RankedChunk, Reranker, select_reranker_cls
+from backend.reranker import (
+    CrossEncoderReranker,
+    RankedChunk,
+    Reranker,
+    SentenceTransformerReranker,
+    select_reranker_cls,
+)
 
 
 def _chunks(n):
@@ -73,9 +79,14 @@ async def test_rerank_raises_on_empty_results(monkeypatch):
         await rr.rerank("вопрос", _chunks(5), top_k=2)
 
 
-def test_select_reranker_cls_default_cross_encoder(monkeypatch):
+def test_select_reranker_cls_default_is_platform_aware(monkeypatch):
+    import sys
+
     monkeypatch.delenv("RERANKER_BACKEND", raising=False)
-    assert select_reranker_cls() is CrossEncoderReranker
+    if sys.platform.startswith("win"):
+        assert select_reranker_cls() is SentenceTransformerReranker
+    else:
+        assert select_reranker_cls() is CrossEncoderReranker
 
 
 def test_select_reranker_cls_llm_escape_hatch(monkeypatch):

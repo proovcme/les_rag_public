@@ -1043,6 +1043,24 @@ async def retrieve_chat_chunks(
     if ordinal_promoted and "first_ordinal_guard" not in trace.mode:
         trace.mode = f"{trace.mode}+first_ordinal_guard"
 
+    # Parent-card hydration: search_chunk → sibling window under the same parent_id.
+    # Does not select a professional answer; only attaches typed meta.parent_card.
+    try:
+        from proxy.services.parent_card_hydration_service import hydrate_parent_cards
+
+        hydration = hydrate_parent_cards(chunks, max_chunks=min(8, max(1, CHAT_TOP_K)))
+        chunks = hydration.chunks
+        trace.parent_hydration = hydration.payload()
+        if hydration.hydrated_count and "parent_card" not in trace.mode:
+            trace.mode = f"{trace.mode}+parent_card"
+    except Exception as hydrate_error:  # noqa: BLE001 — best-effort, never fail retrieval
+        logger.warning("[PARENT_CARD] hydration skipped: %s", hydrate_error)
+        trace.parent_hydration = {
+            "schema": "les.parent_card.v1",
+            "hydrated_count": 0,
+            "error": type(hydrate_error).__name__,
+        }
+
     # A weak-query retry may replace the trace; record the actual query contract
     # only after every dense pass has completed.
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)

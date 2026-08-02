@@ -180,66 +180,20 @@ def test_soft_updater_rejects_failed_baseline_preflight_before_runtime_mutation(
     assert (runtime.parent / "les-desktop.exe").read_bytes() == b"old desktop"
 
 
-def test_soft_updater_verifies_bundled_smeta_baseline_with_persistent_python(
+def test_soft_updater_rejects_unreadable_baseline_without_hidden_repair(
     tmp_path, monkeypatch
 ):
-    runtime = tmp_path / "runtime"
-    state = tmp_path / "state"
-    python = state / ".venv/Scripts/python.exe"
-    tool = runtime / "tools/smeta_release_baseline.py"
-    archive = runtime / "installers/windows/baseline/LES-smeta-baseline.zip"
-    for path in (python, tool, archive):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"fixture")
-    captured = {}
-
-    def run_bounded(arguments, **kwargs):
-        captured["arguments"] = arguments
-        captured["kwargs"] = kwargs
-        return 0
-
-    monkeypatch.setattr(windows_update_engine, "run_bounded", run_bounded)
     monkeypatch.setattr(vps_patch_apply, "_wait_live_smeta_baseline_ready", lambda: False)
-
-    vps_patch_apply._verify_smeta_baseline(runtime, state)
-
-    assert captured["arguments"] == [
-        str(python),
-        str(tool),
-        "repair",
-        "--archive",
-        str(archive),
-        "--state-root",
-        str(state),
-    ]
-    assert captured["kwargs"]["timeout"] == 300
-    assert captured["kwargs"]["environment"]["LES_WINDOWS_STATE_ROOT"] == str(state)
-
-
-def test_soft_updater_preflights_with_staged_baseline_tool(tmp_path, monkeypatch):
-    runtime = tmp_path / "runtime"
-    staged_runtime = tmp_path / "stage/runtime"
-    state = tmp_path / "state"
-    python = state / ".venv/Scripts/python.exe"
-    installed_tool = runtime / "tools/smeta_release_baseline.py"
-    staged_tool = staged_runtime / "tools/smeta_release_baseline.py"
-    archive = runtime / "installers/windows/baseline/LES-smeta-baseline.zip"
-    for path in (python, installed_tool, staged_tool, archive):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(b"fixture")
-    captured = {}
     monkeypatch.setattr(
         windows_update_engine,
         "run_bounded",
-        lambda arguments, **_kwargs: captured.setdefault("arguments", arguments) and 0,
-    )
-    monkeypatch.setattr(vps_patch_apply, "_wait_live_smeta_baseline_ready", lambda: False)
-
-    vps_patch_apply._verify_smeta_baseline(
-        runtime, state, staged_runtime=staged_runtime
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("soft update must not repair baseline")
+        ),
     )
 
-    assert captured["arguments"][1] == str(staged_tool)
+    with pytest.raises(RuntimeError, match="baseline_unreadable"):
+        vps_patch_apply._verify_smeta_baseline(tmp_path / "runtime", tmp_path / "state")
 
 
 def test_soft_updater_keeps_live_ready_smeta_without_touching_baseline(
@@ -487,6 +441,36 @@ def test_windows_updater_rejects_undeclared_archive_content_before_stop(tmp_path
     assert stopped is False
     assert (runtime / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
     assert (state / "data" / "user-owned.db").read_bytes() == b"never replace me"
+
+
+def test_windows_runtime_stop_does_not_kill_stale_state_pids(monkeypatch, tmp_path):
+    state = tmp_path / "LES"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    (logs / "windows-light-state.json").write_text(
+        json.dumps({"proxy_pid": 101, "ui_pid": 102}),
+        encoding="utf-8",
+    )
+    terminated = []
+    monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: {})
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
+    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminated.append)
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda _port: True)
+
+    result = windows_runtime.stop(state, runtime=tmp_path / "runtime")
+
+    assert result["pids"] == []
+    assert terminated == []
+
+
+def test_windows_runtime_stop_reports_foreign_port_owner(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        windows_runtime, "_listening_pids", lambda _ports: {8050: 55, 8051: 56}
+    )
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
+
+    with pytest.raises(RuntimeError, match="foreign_port_owner"):
+        windows_runtime.stop(tmp_path / "LES", runtime=tmp_path / "runtime")
 
 
 def test_windows_updater_process_hygiene_is_behaviorally_enforced():

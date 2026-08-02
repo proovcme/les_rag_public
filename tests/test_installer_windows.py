@@ -60,6 +60,55 @@ def test_bootstrap_ps1_is_utf8_bom(tmp_path):
     assert nsi.read_bytes()[:3] == b"\xef\xbb\xbf"
 
 
+def test_windows_desktop_installer_stops_les_and_offers_data_wipe():
+    """AnythingLLM-style Setup/Uninstall: stop app, optional full data wipe."""
+    hooks = (
+        build_windows_installer.ROOT
+        / "desktop"
+        / "tauri"
+        / "src-tauri"
+        / "windows-installer-hooks.nsh"
+    ).read_text(encoding="utf-8")
+    nsi = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "LES.nsi"
+    ).read_text(encoding="utf-8")
+    helper = (
+        build_windows_installer.ROOT
+        / "installers"
+        / "windows"
+        / "app"
+        / "les-setup-helpers.ps1"
+    ).read_text(encoding="utf-8")
+    desktop_doc = (
+        build_windows_installer.ROOT / "docs" / "WINDOWS_DESKTOP.md"
+    ).read_text(encoding="utf-8")
+    tauri = (
+        build_windows_installer.ROOT
+        / "desktop"
+        / "tauri"
+        / "src-tauri"
+        / "tauri.conf.json"
+    ).read_text(encoding="utf-8")
+
+    for text in (hooks, nsi):
+        assert "exit /b 0" in text
+        assert "ClearErrors" in text
+        assert "les-setup-helpers.ps1" in text
+        assert "LesWipeUserData" in text
+        assert "setup-deps-missing.txt" in text
+    assert "NSIS_HOOK_PREINSTALL" in hooks
+    assert "NSIS_HOOK_PREUNINSTALL" in hooks
+    assert "NSIS_HOOK_POSTUNINSTALL" in hooks
+    assert r"$LOCALAPPDATA\Programs\LES" in hooks
+    assert "exit 0" in helper
+    assert "winget install" in helper
+    assert "downloadBootstrapper" in tauri
+    assert "ошибка 1" in desktop_doc
+    assert "LES-Setup.exe" in desktop_doc
+    assert "Параметры" in desktop_doc
+    assert "Обновление поверх" in desktop_doc
+
+
 def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
     raw = smoke.read_bytes()
@@ -211,11 +260,18 @@ def test_windows_stop_uses_persisted_dynamic_ports():
     text = (
         build_windows_installer.ROOT / "installers" / "windows" / "stop-light.ps1"
     ).read_text(encoding="utf-8")
+    runtime = (
+        build_windows_installer.ROOT / "installers" / "windows" / "runtime-process.ps1"
+    ).read_text(encoding="utf-8")
 
     assert '$PSBoundParameters.ContainsKey("ProxyPort")' in text
     assert 'logs\\windows-light-state.json' in text
     assert "$runtimeState.proxy_port" in text
     assert "$runtimeState.ui_port" in text
+    assert "windows_runtime.py" in text
+    assert "foreign_port_owner" in text
+    assert "function Stop-LesConfirmedPortProcess" in runtime
+    assert "Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue" not in runtime
 
 
 def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned():

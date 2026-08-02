@@ -69,7 +69,11 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> None:
         stream.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
 
-def _parse_profiles(values: list[str]) -> list[tuple[str, str]]:
+def _parse_profiles(
+    values: list[str],
+    *,
+    allow_single: bool = False,
+) -> list[tuple[str, str]]:
     profiles: list[tuple[str, str]] = []
     seen: set[str] = set()
     for value in values:
@@ -82,7 +86,9 @@ def _parse_profiles(values: list[str]) -> list[tuple[str, str]]:
             raise ValueError(f"duplicate profile label: {label}")
         seen.add(label)
         profiles.append((label, model))
-    if len(profiles) < 2:
+    if not profiles:
+        raise ValueError("at least one model profile is required")
+    if len(profiles) < 2 and not allow_single:
         raise ValueError("at least two model profiles are required")
     return profiles
 
@@ -173,6 +179,43 @@ def _unload_model(base_url: str, model: str) -> None:
         response.raise_for_status()
 
 
+def _assert_reranker_ready() -> dict[str, Any]:
+    """Fail closed before a multi-hour A/B if the production reranker is dead."""
+    import asyncio
+
+    from backend.reranker import SentenceTransformerReranker, select_reranker_cls
+
+    cls = select_reranker_cls()
+    if cls is not SentenceTransformerReranker and os.name == "nt":
+        raise RuntimeError(
+            "Windows A/B requires RERANKER_BACKEND=sentence_transformers; "
+            f"got {cls.__name__} (MLX cross_encoder is not a Legion production path)"
+        )
+    if cls is SentenceTransformerReranker:
+        reranker = cls()
+        ranked = asyncio.run(
+            reranker.rerank(
+                "монтаж шкафа",
+                [
+                    {"text": "Монтаж телекоммуникационного шкафа", "score": 0.2, "metadata": {"i": 0}},
+                    {"text": "Устройство стяжки пола", "score": 0.1, "metadata": {"i": 1}},
+                    {"text": "Прокладка кабеля витая пара", "score": 0.15, "metadata": {"i": 2}},
+                    {"text": "Пусконаладка СКС", "score": 0.05, "metadata": {"i": 3}},
+                ],
+                top_k=2,
+            )
+        )
+        if len(ranked) < 1:
+            raise RuntimeError("sentence-transformers reranker returned no ranks")
+        return {
+            "backend": "sentence_transformers",
+            "class": cls.__name__,
+            "model": reranker.model,
+            "smoke_ranks": len(ranked),
+        }
+    return {"backend": "configured", "class": cls.__name__}
+
+
 @contextlib.contextmanager
 def _model_environment(
     model: str,
@@ -197,6 +240,9 @@ def _model_environment(
         "LES_SMETA_DOCUMENT_MAPPING_MAX_TOKENS": str(mapping_max_tokens),
         "LES_SMETA_DOCUMENT_THINK": "false",
     }
+    if os.name == "nt":
+        # Match start-light / windows_runtime: never hit Mac MLX :8080 from Legion A/B.
+        values["RERANKER_BACKEND"] = "sentence_transformers"
     previous = {key: os.environ.get(key) for key in values}
     os.environ.update(values)
     try:
@@ -303,6 +349,92 @@ def _qrel_for(qrels: dict[str, Any], row: dict[str, Any]) -> dict[str, Any]:
             value = rows[str(key)]
             return dict(value) if isinstance(value, dict) else {}
     return {}
+
+
+_STAGE_BY_TOOL = {
+    "browse_norm_catalog": "catalog",
+    "choose_norm_catalog": "catalog",
+    "confirm_norm_catalog_scope": "catalog",
+    "broaden_norm_catalog": "catalog",
+    "reuse_norm_catalog_route": "catalog",
+    "search_norms_batch": "search",
+    "read_norms_batch": "read",
+    "submit_lsr_mapping": "bind",
+}
+
+
+def _percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(ordered[0], 3)
+    rank = (len(ordered) - 1) * (pct / 100.0)
+    low = int(rank)
+    high = min(low + 1, len(ordered) - 1)
+    weight = rank - low
+    return round(ordered[low] * (1.0 - weight) + ordered[high] * weight, 3)
+
+
+def stage_latency_summary(result: dict[str, Any]) -> dict[str, Any]:
+    """Aggregate tool/model stage timings for A/B Gemma↔Qwen comparison."""
+    buckets: dict[str, list[float]] = defaultdict(list)
+    trajectory = ((result.get("agent_trace") or {}).get("tool_trajectory") or [])
+    for item in trajectory if isinstance(trajectory, list) else []:
+        if not isinstance(item, dict):
+            continue
+        tool = str(item.get("tool") or "")
+        stage = _STAGE_BY_TOOL.get(tool, "other_tools")
+        try:
+            buckets[stage].append(float(item.get("elapsed_ms") or 0.0))
+        except (TypeError, ValueError):
+            continue
+    model_turns = 0
+    for trace in result.get("model_trace") or []:
+        if not isinstance(trace, dict):
+            continue
+        model_turns += 1
+        for key in ("elapsed_ms", "duration_ms", "provider_elapsed_ms"):
+            if key in trace:
+                try:
+                    buckets["llm"].append(float(trace[key]))
+                except (TypeError, ValueError):
+                    pass
+                break
+    for trace in result.get("catalog_trace") or []:
+        if isinstance(trace, dict) and trace.get("elapsed_ms") is not None:
+            try:
+                buckets["catalog"].append(float(trace["elapsed_ms"]))
+            except (TypeError, ValueError):
+                pass
+    for trace in result.get("query_trace") or []:
+        if isinstance(trace, dict) and trace.get("elapsed_ms") is not None:
+            try:
+                buckets["search"].append(float(trace["elapsed_ms"]))
+            except (TypeError, ValueError):
+                pass
+    stages: dict[str, Any] = {}
+    for name, values in sorted(buckets.items()):
+        stages[name] = {
+            "count": len(values),
+            "total_ms": round(sum(values), 3),
+            "p50_ms": _percentile(values, 50),
+            "p95_ms": _percentile(values, 95),
+        }
+    tool_calls = sum(
+        int(stage["count"]) for name, stage in stages.items() if name != "llm"
+    )
+    return {
+        "schema": "les.smeta.stage-latency.v1",
+        "model_turns": model_turns,
+        "tool_calls": tool_calls,
+        "stages": stages,
+        "route_events": {
+            "catalog_trace": len(result.get("catalog_trace") or []),
+            "query_trace": len(result.get("query_trace") or []),
+            "browse_trace_work_ids": len(result.get("browse_trace") or {}),
+        },
+    }
 
 
 def analyze_result(
@@ -415,9 +547,11 @@ def analyze_result(
             "blockers": blockers,
         })
     statuses = Counter(row["status"] for row in rows)
+    stage_latency = stage_latency_summary(result)
     return {
         "schema": SCHEMA,
         "rows": rows,
+        "stage_latency": stage_latency,
         "summary": {
             "input_rows": len(rows),
             "calculated": statuses["calculated"],
@@ -437,6 +571,7 @@ def analyze_result(
             "provenance_integrity_pass": sum(bool(row["provenance_integrity"]) for row in rows),
             "route_structural_verified": sum(row["route_structural"] == "verified" for row in rows),
             "professionally_adjudicated_rows": sum(row["norm_correctness"] != "not_adjudicated" for row in rows),
+            "stage_latency": stage_latency,
         },
     }
 
@@ -478,6 +613,29 @@ def _trace_events(
                 "index": index,
                 "payload": value,
             })
+    for index, value in enumerate(
+        ((result.get("agent_trace") or {}).get("tool_trajectory") or []),
+        1,
+    ):
+        _append_jsonl(event_path, {
+            "schema": EVENT_SCHEMA,
+            "timestamp": _utc_now(),
+            "elapsed_sec": round(elapsed_sec, 3),
+            "profile": profile,
+            "model": model,
+            "event": "tool_trajectory",
+            "index": index,
+            "payload": value,
+        })
+    _append_jsonl(event_path, {
+        "schema": EVENT_SCHEMA,
+        "timestamp": _utc_now(),
+        "elapsed_sec": round(elapsed_sec, 3),
+        "profile": profile,
+        "model": model,
+        "event": "stage_latency",
+        "payload": stage_latency_summary(result),
+    })
 
 
 def _run_profile(
@@ -489,19 +647,42 @@ def _run_profile(
     args: argparse.Namespace,
     model_metadata: dict[str, Any],
     qrels: dict[str, Any],
+    resume_existing: bool = False,
 ) -> dict[str, Any]:
     profile_root = run_root / profile
-    profile_root.mkdir(parents=True, exist_ok=False)
+    if resume_existing:
+        if not profile_root.is_dir():
+            raise RuntimeError(f"resume profile directory is absent: {profile_root}")
+    else:
+        profile_root.mkdir(parents=True, exist_ok=False)
     event_path = profile_root / "tool-events.jsonl"
     checkpoint_path = profile_root / "checkpoint.json"
     source_fingerprint = _source_fingerprint(source)
+    resume_result = (
+        _load_document_checkpoint(
+            checkpoint_path,
+            source_fingerprint=source_fingerprint,
+        )
+        if resume_existing
+        else None
+    )
+    if resume_existing and not resume_result:
+        raise RuntimeError(f"resume checkpoint is absent or incompatible: {checkpoint_path}")
     rows = list(intake_vor_document(source).get("work_items") or [])
     ordered_work_ids = [str(row.get("work_id") or "") for row in rows]
-    progress_work_ids = list(ordered_work_ids)
+    progress_work_ids = [
+        work_id
+        for work_id in ordered_work_ids
+        if work_id not in ((resume_result or {}).get("selections") or {})
+    ]
     row_timings: dict[str, dict[str, float]] = {}
     started = time.perf_counter()
     active_batch_started: dict[int, float] = {}
-    interrupted = False
+    interrupted = bool(
+        resume_result
+        and args.interrupt_after_rows > 0
+        and len(resume_result.get("selections") or {}) >= args.interrupt_after_rows
+    )
     interruption_elapsed = 0.0
 
     def emit(event: str, payload: dict[str, Any]) -> None:
@@ -585,6 +766,11 @@ def _run_profile(
         num_ctx=args.num_ctx,
     )
     emit("warmup", warmup)
+    if resume_result:
+        emit("resume_started", {
+            "checkpointed_rows": len(resume_result.get("selections") or {}),
+            "external_resume": True,
+        })
     common = {
         "exchange": adapters._smeta_document_exchange,
         "mapping_exchange": adapters._smeta_document_mapping_exchange,
@@ -601,7 +787,6 @@ def _run_profile(
         "require_scoped_search": True,
         "require_global_review": True,
     }
-    resume_result = None
     with _model_environment(
         model,
         base_url=args.ollama_base_url,
@@ -611,7 +796,15 @@ def _run_profile(
         mapping_max_tokens=args.mapping_max_tokens,
     ):
         try:
-            result = run_vor_document_workflow(source, **common)
+            result = run_vor_document_workflow(
+                source,
+                **common,
+                **(
+                    {"resume_agent_result": resume_result}
+                    if resume_result
+                    else {}
+                ),
+            )
         except BenchmarkInterruption:
             resume_result = _load_document_checkpoint(
                 checkpoint_path,
@@ -635,6 +828,7 @@ def _run_profile(
             )
     elapsed = time.perf_counter() - started
     checkpoint_path.unlink(missing_ok=True)
+    (profile_root / "failure.json").unlink(missing_ok=True)
     analysis = analyze_result(result, row_timings=row_timings, qrels=qrels)
     analysis.update({
         "profile": profile,
@@ -665,18 +859,73 @@ def _run_profile(
     return analysis
 
 
+def _validate_resume_manifest(
+    manifest: dict[str, Any],
+    *,
+    source_sha: str,
+    profiles: list[tuple[str, str]],
+    args: argparse.Namespace,
+) -> None:
+    """Reject resume attempts that would mix incompatible benchmark contracts."""
+    if manifest.get("schema") != SCHEMA:
+        raise ValueError(f"resume manifest must use schema {SCHEMA}")
+    if str((manifest.get("source") or {}).get("sha256") or "") != source_sha:
+        raise ValueError("resume manifest source_sha256 does not match the benchmark source")
+    expected_profiles = [
+        {"label": label, "model": model} for label, model in profiles
+    ]
+    if manifest.get("profiles") != expected_profiles:
+        raise ValueError("resume manifest profiles do not match requested profiles")
+    fixed = dict(manifest.get("fixed_contract") or {})
+    expected_fixed = {
+        "request": args.request,
+        "candidate_limit": args.candidate_limit,
+        "max_turns": args.max_turns,
+        "batch_size": 1,
+        "seed": args.seed,
+        "num_ctx": args.num_ctx,
+        "tool_max_tokens": args.tool_max_tokens,
+        "mapping_max_tokens": args.mapping_max_tokens,
+        "require_scoped_search": True,
+        "require_global_review": True,
+        "interrupt_after_rows": args.interrupt_after_rows,
+    }
+    mismatched = [
+        key for key, value in expected_fixed.items() if fixed.get(key) != value
+    ]
+    if mismatched:
+        raise ValueError(
+            "resume manifest fixed contract differs for: " + ", ".join(mismatched)
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path)
     parser.add_argument("--profile", action="append", default=[])
+    parser.add_argument(
+        "--allow-single-profile",
+        action="store_true",
+        help="Allow one profile for a timed smoke; full A/B still needs two.",
+    )
     parser.add_argument("--out-dir", type=Path, default=Path("outputs/model-quality"))
+    parser.add_argument(
+        "--resume-run",
+        type=Path,
+        help="Resume compatible profile checkpoints inside an existing run directory.",
+    )
     parser.add_argument("--qrels", type=Path)
     parser.add_argument("--request", default=DEFAULT_REQUEST)
     parser.add_argument("--ollama-base-url", default="http://127.0.0.1:11434")
     parser.add_argument("--qdrant-url", default="http://127.0.0.1:6333")
     parser.add_argument("--candidate-limit", type=int, default=8)
     parser.add_argument("--max-turns", type=int, default=20)
-    parser.add_argument("--interrupt-after-rows", type=int, default=3)
+    parser.add_argument(
+        "--interrupt-after-rows",
+        type=int,
+        default=0,
+        help="0 = no injected crash (default for measurement). >0 proves durable resume only.",
+    )
     parser.add_argument("--seed", type=int, default=314159)
     parser.add_argument("--num-ctx", type=int, default=32768)
     parser.add_argument("--tool-max-tokens", type=int, default=1800)
@@ -697,7 +946,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(f"source file not found: {source}")
     if source.suffix.casefold() not in {".xlsx", ".xlsm", ".pdf"}:
         parser.error("source must be XLSX, XLSM or PDF")
-    profiles = _parse_profiles(args.profile or list(DEFAULT_PROFILES))
+    profiles = _parse_profiles(
+        args.profile or list(DEFAULT_PROFILES),
+        allow_single=bool(args.allow_single_profile),
+    )
     qrels = {}
     if args.qrels:
         qrels = json.loads(args.qrels.read_text(encoding="utf-8"))
@@ -708,13 +960,17 @@ def main(argv: list[str] | None = None) -> int:
     missing = [model for _, model in profiles if model not in available]
     if missing:
         parser.error("Ollama models are absent: " + ", ".join(missing))
+    if os.name == "nt":
+        os.environ.setdefault("RERANKER_BACKEND", "sentence_transformers")
+    try:
+        reranker_evidence = _assert_reranker_ready()
+    except Exception as error:
+        parser.error(f"reranker preflight failed: {type(error).__name__}: {error}")
     source_sha = _sha256(source)
     if qrels and str(qrels.get("source_sha256") or "") != source_sha:
         parser.error("qrels source_sha256 does not match the benchmark source")
     run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source_sha[:12]
-    run_root = args.out_dir.resolve() / run_id
-    run_root.mkdir(parents=True, exist_ok=False)
-    manifest = {
+    new_manifest = {
         "schema": SCHEMA,
         "run_id": run_id,
         "created_at": _utc_now(),
@@ -732,6 +988,7 @@ def main(argv: list[str] | None = None) -> int:
                 ).encode("utf-8")
             ).hexdigest(),
             "qdrant": _qdrant_evidence(args.qdrant_url),
+            "reranker": reranker_evidence,
             "ollama_models": {
                 model: {
                     "digest": available[model].get("digest"),
@@ -758,6 +1015,31 @@ def main(argv: list[str] | None = None) -> int:
         "status": "running",
         "results": [],
     }
+    if args.resume_run:
+        run_root = args.resume_run.resolve()
+        manifest_path = run_root / "manifest.json"
+        if not manifest_path.is_file():
+            parser.error(f"resume manifest not found: {manifest_path}")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            _validate_resume_manifest(
+                manifest,
+                source_sha=source_sha,
+                profiles=profiles,
+                args=args,
+            )
+        except (OSError, json.JSONDecodeError, ValueError) as error:
+            parser.error(f"invalid resume run: {error}")
+        manifest.setdefault("prior_results", []).extend(manifest.get("results") or [])
+        manifest["results"] = []
+        manifest["status"] = "running"
+        manifest["resumed_at"] = _utc_now()
+        manifest.pop("completed_at", None)
+        run_id = str(manifest.get("run_id") or run_root.name)
+    else:
+        run_root = args.out_dir.resolve() / run_id
+        run_root.mkdir(parents=True, exist_ok=False)
+        manifest = new_manifest
     _json_dump(run_root / "manifest.json", manifest)
     exit_code = 0
     for label, model in profiles:
@@ -770,6 +1052,7 @@ def main(argv: list[str] | None = None) -> int:
                 args=args,
                 model_metadata=available[model],
                 qrels=qrels,
+                resume_existing=bool(args.resume_run),
             )
             manifest["results"].append({
                 "profile": label,

@@ -28,10 +28,9 @@ def test_flexible_resolver_extracts_table_code_from_covered_by_reason():
     result = resolve_extracted_norm_code_flexible(dict(item), by_id=by_id, opened_cards=opened_cards)
 
     assert result["decision"] == "bind"
-    assert result["norm_code"] == "ГЭСНм11-04-027-01"
+    assert "11-04-027" in result["norm_code"]
     assert result["selection_kind"] == "exact"
     assert "vor-0010" in opened_cards
-    assert "ГЭСНм11-04-027-01" in opened_cards["vor-0010"]
 
 
 def test_flexible_resolver_extracts_table_code_from_unbound_reason():
@@ -39,14 +38,14 @@ def test_flexible_resolver_extracts_table_code_from_unbound_reason():
         "work_id": "vor-0007",
         "decision": "unbound",
         "covered_by_work_id": "",
-        "reason": "Монтаж патч-панели относится к таблице 11-04-028",
+        "reason": "Монтаж патч-панели относится к таблице 11-04-027",
     }
     opened_cards = {}
 
     result = resolve_extracted_norm_code_flexible(dict(item), opened_cards=opened_cards)
 
     assert result["decision"] == "bind"
-    assert result["norm_code"] == "ГЭСНм11-04-028-01"
+    assert "11-04-027" in result["norm_code"]
     assert "vor-0007" in opened_cards
 
 

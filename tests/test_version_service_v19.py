@@ -185,7 +185,7 @@ def test_global_registry_requires_model_final_after_versioning():
 
 def test_releases_doc_exists():
     assert Path("docs/releases.md").exists()
-    txt = Path("docs/releases.md").read_text()
+    txt = Path("docs/releases.md").read_text(encoding="utf-8")
     assert "config/version.json" in txt
     assert "RELEASE_LEDGER.md" in txt
     assert "SOFTWARE_VERSIONS.md" in txt

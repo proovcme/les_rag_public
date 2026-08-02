@@ -320,9 +320,18 @@ def stop(
 ) -> dict[str, Any]:
     state_path = state / "logs" / "windows-light-state.json"
     ports = {proxy_port, ui_port}
+    listeners = _listening_pids(ports)
+    if (
+        runtime is not None
+        and listeners
+        and not _live_runtime_matches(runtime)
+    ):
+        detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
+        raise RuntimeError(f"foreign_port_owner: {detail}")
     stopped: list[int] = (
         _stop_confirmed_live_runtime(runtime, ports) if runtime is not None else []
     )
+    listeners = _listening_pids(ports)
     if state_path.is_file():
         try:
             payload = json.loads(state_path.read_text(encoding="utf-8-sig"))
@@ -330,7 +339,9 @@ def stop(
             payload = {}
         for key in ("proxy_pid", "ui_pid", "lemonade_host_pid"):
             pid = int(payload.get(key) or 0)
-            if pid > 0:
+            # Never kill a recycled PID from a stale state file: only terminate
+            # PIDs that currently own a LES runtime port and are Python images.
+            if pid > 0 and pid in set(listeners.values()):
                 _terminate_pid(pid)
                 if pid not in stopped:
                     stopped.append(pid)
@@ -338,7 +349,9 @@ def stop(
     while time.monotonic() < deadline and not all(_port_free(port) for port in ports):
         time.sleep(0.25)
     if not all(_port_free(port) for port in ports):
-        raise RuntimeError("LES runtime stop completed but runtime ports remain occupied")
+        leftover = _listening_pids(ports)
+        detail = ",".join(f"{port}:{pid}" for port, pid in sorted(leftover.items()))
+        raise RuntimeError(f"foreign_port_owner: {detail}")
     return {"status": "stopped", "pids": stopped}
 
 

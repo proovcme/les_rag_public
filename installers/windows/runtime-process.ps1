@@ -88,10 +88,75 @@ function Test-LesPortFree([int]$Port) {
   return @(Get-LesListeningProcessIds $Port).Count -eq 0
 }
 
-function Stop-LesPortProcess([int]$Port) {
-  foreach ($processId in @(Get-LesListeningProcessIds $Port)) {
-    if ($processId -gt 0) {
-      Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+function Get-LesProcessCommandLine([int]$ProcessId) {
+  try {
+    $row = Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId" -ErrorAction Stop
+    return [string]$row.CommandLine
+  } catch {
+    return ""
+  }
+}
+
+function Test-LesOwnedProcess(
+  [int]$ProcessId,
+  [string]$RuntimeRoot = "",
+  [string[]]$AllowPatterns = @('proxy_server:app', 'sovushka_ng\.py', 'lemonade_host\.py')
+) {
+  if ($ProcessId -le 0) { return $false }
+  $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+  if (-not $process) { return $false }
+  $image = [string]$process.ProcessName
+  if ($image -notin @('python', 'pythonw')) { return $false }
+  $command = Get-LesProcessCommandLine $ProcessId
+  if (-not $command) { return $false }
+  $owned = $false
+  foreach ($pattern in $AllowPatterns) {
+    if ($command -match $pattern) { $owned = $true; break }
+  }
+  if (-not $owned) { return $false }
+  # Optional install binding: prefer the persistent venv / runtime python, but do
+  # not require the runtime path to appear in CommandLine (uvicorn often omits it).
+  if ($RuntimeRoot) {
+    $runtime = [System.IO.Path]::GetFullPath($RuntimeRoot)
+    $exe = ""
+    try { $exe = [string]$process.Path } catch { $exe = "" }
+    if (-not $exe) {
+      try {
+        $exe = [string](Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId").ExecutablePath
+      } catch { $exe = "" }
+    }
+    if ($exe) {
+      $exeFull = [System.IO.Path]::GetFullPath($exe)
+      $statePython = Join-Path $env:LOCALAPPDATA "LES\.venv\Scripts"
+      if ($env:LES_WINDOWS_STATE_ROOT) {
+        $statePython = Join-Path ([System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT)) ".venv\Scripts"
+      }
+      $underState = $exeFull.StartsWith(([System.IO.Path]::GetFullPath($statePython) + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase) -or
+        $exeFull.Equals([System.IO.Path]::GetFullPath($statePython + "\python.exe"), [StringComparison]::OrdinalIgnoreCase) -or
+        $exeFull.Equals([System.IO.Path]::GetFullPath($statePython + "\pythonw.exe"), [StringComparison]::OrdinalIgnoreCase)
+      $underRuntime = $exeFull.StartsWith(($runtime.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)
+      if (-not ($underState -or $underRuntime)) { return $false }
     }
   }
+  return $true
+}
+
+function Stop-LesConfirmedPortProcess(
+  [int]$Port,
+  [string]$RuntimeRoot = "",
+  [string[]]$AllowPatterns = @('proxy_server:app', 'sovushka_ng\.py', 'lemonade_host\.py')
+) {
+  foreach ($processId in @(Get-LesListeningProcessIds $Port)) {
+    if ($processId -le 0) { continue }
+    if (Test-LesOwnedProcess -ProcessId $processId -RuntimeRoot $RuntimeRoot -AllowPatterns $AllowPatterns) {
+      Stop-Process -Id $processId -Force -ErrorAction Stop
+      continue
+    }
+    throw "foreign_port_owner: port=$Port pid=$processId"
+  }
+}
+
+function Stop-LesPortProcess([int]$Port) {
+  # Compatibility alias: never kill an unconfirmed owner.
+  Stop-LesConfirmedPortProcess -Port $Port
 }
