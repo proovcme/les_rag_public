@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import urllib.request
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from tools.build_release_artifacts import ROOT, iter_files
@@ -186,6 +187,29 @@ def stage_windows_python(runtime: Path, *, archive_path: str | Path | None = Non
     return 1
 
 
+def stage_windows_deploy_stamp(runtime: Path) -> int:
+    """Embed the exact release identity required by subsequent soft updates."""
+    from proxy.services.version_service import write_deploy_stamp
+
+    commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    branch = subprocess.check_output(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=ROOT, text=True
+    ).strip()
+    if len(commit) != 40:
+        raise RuntimeError("Windows installer requires an exact 40-character Git commit")
+    write_deploy_stamp(
+        dev_root=ROOT,
+        runtime_root=runtime,
+        deployed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        deployed_commit=commit,
+        deployed_branch=branch or "release",
+        notes=["embedded by Windows installer build"],
+    )
+    return 1
+
+
 def stage_runtime(
     platform: str | None = None,
     *,
@@ -224,6 +248,7 @@ def stage_runtime(
     if target_platform.startswith("win"):
         count += stage_windows_uv(runtime, archive_path=windows_uv_archive)
         count += stage_windows_python(runtime)
+        count += stage_windows_deploy_stamp(runtime)
     bootstrap = RESOURCES / "bootstrap.sh"
     if target_platform == "darwin":
         shutil.copy2(ROOT / "installers/macos/app/bootstrap.sh", bootstrap)

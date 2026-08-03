@@ -11,6 +11,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Runtime startup must never wait on Hugging Face. Tokenizer/model downloads are
+# an explicit preparation action; the online chat/search contour uses Ollama.
+$env:RAG_TOKENIZER_LOCAL_FILES_ONLY = "true"
+$env:HF_HUB_OFFLINE = "1"
 $ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")
 $UiPortExplicit = $PSBoundParameters.ContainsKey("UiPort")
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")

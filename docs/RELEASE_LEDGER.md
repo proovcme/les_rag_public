@@ -7,16 +7,28 @@
 ## Текущее состояние (2026-08-03)
 
 ```
-версия продукта (SemVer):  0.27.37 (responsive UI, live mail, explicit Agent)
-номер сборки:              554
-версия Tauri/NSIS:         5.1.554
-ветка выпуска:             codex/legion-model-quality
+версия продукта (SemVer):  0.27.38 (honest Windows startup and update identity)
+номер сборки:              555
+версия Tauri/NSIS:         5.1.555
+ветка выпуска:             codex/les-0.27.37-ui-mail-agent
 dev implementation:       Memory Core v1 — RAG memory & safe smeta traces infrastructure
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.37
+следующий выпуск:          LES-Setup.exe 0.27.38
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.38 / build 555 — honest Windows startup and update identity
+>
+> Дата: 2026-08-03
+> Статус: Windows release candidate после живого обновления Legion до 0.27.37.
+>
+> **Что вошло:**
+> 1. Кнопка «Запустить ЛЕС» недоступна, пока `bootstrap.state=running`, показывает «Подготовка…» и фактическое сообщение текущей lifecycle-фазы.
+> 2. Windows startup принудительно использует локальный tokenizer-контур и не ждёт сетевой таймаут Hugging Face.
+> 3. Installer встраивает exact 40-character deploy commit, поэтому следующая soft-update имеет проверяемую базу и rollback identity.
+> 4. Release smoke получает отдельные install/state roots; NSIS canonical-path hook больше не перенаправляет изолированный smoke в рабочую установку.
+> 5. `proxy/smeta_core/` и сметные вычисления не изменялись.
 
 > 0.27.37 / build 554 — responsive UI, live mail, explicit Agent
 >

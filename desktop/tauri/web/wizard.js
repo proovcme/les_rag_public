@@ -60,11 +60,17 @@ function render(data) {
     : docker.installed ? "Docker установлен — запустите Desktop и завершите WSL 2" : "Docker Desktop не установлен";
   $("install-docker").disabled = busy || docker.installed;
 
-  const canStart = Boolean(data.ui_ready || (ollama.running && docker.running && preferred && data.embedding_present && !failed));
+  const canStart = Boolean(data.ui_ready || (ollama.running && docker.running && preferred && data.embedding_present && !failed && !preparing));
   setDot("ready-dot", canStart ? "ok" : "warn");
-  $("ready-status").textContent = data.ui_ready ? "ЛЕС уже запущен; можно закрыть справку" : canStart ? "Можно запускать" : "Завершите отмеченные шаги";
+  $("ready-status").textContent = data.ui_ready
+    ? "ЛЕС уже запущен; можно закрыть справку"
+    : preparing
+      ? bootstrap.message || "Подготавливаю ЛЕС — запуск станет доступен автоматически"
+      : canStart
+        ? "Можно запускать"
+        : "Завершите отмеченные шаги";
   $("start").disabled = busy || !canStart;
-  $("start").textContent = data.ui_ready ? "Открыть ЛЕС" : "Запустить ЛЕС";
+  $("start").textContent = data.ui_ready ? "Открыть ЛЕС" : preparing ? "Подготовка…" : "Запустить ЛЕС";
   $("refresh").textContent = failed ? "Повторить подготовку" : "Проверить снова";
 }
 

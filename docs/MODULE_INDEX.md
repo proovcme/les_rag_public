@@ -678,6 +678,8 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 
 Канонический Windows lifecycle: [ALGO-windows-lifecycle.md](ALGO-windows-lifecycle.md). Любой install,
 launch, soft update и hard recovery обязан реализовывать его состояния и terminal errors без UAC.
+Installer содержит exact deploy stamp; изолированный release smoke имеет собственные install/state roots.
+Во время bootstrap desktop блокирует повторный запуск, показывает текущую фазу и не ждёт сеть ради tokenizer.
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|

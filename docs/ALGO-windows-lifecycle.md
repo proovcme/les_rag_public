@@ -73,6 +73,10 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 ## 4. Обычный запуск
 
+Пока bootstrap публикует `state=running`, desktop-кнопка запуска заблокирована и показывает текущую
+фазу подготовки. Runtime startup не обращается к Hugging Face: tokenizer читается только из локального
+кэша, а отсутствие кэша немедленно переключает chunking на контрактный символьный fallback.
+
 Одна команда supervisor:
 
 1. Прочитать installed identity и lifecycle state.
@@ -84,6 +88,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 5. Дождаться полной acceptance; таймаут возвращает точный failed stage.
 
 ## 5. Soft update
+
+Полный Windows installer обязан содержать `.les_deploy_stamp.json` с exact 40-character commit.
+Установка без точной identity не считается допустимой базой для soft update.
 
 Одна команда `update-local` выполняет полный pipeline:
 

@@ -272,6 +272,10 @@ projection под тем же alias; при rollback старый FTS восст
   оставляют вечный `PENDING` при сбое admission/контракта/парсинга. Windows/Ollama startup
   выравнивает query/parse embedding URL на один `OLLAMA_BASE_URL`; `env.example` sidecar `:8081`
   не протекает в production.
+- **Windows startup/update identity:** `desktop/tauri/web/wizard.js` блокирует запуск при
+  `bootstrap.state=running`; `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;
+  `tools/build_tauri_app.py` встраивает exact deploy stamp, а `windows_prepare_update.ps1` вместе с
+  `windows-installer-hooks.nsh` сохраняют отдельные install/state roots изолированного release smoke.
 
 ## Данные и конфиг
 

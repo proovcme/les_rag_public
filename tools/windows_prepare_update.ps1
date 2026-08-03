@@ -104,6 +104,8 @@ try {
     }
   }
   New-Item -ItemType Directory -Force -Path $InstallRoot, $StateRoot | Out-Null
+  $env:LES_RELEASE_SMOKE = "1"
+  $env:LES_WINDOWS_STATE_ROOT = $StateRoot
   $install = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallRoot") -Wait -PassThru
   if ($install.ExitCode -ne 0) { throw "NSIS clean install failed: $($install.ExitCode)" }
   $RuntimeRoot = @(

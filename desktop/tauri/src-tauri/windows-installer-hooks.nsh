@@ -4,6 +4,7 @@
 
 Var LesWipeUserData
 Var LesHelperExit
+Var LesStateRoot
 
 !macro LesRunHelper Action
   ; Prefer already-installed helper (upgrade/uninstall), then freshly staged copy.
@@ -18,9 +19,14 @@ Var LesHelperExit
 
   ClearErrors
   ${If} $R8 != ""
+    StrCpy $LesStateRoot "$LOCALAPPDATA\LES"
+    ReadEnvStr $R7 "LES_WINDOWS_STATE_ROOT"
+    ${If} $R7 != ""
+      StrCpy $LesStateRoot $R7
+    ${EndIf}
     DetailPrint "LES helper: ${Action}"
     ; cmd wrapper forces exit 0 so a PowerShell non-zero never aborts NSIS.
-    nsExec::ExecToLog 'cmd.exe /c set LES_SETUP_INSTALL_ROOT=$INSTDIR&& set LES_WINDOWS_STATE_ROOT=$LOCALAPPDATA\LES&& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$R8" ${Action} & exit /b 0'
+    nsExec::ExecToLog 'cmd.exe /c set LES_SETUP_INSTALL_ROOT=$INSTDIR&& set LES_WINDOWS_STATE_ROOT=$LesStateRoot&& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$R8" ${Action} & exit /b 0'
     Pop $LesHelperExit
   ${Else}
     DetailPrint "LES helper отсутствует — делаю минимальную остановку"
@@ -52,16 +58,19 @@ Var LesHelperExit
 
 !macro NSIS_HOOK_PREINSTALL
   ; Canonical ASCII install path for new trees.
-  ${If} $INSTDIR == "$LOCALAPPDATA\${PRODUCTNAME}"
-    ${IfNot} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
-      StrCpy $INSTDIR "$LOCALAPPDATA\Programs\LES"
-      SetOutPath "$INSTDIR"
+  ReadEnvStr $R7 "LES_RELEASE_SMOKE"
+  ${If} $R7 != "1"
+    ${If} $INSTDIR == "$LOCALAPPDATA\${PRODUCTNAME}"
+      ${IfNot} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+        StrCpy $INSTDIR "$LOCALAPPDATA\Programs\LES"
+        SetOutPath "$INSTDIR"
+      ${EndIf}
     ${EndIf}
-  ${EndIf}
-  ${If} $INSTDIR != "$LOCALAPPDATA\Programs\LES"
-    ${IfNot} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
-      StrCpy $INSTDIR "$LOCALAPPDATA\Programs\LES"
-      SetOutPath "$INSTDIR"
+    ${If} $INSTDIR != "$LOCALAPPDATA\Programs\LES"
+      ${IfNot} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+        StrCpy $INSTDIR "$LOCALAPPDATA\Programs\LES"
+        SetOutPath "$INSTDIR"
+      ${EndIf}
     ${EndIf}
   ${EndIf}
 

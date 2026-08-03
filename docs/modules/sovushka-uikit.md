@@ -68,6 +68,10 @@ desktop и mobile smoke, keyboard/focus проверки и записи в `MOD
 
 ## Текущие поверхности
 
+Windows setup wizard использует существующее lifecycle-состояние bootstrap: во время `running`
+основное действие disabled, подписано «Подготовка…» и показывает фактическую фазу. Отдельного
+декоративного progress-контракта не добавлено.
+
 Мигрированные поверхности: AppShell/Header, чат, evidence/source cards,
 `build_documents(surface=...)`, рабочая и конфигурационная почта, история
 диалогов, управление доступом В.О.Л.К., встроенный Qdrant visualizer, диалоговая

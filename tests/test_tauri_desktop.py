@@ -81,6 +81,8 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert "ollama pull bge-m3" in wizard
     assert 'invoke("install_setup_component"' in script
     assert 'invoke("start_from_setup"' in script
+    assert "&& !preparing" in script
+    assert 'preparing ? "Подготовка…"' in script
     assert "window.setInterval(refresh, 10000)" in script
 
 
@@ -125,7 +127,9 @@ def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
     monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
 
-    assert build_tauri_app.stage_runtime("win32") == 1
+    monkeypatch.setattr(build_tauri_app, "stage_windows_deploy_stamp", lambda _runtime: 1)
+
+    assert build_tauri_app.stage_runtime("win32") == 2
     assert not (resources / "bootstrap.sh").exists()
     assert not (resources / "runtime/installers/macos/app/bootstrap.sh").exists()
     assert (resources / "runtime/installers/windows/app/bootstrap.ps1").is_file()
@@ -134,6 +138,30 @@ def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
     assert (resources / "bootstrap.sh").is_file()
     assert (resources / "runtime/installers/macos/app/bootstrap.sh").is_file()
     assert not (resources / "runtime/installers/windows/app/bootstrap.ps1").exists()
+
+
+def test_windows_runtime_stage_contains_exact_deploy_identity(tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+
+    assert build_tauri_app.stage_windows_deploy_stamp(runtime) == 1
+    stamp = json.loads((runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8"))
+
+    assert len(stamp["deployed_commit"]) == 40
+    assert stamp["product_version"]
+    assert stamp["build_number"] > 0
+
+
+def test_windows_start_and_release_smoke_are_offline_and_isolated():
+    start = (ROOT / "installers/windows/start-light.ps1").read_text(encoding="utf-8-sig")
+    hooks = (TAURI / "src-tauri/windows-installer-hooks.nsh").read_text(encoding="utf-8")
+    prepare = (ROOT / "tools/windows_prepare_update.ps1").read_text(encoding="utf-8-sig")
+
+    assert '$env:RAG_TOKENIZER_LOCAL_FILES_ONLY = "true"' in start
+    assert '$env:HF_HUB_OFFLINE = "1"' in start
+    assert 'ReadEnvStr $R7 "LES_RELEASE_SMOKE"' in hooks
+    assert 'ReadEnvStr $R7 "LES_WINDOWS_STATE_ROOT"' in hooks
+    assert '$env:LES_RELEASE_SMOKE = "1"' in prepare
 
 
 def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypatch):
@@ -146,7 +174,7 @@ def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypat
     monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
 
-    assert build_tauri_app.stage_runtime("win32", smeta_baseline_archive=archive) == 2
+    assert build_tauri_app.stage_runtime("win32", smeta_baseline_archive=archive) == 3
     assert (
         resources / "runtime/installers/windows/baseline/LES-smeta-baseline.zip"
     ).read_bytes() == b"verified-baseline"
@@ -172,7 +200,7 @@ def test_windows_tauri_stage_bundles_verified_uv(tmp_path, monkeypatch):
     monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
 
-    assert build_tauri_app.stage_runtime("win32", windows_uv_archive=archive) == 2
+    assert build_tauri_app.stage_runtime("win32", windows_uv_archive=archive) == 3
     assert (resources / "runtime/installers/windows/tools/uv.exe").read_bytes() == b"verified-uv"
 
 
