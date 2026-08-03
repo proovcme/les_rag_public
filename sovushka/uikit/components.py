@@ -200,7 +200,7 @@ def lazy_tab_panels(
     with ui.tab_panels(
         tabs,
         value=initial,
-        animated=True,
+        animated=False,
         keep_alive=True,
     ).classes(classes).style(style) as container:
         for tab, builder in definitions:

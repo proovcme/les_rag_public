@@ -30,6 +30,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > 4. Release smoke получает отдельные install/state roots; NSIS canonical-path hook больше не перенаправляет изолированный smoke в рабочую установку.
 > 5. `proxy/smeta_core/` и сметные вычисления не изменялись.
 > 6. Создание Qdrant payload-индексов выполняется best-effort в background и больше не удерживает FastAPI startup после создания пустой коллекции.
+> 7. Совушка убирает Quasar slide-transition рабочих вкладок; Самовар принимает вставленный путь к папке, подставляет её имя, открывает файлы в Л.И.С.Т. с exact dataset scope, а служебный uploader больше не показывает пустой `0.0 B / 0%`.
 
 > 0.27.37 / build 554 — responsive UI, live mail, explicit Agent
 >

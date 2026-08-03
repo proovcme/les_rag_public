@@ -552,10 +552,14 @@ if ($env:LES_TAURI_SHELL -eq "1") {
     # First clear any fallback ports remembered by an older side-by-side start,
     # then always clear the canonical production ports. The second call passes
     # explicit values so stop-light cannot substitute stale state-file ports.
-    $stopStaleOutput = @(& $stopScript)
-    $stopStaleOutput | Out-File -FilePath $Log -Append -Encoding utf8
-    $stopOutput = @(& $stopScript -ProxyPort 8050 -UiPort 8051)
-    $stopOutput | Out-File -FilePath $Log -Append -Encoding utf8
+    if ($env:LES_RELEASE_SMOKE -eq "1") {
+      Log "release smoke: keep production ports and select dynamic ports"
+    } else {
+      $stopStaleOutput = @(& $stopScript)
+      $stopStaleOutput | Out-File -FilePath $Log -Append -Encoding utf8
+      $stopOutput = @(& $stopScript -ProxyPort 8050 -UiPort 8051)
+      $stopOutput | Out-File -FilePath $Log -Append -Encoding utf8
+    }
     # Run the PowerShell script in-process. A native `powershell ... | Out-File`
     # pipeline can stay open after start-light exits because long-lived proxy/UI
     # descendants inherit its output handle, leaving bootstrap stuck at services/running.

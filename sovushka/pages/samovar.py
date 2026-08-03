@@ -58,6 +58,14 @@ _DEFAULT_INDEX_SETTINGS = {
 _LOCAL_UI_BASE = f"http://127.0.0.1:{UI_PORT}"
 
 
+def _dataset_name_from_path(value: str) -> str:
+    """Return a useful default name for either a Windows or POSIX folder path."""
+    cleaned = str(value or "").strip().strip('"').rstrip("\\/")
+    if not cleaned:
+        return ""
+    return cleaned.replace("\\", "/").rsplit("/", 1)[-1].strip()
+
+
 def _doc_layer_labels(item: dict) -> list[str]:
     labels: list[str] = []
     for layer in item.get("content_layers") or []:
@@ -509,56 +517,12 @@ def build_samovar():
         _notify("Индексатор остановлен", type="warning")
         await _refresh_status()
 
-    files_dialog = ui.dialog()
-
     async def _open_files(r):
-        files_dialog.clear()
-        with files_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:680px;"):
-            with ui.row().classes("items-center w-full").style("gap:10px;"):
-                ui.label(r["name"]).classes("sov-panel-title")
-                ui.label(f"{r['total']} файлов · {r['indexed']} в индексе · {r['pending']} ждут · "
-                         f"{r['error']} ошибок · {r['chunks']} фрагментов").classes("sov-muted")
-                ui.element("div").style("flex:1;")
-                if r["error"]:
-                    ui.button("Ремонт", icon="o_build",
-                              on_click=_ui_handler(_repair, r)).props("flat dense no-caps").style("color:var(--accent);")
-            layer_summary = ui.row().classes("items-center w-full").style("gap:6px;flex-wrap:wrap;margin:2px 0 8px;")
-            flist = ui.column().classes("w-full sov-advanced-scroll").style("gap:0;")
-        files_dialog.open()
-        d = await api_get(f"/api/rag/documents?dataset_id={r['id']}&limit=1500") or {}
-        docs = d.get("documents", []) if isinstance(d, dict) else []
-        layer_summary.clear()
-        with layer_summary:
-            for label, count in _layer_counts(docs):
-                ui.label(f"{label} · {count}").style(
-                    "font-size:11px;color:var(--accent);border:1px solid var(--border);"
-                    "border-radius:999px;padding:2px 7px;background:rgba(16,185,129,.06);"
-                )
-        flist.clear()
-        with flist:
-            for it in docs:
-                st = it.get("status", "")
-                col = "var(--ok)" if st == "INDEXED" else "var(--warn)" if st == "PENDING" else "var(--err)"
-                with ui.row().classes("items-center w-full").style(
-                        "gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);"):
-                    ui.icon("o_circle").style(f"font-size:8px;color:{col};")
-                    with ui.column().style("flex:1;gap:2px;min-width:0;"):
-                        ui.label((it.get("file_name") or "?")[-90:]).style(
-                            "font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                        )
-                        labels = _doc_layer_labels(it)
-                        if labels:
-                            with ui.row().classes("items-center").style("gap:4px;flex-wrap:wrap;"):
-                                for label in labels[:4]:
-                                    ui.label(label).style(
-                                        "font-size:10px;color:var(--dim);border:1px solid var(--border);"
-                                        "border-radius:999px;padding:1px 6px;"
-                                    )
-                    ui.label(st).style(f"font-size:11.5px;color:{col};")
-                if st == "ERROR" and it.get("last_error"):
-                    with ui.row().classes("w-full").style("gap:6px;padding:0 4px 6px 20px;"):
-                        ui.label(f"{(it.get('last_error') or '')[:90]} → {_error_hint(it.get('last_error'))}").style(
-                            "font-size:11.5px;color:var(--err);opacity:.85;")
+        ds_id = str((r or {}).get("id") or (r or {}).get("dataset_id") or "").strip()
+        if not ds_id:
+            _notify("У датасета нет id", type="warning")
+            return
+        ui.navigate.to(f"/classic?{urlencode({'tab': 'documents', 'dataset_id': ds_id})}")
 
     add_dialog = ui.dialog()
 
@@ -566,18 +530,20 @@ def build_samovar():
         add_dialog.clear()
         picked = {"path": ""}
         browse = {"path": ""}
+        auto_name = {"derived": ""}
         with add_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:560px;"):
             ui.label("Добавить датасет").classes("sov-panel-title")
             ui.label("Папка индексируется на месте: исходные файлы не копируются.").classes("sov-muted")
             name_in = ui.input("Название").props("dense outlined").classes("w-full")
             with ui.row().classes("items-center w-full").style("gap:8px;"):
-                path_lbl = ui.label("Папка не выбрана").style(
-                    "flex:1;font-size:13px;color:var(--dim);border:1px solid var(--border);"
-                    "border-radius:8px;padding:8px 10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")
+                path_in = ui.input(
+                    "Путь к папке",
+                    placeholder=r"C:\Users\Oleg\Documents\RAG\Проект",
+                ).props("dense outlined clearable").classes("flex-1")
                 browse_btn = ui.button("Обзор…", icon="o_folder_open").props(
                     "no-caps flat dense"
                 ).style("color:var(--accent);")
-                native_btn = ui.button("Explorer/Finder…", icon="o_folder_special").props(
+                native_btn = ui.button("Проводник…", icon="o_folder_special").props(
                     "no-caps flat dense"
                 ).style("color:var(--accent);")
             parse_sw = ui.switch("Сразу индексировать", value=True)
@@ -678,10 +644,21 @@ def build_samovar():
 
             def _pick():
                 if browse["path"]:
-                    picked["path"] = browse["path"]
-                    path_lbl.set_text(browse["path"])
-                    path_lbl.style("color:var(--text);")
+                    _set_path(browse["path"])
                     fdlg.close()
+
+            def _set_path(value: str) -> None:
+                path = str(value or "").strip().strip('"')
+                old_derived = auto_name["derived"]
+                derived = _dataset_name_from_path(path)
+                picked["path"] = path
+                auto_name["derived"] = derived
+                path_in.value = path
+                path_in.update()
+                current_name = str(name_in.value or "").strip()
+                if derived and (not current_name or current_name == old_derived):
+                    name_in.value = derived
+                    name_in.update()
 
             async def _open_browser(*_event_args):
                 fdlg.open()
@@ -693,18 +670,17 @@ def build_samovar():
                     title="Выберите папку для датасета",
                 )
                 if path:
-                    picked["path"] = path
-                    path_lbl.set_text(path)
-                    path_lbl.style("color:var(--text);")
+                    _set_path(path)
 
             browse_btn.on("click", _open_browser)
             native_btn.on("click", _open_native_folder)
+            path_in.on("update:model-value", lambda event: _set_path(str(event.args or "")))
 
             async def _do_add():
                 nm = (name_in.value or "").strip()
-                pth = picked["path"]
+                pth = str(path_in.value or picked["path"] or "").strip().strip('"')
                 if not nm or not pth:
-                    ui.notify("Нужны название и выбранная папка (Обзор…)", type="negative")
+                    ui.notify("Укажите путь к папке; название подставится автоматически", type="negative")
                     return
                 plan = await api_post("/api/rag/external/intake-plan", {"path": pth, "dataset_name": nm})
                 if not isinstance(plan, dict) or plan.get("status") != "ok":

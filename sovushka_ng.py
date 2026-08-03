@@ -270,7 +270,12 @@ async def classic_chat_page(request: Request):
 
         _requested_tab = (request.query_params.get("tab") or "").strip().casefold()
         _forced_chat_tab = bool((request.query_params.get("question") or "").strip())
-        _query_tab = {"chat": "AI ЧАТ", "studio": "Студия"}.get(_requested_tab)
+        _query_tab = {
+            "chat": "AI ЧАТ",
+            "studio": "Студия",
+            "documents": "Документы",
+            "datasets": "Датасеты",
+        }.get(_requested_tab)
         _last_tab = (
             "AI ЧАТ"
             if _forced_chat_tab

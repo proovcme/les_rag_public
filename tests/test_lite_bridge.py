@@ -119,6 +119,8 @@ def test_native_folder_picker_uses_windows_folder_dialog(monkeypatch, tmp_path):
     assert calls[0][0][:4] == ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy"]
     assert calls[0][1]["creationflags"] == 0x08000000
     assert "FolderBrowserDialog" in calls[0][0][-1]
+    assert "$owner.TopMost = $true" in calls[0][0][-1]
+    assert "$dialog.ShowDialog($owner)" in calls[0][0][-1]
 
 
 def test_native_folder_picker_uses_macos_finder(monkeypatch, tmp_path):

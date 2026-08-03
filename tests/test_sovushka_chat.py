@@ -247,6 +247,14 @@ def test_samovar_parse_actions_keep_nicegui_slot_context():
     assert "/api/runtime/dispatcher/reindex/start" not in start_block
 
 
+def test_dataset_name_defaults_to_pasted_folder_basename():
+    assert samovar_page._dataset_name_from_path(
+        r"C:\Users\Oleg\Documents\RAG\ИЦ Рабочая документация\ИЦ Рабочая документация"
+    ) == "ИЦ Рабочая документация"
+    assert samovar_page._dataset_name_from_path("/srv/rag/Project A/") == "Project A"
+    assert samovar_page._dataset_name_from_path("") == ""
+
+
 def test_samovar_operator_panel_shows_jobs_memory_and_ocr_queue():
     source = inspect.getsource(samovar_page.build_samovar)
     adapter_source = Path("backend/qdrant_adapter.py").read_text(encoding="utf-8")

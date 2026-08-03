@@ -163,6 +163,8 @@ def test_windows_start_and_release_smoke_are_offline_and_isolated():
     assert 'ReadEnvStr $R7 "LES_WINDOWS_STATE_ROOT"' in hooks
     assert "LES release smoke: рабочий desktop не останавливается" in hooks
     assert '$env:LES_RELEASE_SMOKE = "1"' in prepare
+    bootstrap = (ROOT / "installers/windows/app/bootstrap.ps1").read_text(encoding="utf-8-sig")
+    assert 'release smoke: keep production ports and select dynamic ports' in bootstrap
 
 
 def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypatch):

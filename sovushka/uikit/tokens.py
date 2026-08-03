@@ -592,6 +592,34 @@ html {
   background: var(--bg) !important;
 }
 
+/* A service dataset needs a file action, not an always-visible transfer
+   dashboard saying "0.0 B / 0%" before the user has selected anything. */
+.sov-service-file-upload {
+  min-height: 40px !important;
+  max-height: 40px !important;
+  border: 1px solid var(--border);
+  border-radius: var(--sov-ui-radius-control);
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.sov-service-file-upload .q-uploader__header {
+  min-height: 38px;
+  padding: 0 8px;
+  color: var(--accent);
+  background: transparent;
+}
+
+.sov-service-file-upload .q-uploader__header-content {
+  min-height: 38px;
+  padding: 0;
+}
+
+.sov-service-file-upload .q-uploader__subtitle,
+.sov-service-file-upload .q-uploader__list {
+  display: none;
+}
+
 .sov-app-content .sov-chat-shell {
   background: var(--bg);
 }

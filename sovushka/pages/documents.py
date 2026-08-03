@@ -60,6 +60,10 @@ def build_documents(*, surface: str = "documents") -> None:
         "studio": "Черновики DOCX/XLSX по выбранным источникам с обязательной проверкой.",
         "cad_bim": "Отдельный контур моделей и их проекций.",
     }[surface]
+    try:
+        initial_dataset = str(context.client.request.query_params.get("dataset_id") or "").strip()
+    except (AttributeError, RuntimeError):
+        initial_dataset = ""
     state = {
         "datasets": [],
         "documents": [],
@@ -82,7 +86,7 @@ def build_documents(*, surface: str = "documents") -> None:
         "cad_inventory": {},
         "cad_loading": False,
         "view_mode": initial_mode,
-        "selected_dataset": "",
+        "selected_dataset": initial_dataset,
         "selected_doc_id": "",
         "selected_doc_name": "",
         "selected_doc_ids": [],
@@ -3677,6 +3681,10 @@ def build_documents(*, surface: str = "documents") -> None:
             await _load_cad_inventory()
             return
         await _load_datasets()
+        if initial_dataset and any(
+            str(row.get("id") or "") == initial_dataset for row in state["datasets"]
+        ):
+            await _select_dataset(initial_dataset)
         if surface == "studio":
             await _load_office_studio()
 
@@ -3777,7 +3785,7 @@ def build_documents(*, surface: str = "documents") -> None:
                     max_files=1,
                     on_upload=_upload_service_file,
                 ).props("flat accept=.xlsx,.xlsm,.xls,.csv,.pdf,.docx,.md,.txt,.json,.yaml").classes(
-                    "w-full sov-dataset-data-button"
+                    "w-full sov-service-file-upload"
                 )
                 service_upload.set_visibility(False)
                 refs["service_upload"] = service_upload

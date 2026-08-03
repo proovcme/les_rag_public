@@ -113,7 +113,7 @@ def test_lazy_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
     )
 
     assert built == ["Чат"]
-    assert panel_options["animated"] is True
+    assert panel_options["animated"] is False
     assert panel_options["keep_alive"] is True
     assert chat_timer.active is True
     assert studio_timer.active is False
@@ -429,6 +429,11 @@ def test_dataset_registry_uses_uikit_and_keeps_operator_controls_secondary():
     assert '"Сводка корпуса"' in active
     assert '"Найти датасет по названию"' in active
     assert '"Открыть файлы"' in active
+    assert "files_dialog" not in active
+    assert "'tab': 'documents'" in active
+    assert 'ui.navigate.to(f"/classic?' in active
+    assert '"Путь к папке"' in active
+    assert '"Проводник…"' in active
     assert '"Управление индексатором"' in active
     assert '"Тонкая настройка партий и памяти"' in active
     assert "render_feedback_state(" in active
@@ -445,6 +450,24 @@ def test_dataset_registry_uses_uikit_and_keeps_operator_controls_secondary():
         ".sov-dataset-disclosure",
     ):
         assert contract in UIKIT_CSS
+
+
+def test_documents_service_upload_is_a_compact_action_until_a_file_is_selected():
+    documents = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+
+    assert "sov-service-file-upload" in documents
+    assert ".sov-service-file-upload .q-uploader__subtitle" in UIKIT_CSS
+    assert ".sov-service-file-upload .q-uploader__list" in UIKIT_CSS
+    assert "display: none" in UIKIT_CSS
+
+
+def test_documents_deep_link_selects_requested_dataset():
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    documents = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+
+    assert '"documents": "Документы"' in shell
+    assert 'query_params.get("dataset_id")' in documents
+    assert 'await _select_dataset(initial_dataset)' in documents
 
 
 def test_mail_surfaces_use_uikit_and_keep_host_names_out_of_product_copy():
