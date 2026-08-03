@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import subprocess
 import zipfile
@@ -453,7 +454,7 @@ def test_windows_runtime_stop_does_not_kill_stale_state_pids(monkeypatch, tmp_pa
     )
     terminated = []
     monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: {})
-    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime, **_kwargs: False)
     monkeypatch.setattr(
         windows_runtime,
         "_terminate_pid",
@@ -471,17 +472,42 @@ def test_windows_runtime_stop_reports_foreign_port_owner(monkeypatch, tmp_path):
     monkeypatch.setattr(
         windows_runtime, "_listening_pids", lambda _ports: {8050: 55, 8051: 56}
     )
-    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime, **_kwargs: False)
 
     with pytest.raises(RuntimeError, match="foreign_port_owner"):
         windows_runtime.stop(tmp_path / "LES", runtime=tmp_path / "runtime")
+
+
+def test_windows_runtime_identity_uses_requested_dynamic_ports(monkeypatch, tmp_path):
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    calls = []
+
+    def urlopen(url, timeout):
+        calls.append((url, timeout))
+        payload = (
+            {"runtime_path": str(runtime)}
+            if url.endswith("/api/version")
+            else {"status": "ok", "service": "sovushka"}
+        )
+        return io.BytesIO(json.dumps(payload).encode("utf-8"))
+
+    monkeypatch.setattr(windows_runtime.urllib.request, "urlopen", urlopen)
+
+    assert windows_runtime._live_runtime_matches(
+        runtime, proxy_port=8052, ui_port=8053
+    )
+    assert [url for url, _timeout in calls] == [
+        "http://127.0.0.1:8052/api/version",
+        "http://127.0.0.1:8053/healthz",
+    ]
 
 
 def test_confirmed_windows_runtime_stop_does_not_recheck_owned_process_image(monkeypatch, tmp_path):
     terminated = []
     ports = {8050: 55, 8051: 56}
     monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: ports)
-    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: True)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime, **_kwargs: True)
     monkeypatch.setattr(windows_runtime, "_process_name", lambda _pid: "pythonw.exe")
     monkeypatch.setattr(
         windows_runtime,
@@ -755,7 +781,7 @@ def test_windows_runtime_adopts_and_stops_only_confirmed_live_les(monkeypatch, t
         "_listening_pids",
         lambda ports: {8050: 101, 8051: 102} if ports == {8050, 8051} else {},
     )
-    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda runtime: True)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda runtime, **_kwargs: True)
     monkeypatch.setattr(windows_runtime, "_process_name", lambda pid: "python.exe")
     monkeypatch.setattr(
         windows_runtime,
@@ -778,7 +804,7 @@ def test_windows_runtime_never_adopts_ports_without_exact_live_identity(
     monkeypatch.setattr(
         windows_runtime, "_listening_pids", lambda _ports: {8050: 101, 8051: 102}
     )
-    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime: False)
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda _runtime, **_kwargs: False)
     monkeypatch.setattr(
         windows_runtime,
         "_terminate_pid",

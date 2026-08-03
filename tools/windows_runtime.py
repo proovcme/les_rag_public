@@ -278,11 +278,20 @@ def _listening_pids(ports: set[int]) -> dict[int, int]:
     return result
 
 
-def _live_runtime_matches(runtime: Path) -> bool:
+def _live_runtime_matches(
+    runtime: Path,
+    *,
+    proxy_port: int = 8050,
+    ui_port: int = 8051,
+) -> bool:
     try:
-        with urllib.request.urlopen("http://127.0.0.1:8050/api/version", timeout=5) as response:  # noqa: S310
+        with urllib.request.urlopen(  # noqa: S310
+            f"http://127.0.0.1:{proxy_port}/api/version", timeout=5
+        ) as response:
             version = json.load(response)
-        with urllib.request.urlopen("http://127.0.0.1:8051/healthz", timeout=5) as response:  # noqa: S310
+        with urllib.request.urlopen(  # noqa: S310
+            f"http://127.0.0.1:{ui_port}/healthz", timeout=5
+        ) as response:
             ui = json.load(response)
         reported = Path(str(version.get("runtime_path") or "")).resolve()
     except (OSError, ValueError, TypeError):
@@ -294,9 +303,17 @@ def _live_runtime_matches(runtime: Path) -> bool:
     )
 
 
-def _stop_confirmed_live_runtime(runtime: Path, ports: set[int]) -> list[int]:
+def _stop_confirmed_live_runtime(
+    runtime: Path,
+    ports: set[int],
+    *,
+    proxy_port: int = 8050,
+    ui_port: int = 8051,
+) -> list[int]:
     listeners = _listening_pids(ports)
-    if not listeners or not _live_runtime_matches(runtime):
+    if not listeners or not _live_runtime_matches(
+        runtime, proxy_port=proxy_port, ui_port=ui_port
+    ):
         return []
     if set(listeners) != ports:
         raise RuntimeError("LES runtime identity is confirmed but not every runtime port has an owner")
@@ -329,12 +346,21 @@ def stop(
     if (
         runtime is not None
         and listeners
-        and not _live_runtime_matches(runtime)
+        and not _live_runtime_matches(
+            runtime, proxy_port=proxy_port, ui_port=ui_port
+        )
     ):
         detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
         raise RuntimeError(f"foreign_port_owner: {detail}")
     stopped: list[int] = (
-        _stop_confirmed_live_runtime(runtime, ports) if runtime is not None else []
+        _stop_confirmed_live_runtime(
+            runtime,
+            ports,
+            proxy_port=proxy_port,
+            ui_port=ui_port,
+        )
+        if runtime is not None
+        else []
     )
     listeners = _listening_pids(ports)
     if state_path.is_file():
