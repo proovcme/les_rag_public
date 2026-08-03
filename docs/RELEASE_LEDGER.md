@@ -7,16 +7,24 @@
 ## Текущее состояние (2026-08-03)
 
 ```
-версия продукта (SemVer):  0.27.38 (honest Windows startup and update identity)
-номер сборки:              555
-версия Tauri/NSIS:         5.1.555
+версия продукта (SemVer):  0.27.39 (responsive local-only Sovushka)
+номер сборки:              556
+версия Tauri/NSIS:         5.1.556
 ветка выпуска:             codex/les-0.27.37-ui-mail-agent
 dev implementation:       Memory Core v1 — RAG memory & safe smeta traces infrastructure
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.38 / build 555 / commit 2bcbd553c39e4cc05c691ba8134afbecc5867968
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.38
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
+следующий выпуск:          LES-Setup.exe 0.27.39
+рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.38 / build 555
 ```
+
+> 0.27.39 / build 556 — responsive local-only Sovushka
+>
+> Дата: 2026-08-03
+> Статус: Windows release candidate после installed-smoke 0.27.38.
+>
+> **Что вошло:** UI/датасеты/Л.И.С.Т. и lifecycle-правки из 0.27.38 плюс
+> loopback-only bind NiceGUI/Qdrant visualizer без запроса Windows Firewall.
 
 > 0.27.38 / build 555 — honest Windows startup and update identity
 >
@@ -32,6 +40,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > 6. Создание Qdrant payload-индексов выполняется best-effort в background и больше не удерживает FastAPI startup после создания пустой коллекции.
 > 7. Совушка убирает Quasar slide-transition рабочих вкладок; Самовар принимает вставленный путь к папке, подставляет её имя, открывает файлы в Л.И.С.Т. с exact dataset scope, а служебный uploader больше не показывает пустой `0.0 B / 0%`.
 > 8. Windows lifecycle сверяет identity proxy/UI на фактических динамических портах release-smoke; cleanup больше не объявляет собственные изолированные процессы `foreign_port_owner`.
+> 9. NiceGUI и встроенный Qdrant visualizer привязаны к loopback вместо `0.0.0.0`; новый bundled Python больше не требует разрешения Windows Firewall на входящие подключения.
 
 > 0.27.37 / build 554 — responsive UI, live mail, explicit Agent
 >

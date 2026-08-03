@@ -165,6 +165,11 @@ def test_windows_start_and_release_smoke_are_offline_and_isolated():
     assert '$env:LES_RELEASE_SMOKE = "1"' in prepare
     bootstrap = (ROOT / "installers/windows/app/bootstrap.ps1").read_text(encoding="utf-8-sig")
     assert 'release smoke: keep production ports and select dynamic ports' in bootstrap
+    ui_source = (ROOT / "sovushka_ng.py").read_text(encoding="utf-8")
+    ui_config = (ROOT / "sovushka/config.py").read_text(encoding="utf-8")
+    assert "host=UI_HOST" in ui_source
+    assert 'ThreadingHTTPServer((UI_HOST, QDRANT_VISUALIZER_PORT)' in ui_source
+    assert 'SOVUSHKA_UI_HOST", "127.0.0.1"' in ui_config
 
 
 def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypatch):

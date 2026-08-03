@@ -12,7 +12,7 @@ from fastapi import Request
 from nicegui import app, ui
 from starlette.responses import HTMLResponse, RedirectResponse
 
-from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_PORT
+from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_HOST, UI_PORT
 from sovushka.state import bg_loop
 from sovushka.styles import CUSTOM_CSS, theme_vars_css
 from sovushka.uikit import UIKIT_CSS
@@ -75,7 +75,7 @@ def _start_qdrant_visualizer() -> None:
             return
 
     handler = partial(QuietHandler, directory=str(qdrant_visualizer_dir))
-    server = ThreadingHTTPServer(("0.0.0.0", QDRANT_VISUALIZER_PORT), handler)
+    server = ThreadingHTTPServer((UI_HOST, QDRANT_VISUALIZER_PORT), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
 
@@ -418,6 +418,7 @@ if __name__ in {"__main__", "__mp_main__"}:
     app.on_startup(_start_qdrant_visualizer)
     
     ui.run(
+        host=UI_HOST,
         port=UI_PORT,
         title="Л.Е.С. v5.0",
         favicon="🦉",  # Совушка — иконка во вкладке браузера
