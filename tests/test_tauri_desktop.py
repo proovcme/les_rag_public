@@ -161,6 +161,7 @@ def test_windows_start_and_release_smoke_are_offline_and_isolated():
     assert '$env:HF_HUB_OFFLINE = "1"' in start
     assert 'ReadEnvStr $R7 "LES_RELEASE_SMOKE"' in hooks
     assert 'ReadEnvStr $R7 "LES_WINDOWS_STATE_ROOT"' in hooks
+    assert "LES release smoke: рабочий desktop не останавливается" in hooks
     assert '$env:LES_RELEASE_SMOKE = "1"' in prepare
 
 

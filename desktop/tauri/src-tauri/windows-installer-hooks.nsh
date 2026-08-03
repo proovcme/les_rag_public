@@ -29,9 +29,14 @@ Var LesStateRoot
     nsExec::ExecToLog 'cmd.exe /c set LES_SETUP_INSTALL_ROOT=$INSTDIR&& set LES_WINDOWS_STATE_ROOT=$LesStateRoot&& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$R8" ${Action} & exit /b 0'
     Pop $LesHelperExit
   ${Else}
-    DetailPrint "LES helper отсутствует — делаю минимальную остановку"
-    nsExec::ExecToLog 'cmd.exe /c taskkill.exe /IM les-desktop.exe /F & exit /b 0'
-    Pop $LesHelperExit
+    ReadEnvStr $R7 "LES_RELEASE_SMOKE"
+    ${If} $R7 == "1"
+      DetailPrint "LES release smoke: рабочий desktop не останавливается"
+    ${Else}
+      DetailPrint "LES helper отсутствует — делаю минимальную остановку"
+      nsExec::ExecToLog 'cmd.exe /c taskkill.exe /IM les-desktop.exe /F & exit /b 0'
+      Pop $LesHelperExit
+    ${EndIf}
   ${EndIf}
   ClearErrors
 !macroend
