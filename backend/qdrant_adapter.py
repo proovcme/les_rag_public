@@ -1481,6 +1481,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.vector_size     = rag_vector_size()
         self._collection_ready = False
         self._collection_lock  = asyncio.Lock()
+        self._payload_index_task: asyncio.Task | None = None
 
     # ── Служебные ─────────────────────────────────────────────────────────────
 
@@ -1583,28 +1584,33 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             # file_name). БЕЗ индекса query_points с фильтром проверяет фильтр по ВСЕМ точкам
             # (~1.6с на 179k) — с индексом ~30мс. create_payload_index идемпотентен (повторный
             # вызов — no-op/обновление). Best-effort: сбой не должен блокировать старт.
-            for _field in (
-                "dataset_id",
-                "file_name",
-                "embedding_fingerprint",
-                "mail_account_id",
-                "mail_thread_key",
-                "mail_registry_message_id",
-            ):
-                try:
-                    await self.aclient.create_payload_index(
-                        collection_name=self.collection_name,
-                        field_name=_field,
-                        field_schema=models.PayloadSchemaType.KEYWORD,
-                        # Qdrant may serialize collection mutations immediately
-                        # after a clean collection was created.  Waiting for
-                        # every payload index made FastAPI startup look dead for
-                        # minutes even though the operation was safely queued.
-                        wait=False,
-                    )
-                except Exception as _idx_err:  # noqa: BLE001
-                    logger.warning("[INIT] payload-индекс %s: %s", _field, _idx_err)
+            if self._payload_index_task is None or self._payload_index_task.done():
+                self._payload_index_task = asyncio.create_task(self._ensure_payload_indexes())
             self._collection_ready = True
+
+    async def _ensure_payload_indexes(self) -> None:
+        """Create filter indexes without holding FastAPI application startup."""
+        for _field in (
+            "dataset_id",
+            "file_name",
+            "embedding_fingerprint",
+            "mail_account_id",
+            "mail_thread_key",
+            "mail_registry_message_id",
+        ):
+            try:
+                await self.aclient.create_payload_index(
+                    collection_name=self.collection_name,
+                    field_name=_field,
+                    field_schema=models.PayloadSchemaType.KEYWORD,
+                    # Qdrant may serialize collection mutations immediately
+                    # after a clean collection was created.  Waiting for
+                    # every payload index made FastAPI startup look dead for
+                    # minutes even though the operation was safely queued.
+                    wait=False,
+                )
+            except Exception as _idx_err:  # noqa: BLE001
+                logger.warning("[INIT] payload-индекс %s: %s", _field, _idx_err)
 
     @staticmethod
     def _assert_dense_index_contract() -> None:

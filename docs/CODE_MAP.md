@@ -276,6 +276,9 @@ projection под тем же alias; при rollback старый FTS восст
   `bootstrap.state=running`; `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;
   `tools/build_tauri_app.py` встраивает exact deploy stamp, а `windows_prepare_update.ps1` вместе с
   `windows-installer-hooks.nsh` сохраняют отдельные install/state roots изолированного release smoke.
+- **Qdrant startup:** `QdrantLlamaIndexAdapter._ensure_collection()` публикует готовность коллекции
+  до best-effort background `_ensure_payload_indexes()`; зависший `create_payload_index(wait=false)`
+  больше не удерживает FastAPI lifespan.
 
 ## Данные и конфиг
 

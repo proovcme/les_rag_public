@@ -243,6 +243,11 @@ def test_qdrant_payload_indexes_do_not_block_api_startup():
 
     payload_index_call = adapter.split("await self.aclient.create_payload_index(", 1)[1].split(")", 1)[0]
     assert "wait=False" in payload_index_call
+    assert "asyncio.create_task(self._ensure_payload_indexes())" in adapter
+    ensure_collection = adapter.split("async def _ensure_collection", 1)[1].split(
+        "async def _ensure_payload_indexes", 1
+    )[0]
+    assert "await self.aclient.create_payload_index" not in ensure_collection
 
 
 def test_windows_tauri_uses_update_safe_persistent_state():

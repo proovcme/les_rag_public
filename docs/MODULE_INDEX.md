@@ -680,6 +680,7 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 launch, soft update и hard recovery обязан реализовывать его состояния и terminal errors без UAC.
 Installer содержит exact deploy stamp; изолированный release smoke имеет собственные install/state roots.
 Во время bootstrap desktop блокирует повторный запуск, показывает текущую фазу и не ждёт сеть ради tokenizer.
+Qdrant payload-индексы создаются best-effort после готовности коллекции и не удерживают API startup.
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
