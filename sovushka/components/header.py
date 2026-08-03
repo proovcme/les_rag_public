@@ -234,7 +234,7 @@ def build_header(
                     )
                     tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
                 if include_rim and "rim" not in tab_refs:
-                    tab_refs["rim"] = ui.tab("РИМ-смета", icon="o_calculate")
+                    tab_refs["rim"] = ui.tab("Сметный проект", icon="o_calculate")
                 if include_mail and "mail" not in tab_refs:
                     tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
@@ -244,7 +244,7 @@ def build_header(
             "samovar": "Датасеты",
             "documents": "Документы",
             "cad_bim": "CAD/BIM",
-            "rim": "РИМ-смета",
+            "rim": "Сметный проект",
             "mail": "Почта",
             "history": "История",
             "mail_settings": "Настройка почты",
@@ -260,7 +260,7 @@ def build_header(
             ("samovar", "Датасеты"),
             ("documents", "Документы"),
             ("cad_bim", "CAD/BIM"),
-            ("rim", "РИМ-смета"),
+            ("rim", "Сметный проект"),
             ("mail", "Почта"),
             ("history", "История"),
             ("mail_settings", "Настройка почты"),

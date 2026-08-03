@@ -283,6 +283,7 @@ async def classic_chat_page(request: Request):
             "Студия": tab_studio,
             "CAD/BIM": tab_cad_bim,
             "РИМ-смета": tab_rim,
+            "Сметный проект": tab_rim,
             "Почта": tab_mail,
             "ИСТОРИЯ": tab_history,
         }.get(_last_tab) or tab_chat

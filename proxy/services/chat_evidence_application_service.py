@@ -1123,7 +1123,10 @@ async def _execute_chat_evidence_application(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
                 )
-                tool_loop_enabled = _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True)
+                tool_loop_enabled = (
+                    str(req.mode or "").strip().casefold() == "agent"
+                    or _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True)
+                )
                 if tool_loop_enabled:
                     try:
                         from proxy.services.tool_harness_service import harness

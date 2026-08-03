@@ -125,7 +125,6 @@ class MailLegacyMigrationRequest(BaseModel):
     parse_limit: int = Field(default=DEFAULT_PARSE_BATCH_LIMIT, ge=1, le=25)
 
 
-OUTLOOK_COLLECTOR_TASK = "LES E.ZH.I.K. Outlook Collector"
 
 
 async def _mail_dataset_id(state: Any) -> tuple[str, bool]:
@@ -859,15 +858,15 @@ async def run_outlook_collector(
     _require_loopback(request)
     if not sys.platform.startswith("win"):
         raise HTTPException(status_code=501, detail="manual Outlook collection is available on Windows")
-    result = subprocess.run(
-        ["schtasks", "/run", "/tn", OUTLOOK_COLLECTOR_TASK],
-        capture_output=True,
-        text=True,
-        timeout=10,
-        check=False,
+    collector = Path(
+        os.getenv(
+            "LES_OUTLOOK_COLLECTOR_EXE",
+            str(Path(os.getenv("LOCALAPPDATA", "")) / "LES" / "bin" / "LesMailPoller.exe"),
+        )
     )
-    if result.returncode != 0:
-        raise HTTPException(status_code=503, detail="could not start Outlook collector task")
+    if not collector.is_file():
+        raise HTTPException(status_code=503, detail="Outlook collector is not installed")
+    subprocess.Popen([str(collector)], close_fds=True)
     return {"status": "started", "mode": "manual", "hard_limit_seconds": 15}
 
 
@@ -938,17 +937,18 @@ async def mail_status(_user=Depends(require_user)):
     except Exception:
         pass
     registry = get_mail_registry()
+    accounts = registry.list_accounts()
     spool_pending = sum(1 for _ in _mail_state_root().glob("*/spool/*.json"))
     return {
         "component": "Е.Ж.И.К.",
-        "status": "ready" if dataset else "not_created",
+        "status": "ready" if dataset or accounts else "not_created",
         "dataset_name": MAIL_DATASET_NAME,
         "dataset": asdict(dataset) if dataset else None,
         "supported": [".eml", ".emlx", ".msg"],
         "imap": imap_settings.public_payload(),
         "autosync": autosync,
         "apple_mail": apple_mail_public_payload(),
-        "accounts": registry.list_accounts(),
+        "accounts": accounts,
         "summary": {
             **registry.status_summary(),
             "spool_pending": spool_pending,

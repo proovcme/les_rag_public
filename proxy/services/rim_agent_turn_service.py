@@ -401,6 +401,250 @@ def _question_hints(mapping_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return hints[:15]
 
 
+def _mapping_result_from_revision(payload: dict[str, Any]) -> dict[str, Any]:
+    """Rebuild the model-result projection needed to resume a saved mapping.
+
+    The immutable mapping remains authoritative.  This adapter only restores
+    the transport shape consumed by the existing global-review function; it
+    does not choose or alter any professional decision.
+    """
+    mapping_rows = list(payload.get("mapping_rows") or [])
+    selections: dict[str, dict[str, Any]] = {}
+    opened_cards: dict[str, list[dict[str, Any]]] = {}
+    browse_trace: dict[str, list[dict[str, Any]]] = {}
+
+    for row in mapping_rows:
+        work_id = str(row.get("work_id") or "")
+        if not work_id:
+            continue
+        norm_code = str(row.get("norm_code") or "")
+        if norm_code:
+            card = {
+                "norm_code": norm_code,
+                "norm_key": str(row.get("norm_key") or ""),
+                "title": str(row.get("norm_title") or ""),
+                "measure_unit": str(row.get("norm_unit") or ""),
+                "edition": str(row.get("normative_base_version") or ""),
+                "source_ref": str(row.get("norm_source_ref") or ""),
+                "questions_to_ask": list(row.get("questions_to_ask") or []),
+            }
+            browse_trace.setdefault(work_id, []).append({"candidates": [card]})
+            if bool(row.get("card_opened")):
+                opened_cards.setdefault(work_id, []).append(card)
+
+        selection_status = str(row.get("selection_status") or "")
+        selection_kind = str(row.get("selection_kind") or "")
+        if selection_status not in {"selected", "accepted"} and selection_kind not in {
+            "covered_by",
+            "unbound",
+        }:
+            continue
+        if selection_kind == "covered_by":
+            selections[work_id] = {
+                "covered_by_work_id": str(row.get("covered_by_work_id") or ""),
+                "coverage_reason": str(row.get("reason") or ""),
+            }
+        elif selection_kind == "unbound":
+            selections[work_id] = {
+                "reason": str(row.get("reason") or ""),
+                "unbound_evidence": dict(row.get("unbound_evidence") or {}),
+            }
+        else:
+            selections[work_id] = {
+                "norm_code": norm_code,
+                "selection_kind": "analog" if bool(row.get("is_analog")) else "exact",
+                "applicability": str(row.get("applicability") or ""),
+                "reason": str(row.get("reason") or ""),
+                "analog_limitations": list(row.get("analog_limitations") or []),
+                "technology_check": dict(row.get("technology_check") or {}),
+                "resource_bindings": list(row.get("resource_bindings") or []),
+                "nr_sp_rule_id": str(row.get("nr_sp_rule_id") or ""),
+            }
+
+    audit = dict(payload.get("agent_audit") or {})
+    return {
+        "selections": selections,
+        "opened_cards": opened_cards,
+        "browse_trace": browse_trace,
+        "query_trace": list(audit.get("query_trace") or []),
+        "catalog_trace": list(audit.get("catalog_trace") or []),
+        "agent_trace": dict(audit.get("agent_trace") or {}),
+        "professional_conflicts": list(payload.get("professional_conflicts") or []),
+    }
+
+
+def _calculate_reviewed_mapping_draft(
+    store: RimSessionStore,
+    session_id: str,
+    *,
+    owner_id: str,
+    session: dict[str, Any],
+    work_rows: list[dict[str, Any]],
+    reviewed_rows: list[dict[str, Any]],
+    mapping_revision_id: str,
+    mapping_result: dict[str, Any],
+    expected_parent_revision_id: str,
+    allow_admin: bool,
+    agent_action: dict[str, Any] | None = None,
+    resumed_from_checkpoint: bool = False,
+) -> dict[str, Any]:
+    projected = reviewed_mapping_scenario(
+        reviewed_rows,
+        mapping_revision_id=mapping_revision_id,
+    )
+    scenario_set = validate_authored_scenarios(
+        work_rows,
+        reviewed_rows,
+        [projected],
+        max_combinations=1,
+    )
+    if any(
+        str(item.get("severity") or "") == "blocking"
+        for item in scenario_set.get("issues") or []
+    ):
+        raise RimSessionConflict(
+            "globally reviewed mapping cannot produce a complete draft scenario"
+        )
+    scenario_result = store.save_scenario_revision(
+        session_id,
+        owner_id=owner_id,
+        scenario_set=scenario_set,
+        expected_parent_revision_id=expected_parent_revision_id,
+        created_by="model",
+        allow_admin=allow_admin,
+    )
+    calculation_rows = calculation_rows_for_scenario(
+        work_rows,
+        reviewed_rows,
+        scenario_set["scenarios"][0],
+    )
+    trace = smeta_application.calculate_visible_rows_revision(
+        calculation_rows,
+        selected_by="model",
+        created_by="model",
+        parent_revision_id=mapping_revision_id,
+        change_note="Automatic draft after mandatory global review",
+        revision_root=str(store.root / "files" / session_id / "calculations"),
+        title="ЛСР РИМ — автоматический черновик",
+        book=str(session.get("pricebook_id") or "") or None,
+    )
+    trace["rim_session"] = {
+        "session_id": session_id,
+        "vor_revision_id": str(session.get("current_vor_revision_id") or ""),
+        "mapping_revision_id": mapping_revision_id,
+        "scenario_revision_id": scenario_result.revision_id,
+        "scenario_id": projected["scenario_id"],
+        "normative_base_version": session.get("normative_base_version") or "",
+        "pricebook_id": session.get("pricebook_id") or "",
+        "region_code": session.get("region_code") or "",
+        "price_period": session.get("price_period") or "",
+    }
+    priced = store.save_pricing_revision(
+        session_id,
+        owner_id=owner_id,
+        trace=trace,
+        requirements=requirements_from_calculation(trace),
+        expected_parent_revision_id=scenario_result.revision_id,
+        created_by="model",
+        change_note="Automatic monetary draft",
+        allow_admin=allow_admin,
+    )
+    return {
+        **priced.as_dict(),
+        "mapping_revision_id": mapping_revision_id,
+        "scenario_revision_id": scenario_result.revision_id,
+        "pricing_revision_id": priced.revision_id,
+        "artifact": {
+            "title": "ЛСР РИМ — черновик",
+            "xlsx": f"/api/rim/sessions/{session_id}/export?kind=draft",
+        },
+        "agent_action": agent_action,
+        "message": "Глобальная ревизия и денежный черновик ЛСР готовы.",
+        "agent_trace": mapping_result.get("agent_trace") or {},
+        "resumed_from_checkpoint": resumed_from_checkpoint,
+    }
+
+
+def _finish_mapping_to_draft(
+    store: RimSessionStore,
+    session_id: str,
+    *,
+    owner_id: str,
+    session: dict[str, Any],
+    work_rows: list[dict[str, Any]],
+    initial_result: dict[str, Any],
+    expected_parent_revision_id: str,
+    exchange: Exchange,
+    mapping_exchange: MappingExchange,
+    user_message: str,
+    allow_admin: bool,
+    agent_action: dict[str, Any] | None = None,
+    resumed_from_checkpoint: bool = False,
+) -> dict[str, Any]:
+    reviewed_result = _run_global_norm_review(
+        work_rows,
+        initial_result,
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=4,
+        max_turns=64,
+        progress=None,
+        user_request=user_message,
+        batch_runner=None,
+    )
+    if bool(reviewed_result.get("requires_user_input")):
+        raise RimSessionConflict(
+            "global model review requires a project fact before draft calculation"
+        )
+    reviewed_rows = _mapping_rows(work_rows, reviewed_result)
+    reviewed = store.save_mapping_revision(
+        session_id,
+        owner_id=owner_id,
+        mapping_rows=reviewed_rows,
+        expected_parent_revision_id=expected_parent_revision_id,
+        created_by="model",
+        revision_kind="mapping_global_review",
+        conflicts=list(reviewed_result.get("professional_conflicts") or []),
+        agent_audit={
+            "schema": "rim_global_review_agent_audit_v1",
+            "catalog_trace": list(reviewed_result.get("catalog_trace") or []),
+            "query_trace": list(reviewed_result.get("query_trace") or []),
+            "agent_trace": dict(reviewed_result.get("agent_trace") or {}),
+        },
+        change_note="Mandatory same-model cross-row global review",
+        allow_admin=allow_admin,
+    )
+    blocking_review_issues = [
+        item
+        for item in reviewed.issues
+        if str(item.get("severity") or "") == "blocking"
+    ]
+    if blocking_review_issues:
+        return {
+            **reviewed.as_dict(),
+            "mapping_revision_id": reviewed.revision_id,
+            "message": (
+                "Глобальная модельная ревизия сохранена, но структурные "
+                "blockers не позволяют построить денежный draft."
+            ),
+            "agent_trace": reviewed_result.get("agent_trace") or {},
+        }
+    return _calculate_reviewed_mapping_draft(
+        store,
+        session_id,
+        owner_id=owner_id,
+        session=reviewed.session,
+        work_rows=work_rows,
+        reviewed_rows=reviewed_rows,
+        mapping_revision_id=reviewed.revision_id,
+        mapping_result=reviewed_result,
+        expected_parent_revision_id=reviewed.revision_id,
+        allow_admin=allow_admin,
+        agent_action=agent_action,
+        resumed_from_checkpoint=resumed_from_checkpoint,
+    )
+
+
 def run_rim_agent_turn(
     store: RimSessionStore,
     session_id: str,
@@ -503,6 +747,53 @@ def run_rim_agent_turn(
                     "операции. Следующий шаг — подбор норм."
                 ),
             }
+        if str(session.get("phase") or "") == "mapping" and str(
+            session.get("mapping_status") or ""
+        ) in {"candidates_ready", "mapping_selected"}:
+            vor_revision_id = str(session.get("current_vor_revision_id") or "")
+            mapping_revision_id = str(
+                session.get("current_mapping_revision_id") or ""
+            )
+            if not vor_revision_id or not mapping_revision_id:
+                raise RimSessionConflict(
+                    "saved VOR and mapping revisions are required after the answer"
+                )
+            vor = _current_payload(
+                store,
+                result.session,
+                vor_revision_id,
+                owner_id=owner_id,
+                allow_admin=allow_admin,
+            )
+            mapping_revision = store.revision_payload(
+                session_id,
+                mapping_revision_id,
+                owner_id=owner_id,
+                allow_admin=allow_admin,
+            )
+            answer_context = json.dumps(
+                {
+                    "question": pending_question,
+                    "confirmed_answer": dict(action["arguments"].get("answer") or {}),
+                },
+                ensure_ascii=False,
+            )
+            return _finish_mapping_to_draft(
+                store,
+                session_id,
+                owner_id=owner_id,
+                session=result.session,
+                work_rows=_work_rows(list(vor.get("rows") or [])),
+                initial_result=_mapping_result_from_revision(
+                    dict(mapping_revision.get("payload") or {})
+                ),
+                expected_parent_revision_id=result.revision_id,
+                exchange=exchange,
+                mapping_exchange=mapping_exchange,
+                user_message=f"{user_message}\n\nCONFIRMED PROJECT ANSWER: {answer_context}",
+                allow_admin=allow_admin,
+                agent_action=action,
+            )
         return {
             **result.as_dict(),
             "agent_action": action,
@@ -875,129 +1166,111 @@ def run_rim_agent_turn(
                     "agent_trace": result.get("agent_trace") or {},
                     "resumed_from_checkpoint": bool(stored_checkpoint),
                 }
-        reviewed_result = _run_global_norm_review(
-            work_rows,
-            result,
-            exchange,
-            mapping_exchange=mapping_exchange,
-            candidate_limit=4,
-            max_turns=64,
-            progress=None,
-            user_request=user_message,
-            batch_runner=None,
-        )
-        if bool(reviewed_result.get("requires_user_input")):
-            raise RimSessionConflict(
-                "global model review requires a project fact before draft calculation"
-            )
-        reviewed_rows = _mapping_rows(work_rows, reviewed_result)
-        reviewed = store.save_mapping_revision(
+        return _finish_mapping_to_draft(
+            store,
             session_id,
             owner_id=owner_id,
-            mapping_rows=reviewed_rows,
+            session=revision.session,
+            work_rows=work_rows,
+            initial_result=result,
             expected_parent_revision_id=revision.revision_id,
-            created_by="model",
-            revision_kind="mapping_global_review",
-            conflicts=list(reviewed_result.get("professional_conflicts") or []),
-            agent_audit={
-                "schema": "rim_global_review_agent_audit_v1",
-                "catalog_trace": list(reviewed_result.get("catalog_trace") or []),
-                "query_trace": list(reviewed_result.get("query_trace") or []),
-                "agent_trace": dict(reviewed_result.get("agent_trace") or {}),
-            },
-            change_note="Mandatory same-model cross-row global review",
+            exchange=exchange,
+            mapping_exchange=mapping_exchange,
+            user_message=user_message,
+            allow_admin=allow_admin,
+            agent_action=question_action,
+            resumed_from_checkpoint=bool(stored_checkpoint),
+        )
+
+    if session.get("phase") == "mapping" and session.get("mapping_status") in {
+        "candidates_ready",
+        "mapping_selected",
+    }:
+        vor_revision_id = str(session.get("current_vor_revision_id") or "")
+        mapping_revision_id = str(session.get("current_mapping_revision_id") or "")
+        if not vor_revision_id or not mapping_revision_id:
+            raise RimSessionConflict("saved VOR and mapping revisions are required")
+        vor = _current_payload(
+            store,
+            session,
+            vor_revision_id,
+            owner_id=owner_id,
             allow_admin=allow_admin,
         )
-        blocking_review_issues = [
+        mapping_revision = store.revision_payload(
+            session_id,
+            mapping_revision_id,
+            owner_id=owner_id,
+            allow_admin=allow_admin,
+        )
+        return _finish_mapping_to_draft(
+            store,
+            session_id,
+            owner_id=owner_id,
+            session=session,
+            work_rows=_work_rows(list(vor.get("rows") or [])),
+            initial_result=_mapping_result_from_revision(
+                dict(mapping_revision.get("payload") or {})
+            ),
+            expected_parent_revision_id=str(session.get("head_revision_id") or ""),
+            exchange=exchange,
+            mapping_exchange=mapping_exchange,
+            user_message=user_message,
+            allow_admin=allow_admin,
+        )
+
+    if session.get("mapping_status") in {
+        "mapping_globally_reviewed",
+        "mapping_locked",
+    } and session.get("pricing_status") not in {"priced_draft", "priced_final"}:
+        vor_revision_id = str(session.get("current_vor_revision_id") or "")
+        mapping_revision_id = str(session.get("current_mapping_revision_id") or "")
+        if not vor_revision_id or not mapping_revision_id:
+            raise RimSessionConflict("reviewed VOR and mapping revisions are required")
+        vor = _current_payload(
+            store,
+            session,
+            vor_revision_id,
+            owner_id=owner_id,
+            allow_admin=allow_admin,
+        )
+        mapping_revision = store.revision_payload(
+            session_id,
+            mapping_revision_id,
+            owner_id=owner_id,
+            allow_admin=allow_admin,
+        )
+        mapping_payload = dict(mapping_revision.get("payload") or {})
+        blocking = [
             item
-            for item in reviewed.issues
+            for item in mapping_payload.get("issues") or []
             if str(item.get("severity") or "") == "blocking"
         ]
-        if blocking_review_issues:
+        if blocking:
             return {
-                **reviewed.as_dict(),
-                "mapping_revision_id": reviewed.revision_id,
+                "session_id": session_id,
+                "status": session["display_state"],
+                "revision_id": session["head_revision_id"],
+                "issues": blocking,
+                "requirements": session.get("requirements") or [],
                 "message": (
-                    "Глобальная модельная ревизия сохранена, но структурные "
-                    "blockers не позволяют построить денежный draft."
+                    "Черновик ЛСР не рассчитан: сначала устраните блокирующие "
+                    "замечания global review."
                 ),
-                "agent_trace": reviewed_result.get("agent_trace") or {},
             }
-        projected = reviewed_mapping_scenario(
-            reviewed_rows,
-            mapping_revision_id=reviewed.revision_id,
-        )
-        scenario_set = validate_authored_scenarios(
-            work_rows,
-            reviewed_rows,
-            [projected],
-            max_combinations=1,
-        )
-        if any(
-            str(item.get("severity") or "") == "blocking"
-            for item in scenario_set.get("issues") or []
-        ):
-            raise RimSessionConflict(
-                "globally reviewed mapping cannot produce a complete draft scenario"
-            )
-        scenario_result = store.save_scenario_revision(
+        mapping_result = _mapping_result_from_revision(mapping_payload)
+        return _calculate_reviewed_mapping_draft(
+            store,
             session_id,
             owner_id=owner_id,
-            scenario_set=scenario_set,
-            expected_parent_revision_id=reviewed.revision_id,
-            created_by="model",
+            session=session,
+            work_rows=_work_rows(list(vor.get("rows") or [])),
+            reviewed_rows=list(mapping_payload.get("mapping_rows") or []),
+            mapping_revision_id=mapping_revision_id,
+            mapping_result=mapping_result,
+            expected_parent_revision_id=str(session.get("head_revision_id") or ""),
             allow_admin=allow_admin,
         )
-        calculation_rows = calculation_rows_for_scenario(
-            work_rows,
-            reviewed_rows,
-            scenario_set["scenarios"][0],
-        )
-        trace = smeta_application.calculate_visible_rows_revision(
-            calculation_rows,
-            selected_by="model",
-            created_by="model",
-            parent_revision_id=reviewed.revision_id,
-            change_note="Automatic draft after mandatory global review",
-            revision_root=str(store.root / "files" / session_id / "calculations"),
-            title="ЛСР РИМ — автоматический черновик",
-            book=str(session.get("pricebook_id") or "") or None,
-        )
-        trace["rim_session"] = {
-            "session_id": session_id,
-            "vor_revision_id": vor_revision_id,
-            "mapping_revision_id": reviewed.revision_id,
-            "scenario_revision_id": scenario_result.revision_id,
-            "scenario_id": projected["scenario_id"],
-            "normative_base_version": session.get("normative_base_version") or "",
-            "pricebook_id": session.get("pricebook_id") or "",
-            "region_code": session.get("region_code") or "",
-            "price_period": session.get("price_period") or "",
-        }
-        priced = store.save_pricing_revision(
-            session_id,
-            owner_id=owner_id,
-            trace=trace,
-            requirements=requirements_from_calculation(trace),
-            expected_parent_revision_id=scenario_result.revision_id,
-            created_by="model",
-            change_note="Automatic monetary draft",
-            allow_admin=allow_admin,
-        )
-        return {
-            **priced.as_dict(),
-            "mapping_revision_id": reviewed.revision_id,
-            "scenario_revision_id": scenario_result.revision_id,
-            "pricing_revision_id": priced.revision_id,
-            "artifact": {
-                "title": "ЛСР РИМ — черновик",
-                "xlsx": f"/api/rim/sessions/{session_id}/export?kind=draft",
-            },
-            "agent_action": question_action,
-            "message": "Глобальная ревизия и денежный черновик ЛСР готовы.",
-            "agent_trace": reviewed_result.get("agent_trace") or {},
-            "resumed_from_checkpoint": bool(stored_checkpoint),
-        }
 
     return {
         "session_id": session_id,

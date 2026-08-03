@@ -784,6 +784,100 @@ def test_mapping_turn_resumes_durable_checkpoint_and_clears_it_on_success(
     )
 
 
+def test_saved_mapping_turn_continues_to_priced_draft(monkeypatch, tmp_path):
+    store = RimSessionStore(tmp_path)
+    vor = _create_vor(store)
+    initial = {
+        "selections": {
+            "vor-001": {
+                "norm_code": "ГЭСНм10-06-001-01",
+                "selection_kind": "exact",
+                "applicability": "exact",
+                "reason": "Состав работ совпадает",
+                "technology_check": {"conclusion": "applicable"},
+            }
+        },
+        "browse_trace": {
+            "vor-001": [
+                {
+                    "candidates": [
+                        {
+                            "norm_code": "ГЭСНм10-06-001-01",
+                            "norm_key": "ГЭСНм:10-06-001-01",
+                            "title": "Прокладка кабеля",
+                            "measure_unit": "100 м",
+                            "source_ref": "fsnb.sqlite#guid=1",
+                        }
+                    ]
+                }
+            ]
+        },
+        "opened_cards": {
+            "vor-001": [
+                {
+                    "norm_code": "ГЭСНм10-06-001-01",
+                    "norm_key": "ГЭСНм:10-06-001-01",
+                    "title": "Прокладка кабеля",
+                    "measure_unit": "100 м",
+                    "edition": "ФСНБ-2022",
+                    "source_ref": "fsnb.sqlite#guid=1",
+                    "questions_to_ask": [],
+                }
+            ]
+        },
+        "query_trace": [],
+        "catalog_trace": [],
+        "agent_trace": {"mode": "saved_mapping"},
+    }
+    work_rows = rim_agent_turn_service._work_rows(
+        store.revision_payload(
+            vor.session["session_id"],
+            vor.revision_id,
+            owner_id="tester",
+        )["payload"]["rows"]
+    )
+    mapping = store.save_mapping_revision(
+        vor.session["session_id"],
+        owner_id="tester",
+        mapping_rows=rim_agent_turn_service._mapping_rows(work_rows, initial),
+        expected_parent_revision_id=vor.revision_id,
+        created_by="model",
+    )
+    assert mapping.session["mapping_status"] == "mapping_selected"
+
+    monkeypatch.setattr(
+        rim_agent_turn_service,
+        "_run_global_norm_review",
+        lambda _rows, restored, *_args, **_kwargs: {
+            **restored,
+            "professional_conflicts": [],
+        },
+    )
+    monkeypatch.setattr(
+        rim_agent_turn_service.smeta_application,
+        "calculate_visible_rows_revision",
+        lambda *_args, **_kwargs: {
+            "schema": "rim_lsr_trace_v1",
+            "summary": {"known_amount": 1000.0},
+            "sections": [],
+            "blockers": [],
+        },
+    )
+
+    result = rim_agent_turn_service.run_rim_agent_turn(
+        store,
+        vor.session["session_id"],
+        owner_id="tester",
+        user_message="Сделай ЛСР",
+        exchange=lambda *_args: {},
+        mapping_exchange=lambda *_args: {},
+    )
+
+    assert result["pricing_revision_id"]
+    assert result["artifact"]["xlsx"].endswith("export?kind=draft")
+    assert result["message"] == "Глобальная ревизия и денежный черновик ЛСР готовы."
+
+
 def test_rim_model_reference_is_phase_scoped_and_never_contains_numeric_rules():
     from proxy.services.rim_knowledge_service import model_reference_for_session
 

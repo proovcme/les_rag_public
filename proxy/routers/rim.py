@@ -27,6 +27,7 @@ from proxy.services.rim_mapping_progress_service import build_mapping_progress
 from proxy.services.rim_mapping_review_service import review_mapping
 from proxy.services.rim_agent_action_service import model_tool_specs, validate_model_action
 from proxy.services.rim_agent_turn_service import run_rim_agent_turn
+from proxy.services.rim_next_step_service import next_step_for_session
 from proxy.services.rim_scenario_service import (
     calculation_rows_for_scenario,
     requirements_from_calculation,
@@ -351,9 +352,10 @@ async def get_session(
     user: RequestUser = Depends(require_user),
 ):
     try:
-        return _store().get_session(
+        session = _store().get_session(
             session_id, owner_id=_actor(user), allow_admin=_allow_admin(user)
         )
+        return {**session, "next_step": next_step_for_session(session)}
     except Exception as error:  # noqa: BLE001
         _raise_http(error)
 

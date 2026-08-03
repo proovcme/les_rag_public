@@ -3,7 +3,7 @@
 ## Назначение
 
 `tool_harness_service` даёт ЛЕСу единый слой инструментов: поиск/чтение источников,
-карту датасета и read-only filesystem. Это не автономный агент и не второй
+карту датасета, bounded public web search и read-only filesystem. Это не второй
 ответчик. Модель остаётся субъектом workflow: выбирает тему, документ, раздел,
 смотрит результат инструмента и решает, хватает ли данных.
 
@@ -50,6 +50,15 @@ Filesystem read-only и whitelist-first. Базовые корни: `docs`,
 добавить через `LES_TOOL_FS_EXTRA_ROOTS=key=/path,key2=/path2`. Запрещены
 секретные/тяжёлые/служебные сегменты: `.env`, `.git`, `.venv`, `data`, `logs`,
 `dist`, `local_private_archive` и выход за корень.
+
+Web:
+
+- `web_search` — bounded поиск публичных страниц через существующий DuckDuckGo HTML adapter;
+  возвращает title/snippet/direct URL и никогда не объявляет snippet доказанным фактом.
+
+Режим чата «Агент» явно включает model-owned research loop. Он не получает shell,
+desktop-control, запись файлов или произвольные HTTP-действия: только зарегистрированные
+read-only tools. Финальный ответ и оценку достаточности источников делает модель.
 
 ## Рычаги
 
@@ -165,6 +174,7 @@ uv run python tools/les_tool_harness.py fs-search "pdf-extract" --root docs --co
 | `read_source` | Нужно прочитать конкретный документ по chunks | `doc_id` или `dataset_id+doc_name`, `q`, `limit`, `max_chars` | ordered chunks / in-document hits |
 | `read_pdf_source` | То же, но явно PDF-контекст | как `read_source` | indexed chunks + warning, если raw PDF parser недоступен в этом tool pass |
 | `read_excel_source` | То же, но Excel/CSV-контекст | как `read_source` | indexed chunks + warning по sheet/range limits |
+| `web_search` | Нужны актуальные публичные источники в явном Agent mode | `q`, `limit` | bounded title/snippet/direct URL + web sources |
 | `filesystem_roots` | Нужно увидеть whitelisted корни | нет | keys, paths, forbidden parts |
 | `filesystem_list` | Нужно открыть дерево разрешённого корня | `root`, `path`, `depth` | bounded tree |
 | `filesystem_stat` | Нужно metadata без чтения | `root`, `path` | size, suffix, mtime, type |
@@ -184,7 +194,8 @@ tool/источник, либо честно сказать, чего не хв�
 
 ## Model-selected loop в чате
 
-С 0.24.0.215 общий чат делает первый bounded tool loop:
+Общий чат выполняет bounded multi-round tool loop; явный режим `agent` включает его
+независимо от общего optional-флага:
 
 ```text
 question -> tool shortlist -> model tool_call -> validated executor
@@ -194,5 +205,6 @@ question -> tool shortlist -> model tool_call -> validated executor
 Код не выбирает предметный ответ. Он строит shortlist, просит модель вернуть
 строгий JSON `{"calls":[...]}`, исполняет только tools из shortlist, добавляет
 `les_tool_result_v1` в prompt и пишет полный `retrieval_trace.tool_loop`.
-Финальный visible answer снова пишет модель. Loop одношаговый и read-only;
-filesystem остаётся whitelist-first.
+Финальный visible answer снова пишет модель. Loop read-only, ограничен числом раундов
+и вызовов; filesystem остаётся whitelist-first, web-search возвращает только публичные
+результаты поиска с direct URLs.

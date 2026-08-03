@@ -40,9 +40,9 @@ Backfill идёт возобновляемыми порциями не боле�
 неподтверждённый снимок не двигает cursor и безопасно повторяется позже. Per-folder cursor отдельно фиксирует
 `backfill_complete`: после достижения старейшего письма последующие запуски вообще не перечисляют
 старую часть `Items`, а проверяют только новые письма. Старые cursor-файлы без этого флага проходят
-один завершающий backfill и автоматически обновляются. Task Scheduler хранит задачу без расписания:
-sidecar запускается только кнопкой «Забрать ещё» во вкладке «Почта» и работает в interactive
-user session. Задача не стартует Outlook сама. Команда
+один завершающий backfill и автоматически обновляются. Кнопка «Забрать ещё» вызывает
+installed `LesMailPoller.exe` напрямую из loopback/root-admin API в interactive user session;
+для ручного сбора не нужны UAC и Scheduled Task. Команда
 `--open <base64-store> <base64-entry>` вызывает `Session.GetItemFromID(...).Display()`.
 
 ### IMAP
@@ -100,6 +100,7 @@ message-node каждого письма сохраняет собственну
 - `POST /api/mail/accounts/{id}/migrate-legacy` — только выбранная папка → выбранный mailbox dataset;
 - `POST /api/mail/collector/register-store` — loopback-регистрация видимого Outlook store до писем;
 - `POST /api/mail/collector/import` — loopback multipart intake Outlook-sidecar;
+- `POST /api/mail/collector/run` — прямой запуск installed interactive sidecar;
 - `GET /api/mail/messages` с account/folder/participant/date/index-status filters;
 - `GET /api/mail/messages/{id}`, `POST /api/mail/messages/{id}/open`.
 
@@ -110,9 +111,11 @@ spool, число indexed/pending/error. Кнопка «Спросить в LES�
 
 ## Windows install и acceptance
 
-`clients/outlook_mail_poller/setup_task.ps1` компилирует sidecar в persistent state `bin` и создаёт
-interactive task. `installers/windows/app/bootstrap.ps1` устанавливает его вместе с Tauri/NSIS при
-наличии classic Outlook. Live Windows gate обязан проверить повторный запуск без дублей, folder
+`clients/outlook_mail_poller/setup_task.ps1` компилирует sidecar в persistent state `bin`; его
+legacy interactive task остаётся совместимым ручным рычагом, но product API от него не зависит.
+`installers/windows/app/bootstrap.ps1` устанавливает sidecar вместе с Tauri/NSIS при наличии classic
+Outlook. Изолированный release smoke передаёт `LES_RELEASE_SMOKE=1` и не имеет права заменять
+user-wide Outlook task. Live Windows gate обязан проверить повторный запуск без дублей, folder
 probe без мутаций, `INDEXED`, правильный original и отсутствие секрета в API/log/machine report.
 Так как SSH-процесс не видит COM-объект Outlook из desktop session, release probe запускается
 одноразовой interactive Scheduled Task под тем же пользователем; проверяется её `LastTaskResult`,

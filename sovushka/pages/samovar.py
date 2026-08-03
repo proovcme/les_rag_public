@@ -886,9 +886,9 @@ def build_samovar():
     async def _refresh_status():
         # Тикает каждые 5с НЕЗАВИСИМО от _parse. Верим активной job, а не stale dataset.status:
         # PENDING — это очередь, PARSING — только если есть живой scheduler/batch.
-        st = await api_get("/api/runtime/dispatcher/status") or {}
+        st = await api_get("/api/runtime/dispatcher/reindex/status") or {}
         idx = await api_get("/api/indexing-mode") or {}
-        disp = bool((st.get("reindex") or {}).get("running") or st.get("running"))
+        disp = bool(st.get("running"))
         jobs = await api_get("/api/jobs/summary?limit=40") or {}
         readiness = await api_get("/api/rag/readiness") or {}
         job_items = jobs.get("jobs", []) if isinstance(jobs, dict) else []
@@ -1130,8 +1130,9 @@ def build_samovar():
 
     ui.timer(0.1, _refresh, once=True)
     # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
-    ui.timer(5.0, _refresh_status)
-    ui.timer(20.0, _refresh)
+    status_timer = ui.timer(5.0, _refresh_status)
+    refresh_timer = ui.timer(20.0, _refresh)
+    return {"timers": [status_timer, refresh_timer]}
 
 
 def build_samovar_legacy():

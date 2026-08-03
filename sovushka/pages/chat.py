@@ -131,6 +131,7 @@ def _rows_to_csv(rows: list[dict]) -> bytes:
 OUTPUT_FORMATS = {
     "text": ("Текст", "Свободный ответ"),
     "rag": ("РАГ", "Заземлённый ответ из документов (с цитатами)"),
+    "agent": ("Агент", "Исследование в источниках, интернете и разрешённых папках"),
     "smeta": ("Смета", "Расчёт сметы на объект по описанию"),
     "kp": ("КП", "Коммерческое предложение (задел на будущее)"),
     "review": ("Проверка проекта", "Нормоконтроль документов объекта"),
@@ -167,10 +168,20 @@ CHAT_MODE_GUIDANCE = {
             "Что сказано о котельной в проекте?",
         ),
     },
+    "agent": {
+        "title": "Агент-исследователь",
+        "description": "Сам выбирает несколько безопасных read-only инструментов и собирает проверяемый ответ.",
+        "data_hint": "Может искать в интернете, документах ЛЕС и разрешённых папках; изменения на компьютере не выполняет.",
+        "examples": (
+            "Найди актуальные разъяснения по этому вопросу в интернете",
+            "Найди на компьютере документы по названию объекта",
+            "Сравни проектные документы с публичными источниками",
+        ),
+    },
     "smeta": {
-        "title": "Сметы",
-        "description": "Работает с ВОР, спецификациями, ЛСР и перечнями работ.",
-        "data_hint": "Помогут файл, объёмы и единицы; для цен — регион и период расчёта.",
+        "title": "Смета в текущем диалоге",
+        "description": "Разовый сметный разбор в чате. Для ревизий, блокировок и продолжения используйте раздел «Сметный проект».",
+        "data_hint": "Помогут файл, объёмы и единицы; для длительной работы откройте отдельный сметный проект.",
         "examples": (
             "Подбери нормы к работам из файла",
             "Проверь объёмы и единицы",
@@ -985,7 +996,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 _MODE_CHIPS = (
                     ("text", "o_auto_awesome", "Авто"),
                     ("rag", "o_search", "Поиск"),
-                    ("smeta", "o_calculate", "Сметы"),
+                    ("agent", "o_travel_explore", "Агент"),
+                    ("smeta", "o_calculate", "Смета в чате"),
                     ("doc_review", "o_fact_check", "Нормоконтроль"),
                 )
                 _mode_chip_refs: dict = {}
@@ -3390,10 +3402,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         # МАРШРУТНЫЕ РЕЖИМЫ: backend форсит путь по полю mode (минуя угадайку роутера).
         #   smeta → model+RAG сметчик; review → таблица проверки; kp → текст-задел; rag → заземлённый RAG;
         #   free → вольный LLM без ретрива. Прочие out_mode (table/svg/…) — обычный формат-режим.
-        _ROUTING_MODES = {"smeta", "review", "kp", "rag", "free", "doc_review"}
+        _ROUTING_MODES = {"smeta", "review", "kp", "rag", "agent", "free", "doc_review"}
         _routing_mode = out_mode if out_mode in _ROUTING_MODES else None
         is_smeta_mode = (out_mode == "smeta")
         _ph_map = {"smeta": "Думаю как сметчик…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
+                   "agent": "Исследую источники и файлы…",
                    "free": "Думаю вольно…", "rag": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
         _initial_status = _ph_map.get(out_mode, "Генерирую…")
         # рендер ответа: смета теперь проза model+RAG; проверка → таблица; вольный/раг/кп → текст.
@@ -4180,3 +4193,4 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         "keydown.enter.exact.prevent",
         lambda e: asyncio.create_task(send_chat()) if not _resource_blocked["v"] else None,
     )
+    return {"timers": [resource_gate_timer, model_chip_timer]}

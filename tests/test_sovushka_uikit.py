@@ -41,6 +41,16 @@ def test_lazy_tab_panel_uses_same_name_for_element_and_event_value():
 def test_lazy_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
     panel_options = {}
 
+    class FakeTimer:
+        def __init__(self):
+            self.active = False
+
+        def activate(self):
+            self.active = True
+
+        def deactivate(self):
+            self.active = False
+
     class FakeElement:
         def __init__(self, name=""):
             self._props = {"name": name} if name else {}
@@ -86,12 +96,18 @@ def test_lazy_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
     chat = SimpleNamespace(_props={"name": "Чат"})
     studio = SimpleNamespace(_props={"name": "Студия"})
     built = []
+    chat_timer = FakeTimer()
+    studio_timer = FakeTimer()
+
+    def build(name, timer):
+        built.append(name)
+        return {"timers": [timer]}
 
     container = components_module.lazy_tab_panels(
         FakeElement(),
         [
-            (chat, lambda: built.append("Чат")),
-            (studio, lambda: built.append("Студия")),
+            (chat, lambda: build("Чат", chat_timer)),
+            (studio, lambda: build("Студия", studio_timer)),
         ],
         initial=chat,
     )
@@ -99,9 +115,23 @@ def test_lazy_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
     assert built == ["Чат"]
     assert panel_options["animated"] is True
     assert panel_options["keep_alive"] is True
+    assert chat_timer.active is True
+    assert studio_timer.active is False
     container.on_change(SimpleNamespace(value="Студия"))
     container.on_change(SimpleNamespace(value="Студия"))
     assert built == ["Чат", "Студия"]
+    assert chat_timer.active is False
+    assert studio_timer.active is True
+
+
+def test_heavy_tab_builders_return_pauseable_timers():
+    chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+    samovar = Path("sovushka/pages/samovar.py").read_text(encoding="utf-8")
+
+    assert 'return {"timers": [resource_gate_timer, model_chip_timer]}' in chat
+    assert 'return {"timers": [mapping_progress_timer]}' in rim
+    assert 'return {"timers": [status_timer, refresh_timer]}' in samovar
 
 
 def test_classic_surfaces_use_shared_lazy_panels():
@@ -244,10 +274,14 @@ def test_rim_surface_uses_uikit_and_exposes_auditable_workflow():
     header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
     rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
 
-    assert 'tab_refs["rim"] = ui.tab("РИМ-смета"' in header
+    assert 'tab_refs["rim"] = ui.tab("Сметный проект"' in header
     assert "build_rim" in shell
     assert "sov-rim-question__choices" in rim
     assert "await send_message()" in rim
+    assert 'session.get("next_step")' in rim
+    assert 'ui.label(text or "Продолжить текущий шаг")' not in rim
+    assert 'dialog_state.set_text("Следующий шаг")' not in rim
+    assert '"Следующий шаг"' in rim
     assert "Сохранённая сессия" in rim
     assert 'api_get("/api/rim/sessions?limit=100")' in rim
     assert "if session_id not in session_options:" in rim

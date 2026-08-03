@@ -4,19 +4,45 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-02)
+## Текущее состояние (2026-08-03)
 
 ```
-версия продукта (SemVer):  0.27.35 (PR #8 accepted + corrected)
-номер сборки:              552
-версия Tauri/NSIS:         5.1.552
+версия продукта (SemVer):  0.27.37 (responsive UI, live mail, explicit Agent)
+номер сборки:              554
+версия Tauri/NSIS:         5.1.554
 ветка выпуска:             codex/legion-model-quality
 dev implementation:       Memory Core v1 — RAG memory & safe smeta traces infrastructure
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.37
 рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
 ```
+
+> 0.27.37 / build 554 — responsive UI, live mail, explicit Agent
+>
+> Дата: 2026-08-03
+> Статус: local candidate; portable current verify/test and dedicated mail gate green.
+>
+> **Что вошло:**
+> 1. `lazy_tab_panels` приостанавливает периодические timers скрытых тяжёлых вкладок и возобновляет их только при возврате; накопительный polling после посещения RIM/Датасетов/чата устранён.
+> 2. Датасеты опрашивают новый дешёвый `/api/runtime/dispatcher/reindex/status`, а не 2.7–3.6-секундную process/service диагностику каждые пять секунд.
+> 3. Е.Ж.И.К. запускает установленный интерактивный `LesMailPoller.exe` напрямую без UAC-зависимости от Scheduled Task. Release smoke больше не переписывает пользовательскую Outlook-задачу. Private mailbox считается ready даже без legacy `MAIL_Index`.
+> 4. В чате появился явный read-only режим «Агент»: существующий model-owned research loop получил bounded public `web_search` и сохраняет whitelisted filesystem tools; произвольный shell/управление приложениями не выдаётся.
+> 5. UI развёл два сметных продукта: разовый режим называется «Смета в чате», persistent RIM workspace — «Сметный проект». Сметное ядро и расчёты не изменялись.
+> 6. Живой Outlook-проход зарегистрировал private mailbox и 10 сообщений без ошибок. Focused suite: `158 passed`; portable current gate: `372 passed, 9 skipped`; mail gate: `66 passed`; отдельный online web-search smoke вернул официальные источники Минстроя.
+
+> 0.27.36 / build 553 — RIM next-step recovery
+>
+> Дата: 2026-08-03
+> Статус: local candidate; portable verify и полный contract/behavior gate зелёные.
+>
+> **Что вошло:**
+> 1. Диалог РИМ больше не показывает «Готово», когда готов только ответный канал: session API возвращает один явный `next_step`.
+> 2. Пустой composer не маскируется как «Продолжить текущий шаг» и не отправляет пустую строку; кнопка использует фактический state-scoped prompt.
+> 3. `mapping_selected|candidates_ready` после уточнения возобновляется из immutable mapping revision, проходит штатный same-model global review и детерминированный расчёт без повторного поиска всех строк.
+> 4. Команда «Сделай ЛСР» продолжает проверенный или заблокированный mapping до денежного черновика; блокирующие issues остаются видимыми.
+> 5. Повторный клик во время долгого хода блокируется на UI. `proxy/smeta_core/` и сметные формулы не изменялись.
+> 6. Проверки: focused RIM/API/UI `50 passed`; portable verify `3369 collected`; полный current gate `359 passed, 10 skipped`.
 
 > 0.27.35 / build 552 — public PR #8 accepted with production corrections
 >

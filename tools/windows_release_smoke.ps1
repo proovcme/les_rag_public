@@ -35,6 +35,7 @@ $env:LES_TAURI_SHELL = "1"
 $env:LES_TAURI_ACTION = "start"
 $smokeCollection = "les_release_smoke_$([guid]::NewGuid().ToString('N'))"
 $env:RAG_COLLECTION_NAME = $smokeCollection
+$env:LES_RELEASE_SMOKE = "1"
 
 $result = [ordered]@{
   schema = "les_windows_release_smoke_v1"

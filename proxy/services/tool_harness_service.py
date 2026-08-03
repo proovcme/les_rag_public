@@ -99,8 +99,10 @@ class ToolHarness:
             score = sum(1 for term in terms if term in haystack)
             if spec.category in {"dataset", "source"} and any(t in terms for t in ("датасет", "документ", "источник", "pdf", "excel")):
                 score += 2
-            if spec.category == "filesystem" and any(t in terms for t in ("файл", "папк", "filesystem", "диск")):
+            if spec.category == "filesystem" and any(t in terms for t in ("файл", "папк", "filesystem", "диск", "компьютер", "компьютере")):
                 score += 2
+            if spec.category == "web" and any(t in terms for t in ("agent", "агент", "интернет", "web", "сайт", "актуальн")):
+                score += 3
             if score:
                 scored.append((score, spec))
         scored.sort(key=lambda item: (-item[0], item[1].name))
@@ -246,6 +248,18 @@ class ToolHarness:
                 tags=("project", "documentation", "volume", "cipher", "stage", "section", "metadata", "том", "шифр"),
             ),
             _tool_assemble_project_volume,
+        )
+        self._register(
+            ToolSpec(
+                name="web_search",
+                title="Public web search",
+                category="web",
+                summary="Search the public internet and return bounded titles, snippets and source URLs; read-only and never a final answer.",
+                args_schema={"q": "str", "limit": "int"},
+                returns="public search results with direct source URLs",
+                tags=("agent", "web", "internet", "search", "актуальный", "интернет", "сайт"),
+            ),
+            _tool_web_search,
         )
         self._register(
             ToolSpec(
@@ -736,6 +750,29 @@ def _tool_filesystem_roots(args: dict[str, Any]) -> dict[str, Any]:
     }
     return _result(tool="filesystem_roots", operation="list_roots", inputs=[{}], status="ok",
                    result=result, trace="listed whitelist filesystem roots")
+
+
+def _tool_web_search(args: dict[str, Any]) -> dict[str, Any]:
+    from proxy.services.web_search_service import search_web
+
+    query = str(args.get("q") or "").strip()
+    limit = _int_arg(args.get("limit"), 8, min_value=1, max_value=12)
+    payload = search_web(query, limit=limit)
+    rows = list(payload.get("results") or [])
+    sources = [
+        {"kind": "web", "url": row.get("url"), "title": row.get("title"), "domain": row.get("domain")}
+        for row in rows
+    ]
+    return _result(
+        tool="web_search",
+        operation="search",
+        inputs=[{"q": query, "limit": limit}],
+        status=str(payload.get("status") or "missing"),
+        result={"query": payload.get("query") or query, "results": rows},
+        sources=sources,
+        missing=list(payload.get("missing") or []),
+        trace=f"searched public web; returned {len(rows)} bounded result(s)",
+    )
 
 
 def _tool_filesystem_list(args: dict[str, Any]) -> dict[str, Any]:

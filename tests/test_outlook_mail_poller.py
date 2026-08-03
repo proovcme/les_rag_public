@@ -64,6 +64,7 @@ def test_windows_bootstrap_installs_bounded_manual_interactive_task():
     assert "New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive" in setup
     assert "collector/import" in setup
     assert "outlook_mail_poller\\setup_task.ps1" in bootstrap
+    assert 'LES_RELEASE_SMOKE -eq "1"' in bootstrap
     assert "-EveryMinutes" not in bootstrap
     production = (ROOT / "tools/windows_production_deploy.ps1").read_text(
         encoding="utf-8-sig"
@@ -103,6 +104,12 @@ def test_mail_ui_is_read_only_and_scopes_chat_to_the_mailbox_dataset():
     assert "Переслать" not in page
     assert "Забрать новые письма" in page
     assert "/api/mail/collector/run" in page
+    router = (ROOT / "proxy/routers/mail.py").read_text(encoding="utf-8")
+    collector_run = router.split('@router.post("/collector/run")', maxsplit=1)[1].split(
+        '@router.post("/messages/{message_id}/open")', maxsplit=1
+    )[0]
+    assert "subprocess.Popen" in collector_run
+    assert "schtasks" not in collector_run
     assert "появятся автоматически" in page
 
 

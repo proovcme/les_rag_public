@@ -407,7 +407,9 @@ if ($LASTEXITCODE -ne 0) { Fail "не удалось инициализиров�
 $OutlookCollectorSetup = Join-Path $Root "clients\outlook_mail_poller\setup_task.ps1"
 try {
   $classicOutlook = [Type]::GetTypeFromProgID("Outlook.Application")
-  if ($classicOutlook -and (Test-Path -LiteralPath $OutlookCollectorSetup)) {
+  if ($env:LES_RELEASE_SMOKE -eq "1") {
+    Log "release smoke: skip registration of the user-wide Outlook collector task"
+  } elseif ($classicOutlook -and (Test-Path -LiteralPath $OutlookCollectorSetup)) {
     Write-Status -Phase "mail" -State "running" -Message "Устанавливаю сборщик классического Outlook"
     $mailInstallRoot = Join-Path $StateRoot "bin"
     $mailStateRoot = Join-Path $StateRoot "mail"

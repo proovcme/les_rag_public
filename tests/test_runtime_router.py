@@ -232,6 +232,22 @@ async def test_dispatcher_status_endpoint_uses_dispatcher(runtime_state, monkeyp
 
 
 @pytest.mark.asyncio
+async def test_dispatcher_reindex_status_endpoint_skips_heavy_diagnostics(runtime_state, monkeypatch):
+    class FakeDispatcher:
+        def reindex_status_payload(self):
+            return {"running": True, "remaining": 4}
+
+        def status_payload(self):
+            raise AssertionError("heavy status must not be used for live reindex polling")
+
+    monkeypatch.setattr(runtime, "dispatcher_for_state", lambda state: FakeDispatcher())
+
+    response = await runtime.runtime_dispatcher_reindex_status(_admin=object())
+
+    assert response == {"running": True, "remaining": 4}
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_start_endpoint_returns_payload(runtime_state, monkeypatch):
     class FakeDispatcher:
         def start_reindex(self, **kwargs):

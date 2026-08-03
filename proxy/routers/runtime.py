@@ -513,6 +513,14 @@ async def runtime_dispatcher_status(_admin=Depends(require_admin)):
     return await asyncio.to_thread(dispatcher.status_payload)
 
 
+@router.get("/runtime/dispatcher/reindex/status")
+async def runtime_dispatcher_reindex_status(_admin=Depends(require_admin)):
+    """Cheap live reindex state without process/service memory diagnostics."""
+    state = get_runtime_state()
+    dispatcher = dispatcher_for_state(state)
+    return await asyncio.to_thread(dispatcher.reindex_status_payload)
+
+
 @router.post("/runtime/dispatcher/reindex/start")
 async def runtime_dispatcher_reindex_start(req: DispatcherReindexRequest, _admin=Depends(require_admin)):
     state = get_runtime_state()

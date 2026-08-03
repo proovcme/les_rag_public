@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 import re
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from nicegui import app, ui
@@ -159,7 +160,7 @@ async def _upload_content(event) -> tuple[bytes, str]:
     return content, (filename or "source.xlsx")
 
 
-def build_rim() -> None:
+def build_rim() -> dict[str, Any]:
     """Build the RIM workbench inside the lazy application panel."""
     current: dict[str, object] = {
         "session": None,
@@ -167,6 +168,7 @@ def build_rim() -> None:
         "mapping": [],
         "mapping_progress": [],
         "mapping_progress_refreshing": False,
+        "turn_running": False,
         "requirements": [],
     }
 
@@ -174,7 +176,7 @@ def build_rim() -> None:
         with panel(variant="raised", classes="sov-rim-hero"):
             with ui.row().classes("sov-rim-hero__head"):
                 section_heading(
-                    "РИМ-смета",
+                    "Сметный проект",
                     "Qwen предлагает и спрашивает. Код проверяет, считает и сохраняет трассу. "
                     "Сметчик блокирует решения.",
                 )
@@ -556,18 +558,37 @@ def build_rim() -> None:
             if not isinstance(session, dict):
                 ui.notify("Сначала создайте сессию", type="warning")
                 return
+            if bool(current.get("turn_running")):
+                ui.notify("Текущий шаг уже выполняется", type="warning")
+                return
             text = str(message_field.value or "").strip()
+            if not text:
+                next_step = dict(session.get("next_step") or {})
+                if next_step.get("kind") != "agent_turn":
+                    ui.notify(
+                        str(next_step.get("detail") or "Введите сообщение."),
+                        type="warning",
+                    )
+                    return
+                text = str(next_step.get("prompt") or "").strip()
+            if not text:
+                ui.notify("Введите сообщение или выберите следующий шаг", type="warning")
+                return
+            current["turn_running"] = True
             send_button.disable()
             dialog_state.set_text("Qwen работает")
             with dialog_log:
-                ui.label(text or "Продолжить текущий шаг").classes(
+                ui.label(text).classes(
                     "sov-rim-dialog__message sov-rim-dialog__message--user"
                 )
-            response = await api_post(
-                f"/api/rim/sessions/{session['session_id']}/agent/turn",
-                {"message": text},
-            )
-            send_button.enable()
+            try:
+                response = await api_post(
+                    f"/api/rim/sessions/{session['session_id']}/agent/turn",
+                    {"message": text},
+                )
+            finally:
+                current["turn_running"] = False
+                send_button.enable()
             if not isinstance(response, dict):
                 dialog_state.set_text("Ошибка")
                 ui.notify(last_api_error_text("Ход Qwen не выполнен"), type="negative")
@@ -900,11 +921,51 @@ def build_rim() -> None:
                                 ).on_click(answer_option)
                 dialog_state.set_text("Нужен ответ")
             else:
+                next_step = dict(session.get("next_step") or {})
                 with question_box:
-                    ui.label("Открытого вопроса нет.").classes(
+                    ui.label(
+                        str(next_step.get("label") or "Следующий шаг не определён")
+                    ).classes("sov-rim-question__title")
+                    ui.label(str(next_step.get("detail") or "")).classes(
                         "sov-rim-question__reason"
                     )
-                dialog_state.set_text("Готово")
+                    if next_step.get("kind") == "agent_turn":
+
+                        async def continue_step() -> None:
+                            message_field.value = str(next_step.get("prompt") or "")
+                            await send_message()
+
+                        action_button(
+                            str(next_step.get("label") or "Продолжить"),
+                            icon="o_play_arrow",
+                            variant="primary",
+                        ).on_click(continue_step)
+                    elif next_step.get("tab"):
+                        tab_by_name = {
+                            "vor": tab_vor,
+                            "mapping": tab_mapping,
+                            "review": tab_review,
+                            "requirements": tab_requirements,
+                            "lsr": tab_lsr,
+                            "final": tab_final,
+                        }
+                        target_tab = tab_by_name.get(str(next_step.get("tab") or ""))
+                        if target_tab is not None:
+                            action_button(
+                                str(next_step.get("label") or "Открыть рабочий шаг"),
+                                icon="o_arrow_forward",
+                                variant="secondary",
+                                on_click=lambda: tabs.set_value(target_tab),
+                            )
+                dialog_state.set_text(
+                    "Готово"
+                    if next_step.get("kind") == "complete"
+                    else (
+                        "Требует внимания"
+                        if next_step.get("kind") == "blocked"
+                        else "Следующий шаг"
+                    )
+                )
 
             vor = await api_get(f"/api/rim/sessions/{session_id}/vor") or {}
             mapping = await api_get(f"/api/rim/sessions/{session_id}/mapping") or {}
@@ -1012,4 +1073,5 @@ def build_rim() -> None:
             else None
         )
         ui.timer(0.1, refresh, once=True)
-        ui.timer(5.0, refresh_mapping_progress)
+        mapping_progress_timer = ui.timer(5.0, refresh_mapping_progress)
+        return {"timers": [mapping_progress_timer]}

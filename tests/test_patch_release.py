@@ -161,6 +161,12 @@ def test_prepared_update_smoke_uses_checkout_owned_temporary_root():
     assert 'Join-Path $env:LOCALAPPDATA "LES-release-smoke"' not in source
 
 
+def test_windows_release_smoke_does_not_replace_user_outlook_task():
+    source = (ROOT / "tools/windows_release_smoke.ps1").read_text(encoding="utf-8-sig")
+
+    assert '$env:LES_RELEASE_SMOKE = "1"' in source
+
+
 def test_windows_patch_release_creates_missing_tracking_branch():
     source = (ROOT / "tools/windows_patch_release.ps1").read_text(encoding="utf-8")
 

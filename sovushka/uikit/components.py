@@ -195,6 +195,7 @@ def lazy_tab_panels(
     """
     panel_by_name: dict[str, tuple[Any, Callable[[], Any]]] = {}
     built: set[str] = set()
+    lifecycle_by_name: dict[str, Any] = {}
 
     with ui.tab_panels(
         tabs,
@@ -215,7 +216,7 @@ def lazy_tab_panels(
         tab_panel.clear()
         try:
             with tab_panel:
-                builder()
+                lifecycle_by_name[name] = builder()
         except Exception:
             with tab_panel:
                 render_feedback_state(
@@ -225,6 +226,20 @@ def lazy_tab_panels(
             raise
         built.add(name)
 
-    ensure_built(initial)
-    container.on_value_change(lambda event: ensure_built(event.value))
+    def set_active(value: Any) -> None:
+        name = tab_name(value)
+        ensure_built(value)
+        for panel_name, lifecycle in lifecycle_by_name.items():
+            if not isinstance(lifecycle, dict):
+                continue
+            for timer in lifecycle.get("timers") or []:
+                if timer is None:
+                    continue
+                if panel_name == name:
+                    timer.activate()
+                else:
+                    timer.deactivate()
+
+    set_active(initial)
+    container.on_value_change(lambda event: set_active(event.value))
     return container

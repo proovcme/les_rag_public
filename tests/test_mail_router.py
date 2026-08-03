@@ -145,12 +145,32 @@ def _write_thread_eml(path, *, subject, sender, to, message_id, body, date, in_r
 
 
 @pytest.mark.asyncio
-async def test_mail_status_reports_missing_mail_dataset(mail_state):
+async def test_mail_status_reports_missing_mail_dataset(mail_state, mail_registry):
     status = await mail.mail_status(_user=object())
 
     assert status["component"] == "Е.Ж.И.К."
     assert status["status"] == "not_created"
     assert status["dataset_name"] == "MAIL_Index"
+
+
+@pytest.mark.asyncio
+async def test_mail_status_is_ready_for_private_mailbox_without_legacy_dataset(mail_state, mail_registry):
+    await mail.create_mail_account(
+        mail.MailAccountCreateRequest(
+            kind="imap",
+            label="Рабочий ящик",
+            host="imap.example.com",
+            login="worker@example.com",
+            password="app-password",
+        ),
+        _admin=object(),
+    )
+
+    status = await mail.mail_status(_user=object())
+
+    assert status["status"] == "ready"
+    assert status["dataset"] is None
+    assert len(status["accounts"]) == 1
 
 
 @pytest.mark.asyncio

@@ -132,7 +132,7 @@ def test_chat_stream_keeps_reader_position_until_they_return_to_the_tail():
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():
     guidance = chat_page.CHAT_MODE_GUIDANCE
 
-    assert set(guidance) == {"text", "rag", "smeta", "doc_review"}
+    assert set(guidance) == {"text", "rag", "agent", "smeta", "doc_review"}
     for item in guidance.values():
         assert item["title"]
         assert item["description"]
@@ -230,7 +230,9 @@ def test_samovar_parse_actions_keep_nicegui_slot_context():
     legacy_source = inspect.getsource(samovar_page.build_samovar_legacy)
 
     assert "on_click=_ui_handler(_parse, r)" in source
-    assert "ui.timer(5.0, _refresh_status)" in source
+    assert "status_timer = ui.timer(5.0, _refresh_status)" in source
+    assert 'api_get("/api/runtime/dispatcher/reindex/status")' in source
+    assert 'api_get("/api/runtime/dispatcher/status")' not in source
     assert "api_post(\"/api/rag/parse-scheduler\", payload)" in source
     assert "_scheduler_payload()" in source
     assert "background': 'true'" in source
