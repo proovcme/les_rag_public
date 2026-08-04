@@ -3318,6 +3318,128 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 payload[key] = extra[key]
         return payload
 
+    # Spec → VOR (0 LLM) must win over free attachment LLM. Otherwise the model
+    # invents "ведомость отгрузки", prices, and drops coverage.
+    from proxy.services.spec_to_bor_service import (
+        format_spec_bor_answer,
+        generate_spec_bor_from_rows,
+        is_spec_to_bor_query,
+        rows_from_spec_xlsx,
+    )
+
+    _has_any_attachment = bool(req.attachment_id or req.attachment_context)
+    if is_spec_to_bor_query(req.question, has_attachment=_has_any_attachment):
+        if not req.attachment_id:
+            return _mode_reply(
+                "ВОР из спецификации собирается только из вложения режима «В чат» "
+                "(server-owned read_*). Прикрепи XLSX/XLSM снова и повтори "
+                "«сделай ВОР из спецификации».",
+                "spec_to_bor_needs_attachment",
+                "spec_to_bor",
+                crag="ERROR",
+                extra={
+                    "retrieval_trace": {
+                        "mode": "spec_to_bor",
+                        "error": "vor_requires_read_attachment",
+                    }
+                },
+            )
+
+        def _build_spec_bor_from_attachment() -> dict[str, Any]:
+            from proxy.services.chat_attachment_service import resolve_read_attachment
+
+            path, meta = resolve_read_attachment(str(req.attachment_id))
+            suffix = path.suffix.lower()
+            if suffix not in {".xlsx", ".xlsm"}:
+                return {
+                    "ok": False,
+                    "answer": (
+                        f"Для ВОР из спецификации нужен табличный XLSX/XLSM, "
+                        f"сейчас вложение {suffix or 'без расширения'}."
+                    ),
+                    "error": "unsupported_attachment_type",
+                }
+            label = str(meta.get("original_name") or path.name)
+            rows = rows_from_spec_xlsx(path, source_label=label)
+            if not rows:
+                return {
+                    "ok": False,
+                    "answer": (
+                        "Не удалось прочитать позиции спецификации из вложения "
+                        f"«{label}» (нужны колонки наименования и количества)."
+                    ),
+                    "error": "empty_spec_rows",
+                }
+            _SMETA_ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
+            result = generate_spec_bor_from_rows(
+                rows,
+                output_dir=_SMETA_ARTIFACT_DIR,
+                title=f"ВОР из спецификации — {label}",
+                decompose=True,
+                source_id=str(req.attachment_id),
+            )
+            xlsx_path = Path(result["xlsx_path"]) if result.get("xlsx_path") else None
+            answer = format_spec_bor_answer(result, dataset_label=label)
+            artifact = None
+            if xlsx_path is not None:
+                artifact = {
+                    "mode": "xlsx",
+                    "stage": "vor_from_spec",
+                    "title": f"ВОР — {label}",
+                    "downloads": {
+                        "xlsx": f"/api/smeta-artifacts/download?path={xlsx_path.name}",
+                    },
+                    "files": {"xlsx_path": str(xlsx_path)},
+                    "bor_lines": result.get("bor_lines"),
+                    "source_rows": result.get("source_rows"),
+                }
+            return {
+                "ok": True,
+                "answer": answer,
+                "artifact": artifact,
+                "source_label": label,
+                "source_rows": result.get("source_rows"),
+                "bor_lines": result.get("bor_lines"),
+            }
+
+        bor_payload = await asyncio.to_thread(_build_spec_bor_from_attachment)
+        if not bor_payload.get("ok"):
+            return _mode_reply(
+                str(bor_payload.get("answer") or "ВОР из спецификации не собрана."),
+                "spec_to_bor_failed",
+                "spec_to_bor",
+                crag="ERROR",
+                extra={
+                    "retrieval_trace": {
+                        "mode": "spec_to_bor",
+                        "error": bor_payload.get("error") or "spec_to_bor_failed",
+                        "attachment_id": req.attachment_id,
+                    }
+                },
+            )
+        return _mode_reply(
+            str(bor_payload["answer"]),
+            "spec_to_bor_attachment",
+            "spec_to_bor",
+            crag="DETERMINISTIC",
+            extra={
+                "sources": [
+                    {
+                        "source_ref": bor_payload.get("source_label") or req.attachment_id,
+                        "ref": req.attachment_id,
+                    }
+                ],
+                "artifact": bor_payload.get("artifact"),
+                "retrieval_trace": {
+                    "mode": "spec_to_bor",
+                    "attachment_id": req.attachment_id,
+                    "source_rows": bor_payload.get("source_rows"),
+                    "bor_lines": bor_payload.get("bor_lines"),
+                    "llm": False,
+                },
+            },
+        )
+
     if _PROFILE == "auto" and _has_read_attachment and not req.dataset_ids and not req.dataset_filter and not pid:
         answer = await _run_attachment_mode(req, token_sink)
         return _mode_reply(
@@ -3356,7 +3478,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             )
 
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
-        if req.attachment_id and _smeta_request_needs_lsr_output(req.question):
+        needs_document_lsr = _smeta_request_needs_lsr_output(req.question)
+        if req.attachment_id and needs_document_lsr:
             document_result = await run_smeta_document_application(
                 attachment_id=req.attachment_id,
                 project_id=req.project_id,
@@ -3371,6 +3494,36 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                     document_result.channel,
                     crag=document_result.crag,
                     extra=document_result.extra,
+                )
+        if needs_document_lsr and not req.attachment_id:
+            quick_ids = [
+                str(item)
+                for item in (req.dataset_ids or [])
+                if str(item).startswith("attach_")
+            ]
+            ctx_name = ""
+            ctx = str(req.attachment_context or "")
+            if ctx.startswith("Файл:"):
+                ctx_name = ctx.split("\n", 1)[0].removeprefix("Файл:").strip()
+            looks_like_vor_file = Path(ctx_name).suffix.lower() in {
+                ".pdf", ".xlsx", ".xlsm",
+            } or bool(quick_ids)
+            if looks_like_vor_file:
+                return _mode_reply(
+                    "ЛСР по файлу ВОР/PDF/XLSX собирается только из вложения режима "
+                    "«В чат» (server-owned read_*), а не из «Таблица»/временного датасета. "
+                    "Прикрепи тот же файл снова режимом «В чат» и повтори «собери ЛСР».",
+                    "smeta_document_attachment_mode",
+                    "smeta_mode",
+                    crag="ERROR",
+                    extra={
+                        "retrieval_trace": {
+                            "mode": "smeta_document",
+                            "error": "lsr_requires_read_attachment",
+                            "quick_dataset_ids": quick_ids,
+                            "attachment_name": ctx_name,
+                        }
+                    },
                 )
         # Ordinary smeta mode: the model receives source/RAG/tool results; code calculates only
         # when the user explicitly requests money or an LSR.

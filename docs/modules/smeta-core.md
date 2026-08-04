@@ -1,5 +1,140 @@
 # Smeta Core — единое сметное ядро
 
+## Fast local catalog transport (v0.27.60)
+
+Windows stability profile (`config/local/windows-cuda.env`): `MAX_TOOL_TURNS=10`,
+`TEMPERATURE=0.2`, `TOP_P=0.9`, repair=1, local global review off, batch_size=1.
+Self-contradicting `exact` binds return the model to tools with
+`smeta_exact_deny_broaden_v1` (broaden/unbound) instead of burning schema repair
+on the same norm. `model_batch_candidate` binds do not publish
+`route_evidence_cache`. Rows left without a terminal decision become
+`model_batch_open` and still produce Excel — code never invents a rate.
+
+## Fast local catalog transport (v0.27.59)
+
+`MappingValidationExhausted` after one bounded schema repair no longer raises
+through the document batch loop as a hard «ЛСР не собрана». The stuck batch is
+skipped (`batch_skipped_after_mapping_failure`); later rows continue; a partial
+LSR is finalized from accepted decisions with uncovered rows left open.
+
+## Fast local catalog transport (v0.27.57)
+
+Soft incomplete `unbound` becomes `model_batch_candidate` only after the row has
+real tool evidence (at least one `search_norms_batch` or opened card). Catalog-only
+unbound with zero searches is rejected again so demo rows are not closed empty.
+
+## Fast local catalog transport (v0.27.56)
+
+Local Ollama/Qwen document LSR defaults: `max_turns=8`, evidence-repair `1`,
+and `require_global_review=false` (override with `LES_SMETA_LOCAL_GLOBAL_REVIEW=1`).
+An honest `unbound` with a reason and incomplete evidence is accepted immediately
+as `model_batch_candidate` — no second structured mapping retry that burned
+5–40s/row on demo runs.
+
+## Fast local catalog transport (v0.27.55)
+
+`selection_kind=exact` binds whose own `reason` denies applicability
+(«не применима», «не соответствует», «не совпадает», «не подходит») are
+rejected as incomplete bind evidence and are never draft-promoted. Code does
+not pick another norm; the model must unbound or broaden.
+
+## Fast local catalog transport (v0.27.54)
+
+Conflict-group global review no longer aborts a completed document LSR when
+structured mapping fails after bounded schema repair (`incomplete bind
+evidence`). The packet keeps the initial row-mapping decisions, and draft-eligible
+incomplete binds can be promoted to `model_batch_candidate` before a hard
+RuntimeError. Row quality remains model-owned; code only preserves terminal
+mapping instead of destroying it.
+
+## Fast local catalog transport (v0.27.53)
+
+`route_evidence_cache` is published only after a successful bind — never on
+mere table select. Unbound and `broaden_norm_catalog` drop routes sourced by
+that work. `_completed_route_cache` exposes only bind-proven tables so a wrong
+first table cannot poison every later VOR row via reuse.
+
+`norm_evidence` tools are search/read/`broaden_norm_catalog` (still no
+reuse/browse). After opened typed cards, the model gets one free turn to bind
+or broaden; structured mapping is forced on the second evidence turn.
+
+## Fast local catalog transport (v0.27.52)
+
+Identical catalog tool retries no longer force unbound mapping unless the row
+already has search/read evidence. Ollama tool-call XML HTTP 500 retries once
+with `seed+1` and a short nudge; a second failure soft-degrades to an empty
+tool turn with recovery instead of aborting the whole VOR batch. Mapping
+exchange also retries once on XML 500.
+
+## Fast local catalog transport (v0.27.51)
+
+`norm_evidence` never exposes `reuse_norm_catalog_route` / browse. When any
+active work already has opened typed cards, the agent forces structured mapping
+on the next turn so the first LSR row appears instead of a reuse spin loop.
+
+## Fast local catalog transport (v0.27.50)
+
+When the model reaches `norm_search` with a selected table, LES executes one
+scoped `search_norms_batch` from the VOR title (two lexical queries) before the
+next model turn — same spirit as auto root browse. Flat
+`reuse_norm_catalog_route` args are normalized to `items[]`. Reuse-first
+working-memory text is limited to early catalog phases so Qwen does not spin
+reuse after the table is already chosen.
+
+## Fast local catalog transport (v0.27.49)
+
+After catalog `unbound`, `norm_evidence` exposes only search/read (no browse) and
+the accepted unbound row sets `force_mapping_serialization` so the agent does not
+burn identical `browse_norm_catalog` retries. An identical failed tool call also
+forces mapping immediately (conversation reset removed). Unbound while still on
+a family/collection node is rejected as premature — model must `broaden` to
+`catalog:root` before closing the route.
+
+## Fast local catalog transport (v0.27.48)
+
+`family_select` keeps Ollama-safe `continue_norm_catalog` with `items[]` and
+minimal required fields (`work_id`, `selected_node_id`, `confidence`). A flat
+top-level schema caused Ollama HTTP 500 (`parameter` closed by `</function>`).
+Menu-echo of passport cards into `items[]` is still rejected with an `items[]`
+example; flat decision args remain accepted only as transport normalization.
+
+Hybrid Qwen calls (`items[]` + top-level `selected_node_id`, evidence only for
+rejected siblings) merge the top-level selection into the item and draft
+passport evidence for the model-chosen child so catalog can advance. The chosen
+node is dropped from `rejected_nodes` when both are set. After three identical
+catalog rejects (`catalog_stalled`) or an identical duplicate tool call while
+stalled, the agent forces mapping/unbound serialization instead of burning more
+`model_wait` turns. Native Ollama document exchange retries once on tool-call
+XML syntax HTTP 500.
+
+At wide table menus, more than six `rejected_nodes` are truncated (not rejected).
+Local Ollama/Qwen also defaults `LES_SMETA_NORM_RERANK=false` when unset.
+
+Typed family→collection / section→table menus proceed when shortlist cards exist,
+even if the cross-encoder is missing (`fallback_input_order`). Empty shortlist
+remains a hard reject. Evidence that cites `catalog:root`/parent while selecting
+a visible child is remapped to that child when the field exists there.
+
+Chat `run_smeta_document_application` always passes `require_scoped_search=True`
+(same contract as RIM / `smeta_document_local_run`). Phase tools expose
+`continue_norm_catalog` with `selected_node_id` enum; legacy
+`browse_norm_catalog(decision=continue)` without a node is not the chat path.
+
+On non-cloud Ollama+Qwen (and `qwen_agent`), document LSR defaults to
+`batch_size=1`, `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS=12`, search/read budgets `3`,
+and `LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS=2` unless the operator already set
+those env vars. `batch_size>1` stays off for local Qwen JSON stability.
+
+When `route_evidence_cache` is non-empty, working memory sets `route_reuse_first`
+and asks the model to call `reuse_norm_catalog_route` before browsing from
+`catalog:root`. Reuse transfers verified scope only; search/read and the model's
+norm choice remain mandatory. Source-batch progress reports `rows_done`,
+`elapsed_sec` and `sec_per_row`.
+
+Document LSR requires a server-owned `read_*` attachment. PDF attached as chat
+«Таблица» (`quick`) is promoted to `read_*`; without `attachment_id` the smeta
+path returns an explicit mode error instead of estimate-harness with 0 rows.
+
 ## PR #8 accepted with production corrections (v0.27.35)
 
 The useful local-Qwen transport and document-output work from public PR #8 is
@@ -35,10 +170,10 @@ cross-row link, or fabricated evidence still remains a hard contradiction.
 
 Post-budget evidence repair (`LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS`) is
 granted once. Re-arming it on every failed unbound submit prevented the
-candidate-draft second serialization on local Ollama (`max_turns=10`) and
-ended in `RuntimeError: … after bounded repair`. If the finite loop still
-ends with only `invalid unbound_evidence` after one reject, LES performs one
-terminal re-submit to promote the visible candidate without inventing queries.
+candidate-draft second serialization on local Ollama and ended in
+`RuntimeError: … after bounded repair`. If the finite loop still ends with only
+`invalid unbound_evidence` after one reject, LES performs one terminal re-submit
+to promote the visible candidate without inventing queries.
 
 > Единый человеко-машинный паспорт всего модуля —
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,

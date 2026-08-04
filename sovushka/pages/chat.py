@@ -8,8 +8,9 @@ import inspect
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from nicegui import context, ui
 
@@ -87,6 +88,136 @@ def _copy_button(label: str, text: str, *, icon: str = "o_content_copy",
         btn.classes(classes)
     btn.on("click", js_handler=_copy_js(text))
     return btn
+
+
+def format_chat_duration_sec(value: float | int | None) -> str:
+    """Human-readable duration for chat timing chips."""
+    if value is None:
+        return ""
+    try:
+        sec = max(0.0, float(value))
+    except (TypeError, ValueError):
+        return ""
+    if sec >= 3600:
+        hours = int(sec // 3600)
+        minutes = int((sec % 3600) // 60)
+        return f"{hours}ч {minutes}м"
+    if sec >= 60:
+        minutes = int(sec // 60)
+        seconds = int(round(sec % 60))
+        if seconds == 60:
+            minutes += 1
+            seconds = 0
+        return f"{minutes}м {seconds}с" if seconds else f"{minutes}м"
+    if sec >= 10:
+        return f"{int(round(sec))}с"
+    text = f"{sec:.1f}".rstrip("0").rstrip(".")
+    return f"{text}с"
+
+
+def format_chat_request_clock(requested_at: Any) -> str:
+    """Local clock for the moment the user sent the question."""
+    if requested_at in (None, ""):
+        return ""
+    dt: datetime | None = None
+    if isinstance(requested_at, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(float(requested_at)).astimezone()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    else:
+        raw = str(requested_at).strip()
+        if not raw:
+            return ""
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.astimezone()
+            else:
+                dt = dt.astimezone()
+        except ValueError:
+            # SQLite history often stores "YYYY-MM-DD HH:MM:SS"
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    dt = datetime.strptime(raw[:19], fmt).astimezone()
+                    break
+                except ValueError:
+                    continue
+    if dt is None:
+        return ""
+    now = datetime.now().astimezone()
+    if dt.date() == now.date():
+        return dt.strftime("%H:%M")
+    return dt.strftime("%d.%m %H:%M")
+
+
+def resolve_answer_timing(
+    *,
+    requested_at: Any = None,
+    elapsed_sec: float | int | None = None,
+    latency_phases: dict | None = None,
+    model_think_sec: float | int | None = None,
+) -> dict[str, Any]:
+    """Merge client wall-clock with backend latency_phases for the answer chip."""
+    phases = latency_phases if isinstance(latency_phases, dict) else {}
+    elapsed = elapsed_sec
+    wall = phases.get("wall_total")
+    if wall is not None:
+        try:
+            elapsed = float(wall)
+        except (TypeError, ValueError):
+            pass
+    elif elapsed is not None:
+        try:
+            elapsed = float(elapsed)
+        except (TypeError, ValueError):
+            elapsed = None
+    think = model_think_sec
+    generation = phases.get("generation")
+    if generation is not None:
+        try:
+            think = float(generation)
+        except (TypeError, ValueError):
+            pass
+    elif think is not None:
+        try:
+            think = float(think)
+        except (TypeError, ValueError):
+            think = None
+    return {
+        "requested_at": requested_at,
+        "elapsed_sec": elapsed,
+        "model_think_sec": think,
+    }
+
+
+def format_answer_timing_line(
+    *,
+    requested_at: Any = None,
+    elapsed_sec: float | int | None = None,
+    model_think_sec: float | int | None = None,
+    latency_phases: dict | None = None,
+) -> str:
+    """Compact line shown next to the answer: `21:09 · ответ 42с · модель 28с`."""
+    timing = resolve_answer_timing(
+        requested_at=requested_at,
+        elapsed_sec=elapsed_sec,
+        latency_phases=latency_phases,
+        model_think_sec=model_think_sec,
+    )
+    parts: list[str] = []
+    clock = format_chat_request_clock(timing.get("requested_at"))
+    if clock:
+        parts.append(clock)
+    elapsed = timing.get("elapsed_sec")
+    think = timing.get("model_think_sec")
+    elapsed_label = format_chat_duration_sec(elapsed)
+    think_label = format_chat_duration_sec(think)
+    if elapsed_label:
+        parts.append(f"ответ {elapsed_label}")
+    if think_label:
+        parts.append(f"модель {think_label}")
+    return " · ".join(parts)
 
 
 def _is_spec_request(q: str) -> bool:
@@ -884,8 +1015,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.notify("Не удалось прочитать файл", type="negative")
                     return
                 attach_status.set_text(f"Загрузка «{file_name}»…")
-                add_log(f"[СКРЕПКА] {file_name} mode={attach_mode.value}")
-                d = await api_post_file("/api/rag/attach", content, file_name, params={"mode": attach_mode.value})
+                upload_mode = str(attach_mode.value or "read")
+                # PDF VOR/LSR needs server-owned original bytes («В чат» / read_*).
+                # «Таблица» deletes the source after parquet and leaves no attachment_id.
+                if (
+                    Path(str(file_name)).suffix.lower() == ".pdf"
+                    and upload_mode == "quick"
+                ):
+                    upload_mode = "read"
+                    ui.notify(
+                        "PDF для ЛСР/ВОР прикрепляю в режиме «В чат»",
+                        type="info",
+                    )
+                add_log(f"[СКРЕПКА] {file_name} mode={upload_mode}")
+                d = await api_post_file(
+                    "/api/rag/attach",
+                    content,
+                    file_name,
+                    params={"mode": upload_mode},
+                )
                 if not isinstance(d, dict):
                     ui.notify(last_api_error_text("Не удалось прикрепить файл"), type="negative")
                     attach_status.set_text(last_api_error_text("Не удалось прикрепить файл"))
@@ -936,8 +1084,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     value="read",
                 ).props("no-caps")
                 ui.label(
-                    "В чат: текст файла уйдёт модели вместе со следующим сообщением и не попадёт в базу. "
-                    "Таблица: xlsx/csv станет временным датасетом для сверки. "
+                    "В чат: PDF/XLSX ВОР для «собери ЛСР» и текст для модели (рекомендуется). "
+                    "Таблица: xlsx/csv как временный датасет для сверки; PDF сюда не клади — "
+                    "автоматически уйдёт в «В чат». "
                     "В базу: документ добавится в RAG-датасет."
                 ).style("font-size:.66rem;color:var(--dim);")
                 attach_status = ui.label("").style("font-size:.7rem;color:var(--ok);")
@@ -2937,6 +3086,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "Модель/провайдер этого ответа"
             )
 
+    def _render_answer_timing(meta: dict | None, *, user_requested_at: Any = None) -> None:
+        """Clock + wall/model duration next to the answer."""
+        payload = meta if isinstance(meta, dict) else {}
+        line = format_answer_timing_line(
+            requested_at=payload.get("requested_at") or user_requested_at,
+            elapsed_sec=payload.get("elapsed_sec"),
+            model_think_sec=payload.get("model_think_sec"),
+            latency_phases=payload.get("latency_phases"),
+        )
+        if not line:
+            return
+        ui.label(line).classes("sov-chat-timing").tooltip(
+            "Время отправки запроса и длительность ответа / работы модели"
+        )
+
     def _render_answer_actions(text: str, srcs: list) -> None:
         """v0.20: панель действий ответа — «Копировать» (чистый текст) и «С источниками» (без полного
         тела письма — только chip-локатор). Без скрытого trace."""
@@ -2954,13 +3118,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         srcs: list | None = None,
         crag: str = "",
         meta: dict | None = None,
+        *,
+        requested_at: Any = None,
     ):
         _mode = (meta or {}).get("out_mode", "text")
         _is_ai = "chat-msg-ai" in class_name
         with ui.element("div").classes(class_name) as bubble:
             if _is_ai:
-                _render_model_badge(meta)
+                with ui.row().classes("sov-answer-meta"):
+                    _render_model_badge(meta)
+                    _render_answer_timing(meta, user_requested_at=requested_at)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
+            else:
+                user_clock = format_chat_request_clock(
+                    (meta or {}).get("requested_at") if meta else requested_at
+                )
+                if user_clock:
+                    ui.label(user_clock).classes(
+                        "sov-chat-timing sov-chat-timing--user"
+                    ).tooltip("Время отправки запроса")
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
             explicit_artifact = bool(_artifact_from_meta(meta))
@@ -3001,7 +3177,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _mode = (meta or {}).get("out_mode", "text")
         with bubble:
             if not error:
-                _render_model_badge(meta)
+                with ui.row().classes("sov-answer-meta"):
+                    _render_model_badge(meta)
+                    _render_answer_timing(meta)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
             explicit_artifact = bool(_artifact_from_meta(meta))
@@ -3027,7 +3205,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     def _render_msg(msg):
         if msg.get("role") == "user":
-            _render_chat_bubble(msg.get("text", ""), "chat-msg-user")
+            _render_chat_bubble(
+                msg.get("text", ""),
+                "chat-msg-user",
+                requested_at=msg.get("requested_at"),
+            )
             return
         if msg.get("role") == "system":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
@@ -3038,6 +3220,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             msg.get("srcs", []),
             msg.get("crag", ""),
             msg.get("meta"),
+            requested_at=(msg.get("meta") or {}).get("requested_at"),
         )
         _register_artifact_downloads(msg.get("meta"))
 
@@ -3409,11 +3592,25 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if display_notes:
             question_display = f"{question_display}\n\n" + "\n".join(display_notes)
 
-        state["chat_history"].append({"role": "user", "text": question_display})
-        state["chat_pending"] = {"question": payload_question, "started_at": time.time()}
+        request_started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        request_started_mono = time.monotonic()
+        state["chat_history"].append({
+            "role": "user",
+            "text": question_display,
+            "requested_at": request_started_at,
+        })
+        state["chat_pending"] = {
+            "question": payload_question,
+            "started_at": time.time(),
+            "requested_at": request_started_at,
+        }
 
         with chat_column:
-            _render_chat_bubble(question_display, "chat-msg-user")
+            _render_chat_bubble(
+                question_display,
+                "chat-msg-user",
+                requested_at=request_started_at,
+            )
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
             smeta_operator_lines: list[str] = []
             smeta_operator_log = None
@@ -3473,7 +3670,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if sent_attachment:
             _clear_attachment(notify=False)
 
-        _t0 = time.monotonic()
+        _t0 = request_started_mono
         _stop_tick = {"v": False}
         _status_text = {"v": _initial_status}
 
@@ -3545,6 +3742,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 or retrieval_trace.get("status") == "blocked"
             ):
                 total_status = "blocked"
+            latency_phases = (
+                d.get("latency_phases")
+                or (retrieval_trace.get("latency_phases") if isinstance(retrieval_trace, dict) else None)
+            )
+            timing = resolve_answer_timing(
+                requested_at=request_started_at,
+                elapsed_sec=round(max(0.0, time.monotonic() - _t0), 1),
+                latency_phases=latency_phases if isinstance(latency_phases, dict) else None,
+            )
             meta = {
                 "query_route": d.get("query_route") or {},
                 "retrieval_trace": retrieval_trace,
@@ -3556,7 +3762,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "validation": d.get("validation") or {"enabled": True},
                 "history_id": d.get("history_id"),
                 "table_query": d.get("table_query"),
-                "latency_phases": d.get("latency_phases") or (d.get("retrieval_trace") or {}).get("latency_phases"),
+                "latency_phases": latency_phases if isinstance(latency_phases, dict) else {},
+                "requested_at": timing.get("requested_at"),
+                "elapsed_sec": timing.get("elapsed_sec"),
+                "model_think_sec": timing.get("model_think_sec"),
                 "out_mode": out_mode,
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],

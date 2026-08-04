@@ -1014,6 +1014,617 @@ def test_rim_family_catalog_allows_distinct_model_authored_refinement_query(
     assert refined["rows"][0]["items"][0]["cipher"] == "10"
 
 
+def test_family_continue_accepts_degraded_rerank_when_collection_menu_exists(
+    monkeypatch,
+):
+    """Windows without cross-encoder must not stall family→collection forever."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "rank_norm_catalog_collections",
+        lambda query, **_kwargs: {
+            "cards": [{
+                "node_id": "catalog:collection:ГЭСНм:10",
+                "parent_id": "catalog:family:ГЭСНм",
+                "node_type": "collection",
+                "cipher": "10",
+                "title": "Оборудование связи",
+            }],
+            "retrieval_trace": {"rerank_status": "error:RuntimeError"},
+        },
+    )
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж шкафа", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    family_node = {
+        "node_id": "catalog:family:ГЭСНм",
+        "parent_id": "catalog:root",
+        "node_type": "family",
+        "cipher": "ГЭСНм",
+        "title": "Монтаж оборудования",
+        "purpose": "Монтаж оборудования и его закрепление.",
+        "not_for": "строительные работы без монтажа оборудования",
+    }
+    session.catalog_node_registry["w1"][family_node["node_id"]] = family_node
+    session.catalog_menus["w1"]["catalog:root"] = [family_node]
+    session.catalog_current_nodes["w1"] = "catalog:root"
+
+    result = session.execute(
+        "continue_norm_catalog",
+        {"items": [{
+            "work_id": "w1",
+            "current_node_id": "catalog:root",
+            "selected_node_id": family_node["node_id"],
+            "evidence": [{
+                # Model often cites root; transport remaps to the selected child.
+                "source_node_id": "catalog:root",
+                "field": "purpose",
+                "claim": "Монтаж оборудования.",
+            }],
+            "rejected_nodes": [],
+            "work_features": {
+                "domain": "связь",
+                "system": "СКС",
+                "equipment": "шкаф",
+                "operation": "монтаж",
+                "assembly_state": "factory_assembled",
+                "installation_context": "в помещении",
+                "unknowns": [],
+            },
+            "catalog_query": "оборудование связи",
+            "confidence": "medium",
+        }]},
+        turn=1,
+    )
+
+    assert result["rows"][0]["ok"] is True, result["rows"][0]
+    assert result["rows"][0]["level"] == "collection"
+    assert result["rows"][0]["items"][0]["cipher"] == "10"
+
+
+def test_catalog_menu_echo_is_rejected_with_decision_example(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    families = [
+        {
+            "node_id": f"catalog:family:{cipher}",
+            "parent_id": "catalog:root",
+            "node_type": "family",
+            "cipher": cipher,
+            "purpose": f"purpose {cipher}",
+            "official_name": cipher,
+        }
+        for cipher in ("ГЭСН", "ГЭСНм", "ГЭСНр")
+    ]
+    session.catalog_menus["w1"]["catalog:root"] = families
+    for node in families:
+        session.catalog_node_registry["w1"][node["node_id"]] = node
+    session.catalog_current_nodes["w1"] = "catalog:root"
+
+    echoed = session.execute(
+        "continue_norm_catalog",
+        {"items": [dict(node) for node in families]},
+        turn=1,
+    )
+    assert echoed["ok"] is False
+    assert echoed["rows"][0]["error"] == "catalog menu echoed instead of a decision"
+    assert '"items"' in echoed["rows"][0]["details"][2]
+    assert "selected_node_id" in echoed["rows"][0]["details"][2]
+
+    monkeypatch.setattr(
+        workflow,
+        "rank_norm_catalog_collections",
+        lambda query, **_kwargs: {
+            "cards": [{
+                "node_id": "catalog:collection:ГЭСН:13",
+                "parent_id": "catalog:family:ГЭСН",
+                "node_type": "collection",
+                "cipher": "13",
+                "title": "Защита",
+            }],
+            "retrieval_trace": {"rerank_status": "fallback_input_order"},
+        },
+    )
+    nested = session.execute(
+        "continue_norm_catalog",
+        {
+            "items": [{
+                "work_id": "w1",
+                "selected_node_id": "catalog:family:ГЭСН",
+                "confidence": "high",
+            }],
+        },
+        turn=2,
+    )
+    assert nested["rows"][0]["ok"] is True, nested["rows"][0]
+    assert nested["rows"][0]["level"] == "collection"
+
+    # Flat top-level args remain accepted as transport (normalized to items[]).
+    flat_session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    flat_session.catalog_menus["w1"]["catalog:root"] = families
+    for node in families:
+        flat_session.catalog_node_registry["w1"][node["node_id"]] = node
+    flat_session.catalog_current_nodes["w1"] = "catalog:root"
+    flat = flat_session.execute(
+        "continue_norm_catalog",
+        {
+            "work_id": "w1",
+            "selected_node_id": "catalog:family:ГЭСН",
+            "confidence": "medium",
+        },
+        turn=1,
+    )
+    assert flat["rows"][0]["ok"] is True, flat["rows"][0]
+
+
+def test_reuse_accepts_flat_args_and_auto_search_queries_from_title():
+    from proxy.smeta_core import document_workflow as workflow
+
+    assert workflow._search_queries_for_work_row({
+        "title": "Защитное укрытие пленка",
+    })[0]
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие пленка", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    cache_id = "route:гэснм:24:24-01:24-01-033"
+    session.route_evidence_cache[cache_id] = {
+        "cache_id": cache_id,
+        "family": "ГЭСНм",
+        "collection": "24",
+        "section": "24-01",
+        "table_code": "24-01-033",
+    }
+    result = session.execute(
+        "reuse_norm_catalog_route",
+        {
+            "work_id": "w1",
+            "cache_id": cache_id,
+            # reason omitted — transport drafts one
+        },
+        turn=1,
+    )
+    assert result["ok"] is True, result
+    assert session.selected_tables["w1"]
+
+    items = workflow._auto_norm_search_items(session)
+    assert items
+    assert items[0]["table_codes"] == ["24-01-033"]
+    assert len(items[0]["queries"]) == 2
+
+
+def test_family_unbound_is_premature_until_broaden_to_root():
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    family = {
+        "node_id": "catalog:family:ГЭСНм",
+        "parent_id": "catalog:root",
+        "node_type": "family",
+        "cipher": "ГЭСНм",
+        "title": "ГЭСНм",
+        "purpose": "монтаж оборудования",
+    }
+    collection = {
+        "node_id": "catalog:collection:ГЭСНм:01",
+        "parent_id": "catalog:family:ГЭСНм",
+        "node_type": "collection",
+        "cipher": "01",
+        "title": "Металлообработка",
+        "purpose": "оборудование",
+    }
+    session.catalog_node_registry["w1"][family["node_id"]] = family
+    session.catalog_node_registry["w1"][collection["node_id"]] = collection
+    session.catalog_menus["w1"]["catalog:family:ГЭСНм"] = [collection]
+    session.catalog_current_nodes["w1"] = "catalog:family:ГЭСНм"
+    session.selected_base_types["w1"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "x",
+        "confidence": "high",
+        "work_features": {
+            "domain": "м", "system": "с", "equipment": "пленка",
+            "operation": "монтаж", "assembly_state": "site_assembled",
+            "installation_context": "на объекте", "unknowns": [],
+        },
+    }
+
+    result = session.execute(
+        "unbound_norm_catalog",
+        {
+            "items": [{
+                "work_id": "w1",
+                "current_node_id": "catalog:family:ГЭСНм",
+                "confidence": "high",
+                "evidence": [{
+                    "source_node_id": "catalog:collection:ГЭСНм:01",
+                    "field": "title",
+                    "claim": "не укрытие",
+                }],
+            }],
+        },
+        turn=1,
+    )
+    assert result["rows"][0]["ok"] is False
+    assert "premature" in result["rows"][0]["error"]
+
+
+def test_norm_evidence_phase_tools_exclude_browse_and_reuse():
+    from proxy.smeta_core import document_workflow as workflow
+
+    names = [
+        tool["function"]["name"]
+        for tool in workflow._phase_norm_tools(
+            "norm_evidence",
+            include_route_cache=True,
+        )
+    ]
+    assert "browse_norm_catalog" not in names
+    assert "reuse_norm_catalog_route" not in names
+    assert names == [
+        "search_norms_batch",
+        "read_norms_batch",
+        "broaden_norm_catalog",
+    ]
+
+
+def test_hybrid_continue_merges_top_level_selected_and_drafts_evidence(monkeypatch):
+    """Qwen hybrid shape: selected_node_id outside items[] + sibling-only evidence."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "rank_norm_catalog_tables",
+        lambda *_args, **_kwargs: {
+            "cards": [{
+                "node_id": "catalog:table:ГЭСНм:06-04-001",
+                "parent_id": "catalog:section:ГЭСНм:06-04",
+                "node_type": "table",
+                "cipher": "06-04-001",
+                "title": "Агрегаты",
+            }],
+            "retrieval_trace": {"rerank_status": "fallback_input_order"},
+        },
+    )
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Защитное укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    parent = "catalog:collection:ГЭСНм:06"
+    sections = []
+    for cipher, title in (
+        ("06-01", "КОТЛЫ"),
+        ("06-04", "АГРЕГАТЫ ПАРОТУРБИННЫЕ"),
+        ("06-05", "ТУРБИННОЕ ВСПОМОГАТЕЛЬНОЕ"),
+    ):
+        node = {
+            "node_id": f"catalog:section:ГЭСНм:{cipher}",
+            "parent_id": parent,
+            "node_type": "section",
+            "cipher": cipher,
+            "title": title,
+            "purpose": title,
+            "source_ref": f"ФСНБ · {cipher}",
+        }
+        sections.append(node)
+        session.catalog_node_registry["w1"][node["node_id"]] = node
+    session.catalog_menus["w1"][parent] = sections
+    session.catalog_current_nodes["w1"] = parent
+    session.selected_base_types["w1"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "монтаж",
+        "confidence": "medium",
+        "work_features": {
+            "domain": "монтаж",
+            "system": "теплосиловое",
+            "equipment": "укрытие",
+            "operation": "монтаж",
+            "assembly_state": "site_assembled",
+            "installation_context": "на объекте",
+            "unknowns": [],
+        },
+    }
+    session.selected_collections["w1"].add(("гэснм", "06"))
+
+    chosen = "catalog:section:ГЭСНм:06-04"
+    result = session.execute(
+        "continue_norm_catalog",
+        {
+            "items": [{
+                "work_id": "w1",
+                "current_node_id": parent,
+                "confidence": "medium",
+                "catalog_query": "защитное укрытие пленка",
+                "evidence": [
+                    {
+                        "source_node_id": "catalog:section:ГЭСНм:06-05",
+                        "field": "title",
+                        "claim": "не укрытия",
+                    },
+                    {
+                        "source_node_id": "catalog:section:ГЭСНм:06-01",
+                        "field": "title",
+                        "claim": "котлы",
+                    },
+                ],
+                "rejected_nodes": [
+                    {
+                        "node_id": "catalog:section:ГЭСНм:06-01",
+                        "reason": "котлы не подходят",
+                    },
+                    {
+                        "node_id": "catalog:section:ГЭСНм:06-05",
+                        "reason": "турбины не подходят",
+                    },
+                    {
+                        "node_id": chosen,
+                        "reason": "ошибочно отвергнут вместе с выбором",
+                    },
+                ],
+            }],
+            "selected_node_id": chosen,
+        },
+        turn=1,
+    )
+    assert result["rows"][0]["ok"] is True, result["rows"][0]
+    assert result["rows"][0]["current_node_id"] == chosen
+    assert result["rows"][0]["route_decision"]["selected_node_id"] == chosen
+    assert chosen not in {
+        entry["node_id"]
+        for entry in result["rows"][0]["route_decision"]["rejected_nodes"]
+    }
+
+
+def test_catalog_stall_forces_mapping_serialization():
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    parent = "catalog:collection:ГЭСНм:06"
+    node = {
+        "node_id": "catalog:section:ГЭСНм:06-04",
+        "parent_id": parent,
+        "node_type": "section",
+        "cipher": "06-04",
+        "title": "Агрегаты",
+        "purpose": "Агрегаты",
+    }
+    session.catalog_menus["w1"][parent] = [node]
+    session.catalog_node_registry["w1"][node["node_id"]] = node
+    session.catalog_current_nodes["w1"] = parent
+
+    last = None
+    for turn in range(1, 4):
+        last = session.execute(
+            "continue_norm_catalog",
+            {
+                "items": [{
+                    "work_id": "w1",
+                    "current_node_id": parent,
+                    "selected_node_id": "catalog:section:ГЭСНм:06-04",
+                    "confidence": "medium",
+                    # Deliberately empty evidence after draft would succeed —
+                    # force structural fail via unknown selected outside menu.
+                    "evidence": [{
+                        "source_node_id": "catalog:section:ГЭСНм:99-99",
+                        "field": "title",
+                        "claim": "missing",
+                    }],
+                }],
+            },
+            turn=turn,
+        )
+    assert last is not None
+    assert last.get("catalog_stalled") is True
+    assert last.get("force_mapping_serialization") is True
+
+
+def test_table_continue_truncates_extra_rejected_siblings(monkeypatch):
+    """Wide table menus: >6 sibling rejects must not block a valid selection."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(
+        workflow,
+        "rank_norm_catalog_tables",
+        lambda *_args, **_kwargs: {"cards": [], "retrieval_trace": {"rerank_status": "ok"}},
+    )
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Укрытие", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    section_id = "catalog:section:ГЭСН:13-08"
+    tables = []
+    for index in range(1, 12):
+        cipher = f"13-08-{index:03d}"
+        node = {
+            "node_id": f"catalog:table:ГЭСН:{cipher}",
+            "parent_id": section_id,
+            "node_type": "table",
+            "cipher": cipher,
+            "title": f"Таблица {cipher}",
+            "purpose": f"Описание {cipher}",
+        }
+        tables.append(node)
+        session.catalog_node_registry["w1"][node["node_id"]] = node
+    session.catalog_menus["w1"][section_id] = tables
+    session.catalog_current_nodes["w1"] = section_id
+    session.selected_base_types["w1"]["гэсн"] = {
+        "family": "ГЭСН",
+        "reason": "строительные работы",
+        "confidence": "medium",
+        "work_features": {
+            "domain": "строительство",
+            "system": "временные",
+            "equipment": "пленка",
+            "operation": "устройство",
+            "assembly_state": "site_assembled",
+            "installation_context": "на объекте",
+            "unknowns": [],
+        },
+    }
+    session.selected_collections["w1"].add(("гэсн", "13"))
+    session.selected_sections["w1"].add(("гэсн", "13", "13-08"))
+    chosen = tables[10]["node_id"]
+    rejected = [
+        {"node_id": node["node_id"], "reason": f"не подходит {node['cipher']}"}
+        for node in tables[:11]
+        if node["node_id"] != chosen
+    ]
+    assert len(rejected) > 6
+
+    result = session.execute(
+        "continue_norm_catalog",
+        {"items": [{
+            "work_id": "w1",
+            "current_node_id": section_id,
+            "selected_node_id": chosen,
+            "evidence": [{
+                "source_node_id": chosen,
+                "field": "title",
+                "claim": tables[10]["title"],
+            }],
+            "rejected_nodes": rejected,
+            "confidence": "medium",
+            "missing_facts": [],
+        }]},
+        turn=1,
+    )
+
+    assert result["rows"][0]["ok"] is True, result["rows"][0]
+    assert result["rows"][0]["level"] == "norm_search"
+    assert ("гэсн", "13", tables[10]["cipher"]) in session.selected_tables["w1"]
+    assert session.route_evidence_cache == {}
+    assert session._completed_route_cache() == []
+
+
+def test_route_cache_publishes_only_after_bind_not_table_select():
+    """Wrong first table must not poison reuse for later VOR rows."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Укрытие пленка", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session.selected_base_types["w1"]["гэснм"] = {
+        "family": "ГЭСНм",
+        "reason": "монтаж",
+        "confidence": "high",
+        "work_features": {
+            "domain": "м", "system": "с", "equipment": "пленка",
+            "operation": "монтаж", "assembly_state": "site_assembled",
+            "installation_context": "на объекте", "unknowns": [],
+        },
+    }
+    session.selected_collections["w1"].add(("гэснм", "06"))
+    session.selected_sections["w1"].add(("гэснм", "06", "06-05"))
+    session.selected_tables["w1"] = {("гэснм", "06", "06-05-001")}
+    assert session._completed_route_cache() == []
+    assert session.route_evidence_cache == {}
+
+    code = "ГЭСНм06-05-001-01"
+    session.opened["w1"] = {
+        code: {
+            "norm_code": code,
+            "measure_unit": "м2",
+            "title": "Укрытие",
+        }
+    }
+    submit = session.execute(
+        "submit_lsr_mapping",
+        {
+            "rows": [{
+                "work_id": "w1",
+                "decision": "bind",
+                "norm_code": code,
+                "selection_kind": "exact",
+                "applicability": "exact",
+                "analog_limitations": [],
+                "reason": "карточка совпадает с работой по укрытию",
+                "technology_check": _technology_check(),
+                "candidate_evaluations": _candidate_evaluations(code),
+            }],
+        },
+        turn=1,
+    )
+    assert submit["ok"] is True, submit
+    cache = session._completed_route_cache()
+    assert len(cache) == 1
+    assert cache[0]["table_code"] == "06-05-001"
+    assert "06-05-001" in next(iter(session.route_evidence_cache))
+
+
+def test_unbound_does_not_publish_route_for_reuse():
+    from proxy.smeta_core import document_workflow as workflow
+
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Покраска", "unit": "м2", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session.selected_tables["w1"] = {("гэснм", "06", "06-05-001")}
+    session.route_evidence_cache["route:гэснм:06:06-05:06-05-001"] = {
+        "cache_id": "route:гэснм:06:06-05:06-05-001",
+        "source_work_id": "w1",
+        "family": "ГЭСНм",
+        "collection": "06",
+        "section": "06-05",
+        "table_code": "06-05-001",
+    }
+    session.query_trace.append({
+        "work_id": "w1",
+        "queries": ["покраска исходно", "покраска ФСНБ"],
+    })
+    code = "ГЭСНм06-05-001-01"
+    session.opened["w1"] = {
+        code: {
+            "norm_code": code,
+            "measure_unit": "м2",
+            "title": "Не то",
+        }
+    }
+    submit = session.execute(
+        "submit_lsr_mapping",
+        {
+            "rows": [{
+                "work_id": "w1",
+                "decision": "unbound",
+                "reason": "открытая карточка не подходит к покраске",
+                "unbound_evidence": _unbound_evidence(
+                    queries=["покраска исходно", "покраска ФСНБ"],
+                    opened=[code],
+                ),
+            }],
+        },
+        turn=1,
+    )
+    assert submit["ok"] is True, submit
+    assert session.route_evidence_cache == {}
+    assert session._completed_route_cache() == []
+
+
 def test_mapping_transport_does_not_rewrite_model_decision():
     from proxy.smeta_core.document_workflow import _normalize_mapping_row_transport
 
@@ -1071,6 +1682,59 @@ def test_terminal_rejects_bind_without_complete_technology_evidence():
     assert result["ok"] is False
     assert result["errors"][0]["error"] == "incomplete bind evidence"
     assert "technology_check.matched_operations must be an array" in result["errors"][0]["details"]
+
+
+def test_exact_bind_rejects_reason_that_denies_applicability():
+    from proxy.smeta_core import document_workflow as workflow
+
+    assert workflow._exact_bind_reason_self_contradiction_errors({
+        "selection_kind": "exact",
+        "reason": "Норма не применима к монтажу блока аварийного питания",
+    })
+    assert not workflow._exact_bind_reason_self_contradiction_errors({
+        "selection_kind": "analog",
+        "reason": "Норма не применима как точная, выбран аналог",
+    })
+    assert not workflow._exact_bind_reason_self_contradiction_errors({
+        "selection_kind": "exact",
+        "reason": "Норма применима: операция и объект совпадают",
+    })
+
+    code = "ГЭСНр54-01-002-01"
+    session = workflow.SmetaNormToolSession(
+        [{"work_id": "w1", "title": "Монтаж БАП", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session.opened["w1"] = {
+        code: {"norm_code": code, "measure_unit": "шт", "title": "Разборка балок"},
+    }
+    session.candidate_draft_attempts["w1"] = 2
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": [{
+            "work_id": "w1",
+            "decision": "bind",
+            "norm_code": code,
+            "selection_kind": "exact",
+            "applicability": "exact",
+            "analog_limitations": [],
+            "reason": (
+                "ГЭСНр54-01-002-01 описывает разборку стальных балок, "
+                "норма не применима к монтажу БАП"
+            ),
+            "technology_check": _technology_check(),
+            "candidate_evaluations": _candidate_evaluations(code),
+        }]},
+        turn=1,
+    )
+    assert result["ok"] is False
+    assert result["errors"][0]["error"] == "incomplete bind evidence"
+    assert any(
+        "denies applicability" in str(detail)
+        for detail in result["errors"][0]["details"]
+    )
+    assert "w1" not in session.accepted_rows
 
 
 def test_terminal_accepts_one_defensible_opened_candidate_without_forced_comparison(
@@ -1684,11 +2348,9 @@ def test_phase_scheduler_batches_all_rows_at_the_earliest_phase(monkeypatch):
         )
         assert memory["active_phase"] == "family_select"
         assert memory["active_work_ids"] == ["w1", "w2"]
+        # family_select: Ollama-safe continue only (ask/broaden/unbound later).
         assert [tool["function"]["name"] for tool in tools] == [
             "continue_norm_catalog",
-            "ask_norm_catalog_fact",
-            "broaden_norm_catalog",
-            "unbound_norm_catalog",
         ]
         raise RuntimeError("same-phase batch inspected")
 
@@ -1793,6 +2455,173 @@ def test_model_can_reuse_typed_route_cache_without_reusing_norm_decision():
     assert session.candidates["w1"] == {}
     assert session.accepted_rows == {}
     assert session.catalog_trace[-1]["selection_owner"] == "model"
+
+
+def test_compact_route_evidence_cache_keeps_ids_without_bulky_fields():
+    from proxy.smeta_core import document_workflow as workflow
+
+    compact = workflow._compact_route_evidence_cache_for_model([{
+        "cache_id": "route:гэснм:10:10-04:10-04-067",
+        "source_work_id": "old-1",
+        "family": "ГЭСНм",
+        "collection": "10",
+        "section": "10-04",
+        "table_code": "10-04-067",
+        "passport": {"huge": "payload"},
+        "source": "typed_catalog_trace",
+    }])
+
+    assert compact == [{
+        "cache_id": "route:гэснм:10:10-04:10-04-067",
+        "family": "ГЭСНм",
+        "collection": "10",
+        "section": "10-04",
+        "table_code": "10-04-067",
+        "source_work_id": "old-1",
+    }]
+
+
+def test_batch_agent_surfaces_reuse_first_when_route_cache_present(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    route = {
+        "cache_id": "route:гэснм:10:10-04:10-04-067",
+        "source_work_id": "old-1",
+        "family": "ГЭСНм",
+        "collection": "10",
+        "section": "10-04",
+        "table_code": "10-04-067",
+        "source": "typed_catalog_trace",
+    }
+    seen_tools = []
+    seen_memory = []
+    exchange_calls = {"n": 0}
+
+    def exchange(messages, tools):
+        exchange_calls["n"] += 1
+        seen_tools.append([
+            str(((tool.get("function") or {}).get("name") or ""))
+            for tool in tools
+        ])
+        memory = next(
+            json.loads(message["content"])
+            for message in reversed(messages)
+            if message.get("role") == "user"
+            and "smeta_norm_agent_working_memory_v1"
+            in str(message.get("content") or "")
+        )
+        seen_memory.append(memory)
+        if exchange_calls["n"] == 1:
+            return {"tool_calls": [_native_call(
+                "reuse-1",
+                "reuse_norm_catalog_route",
+                items=[{
+                    "work_id": "w1",
+                    "cache_id": route["cache_id"],
+                    "reason": "Та же система и операция",
+                    "confidence": "high",
+                }],
+            )]}
+        return {"content": "serialize"}
+
+    def mapping_exchange(_messages, _schema):
+        return {"rows": [{
+            "work_id": "w1",
+            "decision": "unbound",
+            "reason": "После reuse применимая норма не найдена",
+            "unbound_evidence": {
+                "rejection_reasons": ["в таблице нет подходящей карточки"],
+                "coverage_checked": "покрытие соседними строками не подтверждено",
+            },
+        }]}
+
+    result = workflow._run_batch_norm_agent(
+        [{
+            "work_id": "w1",
+            "title": "Монтаж шкафа",
+            "unit": "шт",
+            "quantity": 1,
+            "route_evidence_cache": [route],
+        }],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=2,
+        require_scoped_search=False,
+    )
+
+    assert "reuse_norm_catalog_route" in seen_tools[0]
+    assert seen_memory[0]["route_reuse_first"] is True
+    assert seen_memory[0]["route_evidence_cache"][0]["cache_id"] == route["cache_id"]
+    assert "reuse_norm_catalog_route" in seen_memory[0]["instruction"]
+    assert result["selections"]["w1"]["review_status"] in {
+        "model_batch_unbound",
+        "model_batch_candidate",
+    }
+
+
+def test_source_batch_progress_reports_sec_per_row(monkeypatch):
+    from proxy.smeta_core import document_workflow as workflow
+
+    monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
+        query: {"backend": "rrf", "cards": []} for query in queries
+    })
+    monkeypatch.setenv("LES_SMETA_CANDIDATE_DRAFT_MODE", "on")
+    monkeypatch.setenv("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "2")
+    events = []
+
+    def exchange(_messages, _tools):
+        return {"content": "serialize"}
+
+    def mapping_exchange(messages, _schema):
+        work_id = "w1"
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            try:
+                payload = json.loads(str(message.get("content") or "{}"))
+            except json.JSONDecodeError:
+                continue
+            remaining = payload.get("remaining_work_ids") or []
+            if remaining:
+                work_id = str(remaining[0])
+                break
+        return {"rows": [{
+            "work_id": work_id,
+            "decision": "unbound",
+            "reason": "Применимая норма не найдена после проверки",
+            "unbound_evidence": {
+                "rejection_reasons": ["подходящей карточки нет"],
+                "coverage_checked": "покрытие соседними строками не подтверждено",
+            },
+        }]}
+
+    result = workflow._run_native_norm_agent(
+        [
+            {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+            {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+        ],
+        exchange,
+        mapping_exchange=mapping_exchange,
+        candidate_limit=5,
+        max_turns=1,
+        batch_size=1,
+        progress=events.append,
+        require_scoped_search=False,
+    )
+
+    done_events = [
+        event for event in events
+        if event.get("phase") == "source_batch" and event.get("status") == "done"
+    ]
+    assert done_events
+    assert done_events[-1]["rows_done"] == 2
+    assert done_events[-1]["sec_per_row"] is not None
+    assert "с/поз" in str(done_events[-1].get("label") or "")
+    assert set(result["selections"]) == {"w1", "w2"}
 
 
 def test_resume_fingerprint_ignores_growing_transport_route_cache():
@@ -1927,6 +2756,156 @@ def test_global_review_runs_only_connected_conflict_groups(monkeypatch):
     assert result["selections"]["w2"]["reason"] == "reviewed-w2"
     assert result["selections"]["w3"] == initial["selections"]["w3"]
     assert result["agent_trace"]["global_review"]["preserved_work_ids"] == ["w3"]
+
+
+def test_global_review_preserves_initial_when_mapping_repair_fails(monkeypatch):
+    """Conflict review must not destroy a completed row-mapping document."""
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Работа 1", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Работа 2", "unit": "шт", "quantity": 1},
+        {"work_id": "w3", "title": "Работа 3", "unit": "шт", "quantity": 1},
+    ]
+    initial = {
+        "selections": {
+            "w1": {
+                "norm_code": "ГЭСНр54-01-002-01",
+                "reason": "initial-w1",
+                "review_status": "model_batch_candidate",
+            },
+            "w2": {
+                "norm_code": "ГЭСНр54-01-002-01",
+                "reason": "initial-w2",
+                "review_status": "model_batch_candidate",
+            },
+            "w3": {
+                "norm_code": "",
+                "reason": "initial-w3",
+                "review_status": "model_batch_unbound",
+            },
+        },
+        "opened_cards": {},
+        "browse_trace": {},
+        "query_trace": [],
+        "catalog_trace": [],
+        "model_trace": [],
+        "agent_trace": {},
+    }
+    conflict = {
+        "conflict_id": "c1",
+        "code": "possible_duplicate_norm_binding",
+        "severity": "warning",
+        "work_ids": ["w1", "w2"],
+        "claim": "Проверить возможное дублирование.",
+        "evidence": {},
+    }
+    detections = iter([[conflict], [conflict]])
+    monkeypatch.setattr(
+        workflow,
+        "detect_professional_conflicts",
+        lambda *_args, **_kwargs: next(detections),
+    )
+
+    def batch_runner(_packet_rows, **_kwargs):
+        raise RuntimeError(
+            "smeta model mapping failed validation after one bounded schema repair"
+        )
+
+    result = workflow._run_global_norm_review(
+        rows,
+        initial,
+        lambda _messages, _tools: {},
+        mapping_exchange=None,
+        candidate_limit=4,
+        max_turns=4,
+        progress=None,
+        user_request="review",
+        batch_runner=batch_runner,
+    )
+
+    assert result["selections"]["w1"] == initial["selections"]["w1"]
+    assert result["selections"]["w2"] == initial["selections"]["w2"]
+    assert result["selections"]["w3"] == initial["selections"]["w3"]
+    assert result["valid_model_rows"] == 3
+    packet_trace = result["agent_trace"]["global_review"]["packets"][0]
+    assert packet_trace["status"] == "packet_preserved_after_mapping_failure"
+
+
+def test_bounded_batches_continue_after_mapping_validation_exhausted():
+    from proxy.smeta_core import document_workflow as workflow
+
+    rows = [
+        {"work_id": "w1", "title": "Первая", "unit": "шт", "quantity": 1},
+        {"work_id": "w2", "title": "Вторая", "unit": "м", "quantity": 2},
+        {"work_id": "w3", "title": "Третья", "unit": "м2", "quantity": 3},
+    ]
+    received = []
+
+    def runner(work_rows, **_kwargs):
+        work_id = str(work_rows[0]["work_id"])
+        received.append(work_id)
+        if work_id == "w2":
+            raise workflow.MappingValidationExhausted(
+                "smeta model mapping failed validation after one bounded schema repair"
+            )
+        return {
+            "selections": {
+                work_id: {
+                    "norm_code": "",
+                    "reason": f"решение {work_id}",
+                    "review_status": "model_batch_unbound",
+                },
+            },
+            "opened_cards": {},
+            "browse_trace": {},
+            "query_trace": [],
+            "catalog_trace": [],
+            "model_trace": [{"turn": 1, "source": work_id}],
+            "valid_model_rows": 1,
+            "agent_trace": {"engine": "qwen_agent", "model_turns": 1},
+        }
+
+    result = workflow._run_native_norm_agent(
+        rows,
+        lambda _messages, _tools: {},
+        candidate_limit=8,
+        max_turns=6,
+        batch_size=1,
+        batch_runner=runner,
+        accumulate_task_state=True,
+    )
+
+    assert received == ["w1", "w2", "w3"]
+    assert set(result["selections"]) == {"w1", "w2", "w3"}
+    assert result["selections"]["w2"]["review_status"] == "model_batch_open"
+    assert not str(result["selections"]["w2"].get("norm_code") or "").strip()
+    assert result["incomplete"] is True
+    assert result["incomplete_blocker"]["code"] in {
+        "batch_failed",
+        "rows_skipped_after_mapping_failure",
+    }
+    assert result["agent_trace"]["status"] == "partial_after_mapping_failure"
+    assert any(
+        trace.get("status") == "batch_skipped_after_mapping_failure"
+        for trace in result["agent_trace"]["batch_traces"]
+    )
+
+
+def test_exact_deny_error_text_is_evidence_repair_marker():
+    from proxy.smeta_core import document_workflow as workflow
+
+    errors = workflow._exact_bind_reason_self_contradiction_errors({
+        "selection_kind": "exact",
+        "reason": "Норма не применима к данной работе",
+    })
+    assert errors
+    text = " ".join(errors)
+    assert "denies applicability" in text
+    assert "broaden to another table" in text
+    source = Path(workflow.__file__).read_text(encoding="utf-8")
+    assert "contradicts reason that denies applicability" in source
+    assert "smeta_exact_deny_broaden_v1" in source
 
 
 def test_batch_agent_preserves_batch_level_search_page_from_model(monkeypatch):
@@ -2242,7 +3221,8 @@ def test_batch_agent_preserves_unopened_model_norm_as_row_level_provenance_block
     assert first_result["ok"] is True
 
 
-def test_batch_agent_rejects_unbound_without_two_traced_searches(monkeypatch):
+def test_batch_agent_accepts_first_incomplete_unbound_as_candidate(monkeypatch):
+    """Avoid a second slow mapping call when unbound evidence is incomplete."""
     from proxy.smeta_core import document_workflow as workflow
 
     monkeypatch.setattr(workflow, "browse_norms_many", lambda queries, **_kwargs: {
@@ -2256,13 +3236,6 @@ def test_batch_agent_rejects_unbound_without_two_traced_searches(monkeypatch):
             "work_id": "w1", "decision": "unbound", "reason": "ничего не найдено",
             "unbound_evidence": _unbound_evidence(queries=["буквальный поиск"]),
         }])],
-        [_native_call("search2", "search_norms_batch", items=[{
-            "work_id": "w1", "queries": ["нормативная формулировка"],
-        }])],
-        [_native_call("submit2", "submit_lsr_mapping", rows=[{
-            "work_id": "w1", "decision": "unbound", "reason": "защищаемой нормы нет",
-            "unbound_evidence": _unbound_evidence(),
-        }])],
     ])
 
     result = workflow._run_native_norm_agent(
@@ -2273,15 +3246,14 @@ def test_batch_agent_rejects_unbound_without_two_traced_searches(monkeypatch):
     )
 
     first_submit = result["model_trace"][1]["tool_results"][0]["result"]
-    assert first_submit["ok"] is False
-    assert first_submit["errors"][0]["error"] == "invalid unbound_evidence"
-    assert first_submit["errors"][0]["allowed_evidence"]["queries_used"] == ["буквальный поиск"]
+    assert first_submit["ok"] is True
+    assert result["selections"]["w1"]["review_status"] == "model_batch_candidate"
     assert result["selections"]["w1"]["unbound_evidence"]["queries_used"] == [
-        "буквальный поиск", "нормативная формулировка",
+        "буквальный поиск",
     ]
 
 
-def test_repeated_honest_unbound_without_trace_becomes_visible_candidate():
+def test_unbound_without_search_is_rejected_on_first_forced_pass():
     from proxy.smeta_core import document_workflow as workflow
 
     session = workflow.SmetaNormToolSession(
@@ -2297,16 +3269,32 @@ def test_repeated_honest_unbound_without_trace_becomes_visible_candidate():
     }
 
     first = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=1)
-    second = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=2)
-
     assert first["ok"] is False
+    assert first["errors"][0]["error"] == "invalid unbound_evidence"
+    assert "w1" not in session.accepted_rows
+
+    # Second identical pass may become candidate (bounded last resort), but the
+    # first forced mapping must not close a zero-search row.
+    second = session.execute("submit_lsr_mapping", {"rows": [row]}, turn=2)
     assert second["ok"] is True
-    selection = session.accepted_rows["w1"]
-    assert selection["review_status"] == "model_batch_candidate"
-    assert selection["norm_code"] == ""
-    assert selection["unbound_evidence"]["queries_used"] == []
-    assert selection["precalculation_blockers"][0]["code"] == "model_candidate_unbound"
-    assert selection["precalculation_blockers"][0]["memory_eligible"] is False
+    assert session.accepted_rows["w1"]["review_status"] == "model_batch_candidate"
+
+    session2 = workflow.SmetaNormToolSession(
+        [{"work_id": "w2", "title": "Общее изделие", "unit": "шт", "quantity": 1}],
+        candidate_limit=4,
+        require_scoped_search=True,
+    )
+    session2.query_trace.append({
+        "work_id": "w2",
+        "queries": ["общее изделие", "общее изделие ФСНБ"],
+    })
+    with_search = session2.execute(
+        "submit_lsr_mapping",
+        {"rows": [{**row, "work_id": "w2"}]},
+        turn=1,
+    )
+    assert with_search["ok"] is True
+    assert session2.accepted_rows["w2"]["review_status"] == "model_batch_candidate"
 
 
 def test_post_budget_unbound_promotes_candidate_instead_of_hard_fail(monkeypatch):
@@ -2523,8 +3511,9 @@ def test_forced_mapping_gets_one_bounded_schema_repair(monkeypatch):
         max_turns=1,
     )
 
-    assert mapping_calls["count"] == 2
-    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
+    # Soft unbound evidence gaps accept as candidate on the first mapping call.
+    assert mapping_calls["count"] == 1
+    assert result["selections"]["w1"]["review_status"] == "model_batch_candidate"
     assert "search-preflight-harness" not in json.dumps(
         result["model_trace"],
         ensure_ascii=False,
@@ -3330,14 +4319,19 @@ def test_batch_agent_has_configurable_transport_turn_budget():
         calls += 1
         return {"tool_calls": [_native_call(f"unknown-{calls}", "unknown_tool", sequence=calls)]}
 
-    with pytest.raises(RuntimeError, match="within 2 model turns"):
-        workflow._run_native_norm_agent(
-            [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
-            exchange,
-            candidate_limit=5,
-            max_turns=2,
-        )
+    result = workflow._run_native_norm_agent(
+        [{"work_id": "w1", "title": "Работа", "unit": "шт", "quantity": 1}],
+        exchange,
+        candidate_limit=5,
+        max_turns=2,
+    )
     assert calls == 2
+    assert result["incomplete"] is True
+    assert result["incomplete_blocker"] == {
+        "code": "mapping_turns_exhausted",
+        "reason": "smeta model did not submit mapping within 2 model turns",
+        "remaining_work_ids": ["w1"],
+    }
 
 
 def test_native_batch_resume_restores_in_progress_typed_checkpoint():
@@ -3583,12 +4577,8 @@ def test_batch_agent_returns_to_tools_when_unbound_needs_more_evidence(monkeypat
             )]}
         if exchange_calls == 2:
             return {"content": "Данных достаточно для вывода."}
-        if exchange_calls in {3, 4}:
-            return {"tool_calls": [_native_call(
-                f"search-1-repeat-{exchange_calls}",
-                "search_norms_batch",
-                items=[{"work_id": "w1", "queries": ["буквальный поиск"]}],
-            )]}
+        # After failed unbound: second distinct search (identical retry would
+        # force mapping with only one query and skip the repair path).
         working_memory = next(
             json.loads(message["content"])
             for message in reversed(messages)
@@ -3626,12 +4616,13 @@ def test_batch_agent_returns_to_tools_when_unbound_needs_more_evidence(monkeypat
         max_turns=5,
     )
 
-    assert exchange_calls == 5
-    assert mapping_calls == 2
-    assert result["selections"]["w1"]["review_status"] == "model_batch_unbound"
-    assert set(
+    # First incomplete unbound becomes a visible candidate — no second mapping.
+    assert exchange_calls == 2
+    assert mapping_calls == 1
+    assert result["selections"]["w1"]["review_status"] == "model_batch_candidate"
+    assert "буквальный поиск" in set(
         result["selections"]["w1"]["unbound_evidence"]["queries_used"]
-    ) == {"буквальный поиск", "нормативная формулировка"}
+    )
 
 
 def test_batch_agent_returns_to_tools_after_terminal_budget_for_positive_unopened_reference(

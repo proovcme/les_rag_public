@@ -91,6 +91,22 @@ class MappingTransportTimeout(RuntimeError):
     """Structured mapping timed out; the identical payload must not be retried."""
 
 
+class MappingValidationExhausted(RuntimeError):
+    """Bounded schema repair exhausted; keep accepted rows and continue."""
+
+
+def _is_recoverable_batch_mapping_error(error: BaseException) -> bool:
+    """True when a failed batch must not destroy earlier accepted decisions."""
+    if isinstance(error, MappingValidationExhausted):
+        return True
+    text = str(error or "")
+    return (
+        "smeta model mapping failed validation after" in text
+        or "smeta model did not submit mapping within" in text
+        or "smeta agent ended without terminal mapping for:" in text
+    )
+
+
 def _mapping_chunk_size() -> int:
     """Bound only the JSON transport; the model still owns every decision."""
     raw = os.getenv("LES_SMETA_DOCUMENT_MAPPING_CHUNK", "8").strip()
@@ -107,6 +123,56 @@ def _mapping_evidence_repair_turns() -> int:
         return max(0, min(8, int(raw)))
     except ValueError:
         return 4
+
+
+def _catalog_shortlist_menu_ready(
+    cards: list[Any] | tuple[Any, ...] | None,
+    *,
+    rerank_status: Any = None,
+) -> tuple[bool, str]:
+    """Navigation menus may proceed when cards exist, even if the reranker degraded.
+
+    Cross-encoder failure on Windows without ``windows-reranker`` still returns a
+    lexical/RRF shortlist. Blocking on ``rerank_status=ok`` left local Qwen stuck
+    for a dozen turns on family→collection with zero searches.
+    """
+    items = [
+        card for card in (cards or [])
+        if isinstance(card, dict) and (
+            str(card.get("node_id") or card.get("key") or card.get("cipher") or "").strip()
+        )
+    ]
+    status = str(rerank_status or "").strip() or "missing"
+    if items:
+        return True, status
+    return False, status
+
+
+def _compact_route_evidence_cache_for_model(
+    routes: list[dict[str, Any]] | tuple[dict[str, Any], ...] | dict[str, dict[str, Any]],
+    *,
+    limit: int = 24,
+) -> list[dict[str, str]]:
+    """Show reusable catalog routes without shipping bulky passport payloads."""
+    values: list[dict[str, Any]]
+    if isinstance(routes, dict):
+        values = [dict(item) for item in routes.values() if isinstance(item, dict)]
+    else:
+        values = [dict(item) for item in routes if isinstance(item, dict)]
+    compact: list[dict[str, str]] = []
+    for route in values[: max(0, int(limit))]:
+        cache_id = str(route.get("cache_id") or "").strip()
+        if not cache_id:
+            continue
+        compact.append({
+            "cache_id": cache_id[:160],
+            "family": str(route.get("family") or "")[:80],
+            "collection": str(route.get("collection") or "")[:80],
+            "section": str(route.get("section") or "")[:40],
+            "table_code": str(route.get("table_code") or "")[:40],
+            "source_work_id": str(route.get("source_work_id") or "")[:40],
+        })
+    return compact
 
 
 def _is_timeout_error(error: BaseException) -> bool:
@@ -628,6 +694,34 @@ def _normalize_norm_codes_transport(item: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(str(value).strip() for value in values if str(value).strip()))
 
 
+_EXACT_BIND_DENIAL_RE = re.compile(
+    r"\bне\s+(?:"
+    r"примен\w*"
+    r"|соответств\w*"
+    r"|совпад\w*"
+    r"|подход\w*"
+    r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def _exact_bind_reason_self_contradiction_errors(item: dict[str, Any]) -> list[str]:
+    """Reject exact binds whose own reason denies applicability.
+
+    Transport-only guard: does not choose another norm. Not draft-eligible, so
+    candidate promotion cannot keep a self-contradicting exact bind.
+    """
+    if str(item.get("selection_kind") or "").strip().casefold() != "exact":
+        return []
+    reason = " ".join(str(item.get("reason") or "").split())
+    if not reason or not _EXACT_BIND_DENIAL_RE.search(reason):
+        return []
+    return [
+        "selection_kind exact contradicts reason that denies applicability; "
+        "choose unbound or broaden to another table — do not bind this norm as exact"
+    ]
+
+
 def _technology_check_errors(
     item: dict[str, Any], *, work_id: str = "",
 ) -> list[str]:
@@ -939,6 +1033,85 @@ def _promote_terminal_unbound_candidates(
         + 1,
     )
     return bool(result.get("ok")) and not session.remaining_work_ids
+
+
+def _promote_terminal_bind_candidates(
+    session: "SmetaNormToolSession",
+    *,
+    last_submit_result: dict[str, Any],
+    model_trace: list[dict[str, Any]],
+) -> bool:
+    """Accept draft-eligible incomplete binds after bounded repair is exhausted."""
+    if not _candidate_draft_enabled():
+        return False
+    errors = [
+        error
+        for error in (last_submit_result.get("errors") or [])
+        if isinstance(error, dict)
+    ]
+    if not errors:
+        return False
+    bind_ids: list[str] = []
+    for error in errors:
+        work_id = str(error.get("work_id") or "").strip()
+        details = [
+            str(item) for item in (error.get("details") or []) if str(item).strip()
+        ]
+        if (
+            str(error.get("error") or "") != "incomplete bind evidence"
+            or not work_id
+            or session.candidate_draft_attempts.get(work_id, 0) < 1
+            or not _candidate_draft_errors(details)
+            or not session.opened.get(work_id)
+        ):
+            return False
+        bind_ids.append(work_id)
+    rows = [
+        row
+        for row in _last_structured_mapping_rows(model_trace)
+        if str(row.get("work_id") or "") in bind_ids
+        and str(row.get("decision") or "") == "bind"
+    ]
+    if len(rows) != len(bind_ids):
+        return False
+    # Force the second-chance draft path even if the model repeated the same
+    # incomplete evidence payload after the bounded schema repair.
+    for work_id in bind_ids:
+        session.candidate_draft_attempts[work_id] = max(
+            1, int(session.candidate_draft_attempts.get(work_id, 0))
+        )
+    result = session.execute(
+        "submit_lsr_mapping",
+        {"rows": rows},
+        turn=max(
+            (
+                int(item.get("turn") or 0)
+                for item in model_trace
+                if isinstance(item, dict)
+            ),
+            default=0,
+        )
+        + 1,
+    )
+    return bool(result.get("ok")) and not session.remaining_work_ids
+
+
+def _promote_terminal_mapping_candidates(
+    session: "SmetaNormToolSession",
+    *,
+    last_submit_result: dict[str, Any],
+    model_trace: list[dict[str, Any]],
+) -> bool:
+    """Promote either unfinished unbound or draft-eligible bind failures."""
+    return _promote_terminal_unbound_candidates(
+        session,
+        last_submit_result=last_submit_result,
+        model_trace=model_trace,
+    ) or _promote_terminal_bind_candidates(
+        session,
+        last_submit_result=last_submit_result,
+        model_trace=model_trace,
+    )
 
 
 def _candidate_draft_errors(errors: list[str]) -> bool:
@@ -1529,6 +1702,58 @@ def bounded_catalog_query_from_work_features(work_features: dict[str, Any]) -> s
     return " ".join(tokens[:12])
 
 
+def _draft_work_features_from_source(row: dict[str, Any]) -> dict[str, Any]:
+    """Fill a navigation-only work_features card from the VOR row title/note.
+
+    Does not choose a norm family or table — only unblocks catalog transport when
+    local Qwen omits the typed feature object.
+    """
+    title = " ".join(str(row.get("title") or "").split())
+    note = " ".join(str(row.get("note") or "").split())
+    anchor = title or note or "работа"
+    tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", anchor)
+    short = " ".join(tokens[:8]) if tokens else "работа"
+    return {
+        "domain": "unknown",
+        "system": "unknown",
+        "equipment": short,
+        "operation": short,
+        "assembly_state": "unknown",
+        "installation_context": "unknown",
+        "unknowns": [
+            "work_features drafted from source title for catalog navigation only",
+        ],
+    }
+
+
+def _merge_work_features_with_source_draft(
+    work_features: dict[str, Any] | None,
+    source_row: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Keep model-authored fields; fill gaps from the source-row draft."""
+    merged = dict(work_features or {}) if isinstance(work_features, dict) else {}
+    draft = _draft_work_features_from_source(source_row or {})
+    filled_from_draft = False
+    for key, value in draft.items():
+        if key == "unknowns":
+            continue
+        if not str(merged.get(key) or "").strip():
+            merged[key] = value
+            filled_from_draft = True
+    unknowns = [
+        str(item).strip()
+        for item in (merged.get("unknowns") or [])
+        if str(item).strip()
+    ]
+    if filled_from_draft:
+        for note in draft.get("unknowns") or []:
+            text = str(note).strip()
+            if text and text not in unknowns:
+                unknowns.append(text)
+    merged["unknowns"] = unknowns[:8]
+    return merged
+
+
 def _resolve_bounded_catalog_query(
     model_query: str,
     work_features: dict[str, Any],
@@ -1543,6 +1768,48 @@ def _resolve_bounded_catalog_query(
     if 2 <= len(derived_tokens) <= 12:
         return derived, "derived_from_work_features"
     return clean_model, "model"
+
+
+def _search_queries_for_work_row(row: dict[str, Any]) -> list[str]:
+    """Two bounded lexical queries from the VOR row (transport only, not a bind)."""
+    title = " ".join(str(row.get("title") or "").split())
+    note = " ".join(str(row.get("note") or "").split())
+    anchor = title or note or "работа"
+    tokens = re.findall(r"[0-9A-Za-zА-Яа-яЁё]+", anchor)
+    primary = " ".join(tokens[:8]) if tokens else "работа"
+    if "монтаж" in primary.casefold():
+        secondary_tokens = tokens[:6] + ["устройство"]
+    else:
+        secondary_tokens = tokens[:6] + ["монтаж"]
+    secondary = " ".join(secondary_tokens[:8])
+    if secondary.casefold() == primary.casefold():
+        secondary = f"{primary} ФСНБ"
+    return [primary, secondary]
+
+
+def _auto_norm_search_items(session: "SmetaNormToolSession") -> list[dict[str, Any]]:
+    """Build search_norms_batch items for rows that already have a selected table."""
+    items: list[dict[str, Any]] = []
+    for work_id in _phase_work_ids(session, "norm_search"):
+        tables = session.selected_tables.get(work_id) or set()
+        if not tables:
+            continue
+        family_key, collection, table_code = sorted(tables)[0]
+        family = family_key
+        for key, meta in (session.selected_base_types.get(work_id) or {}).items():
+            if str(key).casefold() == str(family_key).casefold():
+                family = str((meta or {}).get("family") or family_key)
+                break
+        row = session.by_id.get(work_id) or {}
+        items.append({
+            "work_id": work_id,
+            "queries": _search_queries_for_work_row(row),
+            "base_types": [family],
+            "collections": [str(collection)],
+            "table_codes": [str(table_code)],
+            "scope_mode": "scoped",
+        })
+    return items
 
 
 def _resolve_selected_node_id(
@@ -1950,7 +2217,37 @@ class SmetaNormToolSession:
             result = self._catalog_transition(routed_args, turn=turn)
             self._remember_catalog_result(result)
         elif name == "reuse_norm_catalog_route":
+            # Qwen often emits flat {work_id, cache_id} without items[].
+            if not _tool_array_argument(args, "items") and (
+                args.get("work_id") or args.get("cache_id")
+            ):
+                synthetic = {
+                    key: args[key]
+                    for key in ("work_id", "cache_id", "reason", "confidence")
+                    if key in args
+                }
+                if not str(synthetic.get("reason") or "").strip():
+                    synthetic["reason"] = (
+                        "reuse cached catalog route before scoped search"
+                    )
+                args = {"items": [synthetic]}
             result = self._reuse_catalog_route(args, turn=turn)
+            # Table already selected in this session: reuse is a no-op. Tell the
+            # model to search instead of spinning identical cache calls.
+            if (
+                not result.get("ok")
+                and self.require_scoped_search
+                and any(self.selected_tables.get(wid) for wid in self.remaining_work_ids)
+            ):
+                result = {
+                    "ok": False,
+                    "error": (
+                        "route already selected for this work; call "
+                        "search_norms_batch with the selected table_codes"
+                    ),
+                    "force_auto_norm_search": True,
+                    "rows": result.get("rows") or [],
+                }
         elif name == "search_norms_batch":
             result = self._search(
                 _one_item_tool_transport(
@@ -2221,21 +2518,79 @@ class SmetaNormToolSession:
             raw_items
             and all("node_id" in item and "work_id" not in item for item in raw_items[:3])
         )
+        # Local Qwen often echoes the whole family passport menu into items[].
+        # That is not a decision — reject once with an actionable example.
+        if items_are_catalog_nodes and not has_flat_decision:
+            work_id = ""
+            if len(self.by_id) == 1:
+                work_id = next(iter(self.by_id))
+            elif self.remaining_work_ids:
+                work_id = str(self.remaining_work_ids[0])
+            current = self.catalog_current_nodes.get(work_id, "catalog:root") if work_id else "catalog:root"
+            visible_ids = [
+                str(node.get("node_id") or "")
+                for node in (self.catalog_menus.get(work_id, {}).get(current, []) if work_id else [])
+                if str(node.get("node_id") or "")
+            ]
+            example_id = visible_ids[0] if visible_ids else str(
+                (raw_items[0] or {}).get("node_id") or ""
+            )
+            return {
+                "ok": False,
+                "rows": [{
+                    "work_id": work_id or str((raw_items[0] or {}).get("node_id") or ""),
+                    "ok": False,
+                    "error": "catalog menu echoed instead of a decision",
+                    "details": [
+                        "continue_norm_catalog must send one decision, not passport cards",
+                        (
+                            "required: items=[{work_id, selected_node_id, confidence}]; "
+                            "work_features/evidence optional — LES drafts gaps from VOR title"
+                        ),
+                        (
+                            f'example: {{"items": [{{"work_id": "{work_id}", '
+                            f'"selected_node_id": "{example_id}", '
+                            f'"confidence": "medium"}}]}}'
+                        ),
+                        "allowed selected_node_id: " + ", ".join(visible_ids[:8]),
+                    ],
+                    "items": [],
+                    "reject_streak": 1,
+                }],
+            }
+        _decision_transport_keys = (
+            "work_id", "current_node_id", "selected_node_id",
+            "evidence", "rejected_nodes", "confidence",
+            "missing_facts", "work_features", "question",
+            "catalog_query", "decision",
+        )
         if has_flat_decision and (not raw_items or items_are_catalog_nodes):
             synthetic_item: dict[str, Any] = {}
-            for key in (
-                "work_id", "current_node_id", "selected_node_id",
-                "evidence", "rejected_nodes", "confidence",
-                "missing_facts", "work_features", "question",
-                "catalog_query", "decision",
-            ):
+            for key in _decision_transport_keys:
                 if key in args:
                     synthetic_item[key] = args[key]
             if not synthetic_item.get("work_id") and len(self.by_id) == 1:
                 synthetic_item["work_id"] = next(iter(self.by_id))
-            if not synthetic_item.get("decision") and args.get("default_decision"):
-                synthetic_item["decision"] = args["default_decision"]
+            if not synthetic_item.get("decision"):
+                if args.get("default_decision"):
+                    synthetic_item["decision"] = args["default_decision"]
+                elif synthetic_item.get("selected_node_id"):
+                    synthetic_item["decision"] = "continue"
+            if not str(synthetic_item.get("confidence") or "").strip():
+                synthetic_item["confidence"] = "medium"
             args["items"] = [synthetic_item]
+        elif has_flat_decision and raw_items:
+            # Hybrid Qwen shape: items[] present, but selected_node_id /
+            # confidence live at the top level. Merge without inventing a node.
+            for transport_item in raw_items:
+                if not isinstance(transport_item, dict):
+                    continue
+                for key in _decision_transport_keys:
+                    if key in args and (
+                        key not in transport_item
+                        or transport_item.get(key) in (None, "", [], {})
+                    ):
+                        transport_item[key] = args[key]
         for transport_item in _tool_array_argument(args, "items"):
             for field in ("evidence", "rejected_nodes", "missing_facts"):
                 if field in transport_item:
@@ -2243,8 +2598,14 @@ class SmetaNormToolSession:
                         transport_item[field]
                     )
             selected_node_id = str(
-                transport_item.get("selected_node_id") or ""
+                transport_item.get("selected_node_id")
+                or args.get("selected_node_id")
+                or ""
             ).strip()
+            if selected_node_id and not str(
+                transport_item.get("selected_node_id") or ""
+            ).strip():
+                transport_item["selected_node_id"] = selected_node_id
             evidence = transport_item.get("evidence")
             if selected_node_id and isinstance(evidence, list):
                 # Qwen may compare several visible nodes and serialize the
@@ -2335,6 +2696,11 @@ class SmetaNormToolSession:
                 continue
             if decision in {"select", "select_node", "choose", "navigate", "next", "confirm", "accepted"}:
                 decision = "continue"
+            selected_hint = str(
+                item.get("selected_node_id") or args.get("selected_node_id") or ""
+            ).strip()
+            if not decision and selected_hint:
+                decision = "continue"
             if decision not in {"continue", "ask", "broaden", "unbound"}:
                 failure(
                     work_id,
@@ -2352,6 +2718,48 @@ class SmetaNormToolSession:
             }
             if current_node_id:
                 visible_ids.add(current_node_id)
+            # Flat/hybrid continue often omits evidence for the selected child
+            # (or only cites rejected siblings). Draft passport evidence for the
+            # model-chosen node so transport can advance without inventing a pick.
+            if decision == "continue" and selected_hint in visible_ids:
+                evidence_values = item.get("evidence") or args.get("evidence") or []
+                if not isinstance(evidence_values, list):
+                    evidence_values = []
+                cites_selected = any(
+                    isinstance(entry, dict)
+                    and str(entry.get("source_node_id") or "").strip() == selected_hint
+                    for entry in evidence_values
+                )
+                if not cites_selected:
+                    selected_node = registry.get(selected_hint) or {}
+                    for field in (
+                        "purpose",
+                        "official_name",
+                        "official_heading",
+                        "title",
+                        "typical_scope",
+                    ):
+                        value = selected_node.get(field)
+                        if value in (None, "", []):
+                            continue
+                        claim = (
+                            "; ".join(
+                                str(part) for part in value if str(part).strip()
+                            )
+                            if isinstance(value, list)
+                            else str(value)
+                        )
+                        if not claim.strip():
+                            continue
+                        drafted = {
+                            "source_node_id": selected_hint,
+                            "field": field,
+                            "claim": claim[:240],
+                        }
+                        item["evidence"] = [drafted, *evidence_values]
+                        break
+            if not str(item.get("confidence") or "").strip():
+                item["confidence"] = "medium"
             evidence_out = []
             evidence_errors = []
             evidence_values = (
@@ -2359,6 +2767,7 @@ class SmetaNormToolSession:
                 if "evidence" in item
                 else args.get("evidence") or []
             )
+            selected_for_evidence = selected_hint
             for evidence in evidence_values or []:
                 if not isinstance(evidence, dict):
                     evidence_errors.append("evidence item must be an object")
@@ -2371,6 +2780,24 @@ class SmetaNormToolSession:
                     str(evidence.get("claim") or "").split()
                 )
                 source_node = registry.get(source_node_id)
+                # Qwen often cites the parent/root passport while selecting a child.
+                # Remap only when the selected visible node carries the same field.
+                if (
+                    (source_node_id not in visible_ids or not source_node)
+                    and selected_for_evidence in visible_ids
+                    and source_node_id in {
+                        current_node_id,
+                        expected_current,
+                        "catalog:root",
+                        "",
+                    }
+                ):
+                    candidate = registry.get(selected_for_evidence)
+                    if isinstance(candidate, dict) and candidate.get(field) not in (
+                        None, "", [],
+                    ):
+                        source_node_id = selected_for_evidence
+                        source_node = candidate
                 if source_node_id not in visible_ids or not source_node:
                     evidence_errors.append(
                         f"evidence node {source_node_id!r} was not shown in the current menu"
@@ -2440,10 +2867,11 @@ class SmetaNormToolSession:
                     )
                     continue
                 rejected_out.append({"node_id": node_id, "reason": reason})
+            # Qwen often rejects every sibling at wide table menus (10–16).
+            # Hard-fail burned ~10 model turns (~80s) after a correct selection.
+            # Keep the first six as audit; the selected child is what advances.
             if len(rejected_out) > 6:
-                evidence_errors.append(
-                    "rejected_nodes is limited to the six visible alternatives"
-                )
+                rejected_out = rejected_out[:6]
             if evidence_errors:
                 failure(
                     work_id,
@@ -2465,6 +2893,14 @@ class SmetaNormToolSession:
                     ["allowed confidence values: low, medium, high"],
                 )
                 continue
+            # Selection wins over a conflicting rejected_nodes entry (Qwen often
+            # lists the chosen child in both places while comparing siblings).
+            if selected_hint:
+                rejected_out = [
+                    entry
+                    for entry in rejected_out
+                    if str(entry.get("node_id") or "") != selected_hint
+                ]
             audit = {
                 "decision": decision,
                 "current_node_id": current_node_id,
@@ -2554,6 +2990,25 @@ class SmetaNormToolSession:
                         ["cite at least one shown official node"],
                     )
                     continue
+                current_node = registry.get(current_node_id) or {}
+                current_type = str(current_node.get("node_type") or "")
+                parent_id = str(current_node.get("parent_id") or "")
+                # Qwen often unbinds inside ГЭСНм after one family glance; film /
+                # building rows then never reach ГЭСН. Require broaden to root.
+                if (
+                    current_node_id != "catalog:root"
+                    and current_type in {"family", "collection"}
+                    and parent_id
+                ):
+                    failure(
+                        work_id,
+                        "catalog unbound before leaving the family branch is premature",
+                        [
+                            "call broaden_norm_catalog toward catalog:root",
+                            "consider other families before unbound",
+                        ],
+                    )
+                    continue
                 self.catalog_terminal_decisions[work_id] = audit
                 rows_out.append({
                     "work_id": work_id,
@@ -2566,6 +3021,7 @@ class SmetaNormToolSession:
                         "submit_lsr_mapping with decision=unbound and preserve "
                         "this evidence; do not search another branch silently"
                     ),
+                    "force_mapping_serialization": True,
                 })
                 self.catalog_trace.append({
                     "trace_id": uuid4().hex,
@@ -2598,6 +3054,7 @@ class SmetaNormToolSession:
                     )
                     continue
                 self._clear_catalog_descendants(work_id, parent_id)
+                self._drop_routes_for_work(work_id)
                 self.catalog_current_nodes[work_id] = parent_id
                 row = {
                     "work_id": work_id,
@@ -2639,15 +3096,14 @@ class SmetaNormToolSession:
                     ],
                 )
                 continue
-            if selected_node_id in {
-                rejected["node_id"] for rejected in rejected_out
-            }:
-                failure(
-                    work_id,
-                    "selected node cannot also be rejected by the model",
-                    [f"selected_node_id={selected_node_id!r}"],
-                )
-                continue
+            # After resolve, drop the chosen child from rejected audit again —
+            # Qwen frequently puts the same node in both fields.
+            rejected_out = [
+                entry
+                for entry in rejected_out
+                if str(entry.get("node_id") or "") != selected_node_id
+            ]
+            audit["rejected_nodes"] = rejected_out
             if not evidence_out:
                 failure(
                     work_id,
@@ -2677,11 +3133,11 @@ class SmetaNormToolSession:
                 )
                 continue
             node_type = str(selected_node.get("node_type") or "")
-            work_features = (
-                dict(item.get("work_features") or {})
-                if isinstance(item.get("work_features"), dict)
-                else {}
+            work_features = _merge_work_features_with_source_draft(
+                item.get("work_features") if isinstance(item.get("work_features"), dict) else {},
+                self.by_id.get(work_id),
             )
+            item["work_features"] = work_features
             catalog_query = " ".join(
                 str(item.get("catalog_query") or "").split()
             )
@@ -2756,22 +3212,25 @@ class SmetaNormToolSession:
                     limit=6,
                 )
                 trace = dict(shortlist.get("retrieval_trace") or {})
-                if str(trace.get("rerank_status") or "") not in {
-                    "ok",
-                    "pool_too_small",
-                }:
+                shortlist_cards = [
+                    value
+                    for value in (shortlist.get("cards") or [])
+                    if isinstance(value, dict)
+                ]
+                menu_ready, rerank_status = _catalog_shortlist_menu_ready(
+                    shortlist_cards,
+                    rerank_status=trace.get("rerank_status"),
+                )
+                if not menu_ready:
                     failure(
                         work_id,
-                        "collection shortlist rerank failed",
-                        [
-                            f"rerank_status={trace.get('rerank_status') or 'missing'}"
-                        ],
+                        "collection shortlist is empty",
+                        [f"rerank_status={rerank_status}"],
                     )
                     continue
                 next_items = [
                     self._catalog_node_fields(value)
-                    for value in (shortlist.get("cards") or [])
-                    if isinstance(value, dict)
+                    for value in shortlist_cards
                 ]
                 self.selected_base_types[work_id] = {
                     family.casefold(): {
@@ -2829,22 +3288,25 @@ class SmetaNormToolSession:
                     limit=16,
                 )
                 trace = dict(shortlist.get("retrieval_trace") or {})
-                if str(trace.get("rerank_status") or "") not in {
-                    "ok",
-                    "pool_too_small",
-                }:
+                shortlist_cards = [
+                    value
+                    for value in (shortlist.get("cards") or [])
+                    if isinstance(value, dict)
+                ]
+                menu_ready, rerank_status = _catalog_shortlist_menu_ready(
+                    shortlist_cards,
+                    rerank_status=trace.get("rerank_status"),
+                )
+                if not menu_ready:
                     failure(
                         work_id,
-                        "table shortlist rerank failed",
-                        [
-                            f"rerank_status={trace.get('rerank_status') or 'missing'}"
-                        ],
+                        "table shortlist is empty",
+                        [f"rerank_status={rerank_status}"],
                     )
                     continue
                 next_items = [
                     self._catalog_node_fields(value)
-                    for value in (shortlist.get("cards") or [])
-                    if isinstance(value, dict)
+                    for value in shortlist_cards
                 ]
                 self.selected_sections[work_id] = {
                     (family.casefold(), collection, section)
@@ -2860,21 +3322,9 @@ class SmetaNormToolSession:
                 self.selected_tables[work_id] = {
                     (family.casefold(), collection, table_code)
                 }
-                cache_id = (
-                    f"route:{family.casefold()}:{collection}:"
-                    f"{section}:{table_code}"
-                )
-                self.route_evidence_cache[cache_id] = {
-                    "cache_id": cache_id,
-                    "source_work_id": work_id,
-                    "family": family,
-                    "collection": collection,
-                    "section": section,
-                    "table_code": table_code,
-                    "source": "typed_catalog_trace",
-                    "decision_owner": "model",
-                    "applicability": "not_decided_for_other_rows",
-                }
+                # Do not publish table select into route_evidence_cache.
+                # A wrong first table (e.g. ГЭСНм:06-05-001) would be reused
+                # by every later row before any bind proves the route.
                 next_level = "norm_search"
             else:
                 failure(
@@ -2923,10 +3373,18 @@ class SmetaNormToolSession:
             "ok": any(row.get("ok") is True for row in rows_out),
             "rows": rows_out,
         }
+        if any(
+            row.get("force_mapping_serialization") is True for row in rows_out
+        ):
+            result["force_mapping_serialization"] = True
         if self.catalog_stall is not None:
             result["catalog_stalled"] = True
             result["catalog_stall"] = dict(self.catalog_stall)
             result["error"] = str(self.catalog_stall.get("reason") or "")
+            # Stop burning identical reject turns: leave catalog for mapping /
+            # unbound serialization. Does not invent a norm.
+            if not result["ok"]:
+                result["force_mapping_serialization"] = True
         pending = next(
             (
                 row.get("pending_question")
@@ -3681,18 +4139,24 @@ class SmetaNormToolSession:
                     catalog_retrieval_trace = dict(
                         shortlist_result.get("retrieval_trace") or {}
                     )
-                    rerank_status = str(
-                        catalog_retrieval_trace.get("rerank_status") or ""
+                    shortlist_cards = [
+                        entry
+                        for entry in (shortlist_result.get("cards") or [])
+                        if isinstance(entry, dict)
+                    ]
+                    menu_ready, rerank_status = _catalog_shortlist_menu_ready(
+                        shortlist_cards,
+                        rerank_status=catalog_retrieval_trace.get("rerank_status"),
                     )
-                    if rerank_status != "ok":
+                    if not menu_ready:
                         reject(
                             work_id=work_id,
-                            error="collection catalog shortlist requires successful rerank",
+                            error="collection catalog shortlist is empty",
                             details=[
-                                f"rerank_status={rerank_status or 'missing'}",
+                                f"rerank_status={rerank_status}",
                                 (
-                                    "retry the same family selection after the reranker "
-                                    "is available; do not guess a collection number"
+                                    "rephrase catalog_query; do not guess a collection "
+                                    "number from the complete catalog"
                                 ),
                             ],
                             filters=filters,
@@ -3839,28 +4303,30 @@ class SmetaNormToolSession:
                 table_retrieval_trace = dict(
                     table_shortlist.get("retrieval_trace") or {}
                 )
-                table_rerank_status = str(
-                    table_retrieval_trace.get("rerank_status") or ""
+                table_cards = [
+                    entry
+                    for entry in (table_shortlist.get("cards") or [])
+                    if isinstance(entry, dict)
+                ]
+                menu_ready, table_rerank_status = _catalog_shortlist_menu_ready(
+                    table_cards,
+                    rerank_status=table_retrieval_trace.get("rerank_status"),
                 )
-                if table_rerank_status not in {"ok", "pool_too_small"}:
+                if not menu_ready:
                     reject(
                         work_id=work_id,
-                        error="table catalog shortlist requires successful rerank",
+                        error="table catalog shortlist is empty",
                         details=[
-                            f"rerank_status={table_rerank_status or 'missing'}",
+                            f"rerank_status={table_rerank_status}",
                             (
-                                "retry the same section after the reranker is "
-                                "available; do not jump to a norm search"
+                                "rephrase catalog_query for this section; do not jump "
+                                "to a norm search without a table menu"
                             ),
                         ],
                         filters=filters,
                     )
                     continue
-                payload["items"] = [
-                    dict(entry)
-                    for entry in (table_shortlist.get("cards") or [])
-                    if isinstance(entry, dict)
-                ]
+                payload["items"] = [dict(entry) for entry in table_cards]
                 payload["catalog_query"] = requested_catalog_query
                 payload["catalog_retrieval_trace"] = table_retrieval_trace
             payload_items = [
@@ -4596,16 +5062,41 @@ class SmetaNormToolSession:
                     evidence=evidence,
                 )
                 unbound_attempt_key = f"unbound:{work_id}"
+                # Soft evidence gaps after real search/read used to force a second
+                # 5–40s structured mapping call. Accept those as candidate once.
+                # Zero-search catalog unbound must NOT close the row — that caused
+                # mass "без нормы" on demo runs (vor-0001/5/6/7).
+                hard_unbound_markers = (
+                    "unbound is not terminal because",
+                    "unbound decision conflicts with",
+                    "cites norm cards not opened",
+                    "collections without an opened typed card",
+                    "opened_norm_codes contains cards not opened",
+                )
+                soft_evidence_gap = bool(evidence_errors) and not any(
+                    any(marker in str(error) for marker in hard_unbound_markers)
+                    for error in evidence_errors
+                )
+                has_tool_evidence = bool(self.opened.get(work_id)) or any(
+                    str(trace.get("work_id") or "") == work_id
+                    for trace in self.query_trace
+                )
+                prior_unbound_attempt = int(
+                    self.candidate_draft_attempts.get(unbound_attempt_key, 0)
+                )
+                # With search/read: accept soft gap immediately (no second mapping).
+                # Without tool evidence: require one prior reject so catalog-only
+                # unbound cannot close the row on the first forced mapping.
                 accept_unbound_candidate = (
                     _candidate_draft_enabled()
                     and bool(reason)
-                    and self.candidate_draft_attempts.get(unbound_attempt_key, 0) >= 1
-                    and bool(evidence_errors)
+                    and soft_evidence_gap
+                    and (has_tool_evidence or prior_unbound_attempt >= 1)
                 )
                 if evidence_errors and not accept_unbound_candidate:
                     if _candidate_draft_enabled() and reason:
                         self.candidate_draft_attempts[unbound_attempt_key] = (
-                            self.candidate_draft_attempts.get(unbound_attempt_key, 0) + 1
+                            prior_unbound_attempt + 1
                         )
                     errors.append({
                         "work_id": work_id,
@@ -4620,6 +5111,10 @@ class SmetaNormToolSession:
                     })
                     continue
                 if accept_unbound_candidate:
+                    self.candidate_draft_attempts[unbound_attempt_key] = max(
+                        1,
+                        int(self.candidate_draft_attempts.get(unbound_attempt_key, 0)),
+                    )
                     proposed[work_id] = {
                         "norm_code": "",
                         "selection_kind": str(item.get("selection_kind") or ""),
@@ -4696,6 +5191,7 @@ class SmetaNormToolSession:
             ))
             if not str(item.get("reason") or "").strip():
                 bind_errors.append("reason is required")
+            bind_errors.extend(_exact_bind_reason_self_contradiction_errors(item))
             if (
                 self.require_scoped_search
                 and opened_card is not None
@@ -4708,7 +5204,15 @@ class SmetaNormToolSession:
                     "selected typed card unit is incompatible with the source work unit"
                 )
             candidate_validation_errors: list[str] = []
-            semantic_draft_errors = _candidate_draft_errors(bind_errors)
+            # Self-contradicting exact binds are never draft-eligible: a repeated
+            # "не применима" reason must not become model_batch_candidate.
+            semantic_draft_errors = (
+                _candidate_draft_errors(bind_errors)
+                and not any(
+                    "denies applicability" in str(error)
+                    for error in bind_errors
+                )
+            )
             accept_as_candidate = (
                 _candidate_draft_enabled()
                 and opened_card is not None
@@ -4802,6 +5306,14 @@ class SmetaNormToolSession:
             }
         for work_id, selection in proposed.items():
             self.accepted_rows[work_id] = selection
+            if (
+                str(selection.get("norm_code") or "").strip()
+                and str(selection.get("review_status") or "") != "model_batch_candidate"
+            ):
+                self._cache_bound_route(work_id)
+            else:
+                # Unbound/covered_by/candidate must not seed reuse for other rows.
+                self._drop_routes_for_work(work_id)
             if self.decision_checkpoint is not None:
                 self.decision_checkpoint(work_id, copy.deepcopy(selection))
         if self.progress:
@@ -5174,35 +5686,84 @@ class SmetaNormToolSession:
             "route_evidence_cache": self._completed_route_cache(),
         }
 
-    def _completed_route_cache(self) -> list[dict[str, Any]]:
-        """Expose server-traced table routes as reusable evidence, never decisions."""
+    def _route_payload_for_work(self, work_id: str) -> list[dict[str, Any]]:
+        """Build compact route evidence from the work's selected table path."""
         routes: list[dict[str, Any]] = []
-        for work_id in self.by_id:
-            tables = sorted(self.selected_tables.get(work_id) or set())
-            sections = sorted(self.selected_sections.get(work_id) or set())
-            for family, collection, table_code in tables:
-                section = next(
-                    (
-                        value
-                        for section_family, section_collection, value in sections
-                        if section_family == family
-                        and section_collection == collection
-                    ),
-                    table_code[:5],
-                )
-                routes.append({
-                    "cache_id": (
-                        f"route:{family}:{collection}:{section}:{table_code}"
-                    ),
-                    "source_work_id": work_id,
-                    "family": family,
-                    "collection": collection,
-                    "section": section,
-                    "table_code": table_code,
-                    "source": "typed_catalog_trace",
-                    "decision_owner": "model",
-                    "applicability": "not_decided_for_other_rows",
-                })
+        tables = sorted(self.selected_tables.get(work_id) or set())
+        sections = sorted(self.selected_sections.get(work_id) or set())
+        for family, collection, table_code in tables:
+            section = next(
+                (
+                    value
+                    for section_family, section_collection, value in sections
+                    if section_family == family
+                    and section_collection == collection
+                ),
+                table_code[:5],
+            )
+            family_label = str(family)
+            for base in (self.selected_base_types.get(work_id) or {}).values():
+                if str(base.get("family") or "").casefold() == family.casefold():
+                    family_label = str(base.get("family") or family)
+                    break
+            routes.append({
+                "cache_id": (
+                    f"route:{family.casefold()}:{collection}:"
+                    f"{section}:{table_code}"
+                ),
+                "source_work_id": work_id,
+                "family": family_label,
+                "collection": collection,
+                "section": section,
+                "table_code": table_code,
+                "source": "typed_catalog_trace",
+                "decision_owner": "model",
+                "applicability": "not_decided_for_other_rows",
+            })
+        return routes
+
+    def _cache_bound_route(self, work_id: str) -> None:
+        """Publish a route only after a successful model bind."""
+        for route in self._route_payload_for_work(work_id):
+            cache_id = str(route.get("cache_id") or "")
+            if cache_id:
+                self.route_evidence_cache[cache_id] = route
+
+    def _drop_routes_for_work(self, work_id: str) -> None:
+        """Remove cache entries sourced by a work that did not bind."""
+        drop_ids = [
+            cache_id
+            for cache_id, route in self.route_evidence_cache.items()
+            if str(route.get("source_work_id") or "") == work_id
+        ]
+        for cache_id in drop_ids:
+            self.route_evidence_cache.pop(cache_id, None)
+
+    def _completed_route_cache(self) -> list[dict[str, Any]]:
+        """Expose only bind-proven table routes as reusable evidence."""
+        routes: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        bound_work_ids = {
+            work_id
+            for work_id, selection in self.accepted_rows.items()
+            if str(selection.get("norm_code") or "").strip()
+            and str(selection.get("review_status") or "") != "model_batch_candidate"
+        }
+        for work_id in bound_work_ids:
+            for route in self._route_payload_for_work(work_id):
+                cache_id = str(route.get("cache_id") or "")
+                if not cache_id or cache_id in seen:
+                    continue
+                seen.add(cache_id)
+                routes.append(route)
+        for cache_id, route in self.route_evidence_cache.items():
+            source = str(route.get("source_work_id") or "")
+            if source and source not in bound_work_ids:
+                continue
+            if cache_id in seen:
+                continue
+            seen.add(cache_id)
+            routes.append(copy.deepcopy(route))
         return routes
 
 
@@ -5324,14 +5885,29 @@ def _run_native_norm_agent(
             ):
                 batch_resume_checkpoint = resumed
         if progress:
+            rows_done = int(merged["valid_model_rows"])
+            elapsed_sec = round(max(0.0, perf_counter() - batches_started), 1)
+            sec_per_row = (
+                round(elapsed_sec / rows_done, 1) if rows_done > 0 else None
+            )
+            pace_suffix = (
+                f" (~{sec_per_row} с/поз)" if sec_per_row is not None else ""
+            )
             progress({
                 "phase": "source_batch",
                 "status": "started",
-                "label": f"Смета: обрабатываю строки {merged['valid_model_rows'] + 1}–{merged['valid_model_rows'] + len(rows)} из {len(work_rows)}",
+                "label": (
+                    f"Смета: обрабатываю строки "
+                    f"{rows_done + 1}–{rows_done + len(rows)} из {len(work_rows)}"
+                    f"{pace_suffix}"
+                ),
                 "batch": batch_index,
                 "batches": len(batches),
-                "completed_rows": merged["valid_model_rows"],
+                "completed_rows": rows_done,
+                "rows_done": rows_done,
                 "total_rows": len(work_rows),
+                "elapsed_sec": elapsed_sec,
+                "sec_per_row": sec_per_row,
             })
         task_rows = [
             {
@@ -5469,6 +6045,17 @@ def _run_native_norm_agent(
                     require_scoped_search=require_scoped_search,
                 )
         except Exception as error:
+            failed_ids = [str(row["work_id"]) for row in rows]
+            blocker = {
+                "code": (
+                    "structured_mapping_timeout"
+                    if isinstance(error, MappingTransportTimeout)
+                    or _is_timeout_error(error)
+                    else "batch_failed"
+                ),
+                "reason": str(error),
+                "failed_work_ids": failed_ids,
+            }
             if checkpoint is not None:
                 checkpoint(copy.deepcopy({
                     **merged,
@@ -5478,16 +6065,37 @@ def _run_native_norm_agent(
                         for work_id in ordered_work_ids
                         if work_id not in merged["selections"]
                     ],
-                    "incomplete_blocker": {
-                        "code": (
-                            "structured_mapping_timeout"
-                            if isinstance(error, MappingTransportTimeout)
-                            or _is_timeout_error(error)
-                            else "batch_failed"
-                        ),
-                        "reason": str(error),
-                    },
+                    "incomplete_blocker": blocker,
                 }))
+            # Keep earlier accepted decisions; skip the stuck batch and continue.
+            if _is_recoverable_batch_mapping_error(error) and (
+                merged["selections"] or batch_index < len(batches)
+            ):
+                batch_traces.append({
+                    "status": "batch_skipped_after_mapping_failure",
+                    "error": str(error),
+                    "failed_work_ids": failed_ids,
+                })
+                merged["incomplete"] = True
+                merged["incomplete_blocker"] = blocker
+                merged["remaining_work_ids"] = [
+                    work_id
+                    for work_id in ordered_work_ids
+                    if work_id not in merged["selections"]
+                ]
+                if progress:
+                    progress({
+                        "phase": "source_batch",
+                        "status": "degraded",
+                        "label": (
+                            "Смета: строка не закрыта после repair — "
+                            "продолжаю следующие"
+                        ),
+                        "batch": batch_index,
+                        "batches": len(batches),
+                        "failed_work_ids": failed_ids,
+                    })
+                continue
             raise
         merged["selections"].update(result["selections"])
         merged["opened_cards"].update(result.get("opened_cards") or {})
@@ -5503,7 +6111,11 @@ def _run_native_norm_agent(
             if work_id not in merged["selections"]
         ]
         merged["incomplete"] = bool(merged["remaining_work_ids"])
-        merged["incomplete_blocker"] = {}
+        batch_blocker = dict(result.get("incomplete_blocker") or {})
+        if merged["incomplete"] and batch_blocker:
+            merged["incomplete_blocker"] = batch_blocker
+        elif not merged["incomplete"]:
+            merged["incomplete_blocker"] = {}
         known_cache_ids = {
             str(item.get("cache_id") or "")
             for item in merged["route_evidence_cache"]
@@ -5518,8 +6130,17 @@ def _run_native_norm_agent(
         if checkpoint is not None:
             checkpoint(copy.deepcopy(merged))
         if progress:
-            elapsed_sec = max(0.0, perf_counter() - batches_started)
-            eta_sec = round((elapsed_sec / batch_index) * (len(batches) - batch_index))
+            rows_done = int(merged["valid_model_rows"])
+            elapsed_sec = round(max(0.0, perf_counter() - batches_started), 1)
+            sec_per_row = (
+                round(elapsed_sec / rows_done, 1) if rows_done > 0 else None
+            )
+            eta_sec = round(
+                (elapsed_sec / batch_index) * (len(batches) - batch_index)
+            )
+            pace_label = (
+                f" · ~{sec_per_row} с/поз" if sec_per_row is not None else ""
+            )
             eta_label = (
                 f" · осталось около {max(1, round(eta_sec / 60))} мин"
                 if eta_sec >= 60
@@ -5530,18 +6151,20 @@ def _run_native_norm_agent(
             progress({
                 "phase": "source_batch",
                 "status": "done",
-                "label": f"Смета: обработано {merged['valid_model_rows']} из {len(work_rows)} строк{eta_label}",
+                "label": (
+                    f"Смета: обработано {rows_done} из {len(work_rows)} строк"
+                    f"{pace_label}{eta_label}"
+                ),
                 "batch": batch_index,
                 "batches": len(batches),
-                "completed_rows": merged["valid_model_rows"],
+                "completed_rows": rows_done,
+                "rows_done": rows_done,
                 "total_rows": len(work_rows),
+                "elapsed_sec": elapsed_sec,
+                "sec_per_row": sec_per_row,
                 "eta_sec": eta_sec,
             })
     missing = [str(row["work_id"]) for row in work_rows if str(row["work_id"]) not in merged["selections"]]
-    if missing:
-        raise RuntimeError(f"model batches did not cover source rows: {missing}")
-    merged["incomplete"] = False
-    merged["remaining_work_ids"] = []
     merged["agent_trace"] = {
         "mode": "model_bounded_batch_rag_tools",
         "engine": str((batch_traces[0] if batch_traces else {}).get("engine") or "native"),
@@ -5563,6 +6186,55 @@ def _run_native_norm_agent(
             for key in {key for trace in batch_traces for key in (trace.get("token_usage") or {})}
         },
     }
+    if missing:
+        # Keep uncovered rows open (empty selection) and still finalize Excel.
+        # Code does not invent norms; open rows stay without a rate.
+        for work_id in missing:
+            merged["selections"].setdefault(work_id, {
+                "norm_code": "",
+                "reason": (
+                    "row left open after mapping budget / validation exhaustion; "
+                    "no model terminal decision was accepted"
+                ),
+                "review_status": "model_batch_open",
+            })
+        merged["incomplete"] = True
+        merged["remaining_work_ids"] = []
+        merged["valid_model_rows"] = sum(
+            1
+            for selection in merged["selections"].values()
+            if isinstance(selection, dict)
+            and (
+                str(selection.get("norm_code") or "").strip()
+                or str(selection.get("review_status") or "").startswith("model_batch")
+            )
+        )
+        if not merged.get("incomplete_blocker"):
+            merged["incomplete_blocker"] = {
+                "code": "rows_skipped_after_mapping_failure",
+                "reason": (
+                    "some source rows were not mapped after bounded schema repair; "
+                    "open rows preserved without invented rates"
+                ),
+                "missing_work_ids": missing,
+            }
+        merged["agent_trace"]["status"] = (
+            "partial_after_mapping_failure"
+            if any(
+                str((merged["selections"].get(work_id) or {}).get("norm_code") or "").strip()
+                or str((merged["selections"].get(work_id) or {}).get("review_status") or "")
+                in {"model_batch_unbound", "model_batch_candidate", "model_batch"}
+                for work_id in ordered_work_ids
+                if work_id not in missing
+            )
+            else "all_rows_open_after_mapping_failure"
+        )
+        if checkpoint is not None:
+            checkpoint(copy.deepcopy(merged))
+        return merged
+    merged["incomplete"] = False
+    merged["remaining_work_ids"] = []
+    merged["incomplete_blocker"] = {}
     return merged
 
 
@@ -5706,31 +6378,93 @@ def _run_global_norm_review(
             "only when this specific dispute needs it. Submit one terminal "
             "decision for every supplied work_id."
         )
-        if batch_runner is not None:
-            reviewed = batch_runner(
-                packet_rows,
-                candidate_limit=candidate_limit,
-                max_turns=max_turns,
-                progress=progress,
-                user_request=review_request,
+        try:
+            if batch_runner is not None:
+                reviewed = batch_runner(
+                    packet_rows,
+                    candidate_limit=candidate_limit,
+                    max_turns=max_turns,
+                    progress=progress,
+                    user_request=review_request,
+                )
+            else:
+                reviewed = _run_batch_norm_agent(
+                    packet_rows,
+                    exchange,
+                    mapping_exchange=mapping_exchange,
+                    candidate_limit=candidate_limit,
+                    max_turns=max_turns,
+                    progress=progress,
+                    user_request=review_request,
+                    require_scoped_search=require_scoped_search,
+                )
+        except RuntimeError as error:
+            # Row mapping already produced terminal decisions. A failed conflict
+            # re-serialization must not destroy the whole LSR document.
+            message = str(error)
+            recoverable = any(
+                marker in message
+                for marker in (
+                    "mapping failed validation",
+                    "did not submit mapping within",
+                    "returned no rows in structured mapping",
+                )
             )
-        else:
-            reviewed = _run_batch_norm_agent(
-                packet_rows,
-                exchange,
-                mapping_exchange=mapping_exchange,
-                candidate_limit=candidate_limit,
-                max_turns=max_turns,
-                progress=progress,
-                user_request=review_request,
-                require_scoped_search=require_scoped_search,
-            )
+            if not recoverable:
+                raise
+            if progress:
+                progress({
+                    "phase": "global_review",
+                    "status": "waiting",
+                    "label": (
+                        "Смета: конфликт-ревью не завершило mapping — "
+                        "сохранены исходные решения строк"
+                    ),
+                    "packet": packet_index,
+                    "error": message[:240],
+                })
+            reviewed = {
+                "selections": {
+                    work_id: copy.deepcopy(initial_selections[work_id])
+                    for work_id in packet_work_ids
+                    if work_id in initial_selections
+                },
+                "opened_cards": {},
+                "browse_trace": {},
+                "query_trace": [],
+                "catalog_trace": [],
+                "model_trace": [],
+                "agent_trace": {
+                    "mode": "model_conflict_group_review",
+                    "status": "packet_preserved_after_mapping_failure",
+                    "error": message[:400],
+                    "preserved_work_ids": list(packet_work_ids),
+                },
+            }
         packet_selections = dict(reviewed.get("selections") or {})
         missing = sorted(packet_set - set(packet_selections))
         if missing:
-            raise RuntimeError(
-                "global conflict review omitted work_ids: " + ", ".join(missing)
-            )
+            # Prefer preserving known initial decisions over aborting the document.
+            for work_id in missing:
+                if work_id in initial_selections:
+                    packet_selections[work_id] = copy.deepcopy(
+                        initial_selections[work_id]
+                    )
+            still_missing = sorted(packet_set - set(packet_selections))
+            if still_missing:
+                raise RuntimeError(
+                    "global conflict review omitted work_ids: "
+                    + ", ".join(still_missing)
+                )
+            reviewed = {
+                **reviewed,
+                "selections": packet_selections,
+                "agent_trace": {
+                    **dict(reviewed.get("agent_trace") or {}),
+                    "status": "packet_backfilled_from_initial",
+                    "backfilled_work_ids": missing,
+                },
+            }
         reviewed_selections.update(packet_selections)
         review_results.append(reviewed)
 
@@ -6066,49 +6800,70 @@ def _phase_norm_tools(
                 *common_fields,
                 "selected_node_id",
             ]
-            if phase == "family_select":
-                continue_fields.extend(["work_features", "catalog_query"])
-            elif phase == "section_select":
+            if phase == "section_select":
                 continue_fields.append("catalog_query")
             split_continue_required = [*common_fields, "selected_node_id"]
-            if phase == "family_select":
-                split_continue_required.extend(["work_features", "catalog_query"])
-            elif phase == "section_select":
+            if phase == "section_select":
                 split_continue_required.append("catalog_query")
-            route_specs = (
-                (
-                    "continue_norm_catalog",
-                    "Select one exact shown child using official evidence.",
-                    continue_fields,
-                    split_continue_required,
-                ),
-                (
-                    "ask_norm_catalog_fact",
+            # family_select stays on items[] (Ollama/Qwen XML tool format). A flat
+            # schema caused HTTP 500 "parameter closed by function". Keep one
+            # continue tool with minimal required fields; LES drafts gaps.
+            if phase == "family_select":
+                route_specs = (
                     (
-                        "Ask one question only about a missing observable "
-                        "installation or project fact. Forbidden in "
-                        "family_select: encode unknown details and choose the "
-                        "norm family from the stated operation."
+                        "continue_norm_catalog",
+                        (
+                            "Select exactly one shown family. items must contain "
+                            "ONE decision object with work_id, selected_node_id, "
+                            "confidence. Do NOT echo passport cards into items. "
+                            "work_features/evidence optional — LES drafts from VOR title."
+                        ),
+                        (
+                            "work_id",
+                            "selected_node_id",
+                            "confidence",
+                            "catalog_query",
+                            "work_features",
+                            "evidence",
+                        ),
+                        ("work_id", "selected_node_id", "confidence"),
                     ),
-                    [*common_fields, "question"],
-                    [*common_fields, "question"],
-                ),
-                (
-                    "broaden_norm_catalog",
-                    "Return exactly to the parent node without choosing a sibling.",
-                    list(common_fields),
-                    list(common_fields),
-                ),
-                (
-                    "unbound_norm_catalog",
+                )
+            else:
+                route_specs = (
                     (
-                        "Stop this catalog route with official evidence; do not "
-                        "invent or jump to a branch."
+                        "continue_norm_catalog",
+                        "Select one exact shown child using official evidence.",
+                        continue_fields,
+                        split_continue_required,
                     ),
-                    list(common_fields),
-                    list(common_fields),
-                ),
-            )
+                    (
+                        "ask_norm_catalog_fact",
+                        (
+                            "Ask one question only about a missing observable "
+                            "installation or project fact. Forbidden in "
+                            "family_select: encode unknown details and choose the "
+                            "norm family from the stated operation."
+                        ),
+                        [*common_fields, "question"],
+                        [*common_fields, "question"],
+                    ),
+                    (
+                        "broaden_norm_catalog",
+                        "Return exactly to the parent node without choosing a sibling.",
+                        list(common_fields),
+                        list(common_fields),
+                    ),
+                    (
+                        "unbound_norm_catalog",
+                        (
+                            "Stop this catalog route with official evidence; do not "
+                            "invent or jump to a branch."
+                        ),
+                        list(common_fields),
+                        list(common_fields),
+                    ),
+                )
             tools = []
             for name, description, fields_for_tool, required_for_tool in route_specs:
                 route_tool = copy.deepcopy(browse)
@@ -6122,12 +6877,18 @@ def _phase_norm_tools(
                 route_item["properties"] = {
                     field: copy.deepcopy(source_properties[field])
                     for field in fields_for_tool
+                    if field in source_properties
                 }
                 route_item["required"] = list(required_for_tool)
                 route_item["additionalProperties"] = False
                 route_item.pop("allOf", None)
-                route_item["properties"]["evidence"]["minItems"] = 1
-                route_item["properties"]["rejected_nodes"]["maxItems"] = 6
+                if (
+                    "evidence" in route_item["properties"]
+                    and "evidence" in required_for_tool
+                ):
+                    route_item["properties"]["evidence"]["minItems"] = 1
+                if "rejected_nodes" in route_item["properties"]:
+                    route_item["properties"]["rejected_nodes"]["maxItems"] = 6
                 if active_work_ids:
                     route_items_schema = (
                         route_tool["function"]["parameters"]["properties"]["items"]
@@ -6143,14 +6904,51 @@ def _phase_norm_tools(
         return [all_tools["search_norms_batch"]]
     if phase == "norm_read":
         return [all_tools["read_norms_batch"]]
-    tools = [
-        all_tools["browse_norm_catalog"],
+    # norm_evidence: no reuse/browse (reuse spins). Broaden stays so the model
+    # can leave a wrong table instead of mass-unbound.
+    broaden = copy.deepcopy(browse)
+    broaden["function"]["name"] = "broaden_norm_catalog"
+    broaden["function"]["description"] = (
+        "Leave the current table when opened cards are not applicable; "
+        "return exactly to the parent catalog node."
+    )
+    broaden_item = (
+        broaden["function"]["parameters"]["properties"]["items"]["items"]
+    )
+    broaden_fields = (
+        "work_id",
+        "current_node_id",
+        "evidence",
+        "rejected_nodes",
+        "confidence",
+        "missing_facts",
+    )
+    source_properties = broaden_item.get("properties") or {}
+    broaden_item["properties"] = {
+        field: copy.deepcopy(source_properties[field])
+        for field in broaden_fields
+        if field in source_properties
+    }
+    broaden_item["required"] = [
+        "work_id",
+        "current_node_id",
+        "evidence",
+        "confidence",
+    ]
+    broaden_item["additionalProperties"] = False
+    broaden_item.pop("allOf", None)
+    if "evidence" in broaden_item["properties"]:
+        broaden_item["properties"]["evidence"]["minItems"] = 1
+    if active_work_ids:
+        broaden["function"]["parameters"]["properties"]["items"]["minItems"] = 1
+        broaden["function"]["parameters"]["properties"]["items"]["maxItems"] = (
+            len(active_work_ids)
+        )
+    return [
         all_tools["search_norms_batch"],
         all_tools["read_norms_batch"],
+        broaden,
     ]
-    if include_route_cache:
-        tools.insert(1, all_tools["reuse_norm_catalog_route"])
-    return tools
 
 
 def _run_batch_norm_agent(
@@ -6316,6 +7114,7 @@ def _run_batch_norm_agent(
     focus_serialization_reason = str(
         resume_state.get("focus_serialization_reason") or ""
     )
+    opened_evidence_turns = int(resume_state.get("opened_evidence_turns") or 0)
     mapping_chunk = _mapping_chunk_size()
 
     def submit_requires_more_evidence(result: dict[str, Any] | None) -> bool:
@@ -6330,6 +7129,10 @@ def _run_batch_norm_agent(
             "selected candidate contradicts bind",
             "selection_kind exact requires exact operation, object and scope",
             "selection_kind exact is unsupported by opened evidence",
+            # Self-contradict exact: return to tools for broaden/unbound, do not
+            # burn the bounded schema-repair budget on the same wrong norm.
+            "contradicts reason that denies applicability",
+            "broaden to another table",
         )
         errors = [
             error for error in (result.get("errors") or [])
@@ -6584,6 +7387,22 @@ def _run_batch_norm_agent(
                     if str(item.get("work_id") or "") == work_id
                 ),
             })
+        compact_route_cache = _compact_route_evidence_cache_for_model(
+            session.route_evidence_cache,
+            limit=24,
+        )
+        reuse_first_instruction = (
+            " route_evidence_cache is non-empty: call reuse_norm_catalog_route "
+            "with a suitable cache_id before browsing from catalog:root. Browse "
+            "from root only when no cached family→collection→section→table route "
+            "applies to the active work. Reuse transfers scope only; search and "
+            "read remain mandatory before bind."
+            if (
+                compact_route_cache
+                and memory_phase in {"family_root", "family_select", "collection"}
+            )
+            else ""
+        )
         phase_instruction = (
             "Call read_norms_batch once for all active_work_ids that appear in "
             "must_read_before_more_search before any new catalog or search action. "
@@ -6617,7 +7436,7 @@ def _run_batch_norm_agent(
                     "reasoning."
                 )
             )
-        )
+        ) + reuse_first_instruction
         if require_scoped_search and len(conversation) >= 2:
             try:
                 focused_request = json.loads(
@@ -6655,9 +7474,8 @@ def _run_batch_norm_agent(
                     "must_read_before_more_search": must_read,
                     "must_navigate_selected_scopes": must_navigate_scopes,
                     "must_search_selected_scopes": must_search_scopes,
-                    "route_evidence_cache": list(
-                        session.route_evidence_cache.values()
-                    )[:24],
+                    "route_reuse_first": bool(compact_route_cache),
+                    "route_evidence_cache": compact_route_cache,
                     "last_submit_validation": (
                         copy.deepcopy(last_submit_result.get("errors") or [])
                         if submit_requires_more_evidence(last_submit_result)
@@ -6705,6 +7523,7 @@ def _run_batch_norm_agent(
             "last_submit_result": copy.deepcopy(last_submit_result),
             "focus_serialization_pending": focus_serialization_pending,
             "focus_serialization_reason": focus_serialization_reason,
+            "opened_evidence_turns": opened_evidence_turns,
             "validation_contract_version": (
                 MAPPING_VALIDATION_CONTRACT_VERSION
             ),
@@ -6720,12 +7539,28 @@ def _run_batch_norm_agent(
 
     session.decision_checkpoint = checkpoint_accepted_decision
 
-    def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any]:
-        nonlocal structured_mapping_attempts
+    def structured_mapping_call(*, reason: str, turn: int) -> dict[str, Any] | None:
+        nonlocal structured_mapping_attempts, last_submit_result
         if mapping_exchange is None:
             raise RuntimeError(reason)
         if structured_mapping_attempts >= 2:
-            raise RuntimeError(
+            if (
+                isinstance(last_submit_result, dict)
+                and not last_submit_result.get("ok")
+                and _promote_terminal_mapping_candidates(
+                    session,
+                    last_submit_result=last_submit_result,
+                    model_trace=model_trace,
+                )
+            ):
+                last_submit_result = {
+                    "ok": True,
+                    "accepted_work_ids": list(session.accepted_rows),
+                    "remaining_work_ids": session.remaining_work_ids,
+                    "promoted": "terminal_mapping_candidate",
+                }
+                return None
+            raise MappingValidationExhausted(
                 "smeta model mapping failed validation after one bounded schema repair"
             )
         remaining = [work_id for work_id in by_id if work_id not in accepted_rows]
@@ -6975,6 +7810,76 @@ def _run_batch_norm_agent(
                 )
             emit_checkpoint(next_turn=turn)
             active_phase = _norm_agent_phase(session)
+        # After the model selects a table, run scoped search once without another
+        # slow tool-call turn. Queries come from the VOR title; the table is the
+        # model's own catalog decision.
+        def _pending_auto_search_items() -> list[dict[str, Any]]:
+            return [
+                item
+                for item in _auto_norm_search_items(session)
+                if not any(
+                    str(trace.get("work_id") or "") == item["work_id"]
+                    for trace in session.query_trace
+                )
+            ]
+
+        if (
+            require_scoped_search
+            and not forced_mapping
+            and active_phase == "norm_search"
+            and session.remaining_work_ids
+        ):
+            auto_items = _pending_auto_search_items()
+            if auto_items:
+                session.execute(
+                    "search_norms_batch",
+                    {"items": auto_items},
+                    turn=turn,
+                )
+                emit_checkpoint(next_turn=turn)
+                active_phase = _norm_agent_phase(session)
+        if (
+            require_scoped_search
+            and forced_mapping
+            and session.remaining_work_ids
+        ):
+            # Do not serialize unbound with zero searches when a table is already
+            # chosen — that only burns mapping_retry on invalid unbound_evidence.
+            pending_search = _pending_auto_search_items()
+            if pending_search:
+                session.execute(
+                    "search_norms_batch",
+                    {"items": pending_search},
+                    turn=turn,
+                )
+                focus_serialization_pending = False
+                forced_mapping = False
+                previous_call_signature = ""
+                duplicate_feedback_signature = ""
+                emit_checkpoint(next_turn=turn)
+                active_phase = _norm_agent_phase(session)
+        # After opened cards: give one free turn (bind / broaden / more read),
+        # then force mapping. Immediate force caused mass unbound when the
+        # first table was wrong and broaden was unavailable.
+        if (
+            require_scoped_search
+            and not forced_mapping
+            and active_phase == "norm_evidence"
+            and any(
+                bool(session.opened.get(work_id))
+                for work_id in _phase_work_ids(session, "norm_evidence")
+            )
+        ):
+            opened_evidence_turns += 1
+            if opened_evidence_turns >= 2:
+                focus_serialization_pending = True
+                forced_mapping = True
+                focus_serialization_reason = (
+                    "opened typed cards already reviewed; serialize "
+                    "bind/covered_by/unbound for the active work_id now"
+                )
+        elif active_phase != "norm_evidence":
+            opened_evidence_turns = 0
         active_tools = (
             _phase_norm_tools(
                 active_phase,
@@ -7020,7 +7925,11 @@ def _run_batch_norm_agent(
                 if str((tool.get("function") or {}).get("name") or "")
                 not in {
                     "submit_lsr_mapping",
-                    "reuse_norm_catalog_route",
+                    *(
+                        ()
+                        if session.route_evidence_cache
+                        else ("reuse_norm_catalog_route",)
+                    ),
                 }
             ]
         )
@@ -7039,21 +7948,49 @@ def _run_batch_norm_agent(
             _prune_stale_tool_evidence(conversation)
             refresh_agent_working_memory()
             repair_mapping = bool(last_submit_result and not last_submit_result.get("ok"))
-            calls = [structured_mapping_call(
-                reason=(
-                    "previous structured mapping failed validation; resubmit only "
-                    "the remaining work_id values using the returned errors"
-                    if repair_mapping else
-                    "the current one-row focus has typed evidence and later-row "
-                    "tool calls were deferred; serialize your own focus decision now"
-                    if focus_serialization_pending
-                    and not focus_serialization_reason
-                    else focus_serialization_reason
-                    if focus_serialization_pending else
-                    f"smeta evidence tool budget exhausted after {max_turns} model turns"
-                ),
-                turn=turn,
-            )]
+            try:
+                mapping_call = structured_mapping_call(
+                    reason=(
+                        "previous structured mapping failed validation; resubmit only "
+                        "the remaining work_id values using the returned errors"
+                        if repair_mapping else
+                        "the current one-row focus has typed evidence and later-row "
+                        "tool calls were deferred; serialize your own focus decision now"
+                        if focus_serialization_pending
+                        and not focus_serialization_reason
+                        else focus_serialization_reason
+                        if focus_serialization_pending else
+                        f"smeta evidence tool budget exhausted after {max_turns} model turns"
+                    ),
+                    turn=turn,
+                )
+            except MappingValidationExhausted as error:
+                return session.result(
+                    model_trace=model_trace,
+                    agent_trace={
+                        "mode": "model_batch_rag_tools",
+                        "turns": turn,
+                        "context_metrics": context_metrics,
+                        "status": "mapping_validation_exhausted",
+                    },
+                    allow_incomplete=True,
+                    incomplete_blocker={
+                        "code": "mapping_validation_exhausted",
+                        "reason": str(error),
+                        "remaining_work_ids": list(session.remaining_work_ids),
+                    },
+                )
+            if mapping_call is None:
+                return session.result(
+                    model_trace=model_trace,
+                    agent_trace={
+                        "mode": "model_batch_rag_tools",
+                        "turns": turn,
+                        "context_metrics": context_metrics,
+                        "status": "candidate_draft_promoted",
+                    },
+                )
+            calls = [mapping_call]
             model_wait_ms = float(model_trace[-1].get("model_wait_ms") or 0.0)
         else:
             _prune_stale_tool_evidence(conversation)
@@ -7092,15 +8029,79 @@ def _run_batch_norm_agent(
                 },
             })
             if not calls:
+                xml_tool_error = str(assistant.get("_les_xml_tool_error") or "").strip()
+                has_row_evidence = any(
+                    any(
+                        str(item.get("work_id") or "") == work_id
+                        for item in session.query_trace
+                    )
+                    or bool(session.opened.get(work_id))
+                    for work_id in session.remaining_work_ids
+                )
+                if xml_tool_error and not has_row_evidence:
+                    conversation.append({
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "recovery_contract": "smeta_xml_tool_recovery_v1",
+                                "instruction": (
+                                    "Previous tool call XML was malformed. Call "
+                                    "exactly one valid catalog/search tool now "
+                                    "with well-formed parameters."
+                                ),
+                                "provider_error": xml_tool_error[:180],
+                            },
+                            ensure_ascii=False,
+                        ),
+                    })
+                    previous_call_signature = ""
+                    emit_checkpoint(next_turn=turn + 1)
+                    continue
                 done_reason = str(assistant.get("_les_done_reason") or "unknown")
                 eval_count = assistant.get("_les_eval_count")
                 model_text = " ".join(str(assistant.get("content") or "").split())[:400]
                 failure = (
-                    "smeta model ended the document workflow without a tool call: "
-                    f"done_reason={done_reason}, eval_count={eval_count}, "
-                    f"model_text={model_text or '<empty>'}"
+                    (
+                        "smeta provider tool XML malformed after retry; serialize "
+                        "with available evidence: "
+                        + xml_tool_error[:180]
+                    )
+                    if xml_tool_error else
+                    (
+                        "smeta model ended the document workflow without a tool call: "
+                        f"done_reason={done_reason}, eval_count={eval_count}, "
+                        f"model_text={model_text or '<empty>'}"
+                    )
                 )
-                calls = [structured_mapping_call(reason=failure, turn=turn)]
+                try:
+                    mapping_call = structured_mapping_call(reason=failure, turn=turn)
+                except MappingValidationExhausted as error:
+                    return session.result(
+                        model_trace=model_trace,
+                        agent_trace={
+                            "mode": "model_batch_rag_tools",
+                            "turns": turn,
+                            "context_metrics": context_metrics,
+                            "status": "mapping_validation_exhausted",
+                        },
+                        allow_incomplete=True,
+                        incomplete_blocker={
+                            "code": "mapping_validation_exhausted",
+                            "reason": str(error),
+                            "remaining_work_ids": list(session.remaining_work_ids),
+                        },
+                    )
+                if mapping_call is None:
+                    return session.result(
+                        model_trace=model_trace,
+                        agent_trace={
+                            "mode": "model_batch_rag_tools",
+                            "turns": turn,
+                            "context_metrics": context_metrics,
+                            "status": "candidate_draft_promoted",
+                        },
+                    )
+                calls = [mapping_call]
         frame_profile = dict(
             (model_trace[-1] if model_trace else {}).get("frame_profile") or {}
         )
@@ -7144,7 +8145,7 @@ def _run_batch_norm_agent(
             )
             if mapping_exchange is None:
                 raise RuntimeError(failure)
-            has_terminal_evidence = any(
+            has_row_evidence = any(
                 any(
                     str(item.get("work_id") or "") == work_id
                     for item in session.query_trace
@@ -7152,68 +8153,106 @@ def _run_batch_norm_agent(
                 or bool(session.opened.get(work_id))
                 for work_id in session.remaining_work_ids
             )
-            evidence_loop_required = submit_requires_more_evidence(
-                last_submit_result
-            )
-            force_mapping_serialization = (
-                has_terminal_evidence and not evidence_loop_required
-            )
-            if duplicate_feedback_signature != call_signature:
-                duplicate_feedback_signature = call_signature
+            # Force mapping only when search/read already happened. Early
+            # identical catalog retries must not jump to unbound mapping.
+            if has_row_evidence:
+                if duplicate_feedback_signature != call_signature:
+                    duplicate_feedback_signature = call_signature
+                    for call_index, call in enumerate(calls, 1):
+                        name = str(((call.get("function") or {}).get("name") or ""))
+                        result = {
+                            "ok": False,
+                            "error": "identical deterministic request already executed; no new evidence was produced",
+                            "force_mapping_serialization": True,
+                        }
+                        conversation.append({
+                            "role": "tool",
+                            "tool_call_id": str(
+                                call.get("id") or f"duplicate-{turn}-{call_index}"
+                            ),
+                            "name": name,
+                            "content": json.dumps(result, ensure_ascii=False),
+                        })
+                        model_trace[-1].setdefault("tool_results", []).append(
+                            {"name": name, "result": result}
+                        )
+                    focus_serialization_pending = True
+                    focus_serialization_reason = failure
+                    emit_checkpoint(next_turn=turn + 1)
+                    continue
+                try:
+                    mapping_call = structured_mapping_call(reason=failure, turn=turn)
+                except MappingValidationExhausted as error:
+                    return session.result(
+                        model_trace=model_trace,
+                        agent_trace={
+                            "mode": "model_batch_rag_tools",
+                            "turns": turn,
+                            "context_metrics": context_metrics,
+                            "status": "mapping_validation_exhausted",
+                        },
+                        allow_incomplete=True,
+                        incomplete_blocker={
+                            "code": "mapping_validation_exhausted",
+                            "reason": str(error),
+                            "remaining_work_ids": list(session.remaining_work_ids),
+                        },
+                    )
+                if mapping_call is None:
+                    return session.result(
+                        model_trace=model_trace,
+                        agent_trace={
+                            "mode": "model_batch_rag_tools",
+                            "turns": turn,
+                            "context_metrics": context_metrics,
+                            "status": "candidate_draft_promoted",
+                        },
+                    )
+                calls = [mapping_call]
+                call_signature = json.dumps([{
+                    "name": "submit_lsr_mapping",
+                    "arguments": _tool_arguments(calls[0]),
+                }], ensure_ascii=False, sort_keys=True, default=str)
+            else:
                 for call_index, call in enumerate(calls, 1):
                     name = str(((call.get("function") or {}).get("name") or ""))
                     result = {
                         "ok": False,
-                        "error": "identical deterministic request already executed; no new evidence was produced",
-                        "force_mapping_serialization": (
-                            force_mapping_serialization
+                        "error": (
+                            "identical catalog request without search/read evidence; "
+                            "choose a different shown child, broaden, or continue"
                         ),
+                        "force_mapping_serialization": False,
                     }
                     conversation.append({
                         "role": "tool",
-                        "tool_call_id": str(call.get("id") or f"duplicate-{turn}-{call_index}"),
+                        "tool_call_id": str(
+                            call.get("id") or f"duplicate-{turn}-{call_index}"
+                        ),
                         "name": name,
                         "content": json.dumps(result, ensure_ascii=False),
                     })
-                    model_trace[-1].setdefault("tool_results", []).append({"name": name, "result": result})
-                focus_serialization_pending = force_mapping_serialization
-                if force_mapping_serialization:
-                    focus_serialization_reason = failure
-                if not force_mapping_serialization:
-                    previous_call_signature = ""
-                    conversation[:] = copy.deepcopy(initial_conversation)
-                    refresh_agent_working_memory()
-                    conversation.append({
-                        "role": "user",
-                        "content": json.dumps(
-                            {
-                                "recovery_contract": (
-                                    "smeta_norm_agent_scope_stall_recovery_v1"
-                                ),
-                                "instruction": (
-                                    "The previous catalog action was repeated without "
-                                    "progress. Read the latest current_node_id and child "
-                                    "menu from working memory. Return one typed decision: "
-                                    "continue to an exact shown child with evidence, ask for "
-                                    "one user-owned fact, broaden exactly to the parent, or "
-                                    "leave the route unbound. Never invent or jump to a node."
-                                ),
-                            },
-                            ensure_ascii=False,
-                        ),
-                    })
-                emit_checkpoint(next_turn=turn + 1)
-                continue
-            if force_mapping_serialization:
-                calls = [structured_mapping_call(reason=failure, turn=turn)]
-            else:
+                    model_trace[-1].setdefault("tool_results", []).append(
+                        {"name": name, "result": result}
+                    )
+                conversation.append({
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "recovery_contract": "smeta_catalog_duplicate_recovery_v1",
+                            "instruction": (
+                                "Repeat rejected. Pick a different shown child with "
+                                "evidence, broaden to the parent, or continue the "
+                                "typed route. Do not submit unbound yet."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                })
                 previous_call_signature = ""
+                duplicate_feedback_signature = ""
                 emit_checkpoint(next_turn=turn + 1)
                 continue
-            call_signature = json.dumps([{
-                "name": "submit_lsr_mapping",
-                "arguments": _tool_arguments(calls[0]),
-            }], ensure_ascii=False, sort_keys=True, default=str)
         else:
             duplicate_feedback_signature = ""
         previous_call_signature = call_signature
@@ -7262,6 +8301,39 @@ def _run_batch_norm_agent(
                     focus_serialization_pending = False
                     previous_call_signature = ""
                     duplicate_feedback_signature = ""
+                    deny_exact = any(
+                        "denies applicability" in str(detail)
+                        or "broaden to another table" in str(detail)
+                        for error in (result.get("errors") or [])
+                        if isinstance(error, dict)
+                        for detail in (error.get("details") or [])
+                    )
+                    if deny_exact:
+                        opened_evidence_turns = 0
+                        conversation.append({
+                            "role": "user",
+                            "content": json.dumps(
+                                {
+                                    "recovery_contract": (
+                                        "smeta_exact_deny_broaden_v1"
+                                    ),
+                                    "instruction": (
+                                        "Your last exact bind contradicted its own "
+                                        "reason. Do not resubmit that norm as exact. "
+                                        "Call broaden_norm_catalog toward catalog:root "
+                                        "or another family/table, then search/read, "
+                                        "or submit an honest unbound."
+                                    ),
+                                    "work_ids": [
+                                        str(error.get("work_id") or "")
+                                        for error in (result.get("errors") or [])
+                                        if isinstance(error, dict)
+                                        and str(error.get("work_id") or "").strip()
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        })
                     if (
                         turn >= max_turns
                         and evidence_repair_turn_budget > 0
@@ -7335,7 +8407,7 @@ def _run_batch_norm_agent(
                 },
             )
     if last_submit_result and not last_submit_result.get("ok"):
-        promoted = _promote_terminal_unbound_candidates(
+        promoted = _promote_terminal_mapping_candidates(
             session,
             last_submit_result=last_submit_result,
             model_trace=model_trace,
@@ -7363,11 +8435,49 @@ def _run_batch_norm_agent(
             ensure_ascii=False,
             default=str,
         )
-        raise RuntimeError(
-            "smeta model mapping failed validation after bounded repair: "
-            f"{errors[:800]}"
+        return session.result(
+            model_trace=model_trace,
+            agent_trace={
+                "mode": "model_batch_rag_tools",
+                "turns": len(model_trace),
+                "context_metrics": context_metrics,
+                "status": "mapping_validation_exhausted",
+                "seed": next(
+                    (
+                        item.get("seed")
+                        for item in model_trace
+                        if item.get("seed") is not None
+                    ),
+                    None,
+                ),
+            },
+            allow_incomplete=True,
+            incomplete_blocker={
+                "code": "mapping_validation_exhausted",
+                "reason": (
+                    "smeta model mapping failed validation after bounded repair: "
+                    f"{errors[:800]}"
+                ),
+                "remaining_work_ids": list(session.remaining_work_ids),
+            },
         )
-    raise RuntimeError(f"smeta model did not submit mapping within {max_turns} model turns")
+    return session.result(
+        model_trace=model_trace,
+        agent_trace={
+            "mode": "model_batch_rag_tools",
+            "turns": len(model_trace),
+            "context_metrics": context_metrics,
+            "status": "mapping_turns_exhausted",
+        },
+        allow_incomplete=True,
+        incomplete_blocker={
+            "code": "mapping_turns_exhausted",
+            "reason": (
+                f"smeta model did not submit mapping within {max_turns} model turns"
+            ),
+            "remaining_work_ids": list(session.remaining_work_ids),
+        },
+    )
 
 
 def _model_resource_bindings(work_id: str, item: dict[str, Any], source_row: dict[str, Any]) -> list[dict[str, Any]]:
@@ -8319,20 +9429,33 @@ def run_vor_document_workflow(
         "approval_status": "auto_draft",
     }
     if work_rows and int(agent_result.get("valid_model_rows") or 0) == 0:
-        if out_report:
-            report_path = Path(out_report)
-            report_path.parent.mkdir(parents=True, exist_ok=True)
-            failure = {
-                "schema": "smeta_document_workflow_failure_v2",
-                "status": "failed_before_calculation",
-                "error": "model returned no valid norm-agent actions",
-                "intake": intake,
-                **agent_result,
+        # Last resort: open every row without inventing a norm, then calculate.
+        open_selections = {
+            str(row["work_id"]): {
+                "norm_code": "",
+                "reason": (
+                    "row left open: model returned no accepted norm-agent actions"
+                ),
+                "review_status": "model_batch_open",
             }
-            temp = report_path.with_suffix(report_path.suffix + ".tmp")
-            temp.write_text(json.dumps(failure, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
-            temp.replace(report_path)
-        raise RuntimeError("model returned no valid norm-agent actions; no estimate was calculated")
+            for row in work_rows
+            if str(row.get("work_id") or "").strip()
+        }
+        agent_result = {
+            **agent_result,
+            "selections": open_selections,
+            "valid_model_rows": len(open_selections),
+            "incomplete": True,
+            "remaining_work_ids": [],
+            "incomplete_blocker": {
+                "code": "no_accepted_mapping_actions",
+                "reason": "model returned no valid norm-agent actions",
+            },
+            "agent_trace": {
+                **dict(agent_result.get("agent_trace") or {}),
+                "status": "all_rows_open_after_empty_mapping",
+            },
+        }
     return _finalize_document_workflow(
         path=path,
         intake=intake,

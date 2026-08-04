@@ -19,6 +19,10 @@ from sovushka.pages.chat import (
     _dataset_profile_operator_summary,
     _operator_status_chips,
     _operator_technical_chips,
+    format_answer_timing_line,
+    format_chat_duration_sec,
+    format_chat_request_clock,
+    resolve_answer_timing,
     should_skip_chat_resource_gate,
 )
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
@@ -502,6 +506,49 @@ def test_attachment_suffix_persists_context_in_user_message():
         {"id": "tmp_table", "mode": "quick", "name": "ВОР.xlsx", "rows": 12}
     )
     assert text == "📎 Прикреплена таблица: ВОР.xlsx · Таблица · 12 строк"
+
+
+def test_smeta_request_needs_lsr_accepts_soberi_verb():
+    from proxy.services.smeta_chat_adapter_service import _smeta_request_needs_lsr_output
+
+    assert _smeta_request_needs_lsr_output("Собери первую ЛСР по приложенной ВОР")
+    assert _smeta_request_needs_lsr_output("сделай ЛСР")
+
+
+def test_chat_lsr_without_read_attachment_does_not_silent_fallback():
+    source = inspect.getsource(chat_router._run_chat)
+    assert "lsr_requires_read_attachment" in source
+    assert "В чат" in source
+
+
+def test_chat_answer_timing_line_shows_clock_and_model_duration():
+    assert format_chat_duration_sec(9.4) == "9.4с"
+    assert format_chat_duration_sec(42) == "42с"
+    assert format_chat_duration_sec(75) == "1м 15с"
+    assert format_chat_request_clock("2026-08-02T21:09:11+03:00").endswith("21:09")
+    timing = resolve_answer_timing(
+        requested_at="2026-08-02T21:09:11+03:00",
+        elapsed_sec=50,
+        latency_phases={"wall_total": 42.2, "generation": 28.0},
+    )
+    assert timing["elapsed_sec"] == 42.2
+    assert timing["model_think_sec"] == 28.0
+    line = format_answer_timing_line(
+        requested_at="2026-08-02T21:09:11+03:00",
+        elapsed_sec=50,
+        latency_phases={"wall_total": 42.2, "generation": 28.0},
+    )
+    assert "21:09" in line
+    assert "ответ 42с" in line
+    assert "модель 28с" in line
+
+
+def test_chat_page_renders_answer_timing_meta():
+    source = inspect.getsource(chat_page)
+    assert "format_answer_timing_line" in source
+    assert "sov-chat-timing" in source
+    assert "requested_at" in source
+    assert "model_think_sec" in source
 
 
 def test_chat_no_longer_auto_hijacks_project_summary():

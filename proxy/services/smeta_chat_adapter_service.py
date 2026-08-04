@@ -46,6 +46,19 @@ def _env_bool(name: str, default: bool) -> bool:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
+
+def _http_response_text(response: Any) -> str:
+    """Body text for live httpx responses and lightweight test doubles."""
+    text = getattr(response, "text", None)
+    if text is None:
+        content = getattr(response, "content", b"")
+        if isinstance(content, (bytes, bytearray)):
+            text = bytes(content).decode("utf-8", errors="replace")
+        else:
+            text = content
+    return " ".join(str(text or "").split())
+
+
 def _smeta_source_row_count(text: str) -> int:
     raw = str(text or "")
     json_rows = len(re.findall(r'"source_no"\s*:', raw))
@@ -549,34 +562,97 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     if is_cloud_provider(runtime.provider) and "glm" in str(runtime.model or "").casefold():
         body["thinking"] = {"type": "disabled"}
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
-    try:
+
+    def _post_chat(payload_body: dict[str, Any]) -> httpx.Response:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
-            response = client.post(chat_url, headers=headers, json=body)
-            if response.status_code == 400 and "thinking" in body:
-                fallback_body = dict(body)
+            response = client.post(chat_url, headers=headers, json=payload_body)
+            if response.status_code == 400 and "thinking" in payload_body:
+                fallback_body = dict(payload_body)
                 fallback_body.pop("thinking", None)
                 response = client.post(chat_url, headers=headers, json=fallback_body)
-            response.raise_for_status()
-            payload = response.json()
-            message = (
-                payload.get("message", {})
-                if native_ollama
-                else payload.get("choices", [{}])[0].get("message", {})
+            return response
+
+    def _is_xml_tool_error(response: httpx.Response) -> bool:
+        detail = _http_response_text(response)
+        return (
+            response.status_code >= 500
+            and "xml syntax error" in detail.casefold()
+        )
+
+    try:
+        response = _post_chat(body)
+        # Qwen/Ollama occasionally emits broken tool XML
+        # (`<parameter>` closed by `</function>`). Same-body retry is often
+        # identical (seed=0); bump seed once, then soft-degrade.
+        if native_ollama and _is_xml_tool_error(response):
+            detail_text = _http_response_text(response)
+            logger.warning(
+                "[SMETA_DOCUMENT] retrying after Ollama tool XML parse error: %s",
+                detail_text[:180],
             )
-            message = message if isinstance(message, dict) else {}
-            message["_les_done_reason"] = payload.get("done_reason")
-            message["_les_eval_count"] = payload.get("eval_count")
-            message["_les_generation_metrics"] = _generation_profile(payload)
-            message.setdefault("_les_model", runtime.model)
-            message.setdefault("_les_provider", runtime.provider)
-            if applied_seed is not None:
-                message.setdefault("_les_seed", applied_seed)
-            return message
+            retry_body = dict(body)
+            options = dict(retry_body.get("options") or {})
+            options["seed"] = int(options.get("seed") or seed or 0) + 1
+            retry_body["options"] = options
+            retry_messages = list(retry_body.get("messages") or [])
+            retry_messages.append({
+                "role": "user",
+                "content": (
+                    "Previous tool call XML was malformed. Call exactly one "
+                    "tool with well-formed parameters; do not nest tags."
+                ),
+            })
+            retry_body["messages"] = retry_messages
+            response = _post_chat(retry_body)
+            if _is_xml_tool_error(response):
+                detail_text = _http_response_text(response)
+                logger.warning(
+                    "[SMETA_DOCUMENT] soft-degrade after repeated Ollama tool "
+                    "XML parse error: %s",
+                    detail_text[:180],
+                )
+                # Do not kill the whole VOR batch: let the agent recover.
+                return {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [],
+                    "_les_xml_tool_error": detail_text[:240],
+                    "_les_done_reason": "xml_tool_error",
+                    "_les_model": runtime.model,
+                    "_les_provider": runtime.provider,
+                    "_les_seed": int(options.get("seed") or seed or 0),
+                }
+        response.raise_for_status()
+        payload = response.json()
+        message = (
+            payload.get("message", {})
+            if native_ollama
+            else payload.get("choices", [{}])[0].get("message", {})
+        )
+        message = message if isinstance(message, dict) else {}
+        message["_les_done_reason"] = payload.get("done_reason")
+        message["_les_eval_count"] = payload.get("eval_count")
+        message["_les_generation_metrics"] = _generation_profile(payload)
+        message.setdefault("_les_model", runtime.model)
+        message.setdefault("_les_provider", runtime.provider)
+        if applied_seed is not None:
+            message.setdefault("_les_seed", applied_seed)
+        return message
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] native agent exchange failed: %s", error)
         if isinstance(error, httpx.HTTPStatusError):
             response = error.response
-            detail = " ".join(str(response.text or "").split())[:300]
+            detail = _http_response_text(response)[:300]
+            if native_ollama and "xml syntax error" in detail.casefold():
+                return {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [],
+                    "_les_xml_tool_error": detail[:240],
+                    "_les_done_reason": "xml_tool_error",
+                    "_les_model": runtime.model,
+                    "_les_provider": runtime.provider,
+                }
             raise RuntimeError(
                 f"smeta provider HTTP {response.status_code}: {detail or response.reason_phrase}"
             ) from error
@@ -697,6 +773,21 @@ def _smeta_document_mapping_exchange(
     try:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
             response = client.post(chat_url, headers=headers, json=body)
+            detail_text = _http_response_text(response)
+            if (
+                native_ollama
+                and response.status_code >= 500
+                and "xml syntax error" in detail_text.casefold()
+            ):
+                logger.warning(
+                    "[SMETA_DOCUMENT] mapping XML parse error; retry seed+1: %s",
+                    detail_text[:180],
+                )
+                retry_body = dict(body)
+                options = dict(retry_body.get("options") or {})
+                options["seed"] = int(options.get("seed") or seed or 0) + 1
+                retry_body["options"] = options
+                response = client.post(chat_url, headers=headers, json=retry_body)
             response.raise_for_status()
             response_payload = response.json()
             message = (
@@ -752,7 +843,7 @@ def _smeta_document_mapping_exchange(
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] structured mapping exchange failed: %s", error)
         if isinstance(error, httpx.HTTPStatusError):
-            detail = " ".join(str(error.response.text or "").split())[:300]
+            detail = _http_response_text(error.response)[:300]
             raise RuntimeError(
                 f"smeta provider HTTP {error.response.status_code}: "
                 f"{detail or error.response.reason_phrase}"
@@ -949,7 +1040,7 @@ def _smeta_request_needs_lsr_output(text: str) -> bool:
         low,
     ))
     explicit_lsr_or_money_action = bool(re.search(
-        r"\b(?:сделай|составь|оформи|сформируй|подготовь|рассчитай|посчитай|оцени|дай)\b"
+        r"\b(?:сделай|составь|собери|оформи|сформируй|подготовь|рассчитай|посчитай|оцени|дай)\b"
         r"[^.\n]{0,100}\b(?:лср|смет[ауыеой]*|стоимост[ьяиюе]*|оценк[ауи]|сумм[ауыеой]*|рубл[яей]*|цен[ауыеой]*|итог[а-я]*)\b",
         low,
     ))

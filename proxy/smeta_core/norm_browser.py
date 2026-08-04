@@ -883,7 +883,8 @@ def _rerank_cards(
             query[:80],
             error,
         )
-        return cards[:limit], False, f"error:{type(error).__name__}"
+        # Usable menu/order without cross-encoder — not a hard catalog failure.
+        return cards[:limit], False, "fallback_input_order"
     reordered = [cards[index] for index in valid_order]
     used = set(valid_order)
     reordered.extend(card for index, card in enumerate(cards) if index not in used)

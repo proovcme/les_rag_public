@@ -146,8 +146,10 @@ def test_section_transition_reuses_saved_work_features(monkeypatch):
                 "confidence": "high",
                 "evidence": [{
                     "source_node_id": "catalog:section:ГЭСНм:10-01",
-                    "field": "official_name",
-                    "claim": "Станции телефонные",
+                    # After collection continue the live catalog overwrites the
+                    # seeded stub; official nodes expose official_heading/title.
+                    "field": "official_heading",
+                    "claim": "ГОРОДСКАЯ ТЕЛЕФОННАЯ СВЯЗЬ",
                 }],
             }]
         },

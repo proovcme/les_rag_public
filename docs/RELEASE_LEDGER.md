@@ -4,19 +4,324 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-02)
+## Текущее состояние (2026-08-04)
 
 ```
-версия продукта (SemVer):  0.27.39
-номер сборки:              556
-версия Tauri/NSIS:         5.1.556
+версия продукта (SemVer):  0.27.64
+номер сборки:              581
+версия Tauri/NSIS:         5.1.581
 ветка выпуска:             fix/xlsx-intake-ko-vo
-dev implementation:       unbound candidate promote + Ollama diag + START/STOP + Ко-во
+dev implementation:       chat attachment → deterministic spec_to_bor
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
-следующий выпуск:          LES-Setup.exe 0.27.39
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion live
+следующий выпуск:          LES-Setup.exe 0.27.64
+рантайм /api/version:      Windows workspace 0.27.64 / build 581 (после redeploy/restart)
 ```
+
+> 0.27.64 / build 581 — chat VOR from XLSX attachment without LLM
+>
+> Дата: 2026-08-04
+> Статус: patch поверх v0.27.63.
+>
+> **Что вошло:** `is_spec_to_bor_query` + `rows_from_spec_xlsx` /
+> `generate_spec_bor_from_rows`; в `chat.py` канал `spec_to_bor` срабатывает
+> до `attachment_context` LLM. Количества только из файла, без цен; Excel-артефакт.
+>
+> **Аудит origin/main (без полного merge):** целевые коммиты
+> `2363bab` → `5a55b68` → `3b8eb35` → `65aa9a9` → `1fde2ea` (mail Outlook +
+> Windows packaging/gates) проверены cherry-pick на `72c52ee`; каждый оказался
+> пустым относительно HEAD — ручной collector/spool, platform-gates и atomic
+> smeta-packaging уже в линии `fix/xlsx-intake-ko-vo` (часто суперсет main).
+> Полный merge `origin/main` (~840 файлов) сознательно не делали.
+
+> 0.27.63 / build 580 — unblock RAG `embedding_contract_mismatch`
+>
+> Дата: 2026-08-04
+> Статус: patch поверх v0.27.62.
+>
+> **Что вошло (live: Поиск ЗАБЛОКИРОВАНО / embedding_contract_mismatch):**
+> Локальный `les_rag` был bge-m3/ollama, а index-contract оставался v2 без
+> hierarchy-полей v3 → native RRF blocked. Контракт усыновлён до v3 при том же
+> embedding fingerprint (без реиндекса). `start-light`/windows-cuda.env жёстко
+> фиксируют Ollama `bge-m3` и сбрасывают Mac CoreML knobs из shared `.env`.
+
+> 0.27.62 / build 579 — LES + ODS host-port coexistence
+>
+> Дата: 2026-08-04
+> Статус: patch поверх v0.27.61.
+>
+> **Что вошло:** LES остаётся на каноне Ollama `:11434` + native Qdrant
+> `:6333/:6334`. ODS host publish уводится на `:21134` (llama-server) и
+> `:26333/:26334` (qdrant) через `%USERPROFILE%\ods\.env` +
+> `scripts/windows/configure-ods-coexist.ps1`. Внутренний Docker DNS ODS
+> не меняется. `LES-START` при конфликте портов указывает на этот helper.
+
+> 0.27.61 / build 578 — LES-START rejects foreign :11434 / :6333
+>
+> Дата: 2026-08-04
+> Статус: patch поверх v0.27.60.
+>
+> **Что вошло (live: `smeta provider HTTP 404 File Not Found`):**
+> Порт 11434 занял Docker `ods-llama-server` (llama.cpp / phi-4), не Ollama →
+> 404 на `/api/chat` для `qwen3.5:9b`. Порт 6333 — Docker `ods-qdrant` с API key
+> (401), LES health `qdrant.ok=false`. `LES-START.ps1` теперь проверяет
+> `/api/tags` и открытый `/collections` и падает с явной инструкцией
+> `docker stop ods-llama-server` / `ods-qdrant`, а не «уже запущено».
+
+> 0.27.60 / build 577 — Windows document LSR stability profile
+>
+> Дата: 2026-08-04
+> Статус: patch поверх v0.27.59.
+>
+> **Что вошло:**
+> 1. `windows-cuda.env`: turns=10, temperature=0.2, top_p=0.9, review off.
+> 2. Exact + «не применима» → return to tools / broaden nudge, not schema thrash.
+> 3. Candidate binds do not seed route cache.
+> 4. Unmapped rows finalize as `model_batch_open` Excel (no invented rates).
+>
+> **Live A/B (ВОР БАП П1, 19 строк):** Qwen×2 → `priced_draft`, 2 bound / 8 unbound /
+> 1 candidate / 8 open, ~12 мин, hard_fail=false, Excel OK (воспроизводимо).
+> Gemma12b → 0 bound / 19 candidate, `norm_selection_required`. Канон локально:
+> `qwen3.5:9b`. Метрики: `storage/stability_runs/SUMMARY.json`.
+
+> 0.27.59 / build 576 — soft-continue after mapping validation exhausted
+>
+> Дата: 2026-08-03
+> Статус: patch поверх v0.27.58.
+>
+> **Что вошло (live: «ЛСР не собрана: RuntimeError…bounded schema repair»):**
+> После 1–N принятых строк застрявший batch больше не валит весь документ.
+> `MappingValidationExhausted` → incomplete batch / skip → следующие строки;
+> частичный ЛСР по принятым решениям, незакрытые остаются open.
+
+> 0.27.58 / build 575 — restore desktop LES START/STOP (native Qdrant)
+>
+> Дата: 2026-08-03
+> Статус: patch поверх v0.27.57.
+>
+> **Что вошло:** тонкий `LES-START.ps1` только звал `start-light` и не поднимал
+> `tools\bin\qdrant.exe`; без `config/qdrant.local.yaml` API отвечал
+> `health.status=error` / «All connection attempts failed». Восстановлен bootstrap
+> Ollama → native Qdrant :6333 → start-light на фиксированных 8050/8051, CUDA env,
+> ownership-aware STOP + останов локального qdrant.exe. Захват stdout
+> start-light запрещён (pythonw держит pipe → вечный Wait). Desktop bats обновлены.
+
+> 0.27.57 / build 574 — unbound candidate only after search/opened card
+>
+> Дата: 2026-08-03
+> Статус: patch поверх v0.27.56.
+>
+> **Что вошло (live 10:51: 6/6 без нормы):**
+> Soft incomplete unbound больше не закрывает строку без tool evidence.
+> Нужен хотя бы один search или opened card; иначе invalid unbound_evidence
+> и возврат к инструментам.
+
+> 0.27.56 / build 573 — demo speed: first unbound candidate, skip local review
+>
+> Дата: 2026-08-03
+> Статус: patch поверх v0.27.55.
+>
+> **Что вошло (live 10:39: 216с / 3 строки):**
+> 1. mapping_retry на invalid unbound_evidence жег 2-й slow mapping на строку.
+> 2. Honest unbound с reason принимается как model_batch_candidate сразу.
+> 3. Local Ollama/Qwen: max_turns=8, repair=1, global review off
+>    (LES_SMETA_LOCAL_GLOBAL_REVIEW=1 чтобы вернуть).
+
+> 0.27.55 / build 572 — reject exact bind when reason denies applicability
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.54.
+>
+> **Что вошло:**
+> 1. Live Excel (2): 4 bound с ГЭСНр54-01-002-01 и reason «не применима».
+> 2. selection_kind=exact + denial in reason → incomplete bind evidence.
+> 3. Такие ошибки не draft-promote в model_batch_candidate.
+
+> 0.27.54 / build 571 — soft-degrade global review; keep completed mapping
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.53.
+>
+> **Что вошло (live 22:38):**
+> 1. Row mapping уже дал 19 решений, но conflict-group review падал на
+>    incomplete bind evidence / bounded schema repair и убивал всю ЛСР.
+> 2. Global review при mapping RuntimeError сохраняет исходные решения пакета.
+> 3. Перед третьим structured mapping — promote draft-eligible incomplete bind
+>    (как unbound candidate), вместо hard abort.
+
+> 0.27.53 / build 570 — bind-only route cache; broaden escapes wrong table
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.52.
+>
+> **Что вошло (live 22:24: 12/12 unbound):**
+> 1. Table select писал route_evidence_cache сразу → все строки reuse
+>    одной ошибочной таблицы (ГЭСНм:06-05-001), потом mass unbound.
+> 2. Кэш публикуется только после успешного bind; unbound/broaden чистят
+>    source_work routes; completed_route_cache только bind-proven.
+> 3. norm_evidence снова отдаёт broaden_norm_catalog (без reuse/browse).
+> 4. Force-mapping после opened cards — со второго хода, не сразу.
+
+> 0.27.52 / build 569 — XML tool 500 soft-degrade; no early force-mapping
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.51.
+>
+> **Что вошло (live 22:16–22:17):**
+> 1. Identical catalog retry без search форсил mapping →
+>    `invalid unbound_evidence` на 26с; потом Ollama XML 500 убивал весь ВОР.
+> 2. Force-mapping на duplicate только при search/read evidence.
+> 3. Tool XML 500: retry с seed+1 + nudge; при повторе — soft-degrade
+>    (пустой tool_calls + recovery), не RuntimeError на весь batch.
+> 4. Mapping exchange тоже retry на XML 500.
+
+> 0.27.51 / build 568 — serialize after read; ban reuse in norm_evidence
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.50.
+>
+> **Что вошло (live 22:14):**
+> Auto-search+read уже работали (19 кандидатов, 4 карточки), но Qwen 7 ходов
+> крутил `reuse_norm_catalog_route` в norm_evidence — первая строка только на
+> ~70с. Теперь: reuse не в tools после таблицы; при открытых карточках сразу
+> structured mapping (bind/unbound).
+
+> 0.27.50 / build 567 — auto search_norms after table; fix flat reuse
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.49.
+>
+> **Что вошло (live 22:03–22:05):**
+> 1. Таблица выбрана (ГЭСНм 24-01-033), но Qwen звал flat
+>    `reuse_norm_catalog_route` без `items[]` → пустой fail → force mapping →
+>    `invalid unbound_evidence` (0 searches) → mapping_retry (~100с).
+> 2. После выбора таблицы LES сам делает scoped `search_norms_batch` по
+>    названию строки ВОР (таблица — решение модели).
+> 3. Flat reuse нормализуется; reuse-first prompt только на ранних фазах.
+
+> 0.27.49 / build 566 — no browse after catalog unbound; no identical-retry burn
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.48.
+>
+> **Что вошло (live checkpoint 22:00):**
+> 1. После `unbound` в ГЭСНм модель 5× звала `browse_norm_catalog` (~35с).
+>    `norm_evidence` больше не отдаёт browse; catalog_unbound сразу
+>    `force_mapping_serialization`.
+> 2. Identical tool retry больше не сбрасывает conversation — сразу mapping.
+> 3. Unbound на family/collection — premature: сначала broaden к root
+>    (иначе плёнка никогда не доходит до ГЭСН).
+
+> 0.27.48 / build 565 — hybrid continue: merge selected_node_id; stall→mapping
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.47.
+>
+> **Что вошло:**
+> 1. Qwen hybrid `continue_norm_catalog` (selected_node_id снаружи items[],
+>    evidence только по отвергнутым соседям) жег ~90с в section_select.
+>    Transport: merge top-level → item, draft passport-evidence выбранного
+>    узла, selection wins над rejected_nodes.
+> 2. `catalog_stalled` / duplicate без прогресса → `force_mapping_serialization`
+>    (без выбора нормы кодом).
+> 3. Windows ops: живой proxy висел на :8052 со **старым 0.27.36** (правки из
+>    workspace не грузились). Перезапущен на :8050/:8051 = **0.27.48**;
+>    `.env` provider выставлен `ollama` + `qwen3.5:9b` (mlx :8080 на этой
+>    машине недоступен).
+
+> 0.27.47 / build 564 — revert flat family_select; retry Ollama tool XML 500
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.46.
+>
+> **Что вошло:**
+> 1. Flat `continue_norm_catalog` на family_select ломал Ollama
+>    (`parameter closed by </function>` HTTP 500). Снова `items[]` с
+>    минимальным required: work_id/selected_node_id/confidence; menu-echo
+>    reject и draft work_features сохранены; flat args всё ещё нормализуются
+>    в transport.
+> 2. Один retry при Ollama HTTP 500 с XML syntax error в tool-call parse.
+
+> 0.27.46 / build 563 — family_select: flat continue; reject menu echo; draft work_features
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.45.
+>
+> **Что вошло:**
+> 1. Qwen эхоил всё меню семейств в `items[]` → 90с без прогресса; теперь
+>    явный reject + example, а `continue_norm_catalog` на family_select — flat
+>    (`work_id`/`selected_node_id`/`confidence`).
+> 2. Пропуски `work_features`/evidence заполняются draft из названия строки ВОР
+>    и passport-полем выбранного узла (только transport, не выбор нормы).
+
+> 0.27.45 / build 562 — table select: truncate >6 rejected_nodes; local rerank off
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.44.
+>
+> **Что вошло:**
+> 1. На широком меню таблиц Qwen отвергает 10–16 соседей → раньше hard-fail
+>    на `rejected_nodes>6` жег ~80с после уже выбранной таблицы; теперь
+>    обрезаем до 6 и принимаем выбор.
+> 2. Local Ollama/Qwen default `LES_SMETA_NORM_RERANK=false` (нет ST → только latency).
+
+> 0.27.44 / build 561 — catalog menu proceeds when reranker unavailable
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.43.
+>
+> **Что вошло:**
+> 1. Family→collection / section→table не блокируются на `rerank_status=ok`:
+>    при непустом shortlist меню отдаётся модели (Windows без
+>    sentence-transformers иначе крутил 12 ходов и уходил в unbound).
+> 2. `_rerank_cards` при падении reranker → `fallback_input_order`.
+> 3. Evidence с `catalog:root`/parent remap на выбранный visible child.
+
+> 0.27.43 / build 560 — chat document LSR: require_scoped_search + max_turns 12
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.42.
+>
+> **Что вошло:**
+> 1. Чат PDF/XLSX→ЛСР включает typed RIM catalog (`require_scoped_search=True`),
+>    как rim_agent / local_run — иначе Qwen крутил legacy browse без `selected_node_id`,
+>    0 search/read и candidate-unbound → 0/N priced.
+> 2. Local Ollama/Qwen default `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS` 6→12
+>    (family→table→search→read→submit).
+
+> 0.27.42 / build 559 — chat: request clock + answer/model duration
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.41.
+>
+> **Что вошло:**
+> 1. У пузыря ответа: `HH:MM · ответ Ns · модель Ns` (wall + `latency_phases.generation`).
+> 2. У пользовательского сообщения — время отправки; история подтягивает timestamp.
+
+> 0.27.41 / build 558 — PDF «Таблица» → read_* for document LSR
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.40.
+>
+> **Что вошло:**
+> 1. PDF в режиме attach `quick` принудительно сохраняется как `read_*` (UI+API):
+>    иначе «собери ЛСР» уходил в estimate harness с 0 строк.
+> 2. Нет `attachment_id` при LSR+VOR/PDF/XLSX — честная ошибка, не silent fallback.
+> 3. Глагол `собери` в LSR-detect; PDF/XLSX без извлечённого текста всё равно
+>    сохраняется для document intake.
+
+> 0.27.40 / build 557 — local Ollama/Qwen LSR fast profile (reuse-first + budgets)
+>
+> Дата: 2026-08-02
+> Статус: patch поверх v0.27.39.
+>
+> **Что вошло:**
+> 1. Локальный Ollama+Qwen / `qwen_agent`: defaults `max_turns=6`, search/read=3,
+>    repair=2 (env override сохраняется); `batch_size` остаётся 1.
+> 2. Непустой `route_evidence_cache` → compact listing + `route_reuse_first` и
+>    инструкция звать `reuse_norm_catalog_route` до browse от корня; reuse tool
+>    доступен и на non-scoped path.
+> 3. Progress `source_batch` показывает `rows_done` / `elapsed_sec` / `sec_per_row`.
 
 > 0.27.39 / build 556 — unbound candidate-draft after bounded repair (no RuntimeError)
 >

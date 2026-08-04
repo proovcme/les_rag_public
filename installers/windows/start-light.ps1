@@ -190,13 +190,19 @@ switch ($Provider) {
     # Эмбеддер (EmbedClient → {MLX_URL}/v1/embeddings) на Windows идёт в ollama (bge-m3),
     # а не в несуществующий MLX-хост :18080. Иначе RAG-индексация/ретрив падают (#3/#4).
     $env:MLX_URL = $env:OLLAMA_BASE_URL
-    # env.example содержит Mac/dev sidecar :8081. Windows production не поднимает этот процесс:
-    # parse и query embeddings обязаны идти в один проверенный Ollama endpoint.
+    # env.example / Mac .env may still say CoreML + Qwen3-Embedding. On Windows
+    # ollama provider those values must not win: the local index is bge-m3 via
+    # Ollama, and a mismatched index-contract blocks native RRF search.
     $env:EMBED_URL_PARSE = $env:OLLAMA_BASE_URL
-    $env:EMBED_MODEL = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "bge-m3:latest" }
-    $env:EMBEDDING_MODEL = if ($env:EMBEDDING_MODEL) { $env:EMBEDDING_MODEL } else { "bge-m3" }
+    $env:EMBED_MODEL = "bge-m3:latest"
+    $env:EMBEDDING_MODEL = "bge-m3"
     $env:EMBED_BACKEND = "ollama"
     $env:RAG_VECTOR_SIZE = "1024"
+    # Clear Mac-only CoreML knobs inherited from a shared .env.
+    Remove-Item Env:COREML_EMBED_MODEL -ErrorAction SilentlyContinue
+    Remove-Item Env:COREML_EMBED_SEQ_LEN -ErrorAction SilentlyContinue
+    Remove-Item Env:COREML_EMBED_COMPUTE_UNITS -ErrorAction SilentlyContinue
+    Remove-Item Env:COREML_EMBED_FALLBACK -ErrorAction SilentlyContinue
     # Ollama has no cross-encoder rerank endpoint. A native local
     # sentence-transformers cross-encoder keeps the 9B answer model out of
     # retrieval scoring.

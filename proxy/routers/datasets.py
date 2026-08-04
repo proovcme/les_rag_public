@@ -3385,12 +3385,19 @@ async def _prepare_read_attachment(
         truncated = len(text) > _READ_ATTACH_MAX_CHARS
 
     text = (text or "").strip()
+    suffix = Path(original_name).suffix.lower()
     if not text:
-        raise HTTPException(
-            422,
-            f"Не удалось прочитать текст из «{original_name}». "
-            "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
-        )
+        # PDF/XLSX VOR still needs the original bytes for document LSR intake even
+        # when chat-facing text extraction is empty.
+        if suffix in {".pdf", ".xlsx", ".xlsm"}:
+            text = f"[document attachment preserved for LSR intake: {original_name}]"
+            truncated = False
+        else:
+            raise HTTPException(
+                422,
+                f"Не удалось прочитать текст из «{original_name}». "
+                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+            )
 
     from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
 
@@ -3523,7 +3530,11 @@ async def attach_chat_file(
     original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
     temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
 
-    if mode == "read":
+    suffix = Path(original_name).suffix.lower()
+    # PDF VOR/LSR needs the original bytes in chat_attachment storage. Quick
+    # parquet mode deletes the source and never sets ChatRequest.attachment_id,
+    # so «собери ЛСР» silently falls into estimate harness with 0 rows.
+    if mode == "read" or (mode == "quick" and suffix == ".pdf"):
         try:
             return await _prepare_read_attachment(temp_path, original_name)
         finally:
