@@ -49,6 +49,36 @@ MappingModelExchange = Callable[[list[dict], dict[str, Any]], dict[str, Any]]
 TokenSink = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+def _is_local_ollama_qwen_document(
+    *,
+    cloud_provider: bool,
+    model_provider: str,
+    model_name: str,
+    agent_engine: str = "",
+) -> bool:
+    """True for the Legion local Qwen document path that needs the fast profile."""
+    if cloud_provider:
+        return False
+    engine = str(agent_engine or "").strip().casefold()
+    if engine == "qwen_agent":
+        return True
+    return (
+        str(model_provider or "").casefold() == "ollama"
+        and "qwen" in str(model_name or "").casefold()
+    )
+
+
+def _ensure_local_ollama_fast_document_env() -> None:
+    """Apply fast local defaults only when the operator did not set the env vars."""
+    os.environ.setdefault("LES_SMETA_SEARCH_BUDGET", "3")
+    os.environ.setdefault("LES_SMETA_READ_BUDGET", "3")
+    os.environ.setdefault("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "1")
+    os.environ.setdefault("LES_SMETA_DOCUMENT_MAX_TOOL_TURNS", "8")
+    # Cross-encoder is usually absent on Legion; failed rerank attempts only
+    # add latency before the same lexical shortlist is returned.
+    os.environ.setdefault("LES_SMETA_NORM_RERANK", "false")
+
+
 def _source_fingerprint(path: Path) -> dict[str, Any]:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -677,22 +707,38 @@ async def run_smeta_document_application(
             cancel_check=cancel_requested.is_set,
         )
         configured_batch_size = os.getenv("LES_SMETA_DOCUMENT_BATCH_SIZE")
+        local_ollama_qwen = _is_local_ollama_qwen_document(
+            cloud_provider=bool(cloud_provider),
+            model_provider=str(model_provider or ""),
+            model_name=str(model_name or ""),
+            agent_engine=str(agent_engine or ""),
+        )
         if configured_batch_size is not None:
             document_batch_size = int(configured_batch_size)
         elif agent_engine == "qwen_agent":
             document_batch_size = 1
-        elif (
-            not cloud_provider
-            and str(model_provider or "").casefold() == "ollama"
-            and "qwen" in str(model_name or "").casefold()
-        ):
+        elif local_ollama_qwen:
             document_batch_size = 1
         else:
             document_batch_size = 0 if cloud_provider else 5
+        if local_ollama_qwen:
+            _ensure_local_ollama_fast_document_env()
         document_max_turns = int(os.getenv(
             "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
-            "64" if cloud_provider else "10",
+            (
+                "64" if cloud_provider else
+                # Scoped catalog needs family→collection→section→table→search→read→submit.
+                # Keep local Qwen under demo latency; 12+ turns × 19 rows stalls 10–20 min.
+                "8" if local_ollama_qwen else
+                "10"
+            ),
         ))
+        # Conflict-group review doubles wall time on local Qwen and often only
+        # re-serializes already terminal rows. Operator can force it via env.
+        local_global_review = os.getenv(
+            "LES_SMETA_LOCAL_GLOBAL_REVIEW",
+            "0" if local_ollama_qwen else "1",
+        ).strip().casefold() not in {"0", "false", "no", "off"}
         workflow_task = asyncio.create_task(asyncio.to_thread(
             run_vor_document_workflow, source_path,
             exchange=exchange,
@@ -705,7 +751,11 @@ async def run_smeta_document_application(
             max_agent_turns=document_max_turns,
             agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
             accumulate_task_state=(agent_engine == "qwen_agent" and document_batch_size == 1),
-            require_global_review=True,
+            require_global_review=local_global_review,
+            # Same typed RIM catalog contract as rim_agent / local_run: phase tools with
+            # selected_node_id. Legacy browse(decision=continue) without a node left
+            # chat LSR at family root → candidate unbound → 0 priced rows.
+            require_scoped_search=True,
             resume_agent_result=resume_agent_result,
             batch_checkpoint=checkpoint,
             work_context_enricher=work_context_enricher,

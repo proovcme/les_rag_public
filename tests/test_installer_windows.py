@@ -307,6 +307,10 @@ def test_windows_stop_uses_persisted_dynamic_ports():
     assert "foreign_port_owner" in text
     assert "function Stop-LesConfirmedPortProcess" in runtime
     assert "Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue" not in runtime
+    # System python + repo\.venv\uvicorn / NiceGUI re-exec must still count as LES-owned.
+    assert "commandUnderRuntime" in runtime
+    assert "IndexOf($runtime" in runtime
+    assert "ParentProcessId" in runtime
 
 
 def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned():
@@ -432,3 +436,31 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     assert '"bootstrap_degraded"' in text
     assert 'Fail "в установочном пакете отсутствует проверенная сметная база"' not in text
     assert 'Fail "не удалось подготовить сметную базу:' not in text
+
+
+def test_desktop_les_start_bootstraps_native_qdrant_and_fixed_ports():
+    root = build_windows_installer.ROOT
+    start = (root / "scripts" / "windows" / "LES-START.ps1").read_text(encoding="utf-8")
+    stop = (root / "scripts" / "windows" / "LES-STOP.ps1").read_text(encoding="utf-8")
+    bat = (root / "scripts" / "windows" / "LES-START.bat").read_text(encoding="utf-8")
+    qdrant_cfg = (root / "config" / "qdrant.local.yaml").read_text(encoding="utf-8")
+    cuda_env = (root / "config" / "local" / "windows-cuda.env").read_text(encoding="utf-8")
+
+    assert "tools\\bin\\qdrant.exe" in start
+    assert "config\\qdrant.local.yaml" in start
+    assert "config\\local\\windows-cuda.env" in start
+    assert '"-ProxyPort", "8050"' in start
+    assert '"-UiPort", "8051"' in start
+    assert "/api/version" in start
+    assert "stop-light.ps1" in start
+    assert "Do NOT capture start-light stdout/stderr" in start
+    assert "2>&1" not in start
+    assert "RERANK_DEVICE" in start
+    assert '-WindowStyle Hidden' in start or "-WindowStyle Hidden" in start
+    assert "stop-light.ps1" in stop
+    assert 'Get-Process -Name "qdrant"' in stop
+    assert "Stop-Port 8050" not in stop  # ownership-aware; no blind port kill
+    assert "LES-START.ps1" in bat
+    assert "storage_path: ./data/qdrant" in qdrant_cfg
+    assert "http_port: 6333" in qdrant_cfg
+    assert "RERANK_DEVICE=cuda" in cuda_env

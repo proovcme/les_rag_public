@@ -1,0 +1,6 @@
+storage:
+  storage_path: ./data/qdrant
+service:
+  host: 127.0.0.1
+  http_port: 6333
+  grpc_port: 6334

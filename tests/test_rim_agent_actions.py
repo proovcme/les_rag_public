@@ -732,10 +732,22 @@ def test_rim_phase_exposes_simple_route_tools_instead_of_conditional_union():
         "node_id"
     ]["enum"] == ["catalog:section:ГЭСНм:10:10-01"]
 
-    family_continue = document_workflow._phase_norm_tools("family_select")[0][
-        "function"
-    ]["parameters"]["properties"]["items"]["items"]
-    assert {"work_features", "catalog_query"}.issubset(family_continue["required"])
+    family_tools = document_workflow._phase_norm_tools("family_select")
+    assert [tool["function"]["name"] for tool in family_tools] == [
+        "continue_norm_catalog",
+    ]
+    family_item = family_tools[0]["function"]["parameters"]["properties"]["items"][
+        "items"
+    ]
+    # Keep items[] for Ollama/Qwen XML tools; flat top-level schema caused HTTP 500.
+    assert set(family_item["required"]) == {
+        "work_id",
+        "selected_node_id",
+        "confidence",
+    }
+    assert "work_features" in family_item["properties"]
+    assert "evidence" in family_item["properties"]
+    assert "evidence" not in family_item["required"]
 
     for phase in ("collection", "table_select"):
         route_continue = document_workflow._phase_norm_tools(phase)[0]["function"][

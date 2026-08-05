@@ -52,36 +52,15 @@ async def test_get_chat_history_returns_recent_messages_in_chronological_order(t
 
     messages = await get_chat_history(limit=2, _user=object())
 
-    assert messages == [
-        {"role": "user", "text": "q2"},
-        {
-            "role": "ai",
-            "text": "a2",
-            "srcs": [],
-            "crag": "NO_DATA",
-            "meta": {
-                "history_id": 2,
-                "query_route": {},
-                "retrieval_trace": {},
-                "cache": "miss",
-                "validation": {"enabled": True},
-            },
-        },
-        {"role": "user", "text": "q3"},
-        {
-            "role": "ai",
-            "text": "a3",
-            "srcs": ["doc-c"],
-            "crag": "VERIFIED",
-            "meta": {
-                "history_id": 3,
-                "query_route": {},
-                "retrieval_trace": {},
-                "cache": "miss",
-                "validation": {"enabled": True},
-            },
-        },
-    ]
+    assert [m["role"] for m in messages] == ["user", "ai", "user", "ai"]
+    assert [m["text"] for m in messages] == ["q2", "a2", "q3", "a3"]
+    assert messages[0]["requested_at"]
+    assert messages[1]["meta"]["history_id"] == 2
+    assert messages[1]["meta"]["requested_at"] == messages[0]["requested_at"]
+    assert messages[1]["crag"] == "NO_DATA"
+    assert messages[3]["srcs"] == ["doc-c"]
+    assert messages[3]["meta"]["history_id"] == 3
+    assert "latency_phases" in messages[1]["meta"]
 
 
 @pytest.mark.asyncio

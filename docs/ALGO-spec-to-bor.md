@@ -40,7 +40,10 @@
 - API: `GET /api/bor/{dataset_id}/from-spec` (превью), `POST …/from-spec/generate` (xlsx),
   `GET …/from-spec/download`.
 - GUI: вкладка «Инструменты» → карта ВОР, переключатель «Свод / Работы из спецификации (Ф9)».
-- Чат: «сделай ВОР из спецификации», «переведи спецификацию в ВОР» → детерминированный канал.
+- Чат: «сделай ВОР из спецификации» / «собери ВОР…» + read-вложение XLSX/XLSM → тот же
+  0-LLM контур (`rows_from_spec_xlsx` → `generate_spec_bor_from_rows`) **до** свободного
+  `attachment_context` LLM. Канал ответа: `spec_to_bor` / `DETERMINISTIC`, Excel без цен.
+  Датасетный Parquet-путь по-прежнему через `/api/bor/{id}/from-spec*`.
 
 ## v2 — декомпозиция (методика ГОСТ 21.111, дефолт)
 

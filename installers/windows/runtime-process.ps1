@@ -117,7 +117,7 @@ function Test-LesOwnedProcess(
   # Optional install binding: prefer the persistent venv / runtime python, but do
   # not require the runtime path to appear in CommandLine (uvicorn often omits it).
   if ($RuntimeRoot) {
-    $runtime = [System.IO.Path]::GetFullPath($RuntimeRoot)
+    $runtime = [System.IO.Path]::GetFullPath($RuntimeRoot).TrimEnd('\')
     $exe = ""
     try { $exe = [string]$process.Path } catch { $exe = "" }
     if (-not $exe) {
@@ -125,6 +125,13 @@ function Test-LesOwnedProcess(
         $exe = [string](Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId").ExecutablePath
       } catch { $exe = "" }
     }
+    # Windows often launches system python.exe with repo\.venv\Scripts\uvicorn.exe
+    # (or -m uvicorn) while cwd/args still point at this RuntimeRoot. NiceGUI may
+    # also re-exec as `python.exe sovushka_ng.py` without an absolute path — then
+    # the parent under RuntimeRoot\.venv is the ownership proof.
+    $commandUnderRuntime = $command.IndexOf($runtime, [StringComparison]::OrdinalIgnoreCase) -ge 0
+    $underState = $false
+    $underRuntime = $false
     if ($exe) {
       $exeFull = [System.IO.Path]::GetFullPath($exe)
       $statePython = Join-Path $env:LOCALAPPDATA "LES\.venv\Scripts"
@@ -134,9 +141,35 @@ function Test-LesOwnedProcess(
       $underState = $exeFull.StartsWith(([System.IO.Path]::GetFullPath($statePython) + [IO.Path]::DirectorySeparatorChar), [StringComparison]::OrdinalIgnoreCase) -or
         $exeFull.Equals([System.IO.Path]::GetFullPath($statePython + "\python.exe"), [StringComparison]::OrdinalIgnoreCase) -or
         $exeFull.Equals([System.IO.Path]::GetFullPath($statePython + "\pythonw.exe"), [StringComparison]::OrdinalIgnoreCase)
-      $underRuntime = $exeFull.StartsWith(($runtime.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase)
-      if (-not ($underState -or $underRuntime)) { return $false }
+      $underRuntime = $exeFull.StartsWith(($runtime + '\'), [StringComparison]::OrdinalIgnoreCase)
     }
+    if ($underState -or $underRuntime -or $commandUnderRuntime) {
+      return $true
+    }
+    $parentId = 0
+    try {
+      $parentId = [int](Get-CimInstance Win32_Process -Filter "ProcessId = $ProcessId").ParentProcessId
+    } catch {
+      $parentId = 0
+    }
+    if ($parentId -le 0) { return $false }
+    $parentCmd = Get-LesProcessCommandLine $parentId
+    $parentExe = ""
+    try {
+      $parentExe = [string](Get-CimInstance Win32_Process -Filter "ProcessId = $parentId").ExecutablePath
+    } catch {
+      $parentExe = ""
+    }
+    if ($parentExe) {
+      $parentExeFull = [System.IO.Path]::GetFullPath($parentExe)
+      if ($parentExeFull.StartsWith(($runtime + '\'), [StringComparison]::OrdinalIgnoreCase)) {
+        return $true
+      }
+    }
+    if ($parentCmd -and $parentCmd.IndexOf($runtime, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+      return $true
+    }
+    return $false
   }
   return $true
 }

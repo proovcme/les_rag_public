@@ -1727,7 +1727,7 @@ body, .nicegui-content {
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
-  margin: 0 0 4px;
+  margin: 0;
   padding: 2px 8px;
   border: 1px solid rgba(28, 44, 64, .16);
   border-radius: 999px;
@@ -1738,6 +1738,28 @@ body, .nicegui-content {
   font-weight: 800;
   line-height: 1.35;
   overflow-wrap: anywhere;
+}
+.sov-answer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 4px;
+  max-width: 100%;
+}
+.sov-chat-timing {
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: 11px !important;
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: .01em;
+  white-space: nowrap;
+}
+.sov-chat-timing--user {
+  align-self: flex-end;
+  margin: 0 0 2px;
+  opacity: .85;
 }
 .sov-prompt-editor {
   width: 100%;

@@ -99,9 +99,13 @@ def _build_diag_map_html(results: list) -> str:
             node(
                 platform["model"],
                 platform["model_detail"],
-                st("Локальная модель", "MLX Backend", "MLX Host :8080"),
+                st("Локальная модель", "Ollama", "MLX Backend", "MLX Host :8080"),
             ),
-            node("Latency", "время ответа модели и чата", st("Model latency", "MLX latency", "Chat latency (тест)")),
+            node(
+                "Latency",
+                "время ответа модели и чата",
+                st("Model latency", "Ollama latency", "MLX latency", "Chat latency (тест)"),
+            ),
             node("Т.О.С.К.А.", "контроль качества ответов", st("Т.О.С.К.А. статистика")),
         ]),
         group(platform["resources"], [

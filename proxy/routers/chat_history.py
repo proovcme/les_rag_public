@@ -80,14 +80,14 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
             ensure_chat_history_schema(conn)
             if session_id:
                 rows = conn.execute(
-                    "SELECT id, question, answer, sources, crag_status, query_route_json, "
+                    "SELECT id, timestamp, question, answer, sources, crag_status, query_route_json, "
                     "retrieval_trace_json, artifact_json, cache_type, validation_enabled, feedback_status FROM chat_history "
                     "WHERE session_id=? ORDER BY id ASC",
                     (session_id,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, question, answer, sources, crag_status, query_route_json, "
+                    "SELECT id, timestamp, question, answer, sources, crag_status, query_route_json, "
                     "retrieval_trace_json, artifact_json, cache_type, validation_enabled, feedback_status FROM chat_history "
                     "ORDER BY id DESC LIMIT ?",
                     (limit,),
@@ -96,6 +96,7 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
         messages = []
         for (
             history_id,
+            timestamp,
             question,
             answer,
             sources_text,
@@ -108,13 +109,27 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
             feedback_status,
         ) in rows:
             sources = [source for source in (sources_text or "").split(",") if source]
-            messages.append({"role": "user", "text": question})
+            messages.append({
+                "role": "user",
+                "text": question,
+                "requested_at": timestamp,
+            })
+            retrieval_trace = _json_object(trace)
+            latency_phases = (
+                retrieval_trace.get("latency_phases")
+                if isinstance(retrieval_trace.get("latency_phases"), dict)
+                else {}
+            )
             meta = {
                 "history_id": history_id,
                 "query_route": _json_object(route),
-                "retrieval_trace": _json_object(trace),
+                "retrieval_trace": retrieval_trace,
                 "cache": cache_type or "miss",
                 "validation": {"enabled": bool(validation_enabled)},
+                "requested_at": timestamp,
+                "latency_phases": latency_phases,
+                "elapsed_sec": latency_phases.get("wall_total"),
+                "model_think_sec": latency_phases.get("generation"),
             }
             artifact_payload = _json_object(artifact)
             if artifact_payload:

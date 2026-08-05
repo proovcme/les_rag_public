@@ -21,9 +21,15 @@ _HEADER_ALIASES = {
     "section": ("раздел", "секция", "section"),
     "title": ("наименование", "работа", "описание"),
     "unit": ("ед. изм", "единица", "ед изм", "ед."),
-    "quantity": ("кол-во", "количество", "объем", "объём"),
+    # Printed estimates often shorten quantity as «Ко-во» (without «л»).
+    "quantity": ("кол-во", "ко-во", "количество", "колич", "объем", "объём"),
     "note": ("примечание", "комментарий"),
 }
+# Contract/estimate title blocks commonly push the real table header past row 12.
+_HEADER_SCAN_ROWS = 48
+_LAYOUT_SUBHEADER_UNITS = frozenset({
+    "материалы", "работа", "работы", "общая стоимость", "стоимость",
+})
 _SECTION_RE = re.compile(r"^\s*(?:раздел|section)\s*(?:№\s*)?(\d+)?[.\s:-]*(.*)$", re.IGNORECASE)
 
 
@@ -71,6 +77,8 @@ def _canonical_column_map(column_map: dict[str, Any] | None) -> dict[str, Any]:
         "ед. изм.": "unit",
         "quantity": "quantity",
         "количество": "quantity",
+        "кол-во": "quantity",
+        "ко-во": "quantity",
         "note": "note",
         "примечание": "note",
     }
@@ -100,7 +108,7 @@ def _explicit_header_map(
         for key, value in column_map.items()
         if key not in numeric and _text(value)
     }
-    for row_index, row in enumerate(rows[:20]):
+    for row_index, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
         by_name = {_text(value).casefold(): index for index, value in enumerate(row)}
         resolved = dict(numeric)
         for key, header in requested.items():
@@ -134,7 +142,7 @@ def _rows_to_items(
     if explicit_map:
         header_at, columns = _explicit_header_map(rows, explicit_map)
     else:
-        for index, row in enumerate(rows[:12]):
+        for index, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
             candidate = _header_map(row)
             if {"title", "unit", "quantity"}.issubset(candidate):
                 header_at, columns = index, candidate
@@ -164,6 +172,9 @@ def _rows_to_items(
         if row_section:
             current_section = row_section
         if not title and not unit and quantity is None:
+            continue
+        # Second header line under split price columns: «Материалы | Работа | …».
+        if quantity is None and unit.casefold() in _LAYOUT_SUBHEADER_UNITS:
             continue
 
         # Printed/exported workbooks commonly keep section totals as numeric

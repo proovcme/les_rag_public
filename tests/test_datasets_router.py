@@ -1000,6 +1000,64 @@ async def test_attach_read_returns_text_context(tmp_path, monkeypatch, dataset_s
 
 
 @pytest.mark.asyncio
+async def test_attach_quick_pdf_is_promoted_to_read(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    async def fake_prepare(temp_path, original_name, **_kwargs):
+        calls.append(original_name)
+        return {
+            "attachment_id": "read_abcdef123456",
+            "mode": "read",
+            "name": original_name,
+            "chars": 11,
+            "text": "pdf context",
+            "truncated": False,
+        }
+
+    monkeypatch.setattr(datasets, "_prepare_read_attachment", fake_prepare)
+    result = await datasets.attach_chat_file(
+        file=_upload("ВОР монтаж.pdf", b"%PDF-1.4 fake"),
+        mode="quick",
+        _admin=object(),
+    )
+
+    assert result["mode"] == "read"
+    assert result["attachment_id"].startswith("read_")
+    assert calls == ["ВОР монтаж.pdf"]
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_attach_read_preserves_pdf_without_extracted_text(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+
+    def empty_converter(_path):
+        return ""
+
+    import backend.converter
+
+    monkeypatch.setattr(backend.converter, "convert_to_markdown", empty_converter)
+    monkeypatch.setattr(
+        datasets,
+        "_format_tabular_attachment_context",
+        lambda *_args, **_kwargs: None,
+    )
+    result = await datasets.attach_chat_file(
+        file=_upload("empty_vor.pdf", b"%PDF-1.4 binary"),
+        mode="read",
+        _admin=object(),
+    )
+
+    assert result["mode"] == "read"
+    assert "preserved for LSR intake" in result["text"]
+    from proxy.services.chat_attachment_service import resolve_read_attachment
+
+    saved_path, _metadata = resolve_read_attachment(result["attachment_id"])
+    assert saved_path.read_bytes() == b"%PDF-1.4 binary"
+
+
+@pytest.mark.asyncio
 async def test_attach_read_converter_error_is_controlled(tmp_path, monkeypatch, dataset_state):
     monkeypatch.chdir(tmp_path)
 
