@@ -19,7 +19,7 @@ def test_graph_integrity_no_dangling_refs():
 def test_load_has_core_concepts():
     onto = load_ontology()
     ids = set(onto["by_id"])
-    assert {"vor", "kac", "lsr", "ks2", "ks3", "ks6a", "spec", "fgis_cs", "gesn"} <= ids
+    assert {"vor", "kac", "lsr", "ks2", "ks3", "spec", "fgis_cs", "gesn"} <= ids
 
 
 def test_resolve_terms_and_aliases():

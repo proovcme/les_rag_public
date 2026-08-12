@@ -206,7 +206,7 @@ def test_qwen_returns_to_tools_when_structured_bind_needs_opened_comparison(monk
                 "scope_match": "partial",
                 "foreign_resources": [],
                 "decision": "rejected",
-                "reason": "отличие по составу: вторая карточка покрывает только часть операции",
+                "reason": "вторая карточка покрывает только часть операции",
             })
             self.tools["submit_lsr_mapping"].call(mapping)
             yield [{"role": "assistant", "content": ""}]

@@ -382,16 +382,7 @@ def _rrf_cards(*rankings: list[dict[str, Any]], limit: int) -> list[dict[str, An
                 continue
             cards.setdefault(identity, card)
             scores[identity] = scores.get(identity, 0.0) + 1.0 / (60.0 + rank)
-    # Tie-break by typed identity so equal RRF scores stay bit-stable across runs.
-    ordered = sorted(
-        cards,
-        key=lambda identity: (
-            -scores[identity],
-            identity.casefold(),
-            identity,
-            str(cards[identity].get("norm_code") or "").casefold(),
-        ),
-    )
+    ordered = sorted(cards, key=lambda identity: (-scores[identity], identity))
     return [cards[identity] for identity in ordered[:limit]]
 
 

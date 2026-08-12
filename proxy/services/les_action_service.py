@@ -22,8 +22,8 @@ from typing import Any
 
 PROJECTS_ROOT = Path("storage/projects")
 
-# Формы-документы, в которые умеем разложить собранную смету.
-_SMETA_FORMS = {"vor", "smeta_lsr", "ks2", "ks3"}
+# Формы-документы, в которые умеем разложить собранную смету (бланк ВОР/ЛСР).
+_SMETA_FORMS = {"vor", "smeta_lsr"}
 
 
 def _projects_root() -> Path:
@@ -45,8 +45,12 @@ def _fmt_qty(value: float) -> str:
 
 # ── 1. les_smeta_save: собранная смета → документ (ВОР/ЛСР) в проект ──
 
-def _vor_lsr_rows(assembled: dict[str, Any]) -> list[list[str]]:
-    """Позиции собранной сметы → строки бланка ВОР/ЛСР (+ строка ИТОГО)."""
+def _smeta_rows(assembled: dict[str, Any]) -> list[list[str]]:
+    """Позиции собранной сметы → строки бланка (ВОР-колонки + строка ИТОГО).
+
+    Колонки ВОР: № п/п | Наименование работ | Ед. изм. | Количество | Обоснование | Примечание.
+    «Всего по позиции» кладём в Примечание — числовой результат сборки виден в документе.
+    """
     rows: list[list[str]] = []
     for i, pos in enumerate(assembled.get("positions") or [], 1):
         total = _f(pos.get("total"))
@@ -65,16 +69,6 @@ def _vor_lsr_rows(assembled: dict[str, Any]) -> list[list[str]]:
     return rows
 
 
-def _smeta_rows(assembled: dict[str, Any], form_id: str = "vor") -> list[list[str]]:
-    """Позиции → строки целевого бланка (ВОР/ЛСР/КС-2/КС-3)."""
-    from proxy.services import ks_forms_service
-
-    fid = str(form_id or "vor").strip().casefold()
-    if fid in ks_forms_service.KS2_KS3_FORMS:
-        return ks_forms_service.rows_for_form(fid, assembled=assembled)
-    return _vor_lsr_rows(assembled)
-
-
 def save_smeta(
     assembled: dict[str, Any],
     project_id: int,
@@ -84,7 +78,7 @@ def save_smeta(
     doc_code: str = "",
     link: bool = True,
 ) -> dict[str, Any]:
-    """Собранную смету (выход les_lsr_assemble) → документ ВОР/ЛСР/КС в storage проекта.
+    """Собранную смету (выход les_lsr_assemble) → документ ВОР/ЛСР в storage проекта.
 
     assembled — словарь с ключами positions[] и summary{} (как отдаёт assemble).
     Создаёт НОВЫЙ файл (не перезаписывает) под storage/projects/<id>/smeta и,
@@ -111,7 +105,7 @@ def save_smeta(
     if resolved is None:
         raise ValueError(f"Форма {form_id!r} не найдена")
     if resolved.get("columns"):
-        resolved["rows"] = _smeta_rows(assembled, form_id=form_id)
+        resolved["rows"] = _smeta_rows(assembled)
 
     out_dir = _projects_root() / str(int(project_id)) / "smeta"
     out_dir.mkdir(parents=True, exist_ok=True)

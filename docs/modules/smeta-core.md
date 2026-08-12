@@ -4,13 +4,9 @@
 > [SMETA_MODULE_EXPLAINED.md](../SMETA_MODULE_EXPLAINED.md): архитектура, skill, полный active prompt,
 > Qwen row-loop, ФСНБ/ФГИС, расчёт, UI, настройки, тесты и ограничения.
 
-> **Статус 2026-07-29: ✅ код и документ синхронизированы (0.25.1).** Канонический PDF→ЛСР путь —
-> model-owned evidence loop, immutable построчный mapping, optional global-review на local Ollama,
+> **Статус 2026-07-28: ✅ код и документ синхронизированы.** Канонический PDF→ЛСР путь —
+> model-owned evidence loop, immutable построчный mapping, обязательная глобальная модельная ревизия,
 > автoчерновик и отдельный пользовательский lock перед финальным расчётом.
-> На local Ollama/Qwen incomplete `unbound`/`bind` evidence по умолчанию принимается как
-> `precalculation_blockers` (поведение 0.24.48), чтобы ЛСР доходил до XLSX; cloud остаётся
-> hard-reject. Env: `LES_SMETA_DOCUMENT_SOFT_ACCEPT`, `LES_SMETA_DOCUMENT_GLOBAL_REVIEW`,
-> `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS`, `LES_SMETA_DOCUMENT_BATCH_SIZE`.
 > Архитектурное решение и судьба экспериментальных веток зафиксированы в
 > [ADR-13](../ADR-13-smeta-session-workflow.md).
 
@@ -108,20 +104,7 @@ immutable lock-ревизию и только затем отдельный фи
   и tool JSON от смешивания/обрыва, но не выбирает нормы и не дробит общую immutable-ревизию.
   Оба document exchange используют `temperature=0`; локальный повторяемый профиль дополнительно
   передаёт `LES_SMETA_DOCUMENT_SEED` (default `0`) и сохраняет seed в trace. Нормализованные
-  model-authored запросы и пакетные tool-вызовы сортируются перед retrieval без изменения scope;
-  RRF tie-break и compact cards стабильны по identity/`norm_code`. Submit отклоняет floating
-  reject opened close-analog и соседних шифров одной таблицы без mismatch/критерия различия —
-  без code-side выбора нормы и без replay прошлого mapping.   Bind на `ГЭСНр`/`ГЭСНмр` без
-  маркеров ремонта/замены в тексте строки ВОР hard-demote в unbound (даже при soft-accept);
-  код не подставляет другую норму. После расчёта в artifact/ответе пишется
-  `mapping_fingerprint` (digest привязок) и предупреждение о возможном разбросе fresh-run.
-  При низком покрытии (много unbound) чат и шапка XLSX явно говорят, что сумма — только по
-  привязанным строкам, не итог ведомости.   Опциональный `missing_rows_pass`
-  (`LES_SMETA_DOCUMENT_MISSING_PASS`, default on для local Ollama/Qwen) даёт модели второй
-  шанс только по незакрытым `work_id`; уже выбранные нормы immutable. Финальный
-  structured-mapping JSON ретраится (`LES_SMETA_DOCUMENT_MAPPING_RETRIES`); при soft-accept
-  битый/пустой JSON закрывает remaining как unbound (норма не выбирается), а сбой
-  missing-rows pass не затирает уже собранный черновик.
+  model-authored запросы и пакетные tool-вызовы сортируются перед retrieval без изменения scope.
   Qwen-Agent по умолчанию получает одну активную строку и накопленный `task_state` общей задачи.
   Ordinary-text завершение получает ограниченный same-model terminal recovery; отсутствие или
   расхождение `unbound_evidence` с tool trace отклоняет только transport-пакет, не решение модели.

@@ -131,39 +131,9 @@ def _header_block(ws, put, S: dict[str, Any], *, name: str, summary: dict[str, A
         )
         for c in range(1, 13):
             ws.cell(row=r, column=c).fill = S["fill_warning"]
-        r += 1
-    input_rows = int(summary.get("input_rows") or 0)
-    bound_rows = int(summary.get("bound_rows") or 0)
-    open_rows = int(summary.get("open_rows", summary.get("unbound_rows")) or 0)
-    covered_rows = int(summary.get("covered_rows") or 0)
-    closed = bound_rows + covered_rows
-    low_coverage = (
-        input_rows > 0
-        and open_rows > 0
-        and (open_rows / input_rows >= 0.30 or closed / input_rows < 0.70)
-    )
-    if low_coverage:
-        put(
-            r,
-            1,
-            (
-                f"ПОКРЫТИЕ НИЗКОЕ: привязано {bound_rows} из {input_rows} строк"
-                f"{', ещё ' + str(covered_rows) + ' покрыто соседними' if covered_rows else ''}. "
-                "Сумма в шапке — только по привязанным, не итог ведомости."
-            ),
-            font=S["warning"],
-        )
-        for c in range(1, 13):
-            ws.cell(row=r, column=c).fill = S["fill_warning"]
         r += 2
-    elif result_status and result_status != "priced_final":
-        r += 1
     amount_complete = summary.get("full_amount") is not None
-    if low_coverage and input_rows:
-        cost_label = f"Стоимость только привязанной части ({bound_rows}/{input_rows})"
-    else:
-        cost_label = "Сметная стоимость" if amount_complete else "Стоимость рассчитанной части"
-    put(r, 1, cost_label, font=S["bold"])
+    put(r, 1, "Сметная стоимость" if amount_complete else "Стоимость рассчитанной части", font=S["bold"])
     put(r, 4, _f(summary.get("total_with_vat", summary.get("total", 0))), font=S["bold"], num=True)
     put(r, 6, "руб.", font=S["dim"]); r += 1
     put(r, 1, "  средства на оплату труда рабочих", font=S["dim"]); put(r, 4, _f(summary.get("ozp", 0)), font=S["dim"], num=True); r += 1
@@ -372,10 +342,7 @@ def _set_header_total_formula(ws, total_row: int | None) -> None:
     if not total_row:
         return
     for row_no in range(1, min(ws.max_row, 40) + 1):
-        label = str(ws.cell(row=row_no, column=1).value or "")
-        if label in {"Сметная стоимость", "Стоимость рассчитанной части"} or label.startswith(
-            "Стоимость только привязанной части"
-        ):
+        if ws.cell(row=row_no, column=1).value in {"Сметная стоимость", "Стоимость рассчитанной части"}:
             ws.cell(row=row_no, column=4, value=f"=L{total_row}")
             return
 

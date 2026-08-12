@@ -19,16 +19,6 @@ _DOC_PURPOSE = {
     "vor": "наименования и объёмы строительно-монтажных работ (основа для сметы)",
     "smeta_lsr": "стоимость работ и затрат по объекту (локальный сметный расчёт)",
     "aosr": "освидетельствование скрытых работ перед закрытием (исполнительная документация)",
-    "ks2": "акт о приёмке выполненных работ за период (заполнение из последней ЛСР)",
-    "ks3": "справка о стоимости выполненных работ (итог по КС-2/ЛСР)",
-    "ks6a": "журнал учёта выполненных работ (только confirmed полевые объёмы)",
-}
-
-# Заполняемые КС-формы: не blank, а generate_filled_form.
-_FILLED_FORM_SOURCES = {
-    "ks2": "last_lsr",
-    "ks3": "last_lsr",
-    "ks6a": "field_journal",
 }
 
 # Реестр команд. kind: form | rewrite | info | help.
@@ -41,13 +31,6 @@ COMMANDS: tuple[dict[str, Any], ...] = (
      "title": "Локальная смета (ЛСР)", "desc": "Бланк сметы по Методике 421/пр"},
     {"cmd": "/акт", "aliases": ("/аоср", "/aosr"), "kind": "form", "form": "aosr",
      "title": "Акт скрытых работ (АОСР)", "desc": "Акт освидетельствования скрытых работ"},
-    {"cmd": "/кс-2", "aliases": ("/кс2", "/ks2"), "kind": "filled_form", "form": "ks2",
-     "title": "КС-2 (акт выполненных работ)", "desc": "Заполненный КС-2 из последней ЛСР"},
-    {"cmd": "/кс-3", "aliases": ("/кс3", "/ks3"), "kind": "filled_form", "form": "ks3",
-     "title": "КС-3 (справка о стоимости)", "desc": "Заполненный КС-3 из последней ЛСР"},
-    {"cmd": "/кс-6а", "aliases": ("/кс-6a", "/кс6а", "/кс6a", "/ks6a"), "kind": "filled_form",
-     "form": "ks6a", "title": "КС-6а (журнал учёта)",
-     "desc": "Заполненный КС-6а из confirmed журнала объёмов"},
     {"cmd": "/сводка", "aliases": ("/тэп",), "kind": "rewrite", "rewrite": "дай сводку проекта",
      "title": "Сводка проекта", "desc": "Стадия, ТЭП, состав документов"},
     {"cmd": "/сверка", "aliases": ("/сверь",), "kind": "rewrite", "rewrite": "сверь ведомости и акты, где расхождения",
@@ -95,19 +78,6 @@ def _explain_doc(form_id: str) -> str:
         parts.append(f"Основание: {basis}.")
     if cols:
         parts.append("Графы: " + " · ".join(cols) + ".")
-    if form_id in _FILLED_FORM_SOURCES:
-        src = _FILLED_FORM_SOURCES[form_id]
-        if src == "last_lsr":
-            parts.append(
-                "Будет заполнен из последней ЛСР сессии (перенос qty/сумм за период). "
-                "Сначала соберите смету в режиме «Смета»."
-            )
-        else:
-            parts.append(
-                "Будет заполнен из confirmed журнала полевых объёмов. "
-                "ЛСР как факт выполнения не подставляется."
-            )
-        return "\n".join(parts)
     parts.append("⚠️ Это ПУСТОЙ бланк (шаблон, без данных проекта) — xlsx скачается; docx/html — Инструменты → Формы.")
     if form_id in ("vor", "spec_gost21110"):
         build = ("«сделай ВОР из спецификации»" if form_id == "vor"
@@ -155,8 +125,7 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
                        "  • les_reconcile — сверка ВОР↔КС-2↔смета↔ИД по количествам;\n"
                        "  • les_bor / les_spec_to_bor — ВОР (свод и работы из спецификации);\n"
                        "  • les_project_summary — сводка проекта (ТЭП/стадии/состав);\n"
-                       "  • les_form_generate — генерация спецификации/ВОР/сметы/АОСР/КС;\n"
-                       "  • les_smeta_save — смета → ВОР/ЛСР/КС-2/КС-3 в проект.\n"
+                       "  • les_form_generate — генерация спецификации/ВОР/сметы/АОСР.\n"
                        "Запуск: uv run python tools/les_mcp_server.py (stdio). Регистрация в MCP-клиенте:\n"
                        '  {"mcpServers":{"les":{"command":"uv","args":["run","python",'
                        '"tools/les_mcp_server.py"],"cwd":"/Users/ovc/LES"}}}'),
@@ -178,18 +147,5 @@ def handle_command(question: str, *, project_id: int | None = None) -> dict[str,
             "answer": _explain_doc(form_id),
             "command": {"action": "generate_form", "form_id": form_id, "fmt": "xlsx",
                         "title": entry["title"]},
-        }
-    if kind == "filled_form":
-        form_id = entry["form"]
-        return {
-            "answer": _explain_doc(form_id),
-            "command": {
-                "action": "generate_filled_form",
-                "form_id": form_id,
-                "fmt": "xlsx",
-                "title": entry["title"],
-                "source": _FILLED_FORM_SOURCES.get(form_id, "last_lsr"),
-                "project_id": project_id,
-            },
         }
     return None
