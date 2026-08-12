@@ -16,4 +16,3 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "LES-owned runtime processes stopped." -ForegroundColor Green
-
