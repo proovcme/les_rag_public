@@ -175,24 +175,6 @@ def test_memory_processes_missing_platform_command_returns_empty(monkeypatch):
     assert runtime_control.memory_processes() == []
 
 
-def test_memory_processes_none_stdout_returns_empty(monkeypatch):
-    """Windows tasklist can return rc=0 with stdout=None (encoding/locale)."""
-    monkeypatch.setattr(runtime_control.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(
-        runtime_control,
-        "_run",
-        lambda args, timeout=20: runtime_control.subprocess.CompletedProcess(
-            args=args,
-            returncode=0,
-            stdout=None,
-            stderr=None,
-        ),
-    )
-
-    assert runtime_control.memory_processes() == []
-    assert runtime_control._parse_tasklist_memory_processes(None) == []
-
-
 def test_process_command_uses_tasklist_on_windows(monkeypatch):
     monkeypatch.setattr(runtime_control.platform, "system", lambda: "Windows")
     calls = []

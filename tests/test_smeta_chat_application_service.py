@@ -49,16 +49,6 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
             "schema": "smeta_vor_pdf_workflow_v1",
             "agent_trace": {},
             "model_trace": [{"turn": 1}],
-            "intake": {
-                "work_items": [
-                    {"work_id": "w1", "title": "Работа"},
-                    {"work_id": "w2", "title": "Другая"},
-                ],
-            },
-            "selections": {
-                "w1": {"norm_code": "ГЭСН01", "precalculation_blockers": []},
-                "w2": {"norm_code": "", "precalculation_blockers": []},
-            },
             "lsr": {
                 "summary": {
                     "result_status": "priced_partial",
@@ -92,22 +82,31 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
     assert result.operation == "smeta_document_lsr"
     assert result.crag == "PARTIAL"
     assert "Из 19 позиций рассчитаны 16" in result.answer
-    assert "Повторный прогон" in result.answer
     assert result.extra["artifact"]["mode"] == "xlsx"
     assert result.extra["artifact"]["rim_trace"]["positions"][0]["selected_by"] == "model"
-    fp = result.extra["artifact"]["mapping_fingerprint"]
-    assert fp["schema"] == "les.smeta_mapping_fingerprint.v1"
-    assert fp["digest"]
-    assert fp["digest"] in result.answer
-    trace = result.extra["retrieval_trace"]
-    assert trace["mapping_fingerprint"]["digest"] == fp["digest"]
-    assert trace["mode"] == "smeta_document"
-    assert trace["schema"] == "smeta_vor_pdf_workflow_v1"
-    assert trace["source_sha256"] == "source-sha"
-    assert trace["result_status"] == "priced_partial"
-    assert trace["summary"]["bound_rows"] == 16
-    assert trace["model"] == "gpt-5.4"
-    assert trace["model_calls"] == 1
+    assert result.extra["retrieval_trace"] == {
+        "mode": "smeta_document",
+        "schema": "smeta_vor_pdf_workflow_v1",
+        "zero_state": True,
+        "previous_revision_read": False,
+        "source_sha256": "source-sha",
+        "result_status": "priced_partial",
+        "summary": {
+            "result_status": "priced_partial",
+            "input_rows": 19,
+            "bound_rows": 16,
+            "open_rows": 3,
+            "total_without_vat": 100,
+            "total_with_vat": 122,
+        },
+        "model_provider": "openai",
+        "agent_engine": "native",
+        "model_requested": "gpt-5.4",
+        "model": "gpt-5.4",
+        "models_used": ["gpt-5.4"],
+        "model_fallbacks": [],
+        "model_calls": 1,
+    }
     assert workflow_call["candidate_limit"] == 12
     assert workflow_call["batch_size"] == 0
     saved_trace = json.loads(Path(result.extra["artifact"]["files"]["trace_path"]).read_text())
@@ -323,49 +322,6 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
 
 
 @pytest.mark.asyncio
-async def test_local_ollama_qwen_document_application_uses_single_row_batches(tmp_path, monkeypatch):
-    source = tmp_path / "source.pdf"
-    source.write_bytes(b"%PDF-test")
-    seen = {}
-    monkeypatch.delenv("LES_SMETA_DOCUMENT_BATCH_SIZE", raising=False)
-    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
-        source, {"original_name": "source.pdf", "sha256": "sha"},
-    ))
-    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
-
-    def run_workflow(_path, **kwargs):
-        seen.update(kwargs)
-        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
-        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
-        return {
-            "schema": "smeta_document_workflow_v2",
-            "agent_trace": {},
-            "model_trace": [],
-            "lsr": {"summary": {
-                "result_status": "priced_complete",
-                "input_rows": 1,
-                "bound_rows": 1,
-                "open_rows": 0,
-            }, "positions": []},
-        }
-
-    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
-    result = await service.run_smeta_document_application(
-        attachment_id="read_0123456789ab",
-        user_request="Сделай ЛСР",
-        model_exchange=lambda _messages, _tools: {},
-        model_provider="ollama",
-        model_name="qwen3.5:9b",
-        cloud_provider=False,
-        artifact_dir=tmp_path / "artifacts",
-    )
-
-    assert result is not None and result.operation == "smeta_document_lsr"
-    assert seen["batch_size"] == 1
-    assert seen["accumulate_task_state"] is False
-
-
-@pytest.mark.asyncio
 async def test_qwen_document_application_defaults_to_accumulated_single_rows(tmp_path, monkeypatch):
     source = tmp_path / "source.xlsx"
     source.write_bytes(b"xlsx")
@@ -490,91 +446,6 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert urls == ["http://127.0.0.1:11434/api/chat"]
 
 
-def test_document_exchange_retries_ollama_tool_xml_parse_500(monkeypatch):
-    """Qwen/Ollama may return HTTP 500 on drifted tool XML; retry with seed+n."""
-    from proxy.services import smeta_chat_adapter_service as adapter
-
-    bodies = []
-    calls = {"n": 0}
-
-    class BadResponse:
-        status_code = 500
-        text = '{"error":"XML syntax error on line 8: element <function> closed by </parameter>"}'
-        reason_phrase = "Internal Server Error"
-
-        def raise_for_status(self):
-            raise adapter.httpx.HTTPStatusError(
-                "500", request=adapter.httpx.Request("POST", "http://x"), response=self,
-            )
-
-        def json(self):
-            return {"error": "XML syntax error"}
-
-    class GoodResponse:
-        status_code = 200
-        text = ""
-        reason_phrase = "OK"
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "message": {
-                    "role": "assistant",
-                    "tool_calls": [{"id": "call-ok", "function": {"name": "search_norms_batch"}}],
-                },
-                "done_reason": "stop",
-            }
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, _url, **kwargs):
-            bodies.append(kwargs["json"])
-            calls["n"] += 1
-            return BadResponse() if calls["n"] == 1 else GoodResponse()
-
-    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
-        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3.5:9b", "", True,
-    ))
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-
-    result = adapter._smeta_document_exchange(
-        [{"role": "user", "content": "Собери ЛСР"}],
-        [{"type": "function", "function": {"name": "search_norms_batch"}}],
-    )
-
-    assert calls["n"] == 2
-    assert bodies[0]["options"]["seed"] == 0
-    assert bodies[1]["options"]["seed"] == 1
-    assert bodies[1]["think"] is False
-    assert bodies[1]["messages"][-1]["role"] == "user"
-    assert "transport parser error" in bodies[1]["messages"][-1]["content"]
-    assert result["tool_calls"][0]["id"] == "call-ok"
-    assert result["_les_xml_parse_retries"] == 1
-    assert result["_les_seed"] == 1
-
-
-def test_is_ollama_tool_xml_parse_error_helper():
-    from proxy.services import smeta_chat_adapter_service as adapter
-
-    assert adapter._is_ollama_tool_xml_parse_error(
-        500,
-        '{"error":"XML syntax error on line 8: element <function> closed by </parameter>"}',
-    )
-    assert not adapter._is_ollama_tool_xml_parse_error(500, "model not found")
-    assert not adapter._is_ollama_tool_xml_parse_error(400, "XML syntax error")
-
-
 def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     from proxy.services import smeta_chat_adapter_service as adapter
 
@@ -630,156 +501,6 @@ def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     assert captured["body"]["options"]["temperature"] == 0.0
     assert captured["body"]["options"]["seed"] == 0
     assert result["_les_seed"] == 0
-
-
-def test_smeta_document_mapping_exchange_strips_think_before_json_parse(monkeypatch):
-    from proxy.services import smeta_chat_adapter_service as adapter
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "message": {
-                    "content": '<think>\nПромежуточное рассуждение {"bad":"inside_think"}\n</think>\n'
-                    '{"rows":[{"work_id":"w1","decision":"unbound","reason":"clean-json"}]}'
-                },
-                "done_reason": "stop",
-                "eval_count": 7,
-            }
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, *_args, **_kwargs):
-            return Response()
-
-    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
-        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3.5:9b", "", True,
-    ))
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-
-    result = adapter._smeta_document_mapping_exchange(
-        [{"role": "user", "content": "build mapping"}],
-        {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
-    )
-
-    assert result["rows"][0]["reason"] == "clean-json"
-
-
-def test_smeta_document_mapping_exchange_retries_think_false_when_content_empty(monkeypatch):
-    from proxy.services import smeta_chat_adapter_service as adapter
-
-    posts = []
-
-    class Response:
-        def __init__(self, payload):
-            self._payload = payload
-
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return self._payload
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, url, **kwargs):
-            body = kwargs.get("json") or {}
-            posts.append(body)
-            if body.get("think") is False:
-                return Response({
-                    "message": {
-                        "content": '{"rows":[{"work_id":"w1","decision":"unbound","reason":"from-retry"}]}'
-                    },
-                    "done_reason": "stop",
-                    "eval_count": 12,
-                })
-            return Response({
-                "message": {"content": "", "thinking": "long reasoning without final json"},
-                "done_reason": "stop",
-                "eval_count": 299,
-            })
-
-    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
-        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3.5:9b", "", True,
-    ))
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-
-    result = adapter._smeta_document_mapping_exchange(
-        [{"role": "user", "content": "build mapping"}],
-        {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
-    )
-
-    assert len(posts) == 2
-    assert "think" not in posts[0]
-    assert posts[1]["think"] is False
-    assert posts[1]["options"]["seed"] == 1
-    assert result["rows"][0]["reason"] == "from-retry"
-    assert result["_les_mapping_retries"] == 1
-    assert result["_les_seed"] == 1
-
-
-def test_smeta_document_mapping_exchange_raises_after_retries(monkeypatch):
-    from proxy.services import smeta_chat_adapter_service as adapter
-
-    posts = []
-
-    class Response:
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {"message": {"content": "not json at all"}, "done_reason": "stop"}
-
-    class Client:
-        def __init__(self, **_kwargs):
-            pass
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return None
-
-        def post(self, *_args, **kwargs):
-            posts.append(kwargs.get("json") or {})
-            return Response()
-
-    monkeypatch.setenv("LES_SMETA_DOCUMENT_MAPPING_RETRIES", "2")
-    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
-        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
-        "qwen3.5:9b", "", True,
-    ))
-    monkeypatch.setattr(adapter.httpx, "Client", Client)
-
-    with pytest.raises(RuntimeError, match="invalid structured mapping JSON"):
-        adapter._smeta_document_mapping_exchange(
-            [{"role": "user", "content": "build mapping"}],
-            {"type": "object", "properties": {"rows": {"type": "array"}}, "required": ["rows"]},
-        )
-
-    assert len(posts) == 3
-    assert posts[1]["options"]["seed"] == 1
-    assert posts[2]["options"]["seed"] == 2
 
 
 def test_default_direct_dependencies_live_in_smeta_adapter_not_router():

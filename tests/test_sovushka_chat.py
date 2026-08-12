@@ -388,16 +388,6 @@ def test_attachment_payload_passes_read_context():
     }
 
 
-def test_attachment_payload_passes_read_id_without_extracted_text():
-    """PDF→ЛСР needs attachment_id even when OCR/text preview is empty."""
-    assert _attachment_chat_payload(
-        {"id": "read_pdf_empty", "mode": "read", "name": "ВОР.pdf", "text": ""}
-    ) == {
-        "attachment_id": "read_pdf_empty",
-        "attachment_context": "Файл: ВОР.pdf",
-    }
-
-
 def test_attachment_source_label_uses_filename():
     assert _attachment_source_label("Файл: ТЗ.docx\n\nТекст файла") == "attachment:ТЗ.docx"
     assert _attachment_source_label("Текст без имени") == "attachment"

@@ -213,9 +213,9 @@ def _is_protected_process(command: str) -> bool:
     return any(f"/{protected}" in command for protected in PROTECTED_PROCESS_NAMES)
 
 
-def _parse_ps_memory_processes(output: str | None) -> list[MemoryProcess]:
+def _parse_ps_memory_processes(output: str) -> list[MemoryProcess]:
     processes: list[MemoryProcess] = []
-    for line in (output or "").splitlines():
+    for line in output.splitlines():
         parts = line.strip().split(None, 3)
         if len(parts) < 4:
             continue
@@ -240,10 +240,9 @@ def _parse_ps_memory_processes(output: str | None) -> list[MemoryProcess]:
     return sorted(processes, key=lambda item: item.rss_mb, reverse=True)
 
 
-def _parse_tasklist_memory_processes(output: str | None) -> list[MemoryProcess]:
+def _parse_tasklist_memory_processes(output: str) -> list[MemoryProcess]:
     processes: list[MemoryProcess] = []
-    # tasklist on some Windows locales/encodings can yield stdout=None even with rc=0.
-    for row in csv.reader((output or "").splitlines()):
+    for row in csv.reader(output.splitlines()):
         if len(row) < 5 or row[1].strip().lower() == "pid":
             continue
         image_name, pid_raw, _session_name, _session_num, mem_raw = row[:5]
@@ -273,11 +272,11 @@ def memory_processes(limit: int = 10) -> list[MemoryProcess]:
         result = _run(["tasklist", "/FO", "CSV", "/NH"], timeout=8)
         if result.returncode != 0:
             return []
-        return _parse_tasklist_memory_processes(result.stdout or "")[:limit]
+        return _parse_tasklist_memory_processes(result.stdout)[:limit]
     result = _run(["ps", "-axo", "pid=,rss=,user=,command="], timeout=8)
     if result.returncode != 0:
         return []
-    return _parse_ps_memory_processes(result.stdout or "")[:limit]
+    return _parse_ps_memory_processes(result.stdout)[:limit]
 
 
 def build_memory_preflight(

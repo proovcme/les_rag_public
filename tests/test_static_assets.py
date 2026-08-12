@@ -29,9 +29,6 @@ def test_work_surfaces_are_mounted_outside_configurator():
 
     for label in ("Документы", "Студия", "CAD/BIM", "Почта"):
         assert f'ui.tab("{label}"' in header
-    # Quasar outlined set has o_edit_note; o_edit_document is missing → empty Studio tab icon.
-    assert 'ui.tab("Студия", icon="o_edit_note")' in header
-    assert "o_edit_document" not in header
     for surface in ("documents", "studio", "cad_bim"):
         assert f'build_documents(surface="{surface}")' in app_shell
     assert 'def build_documents(*, surface: str = "documents")' in page

@@ -3239,7 +3239,7 @@ def build_documents(*, surface: str = "documents") -> None:
             "background:var(--bg-panel);"
         ):
             with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
-                ui.icon("o_edit_note").style("font-size:22px;color:var(--accent);")
+                ui.icon("o_edit_document").style("font-size:22px;color:var(--accent);")
                 with ui.column().classes("gap-0").style("flex:1;min-width:230px;"):
                     _label("Л.И.С.Т. · Студия документов", size="14px", weight=900)
                     _label(
@@ -3626,7 +3626,7 @@ def build_documents(*, surface: str = "documents") -> None:
                     ui.icon(
                         "o_folder_open"
                         if surface == "documents"
-                        else ("o_edit_note" if surface == "studio" else "o_view_in_ar")
+                        else ("o_edit_document" if surface == "studio" else "o_view_in_ar")
                     )
                 _label(state["view_title"], size="15px", weight=900).classes("sov-docs-view-title").style(
                     "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"

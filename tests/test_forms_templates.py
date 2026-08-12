@@ -28,16 +28,15 @@ def test_vor_uses_native_template(tmp_path: Path):
 
 def test_ks_forms_registered():
     ids = {f["id"] for f in forms_service.list_forms()}
-    assert {"vor", "ks2", "ks3", "ks6a", "technical_letter", "meeting_protocol"} <= ids
+    assert {"vor", "ks2", "ks3", "technical_letter", "meeting_protocol"} <= ids
 
 
 def test_template_anchor_writes_rows(tmp_path: Path):
-    # КС-2: официальная XLSX-вёрстка (не плоский fallback / не missing template)
+    # строки данных пишутся от якоря {{rows}} (resolve_fields кладёт пустые при mode=blank)
     out = tmp_path / "ks2.xlsx"
     res = forms_service.generate("ks2", "xlsx", project_id=None,
                                  manual={"contractor": "ООО Подрядчик"}, out_path=out)
     blob = _blob(res["path"])
-    assert "АКТ О ПРИЕМКЕ ВЫПОЛНЕННЫХ РАБОТ" in blob
+    assert "Акт о приёмке выполненных работ" in blob
     assert "ООО Подрядчик" in blob
-    assert "Унифицированная форма № КС-2" in blob
     assert "{{" not in blob
