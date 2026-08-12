@@ -74,6 +74,10 @@ _COMPRESSIBLE_TOOL_RESULTS = frozenset({
     "read_norms_batch",
 })
 _RIM_MAX_READ_CARDS_PER_CALL = 2
+# Same family → broaden → root without reaching a table burns local Qwen turns.
+# After this many returns, re-entry into that family is blocked while other
+# passports remain on the root menu (model still chooses; code does not bind).
+CATALOG_FAMILY_RETURN_LIMIT = 2
 MAPPING_VALIDATION_CONTRACT_VERSION = "grounded-unit-scoped-mapping-v15"
 _PHASE_ORDER = (
     "family_root",
@@ -99,11 +103,14 @@ def _is_recoverable_batch_mapping_error(error: BaseException) -> bool:
     """True when a failed batch must not destroy earlier accepted decisions."""
     if isinstance(error, MappingValidationExhausted):
         return True
-    text = str(error or "")
+    text = str(error or "").casefold()
     return (
         "smeta model mapping failed validation after" in text
         or "smeta model did not submit mapping within" in text
         or "smeta agent ended without terminal mapping for:" in text
+        or "invalid structured mapping json" in text
+        or "returned no rows in structured mapping" in text
+        or "smeta provider mapping failed" in text
     )
 
 
@@ -823,6 +830,26 @@ def _candidate_evaluation_errors(
         for code, card in opened_for_work.items()
         if str((card or {}).get("norm_code") or code).strip()
     }
+    shown_codes = set(opened_codes)
+    for code, card in candidates_for_work.items():
+        shown = str((card or {}).get("norm_code") or code).strip()
+        if shown:
+            shown_codes.add(shown)
+        raw = str(code or "").strip()
+        if raw:
+            shown_codes.add(raw)
+
+    def code_was_shown(value: str) -> bool:
+        if not value:
+            return False
+        if value in shown_codes or value == selected_code:
+            return True
+        if _resolve_norm_code_transport(value, opened_for_work):
+            return True
+        if _resolve_norm_code_transport(value, candidates_for_work):
+            return True
+        return False
+
     evaluated_codes: set[str] = set()
     evaluation_signatures: dict[str, tuple[Any, ...]] = {}
     selected_evaluations = 0
@@ -840,7 +867,7 @@ def _candidate_evaluation_errors(
             errors.append(f"{prefix} must be an object")
             continue
         raw_code = str(evaluation.get("candidate_code") or "").strip()
-        code = canonical_opened_code(raw_code)
+        code = canonical_opened_code(raw_code) or raw_code
         if not code:
             errors.append(f"{prefix}.candidate_code is required")
             continue
@@ -868,8 +895,13 @@ def _candidate_evaluation_errors(
             tuple(str(value) for value in (evaluation.get("foreign_resources") or [])),
             str(evaluation.get("decision") or ""),
         )
-        if code not in opened_codes and code != selected_code:
-            errors.append(f"{prefix}.candidate_code was not opened through read_norms_batch")
+        # Rejected/uncertain comparisons may cite the search shortlist without a
+        # full read — only invented codes outside search+opened are errors.
+        if not code_was_shown(code) and not code_was_shown(raw_code):
+            errors.append(
+                f"{prefix}.candidate_code was not shown in search shortlist or "
+                "opened through read_norms_batch"
+            )
         for field, values in allowed.items():
             if str(evaluation.get(field) or "") not in values:
                 errors.append(f"{prefix}.{field} has an unsupported value")
@@ -954,6 +986,59 @@ def _candidate_draft_enabled() -> bool:
     return os.getenv("LES_SMETA_CANDIDATE_DRAFT_MODE", "on").strip().casefold() not in {
         "0", "false", "no", "off",
     }
+
+
+_NORM_TABLE_ROOT_RE = re.compile(
+    r"(?i)(?:ГЭСН[мрп]?|ФЕР[мрп]?|ТЕР[мрп]?)[:\s]*"
+    r"(\d{2})\s*[-–]\s*(\d{2})\s*[-–]\s*(\d{3})"
+)
+_PLAIN_TABLE_ROOT_RE = re.compile(
+    r"(?<!\d)(\d{2})\s*[-–]\s*(\d{2})\s*[-–]\s*(\d{3})(?!\d)"
+)
+
+
+def _norm_table_root(value: Any) -> str:
+    """Extract FSNB table root ``NN-NN-NNN`` from a norm code or rejection prose."""
+    text = str(value or "").strip().replace("–", "-")
+    if not text:
+        return ""
+    match = _NORM_TABLE_ROOT_RE.search(text) or _PLAIN_TABLE_ROOT_RE.search(text)
+    if not match:
+        return ""
+    return f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+
+
+def _table_roots_from_texts(*groups: Any) -> set[str]:
+    roots: set[str] = set()
+    for group in groups:
+        values = group if isinstance(group, (list, tuple, set)) else [group]
+        for value in values:
+            root = _norm_table_root(value)
+            if root:
+                roots.add(root)
+    return roots
+
+
+def _table_roots_from_search_trace(trace: dict[str, Any] | None) -> set[str]:
+    """Table roots named by a search_norms_batch query_trace entry."""
+    if not isinstance(trace, dict):
+        return set()
+    filters = trace.get("filters") if isinstance(trace.get("filters"), dict) else {}
+    values: list[Any] = []
+    values.extend(filters.get("table_codes") or [])
+    values.extend(trace.get("candidate_codes") or [])
+    return _table_roots_from_texts(values)
+
+
+def _coverage_provider_has_bound_norm(selection: dict[str, Any] | None) -> bool:
+    if not isinstance(selection, dict):
+        return False
+    if str(selection.get("covered_by_work_id") or "").strip():
+        return False
+    if not str(selection.get("norm_code") or "").strip():
+        return False
+    review = str(selection.get("review_status") or "")
+    return review in {"model_batch", "model_batch_candidate"}
 
 
 def _last_structured_mapping_rows(
@@ -1120,9 +1205,11 @@ def _candidate_draft_errors(errors: list[str]) -> bool:
         return False
     for error in errors:
         text = str(error)
-        if text.startswith("candidate_evaluations[") and not text.endswith(
-            ".candidate_code was not opened through read_norms_batch"
-        ):
+        hard_candidate_evidence = (
+            "was not opened through read_norms_batch" in text
+            or "was not shown in search shortlist" in text
+        )
+        if text.startswith("candidate_evaluations[") and not hard_candidate_evidence:
             return False
         if not any(text.startswith(prefix) for prefix in _CANDIDATE_DRAFT_ERROR_PREFIXES):
             return False
@@ -1161,6 +1248,39 @@ def _resolve_norm_code_transport(code: Any, available: dict[str, Any]) -> str:
         if gesn_service._norm_key(candidate_code) == requested_key
     ]
     return matches[0] if len(matches) == 1 else ""
+
+
+def _hydrate_opened_card_from_candidates(
+    *,
+    work_id: str,
+    requested_code: str,
+    opened_for_work: dict[str, dict[str, Any]],
+    candidates_for_work: dict[str, dict[str, Any]],
+) -> tuple[str, dict[str, Any] | None]:
+    """Materialize a model-selected shortlist card into opened evidence.
+
+    The model already named the code. Opening that exact search candidate is
+    transport hydration, not code-side norm choice — it stops empty
+    read↔submit retries when the selection is already in the shortlist.
+    """
+    opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
+    if opened_code and opened_code in opened_for_work:
+        return opened_code, opened_for_work.get(opened_code)
+    candidate_code = _resolve_norm_code_transport(requested_code, candidates_for_work)
+    if not candidate_code:
+        return "", None
+    candidate = candidates_for_work.get(candidate_code)
+    if not isinstance(candidate, dict):
+        return candidate_code, None
+    norm_code = str(candidate.get("norm_code") or candidate_code).strip()
+    card = _opened_norm_card(norm_code, candidate)
+    if card is None:
+        return candidate_code, None
+    opened_for_work[norm_code] = card
+    opened_for_work[candidate_code] = card
+    if requested_code and requested_code not in opened_for_work:
+        opened_for_work[requested_code] = card
+    return norm_code, card
 
 
 
@@ -1702,6 +1822,55 @@ def bounded_catalog_query_from_work_features(work_features: dict[str, Any]) -> s
     return " ".join(tokens[:12])
 
 
+def _catalog_family_ancestor_id(
+    registry: dict[str, dict[str, Any]],
+    node_id: str,
+) -> str:
+    """Walk typed parents until the family passport node, or empty."""
+    seen: set[str] = set()
+    current = str(node_id or "").strip()
+    while current and current not in seen and current != "catalog:root":
+        seen.add(current)
+        node = registry.get(current) or {}
+        if str(node.get("node_type") or "") == "family":
+            return current
+        current = str(node.get("parent_id") or "").strip()
+    return ""
+
+
+def _exhausted_catalog_family_ids(
+    return_counts: dict[str, int] | None,
+) -> set[str]:
+    return {
+        str(family_id).strip()
+        for family_id, count in dict(return_counts or {}).items()
+        if str(family_id).strip() and int(count) >= CATALOG_FAMILY_RETURN_LIMIT
+    }
+
+
+def _filter_root_menu_excluding_exhausted(
+    menu: list[dict[str, Any]] | list[Any],
+    exhausted: set[str],
+) -> list[dict[str, Any]]:
+    """Hide exhausted family passports from the model-facing root menu.
+
+    Does not choose a replacement family or norm. If filtering would empty the
+    menu, keep the original so the model can still unbound or re-enter.
+    """
+    source = [node for node in menu if isinstance(node, dict)]
+    if not exhausted:
+        return copy.deepcopy(source)
+    filtered = [
+        copy.deepcopy(node)
+        for node in source
+        if not (
+            str(node.get("node_type") or "") == "family"
+            and str(node.get("node_id") or "").strip() in exhausted
+        )
+    ]
+    return filtered if filtered else copy.deepcopy(source)
+
+
 def _draft_work_features_from_source(row: dict[str, Any]) -> dict[str, Any]:
     """Fill a navigation-only work_features card from the VOR row title/note.
 
@@ -1794,7 +1963,15 @@ def _auto_norm_search_items(session: "SmetaNormToolSession") -> list[dict[str, A
         tables = session.selected_tables.get(work_id) or set()
         if not tables:
             continue
-        family_key, collection, table_code = sorted(tables)[0]
+        rejected = session.rejected_table_roots.get(work_id) or set()
+        usable = [
+            entry
+            for entry in tables
+            if _norm_table_root(entry[2]) not in rejected
+        ]
+        if not usable:
+            continue
+        family_key, collection, table_code = sorted(usable)[0]
         family = family_key
         for key, meta in (session.selected_base_types.get(work_id) or {}).items():
             if str(key).casefold() == str(family_key).casefold():
@@ -1867,6 +2044,23 @@ class SmetaNormToolSession:
         self.family_catalog_seen: set[str] = set()
         self.catalog_reject_streak: dict[str, int] = {}
         self.catalog_stall: dict[str, Any] | None = None
+        # work_id → family_node_id → times broadened back to catalog:root
+        self.catalog_family_return_counts: dict[str, dict[str, int]] = {
+            work_id: {} for work_id in self.by_id
+        }
+        # After family_loop_redirect, refuse unbound until another family reaches
+        # a table or a real search_norms_batch (model still chooses the path).
+        self.post_redirect_requires_descent: set[str] = set()
+        # Table roots rejected for a work (from unbound/reject prose or
+        # candidate_evaluations). Re-bind to a rejected root stays blocked;
+        # unlock requires a later search whose table/hit roots leave the
+        # rejected set (same-table search does not count).
+        self.rejected_table_roots: dict[str, set[str]] = {
+            work_id: set() for work_id in self.by_id
+        }
+        self.rejected_table_search_count: dict[str, int] = {
+            work_id: 0 for work_id in self.by_id
+        }
         self.selected_base_types: dict[str, dict[str, dict[str, Any]]] = {
             work_id: {} for work_id in self.by_id
         }
@@ -1975,6 +2169,21 @@ class SmetaNormToolSession:
             "catalog_terminal_decisions": copy.deepcopy(
                 self.catalog_terminal_decisions
             ),
+            "catalog_family_return_counts": {
+                work_id: dict(counts)
+                for work_id, counts in self.catalog_family_return_counts.items()
+            },
+            "post_redirect_requires_descent": sorted(self.post_redirect_requires_descent),
+            "rejected_table_roots": {
+                work_id: sorted(roots)
+                for work_id, roots in self.rejected_table_roots.items()
+                if roots
+            },
+            "rejected_table_search_count": {
+                work_id: int(count)
+                for work_id, count in self.rejected_table_search_count.items()
+                if int(count) > 0
+            },
             "candidates": copy.deepcopy(self.candidates),
             "opened": copy.deepcopy(self.opened),
             "browse_trace": copy.deepcopy(self.browse_trace),
@@ -2086,6 +2295,36 @@ class SmetaNormToolSession:
                 "catalog_terminal_decisions"
             ).items()
         }
+        restored_family_returns = work_mapping("catalog_family_return_counts")
+        self.catalog_family_return_counts = {
+            work_id: {
+                str(family_id): int(count)
+                for family_id, count in dict(
+                    restored_family_returns.get(work_id) or {}
+                ).items()
+                if str(family_id).strip()
+            }
+            for work_id in self.by_id
+        }
+        self.post_redirect_requires_descent = {
+            str(work_id)
+            for work_id in (state.get("post_redirect_requires_descent") or [])
+            if str(work_id) in known
+        }
+        restored_rejected_roots = work_mapping("rejected_table_roots")
+        self.rejected_table_roots = {
+            work_id: {
+                str(root)
+                for root in (restored_rejected_roots.get(work_id) or [])
+                if str(root).strip()
+            }
+            for work_id in self.by_id
+        }
+        restored_rejected_search = work_mapping("rejected_table_search_count")
+        self.rejected_table_search_count = {
+            work_id: int(restored_rejected_search.get(work_id) or 0)
+            for work_id in self.by_id
+        }
         for name in ("candidates", "opened", "browse_trace"):
             restored = work_mapping(name)
             setattr(
@@ -2174,6 +2413,71 @@ class SmetaNormToolSession:
                 4,
             ),
         }
+
+    def _work_search_count(self, work_id: str) -> int:
+        return sum(
+            1
+            for trace in self.query_trace
+            if str(trace.get("work_id") or "") == work_id
+        )
+
+    def _work_searched_outside_rejected_tables(self, work_id: str) -> bool:
+        """True when a post-reject search used a table/hit root outside rejected set."""
+        rejected = self.rejected_table_roots.get(work_id) or set()
+        if not rejected:
+            return True
+        searches_at_reject = int(self.rejected_table_search_count.get(work_id) or 0)
+        work_traces = [
+            trace
+            for trace in self.query_trace
+            if str(trace.get("work_id") or "") == work_id
+        ]
+        for trace in work_traces[searches_at_reject:]:
+            roots = _table_roots_from_search_trace(trace)
+            if roots and roots.isdisjoint(rejected):
+                return True
+        return False
+
+    def _demote_rejected_selected_tables(self, work_id: str) -> None:
+        """Drop rejected table roots from selected_tables so auto-search cannot re-fire them."""
+        rejected = self.rejected_table_roots.get(work_id) or set()
+        if not rejected or work_id not in self.selected_tables:
+            return
+        keep = {
+            (family, collection, table_code)
+            for family, collection, table_code in (self.selected_tables.get(work_id) or set())
+            if _norm_table_root(table_code) not in rejected
+        }
+        self.selected_tables[work_id] = keep
+
+    def _record_rejected_table_roots(
+        self,
+        work_id: str,
+        *groups: Any,
+    ) -> None:
+        roots = _table_roots_from_texts(*groups)
+        if not roots or work_id not in self.by_id:
+            return
+        self.rejected_table_roots.setdefault(work_id, set()).update(roots)
+        self.rejected_table_search_count[work_id] = self._work_search_count(work_id)
+        self._demote_rejected_selected_tables(work_id)
+
+    def _rejected_table_rebind_error(self, work_id: str, norm_code: str) -> str:
+        root = _norm_table_root(norm_code)
+        if not root:
+            return ""
+        rejected = self.rejected_table_roots.get(work_id) or set()
+        if root not in rejected:
+            return ""
+        # Same-table (or empty-scope) search must not unlock. Only a later
+        # search whose table/hit roots leave the rejected set clears the gate.
+        if self._work_searched_outside_rejected_tables(work_id):
+            return ""
+        return (
+            f"table {root} was already rejected for this work; "
+            "browse/search another table root or unbound — "
+            "searching the same rejected table again does not unlock rebind"
+        )
 
     def execute(self, name: str, args: dict[str, Any], *, turn: int) -> dict[str, Any]:
         started = perf_counter()
@@ -2631,7 +2935,13 @@ class SmetaNormToolSession:
         # --- End flat-to-items normalization ---------------------------------
         rows_out: list[dict[str, Any]] = []
 
-        def failure(work_id: str, error: str, details: list[str]) -> None:
+        def failure(
+            work_id: str,
+            error: str,
+            details: list[str],
+            *,
+            stallable: bool = True,
+        ) -> None:
             streak_key = f"{work_id}\0{error}"
             streak = int(self.catalog_reject_streak.get(streak_key) or 0) + 1
             self.catalog_reject_streak[streak_key] = streak
@@ -2655,7 +2965,7 @@ class SmetaNormToolSession:
                 "details": details,
                 "reject_streak": streak,
             })
-            if streak >= 3 and self.catalog_stall is None:
+            if stallable and streak >= 3 and self.catalog_stall is None:
                 detail_text = "; ".join(str(item) for item in details if item)
                 self.catalog_stall = {
                     "work_id": work_id,
@@ -2710,14 +3020,78 @@ class SmetaNormToolSession:
                 continue
 
             registry = self.catalog_node_registry[work_id]
-            visible_items = self.catalog_menus[work_id].get(
-                current_node_id, []
+            visible_items = list(
+                self.catalog_menus[work_id].get(current_node_id, []) or []
             )
+            if current_node_id == "catalog:root":
+                visible_items = _filter_root_menu_excluding_exhausted(
+                    visible_items,
+                    _exhausted_catalog_family_ids(
+                        self.catalog_family_return_counts.get(work_id)
+                    ),
+                )
             visible_ids = {
                 str(node.get("node_id") or "") for node in visible_items
             }
             if current_node_id:
                 visible_ids.add(current_node_id)
+            if (
+                decision == "continue"
+                and current_node_id == "catalog:root"
+                and selected_hint
+            ):
+                exhausted_early = _exhausted_catalog_family_ids(
+                    self.catalog_family_return_counts.get(work_id)
+                )
+                if selected_hint in exhausted_early:
+                    root_menu = self.catalog_menus[work_id].get("catalog:root") or []
+                    visible_menu = _filter_root_menu_excluding_exhausted(
+                        root_menu, exhausted_early
+                    )
+                    alternatives = [
+                        str(node.get("node_id") or "").strip()
+                        for node in visible_menu
+                        if str(node.get("node_type") or "") == "family"
+                        and str(node.get("node_id") or "").strip()
+                    ]
+                    if alternatives:
+                        prior_returns = int(
+                            (self.catalog_family_return_counts.get(work_id) or {}).get(
+                                selected_hint
+                            )
+                            or 0
+                        )
+                        self.catalog_current_nodes[work_id] = "catalog:root"
+                        rows_out.append({
+                            "work_id": work_id,
+                            "ok": True,
+                            "level": "family_loop_redirect",
+                            "current_node_id": "catalog:root",
+                            "items": visible_menu,
+                            "redirected_from_family": selected_hint,
+                            "family_return_count": prior_returns,
+                            "next_action": (
+                                f"{selected_hint} is exhausted after "
+                                f"{prior_returns} root returns without "
+                                "table/search; choose another passport from "
+                                "this menu and descend to a table before unbound: "
+                                + ", ".join(alternatives)
+                            ),
+                        })
+                        self.catalog_trace.append({
+                            "trace_id": uuid4().hex,
+                            "phase": "catalog_route",
+                            "turn": turn,
+                            "work_id": work_id,
+                            "outcome": "redirected",
+                            "decision": "family_loop_redirect",
+                            "selected_node_id": selected_hint,
+                            "redirected_from_family": selected_hint,
+                            "family_return_count": prior_returns,
+                            "alternatives": alternatives,
+                        })
+                        self.post_redirect_requires_descent.add(work_id)
+                        continue
             # Flat/hybrid continue often omits evidence for the selected child
             # (or only cites rejected siblings). Draft passport evidence for the
             # model-chosen node so transport can advance without inventing a pick.
@@ -2990,6 +3364,17 @@ class SmetaNormToolSession:
                         ["cite at least one shown official node"],
                     )
                     continue
+                if work_id in self.post_redirect_requires_descent:
+                    failure(
+                        work_id,
+                        "catalog unbound after family-loop redirect is premature",
+                        [
+                            "choose a non-exhausted family from the redirected root menu",
+                            "descend to a table and call search_norms_batch before unbound",
+                        ],
+                        stallable=False,
+                    )
+                    continue
                 current_node = registry.get(current_node_id) or {}
                 current_type = str(current_node.get("node_type") or "")
                 parent_id = str(current_node.get("parent_id") or "")
@@ -3053,21 +3438,84 @@ class SmetaNormToolSession:
                         [f"parent_id={parent_id!r}"],
                     )
                     continue
+                abandoned_family = _catalog_family_ancestor_id(
+                    registry, current_node_id
+                )
                 self._clear_catalog_descendants(work_id, parent_id)
                 self._drop_routes_for_work(work_id)
                 self.catalog_current_nodes[work_id] = parent_id
+                next_action = (
+                    "choose only a real child from this parent menu; "
+                    "do not jump to an unshown sibling branch"
+                )
+                if parent_id == "catalog:root" and abandoned_family:
+                    returns = self.catalog_family_return_counts.setdefault(
+                        work_id, {}
+                    )
+                    returns[abandoned_family] = int(
+                        returns.get(abandoned_family) or 0
+                    ) + 1
+                    return_count = returns[abandoned_family]
+                    root_families = [
+                        str(node.get("node_id") or "").strip()
+                        for node in parent_menu
+                        if isinstance(node, dict)
+                        and str(node.get("node_type") or "") == "family"
+                        and str(node.get("node_id") or "").strip()
+                    ]
+                    exhausted = {
+                        family_id
+                        for family_id, count in returns.items()
+                        if int(count) >= CATALOG_FAMILY_RETURN_LIMIT
+                    }
+                    alternatives = [
+                        family_id
+                        for family_id in root_families
+                        if family_id not in exhausted
+                    ]
+                    next_action = (
+                        f"family loop: {abandoned_family} returned to root "
+                        f"{return_count} time(s) without a table/search; "
+                        "this is not evidence that a norm is missing. "
+                        + (
+                            "Choose a different passport from this root menu: "
+                            + ", ".join(alternatives)
+                            if alternatives
+                            else (
+                                "No unused passports remain on this menu; "
+                                "either descend into one remaining family to a "
+                                "table and search, or unbound_norm_catalog at "
+                                "catalog:root with official evidence"
+                            )
+                        )
+                    )
+                visible_menu = (
+                    _filter_root_menu_excluding_exhausted(
+                        parent_menu,
+                        _exhausted_catalog_family_ids(
+                            self.catalog_family_return_counts.get(work_id)
+                        ),
+                    )
+                    if parent_id == "catalog:root"
+                    else copy.deepcopy(parent_menu)
+                )
                 row = {
                     "work_id": work_id,
                     "ok": True,
                     "level": "broadened",
                     "current_node_id": parent_id,
-                    "items": copy.deepcopy(parent_menu),
+                    "items": visible_menu,
                     "route_decision": audit,
-                    "next_action": (
-                        "choose only a real child from this parent menu; "
-                        "do not jump to an unshown sibling branch"
-                    ),
+                    "next_action": next_action,
                 }
+                if abandoned_family and parent_id == "catalog:root":
+                    row["abandoned_family_node_id"] = abandoned_family
+                    row["family_return_count"] = int(
+                        self.catalog_family_return_counts.get(work_id, {}).get(
+                            abandoned_family
+                        )
+                        or 0
+                    )
                 rows_out.append(row)
                 self.catalog_trace.append({
                     "trace_id": uuid4().hex,
@@ -3077,6 +3525,14 @@ class SmetaNormToolSession:
                     "outcome": "accepted",
                     **audit,
                     "broadened_to": parent_id,
+                    **(
+                        {
+                            "abandoned_family_node_id": abandoned_family,
+                            "family_return_count": row.get("family_return_count"),
+                        }
+                        if abandoned_family and parent_id == "catalog:root"
+                        else {}
+                    ),
                 })
                 continue
 
@@ -3087,6 +3543,61 @@ class SmetaNormToolSession:
                 raw_selected, evidence_out, visible_ids
             )
             if selected_node_id not in visible_ids:
+                exhausted = _exhausted_catalog_family_ids(
+                    self.catalog_family_return_counts.get(work_id)
+                )
+                if (
+                    current_node_id == "catalog:root"
+                    and selected_node_id in exhausted
+                ):
+                    root_menu = self.catalog_menus[work_id].get("catalog:root") or []
+                    visible_menu = _filter_root_menu_excluding_exhausted(
+                        root_menu, exhausted
+                    )
+                    alternatives = [
+                        str(node.get("node_id") or "").strip()
+                        for node in visible_menu
+                        if str(node.get("node_type") or "") == "family"
+                        and str(node.get("node_id") or "").strip()
+                    ]
+                    if alternatives:
+                        prior_returns = int(
+                            (self.catalog_family_return_counts.get(work_id) or {}).get(
+                                selected_node_id
+                            )
+                            or 0
+                        )
+                        self.catalog_current_nodes[work_id] = "catalog:root"
+                        rows_out.append({
+                            "work_id": work_id,
+                            "ok": True,
+                            "level": "family_loop_redirect",
+                            "current_node_id": "catalog:root",
+                            "items": visible_menu,
+                            "redirected_from_family": selected_node_id,
+                            "family_return_count": prior_returns,
+                            "next_action": (
+                                f"{selected_node_id} is exhausted after "
+                                f"{prior_returns} root returns without "
+                                "table/search; choose another passport from "
+                                "this menu and descend to a table before unbound: "
+                                + ", ".join(alternatives)
+                            ),
+                        })
+                        self.catalog_trace.append({
+                            "trace_id": uuid4().hex,
+                            "phase": "catalog_route",
+                            "turn": turn,
+                            "work_id": work_id,
+                            "outcome": "redirected",
+                            "decision": "family_loop_redirect",
+                            "selected_node_id": selected_node_id,
+                            "redirected_from_family": selected_node_id,
+                            "family_return_count": prior_returns,
+                            "alternatives": alternatives,
+                        })
+                        self.post_redirect_requires_descent.add(work_id)
+                        continue
                 failure(
                     work_id,
                     "selected node is not a child shown by the current menu",
@@ -3153,6 +3664,55 @@ class SmetaNormToolSession:
             next_items: list[dict[str, Any]] = []
             next_level = ""
             if node_type == "family":
+                return_counts = self.catalog_family_return_counts.get(work_id) or {}
+                prior_returns = int(return_counts.get(selected_node_id) or 0)
+                if prior_returns >= CATALOG_FAMILY_RETURN_LIMIT:
+                    root_menu = self.catalog_menus[work_id].get("catalog:root") or []
+                    exhausted = _exhausted_catalog_family_ids(return_counts)
+                    visible_menu = _filter_root_menu_excluding_exhausted(
+                        root_menu, exhausted
+                    )
+                    alternatives = [
+                        str(node.get("node_id") or "").strip()
+                        for node in visible_menu
+                        if str(node.get("node_type") or "") == "family"
+                        and str(node.get("node_id") or "").strip()
+                        and str(node.get("node_id") or "").strip() != selected_node_id
+                    ]
+                    if alternatives:
+                        # Soft redirect: hide the exhausted passport from the next
+                        # menu instead of reject-spamming until mapping_retry.
+                        self.catalog_current_nodes[work_id] = "catalog:root"
+                        rows_out.append({
+                            "work_id": work_id,
+                            "ok": True,
+                            "level": "family_loop_redirect",
+                            "current_node_id": "catalog:root",
+                            "items": visible_menu,
+                            "redirected_from_family": selected_node_id,
+                            "family_return_count": prior_returns,
+                            "next_action": (
+                                f"{selected_node_id} is exhausted after "
+                                f"{prior_returns} root returns without "
+                                "table/search; choose another passport from "
+                                "this menu and descend to a table before unbound: "
+                                + ", ".join(alternatives)
+                            ),
+                        })
+                        self.catalog_trace.append({
+                            "trace_id": uuid4().hex,
+                            "phase": "catalog_route",
+                            "turn": turn,
+                            "work_id": work_id,
+                            "outcome": "redirected",
+                            "decision": "family_loop_redirect",
+                            "selected_node_id": selected_node_id,
+                            "redirected_from_family": selected_node_id,
+                            "family_return_count": prior_returns,
+                            "alternatives": alternatives,
+                        })
+                        self.post_redirect_requires_descent.add(work_id)
+                        continue
                 required_features = (
                     "domain",
                     "system",
@@ -3335,6 +3895,8 @@ class SmetaNormToolSession:
                 continue
 
             self.catalog_current_nodes[work_id] = selected_node_id
+            if next_level == "norm_search":
+                self.post_redirect_requires_descent.discard(work_id)
             if next_items:
                 self.catalog_menus[work_id][selected_node_id] = copy.deepcopy(
                     next_items
@@ -4987,6 +5549,7 @@ class SmetaNormToolSession:
                 "rerank_status": list(payload.get("rerank_status") or []),
                 "reranked": bool(payload.get("reranked")),
             })
+            self.post_redirect_requires_descent.discard(work_id)
         result: dict[str, Any] = {
             "ok": any(row.get("ok") is True for row in rows_out),
             "rows": rows_out,
@@ -5072,6 +5635,7 @@ class SmetaNormToolSession:
                     "cites norm cards not opened",
                     "collections without an opened typed card",
                     "opened_norm_codes contains cards not opened",
+                    "unbound after family-loop redirect",
                 )
                 soft_evidence_gap = bool(evidence_errors) and not any(
                     any(marker in str(error) for marker in hard_unbound_markers)
@@ -5084,14 +5648,28 @@ class SmetaNormToolSession:
                 prior_unbound_attempt = int(
                     self.candidate_draft_attempts.get(unbound_attempt_key, 0)
                 )
+                remaining_budget = self.evidence_remaining()
+                budget_exhausted = (
+                    int(remaining_budget.get("search_calls") or 0) <= 0
+                    and int(remaining_budget.get("read_calls") or 0) <= 0
+                )
                 # With search/read: accept soft gap immediately (no second mapping).
                 # Without tool evidence: require one prior reject so catalog-only
                 # unbound cannot close the row on the first forced mapping.
+                # When evidence budget is gone, stop mapping_retry loops after one
+                # failed attempt even without fresh search room.
                 accept_unbound_candidate = (
                     _candidate_draft_enabled()
                     and bool(reason)
                     and soft_evidence_gap
-                    and (has_tool_evidence or prior_unbound_attempt >= 1)
+                    and (
+                        has_tool_evidence
+                        or prior_unbound_attempt >= 1
+                        or (
+                            budget_exhausted
+                            and int(self.invalid_submission_attempts.get(work_id, 0)) >= 1
+                        )
+                    )
                 )
                 if evidence_errors and not accept_unbound_candidate:
                     if _candidate_draft_enabled() and reason:
@@ -5115,6 +5693,12 @@ class SmetaNormToolSession:
                         1,
                         int(self.candidate_draft_attempts.get(unbound_attempt_key, 0)),
                     )
+                    self._record_rejected_table_roots(
+                        work_id,
+                        evidence.get("rejection_reasons") or [],
+                        evidence.get("opened_norm_codes") or [],
+                        reason,
+                    )
                     proposed[work_id] = {
                         "norm_code": "",
                         "selection_kind": str(item.get("selection_kind") or ""),
@@ -5137,6 +5721,12 @@ class SmetaNormToolSession:
                         "model_mapping_raw": raw_model_item,
                     }
                     continue
+                self._record_rejected_table_roots(
+                    work_id,
+                    evidence.get("rejection_reasons") or [],
+                    evidence.get("opened_norm_codes") or [],
+                    reason,
+                )
                 proposed[work_id] = {
                     "norm_code": "",
                     "selection_kind": str(item.get("selection_kind") or ""),
@@ -5179,19 +5769,48 @@ class SmetaNormToolSession:
                 errors.append({"work_id": work_id, "error": "decision must be bind|covered_by|unbound"})
                 continue
             requested_code = str(item.get("norm_code") or "")
-            opened_for_work = self.opened.get(work_id, {})
-            opened_code = _resolve_norm_code_transport(requested_code, opened_for_work)
-            opened_card = opened_for_work.get(opened_code) if opened_code else None
+            opened_for_work = self.opened.setdefault(work_id, {})
+            candidates_for_work = self.candidates.get(work_id, {})
+            opened_code, opened_card = _hydrate_opened_card_from_candidates(
+                work_id=work_id,
+                requested_code=requested_code,
+                opened_for_work=opened_for_work,
+                candidates_for_work=candidates_for_work,
+            )
             bind_errors = _technology_check_errors(item, work_id=work_id)
             bind_errors.extend(_candidate_evaluation_errors(
                 item,
-                candidates_for_work=self.candidates.get(work_id, {}),
+                candidates_for_work=candidates_for_work,
                 opened_for_work=opened_for_work,
                 source_work=self.by_id.get(work_id),
             ))
             if not str(item.get("reason") or "").strip():
                 bind_errors.append("reason is required")
             bind_errors.extend(_exact_bind_reason_self_contradiction_errors(item))
+            rejected_bind = self._rejected_table_rebind_error(
+                work_id,
+                str((opened_card or {}).get("norm_code") or requested_code),
+            )
+            if rejected_bind:
+                bind_errors.append(rejected_bind)
+            submitted_code = str((opened_card or {}).get("norm_code") or requested_code)
+            rejected_eval_codes = [
+                str(evaluation.get("candidate_code") or "")
+                for evaluation in (item.get("candidate_evaluations") or [])
+                if isinstance(evaluation, dict)
+                and str(evaluation.get("decision") or "").casefold() == "rejected"
+            ]
+            # Bind + "rejected" on the submitted card is a serialization conflict
+            # (candidate draft), not a professional rejection of that table.
+            if str(item.get("decision") or "") == "bind":
+                submitted_root = _norm_table_root(submitted_code)
+                rejected_eval_codes = [
+                    code
+                    for code in rejected_eval_codes
+                    if _norm_table_root(code) != submitted_root
+                ]
+            if rejected_eval_codes:
+                self._record_rejected_table_roots(work_id, rejected_eval_codes)
             if (
                 self.require_scoped_search
                 and opened_card is not None
@@ -5304,6 +5923,28 @@ class SmetaNormToolSession:
                 "resolver_trace": resolver_trace,
                 "model_mapping_raw": raw_model_item,
             }
+        # covered_by may point at a sibling decided in the same batch — validate
+        # providers only after every row of this submit is proposed.
+        for work_id, selection in list(proposed.items()):
+            covered_by = str(selection.get("covered_by_work_id") or "").strip()
+            if not covered_by:
+                continue
+            provider = proposed.get(covered_by) or self.accepted_rows.get(covered_by)
+            if _coverage_provider_has_bound_norm(provider):
+                continue
+            errors.append({
+                "work_id": work_id,
+                "error": "covered_by requires a bound provider norm",
+                "details": [
+                    f"covered_by_work_id={covered_by} has no successful bind/norm_code",
+                    "Bind the provider row first, or choose unbound instead of covered_by.",
+                ],
+            })
+            proposed.pop(work_id, None)
+        if errors and proposed:
+            # Partial accept only when no coverage/bind errors remain for those rows.
+            # Keep proposed rows that are not implicated; errors already recorded.
+            pass
         for work_id, selection in proposed.items():
             self.accepted_rows[work_id] = selection
             if (
@@ -5326,6 +5967,8 @@ class SmetaNormToolSession:
                     decision_label = "Норма выбрана"
                 elif covered_by:
                     decision_label = f"Покрыто строкой {covered_by}"
+                elif selection.get("candidate_validation_errors"):
+                    decision_label = "Нужен поиск нормы"
                 else:
                     decision_label = "Оставлено без нормы"
                 self.progress({
@@ -5570,6 +6213,11 @@ class SmetaNormToolSession:
         ):
             errors.append(
                 "unbound requires at least two distinct query or scoped-search strategies"
+            )
+        if work_id in self.post_redirect_requires_descent and not executed_queries:
+            errors.append(
+                "unbound after family-loop redirect requires descending another "
+                "family to a table or running search_norms_batch first"
             )
         missing_queries = sorted(value for value in unique_queries if value not in executed_queries)
         if missing_queries:
@@ -7125,6 +7773,7 @@ def _run_batch_norm_agent(
             "requires at least two distinct query or scoped-search strategies",
             "without an opened typed card",
             "was not opened through read_norms_batch",
+            "was not shown in search shortlist",
             "requires opening at least one shown alternative",
             "selected candidate contradicts bind",
             "selection_kind exact requires exact operation, object and scope",
@@ -7133,6 +7782,9 @@ def _run_batch_norm_agent(
             # burn the bounded schema-repair budget on the same wrong norm.
             "contradicts reason that denies applicability",
             "broaden to another table",
+            # Rejected-table anti-stick: return to catalog/search, do not remount
+            # the same root via forced mapping.
+            "already rejected for this work",
         )
         errors = [
             error for error in (result.get("errors") or [])
@@ -7266,6 +7918,10 @@ def _run_batch_norm_agent(
                     })
                     continue
                 for table_code in selected_tables:
+                    if _norm_table_root(table_code) in (
+                        session.rejected_table_roots.get(work_id) or set()
+                    ):
+                        continue
                     if (
                         family.casefold(),
                         collection.casefold(),
@@ -7356,6 +8012,9 @@ def _run_batch_norm_agent(
                         session.selected_tables.get(work_id) or set()
                     )
                 ],
+                "rejected_table_roots": sorted(
+                    session.rejected_table_roots.get(work_id) or set()
+                ),
                 "candidate_codes": sorted(candidate_cards),
                 "active_candidate_codes": list(active_candidate_cards),
                 "candidates": [
@@ -7427,7 +8086,9 @@ def _run_batch_norm_agent(
                 "candidates before more navigation. Complete one focused row, "
                 "then finish the tool loop when evidence supports your own "
                 "mapping decision. If a selected table is empty or unsuitable, "
-                "backtrack through explicit catalog nodes; never remove scope."
+                "backtrack through explicit catalog nodes; never remove scope. "
+                "rejected_table_roots must not be re-searched or re-bound: browse "
+                "another table root or submit honest unbound."
                 if require_scoped_search
                 else (
                     "This compact typed state is authoritative; historical tool "
@@ -7573,6 +8234,7 @@ def _run_batch_norm_agent(
         allowed_bind_codes: dict[str, list[str]] = {}
         for work_id in serialize_ids:
             source_unit = str((by_id.get(work_id) or {}).get("unit") or "")
+            rejected_roots = session.rejected_table_roots.get(work_id) or set()
             seen_codes: set[str] = set()
             for candidate_code, card in (
                 session.opened.get(work_id) or {}
@@ -7586,6 +8248,10 @@ def _run_batch_norm_agent(
                     or code in seen_codes
                     or not units_compatible(source_unit, measure_unit)
                 ):
+                    continue
+                # Never offer a previously rejected table root as a bind option.
+                # Model must broaden catalog/search or choose unbound/covered_by.
+                if _norm_table_root(code) in rejected_roots:
                     continue
                 seen_codes.add(code)
                 allowed_bind_codes.setdefault(work_id, []).append(code)
@@ -7652,10 +8318,17 @@ def _run_batch_norm_agent(
                 else []
             ),
             "typed_bind_options": typed_bind_options,
+            "rejected_table_roots": {
+                work_id: sorted(session.rejected_table_roots.get(work_id) or set())
+                for work_id in serialize_ids
+                if session.rejected_table_roots.get(work_id)
+            },
             "unit_guardrail": (
                 "A bind is schema-valid only for a norm_code listed in "
                 "typed_bind_options for the same work_id. Those are opened typed "
                 "cards whose formal measure is convertible from the source unit. "
+                "Rejected table roots are excluded from typed_bind_options: do not "
+                "re-bind them; browse/search another table or choose unbound. "
                 "If none is professionally applicable, choose unbound; do not "
                 "reinterpret a card measure or invent another norm code."
             ),
@@ -7711,12 +8384,14 @@ def _run_batch_norm_agent(
                 }
                 emit_checkpoint(incomplete_blocker=blocker)
                 raise MappingTransportTimeout(str(error)) from error
-            raise
+            raise MappingValidationExhausted(
+                "smeta provider mapping failed: " + str(error)
+            ) from error
         structured_mapping_attempts += 1
         wait_ms = round((perf_counter() - started) * 1000, 2)
         rows = _tool_array_argument(payload, "rows", aliases=("mapping",))
         if not rows:
-            raise RuntimeError(
+            raise MappingValidationExhausted(
                 "smeta model returned no rows in structured mapping response: "
                 + " ".join(str(payload.get("content") or "").split())[:300]
             )
@@ -7892,11 +8567,22 @@ def _run_batch_norm_agent(
                 visible_child_node_ids={
                     work_id: [
                         str(child.get("node_id") or "")
-                        for child in (
-                            session.catalog_menus.get(work_id, {}).get(
-                                session.catalog_current_nodes.get(work_id) or "",
-                                [],
-                            )
+                        for child in _filter_root_menu_excluding_exhausted(
+                            (
+                                session.catalog_menus.get(work_id, {}).get(
+                                    session.catalog_current_nodes.get(work_id) or "",
+                                    [],
+                                )
+                            ),
+                            (
+                                _exhausted_catalog_family_ids(
+                                    session.catalog_family_return_counts.get(work_id)
+                                )
+                                if str(
+                                    session.catalog_current_nodes.get(work_id) or ""
+                                ) == "catalog:root"
+                                else set()
+                            ),
                         )
                         if str(child.get("node_id") or "")
                     ]
@@ -8308,21 +8994,37 @@ def _run_batch_norm_agent(
                         if isinstance(error, dict)
                         for detail in (error.get("details") or [])
                     )
-                    if deny_exact:
+                    rejected_stick = any(
+                        "already rejected for this work" in str(detail)
+                        for error in (result.get("errors") or [])
+                        if isinstance(error, dict)
+                        for detail in (error.get("details") or [])
+                    )
+                    if deny_exact or rejected_stick:
                         opened_evidence_turns = 0
+                        for error in (result.get("errors") or []):
+                            if not isinstance(error, dict):
+                                continue
+                            wid = str(error.get("work_id") or "").strip()
+                            if wid:
+                                session._demote_rejected_selected_tables(wid)
                         conversation.append({
                             "role": "user",
                             "content": json.dumps(
                                 {
                                     "recovery_contract": (
-                                        "smeta_exact_deny_broaden_v1"
+                                        "smeta_rejected_table_broaden_v1"
+                                        if rejected_stick and not deny_exact
+                                        else "smeta_exact_deny_broaden_v1"
                                     ),
                                     "instruction": (
-                                        "Your last exact bind contradicted its own "
-                                        "reason. Do not resubmit that norm as exact. "
-                                        "Call broaden_norm_catalog toward catalog:root "
-                                        "or another family/table, then search/read, "
-                                        "or submit an honest unbound."
+                                        "Your last bind targeted a rejected table "
+                                        "root or contradicted exact applicability. "
+                                        "Do not resubmit that table. Call "
+                                        "broaden_norm_catalog toward catalog:root "
+                                        "or another family/table, then search/read "
+                                        "a different table_codes root, or submit "
+                                        "an honest unbound."
                                     ),
                                     "work_ids": [
                                         str(error.get("work_id") or "")

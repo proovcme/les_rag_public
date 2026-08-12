@@ -430,6 +430,7 @@ async def test_ollama_qwen_document_uses_fast_local_defaults(tmp_path, monkeypat
     monkeypatch.delenv("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", raising=False)
     monkeypatch.delenv("LES_SMETA_NORM_RERANK", raising=False)
     monkeypatch.delenv("LES_SMETA_LOCAL_GLOBAL_REVIEW", raising=False)
+    monkeypatch.delenv("RERANKER_ENABLED", raising=False)
     monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
         source, {"original_name": "source.xlsx", "sha256": "sha"},
     ))
@@ -471,6 +472,50 @@ async def test_ollama_qwen_document_uses_fast_local_defaults(tmp_path, monkeypat
     assert os.environ["LES_SMETA_READ_BUDGET"] == "3"
     assert os.environ["LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS"] == "1"
     assert os.environ["LES_SMETA_NORM_RERANK"] == "false"
+
+
+@pytest.mark.asyncio
+async def test_ollama_qwen_document_enables_norm_rerank_when_windows_reranker_on(
+    tmp_path, monkeypatch,
+):
+    import os
+
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"xlsx")
+    monkeypatch.delenv("LES_SMETA_NORM_RERANK", raising=False)
+    monkeypatch.setenv("RERANKER_ENABLED", "true")
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source, {"original_name": "source.xlsx", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+
+    def run_workflow(_path, **kwargs):
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {"summary": {
+                "result_status": "priced_complete",
+                "input_rows": 1,
+                "bound_rows": 1,
+                "open_rows": 0,
+            }, "positions": []},
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="ollama",
+        model_name="qwen3.5:9b",
+        cloud_provider=False,
+        artifact_dir=tmp_path / "artifacts",
+    )
+    assert result is not None
+    assert os.environ["LES_SMETA_NORM_RERANK"] == "true"
 
 
 @pytest.mark.asyncio
@@ -646,7 +691,7 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert bodies[0]["options"]["min_p"] == 0.0
     assert bodies[0]["options"]["seed"] == 0
     assert result["_les_seed"] == 0
-    assert bodies[0]["think"] is False
+    assert "think" not in bodies[0]
     assert bodies[0]["messages"][-1] == {
         "role": "tool",
         "content": '{"ok":true}',
@@ -655,6 +700,130 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
     assert "model" not in bodies[0]["messages"][1]
     assert bodies[0]["messages"][1]["tool_calls"][0]["id"] == "call-1"
     assert urls == ["http://127.0.0.1:11434/api/chat"]
+
+
+def test_ollama_model_supports_think_skips_qwen25_instruct():
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    assert adapter._ollama_model_supports_think("qwen2.5:14b-instruct-q4_K_M") is False
+    assert adapter._ollama_model_supports_think("qwen2.5:14b-instruct-q4KM") is False
+    assert adapter._ollama_model_supports_think("qwen3.5:9b") is True
+    assert adapter._ollama_model_supports_think("gemma4:12b") is False
+
+
+def test_document_exchange_retries_when_ollama_rejects_thinking(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    _clear_smeta_host_env(monkeypatch)
+    bodies = []
+
+    class Response:
+        def __init__(self, status_code, payload=None, text=""):
+            self.status_code = status_code
+            self._payload = payload or {}
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                request = adapter.httpx.Request("POST", "http://127.0.0.1:11434/api/chat")
+                raise adapter.httpx.HTTPStatusError(
+                    "400",
+                    request=request,
+                    response=self,
+                )
+
+        def json(self):
+            return self._payload
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            body = kwargs["json"]
+            bodies.append(body)
+            if "think" in body or any(
+                isinstance(msg, dict) and "thinking" in msg
+                for msg in (body.get("messages") or [])
+            ):
+                return Response(
+                    400,
+                    payload={"error": '"qwen2.5:14b-instruct-q4KM" does not support thinking'},
+                    text='{"error":"\\"qwen2.5:14b-instruct-q4KM\\" does not support thinking"}',
+                )
+            return Response(
+                200,
+                payload={"message": {"role": "assistant", "content": "ok", "tool_calls": []}},
+            )
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Собери ЛСР"}],
+        [{"type": "function", "function": {"name": "search_norms_batch"}}],
+    )
+    assert result["content"] == "ok"
+    assert len(bodies) == 2
+    assert bodies[0]["think"] is False
+    assert "think" not in bodies[1]
+    assert all("thinking" not in (msg or {}) for msg in bodies[1]["messages"])
+
+
+def test_document_exchange_omits_think_for_qwen25(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    _clear_smeta_host_env(monkeypatch)
+    bodies = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"message": {"role": "assistant", "content": "ok"}}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            bodies.append(kwargs["json"])
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen2.5:14b-instruct-q4_K_M", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    adapter._smeta_document_exchange(
+        [
+            {"role": "user", "content": "Собери ЛСР"},
+            {"role": "assistant", "content": "", "thinking": "should not be forwarded"},
+        ],
+        [{"type": "function", "function": {"name": "search_norms_batch"}}],
+    )
+    assert "think" not in bodies[0]
+    assert all("thinking" not in msg for msg in bodies[0]["messages"])
 
 
 def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):

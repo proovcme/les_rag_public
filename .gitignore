@@ -1,5 +1,8 @@
 # Данные и Секреты (НИКОГДА не пушить)
 .env
+config/local/secrets.env
+# Local Windows sidecar binaries (not part of the source tree)
+tools/bin/
 data/*
 legacy/data/
 tmp/

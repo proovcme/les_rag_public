@@ -1,5 +1,19 @@
 # Smeta Core — единое сметное ядро
 
+## Fast local catalog transport (v0.27.84)
+
+Invalid structured mapping JSON from the provider (qwen2.5 empty/truncated
+object after `format=schema`) is `MappingValidationExhausted`, not a hard
+«ЛСР не собрана». The stuck row stays open; later rows and already accepted
+decisions continue into a partial Excel. Timeouts stay `MappingTransportTimeout`.
+
+## Fast local catalog transport (v0.27.82)
+
+Ollama native `/api/chat` omits the `think` key for models without a thinking
+template (`qwen2.5-instruct`). HTTP 400 `does not support thinking` retries
+once with `think`/`thinking` stripped from body and history. Qwen3 keeps
+`think=false` as before.
+
 ## Fast local catalog transport (v0.27.60)
 
 Windows stability profile (`config/local/windows-cuda.env`): `MAX_TOOL_TURNS=10`,
@@ -88,7 +102,14 @@ the accepted unbound row sets `force_mapping_serialization` so the agent does no
 burn identical `browse_norm_catalog` retries. An identical failed tool call also
 forces mapping immediately (conversation reset removed). Unbound while still on
 a family/collection node is rejected as premature — model must `broaden` to
-`catalog:root` before closing the route.
+`catalog:root` before closing the route. Repeated `family → broaden → root`
+without reaching a table increments `catalog_family_return_counts`; after
+`CATALOG_FAMILY_RETURN_LIMIT` (2) returns the same passport is blocked while
+other root families remain (diagnostic only — no auto-bind). Candidate unbound
+without search/read shows progress label «Нужен поиск нормы», not
+«Оставлено без нормы». After the limit, exhausted family nodes are removed from
+the model-facing root menu and tool enum; re-selecting them soft-redirects to the
+remaining passports instead of reject-spamming into `mapping_retry`.
 
 ## Fast local catalog transport (v0.27.48)
 
@@ -108,7 +129,22 @@ stalled, the agent forces mapping/unbound serialization instead of burning more
 XML syntax HTTP 500.
 
 At wide table menus, more than six `rejected_nodes` are truncated (not rejected).
-Local Ollama/Qwen also defaults `LES_SMETA_NORM_RERANK=false` when unset.
+Local Ollama/Qwen defaults `LES_SMETA_NORM_RERANK` from `RERANKER_ENABLED`
+(true on Windows CUDA start-light; false otherwise). When CE ranking is
+`disabled`/`fallback_input_order`, `rank_norm_catalog_collections` fuses
+family-scoped norm-hit coverage + lexical collection text instead of the raw
+official catalog head (which previously hid ГЭСНр 67 behind 51–56). After
+`family_loop_redirect`, catalog/mapping `unbound` stays blocked until the row
+reaches a table or `search_norms_batch`. Windows CE needs a CUDA torch wheel
+(`uv pip install torch --index-url …/cu124`); `resolve_rerank_device` falls
+back to cpu instead of crashing CrossEncoder. `submit_lsr_mapping` hard-rejects
+`covered_by` without a bound provider norm, and refuses re-bind to a table root
+already rejected for that work until a later `search_norms_batch` whose
+`table_codes`/hits leave that rejected root (same-table search does not unlock).
+Rejected roots are removed from `selected_tables`, excluded from
+`typed_bind_options`, and surfaced in working memory so the model must broaden
+or unbound. Document
+profile defaults temperature `0` / top_p `1` on the CUDA local env.
 
 Typed family→collection / section→table menus proceed when shortlist cards exist,
 even if the cross-encoder is missing (`fallback_input_order`). Empty shortlist
@@ -336,8 +372,10 @@ Conflict-only global review возвращает полный terminal mapping �
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.
 - `proxy.services.etm_price_service` и `/api/prices/etm/*` — read-only источник текущих
-  поставщицких цен для КАЦ: session reuse, пакеты до 50 кодов, rate limit и provenance.
-  Код товара/материал выбирает модель или пользователь; ETM adapter только читает заданные коды.
+  поставщицких цен для КАЦ: session reuse, пакеты до 50 кодов, rate limit, Goods v2 browse
+  (candidates only), `kac_map` bridge и provenance. Код товара выбирает модель или пользователь;
+  ETM adapter только читает заданные коды. Order API не подключён. Креды — `config/local/secrets.env`
+  (gitignore); живая проверка без рестарта: `tools/etm_live_smoke.py`. Контракт: [ALGO-etm-price.md](../ALGO-etm-price.md).
 - `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
 
 `estimate_harness_service` временно исполняет старый tool-loop только за
@@ -428,12 +466,18 @@ trajectory: выдуманные ссылки отбрасываются, а р�
 остаётся невалидным и возвращается той же модели.
 
 `candidate_evaluations` фиксирует оценку выбранной карточки по операции, объекту, измерителю, области
-и чужим ресурсам. Если search показал несколько карточек, transport требует открыть и сравнить выбранную хотя
-бы с одной реально открытой отклонённой/спорной альтернативой. Код проверяет ссылки и полноту,
-но не оценивает причины и не меняет `selected|rejected|uncertain`.
+и чужим ресурсам. Если search показал несколько карточек, transport требует сравнить выбранную хотя
+бы с одной реально показанной отклонённой/спорной альтернативой: код из shortlist или
+`read_norms_batch`. Выдуманный код вне search+opened остаётся hard evidence fault. Код проверяет
+ссылки и полноту, но не оценивает причины и не меняет `selected|rejected|uncertain`.
+
+При `bind` выбранный код из search shortlist, ещё не открытый через `read_norms_batch`,
+материализуется в opened как transport hydration (`_hydrate_opened_card_from_candidates`):
+модель уже назвала код, код не выбирает норму. Это останавливает пустые read↔submit retries
+на `invalid unbound_evidence`.
 
 Кандидатные меню и рабочая память используют короткие карточки с точными selectable ids; полная
-typed-карточка появляется только через `read_norms_batch` перед model-owned bind. Когда модель
+typed-карточка обычно появляется через `read_norms_batch` перед model-owned bind. Когда модель
 явно считает ранее пройденный маршрут применимым к другой строке, она вызывает
 `reuse_norm_catalog_route` с `cache_id` и собственной причиной. Код переносит только проверенный
 family/collection/section/table scope, но не норму и не вывод о применимости; search/read остаются

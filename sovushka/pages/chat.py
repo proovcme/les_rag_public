@@ -1014,6 +1014,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     attach_status.set_text(f"Не удалось прочитать файл: {error}")
                     ui.notify("Не удалось прочитать файл", type="negative")
                     return
+                # Optimistic strip: show the file under the composer before the
+                # server round-trip finishes (PDF convert used to block for tens of seconds).
+                attach_title.set_text(f"Загрузка «{file_name}»…")
+                attach_chip.set_text("отправляю на сервер…")
+                attach_strip.set_visibility(True)
                 attach_status.set_text(f"Загрузка «{file_name}»…")
                 upload_mode = str(attach_mode.value or "read")
                 # PDF VOR/LSR needs server-owned original bytes («В чат» / read_*).
@@ -1035,6 +1040,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     params={"mode": upload_mode},
                 )
                 if not isinstance(d, dict):
+                    attach_state.clear()
+                    attach_state.update({"id": None, "name": "", "mode": "", "text": ""})
+                    attach_title.set_text("")
+                    attach_chip.set_text("")
+                    attach_strip.set_visibility(False)
                     ui.notify(last_api_error_text("Не удалось прикрепить файл"), type="negative")
                     attach_status.set_text(last_api_error_text("Не удалось прикрепить файл"))
                     return

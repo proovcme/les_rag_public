@@ -900,11 +900,9 @@ def test_scoped_agent_prepares_root_without_spending_a_model_turn():
         ) == 5
         assert "authoritative_budget_remaining" not in working_memory
         assert all(message.get("role") != "tool" for message in messages)
+        # family_select exposes only continue; ask/broaden/unbound start at collection.
         assert [tool["function"]["name"] for tool in tools] == [
             "continue_norm_catalog",
-            "ask_norm_catalog_fact",
-            "broaden_norm_catalog",
-            "unbound_norm_catalog",
         ]
         raise RuntimeError("first model call inspected")
 

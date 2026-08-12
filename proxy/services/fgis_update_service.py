@@ -15,6 +15,108 @@ from proxy.services.process_status import pid_running
 _ROOT = Path(__file__).resolve().parents[2]
 _LOG = Path("storage/jobs/fgis_full_update.log")
 _PID = Path("storage/jobs/fgis_full_update.pid")
+_LOCK = Path("storage/jobs/fgis_full_update.lock")
+_SUPERVISOR_MARKER = "tools.fgis_update_supervisor"
+_WORKER_MARKER = "tools.fgis_full_update"
+
+
+def _cmdline_parts(proc: Any) -> list[str]:
+    try:
+        return [str(part) for part in (proc.cmdline() or [])]
+    except Exception:
+        return []
+
+
+def _cmdline_runs_module(parts: list[str], module: str) -> bool:
+    """True only for ``python -m <module>``, not for ``python -c '...module...'``."""
+    for index, part in enumerate(parts):
+        if part == "-m" and index + 1 < len(parts) and parts[index + 1] == module:
+            return True
+    return False
+
+
+def _drop_venv_shim_parents(pids: list[int]) -> list[int]:
+    """Windows venv ``Scripts\\python.exe`` re-execs base Python as a child.
+
+    Both show ``-m tools.fgis_*``; counting both invents false duplicate jobs.
+    Keep the leaf processes (real interpreters), drop parents that have a child
+    in the same pid set.
+    """
+    if len(pids) <= 1:
+        return pids
+    try:
+        import psutil
+    except Exception:
+        return pids
+    pid_set = set(pids)
+    shim_parents: set[int] = set()
+    for pid in pids:
+        try:
+            for child in psutil.Process(pid).children(recursive=False):
+                if int(child.pid) in pid_set:
+                    shim_parents.add(pid)
+                    break
+        except Exception:
+            continue
+    return [pid for pid in pids if pid not in shim_parents]
+
+
+def _running_fgis_jobs() -> dict[str, list[int]]:
+    """Live FGIS updater processes grouped by role (cross-interpreter)."""
+    try:
+        import psutil
+    except Exception:
+        return {"supervisors": [], "workers": []}
+    supervisors: list[int] = []
+    workers: list[int] = []
+    for proc in psutil.process_iter(["pid"]):
+        pid = int(proc.info.get("pid") or 0)
+        if pid <= 0 or not pid_running(pid):
+            continue
+        parts = _cmdline_parts(proc)
+        if _cmdline_runs_module(parts, _SUPERVISOR_MARKER):
+            supervisors.append(pid)
+        elif _cmdline_runs_module(parts, _WORKER_MARKER):
+            workers.append(pid)
+    return {
+        "supervisors": _drop_venv_shim_parents(sorted(set(supervisors))),
+        "workers": _drop_venv_shim_parents(sorted(set(workers))),
+    }
+
+
+def _job_lock_held() -> bool:
+    if not _LOCK.exists():
+        return False
+    try:
+        raw = _LOCK.read_text(encoding="utf-8").strip()
+        token = raw.split(":", 1)[-1] if raw else ""
+        pid = int(token) if token.isdigit() else 0
+    except Exception:
+        return False
+    if pid and pid_running(pid):
+        return True
+    try:
+        _LOCK.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return False
+
+
+def _claim_start_lock() -> bool:
+    """Exclusive claim before spawning a supervisor (cross-interpreter)."""
+    import os
+
+    jobs = _running_fgis_jobs()
+    if jobs["supervisors"] or jobs["workers"] or _job_lock_held():
+        return False
+    _LOCK.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        fd = os.open(str(_LOCK), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(f"pending:{os.getpid()}")
+    except FileExistsError:
+        return False
+    return True
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -61,11 +163,30 @@ def _operator_reason(value: object) -> str:
     low = text.casefold()
     if not text:
         return "Неизвестная ошибка обновления"
-    if "permission denied" in low or "errno 13" in low:
+    # Match Windows file locks before the bare "json" substring — otherwise
+    # PermissionError on ``…status.json`` is mislabeled as a bad FGIS payload.
+    if (
+        "permission denied" in low
+        or "access is denied" in low
+        or "отказано в доступе" in low
+        or "winerror 5" in low
+        or "errno 13" in low
+    ):
         return "Нет доступа к локальному файлу. ЛЕС повторит операцию после освобождения файла."
     if "timed out" in low or "timeout" in low:
         return "ФГИС не ответил вовремя. ЛЕС повторяет запрос и продолжит с контрольной точки."
-    if "json" in low:
+    if "page was smaller" in low or "unexpected end of stream" in low:
+        return (
+            "Локальный кэш ГЭСН оборвался на середине записи. "
+            "ЛЕС изолирует битый parquet и продолжает обновление заново с контрольной точки."
+        )
+    if (
+        "jsondecode" in low
+        or "json.decoder" in low
+        or "expecting value" in low
+        or "invalid json" in low
+        or "json decode" in low
+    ):
         return "ФГИС вернул повреждённый ответ. ЛЕС повторяет запрос с контрольной точки."
     if "url" in low or "connection" in low or "network" in low:
         return "Нет устойчивого соединения с ФГИС. Уже скачанное сохранено; ЛЕС повторит запрос."
@@ -184,7 +305,20 @@ def _progress(raw: dict[str, Any], *, running: bool) -> dict[str, Any]:
 def status() -> dict[str, Any]:
     raw_pid = _PID.read_text().strip() if _PID.exists() else ""
     pid = int(raw_pid) if raw_pid.isdigit() else 0
-    process_running = bool(pid and pid_running(pid))
+    jobs = _running_fgis_jobs()
+    live_supervisors = jobs["supervisors"]
+    live_workers = jobs["workers"]
+    process_running = bool(pid and pid_running(pid)) or bool(live_supervisors or live_workers) or _job_lock_held()
+    if not (pid and pid_running(pid)):
+        adopted = (live_supervisors or live_workers or [0])[0]
+        if adopted:
+            pid = adopted
+            try:
+                _PID.parent.mkdir(parents=True, exist_ok=True)
+                _PID.write_text(str(pid), encoding="utf-8")
+            except Exception:
+                pass
+    duplicate_jobs = max(0, len(live_supervisors) - 1) + max(0, len(live_workers) - (1 if live_supervisors else 1))
     raw = _read_json(DEFAULT_STATUS)
     from proxy.services import gesn_update_service
 
@@ -195,8 +329,8 @@ def status() -> dict[str, Any]:
         "stage": (gesn.get("status") or {}).get("stage"),
     }
     running = process_running or bool(dependency["running"])
-    normalized_progress = _progress(raw, running=process_running)
-    if dependency["running"] and not process_running:
+    normalized_progress = _progress(raw, running=bool(pid and pid_running(pid)) or bool(live_supervisors or live_workers))
+    if dependency["running"] and not (live_supervisors or live_workers):
         gesn_progress = dependency["progress"]
         total = int(gesn_progress.get("collection_total") or 0) or None
         completed = max(0, int(gesn_progress.get("collection_index") or 1) - 1)
@@ -217,7 +351,7 @@ def status() -> dict[str, Any]:
                 },
             }
         )
-    layer_status = _layers(raw, running=process_running)
+    layer_status = _layers(raw, running=bool(live_supervisors or live_workers))
     if dependency["running"]:
         for item in layer_status:
             if item["id"] == "gesn":
@@ -226,6 +360,9 @@ def status() -> dict[str, Any]:
     return {
         "running": running,
         "process_running": process_running,
+        "duplicate_jobs": duplicate_jobs,
+        "supervisor_pids": live_supervisors,
+        "worker_pids": live_workers,
         "pid": pid if process_running else gesn.get("pid"),
         "status": raw,
         "progress": normalized_progress,
@@ -241,7 +378,20 @@ def status() -> dict[str, Any]:
 def start(*, include_gesn: bool = True, all_periods: bool = False) -> dict[str, Any]:
     current = status()
     if current["process_running"]:
-        return {"ok": True, "started": False, **current}
+        return {
+            "ok": True,
+            "started": False,
+            "message": "Обновление ФГИС уже выполняется; повторный запуск не нужен.",
+            **current,
+        }
+    if not _claim_start_lock():
+        current = status()
+        return {
+            "ok": True,
+            "started": False,
+            "message": "Обновление ФГИС уже выполняется; повторный запуск не нужен.",
+            **current,
+        }
     joined_existing_gesn = False
     if include_gesn:
         from proxy.services import gesn_update_service
@@ -277,6 +427,10 @@ def start(*, include_gesn: bool = True, all_periods: bool = False) -> dict[str, 
         with _LOG.open("ab") as log:
             proc = subprocess.Popen(cmd, cwd=str(_ROOT), stdout=log, stderr=subprocess.STDOUT)
     except Exception as exc:
+        try:
+            _LOCK.unlink(missing_ok=True)
+        except Exception:
+            pass
         DEFAULT_STATUS.write_text(
             json.dumps(
                 {

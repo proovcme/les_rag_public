@@ -17,6 +17,20 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
 . (Join-Path $PSScriptRoot "runtime-process.ps1")
 
+function Import-LesEnvFile([string]$Path) {
+  if (-not (Test-Path -LiteralPath $Path)) { return }
+  Get-Content -LiteralPath $Path -Encoding UTF8 | ForEach-Object {
+    $line = $_.Trim()
+    if (-not $line -or $line.StartsWith("#")) { return }
+    $parts = $line -split "=", 2
+    if ($parts.Count -ne 2) { return }
+    $key = $parts[0].Trim()
+    $val = $parts[1].Trim().Trim('"').Trim("'")
+    if ($key) { Set-Item -Path "Env:$key" -Value $val }
+  }
+}
+Import-LesEnvFile (Join-Path $Root "config\local\secrets.env")
+
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) { [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT) } else { "" }
 if ($StateRoot) {
   $env:LES_ENV_PATH = if ($env:LES_ENV_PATH) { $env:LES_ENV_PATH } else { Join-Path $StateRoot ".env" }
@@ -209,6 +223,25 @@ switch ($Provider) {
     $env:RERANKER_ENABLED = "true"
     $env:RERANKER_BACKEND = "sentence_transformers"
     $env:RERANK_MODEL = if ($env:RERANK_MODEL) { $env:RERANK_MODEL } else { "BAAI/bge-reranker-v2-m3" }
+    # Keep smeta catalog/norm shortlists on the same CE path (not forced false).
+    if (-not $env:LES_SMETA_NORM_RERANK) { $env:LES_SMETA_NORM_RERANK = "true" }
+    # Probe torch CUDA before proxy starts. CPU-only wheels with RERANK_DEVICE=cuda
+    # used to crash CrossEncoder and collapse smeta shortlists to raw RRF.
+    try {
+      $py = Resolve-LesPython
+      $torchProbe = & $py -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(getattr(torch.version,'cuda',None) or '')" 2>$null
+      if ($torchProbe) {
+        $torchLines = @($torchProbe | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+        $torchVer = if ($torchLines.Count -ge 1) { $torchLines[0] } else { "?" }
+        $cudaOk = if ($torchLines.Count -ge 2) { $torchLines[1] } else { "False" }
+        Write-Host "torch=$torchVer cuda_available=$cudaOk RERANK_DEVICE=$($env:RERANK_DEVICE)"
+        if ($env:RERANK_DEVICE -like "cuda*" -and $cudaOk -ne "True") {
+          Write-Warning "RERANK_DEVICE=cuda but torch has no CUDA. Install: uv pip install --force-reinstall torch --index-url https://download.pytorch.org/whl/cu124"
+        }
+      }
+    } catch {
+      Write-Warning "torch CUDA probe failed: $($_.Exception.Message)"
+    }
   }
   "lemonade" {
     $env:LEMONADE_BASE_URL = if ($env:LEMONADE_BASE_URL) { $env:LEMONADE_BASE_URL } else { "http://127.0.0.1:13305/api/v1" }

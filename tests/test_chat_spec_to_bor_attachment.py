@@ -118,3 +118,111 @@ async def test_chat_vor_without_attachment_id_errors(tmp_path, monkeypatch):
     assert resp["crag_status"] == "ERROR"
     assert resp["query_route"]["channel"] == "spec_to_bor"
     assert "read_" in resp["answer"] or "В чат" in resp["answer"]
+
+
+@pytest.mark.asyncio
+async def test_chat_lsr_from_vor_pdf_does_not_hijack_spec_to_bor(tmp_path, monkeypatch):
+    """«Собери ЛСР по ВОР.pdf» → document LSR, not XLSX-only spec→VOR."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
+    artifact_dir = tmp_path / "storage" / "smeta_artifacts"
+    artifact_dir.mkdir(parents=True)
+    monkeypatch.setattr(chat_router, "_SMETA_ARTIFACT_DIR", artifact_dir)
+    _mock_chat_state()
+
+    async def fail_attachment_mode(*_a, **_k):
+        raise AssertionError("attachment LLM must not run for document LSR")
+
+    async def fake_document_lsr(**kwargs):
+        assert kwargs.get("attachment_id") == "read_abcdef123456"
+        assert "ЛСР" in str(kwargs.get("user_request") or "")
+        return SimpleNamespace(
+            answer="ЛСР по PDF-ВОР запущена",
+            operation="smeta_document_lsr",
+            channel="smeta_mode",
+            crag="OK",
+            extra={"retrieval_trace": {"mode": "smeta_document", "source": "pdf"}},
+        )
+
+    monkeypatch.setattr(chat_router, "_run_attachment_mode", fail_attachment_mode)
+    monkeypatch.setattr(chat_router, "run_smeta_document_application", fake_document_lsr)
+
+    resp = await chat_router.chat(
+        chat_router.ChatRequest(
+            question="Собери первую ЛСР по приложенной ВОР",
+            mode="auto",
+            attachment_id="read_abcdef123456",
+            attachment_context="Файл: ВОР монтаж БАП П1 13.05 (2).pdf\n\n[document attachment preserved]",
+        ),
+        _user=object(),
+    )
+
+    assert resp["answer"] == "ЛСР по PDF-ВОР запущена"
+    assert resp["query_route"]["channel"] == "smeta_mode"
+    assert resp["query_route"]["operation"] == "smeta_document_lsr"
+    assert "XLSX" not in resp["answer"]
+    assert "спецификац" not in resp["answer"].lower()
+
+
+@pytest.mark.asyncio
+async def test_chat_vor_from_pdf_spec_is_deterministic(tmp_path, monkeypatch):
+    """«ВОР из спецификации» accepts PDF the same as XLSX."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    monkeypatch.setenv("RAG_META_DB_PATH", str(tmp_path / "data" / "les_meta_qwen.db"))
+    attach_root = tmp_path / "storage" / "chat_attachments"
+    artifact_dir = tmp_path / "storage" / "smeta_artifacts"
+    artifact_dir.mkdir(parents=True)
+    monkeypatch.setattr(chat_router, "_SMETA_ARTIFACT_DIR", artifact_dir)
+
+    src = tmp_path / "spec.pdf"
+    src.write_bytes(b"%PDF-1.4 placeholder")
+    meta = preserve_read_attachment(
+        src,
+        attachment_id="read_abcdef123456",
+        original_name="Спецификация Ф9.pdf",
+        root=attach_root,
+    )
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attach_root))
+
+    async def fail_attachment_mode(*_a, **_k):
+        raise AssertionError("attachment LLM must not run for VOR-from-spec PDF")
+
+    def fake_rows(path, *, source_label=""):
+        assert Path(path).suffix.lower() == ".pdf"
+        return [
+            {
+                "doc_type": "SPEC",
+                "name": "Кабель КПСнг(А)-FRLS",
+                "unit": "м",
+                "qty": 100.0,
+                "section": "ЛВЖ",
+                "code": "",
+                "mark": "",
+                "pos": "1",
+                "source_file": source_label,
+            }
+        ]
+
+    _mock_chat_state()
+    monkeypatch.setattr(chat_router, "_run_attachment_mode", fail_attachment_mode)
+    import proxy.services.spec_to_bor_service as bor_svc
+
+    monkeypatch.setattr(bor_svc, "rows_from_spec_document", fake_rows)
+
+    resp = await chat_router.chat(
+        chat_router.ChatRequest(
+            question="сделай ВОР из спецификации",
+            mode="auto",
+            attachment_id=meta["attachment_id"],
+            attachment_context=f"Файл: {meta['original_name']}\n\n",
+        ),
+        _user=object(),
+    )
+
+    assert resp["crag_status"] == "DETERMINISTIC"
+    assert resp["query_route"]["channel"] == "spec_to_bor"
+    assert "unsupported" not in (resp.get("retrieval_trace") or {}).get("error", "")
+    assert "XLSX/XLSM, сейчас вложение .pdf" not in resp["answer"]
+    assert "работ" in resp["answer"].lower() or "вор" in resp["answer"].lower()

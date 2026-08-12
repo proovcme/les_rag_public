@@ -36,6 +36,28 @@ def test_fixture_is_anonymized():
     assert "Столп" not in raw and "СПб" not in raw  # ни объекта, ни региона-заказчика
 
 
+def test_kac_lookup_accepts_resource_code_and_material_name():
+    trace = rim.build_position_trace(
+        {
+            "name": "Работа",
+            "qty": 1,
+            "unit": "шт",
+            "resources": [{
+                "kind": "material",
+                "code": "01.7.15.01-0011",
+                "name": "Кабель U/UTP",
+                "unit": "м",
+                "per_unit": 2,
+            }],
+        },
+        kac_map={"01.7.15.01-0011": 125.5},
+    )
+    row = next(r for r in trace["rows"] if r["type"] == "resource_material")
+    assert row["source"] == "kac"
+    assert row["columns"]["10"] == 125.5
+    assert row["columns"]["12"] == 251.0
+
+
 def test_missing_material_price_is_marked_as_kac():
     trace = rim.build_position_trace({
         "name": "Материал без цены",

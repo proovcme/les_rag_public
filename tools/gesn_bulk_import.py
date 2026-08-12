@@ -144,15 +144,58 @@ def _records_for_prefix(prefix: str, records: list[dict[str, Any]]) -> list[dict
 
 # ── состояние Parquet (резюмируемость) ────────────────────────────────
 
+# Local raw cache with this many filled otdels is treated as complete for
+# operator re-runs: skip FGIS probing of empty departments (hours of noise).
+COMPLETE_OTDEL_PREFIX_FLOOR = 300
+
+
+def _empty_otdel_sidecar(parquet_path: Path) -> Path:
+    return parquet_path.with_suffix(parquet_path.suffix + ".empty_otdels.json")
+
+
+def _load_empty_otdel_prefixes(parquet_path: Path) -> set[str]:
+    path = _empty_otdel_sidecar(parquet_path)
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return set()
+    items = payload.get("prefixes") if isinstance(payload, dict) else payload
+    if not isinstance(items, list):
+        return set()
+    return {str(item).strip() for item in items if str(item).strip()}
+
+
+def _save_empty_otdel_prefixes(parquet_path: Path, prefixes: set[str]) -> None:
+    path = _empty_otdel_sidecar(parquet_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema": "les.gesn.empty-otdels.v1",
+                "parquet": str(parquet_path),
+                "prefixes": sorted(prefixes),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+
 def _existing_otdel_prefixes(parquet_path: Path) -> set[str]:
     """Отделы ('NN-NN'), уже представленные в базе → пропускаем при дозаливке."""
     if not parquet_path.exists():
         return set()
     import pandas as pd
 
+    from tools.gesn_pdf_import import _quarantine_corrupt_parquet
+
     try:
         df = pd.read_parquet(parquet_path, columns=["norm_code"])
-    except Exception:                                # noqa: BLE001 — битый/старый parquet → не резюмируем
+    except Exception as exc:  # noqa: BLE001 — битый/старый parquet → quarantine + full refill
+        _quarantine_corrupt_parquet(parquet_path, reason=str(exc))
         return set()
     out: set[str] = set()
     for code in df["norm_code"].dropna().astype(str):
@@ -161,6 +204,11 @@ def _existing_otdel_prefixes(parquet_path: Path) -> set[str]:
         if m:
             out.add(m.group(1)[:5])                  # 'NN-NN'
     return out
+
+
+def raw_cache_looks_complete(parquet_path: Path | str, *, floor: int = COMPLETE_OTDEL_PREFIX_FLOOR) -> bool:
+    """True when local raw GESN parquet already holds a full public otdel set."""
+    return len(_existing_otdel_prefixes(Path(parquet_path))) >= max(1, int(floor))
 
 
 # ── основной прогон ───────────────────────────────────────────────────
@@ -185,12 +233,20 @@ def run(
     """
     out_path = Path(out_path)
     done_prefixes = _existing_otdel_prefixes(out_path) if resume else set()
+    empty_prefixes = _load_empty_otdel_prefixes(out_path) if resume else set()
     delay = 1.0 / rate if rate > 0 else 0.0
 
-    stats = {"otdels_done": 0, "otdels_skipped": 0, "otdels_empty": 0,
-             "errors": 0, "norms": 0, "resources": 0}
+    stats = {
+        "otdels_done": 0,
+        "otdels_skipped": 0,
+        "otdels_empty": 0,
+        "errors": 0,
+        "norms": 0,
+        "resources": 0,
+    }
     pending_rows: list[dict[str, Any]] = []
     pending_prefixes: list[str] = []
+    empty_dirty = False
 
     def _emit(msg: str) -> None:
         print(msg, file=log, flush=True)
@@ -207,6 +263,12 @@ def run(
         pending_rows.clear()
         pending_prefixes.clear()
 
+    def _persist_empty() -> None:
+        nonlocal empty_dirty
+        if empty_dirty:
+            _save_empty_otdel_prefixes(out_path, empty_prefixes)
+            empty_dirty = False
+
     sborniki = list(sborniki)
     for sb_index, sb in enumerate(sborniki, 1):
         gap = 0
@@ -220,11 +282,21 @@ def run(
                     "collection": sb,
                     "collection_index": sb_index,
                     "collection_total": len(sborniki),
+                    "activity": (
+                        "resuming"
+                        if (resume and prefix in done_prefixes) or prefix in empty_prefixes
+                        else "downloading"
+                    ),
                 })
             if resume and prefix in done_prefixes:
                 stats["otdels_skipped"] += 1
                 gap = 0                              # отдел существует (был залит) → не считаем пропуском
                 _emit(f"[skip] {prefix} — уже в базе")
+                continue
+            if resume and prefix in empty_prefixes:
+                stats["otdels_empty"] += 1
+                gap += 1
+                _emit(f"[skip-empty] {prefix} — ранее пустой у ФГИС")
                 continue
             try:
                 raw = _fetch_with_retry(prefix)
@@ -238,6 +310,8 @@ def run(
             if not recs:
                 stats["otdels_empty"] += 1
                 gap += 1
+                empty_prefixes.add(prefix)
+                empty_dirty = True
                 if delay:
                     time.sleep(delay)
                 continue
@@ -245,6 +319,8 @@ def run(
             rows = parse_fgis_json(recs)
             if not rows:
                 stats["otdels_empty"] += 1
+                empty_prefixes.add(prefix)
+                empty_dirty = True
                 if delay:
                     time.sleep(delay)
                 continue
@@ -258,9 +334,13 @@ def run(
             stats["resources"] += len(rows)
             pending_rows.extend(rows)
             pending_prefixes.append(prefix)
-            _emit(f"[queue] {prefix}: +{n_norms} норм / {len(rows)} строк "
-                  f"(batch={len(pending_prefixes)}/{max(1, flush_every)}, "
-                  f"done={stats['otdels_done']} err={stats['errors']})")
+            empty_prefixes.discard(prefix)
+            empty_dirty = True
+            _emit(
+                f"[queue] {prefix}: +{n_norms} норм / {len(rows)} строк "
+                f"(batch={len(pending_prefixes)}/{max(1, flush_every)}, "
+                f"done={stats['otdels_done']} err={stats['errors']})"
+            )
             if progress_callback:
                 progress_callback({
                     **stats,
@@ -268,16 +348,20 @@ def run(
                     "collection": sb,
                     "collection_index": sb_index,
                     "collection_total": len(sborniki),
+                    "activity": "downloading",
                 })
             if len(pending_prefixes) >= max(1, flush_every):
                 _flush()
+                _persist_empty()
             if limit is not None and stats["otdels_done"] >= limit:
                 _flush()
+                _persist_empty()
                 _emit(f"[stop] достигнут --limit {limit}")
                 return stats
             if delay:
                 time.sleep(delay)
     _flush()
+    _persist_empty()
     return stats
 
 

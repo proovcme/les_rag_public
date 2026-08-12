@@ -83,6 +83,18 @@ def _read_snapshot(path: Path) -> pd.DataFrame:
     try:
         shutil.copy2(path, tmp_path)
         return pd.read_parquet(tmp_path)
+    except Exception as exc:
+        # Truncated mid-flush cache must not kill the whole FGIS job with a raw OSError.
+        from tools.gesn_pdf_import import _quarantine_corrupt_parquet
+
+        try:
+            _quarantine_corrupt_parquet(path, reason=str(exc))
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"corrupt GESN parquet quarantined ({path.name}): {exc}. "
+            "Re-run FGIS/GESN update to rebuild the cache."
+        ) from exc
     finally:
         try:
             tmp_path.unlink()

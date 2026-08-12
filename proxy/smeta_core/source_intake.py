@@ -15,6 +15,11 @@ from typing import Any, Iterable
 
 from proxy.smeta_core.contracts import WorkItem
 
+# Chat/РИМ/spec→ВОР: format is orthogonal to operation intent.
+TABLE_DOCUMENT_SUFFIXES = frozenset({".pdf", ".xlsx", ".xlsm"})
+# RIM also accepts CSV via the same intake dispatcher.
+RIM_DOCUMENT_SUFFIXES = TABLE_DOCUMENT_SUFFIXES | {".csv"}
+
 
 _HEADER_ALIASES = {
     "number": ("№", "пп", "номер"),
@@ -374,3 +379,8 @@ def intake_vor_document(
     if suffix == ".csv":
         return intake_vor_csv(path, column_map=column_map)
     raise ValueError(f"Unsupported VOR document format: {suffix or 'none'}")
+
+
+def is_table_document_suffix(suffix: str) -> bool:
+    """True for PDF/XLSX/XLSM tabular attachments (any chat smeta channel)."""
+    return str(suffix or "").lower() in TABLE_DOCUMENT_SUFFIXES

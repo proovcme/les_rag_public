@@ -25,6 +25,9 @@
 `needs_kac(code)` — нужен ли КАЦ: проверяет, **отсутствует ли код** в книге цен (`fgis_price_service`).
 Регламент дословно: КАЦ — для того, чего нет в ФГИС ЦС. См. [[ALGO-fgis-price]].
 
+Коммерческие цены поставщика ЭТМ (Product API) → `kac_map` — см. [[ALGO-etm-price]]:
+модель/пользователь выбирает код, адаптер только читает quotes с provenance; miss/0 → MISSING.
+
 ## Где в коде
 
 - Сервис: `proxy/services/kac_service.py` (без LLM).

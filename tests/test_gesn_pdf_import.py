@@ -120,6 +120,34 @@ def test_fgis_json_builds_parquet(tmp_path):
     assert summary["norms"] >= 2 and out.exists()
     df = pd.read_parquet(out)
     assert list(df.columns) == list(RESOURCE_FIELDS)
+    # Atomic write must not leave a .tmp sibling behind.
+    assert not out.with_suffix(out.suffix + ".tmp").exists()
+
+
+def test_build_parquet_quarantines_corrupt_append_target(tmp_path):
+    import pandas as pd
+
+    from tools.gesn_import import RESOURCE_FIELDS
+    from tools.gesn_pdf_import import build_parquet as build
+
+    out = tmp_path / "gesn.parquet"
+    out.write_bytes(b"NOT A PARQUET FILE")
+    recs = [{
+        field: ("ГЭСН12-01-001-01" if field == "norm_code" else
+                "ГЭСН:12-01-001-01" if field == "norm_key" else
+                "ГЭСН" if field == "base_type" else
+                "material" if field == "kind" else
+                "Песок" if field == "resource_name" else
+                "м3" if field == "resource_unit" else
+                1.0 if field == "per_unit" else None)
+        for field in RESOURCE_FIELDS
+    }]
+    summary = build(recs, out, append=True)
+    assert summary["resources"] == 1
+    assert out.exists()
+    assert pd.read_parquet(out).shape[0] == 1
+    quarantined = list(tmp_path.glob("gesn.corrupt.*.parquet"))
+    assert len(quarantined) == 1
 
 
 def test_fgis_json_keeps_work_steps_from_catalog_work_table():

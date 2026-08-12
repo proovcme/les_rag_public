@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ DEFAULT_BASE_URL = "https://ipro.etm.ru/api/v1"
 ALLOWED_CODE_TYPES = {"cli", "etm", "mnf"}
 ALLOWED_PRICE_FIELDS = {"price", "pricewnds", "price_tarif", "price_retail"}
 MAX_CODES_PER_REQUEST = 50
+MAX_BROWSE_CANDIDATES = 50
 SESSION_TTL_SEC = 7 * 60 * 60 + 50 * 60
 
 
@@ -62,9 +64,29 @@ def configuration_status(env: dict[str, str] | None = None) -> dict[str, Any]:
         ),
         "base_url": str(values.get("LES_ETM_BASE_URL") or DEFAULT_BASE_URL).rstrip("/"),
         "read_only": True,
+        "order_api": False,
         "max_codes_per_request": MAX_CODES_PER_REQUEST,
         "price_rate_limit_sec": 1.0,
+        "capabilities": {
+            "price_lookup": True,
+            "goods_browse": True,
+            "kac_map": True,
+            "remains": False,
+            "sggds": False,
+            "orders": False,
+        },
     }
+
+
+def _norm_material(name: Any) -> str:
+    return re.sub(
+        r"\s+", " ", str(name or "").strip().lower().replace("ё", "е")
+    ).strip(" .,;:")
+
+
+def _goods_path(product_id: str) -> str:
+    """Goods v2 lives next to Product v1 (`/api/v1` → `/api/v2`)."""
+    return f"/api/v2/goods/{quote(str(product_id).strip(), safe='')}"
 
 
 def _chunks(values: list[str], size: int) -> Iterable[list[str]]:
@@ -82,6 +104,15 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return number if number >= 0 else None
+
+
+def _safe_status_message(payload: dict[str, Any], *, secrets: tuple[str, ...] = ()) -> str:
+    raw = str(((payload.get("status") or {}) if isinstance(payload.get("status"), dict) else {}).get("message") or "")
+    text = " ".join(raw.split())
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
+    return text[:200]
 
 
 def _status_code(payload: dict[str, Any]) -> int:
@@ -126,7 +157,7 @@ class EtmPriceClient:
         self._lock = threading.RLock()
         self._session = ""
         self._session_expires_at = 0.0
-        self._last_price_request_at: float | None = None
+        self._last_rate_limited_at: float | None = None
 
     def close(self) -> None:
         if self._owns_http:
@@ -141,10 +172,12 @@ class EtmPriceClient:
     ) -> dict[str, Any]:
         try:
             response = self._http.request(method, path, params=params)
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError) as error:
+        except httpx.HTTPError as error:
             raise EtmPriceError("ETM API request failed") from error
+        try:
+            payload = response.json()
+        except ValueError as error:
+            raise EtmPriceError(f"ETM API HTTP {response.status_code}") from error
         if not isinstance(payload, dict):
             raise EtmPriceError("ETM API returned a non-object response")
         return payload
@@ -156,7 +189,14 @@ class EtmPriceClient:
             params={"log": self.config.login, "pwd": self.config.password},
         )
         if _status_code(payload) != 200:
-            raise EtmPriceError("ETM API authentication failed")
+            detail = _safe_status_message(
+                payload,
+                secrets=(self.config.login, self.config.password),
+            )
+            raise EtmPriceError(
+                "ETM API authentication failed"
+                + (f": {detail}" if detail else "")
+            )
         data = payload.get("data") or {}
         session = str(data.get("session") or "") if isinstance(data, dict) else ""
         if not session:
@@ -165,22 +205,56 @@ class EtmPriceClient:
         self._session_expires_at = self._clock() + SESSION_TTL_SEC
         return session
 
+    def authenticate(self) -> bool:
+        """Establish or reuse a session. Returns True; never exposes session-id."""
+        return bool(self._valid_session())
+
     def _valid_session(self) -> str:
         with self._lock:
             if self._session and self._clock() < self._session_expires_at:
                 return self._session
             return self._login()
 
-    def _wait_for_price_slot(self) -> None:
+    def _wait_for_rate_slot(self) -> None:
         with self._lock:
             now = self._clock()
-            if self._last_price_request_at is not None:
+            if self._last_rate_limited_at is not None:
                 remaining = self._price_interval_sec - (
-                    now - self._last_price_request_at
+                    now - self._last_rate_limited_at
                 )
                 if remaining > 0:
                     self._sleep(remaining)
-            self._last_price_request_at = self._clock()
+            self._last_rate_limited_at = self._clock()
+
+    def _authed_get(
+        self,
+        path: str,
+        *,
+        code_type: str,
+        manufacturer_code: str | None = None,
+        extra_params: dict[str, Any] | None = None,
+        failure_message: str,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {
+            "type": code_type,
+            "session-id": self._valid_session(),
+        }
+        if manufacturer_code:
+            params["mnf"] = manufacturer_code
+        if extra_params:
+            params.update(extra_params)
+        self._wait_for_rate_slot()
+        payload = self._request("GET", path, params=params)
+        if _status_code(payload) == 403:
+            with self._lock:
+                self._session = ""
+                self._session_expires_at = 0.0
+            params["session-id"] = self._valid_session()
+            self._wait_for_rate_slot()
+            payload = self._request("GET", path, params=params)
+        if _status_code(payload) != 200:
+            raise EtmPriceError(failure_message)
+        return payload
 
     def _price_request(
         self,
@@ -189,25 +263,13 @@ class EtmPriceClient:
         code_type: str,
         manufacturer_code: str | None,
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "type": code_type,
-            "session-id": self._valid_session(),
-        }
-        if manufacturer_code:
-            params["mnf"] = manufacturer_code
-        self._wait_for_price_slot()
         path = f"/goods/{quote(','.join(codes), safe='')}/price"
-        payload = self._request("GET", path, params=params)
-        if _status_code(payload) == 403:
-            with self._lock:
-                self._session = ""
-                self._session_expires_at = 0.0
-            params["session-id"] = self._valid_session()
-            self._wait_for_price_slot()
-            payload = self._request("GET", path, params=params)
-        if _status_code(payload) != 200:
-            raise EtmPriceError("ETM API price lookup failed")
-        return payload
+        return self._authed_get(
+            path,
+            code_type=code_type,
+            manufacturer_code=manufacturer_code,
+            failure_message="ETM API price lookup failed",
+        )
 
     def lookup_prices(
         self,
@@ -310,6 +372,243 @@ class EtmPriceClient:
             "missing": len(items) - len(quotes),
             "rows": result_rows,
             "quotes": quotes,
+        }
+
+    def browse_goods(
+        self,
+        query: str,
+        *,
+        code_type: str = "etm",
+        manufacturer_code: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Read-only Goods v2 candidates. Selection stays with model/user."""
+        product_id = str(query or "").strip()
+        if not product_id:
+            raise ValueError("ETM browse query must not be empty")
+        if code_type not in ALLOWED_CODE_TYPES:
+            raise ValueError(f"Unsupported ETM code type: {code_type}")
+        if code_type == "mnf" and not manufacturer_code:
+            raise ValueError("manufacturer_code is required for ETM mnf browse")
+        limit = max(1, min(int(limit), MAX_BROWSE_CANDIDATES))
+        payload = self._authed_get(
+            _goods_path(product_id),
+            code_type=code_type,
+            manufacturer_code=manufacturer_code,
+            failure_message="ETM API goods browse failed",
+        )
+        candidates = [
+            candidate
+            for candidate in (
+                _goods_candidate(row) for row in _data_rows(payload)
+            )
+            if candidate.get("gdscode") or candidate.get("art")
+        ][:limit]
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        return {
+            "schema": "etm_goods_browse_v1",
+            "selection_owner": "model_or_user",
+            "code_type": code_type,
+            "query": product_id,
+            "result_text": str((data or {}).get("result_text") or ""),
+            "count": len(candidates),
+            "candidates": candidates,
+        }
+
+
+def _goods_candidate(row: dict[str, Any]) -> dict[str, Any]:
+    gdscode = str(row.get("gdscode") or "").strip()
+    code = str(row.get("code") or "").strip()
+    if not gdscode and code.upper().startswith("ETM"):
+        gdscode = code[3:]
+    unit = str(row.get("edizm") or row.get("pack") or "").strip()
+    name = str(row.get("name") or "").strip()
+    if not name:
+        chars = ((row.get("add_info_card") or {}) if isinstance(row.get("add_info_card"), dict) else {})
+        tree = chars.get("gdsClassTree") if isinstance(chars, dict) else None
+        if isinstance(tree, list) and tree:
+            leaf = tree[-1] if isinstance(tree[-1], dict) else {}
+            name = str(leaf.get("name") or "").strip()
+    return {
+        "gdscode": gdscode,
+        "code": code or (f"ETM{gdscode}" if gdscode else ""),
+        "name": name,
+        "art": str(row.get("art") or "").strip(),
+        "mnf_name": str(row.get("mnf_name") or "").strip(),
+        "mnf_code": str(row.get("mnf_code") or "").strip(),
+        "unit": unit,
+        "image": str(row.get("image") or "").strip(),
+    }
+
+
+def _net_price_from_quote(quote: dict[str, Any]) -> float | None:
+    gross = _number(quote.get("price"))
+    if gross is None or gross <= 0:
+        return None
+    if not quote.get("price_includes_vat"):
+        return round(gross, 6)
+    vat_pct = _number(quote.get("vat_pct"))
+    if vat_pct is None or vat_pct < 0:
+        return None
+    return round(gross / (1.0 + vat_pct / 100.0), 6)
+
+
+def build_kac_map_from_quotes(
+    quotes_result: dict[str, Any],
+    *,
+    resource_codes: dict[str, str] | None = None,
+) -> dict[str, float]:
+    """Map ETM quotes → net KAC prices keyed by material name and resource/product code.
+
+    Miss / individual_quote_required rows stay absent (never priced as 0).
+    """
+    resource_codes = resource_codes or {}
+    kac_map: dict[str, float] = {}
+    for quote in quotes_result.get("quotes") or []:
+        if not isinstance(quote, dict):
+            continue
+        net = _net_price_from_quote(quote)
+        if net is None:
+            continue
+        material = str(quote.get("material") or "").strip()
+        product_code = str(quote.get("product_code") or "").strip()
+        resource_code = str(
+            resource_codes.get(product_code)
+            or resource_codes.get(material)
+            or ""
+        ).strip()
+        for key in (material, _norm_material(material), product_code, resource_code):
+            if key:
+                kac_map[key] = net
+    return kac_map
+
+
+def fetch_kac_map_for_materials(
+    items: list[dict[str, Any]],
+    *,
+    client: EtmPriceClient | None = None,
+    code_type: str = "etm",
+    manufacturer_code: str | None = None,
+    price_field: str = "pricewnds",
+    existing: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Lookup ETM prices for model/user-selected codes and merge into kac_map.
+
+    Each item: ``{code, material, unit, resource_code?}``. Already-priced resource
+    codes in ``existing`` are left untouched. Not configured → empty applied set.
+    """
+    base = dict(existing or {})
+    pending: list[dict[str, Any]] = []
+    resource_codes: dict[str, str] = {}
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("code") or item.get("etm_code") or item.get("product_code") or "").strip()
+        material = str(item.get("material") or item.get("name") or "").strip()
+        unit = str(item.get("unit") or "").strip() or "шт"
+        resource_code = str(item.get("resource_code") or "").strip()
+        if resource_code and resource_code in base:
+            continue
+        if not code or not material:
+            continue
+        pending.append({"code": code, "material": material, "unit": unit})
+        if resource_code:
+            resource_codes[code] = resource_code
+            resource_codes[material] = resource_code
+    if not pending:
+        return {
+            "schema": "etm_kac_map_v1",
+            "configured": configuration_status()["configured"],
+            "kac_map": base,
+            "applied": 0,
+            "missing": 0,
+            "quotes": {"schema": "etm_price_quotes_v1", "quotes": [], "rows": []},
+        }
+    active = client or get_client()
+    quotes = active.collect_quotes(
+        pending,
+        code_type=code_type,
+        manufacturer_code=manufacturer_code,
+        price_field=price_field,
+    )
+    built = build_kac_map_from_quotes(quotes, resource_codes=resource_codes)
+    merged = {**base, **built}
+    priced_codes = {
+        str(quote.get("product_code") or "").strip()
+        for quote in (quotes.get("quotes") or [])
+        if isinstance(quote, dict) and str(quote.get("product_code") or "").strip()
+    }
+    return {
+        "schema": "etm_kac_map_v1",
+        "configured": True,
+        "supplier": "ЭТМ",
+        "source_kind": "supplier_api",
+        "kac_map": merged,
+        "applied": len(priced_codes) or len(quotes.get("quotes") or []),
+        "missing": int(quotes.get("missing") or 0),
+        "quotes": quotes,
+    }
+
+
+def enrich_requirements_kac_map(
+    requirements: list[dict[str, Any]],
+    *,
+    existing: dict[str, float] | None = None,
+    client: EtmPriceClient | None = None,
+) -> dict[str, Any]:
+    """Pull ETM quotes for resolved/open KAC requirements that already carry an ETM code."""
+    items: list[dict[str, Any]] = []
+    for requirement in requirements or []:
+        if not isinstance(requirement, dict):
+            continue
+        if str(requirement.get("kind") or "") != "kac":
+            continue
+        resolution = (
+            dict(requirement.get("resolution") or {})
+            if isinstance(requirement.get("resolution"), dict)
+            else {}
+        )
+        etm_code = str(
+            resolution.get("etm_code")
+            or resolution.get("product_code")
+            or requirement.get("etm_code")
+            or ""
+        ).strip()
+        if not etm_code:
+            continue
+        if any(resolution.get(key) is not None for key in ("current_price", "price", "value")):
+            continue
+        items.append({
+            "code": etm_code,
+            "material": str(
+                requirement.get("material")
+                or requirement.get("name")
+                or requirement.get("resource_name")
+                or etm_code
+            ).strip(),
+            "unit": str(requirement.get("unit") or "шт").strip() or "шт",
+            "resource_code": str(requirement.get("resource_code") or "").strip(),
+        })
+    if not items:
+        return {
+            "schema": "etm_kac_map_v1",
+            "configured": configuration_status()["configured"],
+            "kac_map": dict(existing or {}),
+            "applied": 0,
+            "missing": 0,
+            "quotes": {"schema": "etm_price_quotes_v1", "quotes": [], "rows": []},
+        }
+    try:
+        return fetch_kac_map_for_materials(items, client=client, existing=existing)
+    except EtmNotConfiguredError:
+        return {
+            "schema": "etm_kac_map_v1",
+            "configured": False,
+            "kac_map": dict(existing or {}),
+            "applied": 0,
+            "missing": len(items),
+            "quotes": {"schema": "etm_price_quotes_v1", "quotes": [], "rows": []},
+            "reason": "etm_not_configured",
         }
 
 

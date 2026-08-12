@@ -227,6 +227,8 @@ def test_chat_attachment_upload_uses_nicegui_file_api_not_stale_content_api():
     assert "upload = getattr(e, \"file\", None)" in attach_block
     assert "await upload.read()" in attach_block
     assert "e.content.read()" not in attach_block
+    assert "отправляю на сервер" in attach_block
+    assert "attach_strip.set_visibility(True)" in attach_block
 
 
 def test_samovar_parse_actions_keep_nicegui_slot_context():
@@ -446,11 +448,11 @@ class _FakeAsyncClient:
 
 @pytest.mark.asyncio
 async def test_free_mode_injects_session_memory(monkeypatch):
-    monkeypatch.setattr(
-        chat_router,
-        "_llm_runtime",
-        lambda: chat_router.LlmRuntime("openai-compatible", "http://127.0.0.1:9", "http://llm/chat", "m", "", False),
+    runtime = chat_router.LlmRuntime(
+        "openai-compatible", "http://127.0.0.1:9", "http://llm/chat", "m", "", False,
     )
+    monkeypatch.setattr(chat_router, "_llm_runtime", lambda: runtime)
+    monkeypatch.setattr(chat_router, "_smeta_model_runtime", lambda _name: runtime)
     monkeypatch.setattr(chat_router, "session_memory", lambda session_id, **kwargs: "ПАМЯТЬ СЕССИИ")
     monkeypatch.setattr(chat_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -463,11 +465,11 @@ async def test_free_mode_injects_session_memory(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_attachment_mode_injects_session_memory(monkeypatch):
-    monkeypatch.setattr(
-        chat_router,
-        "_llm_runtime",
-        lambda: chat_router.LlmRuntime("openai-compatible", "http://127.0.0.1:9", "http://llm/chat", "m", "", False),
+    runtime = chat_router.LlmRuntime(
+        "openai-compatible", "http://127.0.0.1:9", "http://llm/chat", "m", "", False,
     )
+    monkeypatch.setattr(chat_router, "_llm_runtime", lambda: runtime)
+    monkeypatch.setattr(chat_router, "_smeta_model_runtime", lambda _name: runtime)
     monkeypatch.setattr(chat_router, "session_memory", lambda session_id, **kwargs: "ПАМЯТЬ СЕССИИ")
     monkeypatch.setattr(chat_router.httpx, "AsyncClient", _FakeAsyncClient)
 
@@ -519,6 +521,23 @@ def test_chat_lsr_without_read_attachment_does_not_silent_fallback():
     source = inspect.getsource(chat_router._run_chat)
     assert "lsr_requires_read_attachment" in source
     assert "В чат" in source
+    assert "allow_free_text_work" in source
+    assert "is_explicit_work_estimate_request" in source
+    # Vague document LSR must not fall through to free-text harness.
+    assert "allow_free_text_work = bool" in source
+    assert "or not allow_free_text_work" in source
+
+
+def test_smeta_document_lsr_gate_keeps_explicit_work_estimate_on_harness():
+    from proxy.services.estimate_harness_service import is_explicit_work_estimate_request
+    from proxy.services.smeta_chat_adapter_service import _smeta_request_needs_lsr_output
+
+    vague = "Собери ЛСР по ведомости"
+    work = "Рассчитай сметную стоимость работ по штукатурке стен объём 100 м2"
+    assert _smeta_request_needs_lsr_output(vague)
+    assert not is_explicit_work_estimate_request(vague)
+    assert _smeta_request_needs_lsr_output(work)
+    assert is_explicit_work_estimate_request(work)
 
 
 def test_chat_answer_timing_line_shows_clock_and_model_duration():

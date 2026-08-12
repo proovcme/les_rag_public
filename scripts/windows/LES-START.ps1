@@ -9,6 +9,7 @@ Set-Location -LiteralPath $Root
 $QdrantExe = Join-Path $Root "tools\bin\qdrant.exe"
 $QdrantCfg = Join-Path $Root "config\qdrant.local.yaml"
 $CudaEnv = Join-Path $Root "config\local\windows-cuda.env"
+$SecretsEnv = Join-Path $Root "config\local\secrets.env"
 $StopLight = Join-Path $Root "installers\windows\stop-light.ps1"
 $StartLight = Join-Path $Root "installers\windows\start-light.ps1"
 $LogDir = Join-Path $Root "logs"
@@ -81,6 +82,12 @@ if (-not (Test-Path -LiteralPath $QdrantCfg)) {
 }
 
 Import-LesEnvFile $CudaEnv
+Import-LesEnvFile $SecretsEnv
+if ($env:LES_ETM_LOGIN -and $env:LES_ETM_PASSWORD) {
+  Write-Host "ETM: configured (read-only Product API)"
+} else {
+  Write-Host "ETM: not configured (copy config/local/secrets.env.example)"
+}
 # Re-resolve after windows-cuda.env so LES_OLLAMA_MODEL / OLLAMA_MODEL stick.
 $Model = if ($env:LES_OLLAMA_MODEL) {
   $env:LES_OLLAMA_MODEL
@@ -108,6 +115,21 @@ try {
   }
 } catch {
   Write-Host "WARN: nvidia-smi unavailable" -ForegroundColor Yellow
+}
+
+try {
+  $uvTorch = & uv run python -c "import torch; print(torch.__version__); print(torch.cuda.is_available())" 2>$null
+  if ($uvTorch) {
+    $lines = @($uvTorch | ForEach-Object { "$_".Trim() } | Where-Object { $_ })
+    $torchVer = if ($lines.Count -ge 1) { $lines[0] } else { "?" }
+    $cudaOk = if ($lines.Count -ge 2) { $lines[1] } else { "?" }
+    Write-Host "torch=$torchVer cuda_available=$cudaOk"
+    if (($env:RERANK_DEVICE -like "cuda*") -and ($cudaOk -ne "True")) {
+      Write-Host "WARN: RERANK_DEVICE=cuda but venv torch has no CUDA - install cu124 wheel" -ForegroundColor Yellow
+    }
+  }
+} catch {
+  Write-Host "WARN: torch CUDA probe skipped" -ForegroundColor Yellow
 }
 
 # Restart LES-owned proxy/UI on canonical ports before bootstrap.
@@ -176,7 +198,7 @@ try {
   Write-Host "WARN: could not verify Ollama models: $($_.Exception.Message)" -ForegroundColor Yellow
 }
 
-# 2) Qdrant (native tools\bin\qdrant.exe — Docker optional, not required here)
+# 2) Qdrant (native tools\bin\qdrant.exe - Docker optional, not required here)
 if (-not (Test-PortOpen 6333)) {
   if (-not (Test-Path -LiteralPath $QdrantExe)) { throw "Missing $QdrantExe" }
   Write-Host "Starting Qdrant..."

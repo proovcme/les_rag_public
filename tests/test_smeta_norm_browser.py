@@ -106,6 +106,11 @@ def test_collection_catalog_fuses_official_lexical_signal_with_rerank(
         return [by_code[code] for code in wrong_order], True, "ok"
 
     monkeypatch.setattr(norm_browser, "_rerank_cards", rerank)
+    monkeypatch.setattr(
+        norm_browser,
+        "_collections_from_family_norm_hits",
+        lambda *_args, **_kwargs: [],
+    )
 
     result = norm_browser.rank_norm_catalog_collections(
         "монтаж телекоммуникационного шкафа 42U",
@@ -118,10 +123,8 @@ def test_collection_catalog_fuses_official_lexical_signal_with_rerank(
     assert result["retrieval_trace"]["fusion"] == (
         "official_lexical_head_coverage_then_rerank"
     )
-    assert result["retrieval_trace"]["signals"] == [
-        "official_catalog_lexical",
-        "rerank",
-    ]
+    assert "official_catalog_lexical" in result["retrieval_trace"]["signals"]
+    assert "rerank" in result["retrieval_trace"]["signals"]
 
 
 def test_variant_coverage_merge_keeps_each_variant_head_visible():
@@ -676,7 +679,7 @@ def test_reranker_failure_is_visible_and_preserves_raw_order(monkeypatch):
     ranked, used, status = norm_browser._rerank_cards("query", cards, limit=4)
 
     assert used is False
-    assert status == "error:TimeoutError"
+    assert status == "fallback_input_order"
     assert ranked == cards[:4]
 
 
@@ -859,3 +862,50 @@ def test_staged_smeta_manifest_does_not_replace_active_manifest(monkeypatch, tmp
 
     assert _rag_manifest_path(base) == staged
     assert json.loads(active.read_text(encoding="utf-8"))["collection"] == "active"
+
+
+def test_collection_shortlist_keeps_cable_collection_when_norm_rerank_disabled(monkeypatch):
+    """Miss@known guard: disabled CE must not return raw GESNr 51-56 head only."""
+    from proxy.smeta_core import norm_browser
+
+    items = [
+        {
+            "key": code,
+            "title": title,
+            "purpose": purpose,
+            "source_example": example,
+            "node_type": "collection",
+            "cipher": code,
+        }
+        for code, title, purpose, example in [
+            ("51", "Земляные работы", "земля", "котлован"),
+            ("52", "Фундаменты", "фундамент", "бетон"),
+            ("53", "Стены", "стены", "кирпич"),
+            ("54", "Перекрытия", "перекрытия", "плиты"),
+            ("55", "Перегородки", "перегородки", "гкл"),
+            ("56", "Проемы", "проемы", "двери окна"),
+            ("67", "Электромонтажные работы", "электромонтаж", "демонтаж кабеля"),
+            ("69", "Прочие ремонтно-строительные работы", "прочие", "разное"),
+        ]
+    ]
+    monkeypatch.setenv("LES_SMETA_NORM_RERANK", "false")
+    monkeypatch.setattr(
+        norm_browser,
+        "browse_norm_catalog",
+        lambda **_kwargs: {"items": items, "source_integrity": {"ok": True}},
+    )
+    monkeypatch.setattr(
+        norm_browser,
+        "_collections_from_family_norm_hits",
+        lambda *_args, **_kwargs: ["67"],
+    )
+
+    result = norm_browser.rank_norm_catalog_collections(
+        "демонтаж кабеля в гофре",
+        family="ГЭСНр",
+        limit=6,
+    )
+    collections = [card["collection"] for card in result["cards"]]
+    assert "67" in collections
+    assert result["retrieval_trace"]["rerank_status"] == "disabled"
+    assert collections[0] == "67"

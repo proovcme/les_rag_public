@@ -77,9 +77,11 @@ def _session_root(session_id: str) -> Path:
 
 
 def _save_upload(session_id: str, name: str, content: bytes) -> Path:
+    from proxy.smeta_core.source_intake import RIM_DOCUMENT_SUFFIXES
+
     suffix = Path(name or "").suffix.lower()
-    if suffix not in {".xlsx", ".xlsm", ".csv"}:
-        raise HTTPException(415, "Поддерживаются XLSX, XLSM и CSV")
+    if suffix not in RIM_DOCUMENT_SUFFIXES:
+        raise HTTPException(415, "Поддерживаются PDF, XLSX, XLSM и CSV")
     digest = hashlib.sha256(content).hexdigest()
     target = _session_root(session_id) / "sources" / f"{digest}{suffix}"
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +216,8 @@ def _resolved_calculation_inputs(
     requirements: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Translate only typed, resolved calculator inputs from durable requirements."""
+    from proxy.services import etm_price_service as etm
+
     kac_map: dict[str, float] = {}
     k_ozp: float | None = None
     k_em: float | None = None
@@ -229,6 +233,12 @@ def _resolved_calculation_inputs(
         kind = str(requirement.get("kind") or "")
         if kind == "kac":
             resource_code = str(requirement.get("resource_code") or "").strip()
+            material_name = str(
+                requirement.get("material")
+                or requirement.get("name")
+                or requirement.get("resource_name")
+                or ""
+            ).strip()
             raw_price = next(
                 (
                     resolution[key]
@@ -237,11 +247,14 @@ def _resolved_calculation_inputs(
                 ),
                 None,
             )
-            if resource_code and raw_price is not None:
+            if raw_price is not None:
                 price = float(raw_price)
                 if price < 0:
                     raise RimSessionConflict("resolved KAC price cannot be negative")
-                kac_map[resource_code] = price
+                if resource_code:
+                    kac_map[resource_code] = price
+                if material_name:
+                    kac_map[material_name] = price
         if kind in {"coefficient", "coefficient_basis"}:
             if resolution.get("k_ozp") is not None:
                 k_ozp = float(resolution["k_ozp"])
@@ -250,11 +263,18 @@ def _resolved_calculation_inputs(
             coefficient_basis = str(
                 resolution.get("coefficient_basis") or coefficient_basis
             )
+    etm_bridge = etm.enrich_requirements_kac_map(requirements, existing=kac_map)
     return {
-        "kac_map": kac_map,
+        "kac_map": dict(etm_bridge.get("kac_map") or kac_map),
         "k_ozp": k_ozp,
         "k_em": k_em,
         "coefficient_basis": coefficient_basis,
+        "etm": {
+            "configured": bool(etm_bridge.get("configured")),
+            "applied": int(etm_bridge.get("applied") or 0),
+            "missing": int(etm_bridge.get("missing") or 0),
+            "reason": str(etm_bridge.get("reason") or ""),
+        },
     }
 
 

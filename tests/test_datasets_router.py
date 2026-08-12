@@ -1058,6 +1058,33 @@ async def test_attach_read_preserves_pdf_without_extracted_text(tmp_path, monkey
 
 
 @pytest.mark.asyncio
+async def test_attach_read_pdf_skips_markdown_convert(tmp_path, monkeypatch, dataset_state):
+    """Form-9 PDF attach must not block UI on convert_to_markdown."""
+    monkeypatch.chdir(tmp_path)
+    calls = {"n": 0}
+
+    def boom_converter(_path):
+        calls["n"] += 1
+        raise AssertionError("convert_to_markdown must not run for PDF attach")
+
+    import backend.converter
+
+    monkeypatch.setattr(backend.converter, "convert_to_markdown", boom_converter)
+    result = await datasets.attach_chat_file(
+        file=_upload("form9.pdf", b"%PDF-1.4 form9"),
+        mode="read",
+        _admin=object(),
+    )
+    assert calls["n"] == 0
+    assert result["attachment_id"].startswith("read_")
+    assert "preserved for LSR intake" in result["text"]
+    from proxy.services.chat_attachment_service import resolve_read_attachment
+
+    saved_path, _metadata = resolve_read_attachment(result["attachment_id"])
+    assert saved_path.read_bytes() == b"%PDF-1.4 form9"
+
+
+@pytest.mark.asyncio
 async def test_attach_read_converter_error_is_controlled(tmp_path, monkeypatch, dataset_state):
     monkeypatch.chdir(tmp_path)
 

@@ -198,6 +198,17 @@ def _fgis_progress_text(payload: dict) -> tuple[str, str, float | None, bool]:
             location += f" · отдел {current.get('prefix')}"
     if location:
         details.append(f"Сейчас: {location}")
+    raw = payload.get("status") or {}
+    gesn_progress = raw.get("gesn_progress") or progress.get("current") or {}
+    if isinstance(gesn_progress, dict):
+        skipped = gesn_progress.get("otdels_skipped")
+        done = gesn_progress.get("otdels_done")
+        if skipped or done:
+            details.append(
+                f"Отделы ГЭСН: новых {int(done or 0)}, пропущено {int(skipped or 0)}"
+            )
+        if gesn_progress.get("resumed_complete"):
+            details.append("Локальный кэш норм полный — сеть ФГИС для ГЭСН не дергаем")
     remaining = progress.get("remaining")
     if remaining is not None:
         unit = "книг" if progress.get("units") == "books" else "сборников"
@@ -272,6 +283,25 @@ def build_instrumenty():
                     fgis_log = ui.log(max_lines=40).classes("w-full sov-tools-log")
                     fgis_log.push("Ожидаем запуск обновления…")
                 fgis_log_state = {"seen": set(), "started": False}
+            with panel(variant="inset", classes="sov-tools-fgis"):
+                with ui.row().classes("sov-tools-fgis__head"):
+                    etm_state_icon = ui.icon("o_storefront").classes("sov-tools-state-icon")
+                    etm_status = ui.label("ЭТМ: проверка…").classes("sov-tools-fgis__title")
+                etm_detail = ui.label(
+                    "Коммерческие цены поставщика для КАЦ (read-only Product API)."
+                ).classes("sov-tools-detail")
+                with ui.row().classes("sov-tools-metrics items-end gap-2"):
+                    etm_code_input = ui.input(
+                        label="Код ЭТМ",
+                        placeholder="9536092",
+                    ).classes("w-40")
+                    etm_lookup_btn = action_button(
+                        "Запросить цену ЭТМ",
+                        icon="o_request_quote",
+                        compact=True,
+                        variant="secondary",
+                    )
+                etm_lookup_result = ui.label("").classes("sov-tools-detail")
             cards = ui.column().classes("w-full sov-tools-source-list")
 
         with panel(variant="plain", classes="sov-tools-section sov-tools-prompts"):
@@ -507,6 +537,7 @@ def build_instrumenty():
             with cards:
                 for item in d.get("sources") or []:
                     _render_source(item)
+            await _refresh_etm_status()
 
         async def _refresh_fgis_status() -> None:
             d = await api_get("/api/service-sources/fgis/update/status")
@@ -614,10 +645,78 @@ def build_instrumenty():
                     fgis_progress.value = percent / 100.0
                     fgis_progress.set_visibility(True)
 
+        async def _refresh_etm_status() -> None:
+            d = await api_get("/api/prices/etm/status")
+            if not isinstance(d, dict):
+                etm_status.text = "ЭТМ: статус недоступен"
+                etm_detail.text = last_api_error_text("Не удалось прочитать конфигурацию ЭТМ")
+                etm_state_icon.classes(
+                    remove="sov-tools-state-icon--accent sov-tools-state-icon--ok sov-tools-state-icon--error sov-tools-state-icon--muted",
+                    add="sov-tools-state-icon--error",
+                )
+                etm_lookup_btn.props("disable")
+                return
+            configured = bool(d.get("configured"))
+            caps = d.get("capabilities") or {}
+            etm_status.text = (
+                "ЭТМ: настроен (read-only Product API)"
+                if configured
+                else "ЭТМ: не настроен — задайте LES_ETM_LOGIN / LES_ETM_PASSWORD"
+            )
+            etm_detail.text = (
+                f"Каталог Goods: {'да' if caps.get('goods_browse') else 'нет'} · "
+                f"цены→КАЦ: {'да' if caps.get('kac_map') else 'нет'} · "
+                f"заказы: нет · {d.get('base_url') or ''}"
+            )
+            etm_state_icon.classes(
+                remove="sov-tools-state-icon--accent sov-tools-state-icon--ok sov-tools-state-icon--error sov-tools-state-icon--muted",
+                add="sov-tools-state-icon--ok" if configured else "sov-tools-state-icon--muted",
+            )
+            if configured:
+                etm_lookup_btn.props(remove="disable")
+            else:
+                etm_lookup_btn.props("disable")
+
+        async def _lookup_etm_price() -> None:
+            code = str(etm_code_input.value or "").strip()
+            if not code:
+                ui.notify("Укажите код ЭТМ", type="warning")
+                return
+            d = await api_post(
+                "/api/prices/etm/lookup-batch",
+                {
+                    "items": [{
+                        "code": code,
+                        "material": f"ETM {code}",
+                        "unit": "шт",
+                    }],
+                },
+            )
+            if not isinstance(d, dict):
+                etm_lookup_result.text = last_api_error_text("Запрос цены ЭТМ не выполнен")
+                ui.notify(etm_lookup_result.text, type="negative")
+                return
+            rows = d.get("rows") or []
+            row = rows[0] if rows else {}
+            if row.get("found"):
+                etm_lookup_result.text = (
+                    f"Код {code}: {row.get('price')} "
+                    f"({row.get('price_field') or 'pricewnds'}; provenance supplier_api)"
+                )
+                ui.notify("Цена ЭТМ получена", type="positive")
+            else:
+                reason = str(row.get("reason") or "not_found")
+                etm_lookup_result.text = (
+                    f"Код {code}: цена не взята ({reason}) — оставляем MISSING, не 0"
+                )
+                ui.notify(etm_lookup_result.text, type="warning")
+
         refresh_btn.on("click", _refresh)
         fgis_update_btn.on("click", _update_all_fgis)
+        etm_lookup_btn.on("click", _ui_handler(_lookup_etm_price))
         refresh_prompts_btn.on("click", _refresh_prompts)
         ui.timer(0.2, _refresh, once=True)
         ui.timer(0.25, _refresh_fgis_status, once=True)
         ui.timer(3.0, _refresh_fgis_status)
+        ui.timer(0.3, _refresh_etm_status, once=True)
         ui.timer(0.35, _refresh_prompts, once=True)
