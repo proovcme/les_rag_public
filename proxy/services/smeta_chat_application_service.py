@@ -24,7 +24,10 @@ from proxy.services.chat_attachment_service import (
     consume_read_attachment,
     resolve_read_attachment,
 )
-from proxy.services.smeta_user_message_service import format_document_lsr_message
+from proxy.services.smeta_user_message_service import (
+    build_mapping_fingerprint,
+    format_document_lsr_message,
+)
 from proxy.services.smeta_artifact_service import (
     build_checked_rim_form_from_visible_rows,
     build_smeta_artifact,
@@ -43,6 +46,20 @@ SMETA_DOCUMENT_HEARTBEAT_SEC = 15.0
 ModelExchange = Callable[[list[dict], list[dict]], dict[str, Any]]
 MappingModelExchange = Callable[[list[dict], dict[str, Any]], dict[str, Any]]
 TokenSink = Callable[[dict[str, Any]], Awaitable[None]]
+
+
+def _env_missing_pass(cloud_provider: bool, model_provider: str, model_name: str) -> bool:
+    """Second pass over unbound rows only. Env overrides; default on for local Ollama/Qwen."""
+    raw = os.getenv("LES_SMETA_DOCUMENT_MISSING_PASS", "").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return (
+        not cloud_provider
+        and str(model_provider or "").lower() == "ollama"
+        and "qwen" in str(model_name or "").lower()
+    )
 
 
 @dataclass(frozen=True)
@@ -283,12 +300,18 @@ async def run_smeta_direct_application(
             "smeta_dataset_filter": dataset_filter or "",
             "smeta_artifact_present": False,
         }
+        hint = (
+            "Прикрепи ВОР/PDF или XLSX скрепкой в режиме «В чат» и напиши «сделай ЛСР» — "
+            "тогда отработает document workflow по файлу, а не текстовый разбор чата."
+            if source_rows <= 0 and lookup_calls <= 0
+            else "Повтори расчёт; если приложен файл, он сохранён для повторной обработки."
+        )
         return SmetaApplicationResult(
             answer=(
                 "ЛСР не сформирована: сметный контур не получил проверяемых расчётных строк "
                 f"(исходных строк распознано: {source_rows}, запросов к нормам выполнено: {lookup_calls}). "
                 "Неподтверждённые цены, шифры и трудозатраты в результат не выпущены. "
-                "Повтори расчёт; если приложен файл, он сохранён для повторной обработки."
+                f"{hint}"
             ),
             operation="smeta_verified_calculation_missing",
             channel="smeta_mode",
@@ -566,12 +589,51 @@ async def run_smeta_document_application(
             document_batch_size = int(configured_batch_size)
         elif agent_engine == "qwen_agent":
             document_batch_size = 1
+        elif (
+            not cloud_provider
+            and str(model_provider or "").lower() == "ollama"
+            and "qwen" in str(model_name or "").lower()
+        ):
+            # Local Qwen + Ollama: 5-row packages leave too little room for
+            # read_norms_batch before forced mapping, then truncate multi-row JSON
+            # (done_reason=length). One row per package keeps evidence+serialize small.
+            document_batch_size = 1
         else:
             document_batch_size = 0 if cloud_provider else 5
         document_max_turns = int(os.getenv(
             "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
-            "64" if cloud_provider else "10",
+            "64" if cloud_provider else (
+                # Local Qwen often burns 10 turns on catalog browse; 6 + evidence
+                # preflight is enough once search/open repair exists.
+                "6"
+                if (
+                    str(model_provider or "").lower() == "ollama"
+                    and "qwen" in str(model_name or "").lower()
+                )
+                else "10"
+            ),
         ))
+        # Second full-document pass roughly doubles wall time on local 9B.
+        # Keep it for cloud; local default off unless explicitly enabled.
+        global_review_env = os.getenv("LES_SMETA_DOCUMENT_GLOBAL_REVIEW", "").strip().lower()
+        if global_review_env in {"1", "true", "yes", "on"}:
+            require_global_review = True
+        elif global_review_env in {"0", "false", "no", "off"}:
+            require_global_review = False
+        else:
+            require_global_review = bool(cloud_provider)
+        soft_accept_env = os.getenv("LES_SMETA_DOCUMENT_SOFT_ACCEPT", "").strip().lower()
+        if soft_accept_env in {"1", "true", "yes", "on"}:
+            soft_accept = True
+        elif soft_accept_env in {"0", "false", "no", "off"}:
+            soft_accept = False
+        else:
+            # Local Ollama/Qwen: restore 0.24.48 soft blockers so LSR reaches XLSX.
+            soft_accept = (
+                not cloud_provider
+                and str(model_provider or "").lower() == "ollama"
+                and "qwen" in str(model_name or "").lower()
+            )
         workflow_task = asyncio.create_task(asyncio.to_thread(
             run_vor_document_workflow, source_path,
             exchange=exchange,
@@ -584,7 +646,9 @@ async def run_smeta_document_application(
             max_agent_turns=document_max_turns,
             agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
             accumulate_task_state=(agent_engine == "qwen_agent" and document_batch_size == 1),
-            require_global_review=True,
+            require_global_review=require_global_review,
+            soft_accept=soft_accept,
+            missing_rows_pass=_env_missing_pass(cloud_provider, model_provider, model_name),
         ))
         while True:
             try:
@@ -653,7 +717,16 @@ async def run_smeta_document_application(
     summary = (workflow.get("lsr") or {}).get("summary") or {}
     status = str(summary.get("result_status") or "unknown")
     source_name = str(attachment_meta.get("original_name") or source_path.name)
-    answer = format_document_lsr_message(source_name, summary)
+    intake = workflow.get("intake") if isinstance(workflow.get("intake"), dict) else {}
+    work_rows = list(intake.get("work_items") or intake.get("rows") or [])
+    selections = workflow.get("selections") if isinstance(workflow.get("selections"), dict) else {}
+    mapping_fingerprint = build_mapping_fingerprint(
+        work_rows=work_rows,
+        selections=selections,
+    )
+    answer = format_document_lsr_message(
+        source_name, summary, fingerprint=mapping_fingerprint,
+    )
     model_steps = [
         str((item.get("assistant") or {}).get("model") or "").strip()
         for item in (workflow.get("model_trace") or [])
@@ -675,6 +748,9 @@ async def run_smeta_document_application(
             f"{item['from']} → {item['to']}" for item in fallback_steps
         )
         answer += f"\n\nСметная модель переключилась на резерв: {switches}. Это записано в журнале ЛСР."
+    rim_trace = json.loads(
+        json.dumps(workflow.get("lsr") or {}, ensure_ascii=False, default=str)
+    )
     artifact = {
         "mode": "xlsx",
         "stage": "priced_draft" if status == "priced_draft" else "priced_lsr",
@@ -683,9 +759,8 @@ async def run_smeta_document_application(
             "xlsx": f"/api/smeta-artifacts/download?path={xlsx_path.name}",
         },
         "files": {"xlsx_path": str(xlsx_path), "trace_path": str(report_path)},
-        "rim_trace": json.loads(
-            json.dumps(workflow.get("lsr") or {}, ensure_ascii=False, default=str)
-        ),
+        "rim_trace": rim_trace,
+        "mapping_fingerprint": mapping_fingerprint,
         "approval": {
             "status": summary.get("approval_status") or "auto_draft",
             "mapping_revision_id": (workflow.get("mapping_run") or {}).get(
@@ -699,6 +774,29 @@ async def run_smeta_document_application(
             ),
         },
     }
+    # Compact assemble rows so KS-2/KS-3 can resolve last_lsr from chat history
+    # or disk without replaying the full RIM tree.
+    try:
+        from proxy.services.ks_forms_service import (
+            assembled_from_rim_trace,
+            persist_rim_sidecar,
+        )
+
+        assembled = assembled_from_rim_trace(
+            rim_trace if isinstance(rim_trace, dict) else None
+        )
+        if assembled.get("positions"):
+            artifact["positions"] = assembled["positions"]
+            artifact["summary"] = {
+                **(summary if isinstance(summary, dict) else {}),
+                "positions": assembled["summary"].get("positions"),
+                "total": assembled["summary"].get("total"),
+            }
+            sidecar = xlsx_path.with_suffix(".ks.json")
+            persist_rim_sidecar(artifact, path=sidecar)
+            artifact["files"]["json_path"] = str(sidecar)
+    except Exception:
+        logger.exception("[SMETA_DOCUMENT] KS last_lsr sidecar skipped")
     return SmetaDocumentApplicationResult(
         answer=answer,
         operation="smeta_document_lsr",
@@ -714,6 +812,7 @@ async def run_smeta_document_application(
                 "source_sha256": attachment_meta.get("sha256"),
                 "result_status": status,
                 "summary": summary,
+                "mapping_fingerprint": mapping_fingerprint,
                 "model_provider": model_provider,
                 "agent_engine": agent_engine,
                 "model_requested": model_name,

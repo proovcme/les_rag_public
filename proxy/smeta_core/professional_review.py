@@ -121,12 +121,18 @@ class MappingRevision:
     schema: str = "smeta_mapping_revision_v1"
 
     def __post_init__(self) -> None:
-        if self.revision_kind not in {"row_mapping", "global_review", "user_lock"}:
+        if self.revision_kind not in {
+            "row_mapping", "global_review", "missing_rows_pass", "user_lock",
+        }:
             raise ValueError("unknown mapping revision kind")
         if self.created_by not in {"model", "user"}:
             raise ValueError("mapping revision owner must be model or user")
         allowed_statuses = {
-            "mapping_selected", "mapping_globally_reviewed", "mapping_user_reviewed", "mapping_locked",
+            "mapping_selected",
+            "mapping_globally_reviewed",
+            "mapping_missing_pass",
+            "mapping_user_reviewed",
+            "mapping_locked",
         }
         if self.mapping_status not in allowed_statuses:
             raise ValueError("unknown mapping status")

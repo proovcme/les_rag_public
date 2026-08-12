@@ -336,13 +336,19 @@ def render_xlsx(resolved: dict[str, Any], out_path: Path, template_path: Path | 
 def generate(
     form_id: str, fmt: str, *, project_id: int | None = None, manual: dict[str, Any] | None = None,
     out_path: Path | None = None,
+    rows: list[list[str]] | None = None,
 ) -> dict[str, Any]:
-    """Сгенерировать документ формы в формате fmt. Возвращает путь и резолв полей."""
+    """Сгенерировать документ формы в формате fmt. Возвращает путь и резолв полей.
+
+    ``rows`` — опциональная подмена blank-таблицы (заполненные КС/ВОР из кода).
+    """
     if fmt not in SUPPORTED_FORMATS:
         raise ValueError(f"fmt: {list(SUPPORTED_FORMATS)}")
     resolved = resolve_fields(form_id, project_id, manual)
     if resolved is None:
         raise ValueError(f"Форма {form_id!r} не найдена")
+    if rows is not None:
+        resolved = {**resolved, "rows": [list(r) for r in rows]}
     descriptor = load_descriptor(form_id) or {}
 
     if fmt == "html":
@@ -358,7 +364,13 @@ def generate(
         tmpl_path = Path(tmpl) if tmpl else None
         render_docx(resolved, out_path, tmpl_path)
     elif fmt == "xlsx":
-        tmpl = (descriptor.get("templates") or {}).get("xlsx")
-        tmpl_path = Path(tmpl) if tmpl else None
-        render_xlsx(resolved, out_path, tmpl_path)
+        if str(form_id or "").strip().casefold() == "ks2":
+            # Official Goskomstat layout (HTML-equivalent), not the flat fallback table.
+            from proxy.services.ks2_xlsx_render import render_ks2_xlsx
+
+            render_ks2_xlsx(resolved, out_path)
+        else:
+            tmpl = (descriptor.get("templates") or {}).get("xlsx")
+            tmpl_path = Path(tmpl) if tmpl else None
+            render_xlsx(resolved, out_path, tmpl_path)
     return {"resolved": resolved, "html": None, "path": str(out_path)}

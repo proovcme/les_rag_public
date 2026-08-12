@@ -1105,6 +1105,15 @@ def persist_smeta_artifact_exports(
         "xlsx_path": str(xlsx_path),
         "csv_path": str(csv_path),
     }
+    # Sidecar for filled KS-2/KS-3 (last_lsr) without replaying chat history.
+    try:
+        from proxy.services.ks_forms_service import persist_rim_sidecar
+
+        sidecar = out_dir / f"{safe_prefix}_{stamp}.json"
+        persist_rim_sidecar(artifact, path=sidecar)
+        artifact["files"]["json_path"] = str(sidecar)
+    except Exception:
+        pass
     return artifact
 
 

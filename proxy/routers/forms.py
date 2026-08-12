@@ -24,6 +24,12 @@ class FormGenerate(BaseModel):
     project_id: Optional[int] = None
     fmt: str = "docx"
     manual: Optional[dict[str, Any]] = None
+    # blank | last_lsr | field_journal — filled KS forms via ks_forms_service
+    source: Optional[str] = None
+    session_id: Optional[str] = None
+    rows: Optional[list[list[str]]] = None
+    assembled: Optional[dict[str, Any]] = None
+    rim_form: Optional[dict[str, Any]] = None
 
 
 class OfficeDraftCreate(BaseModel):
@@ -126,12 +132,34 @@ async def forms_fields(form_id: str, project_id: Optional[int] = None, _user=Dep
 
 @router.post("/{form_id}/generate")
 async def forms_generate(form_id: str, req: FormGenerate, _user=Depends(require_user)):
-    """Сгенерировать документ. html — инлайн-превью; docx/xlsx — путь + /download."""
+    """Сгенерировать документ. html — инлайн-превью; docx/xlsx — путь + /download.
+
+    Для ks2/ks3/ks6a: ``source=last_lsr|field_journal`` заполняет строки кодом;
+    ``rows`` — явная подмена таблицы; без source — blank как раньше.
+    """
+    fid = str(form_id or "").strip().casefold()
+    source = str(req.source or "").strip().casefold()
     try:
-        result = await asyncio.to_thread(
-            forms_service.generate, form_id, req.fmt,
-            project_id=req.project_id, manual=req.manual or {},
-        )
+        if fid in {"ks2", "ks3", "ks6a"} and source in {"last_lsr", "field_journal"}:
+            from proxy.services import ks_forms_service
+
+            result = await asyncio.to_thread(
+                ks_forms_service.build_ks_document,
+                fid,
+                fmt=req.fmt,
+                project_id=req.project_id,
+                manual=req.manual or {},
+                assembled=req.assembled,
+                rim_form=req.rim_form,
+                session_id=req.session_id or "",
+                source=source,
+            )
+        else:
+            result = await asyncio.to_thread(
+                forms_service.generate, form_id, req.fmt,
+                project_id=req.project_id, manual=req.manual or {},
+                rows=req.rows,
+            )
     except ValueError as e:
         raise HTTPException(400, str(e))
     if result.get("path"):

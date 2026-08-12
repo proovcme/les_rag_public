@@ -12,15 +12,15 @@ fields:
   - { key: act_no,      label: Номер документа,          type: str, source: "manual" }
   - { key: date,        label: Дата составления,         type: str, source: "date.today" }
 columns:
-  - "№ п/п"
+  - "Номер по порядку"
+  - "Номер позиции по смете"
   - "Наименование работ"
-  - "Номер расценки"
-  - "Ед. изм."
+  - "Номер единичной расценки"
+  - "Единица измерения"
   - "Количество"
-  - "Цена за ед., руб."
+  - "Цена за единицу, руб."
   - "Стоимость, руб."
 table:
   mode: blank
   rows: 15
-templates:
-  xlsx: config/forms/templates/ks2.xlsx
+# XLSX рендерится кодом (ks2_xlsx_render) по официальной шапке HTML/Госкомстат № 100.

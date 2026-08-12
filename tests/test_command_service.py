@@ -24,6 +24,18 @@ def test_form_aliases():
     assert handle_command("/аоср")["command"]["form_id"] == "aosr"
 
 
+def test_filled_ks_commands():
+    r2 = handle_command("/кс-2")
+    assert r2["command"]["action"] == "generate_filled_form"
+    assert r2["command"]["form_id"] == "ks2"
+    assert r2["command"]["source"] == "last_lsr"
+    r3 = handle_command("/кс3")
+    assert r3["command"]["form_id"] == "ks3"
+    r6 = handle_command("/кс-6а")
+    assert r6["command"]["form_id"] == "ks6a"
+    assert r6["command"]["source"] == "field_journal"
+
+
 def test_rewrite_command():
     r = handle_command("/сводка")
     assert r.get("rewrite") == "дай сводку проекта"
@@ -55,5 +67,8 @@ def test_not_a_command_returns_none():
 def test_list_commands_shape():
     cmds = list_commands()
     ids = {c["cmd"] for c in cmds}
-    assert {"/спецификация", "/вор", "/смета", "/акт", "/сводка", "/сверка", "/мсп", "/команды"} <= ids
+    assert {
+        "/спецификация", "/вор", "/смета", "/акт", "/кс-2", "/кс-3", "/кс-6а",
+        "/сводка", "/сверка", "/мсп", "/команды",
+    } <= ids
     assert all("desc" in c and "title" in c for c in cmds)

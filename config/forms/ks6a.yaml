@@ -1,0 +1,25 @@
+# Журнал учёта выполненных работ (КС-6а). Основание для КС-2 по фактически
+# подтверждённым объёмам (field_intake confirmed). Не путать с ОЖР (РД-11-05).
+id: ks6a
+title: Журнал учёта выполненных работ (КС-6а)
+legal_basis: Унифицированная форма КС-6а (учёт выполненных работ; данные из confirmed журнала объёмов ЛЕС)
+fields:
+  - { key: object_name, label: Объект,                  type: str, source: "project.name" }
+  - { key: contractor,  label: Подрядчик,               type: str, source: "manual" }
+  - { key: customer,    label: Заказчик,                type: str, source: "manual" }
+  - { key: contract,    label: Договор подряда (№, дата), type: str, source: "manual" }
+  - { key: period,      label: Отчётный период,          type: str, source: "manual" }
+  - { key: journal_no,  label: Номер журнала,            type: str, source: "manual" }
+  - { key: date,        label: Дата составления,         type: str, source: "date.today" }
+columns:
+  - "№ п/п"
+  - "Дата"
+  - "Наименование работ"
+  - "Ед. изм."
+  - "Объём за период"
+  - "Нарастающий итог"
+table:
+  mode: blank
+  rows: 20
+templates:
+  xlsx: config/forms/templates/ks6a.xlsx

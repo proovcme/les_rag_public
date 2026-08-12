@@ -3280,14 +3280,59 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if cmd_res and cmd_res.get("rewrite"):
             req.question = cmd_res["rewrite"]
         elif cmd_res is not None:
+            cmd_payload = dict(cmd_res.get("command") or {})
+            # Filled KS forms: build on the server so download exists even without GUI post.
+            if cmd_payload.get("action") == "generate_filled_form":
+                from proxy.services.ks_forms_chat_service import answer_ks_forms_query
+
+                ks_res = await asyncio.to_thread(
+                    answer_ks_forms_query,
+                    f"собери {cmd_payload.get('form_id')}",
+                    project_id=pid or None,
+                    session_id=str(req.session_id or ""),
+                    fmt=str(cmd_payload.get("fmt") or "xlsx"),
+                )
+                return {
+                    "answer": ks_res.get("answer") or cmd_res.get("answer"),
+                    "crag_status": "DETERMINISTIC",
+                    "sources": [],
+                    "query_route": _profile_route(
+                        "ks_forms",
+                        "filled" if ks_res.get("ok") else "clarify",
+                    ),
+                    "validation": {"enabled": False, "reason": "deterministic_ks_forms"},
+                    "command": ks_res.get("command") or cmd_payload,
+                }
             return {
                 "answer": cmd_res["answer"],
                 "crag_status": "DETERMINISTIC",
                 "sources": [],
-                "query_route": _profile_route("command", (cmd_res.get("command") or {}).get("action")),
+                "query_route": _profile_route("command", cmd_payload.get("action")),
                 "validation": {"enabled": False, "reason": "deterministic_command"},
-                "command": cmd_res.get("command"),
+                "command": cmd_payload,
             }
+
+    # Filled KS forms must win over smeta/RAG profiles: «Собери КС-2» is a
+    # document action, not a model-first estimate turn.
+    from proxy.services.ks_forms_chat_service import answer_ks_forms_query, is_ks_forms_query
+    if is_ks_forms_query(req.question):
+        ks_res = await asyncio.to_thread(
+            answer_ks_forms_query,
+            req.question,
+            project_id=pid or None,
+            session_id=str(req.session_id or ""),
+        )
+        return {
+            "answer": ks_res.get("answer") or "",
+            "crag_status": "DETERMINISTIC",
+            "sources": [],
+            "query_route": _profile_route(
+                "ks_forms",
+                "filled" if ks_res.get("ok") else "clarify",
+            ),
+            "validation": {"enabled": False, "reason": "deterministic_ks_forms"},
+            "command": ks_res.get("command"),
+        }
 
     def _mode_reply(
         answer: str,
