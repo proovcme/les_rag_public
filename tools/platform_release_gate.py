@@ -231,12 +231,6 @@ def test() -> None:
                 *platform_tests,
             ]
         )
-    run(
-        [
-            "uv", "run", "python", "-m", "tools.smeta_release_baseline",
-            "verify-root", "--root", ".",
-        ]
-    )
 
 
 def updater() -> None:

@@ -102,6 +102,13 @@ def test_platform_gate_is_behavioral_and_platform_specific() -> None:
     assert windows.isdisjoint(macos)
 
 
+def test_platform_gate_does_not_require_a_runtime_baseline() -> None:
+    source = (ROOT / "tools/platform_release_gate.py").read_text(encoding="utf-8")
+
+    assert '"verify-root", "--root", "."' not in source
+    assert "tests/test_smeta_release_baseline.py" in platform_release_gate.PORTABLE_BEHAVIOR_TESTS
+
+
 def test_windows_portable_current_gate_matches_core_make_profile() -> None:
     current = set(platform_release_gate.CURRENT_LES_TESTS)
 

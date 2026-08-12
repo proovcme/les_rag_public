@@ -106,15 +106,13 @@ one interactive desktop process exists.
 ## Automated platform gates and release
 
 `.github/workflows/verify.yml` runs the portable behavior/integration profile,
-verifies the real packaged smeta baseline, and performs a real
+tests the smeta baseline contract with hermetic fixtures, and performs a real
 `tauri build --no-bundle` on `macos-14` and `windows-2022` for every PR and
 push to `main`. The platform profile contains shared evidence/RAG/UI tests plus
 installer-specific checks for the current OS; the complete canonical suite remains
-the local release gate. Clean runners download the private immutable prerelease fixture
-`ci-smeta-baseline-20260728`, verify its manifest/SHA/counts through
-`tools.smeta_release_baseline` and provision only linked ФГИС/ФСНБ/FSEM files
-plus the verified default Saint Petersburg resource pricebook before pytest.
-This is not user RAG or production state. CoreML cache helpers
+the local release gate. Hosted PR runners do not download or provision a full normative
+payload: a deleted or rotated release asset must not block unrelated pull requests.
+CoreML cache helpers
 remain importable on Windows without POSIX `fcntl`; CoreML inference itself
 stays macOS-only. This proves both native shells compile without pretending
 that a hosted runner has installed Ollama/Qdrant.
@@ -123,7 +121,8 @@ The production workflow is intentionally separate:
 `.github/workflows/release.yml` runs on the approved self-hosted Mac release
 runner. `tools/multiplatform_release.py` builds and verifies `LES.app`/`LES.dmg`,
 then uses the existing SSH Legion contour to build/install/smoke the real NSIS
-package. The boxed smeta baseline includes its default verified regional
+package. This release contour creates and verifies the real boxed smeta baseline from
+the approved operator source before packaging. The boxed baseline includes its default verified regional
 pricebook because FSEM-derived machinist rows cannot be priced reproducibly
 without it. Update repair keeps a valid operator base only when it is at least
 as complete as the release payload; an older valid linked set is backed up and
