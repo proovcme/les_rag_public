@@ -181,6 +181,38 @@ def _missing_price_action(res: dict[str, Any]) -> str:
     return "needs_price"
 
 
+def _expand_kac_lookup(kac_map: dict[str, float] | None) -> dict[str, float]:
+    """Keep original and normalized keys so code-keyed and name-keyed maps both resolve."""
+    lookup: dict[str, float] = {}
+    for key, value in (kac_map or {}).items():
+        price = _num(value)
+        if price is None:
+            continue
+        raw = str(key or "").strip()
+        if not raw:
+            continue
+        lookup[raw] = float(price)
+        lookup[_norm_name(raw)] = float(price)
+    return lookup
+
+
+def _lookup_kac_price(
+    kac_map: dict[str, float] | None,
+    res: dict[str, Any],
+) -> Optional[float]:
+    if not kac_map:
+        return None
+    for key in (
+        str(res.get("code") or "").strip(),
+        _norm_name(res.get("code")),
+        str(res.get("name") or "").strip(),
+        _norm_name(res.get("name")),
+    ):
+        if key and key in kac_map:
+            return _num(kac_map[key])
+    return None
+
+
 def _resolve_price_trace(
     res: dict[str, Any],
     *,
@@ -227,8 +259,8 @@ def _resolve_price_trace(
                     basis="split_form_effective_price",
                 )
 
-    if str(res.get("kind")) == "material" and kac_map:
-        price = kac_map.get(_norm_name(res.get("name")))
+    if str(res.get("kind")) == "material":
+        price = _lookup_kac_price(kac_map, res)
         if price is not None:
             price = _round(price)
             return PriceTrace(price=price, source="kac", column_10=price, basis="kac")
@@ -304,7 +336,7 @@ def build_position_trace(
     ``position`` обычно содержит ``code`` ГЭСН и ``qty`` объёма работ. Если ``resources`` не переданы,
     ресурсы берутся из ``gesn_service``. НР/СП берутся из позиции, из нормы или из ``nr_sp_service``.
     """
-    kac_lookup = {_norm_name(k): _f(v) for k, v in (kac_map or {}).items()}
+    kac_lookup = _expand_kac_lookup(kac_map)
     work_qty = _f(position.get("qty")) or 0.0
     norm, resources = _position_resources(position)
     from proxy.services import fsem_machinist_service as fsem

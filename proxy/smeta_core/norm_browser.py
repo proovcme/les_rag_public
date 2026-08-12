@@ -571,6 +571,104 @@ def catalog_compass_score(query: str, item: dict[str, Any]) -> float:
     return round(score, 6)
 
 
+def _collection_navigation_text(card: dict[str, Any]) -> str:
+    """Official collection text used only for navigation scoring, not selection."""
+    return " ".join(
+        part
+        for part in [
+            str(card.get("title") or ""),
+            str(card.get("purpose") or ""),
+            " ".join(str(value) for value in (card.get("typical_scope") or [])),
+            " ".join(str(value) for value in (card.get("work_steps") or [])[:12]),
+            " ".join(_source_lines(card.get("source_example"))[:12]),
+        ]
+        if str(part or "").strip()
+    )
+
+
+def _collection_lexical_scores(
+    query_variants: list[str],
+    cards: list[dict[str, Any]],
+) -> dict[str, float]:
+    """Lexical overlap against collection passport text when CE rerank is off."""
+    scores: dict[str, float] = {}
+    variants = [str(value).strip() for value in query_variants if str(value).strip()]
+    if not variants:
+        return scores
+    for card in cards:
+        collection = str(card.get("collection") or "").strip()
+        if not collection:
+            continue
+        blob = _collection_navigation_text(card)
+        expanded = {
+            **card,
+            "title": blob,
+            "purpose": str(card.get("purpose") or ""),
+            "typical_scope": list(card.get("typical_scope") or []),
+        }
+        compass = max(catalog_compass_score(variant, expanded) for variant in variants)
+        blob_cf = blob.casefold().replace("ё", "е")
+        token_hits = 0
+        for variant in variants:
+            for root in _catalog_compass_roots(variant):
+                if root and root in blob_cf:
+                    token_hits += 1
+        score = float(compass) + (0.35 * float(token_hits))
+        if score > 0.0:
+            scores[collection] = max(scores.get(collection, 0.0), round(score, 6))
+    return scores
+
+
+def _collections_from_family_norm_hits(
+    query: str,
+    *,
+    family: str,
+    known_collections: set[str],
+    limit: int = 12,
+    base_path: str | Path | None = None,
+) -> list[str]:
+    """Coverage floor: collections that appear in family-scoped norm hits.
+
+    Does not select a collection or norm for the model — only widens the menu
+    when CE/catalog-head ranking would hide a hit-bearing сборник.
+    """
+    clean_query = " ".join(str(query or "").split()).strip()
+    clean_family = str(family or "").strip()
+    if not clean_query or not clean_family or not known_collections:
+        return []
+    try:
+        packs = browse_norms_many(
+            [clean_query],
+            limit=max(4, min(int(limit), 24)),
+            base_path=base_path,
+            base_types=[clean_family],
+            rerank=False,
+            expand_queries=True,
+        )
+        pack = packs.get(clean_query) or {}
+    except Exception as error:  # noqa: BLE001 — menu coverage must stay soft
+        logger.debug(
+            "[SMETA_CATALOG] family norm-hit coverage skipped for %r/%r: %s",
+            clean_family,
+            clean_query[:80],
+            error,
+        )
+        return []
+    ordered: list[str] = []
+    for card in pack.get("cards") or []:
+        if not isinstance(card, dict):
+            continue
+        collection = re.sub(r"\D", "", str(card.get("collection") or ""))[:2]
+        if not collection:
+            code = str(card.get("norm_code") or card.get("norm_key") or "")
+            match = re.search(r"(\d{2})-\d{2}-\d{3}-\d{2}", code)
+            if match:
+                collection = match.group(1)
+        if collection in known_collections:
+            ordered.append(collection)
+    return list(dict.fromkeys(ordered))
+
+
 @lru_cache(maxsize=8)
 def _sha256_for_stat(path: str, mtime_ns: int, size: int) -> str:
     del mtime_ns, size
@@ -1277,6 +1375,7 @@ def rank_norm_catalog_collections(
     rerank_rank = {
         str(card.get("collection") or ""): rank
         for rank, card in enumerate(ranked, start=1)
+        if str(card.get("collection") or "")
     }
     compass_scores = {
         str(card.get("collection") or ""): max(
@@ -1303,19 +1402,70 @@ def rank_norm_catalog_collections(
     by_collection = {
         str(card.get("collection") or ""): card for card in cards
     }
-    # Protect exact official catalog heads from a semantically plausible but
-    # wrong cross-encoder order. This is candidate coverage, not a selected
-    # collection: the model still receives and compares the bounded menu.
-    fused_collections = list(
-        dict.fromkeys([
-            *compass_order,
-            *(
-                str(card.get("collection") or "")
-                for card in ranked
-                if str(card.get("collection") or "")
-            ),
-        ])
-    )[: max(1, min(int(limit), 100))]
+    known_collections = set(by_collection)
+    lexical_scores = _collection_lexical_scores(query_variants, cards)
+    lexical_order = sorted(
+        lexical_scores,
+        key=lambda collection: (-lexical_scores[collection], collection),
+    )
+    hit_coverage = _collections_from_family_norm_hits(
+        str(query or ""),
+        family=str(family or ""),
+        known_collections=known_collections,
+        limit=max(8, int(limit) * 2),
+        base_path=base_path,
+    )
+    weak_rerank = str(rerank_status or "").casefold() in {
+        "disabled",
+        "fallback_input_order",
+        "pool_too_small",
+    }
+    # Never lead with raw official catalog order when the query has signal and
+    # CE is off/broken — that produced GESNr 51-56 menus that hid сборник 67.
+    if weak_rerank:
+        fused_collections = list(
+            dict.fromkeys([
+                *hit_coverage,
+                *lexical_order,
+                *compass_order,
+                *(
+                    str(card.get("collection") or "")
+                    for card in ranked
+                    if str(card.get("collection") or "")
+                ),
+            ])
+        )
+        fusion_name = "norm_hit_coverage_then_lexical_then_compass"
+        signals = [
+            "family_norm_hit_coverage",
+            "collection_lexical",
+            "official_catalog_lexical",
+        ]
+    else:
+        fused_collections = list(
+            dict.fromkeys([
+                *compass_order,
+                *hit_coverage,
+                *lexical_order,
+                *(
+                    str(card.get("collection") or "")
+                    for card in ranked
+                    if str(card.get("collection") or "")
+                ),
+            ])
+        )
+        fusion_name = "official_lexical_head_coverage_then_rerank"
+        signals = [
+            "official_catalog_lexical",
+            "family_norm_hit_coverage",
+            "collection_lexical",
+            "rerank",
+        ]
+    fused_collections = [
+        collection
+        for collection in fused_collections
+        if collection in by_collection
+    ][: max(1, min(int(limit), 100))]
     visible_cards = []
     for rank, collection in enumerate(fused_collections, start=1):
         card = by_collection[collection]
@@ -1327,6 +1477,8 @@ def rank_norm_catalog_collections(
                 "rerank_rank": rerank_rank.get(collection),
                 "catalog_compass_rank": compass_rank.get(collection),
                 "catalog_compass_score": compass_scores.get(collection, 0.0),
+                "catalog_lexical_score": lexical_scores.get(collection, 0.0),
+                "norm_hit_coverage": collection in set(hit_coverage),
             }.items()
             if key not in {"norm_key", "norm_code", "work_steps"}
         })
@@ -1345,8 +1497,9 @@ def rank_norm_catalog_collections(
             "reranked": reranked,
             "rerank_status": rerank_status,
             "query_variants": query_variants,
-            "fusion": "official_lexical_head_coverage_then_rerank",
-            "signals": ["official_catalog_lexical", "rerank"],
+            "fusion": fusion_name,
+            "signals": signals,
+            "norm_hit_collections": list(hit_coverage)[:12],
             "tool_total_ms": round((perf_counter() - started) * 1000, 2),
         },
     }

@@ -4,7 +4,529 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-04)
+## Текущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.84
+номер сборки:              601
+версия Tauri/NSIS:         5.1.601
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       invalid mapping JSON skips row, not whole LSR
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.84
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.84 / build 601 — битый mapping JSON не валит всю ЛСР
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.83.
+>
+> **Что вошло:** `invalid structured mapping JSON` и пустой mapping от
+> провайдера → `MappingValidationExhausted` / skip batch (как 0.27.59), а не
+> hard «ЛСР не собрана». Принятые строки и следующие работы сохраняются.
+> Timeout по-прежнему отдельный. Review: bind с serialization-conflict
+> (`candidate_evaluations` rejected на выбранной карточке) не запирает
+> таблицу anti-stick; сырой CAD/BIM (.dwg/.rvt/.ifc) не берётся в intake.
+>
+> **Гейт:** pytest invalid-mapping-json skip + rejected-table + CAD skip +
+> mapping timeout unchanged.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.83
+номер сборки:              600
+версия Tauri/NSIS:         5.1.600
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       ETM secrets.env + live smoke (no proxy restart)
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.83
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.83 / build 600 — ЭТМ креды локально + live smoke
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.82.
+>
+> **Что вошло:** операторские креды ЭТМ в gitignored `config/local/secrets.env`;
+> `LES-START.ps1` / `start-light.ps1` подхватывают файл; `tools/etm_live_smoke.py`
+> проверяет login+browse+price без рестарта proxy (ЛСР можно не трогать).
+> Пароль/session не логируются. UI lookup — после следующего старта LES.
+>
+> **Гейт:** pytest etm adapter/router/smoke + installer secrets path; live
+> `uv run python tools/etm_live_smoke.py`.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.82
+номер сборки:              599
+версия Tauri/NSIS:         5.1.599
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       Ollama qwen2.5 omit think; 400 thinking retry
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.82
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.82 / build 599 — Ollama qwen2.5 без think
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.81.
+>
+> **Что вошло:** `qwen2.5-instruct` не получает ключ `think` (Ollama HTTP 400
+> «does not support thinking» даже при `think=false`); retry снимает
+> think/thinking из body и истории. Qwen3 без изменений (`think=false`).
+>
+> **Гейт:** pytest smeta document exchange think omit + 400 retry.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.81
+номер сборки:              598
+версия Tauri/NSIS:         5.1.598
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       LSR rejected-table anti-stick (non-rejected search unlock)
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.81
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.81 / build 598 — LSR rejected-table anti-stick
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.80.
+>
+> **Что вошло:** rebind rejected table root unlocks only after search of a
+> different table root; rejected roots demoted from selected_tables, excluded
+> from typed_bind_options, shown in WM; auto-search skips them; skill analog
+> guidance for commercial VOR→generic GESN. Model still chooses norms.
+>
+> **Гейт:** pytest rejected-table / auto-search / bind-options + exact-anchor.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.80
+номер сборки:              597
+версия Tauri/NSIS:         5.1.597
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       fast PDF attach + optimistic attachment strip
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.80
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.80 / build 597 — быстрый PDF attach
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.79.
+>
+> **Что вошло:** PDF «В чат» сохраняет bytes без `convert_to_markdown`
+> (VOR/LSR читают файл по `attachment_id`); optimistic strip в Совушке до
+> ответа сервера. Текст PDF в чат — через «В базу»/индексацию.
+>
+> **Гейт:** pytest attach PDF skip-convert + sovushka attach strip.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.79
+номер сборки:              596
+версия Tauri/NSIS:         5.1.596
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       cable-noun boundaries in spec→VOR decompose
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.79
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.79 / build 596 — cable-noun boundaries в spec→VOR
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.78.
+>
+> **Что вошло:** `_has_cable_noun` / `_token_in_name` — «кабель/провод/шнур»
+> только как существительные (не «кабельный», не «водогазопроводная»);
+> в `_DECOMPOSE` «коробка» раньше «короб». Без LLM, объёмы без выдумок.
+>
+> **Гейт:** pytest `tests/test_spec_to_bor_service.py`.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.78
+номер сборки:              595
+версия Tauri/NSIS:         5.1.595
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       Form-9 PDF coalesce + RU qty + cable км→м (0 LLM)
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.78
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.78 / build 595 — Form-9 intake coalesce
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.77.
+>
+> **Что вошло:** `_coalesce_form9_rows` для pdfplumber-разрывов Ф9; RU
+> `parse_ru_number`; колонка массы не как qty; pos из «Поз.»; кабель/провод
+> км→м ×1000 только при наличии qty (иначе ед. м + qty=None + note); note в v2
+> WorkLine; `км` в UNIT_ALIASES. Без LLM, без выдуманных объёмов (ADR-11).
+>
+> **Гейт:** pytest `tests/test_spec_to_bor_service.py` + make verify.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.77
+номер сборки:              594
+версия Tauri/NSIS:         5.1.594
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       CUDA CE torch + covered_by/rejected-table mapping gates
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.77
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.77 / build 594 — CUDA CE + жёсткие mapping-гейты
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.76.
+>
+> **Что вошло:** Windows venv CUDA torch (`cu124`); `resolve_rerank_device`
+> падает на cpu вместо падения CE; start-light/LES-START probe `cuda_available`;
+> hard-reject `covered_by`→unbound provider; anti-stick rejected table без нового
+> search; soft unbound при exhausted budget после 1 retry; document temp=0/top_p=1.
+>
+> **Гейт:** pytest reranker device + covered_by/rejected-table + make verify.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.76
+номер сборки:              593
+версия Tauri/NSIS:         5.1.593
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       collection shortlist hybrid fallback + post-redirect unbound gate
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.76
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.76 / build 593 — miss@known: shortlist сборников без CE + gate после redirect
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.75.
+>
+> **Что вошло:** при `LES_SMETA_NORM_RERANK=false/fallback` меню сборников
+> строится из family norm-hit coverage + lexical, не из головы каталога 51–56;
+> start-light/`RERANKER_ENABLED` включает `LES_SMETA_NORM_RERANK=true`;
+> unbound после family_loop_redirect запрещён до table/search.
+>
+> **Гейт:** pytest cable→67 + redirect unbound gate + ollama rerank env.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.75
+номер сборки:              592
+версия Tauri/NSIS:         5.1.592
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       hide exhausted catalog families from root menu
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.75
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.75 / build 592 — скрывать исчерпанные семейства в root-меню
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.74.
+>
+> **Что вошло:** после family-loop exhausted passport убирается из
+> model-facing root menu / tool enum; повторный выбор даёт soft redirect
+> на оставшиеся паспорта вместо reject→mapping_retry.
+>
+> **Гейт:** pytest family_loop_redirect.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.74
+номер сборки:              591
+версия Tauri/NSIS:         5.1.591
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       catalog family anti-loop + ГЭСНр/ГЭСН skill hints
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.74
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.74 / build 591 — антилуп каталога семейств + skill ГЭСНр/ГЭСН
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.73.
+>
+> **Что вошло:** после 2× возвратов одного семейства на root без таблицы
+> повторный вход блокируется (пока есть другие паспорта); skill явно ведёт
+> демонтаж→ГЭСНр, отделку→ГЭСН; UI candidate unbound — «Нужен поиск нормы».
+> Норму кодом не выбираем.
+>
+> **Гейт:** pytest family-loop / candidate progress labels.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.73
+номер сборки:              590
+версия Tauri/NSIS:         5.1.590
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       skip GESN network re-download when raw cache complete
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.73
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.73 / build 590 — не перекачивать уже полные нормы ГЭСН
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.72.
+>
+> **Что вошло:** при полном локальном raw-кэше ГЭСН (≥300 отделов) повторный
+> «Обновить» пропускает сеть ФГИС для норм; пустые отделы кэшируются;
+> UI пишет «пропускаем», а не «скачиваются».
+>
+> **Гейт:** pytest raw_cache_complete / empty-otdel skip; live FGIS restart.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.72
+номер сборки:              589
+версия Tauri/NSIS:         5.1.589
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       skip already-downloaded split forms via local parquet
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.72
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.72 / build 589 — не перекачивать уже скачанные Сплит-формы
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.71.
+>
+> **Что вошло:** `update_price_books` сначала смотрит локальный
+> `data/price_base/*_zone-N.parquet`; pytest/temp checkpoint-пути игнорируются;
+> checkpoint лечится. UI: «Пропускаем уже скачанную Сплит-форму».
+>
+> **Гейт:** pytest local-skip/resume; live restart FGIS → GESN.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.71
+номер сборки:              588
+версия Tauri/NSIS:         5.1.588
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       Windows-safe FGIS status write + honest WinError 5 reason
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.71
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.71 / build 588 — FGIS status write WinError 5
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.70.
+>
+> **Что вошло:** atomic status JSON с retry/уникальным `.tmp` и fallback
+> in-place; `_operator_reason` больше не путает `…status.json` в PermissionError
+> с «повреждённым ответом ФГИС». Перезапуск job после цен → ГЭСН.
+>
+> **Гейт:** pytest operator_reason + write_json retry; live FGIS restart.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.70
+номер сборки:              587
+версия Tauri/NSIS:         5.1.587
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       atomic GESN parquet + quarantine truncated cache + FGIS restart
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.70
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.70 / build 587 — FGIS/GESN: atomic parquet + quarantine
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.69.
+>
+> **Что вошло:** `build_parquet` пишет через `.tmp`+replace; битый cache
+> уходит в `.corrupt.*` вместо падения `Page was smaller…`; stale GESN
+> `running` без PID → `interrupted`; понятный operator reason.
+>
+> **Гейт:** pytest gesn_pdf_import + fgis_full_update; live restart FGIS job.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.69
+номер сборки:              586
+версия Tauri/NSIS:         5.1.586
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       PDF+XLSX на любом tabular-канале (ЛСР/ВОР/РИМ)
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.69
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.69 / build 586 — PDF + XLSX на любом tabular-канале
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.68.
+>
+> **Что вошло:** `TABLE_DOCUMENT_SUFFIXES` / `RIM_DOCUMENT_SUFFIXES`;
+> `rows_from_spec_document` (PDF tables + XLSX); chat spec→ВОР и РИМ upload
+> принимают PDF наравне с XLSX/XLSM. Формат ортогонален операции.
+>
+> **Гейт:** pytest spec_to_bor / chat attachment / rim upload.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.68
+номер сборки:              585
+версия Tauri/NSIS:         5.1.585
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       ЛСР по PDF-ВОР не hijack'ится в spec→ВОР
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.68
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.68 / build 585 — document LSR wins over spec→VOR for «ЛСР по ВОР»
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.67.
+>
+> **Что вошло:** «Собери ЛСР по приложенной ВОР.pdf» больше не отвечает
+> «нужен XLSX». `is_spec_to_bor_query` исключает ЛСР/смету; chat запускает
+> `run_smeta_document_application` до spec_to_bor и free attachment LLM.
+>
+> **Гейт:** `test_spec_to_bor_service` + `test_chat_spec_to_bor_attachment`.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.67
+номер сборки:              584
+версия Tauri/NSIS:         5.1.584
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       shortlist hydrate + candidate shortlist gates + windows-reranker
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.67
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.67 / build 584 — shortlist bind hydrate + windows-reranker
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.66.
+>
+> **Что вошло:** (а) `bind` гидрирует выбранный код из search shortlist в
+> opened без лишнего read↔submit цикла; `candidate_evaluations` принимает
+> сравнение shortlist-кодов (не только opened). (б) extra `windows-reranker`
+> + `LES_SMETA_NORM_RERANK=true` в `config/local/windows-cuda.env`.
+>
+> **Гейт:** точечный pytest hydrate/shortlist; `make verify`.
+>
+> Live re-smoke — после ручного теста оператора (не в этом патче).
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.66
+номер сборки:              583
+версия Tauri/NSIS:         5.1.583
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       document LSR entry-path fail-closed + smoke fixture
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.66
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.66 / build 583 — document LSR entry gate + stabilization smoke
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.65.
+>
+> **Что вошло:** «собери ЛСР/смету» без `read_*` больше не падает в free-text
+> harness (кроме явной работы с объёмом). Fixture
+> `tests/fixtures/smeta/vor_stabilization_smoke.xlsx` (5 строк) для локального
+> zero-state document smoke. ЭТМ по-прежнему ждёт креды.
+>
+> **Гейт:** точечный pytest chat entry + local_run smoke (модель).
+>
+> **Live smoke (5-row fixture, qwen2.5:14b, ~8 мин):** `priced_draft`,
+> **1 bound / 4 open**, total 232 473.22 без НДС; XLSX
+> `storage/local_runs/stabilization_20260812/vor_stabilization_smoke.lsr.xlsx`.
+> Повторялись `invalid unbound_evidence` retries; reranker отсутствует
+> (raw RRF). Покрытие как у БАП A/B — транспорт ок, bind quality нет.
+
+## Предыдущее состояние (2026-08-12)
+
+```
+версия продукта (SemVer):  0.27.65
+номер сборки:              582
+версия Tauri/NSIS:         5.1.582
+ветка выпуска:             fix/xlsx-intake-ko-vo
+dev implementation:       ETM Product API → KAC commercial prices
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.65
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.65 / build 582 — ETM commercial prices → kac_map
+>
+> Дата: 2026-08-12
+> Статус: patch поверх v0.27.64.
+>
+> **Что вошло:** `docs/ALGO-etm-price.md`; Goods v2 browse + `POST /api/prices/etm/{browse,kac-map}`;
+> quotes→net `kac_map` в RIM `_resolved_calculation_inputs`; `_resolve_price_trace` ищет КАЦ
+> по resource_code и имени; UI «Инструменты» показывает статус ЭТМ и lookup выбранного кода;
+> Order API / Remains / SgGds вне scope. Без `LES_ETM_*` — fail-closed 503.
+>
+> **Гейт:** `make verify` + точечный pytest etm/prices/rim-trace. Live smoke — после кредов оператора.
+
+## Предыдущее состояние (2026-08-04)
 
 ```
 версия продукта (SemVer):  0.27.64
@@ -33,6 +555,14 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > пустым относительно HEAD — ручной collector/spool, platform-gates и atomic
 > smeta-packaging уже в линии `fix/xlsx-intake-ko-vo` (часто суперсет main).
 > Полный merge `origin/main` (~840 файлов) сознательно не делали.
+>
+> **Локальная полнота ЛСР (data/env, без bump версии):** нормы уже были
+> 49855 / 505262 resources. Хирургически из `LES-smeta-baseline.zip`
+> (извлечён из `v0.27.35` LES-Setup.exe; отдельный `ci-smeta-baseline` release
+> на public GitHub отсутствует) догружены `fsem_2022` (1576) и канонический
+> `sankt-peterburg_2kv2026.parquet` (281223 rows). `verify-root` → ok.
+> В `config/local/windows-cuda.env`: `LES_DEFAULT_PRICEBOOK=sankt-peterburg_2kv2026`,
+> `LES_SMETA_LOCAL_GLOBAL_REVIEW=1`. Полный FGIS scrape / wipe SQLite не делали.
 
 > 0.27.63 / build 580 — unblock RAG `embedding_contract_mismatch`
 >

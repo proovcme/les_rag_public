@@ -27,9 +27,10 @@ DEFAULT_STATUS = Path("storage/jobs/gesn_fgis_update_status.json")
 
 
 def _write_status(path: Path, data: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    from tools.fgis_full_update import _write_json
+
     payload = {"updated_at": datetime.now(timezone.utc).isoformat(), **data}
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_json(path, payload)
 
 
 def run_update(
@@ -65,14 +66,32 @@ def run_update(
         if progress_callback:
             progress_callback(payload)
 
-    stats = gesn_bulk_import.run(
-        sborniki=sborniki,
-        out_path=raw_out,
-        rate=rate,
-        limit=limit,
-        resume=not no_resume,
-        progress_callback=_download_progress,
-    )
+    if (not no_resume) and gesn_bulk_import.raw_cache_looks_complete(raw_out):
+        existing = gesn_bulk_import._existing_otdel_prefixes(Path(raw_out))
+        stats = {
+            "otdels_done": 0,
+            "otdels_skipped": len(existing),
+            "otdels_empty": 0,
+            "errors": 0,
+            "norms": 0,
+            "resources": 0,
+            "resumed_complete": True,
+            "activity": "resuming",
+            "current_prefix": None,
+            "collection": None,
+            "collection_index": len(sborniki),
+            "collection_total": len(sborniki),
+        }
+        _download_progress(stats)
+    else:
+        stats = gesn_bulk_import.run(
+            sborniki=sborniki,
+            out_path=raw_out,
+            rate=rate,
+            limit=limit,
+            resume=not no_resume,
+            progress_callback=_download_progress,
+        )
     unify_payload = {"status": "running", "stage": "unify", "download": stats}
     _write_status(status_out, unify_payload)
     if progress_callback:

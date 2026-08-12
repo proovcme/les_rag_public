@@ -2,7 +2,52 @@ from __future__ import annotations
 
 import pytest
 
-from backend.reranker import CrossEncoderReranker, RankedChunk, Reranker, SentenceTransformerReranker
+from backend.reranker import (
+    CrossEncoderReranker,
+    RankedChunk,
+    Reranker,
+    SentenceTransformerReranker,
+    resolve_rerank_device,
+)
+
+
+def test_resolve_rerank_device_falls_back_to_cpu_when_cuda_unavailable(monkeypatch):
+    class _FakeCuda:
+        @staticmethod
+        def is_available():
+            return False
+
+    class _FakeTorch:
+        cuda = _FakeCuda
+        version = type("V", (), {"cuda": None})()
+
+    monkeypatch.setitem(__import__("sys").modules, "torch", _FakeTorch)
+    assert resolve_rerank_device("cuda") == "cpu"
+    assert resolve_rerank_device("cuda:0") == "cpu"
+
+
+def test_resolve_rerank_device_keeps_cuda_when_available(monkeypatch):
+    class _FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+    class _FakeTorch:
+        cuda = _FakeCuda
+        version = type("V", (), {"cuda": "12.4"})()
+
+    monkeypatch.setitem(__import__("sys").modules, "torch", _FakeTorch)
+    assert resolve_rerank_device("cuda") == "cuda"
+
+
+def test_sentence_transformer_uses_resolved_device(monkeypatch):
+    monkeypatch.setenv("RERANK_DEVICE", "cuda")
+    monkeypatch.setattr(
+        "backend.reranker.resolve_rerank_device",
+        lambda requested=None: "cpu",
+    )
+    reranker = SentenceTransformerReranker(model="test/reranker")
+    assert reranker.device == "cpu"
 
 
 @pytest.mark.asyncio

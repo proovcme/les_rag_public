@@ -395,6 +395,37 @@ class CrossEncoderReranker:
         return ranked
 
 
+def resolve_rerank_device(requested: str | None = None) -> str:
+    """Resolve RERANK_DEVICE; fall back to CPU when CUDA was asked but unavailable.
+
+    A CPU-only torch wheel with ``RERANK_DEVICE=cuda`` used to raise inside
+    CrossEncoder and collapse smeta shortlists to raw RRF order. Prefer a
+    working CE on CPU over a silent retrieval downgrade.
+    """
+    device = (requested if requested is not None else os.getenv("RERANK_DEVICE", "")).strip()
+    if not device:
+        return ""
+    if not device.casefold().startswith("cuda"):
+        return device
+    try:
+        import torch
+    except ImportError:
+        logger.warning(
+            "[RERANK] RERANK_DEVICE=%s but torch is missing; falling back to cpu",
+            device,
+        )
+        return "cpu"
+    if torch.cuda.is_available():
+        return device
+    logger.warning(
+        "[RERANK] RERANK_DEVICE=%s but torch.cuda.is_available() is False "
+        "(build=%s); falling back to cpu — install a CUDA torch wheel on Windows",
+        device,
+        getattr(torch.version, "cuda", None),
+    )
+    return "cpu"
+
+
 class SentenceTransformerReranker:
     """Native local cross-encoder for Windows/Linux production.
 
@@ -416,7 +447,7 @@ class SentenceTransformerReranker:
     ):
         del mlx_url, mode, timeout
         self.model = model or os.getenv("RERANK_MODEL", "BAAI/bge-reranker-v2-m3").strip()
-        self.device = os.getenv("RERANK_DEVICE", "").strip()
+        self.device = resolve_rerank_device()
         configured_chunk_len = int(
             os.getenv("RERANK_MAX_TEXT_CHARS", str(max_chunk_len))
         )

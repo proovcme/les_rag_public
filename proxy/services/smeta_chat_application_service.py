@@ -74,9 +74,16 @@ def _ensure_local_ollama_fast_document_env() -> None:
     os.environ.setdefault("LES_SMETA_READ_BUDGET", "3")
     os.environ.setdefault("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "1")
     os.environ.setdefault("LES_SMETA_DOCUMENT_MAX_TOOL_TURNS", "8")
-    # Cross-encoder is usually absent on Legion; failed rerank attempts only
-    # add latency before the same lexical shortlist is returned.
-    os.environ.setdefault("LES_SMETA_NORM_RERANK", "false")
+    # Prefer CE catalog/norm ranking when the Windows reranker is already on.
+    # Otherwise keep lexical/hybrid shortlist (not raw catalog head) via
+    # rank_norm_catalog_collections fallback — do not force false over CUDA.
+    reranker_on = os.getenv("RERANKER_ENABLED", "").strip().casefold() in {
+        "1", "true", "yes", "on",
+    }
+    os.environ.setdefault(
+        "LES_SMETA_NORM_RERANK",
+        "true" if reranker_on else "false",
+    )
 
 
 def _source_fingerprint(path: Path) -> dict[str, Any]:
@@ -577,7 +584,9 @@ async def run_smeta_document_application(
             extra={"retrieval_trace": {"mode": "smeta_document", "error": str(error)}},
         )
 
-    if source_path.suffix.lower() not in {".pdf", ".xlsx", ".xlsm"}:
+    from proxy.smeta_core.source_intake import TABLE_DOCUMENT_SUFFIXES
+
+    if source_path.suffix.lower() not in TABLE_DOCUMENT_SUFFIXES:
         return None
 
     out_dir = Path(artifact_dir)

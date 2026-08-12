@@ -37,6 +37,26 @@ def test_vor_lines_does_not_treat_visible_row_number_as_blocking_assumption():
     assert rows[0]["assumptions"] == ["visible_row_number:984"]
 
 
+def test_rim_save_upload_accepts_pdf_and_rejects_unknown(tmp_path):
+    from fastapi import HTTPException
+
+    from proxy.routers import rim as rim_router
+
+    set_rim_session_store(RimSessionStore(tmp_path / "rim"))
+    store = get_rim_session_store()
+    created = store.create_session(owner_id="tester", project_id="p1")
+    session_id = created.session["session_id"]
+    path = rim_router._save_upload(session_id, "vor.pdf", b"%PDF-1.4 x")
+    assert path.suffix == ".pdf"
+    assert path.exists()
+    try:
+        rim_router._save_upload(session_id, "notes.docx", b"PK")
+        raise AssertionError("docx must be rejected")
+    except HTTPException as exc:
+        assert exc.status_code == 415
+        assert "PDF" in str(exc.detail)
+
+
 def test_rim_api_runs_vor_mapping_and_two_lock_flow(tmp_path):
     client = _client(tmp_path)
     created = client.post(
@@ -330,9 +350,8 @@ def test_resolved_requirements_feed_typed_recalculation_inputs():
         ]
     )
 
-    assert result == {
-        "kac_map": {"01.7.15.01-0011": 125.5},
-        "k_ozp": 1.15,
-        "k_em": 1.05,
-        "coefficient_basis": "СП 000",
-    }
+    assert result["kac_map"] == {"01.7.15.01-0011": 125.5}
+    assert result["k_ozp"] == 1.15
+    assert result["k_em"] == 1.05
+    assert result["coefficient_basis"] == "СП 000"
+    assert result["etm"]["applied"] == 0

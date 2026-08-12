@@ -80,9 +80,9 @@ def test_price_update_downloads_latest_period_of_every_zone(tmp_path: Path, monk
     status = json.loads((tmp_path / "status.json").read_text(encoding="utf-8"))
     assert status["stage"] == "price_books"
     assert status["activity"] == "downloading"
-    assert status["completed"] == 1
+    assert status["completed"] == 2
     assert status["total"] == 2
-    assert status["remaining"] == 1
+    assert status["remaining"] == 0
 
 
 def test_full_update_persists_catalog_and_manifest_without_gesn(tmp_path: Path, monkeypatch):
@@ -164,6 +164,43 @@ def test_fgis_progress_explains_running_and_interrupted_states():
     assert "не записал итоговый статус" in interrupted["reason"]
 
 
+def test_operator_reason_explains_truncated_parquet_stream():
+    text = fgis_update_service._operator_reason(
+        "OSError: Unexpected end of stream: Page was smaller (1836) than expected (128950)"
+    )
+    assert "изолирует битый parquet" in text
+
+
+def test_operator_reason_does_not_treat_status_json_path_as_bad_payload():
+    text = fgis_update_service._operator_reason(
+        "PermissionError: [WinError 5] Отказано в доступе: "
+        "'storage\\\\jobs\\\\fgis_full_update_status.json.tmp' -> "
+        "'storage\\\\jobs\\\\fgis_full_update_status.json'"
+    )
+    assert "Нет доступа к локальному файлу" in text
+    assert "повреждённый ответ" not in text
+
+
+def test_write_json_retries_windows_replace_lock(tmp_path: Path, monkeypatch):
+    target = tmp_path / "status.json"
+    calls = {"n": 0}
+    real_replace = fgis_full_update.os.replace
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] < 3:
+            err = PermissionError(13, "Отказано в доступе")
+            err.filename = str(dst)
+            err.winerror = 5
+            raise err
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(fgis_full_update.os, "replace", flaky_replace)
+    fgis_full_update._write_json(target, {"ok": True, "stage": "gesn"})
+    assert json.loads(target.read_text(encoding="utf-8"))["ok"] is True
+    assert calls["n"] == 3
+
+
 def test_fgis_idle_text_distinguishes_refresh_from_download():
     summary, detail, percent, running = _fgis_progress_text(
         {"progress": {"state": "idle", "reason": "Обновление ещё не запускалось"}}
@@ -178,6 +215,8 @@ def test_fgis_idle_text_distinguishes_refresh_from_download():
 def test_price_update_resumes_verified_book_from_checkpoint(tmp_path: Path, monkeypatch):
     import pandas as pd
 
+    # Keep checkpoint parquet under out_root but not at the expected book name,
+    # so resume goes through checkpoint (not local name match).
     parquet = tmp_path / "ready.parquet"
     pd.DataFrame([{"code": "01.1-1"}]).to_parquet(parquet, index=False)
     checkpoint = tmp_path / "checkpoint.json"
@@ -205,7 +244,79 @@ def test_price_update_resumes_verified_book_from_checkpoint(tmp_path: Path, monk
 
     assert result["done"] == 2
     assert result["failed"] == 0
+    assert result["resumed"] == 2
     assert all(item.get("resumed") for item in result["books"])
+
+
+def test_price_update_ignores_foreign_pytest_checkpoint_paths(tmp_path: Path, monkeypatch):
+    import pandas as pd
+
+    price_root = tmp_path / "price_base"
+    price_root.mkdir()
+    poison = tmp_path / "elsewhere" / "pytest-of-user" / "ready.parquet"
+    poison.parent.mkdir(parents=True)
+    pd.DataFrame([{"code": "01.1-1"}]).to_parquet(poison, index=False)
+    checkpoint = tmp_path / "checkpoint.json"
+    checkpoint.write_text(
+        json.dumps(
+            {
+                "schema": "les.fgis.update-checkpoint.v1",
+                "books": {
+                    "10:102": {"ok": True, "rows": 1, "bytes": 2048, "parquet": str(poison)},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    calls: list[str] = []
+
+    def fake_import(**kwargs):
+        calls.append(kwargs["name"])
+        return {"ok": True, "rows": 3, "parquet": str(price_root / f"{kwargs['name']}.parquet")}
+
+    monkeypatch.setattr(price_fetch, "import_price_zone", fake_import)
+    subject = _catalog()["subjects"][0]
+    zone = subject["zones"][0]
+    result = fgis_full_update.update_price_books(
+        catalog={"subjects": [{**subject, "zones": [zone]}]},
+        out_root=price_root,
+        status_out=tmp_path / "status.json",
+        checkpoint_out=checkpoint,
+        rate=0,
+    )
+    assert calls, "poisoned checkpoint must not resume; download expected"
+    assert result["resumed"] == 0
+
+
+def test_price_update_skips_existing_local_parquet_without_checkpoint(tmp_path: Path, monkeypatch):
+    import pandas as pd
+
+    catalog = _catalog()
+    subject = catalog["subjects"][0]
+    zone = subject["zones"][0]
+    period = zone["periods"][0]
+    name = fgis_full_update._book_name(subject, zone, period)
+    path = tmp_path / f"{name}.parquet"
+    pd.DataFrame([{"code": "01.1-1"}, {"code": "01.1-2"}]).to_parquet(path, index=False)
+    monkeypatch.setattr(
+        price_fetch,
+        "import_price_zone",
+        lambda **_: (_ for _ in ()).throw(AssertionError("must reuse local parquet")),
+    )
+
+    result = fgis_full_update.update_price_books(
+        catalog={"subjects": [{**subject, "zones": [{**zone, "periods": [period]}]}]},
+        out_root=tmp_path,
+        status_out=tmp_path / "status.json",
+        checkpoint_out=tmp_path / "checkpoint.json",
+        rate=0,
+    )
+
+    assert result["done"] == 1
+    assert result["resumed"] == 1
+    assert result["books"][0]["parquet"] == str(path.resolve())
+    healed = json.loads((tmp_path / "checkpoint.json").read_text(encoding="utf-8"))
+    assert "10:102" in healed["books"]
 
 
 def test_operator_start_downloads_prices_when_gesn_is_already_running(tmp_path: Path, monkeypatch):
@@ -247,6 +358,8 @@ def test_supervisor_restarts_failed_update_from_checkpoint(monkeypatch):
             self.returncode = code
 
     codes = iter([1, 0])
+    monkeypatch.setattr(fgis_update_supervisor, "_acquire_lock", lambda: True)
+    monkeypatch.setattr(fgis_update_supervisor, "_release_lock", lambda: None)
     monkeypatch.setattr(
         fgis_update_supervisor.subprocess,
         "run",
@@ -262,3 +375,14 @@ def test_supervisor_restarts_failed_update_from_checkpoint(monkeypatch):
     assert len(calls) == 2
     assert writes[0]["stage"] == "retry"
     assert writes[0]["retry_stage"] == "price_books"
+
+
+def test_supervisor_skips_when_lock_held(monkeypatch):
+    monkeypatch.setattr(fgis_update_supervisor, "_acquire_lock", lambda: False)
+    monkeypatch.setattr(
+        fgis_update_supervisor.subprocess,
+        "run",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("must not spawn")),
+    )
+
+    assert fgis_update_supervisor.run_supervised(include_gesn=True, all_periods=False) == 0

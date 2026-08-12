@@ -6,6 +6,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +64,30 @@ def status() -> dict[str, Any]:
     service_rag_overview = DEFAULT_SERVICE_RAG_OUT / "00_smeta_service_overview.md"
     log_tail = _tail(_LOG)
     raw_status = _read_json(DEFAULT_STATUS)
+    # Stale "running" after a crash left the GUI frozen on July job state.
+    if not running and str(raw_status.get("status") or "") == "running":
+        raw_status = {
+            **raw_status,
+            "status": "interrupted",
+            "stage": "interrupted",
+            "error": "Процесс обновления ГЭСН больше не работает; нужен повторный запуск",
+        }
+        try:
+            DEFAULT_STATUS.write_text(
+                json.dumps(
+                    {**raw_status, "updated_at": datetime.now(timezone.utc).isoformat()},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        if _PID.exists():
+            try:
+                _PID.unlink()
+            except OSError:
+                pass
     progress = raw_status.get("progress") or _log_progress(log_tail)
     return {
         "running": running,

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import time
 from datetime import datetime, timezone
@@ -45,10 +46,39 @@ def _slug(subject: str, quarter: str) -> str:
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    """Atomically write JSON with Windows-safe replace retries.
+
+    On Windows the status file is polled by the UI while the updater rewrites it.
+    A plain ``.tmp`` → replace can raise WinError 5; retry with a unique temp name
+    and fall back to in-place write so a locked status file does not kill GESN.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    text = json.dumps(payload, ensure_ascii=False, indent=2)
+    temporary = path.with_name(f"{path.stem}.{os.getpid()}.{time.time_ns()}.tmp")
+    temporary.write_text(text, encoding="utf-8")
+    last_error: Exception | None = None
+    for attempt in range(8):
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+            time.sleep(min(1.0, 0.05 * (2**attempt)))
+        except OSError as exc:
+            last_error = exc
+            # WinError 5 surfaces as PermissionError on some Pythons and OSError on others.
+            if getattr(exc, "winerror", None) != 5 and getattr(exc, "errno", None) not in {13, 11}:
+                temporary.unlink(missing_ok=True)
+                raise
+            time.sleep(min(1.0, 0.05 * (2**attempt)))
+    try:
+        path.write_text(text, encoding="utf-8")
+        temporary.unlink(missing_ok=True)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        if last_error is not None:
+            raise last_error
+        raise
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -63,16 +93,60 @@ def _book_checkpoint_key(zone: dict[str, Any], period: dict[str, Any]) -> str:
     return f"{int(zone.get('id') or 0)}:{int(period.get('id') or 0)}"
 
 
-def _valid_checkpoint_book(item: dict[str, Any]) -> bool:
+def _valid_checkpoint_book(item: dict[str, Any], *, out_root: Path | None = None) -> bool:
     path = Path(str(item.get("parquet") or ""))
     if not path.is_file() or path.stat().st_size < 1024 or int(item.get("rows") or 0) <= 0:
         return False
+    # Foreign pytest/temp leftovers must never count as a resume source.
+    # Entries under the active out_root are fine even inside a pytest tree.
+    if out_root is not None:
+        try:
+            path.resolve().relative_to(Path(out_root).resolve())
+        except ValueError:
+            normalized = str(path).casefold().replace("\\", "/")
+            if "pytest" in normalized or "/temp/" in normalized:
+                return False
     try:
         import pyarrow.parquet as pq
 
         return int(pq.ParquetFile(path).metadata.num_rows) == int(item.get("rows") or 0)
     except Exception:
         return False
+
+
+def _existing_local_book(
+    *,
+    out_root: Path,
+    name: str,
+    subject: dict[str, Any],
+    zone: dict[str, Any],
+    period: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Reuse an already-downloaded pricebook under out_root without hitting FGIS."""
+    path = (Path(out_root) / f"{Path(name).name}.parquet").resolve()
+    if not path.is_file() or path.stat().st_size < 1024:
+        return None
+    try:
+        import pyarrow.parquet as pq
+
+        rows = int(pq.ParquetFile(path).metadata.num_rows)
+    except Exception:
+        return None
+    if rows <= 0:
+        return None
+    return {
+        "ok": True,
+        "resumed": True,
+        "name": path.stem,
+        "rows": rows,
+        "bytes": int(path.stat().st_size),
+        "parquet": str(path),
+        "subject_id": subject.get("id"),
+        "price_zone_id": zone.get("id"),
+        "period_id": period.get("id"),
+        "region": zone.get("name") or subject.get("name"),
+        "quarter": period.get("name"),
+    }
 
 
 def _repair_local_baseline() -> dict[str, Any]:
@@ -161,86 +235,138 @@ def update_price_books(
                 tasks.append((subject, zone, period))
 
     checkpoint = _read_json(checkpoint_out)
-    completed_books = checkpoint.get("books") if isinstance(checkpoint.get("books"), dict) else {}
+    completed_books = {
+        key: value
+        for key, value in (checkpoint.get("books") or {}).items()
+        if isinstance(value, dict) and _valid_checkpoint_book(value, out_root=out_root)
+    }
     done: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
     delay = 1.0 / rate if rate > 0 else 0.0
     started = time.monotonic()
     bytes_downloaded = 0
+    checkpoint_dirty = False
     for index, (subject, zone, period) in enumerate(tasks, 1):
         elapsed = max(0.0, time.monotonic() - started)
         completed = index - 1
         eta = (elapsed / completed * (len(tasks) - completed)) if completed else None
         rate_bytes_per_second = (bytes_downloaded / elapsed) if elapsed > 0 and bytes_downloaded else None
-        _write_status(
-            status_out,
-            status="running",
-            stage="price_books",
-            activity="downloading",
-            message="Скачивается Сплит-форма ФГИС ЦС",
-            completed=completed,
-            total=len(tasks),
-            remaining=len(tasks) - completed,
-            percent=round(completed * 100 / len(tasks), 1) if tasks else 100.0,
-            elapsed_seconds=round(elapsed, 1),
-            eta_seconds=round(eta, 1) if eta is not None else None,
-            bytes_downloaded=bytes_downloaded,
-            rate_bytes_per_second=round(rate_bytes_per_second, 1) if rate_bytes_per_second else None,
-            current={"subject": subject.get("name"), "zone": zone.get("name"), "period": period.get("name")},
-        )
         key = _book_checkpoint_key(zone, period)
+        book_name = _book_name(subject, zone, period)
         saved = completed_books.get(key) if isinstance(completed_books.get(key), dict) else {}
-        if saved and _valid_checkpoint_book(saved):
+        local = _existing_local_book(
+            out_root=out_root,
+            name=book_name,
+            subject=subject,
+            zone=zone,
+            period=period,
+        )
+        if local:
+            result = local
+            completed_books[key] = {k: v for k, v in local.items() if k != "resumed"}
+            checkpoint_dirty = True
+            activity = "resuming"
+            message = "Пропускаем уже скачанную Сплит-форму"
+        elif saved:
             result = {**saved, "ok": True, "resumed": True}
+            activity = "resuming"
+            message = "Пропускаем уже скачанную Сплит-форму"
         else:
             result = {}
+            activity = "downloading"
+            message = "Скачивается Сплит-форма ФГИС ЦС"
             for attempt in range(1, max(1, retries) + 1):
-                result = price_fetch.import_price_zone(
-                    subject=subject,
-                    zone=zone,
-                    period=period,
-                    name=_book_name(subject, zone, period),
-                    out_root=out_root,
-                )
-                if result.get("ok"):
-                    break
                 _write_status(
                     status_out,
                     status="running",
                     stage="price_books",
-                    activity="retrying",
-                    message=f"Повторяем Сплит-форму после ошибки ({attempt}/{max(1, retries)})",
+                    activity="downloading" if attempt == 1 else "retrying",
+                    message=(
+                        message
+                        if attempt == 1
+                        else f"Повторяем Сплит-форму после ошибки ({attempt}/{max(1, retries)})"
+                    ),
                     completed=completed,
                     total=len(tasks),
                     remaining=len(tasks) - completed,
                     percent=round(completed * 100 / len(tasks), 1) if tasks else 100.0,
                     elapsed_seconds=round(time.monotonic() - started, 1),
+                    eta_seconds=round(eta, 1) if eta is not None else None,
                     bytes_downloaded=bytes_downloaded,
-                    current={"subject": subject.get("name"), "zone": zone.get("name"), "period": period.get("name")},
-                    retry={"attempt": attempt, "maximum": max(1, retries), "reason": result.get("note")},
+                    rate_bytes_per_second=(
+                        round(rate_bytes_per_second, 1) if rate_bytes_per_second else None
+                    ),
+                    current={
+                        "subject": subject.get("name"),
+                        "zone": zone.get("name"),
+                        "period": period.get("name"),
+                    },
+                    retry=(
+                        {"attempt": attempt, "maximum": max(1, retries)}
+                        if attempt > 1
+                        else None
+                    ),
                 )
+                result = price_fetch.import_price_zone(
+                    subject=subject,
+                    zone=zone,
+                    period=period,
+                    name=book_name,
+                    out_root=out_root,
+                )
+                if result.get("ok"):
+                    completed_books[key] = result
+                    checkpoint_dirty = True
+                    break
                 if attempt < max(1, retries):
                     time.sleep(min(30.0, 2.0**attempt))
-            if result.get("ok"):
-                completed_books[key] = result
-                _write_json(
-                    checkpoint_out,
-                    {
-                        "schema": "les.fgis.update-checkpoint.v1",
-                        "updated_at": datetime.now(timezone.utc).isoformat(),
-                        "books": completed_books,
-                    },
-                )
+        _write_status(
+            status_out,
+            status="running",
+            stage="price_books",
+            activity=activity,
+            message=message,
+            completed=index if result.get("ok") else completed,
+            total=len(tasks),
+            remaining=max(0, len(tasks) - index) if result.get("ok") else len(tasks) - completed,
+            percent=round((index if result.get("ok") else completed) * 100 / len(tasks), 1) if tasks else 100.0,
+            elapsed_seconds=round(time.monotonic() - started, 1),
+            eta_seconds=round(eta, 1) if eta is not None else None,
+            bytes_downloaded=bytes_downloaded,
+            rate_bytes_per_second=round(rate_bytes_per_second, 1) if rate_bytes_per_second else None,
+            current={"subject": subject.get("name"), "zone": zone.get("name"), "period": period.get("name")},
+        )
+        if checkpoint_dirty and (index % 10 == 0 or index == len(tasks) or not result.get("resumed")):
+            _write_json(
+                checkpoint_out,
+                {
+                    "schema": "les.fgis.update-checkpoint.v1",
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "books": completed_books,
+                },
+            )
+            checkpoint_dirty = False
         (done if result.get("ok") else failed).append(result)
-        bytes_downloaded += int(result.get("bytes") or 0)
-        if delay and index < len(tasks):
+        if result.get("ok") and not result.get("resumed"):
+            bytes_downloaded += int(result.get("bytes") or 0)
+        if delay and index < len(tasks) and not result.get("resumed"):
             time.sleep(delay)
+    if checkpoint_dirty:
+        _write_json(
+            checkpoint_out,
+            {
+                "schema": "les.fgis.update-checkpoint.v1",
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+                "books": completed_books,
+            },
+        )
     return {
         "mode": "all_periods" if all_periods else "latest_per_zone",
         "requested": len(tasks),
         "done": len(done),
         "failed": len(failed),
         "rows": sum(int(item.get("rows") or 0) for item in done),
+        "resumed": sum(1 for item in done if item.get("resumed")),
         "books": done,
         "errors": failed,
     }
@@ -299,16 +425,30 @@ def run_update(
         def _gesn_progress(payload: dict[str, Any]) -> None:
             progress = payload.get("progress") or {}
             nested_stage = str(payload.get("stage") or "download")
+            skipped = int(progress.get("otdels_skipped") or 0)
+            downloaded = int(progress.get("otdels_done") or 0)
+            resumed_complete = bool(progress.get("resumed_complete"))
+            activity = str(progress.get("activity") or "")
+            if nested_stage == "download":
+                if resumed_complete or (skipped and not downloaded and activity != "downloading"):
+                    activity_out = "resuming"
+                    message = (
+                        "Локальная база норм уже полная — пропускаем повторное скачивание ГЭСН"
+                        if resumed_complete
+                        else "Пропускаем уже скачанные отделы ГЭСН; новые дозаливаем при необходимости"
+                    )
+                else:
+                    activity_out = "downloading"
+                    message = "Скачиваются нормы и ресурсы ГЭСН из ФГИС ЦС"
+            else:
+                activity_out = "processing"
+                message = "Скачивание завершено; собирается локальная база ГЭСН"
             _write_status(
                 status_out,
                 status="running",
                 stage="gesn" if nested_stage == "download" else nested_stage,
-                activity="downloading" if nested_stage == "download" else "processing",
-                message=(
-                    "Скачиваются нормы и ресурсы ГЭСН из ФГИС ЦС"
-                    if nested_stage == "download"
-                    else "Скачивание завершено; собирается локальная база ГЭСН"
-                ),
+                activity=activity_out,
+                message=message,
                 started_at=started_at,
                 prices=prices,
                 gesn_progress=progress,

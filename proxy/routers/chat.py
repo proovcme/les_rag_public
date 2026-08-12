@@ -3318,13 +3318,33 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 payload[key] = extra[key]
         return payload
 
+    # Document LSR (PDF/XLSX VOR → ЛСР) wins over spec→VOR and free attachment LLM.
+    # Otherwise «собери ЛСР по ВОР.pdf» is misread as «ВОР из спецификации» (XLSX-only).
+    _needs_document_lsr = _smeta_request_needs_lsr_output(req.question)
+    if req.attachment_id and _needs_document_lsr:
+        document_result = await run_smeta_document_application(
+            attachment_id=req.attachment_id,
+            project_id=req.project_id,
+            user_request=req.question,
+            token_sink=token_sink,
+            artifact_dir=_SMETA_ARTIFACT_DIR,
+        )
+        if document_result is not None:
+            return _mode_reply(
+                document_result.answer,
+                document_result.operation,
+                document_result.channel,
+                crag=document_result.crag,
+                extra=document_result.extra,
+            )
+
     # Spec → VOR (0 LLM) must win over free attachment LLM. Otherwise the model
     # invents "ведомость отгрузки", prices, and drops coverage.
     from proxy.services.spec_to_bor_service import (
         format_spec_bor_answer,
         generate_spec_bor_from_rows,
         is_spec_to_bor_query,
-        rows_from_spec_xlsx,
+        rows_from_spec_document,
     )
 
     _has_any_attachment = bool(req.attachment_id or req.attachment_context)
@@ -3332,7 +3352,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if not req.attachment_id:
             return _mode_reply(
                 "ВОР из спецификации собирается только из вложения режима «В чат» "
-                "(server-owned read_*). Прикрепи XLSX/XLSM снова и повтори "
+                "(server-owned read_*). Прикрепи PDF или XLSX/XLSM снова и повтори "
                 "«сделай ВОР из спецификации».",
                 "spec_to_bor_needs_attachment",
                 "spec_to_bor",
@@ -3347,20 +3367,21 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
         def _build_spec_bor_from_attachment() -> dict[str, Any]:
             from proxy.services.chat_attachment_service import resolve_read_attachment
+            from proxy.smeta_core.source_intake import TABLE_DOCUMENT_SUFFIXES
 
             path, meta = resolve_read_attachment(str(req.attachment_id))
             suffix = path.suffix.lower()
-            if suffix not in {".xlsx", ".xlsm"}:
+            if suffix not in TABLE_DOCUMENT_SUFFIXES:
                 return {
                     "ok": False,
                     "answer": (
-                        f"Для ВОР из спецификации нужен табличный XLSX/XLSM, "
+                        f"Для ВОР из спецификации нужен PDF или табличный XLSX/XLSM, "
                         f"сейчас вложение {suffix or 'без расширения'}."
                     ),
                     "error": "unsupported_attachment_type",
                 }
             label = str(meta.get("original_name") or path.name)
-            rows = rows_from_spec_xlsx(path, source_label=label)
+            rows = rows_from_spec_document(path, source_label=label)
             if not rows:
                 return {
                     "ok": False,
@@ -3466,8 +3487,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         return _mode_reply(answer, "free", "free_mode", crag="")
 
     _auto_estimate_work = False
+    from proxy.services.estimate_harness_service import is_explicit_work_estimate_request
     if _PROFILE == "auto":
-        from proxy.services.estimate_harness_service import is_explicit_work_estimate_request
         _auto_estimate_work = is_explicit_work_estimate_request(req.question)
         if _auto_estimate_work:
             _resolution.refine(
@@ -3478,23 +3499,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             )
 
     if _PROFILE == "estimate_harness" or _auto_estimate_work:
-        needs_document_lsr = _smeta_request_needs_lsr_output(req.question)
-        if req.attachment_id and needs_document_lsr:
-            document_result = await run_smeta_document_application(
-                attachment_id=req.attachment_id,
-                project_id=req.project_id,
-                user_request=req.question,
-                token_sink=token_sink,
-                artifact_dir=_SMETA_ARTIFACT_DIR,
-            )
-            if document_result is not None:
-                return _mode_reply(
-                    document_result.answer,
-                    document_result.operation,
-                    document_result.channel,
-                    crag=document_result.crag,
-                    extra=document_result.extra,
-                )
+        # attachment_id + LSR already handled above (before spec_to_bor / attachment LLM).
+        needs_document_lsr = _needs_document_lsr
         if needs_document_lsr and not req.attachment_id:
             quick_ids = [
                 str(item)
@@ -3508,11 +3514,27 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             looks_like_vor_file = Path(ctx_name).suffix.lower() in {
                 ".pdf", ".xlsx", ".xlsm",
             } or bool(quick_ids)
-            if looks_like_vor_file:
-                return _mode_reply(
+            # Document LSR always needs read_*. Free-text harness is allowed only for an
+            # explicit single-work estimate with quantity (not "собери ЛСР" / vague смета).
+            allow_free_text_work = bool(
+                _auto_estimate_work
+                or is_explicit_work_estimate_request(req.question)
+            )
+            if looks_like_vor_file or not allow_free_text_work:
+                message = (
                     "ЛСР по файлу ВОР/PDF/XLSX собирается только из вложения режима "
                     "«В чат» (server-owned read_*), а не из «Таблица»/временного датасета. "
-                    "Прикрепи тот же файл снова режимом «В чат» и повтори «собери ЛСР».",
+                    "Прикрепи тот же файл снова режимом «В чат» и повтори «собери ЛСР»."
+                    if looks_like_vor_file
+                    else (
+                        "ЛСР/сметный расчёт по документу требует вложения режима «В чат» "
+                        "(read_*). Для оценки одной работы без файла укажите вид работ и "
+                        "явный объём (например: «смета на штукатурку 100 м2»). "
+                        "«Сделай ВОР» по спецификации — отдельный канал без цен."
+                    )
+                )
+                return _mode_reply(
+                    message,
                     "smeta_document_attachment_mode",
                     "smeta_mode",
                     crag="ERROR",
@@ -3522,6 +3544,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                             "error": "lsr_requires_read_attachment",
                             "quick_dataset_ids": quick_ids,
                             "attachment_name": ctx_name,
+                            "allow_free_text_work": allow_free_text_work,
                         }
                     },
                 )

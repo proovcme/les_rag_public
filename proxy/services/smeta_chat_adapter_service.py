@@ -479,7 +479,42 @@ def _qwen_non_thinking_sampling() -> dict[str, float | int]:
     }
 
 
-def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _ollama_model_supports_think(model: str) -> bool:
+    """Ollama rejects even think=false on models without a thinking template.
+
+    qwen2.5-instruct returns HTTP 400: 'does not support thinking'.
+    """
+    low = str(model or "").casefold().replace("_", "").replace("-", "")
+    if "qwen25" in low:
+        return False
+    return any(
+        token in low
+        for token in ("qwen3", "deepseekr1", "qwq", "thinking")
+    )
+
+
+def _strip_ollama_thinking(body: dict[str, Any]) -> dict[str, Any]:
+    """Drop think/thinking so a 400 'does not support thinking' can retry."""
+    cleaned = dict(body)
+    cleaned.pop("think", None)
+    cleaned.pop("thinking", None)
+    messages = []
+    for source in cleaned.get("messages") or []:
+        if not isinstance(source, dict):
+            messages.append(source)
+            continue
+        message = dict(source)
+        message.pop("thinking", None)
+        messages.append(message)
+    cleaned["messages"] = messages
+    return cleaned
+
+
+def _ollama_native_messages(
+    messages: list[dict[str, Any]],
+    *,
+    include_thinking: bool = True,
+) -> list[dict[str, Any]]:
     """Translate the shared conversation to Ollama's native message contract."""
     native: list[dict[str, Any]] = []
     for source in messages:
@@ -490,7 +525,7 @@ def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
         }
         if role == "assistant" and source.get("tool_calls"):
             message["tool_calls"] = source["tool_calls"]
-        if role == "assistant" and source.get("thinking"):
+        if include_thinking and role == "assistant" and source.get("thinking"):
             message["thinking"] = source["thinking"]
         if role == "tool":
             tool_name = str(source.get("tool_name") or source.get("name") or "").strip()
@@ -516,18 +551,18 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
+    think_capable = _ollama_model_supports_think(runtime.model)
     if native_ollama:
         # Ollama's OpenAI-compatible endpoint can silently lose Gemma native
         # tool_calls. Its native /api/chat contract preserves them for both
         # Gemma and Qwen, while keeping the same messages/tools schema.
         body = {
             "model": runtime.model,
-            "messages": _ollama_native_messages(messages),
+            "messages": _ollama_native_messages(
+                messages, include_thinking=think_capable,
+            ),
             "tools": tools,
             "stream": False,
-            # Ollama's documented agent loop keeps thinking enabled and passes
-            # it back in conversation history with the tool call.
-            "think": _env_bool("LES_SMETA_DOCUMENT_THINK", False),
             "options": {
                 **_qwen_non_thinking_sampling(),
                 "seed": seed,
@@ -537,6 +572,11 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
                 "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
             },
         }
+        if think_capable:
+            # Ollama's documented agent loop keeps thinking enabled and passes
+            # it back in conversation history with the tool call. qwen2.5
+            # instruct rejects the think key entirely (HTTP 400).
+            body["think"] = _env_bool("LES_SMETA_DOCUMENT_THINK", False)
         ollama_root = runtime.base_url.rstrip("/")
         if ollama_root.casefold().endswith("/v1"):
             ollama_root = ollama_root[:-3]
@@ -566,9 +606,23 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
     def _post_chat(payload_body: dict[str, Any]) -> httpx.Response:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
             response = client.post(chat_url, headers=headers, json=payload_body)
-            if response.status_code == 400 and "thinking" in payload_body:
-                fallback_body = dict(payload_body)
-                fallback_body.pop("thinking", None)
+            detail = _http_response_text(response).casefold()
+            thinking_rejected = (
+                response.status_code == 400
+                and "thinking" in detail
+            )
+            has_think_keys = (
+                "think" in payload_body
+                or "thinking" in payload_body
+                or any(
+                    isinstance(msg, dict) and "thinking" in msg
+                    for msg in (payload_body.get("messages") or [])
+                )
+            )
+            if thinking_rejected or (
+                response.status_code == 400 and has_think_keys
+            ):
+                fallback_body = _strip_ollama_thinking(payload_body)
                 response = client.post(chat_url, headers=headers, json=fallback_body)
             return response
 
@@ -733,16 +787,15 @@ def _smeta_document_mapping_exchange(
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
+    think_capable = _ollama_model_supports_think(runtime.model)
     if native_ollama:
         body = {
             "model": runtime.model,
-            "messages": _ollama_native_messages(messages),
+            "messages": _ollama_native_messages(
+                messages, include_thinking=think_capable,
+            ),
             "format": schema,
             "stream": False,
-            # Qwen documents non-thinking function calls with sampled decoding.
-            # If a particular Ollama template loses the schema, the bounded
-            # fallback below retries once with thinking enabled.
-            "think": False,
             "options": {
                 **_qwen_non_thinking_sampling(),
                 "seed": seed,
@@ -750,6 +803,9 @@ def _smeta_document_mapping_exchange(
                 "num_ctx": _env_int("LES_SMETA_DOCUMENT_NUM_CTX", 32768),
             },
         }
+        if think_capable:
+            # Qwen3 documents non-thinking function calls with sampled decoding.
+            body["think"] = False
         ollama_root = runtime.base_url.rstrip("/")
         if ollama_root.casefold().endswith("/v1"):
             ollama_root = ollama_root[:-3]
@@ -774,6 +830,14 @@ def _smeta_document_mapping_exchange(
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
             response = client.post(chat_url, headers=headers, json=body)
             detail_text = _http_response_text(response)
+            if (
+                native_ollama
+                and response.status_code == 400
+                and "thinking" in detail_text.casefold()
+            ):
+                body = _strip_ollama_thinking(body)
+                response = client.post(chat_url, headers=headers, json=body)
+                detail_text = _http_response_text(response)
             if (
                 native_ollama
                 and response.status_code >= 500
@@ -804,7 +868,10 @@ def _smeta_document_mapping_exchange(
                 )
                 # A length-truncated JSON object needs more output room, not a
                 # hidden reasoning trace that competes for the same context.
-                retry_body["think"] = not length_limited
+                if think_capable:
+                    retry_body["think"] = not length_limited
+                else:
+                    retry_body.pop("think", None)
                 if length_limited:
                     options = dict(retry_body.get("options") or {})
                     options["num_predict"] = max(
@@ -813,16 +880,26 @@ def _smeta_document_mapping_exchange(
                     )
                     retry_body["options"] = options
                     retry_body["messages"] = _ollama_native_messages(
-                        _compact_mapping_retry_messages(messages)
+                        _compact_mapping_retry_messages(messages),
+                        include_thinking=think_capable,
                     )
                 logger.warning(
                     "[SMETA_DOCUMENT] structured mapping missing; retrying once "
                     "think=%r done_reason=%r eval_count=%r",
-                    retry_body["think"],
+                    retry_body.get("think"),
                     response_payload.get("done_reason"),
                     response_payload.get("eval_count"),
                 )
                 response = client.post(chat_url, headers=headers, json=retry_body)
+                if (
+                    response.status_code == 400
+                    and "thinking" in _http_response_text(response).casefold()
+                ):
+                    response = client.post(
+                        chat_url,
+                        headers=headers,
+                        json=_strip_ollama_thinking(retry_body),
+                    )
                 response.raise_for_status()
                 response_payload = response.json()
                 message = response_payload.get("message", {})

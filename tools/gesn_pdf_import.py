@@ -62,6 +62,7 @@ import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -75,6 +76,17 @@ from tools.gesn_import import (
 )
 
 DEFAULT_OUT = Path("storage/cache/gesn_fgis/gesn2022_fgis_raw.parquet")
+
+
+def _quarantine_corrupt_parquet(path: Path, *, reason: str = "") -> Path:
+    """Move a truncated/unreadable parquet aside so resume can rebuild cleanly."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target = path.with_name(f"{path.stem}.corrupt.{stamp}{path.suffix}")
+    path.replace(target)
+    marker = target.with_suffix(target.suffix + ".reason.txt")
+    marker.write_text(reason or "corrupt parquet", encoding="utf-8")
+    return target
+
 
 # ── категории расхода → kind ──────────────────────────────────────────
 # Шапки категорий в PDF/JSON: «1 ЗАТРАТЫ ТРУДА РАБОЧИХ», «2 Затраты труда машинистов»,
@@ -480,13 +492,28 @@ def build_parquet(records: list[dict[str, Any]], out_path: str | Path = DEFAULT_
 
     out_path = Path(out_path)
     if append and out_path.exists():
-        old = pd.read_parquet(out_path)
-        df = pd.concat([old, df], ignore_index=True)
-        if "norm_key" not in df.columns or df["norm_key"].isna().all():
-            dedupe_cols = ["norm_code", "kind", "resource_code", "resource_name"]
-        df = df.drop_duplicates(subset=dedupe_cols, keep="last")
+        try:
+            old = pd.read_parquet(out_path)
+        except Exception as exc:  # noqa: BLE001 — truncated/corrupt mid-write parquet
+            quarantined = _quarantine_corrupt_parquet(out_path, reason=str(exc))
+            # Keep going with the new batch only; resume will refill missing otdels.
+            print(
+                f"[gesn] quarantined corrupt parquet {out_path.name} → {quarantined.name}: {exc}",
+                file=sys.stderr,
+                flush=True,
+            )
+            old = None
+        if old is not None:
+            df = pd.concat([old, df], ignore_index=True)
+            if "norm_key" not in df.columns or df["norm_key"].isna().all():
+                dedupe_cols = ["norm_code", "kind", "resource_code", "resource_name"]
+            df = df.drop_duplicates(subset=dedupe_cols, keep="last")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(out_path, compression="snappy", index=False)
+    # Atomic replace: a crash mid-write used to leave truncated parquet
+    # ("Page was smaller than expected") and stop the whole FGIS/GESN job.
+    temporary = out_path.with_suffix(out_path.suffix + ".tmp")
+    df.to_parquet(temporary, compression="snappy", index=False)
+    temporary.replace(out_path)
     norm_keys = sorted({r.get("norm_key") or r.get("norm_code") for r in records if r.get("norm_code")})
     return {"parquet": str(out_path), "norms": len(norm_keys), "resources": len(df)}
 

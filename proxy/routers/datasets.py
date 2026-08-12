@@ -1990,6 +1990,9 @@ def _estimate_role_hint(name: str) -> str:
     return "unknown"
 
 
+_RAW_CAD_BIM_SUFFIXES = {".dwg", ".dxf", ".rvt", ".rfa", ".ifc", ".ifczip", ".nwc"}
+
+
 def _external_intake_plan(root: Path, *, dataset_name: str, project_name: str = "") -> dict[str, Any]:
     suffixes = rag_upload_suffixes()
     accepted: list[dict[str, Any]] = []
@@ -2019,7 +2022,7 @@ def _external_intake_plan(root: Path, *, dataset_name: str, project_name: str = 
             skipped.append({"file_name": rel, "reason": "outside_root"})
             continue
         suffix = path.suffix.lower()
-        if suffix not in suffixes:
+        if suffix in _RAW_CAD_BIM_SUFFIXES or suffix not in suffixes:
             skipped.append({"file_name": rel, "reason": "unsupported_suffix", "suffix": suffix, "size_bytes": size})
             continue
 
@@ -2238,7 +2241,7 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         if resolved.name in EXTERNAL_SERVICE_FILENAMES:
             skipped_unsupported += 1
             continue
-        if resolved.suffix.lower() not in suffixes:
+        if resolved.suffix.lower() in _RAW_CAD_BIM_SUFFIXES or resolved.suffix.lower() not in suffixes:
             skipped_unsupported += 1
             continue
         # file_name — путь относительно родителя корня: "<папка>/rel" (читаемо и уникально).
@@ -3361,43 +3364,51 @@ async def _prepare_read_attachment(
     from uuid import uuid4
 
     attach_id = attachment_id or f"read_{uuid4().hex[:12]}"
-    structured = await asyncio.to_thread(
-        _format_tabular_attachment_context,
-        temp_path,
-        original_name,
-        max_chars=_READ_ATTACH_MAX_CHARS,
-    )
-    if structured:
-        text, truncated = structured
-    else:
-        from backend.converter import convert_to_markdown
-
-        try:
-            text = await asyncio.to_thread(convert_to_markdown, temp_path)
-        except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
-            logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
-            raise HTTPException(
-                422,
-                f"Не удалось прочитать файл «{original_name}»: {error}. "
-                "Попробуй режим индексации/OCR или другой формат файла.",
-            ) from error
-        text = (text or "").strip()
-        truncated = len(text) > _READ_ATTACH_MAX_CHARS
-
-    text = (text or "").strip()
     suffix = Path(original_name).suffix.lower()
-    if not text:
-        # PDF/XLSX VOR still needs the original bytes for document LSR intake even
-        # when chat-facing text extraction is empty.
-        if suffix in {".pdf", ".xlsx", ".xlsm"}:
-            text = f"[document attachment preserved for LSR intake: {original_name}]"
-            truncated = False
+
+    # PDF «В чат»: VOR/LSR читают server-owned bytes по attachment_id.
+    # Полный convert_to_markdown на Form-9 PDF блокировал UI на десятки секунд
+    # до появления чипа вложения — не делаем это на пути attach.
+    if suffix == ".pdf":
+        text = f"[document attachment preserved for LSR intake: {original_name}]"
+        truncated = False
+    else:
+        structured = await asyncio.to_thread(
+            _format_tabular_attachment_context,
+            temp_path,
+            original_name,
+            max_chars=_READ_ATTACH_MAX_CHARS,
+        )
+        if structured:
+            text, truncated = structured
         else:
-            raise HTTPException(
-                422,
-                f"Не удалось прочитать текст из «{original_name}». "
-                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
-            )
+            from backend.converter import convert_to_markdown
+
+            try:
+                text = await asyncio.to_thread(convert_to_markdown, temp_path)
+            except Exception as error:  # noqa: BLE001 - upload errors must stay operator-visible
+                logger.warning("[ATTACH] read conversion failed for %s: %s", original_name, error)
+                raise HTTPException(
+                    422,
+                    f"Не удалось прочитать файл «{original_name}»: {error}. "
+                    "Попробуй режим индексации/OCR или другой формат файла.",
+                ) from error
+            text = (text or "").strip()
+            truncated = len(text) > _READ_ATTACH_MAX_CHARS
+
+        text = (text or "").strip()
+        if not text:
+            # XLSX VOR still needs the original bytes for document LSR intake even
+            # when chat-facing text extraction is empty.
+            if suffix in {".xlsx", ".xlsm"}:
+                text = f"[document attachment preserved for LSR intake: {original_name}]"
+                truncated = False
+            else:
+                raise HTTPException(
+                    422,
+                    f"Не удалось прочитать текст из «{original_name}». "
+                    "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+                )
 
     from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
 

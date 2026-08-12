@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Iterable
 
 from proxy.services.bor_service import (
     BorLine,
@@ -20,6 +21,7 @@ from proxy.services.bor_service import (
     collect_spec_rows,
     normalize_unit,
 )
+from proxy.services.estimate_math_service import parse_ru_number
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +30,34 @@ _QTY_FIELDS = ("qty", "work_volume", "work_done", "work_since_start")
 
 # Заголовки секций / нечисловой мусор — не позиции (как в сверке).
 _SECTION_RE = re.compile(r"^\d+\s*[.)]\s")
+# Orphan electrical rating cell split from device name by pdfplumber.
+_RATING_ONLY_RE = re.compile(
+    r"^\d+\s*А\b(?:\s*,?\s*~?\s*\d+\s*В)?(?:\s*,?\s*IP\s*\d+)?\s*$",
+    re.IGNORECASE,
+)
+# Form-9 size/section branches split by pdfplumber (cable cross-section, Ø pipe).
+_SIZE_BRANCH_RE = re.compile(
+    r"^\s*[-–—]\s+.+"
+    r"|^\s*[Ø⌀]\s*\d"
+    r"|^\s*\d+\s*[xх×]\s*\d",
+    re.IGNORECASE,
+)
+_SOFT_CONTINUATION_RE = re.compile(
+    r"^(сечением|не\s+распространя|не\s+выделяющ|с\s+изоляц|с\s+оболоч|"
+    r"полимерн|медн|алюмин|в\s+труб|для\s+)",
+    re.IGNORECASE,
+)
+_CABLE_NAME_TOKENS = ("кабель", "провод", "шнур")
+# Noun forms only — not adjectives (кабельный) and not compounds (водогазопроводная).
+_CABLE_NOUN_RE = re.compile(
+    r"(?<![а-яёa-z0-9])(?:"
+    r"кабел(?:ь|я|ю|ем|е|и|ей|ям|ями|ях)|"
+    r"провод(?:а|у|ом|е|ы|ов|ам|ами|ах)?|"
+    r"шнур(?:а|у|ом|е|ы|ов|ам|ами|ах)?"
+    r")(?![а-яёa-z0-9])",
+    re.IGNORECASE,
+)
+_KM_UNITS = frozenset({"км", "км.", "km", "km."})
 
 # Категория предмета → глагол работы. Порядок ВАЖЕН: конкретные предметы выше «Прокладки»,
 # иначе прилагательное «кабельный» (лоток/наконечник кабельный) ложно цепляет «Прокладку».
@@ -44,9 +74,31 @@ _WORK_RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 _DEFAULT_VERB = "Монтаж"
 
 
+def _normalize_spec_name(name: str) -> str:
+    return f" {(name or '').lower().replace('ё', 'е')} "
+
+
+def _has_cable_noun(name: str) -> bool:
+    """True only for cable/wire/cord as a noun, not «кабельный» / «водогазопроводная»."""
+    return bool(_CABLE_NOUN_RE.search(_normalize_spec_name(name)))
+
+
+def _token_in_name(name: str, token: str) -> bool:
+    """Category token match. Cable nouns use inflection-aware boundaries (ADR-safe)."""
+    tok = (token or "").lower().replace("ё", "е")
+    if not tok:
+        return False
+    if tok in _CABLE_NAME_TOKENS:
+        return _has_cable_noun(name)
+    low = _normalize_spec_name(name)
+    return tok in low
+
+
 def _is_noise_name(name: str) -> bool:
     s = (name or "").strip()
     if len(s) < 3 or _SECTION_RE.match(s):
+        return True
+    if _RATING_ONLY_RE.match(s):
         return True
     return sum(ch.isalpha() for ch in s) < 2
 
@@ -56,18 +108,178 @@ def _row_qty(row: dict) -> float | None:
         val = row.get(key)
         if val is None:
             continue
-        try:
-            return float(val)
-        except (TypeError, ValueError):
-            continue
+        parsed = parse_ru_number(val)
+        if parsed is not None:
+            return parsed
     return None
+
+
+def _join_spec_name(*parts: str) -> str:
+    chunks = [re.sub(r"\s+", " ", str(part or "").strip()) for part in parts]
+    return re.sub(r"\s+", " ", " ".join(chunk for chunk in chunks if chunk)).strip()
+
+
+def _is_size_branch_name(name: str) -> bool:
+    return bool(_SIZE_BRANCH_RE.match(str(name or "").strip()))
+
+
+def _is_soft_continuation_name(name: str, *, pending_name: str) -> bool:
+    text = str(name or "").strip()
+    if not text or not pending_name:
+        return False
+    if text.casefold() in {"сечением:", "сечением"}:
+        return True
+    if _SOFT_CONTINUATION_RE.match(text):
+        return True
+    # pdfplumber often continues a wrapped cell on the next row in lowercase.
+    first = text[0]
+    if first.islower() or first in ",;)]}":
+        return True
+    pending = pending_name.rstrip()
+    if pending.endswith((",", "-", "—", "–", ":")):
+        return True
+    return False
+
+
+def _looks_like_cable_name(name: str) -> bool:
+    return _has_cable_noun(name)
+
+
+def _normalize_cable_length_unit(row: dict) -> None:
+    """Deterministic км→м for cable/wire rows. Never invents qty (ADR-11)."""
+    if not _looks_like_cable_name(str(row.get("name") or "")):
+        return
+    unit = normalize_unit(row.get("unit")).casefold().replace("ё", "е")
+    if unit not in _KM_UNITS:
+        return
+    qty = _row_qty(row)
+    if qty is not None:
+        row["qty"] = float(qty) * 1000.0
+        note = "ед. пересчитаны км→м (×1000) из спецификации"
+    else:
+        note = "в спецификации ед. км; кол-во отсутствует — в ВОР ед. м без выдуманного объёма"
+    row["unit"] = "м"
+    prev = str(row.get("note") or "").strip()
+    row["note"] = f"{prev}; {note}".strip("; ") if prev else note
+
+
+def _coalesce_form9_rows(rows: list[dict]) -> list[dict]:
+    """Join Form-9 wrapped description / size-branch rows without inventing numbers.
+
+    pdfplumber often splits one cable position into:
+    ``Кабель силовой…`` + ``полимерных…`` + ``сечением:`` + ``- 3х1,5 мм2``.
+    Size branches under one description become separate positions that inherit
+    the shared prefix; quantities stay only those present on the branch/prefix.
+    """
+    out: list[dict] = []
+    pending: dict | None = None
+    pending_emitted_sizes = False
+
+    def flush_pending() -> None:
+        nonlocal pending, pending_emitted_sizes
+        if pending is None:
+            return
+        if not pending_emitted_sizes:
+            _normalize_cable_length_unit(pending)
+            out.append(pending)
+        pending = None
+        pending_emitted_sizes = False
+
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        row = dict(raw)
+        name = str(row.get("name") or "").strip()
+        if not name:
+            continue
+        if _is_size_branch_name(name):
+            if pending is None and out:
+                # Orphan size line after a flushed incomplete description.
+                base = str(out[-1].get("name") or "")
+                if _looks_like_cable_name(base) or "сечением" in base.casefold():
+                    pending = dict(out.pop())
+                    pending_emitted_sizes = False
+                    # Strip a previously absorbed size from the shared prefix.
+                    pending["name"] = re.split(
+                        r"\s[-–—]\s+\d", pending["name"], maxsplit=1
+                    )[0].strip()
+            if pending is None:
+                _normalize_cable_length_unit(row)
+                out.append(row)
+                continue
+            merged = dict(pending)
+            merged["name"] = _join_spec_name(str(pending.get("name") or ""), name)
+            if _row_qty(row) is not None:
+                merged["qty"] = row.get("qty")
+            elif pending_emitted_sizes:
+                # Parent qty already consumed by an earlier size branch — do not double-count.
+                merged["qty"] = None
+            if not str(merged.get("unit") or "").strip() and str(row.get("unit") or "").strip():
+                merged["unit"] = row.get("unit")
+            if str(row.get("mark") or "").strip() and not str(merged.get("mark") or "").strip():
+                merged["mark"] = row.get("mark")
+            if str(row.get("code") or "").strip() and not str(merged.get("code") or "").strip():
+                merged["code"] = row.get("code")
+            if str(row.get("pos") or "").strip() and not str(merged.get("pos") or "").strip():
+                merged["pos"] = row.get("pos")
+            _normalize_cable_length_unit(merged)
+            out.append(merged)
+            pending_emitted_sizes = True
+            continue
+
+        if pending is not None and _is_soft_continuation_name(
+            name, pending_name=str(pending.get("name") or "")
+        ):
+            if pending_emitted_sizes:
+                # After size branches, do not treat a new Title-case row as a
+                # continuation just because the shared prefix ends with ":".
+                soft_only = (
+                    name.casefold() in {"сечением:", "сечением"}
+                    or bool(_SOFT_CONTINUATION_RE.match(name))
+                    or name[0].islower()
+                    or name[0] in ",;)]}"
+                )
+                if not soft_only:
+                    flush_pending()
+                    pending = row
+                    if _row_qty(pending) is not None and not _looks_like_cable_name(
+                        str(pending.get("name") or "")
+                    ):
+                        _normalize_cable_length_unit(pending)
+                        out.append(pending)
+                        pending = None
+                        pending_emitted_sizes = False
+                    continue
+            pending["name"] = _join_spec_name(str(pending.get("name") or ""), name)
+            if _row_qty(pending) is None and _row_qty(row) is not None:
+                pending["qty"] = row.get("qty")
+            if not str(pending.get("unit") or "").strip() and str(row.get("unit") or "").strip():
+                pending["unit"] = row.get("unit")
+            continue
+
+        flush_pending()
+        pending = row
+        # Complete equipment/material rows keep flowing immediately.
+        if _row_qty(pending) is not None and not _looks_like_cable_name(
+            str(pending.get("name") or "")
+        ):
+            _normalize_cable_length_unit(pending)
+            out.append(pending)
+            pending = None
+            pending_emitted_sizes = False
+
+    flush_pending()
+    # Re-number synthetic pos only when the source did not provide one.
+    for index, row in enumerate(out, start=1):
+        if not str(row.get("pos") or "").strip():
+            row["pos"] = str(index)
+    return out
 
 
 def work_verb(name: str) -> str:
     """Глагол работы по категории предмета (словарь). Без LLM."""
-    low = f" {(name or '').lower().replace('ё', 'е')} "
     for verb, tokens in _WORK_RULES:
-        if any(tok.replace("ё", "е") in low for tok in tokens):
+        if any(_token_in_name(name, tok) for tok in tokens):
             return verb
     return _DEFAULT_VERB
 
@@ -112,19 +324,22 @@ def spec_rows_to_work_lines(rows: list[dict]) -> list[BorLine]:
 # Категория → перечень работ. Все под-работы наследуют ЕД.+КОЛ-ВО позиции (объём один и тот
 # же — линейный/поштучный), поэтому чисел НЕ выдумываем (ADR-11). Работы по числу концов
 # (маркировка, расключение) в авто-объём не попадают — отмечаем в примечании.
+# Порядок важен: «коробка» раньше «короб», иначе substring «короб» съедает коробки.
+# Кабель/провод/шнур — только существительные (_has_cable_noun), не «кабельный» /
+# «водогазопроводная».
 _DECOMPOSE: tuple[tuple[tuple[str, ...], tuple[str, ...], str], ...] = (
     # (ключевые слова категории, перечень работ, примечание о доп. работах)
     (("кабель", "провод", "шнур"),
      ("Разметка трассы", "Прокладка кабеля"),
      "доп.: маркировка и расключение — по числу концов, добавить отдельно"),
+    (("коробка", "клемм", "наконечник", "крепеж", "крепёж", "дюбель", "хомут", "скоба", "зажим"),
+     ("Установка {предмет}",),
+     ""),
     (("лоток", "короб", "труба", "гофр", "канал"),
      ("Разметка трассы", "Монтаж {предмет}"),
      ""),
     (("стойк", "полка", "подвес", "конструкц", "закладн"),
      ("Монтаж {предмет}",),
-     ""),
-    (("коробка", "клемм", "наконечник", "крепеж", "крепёж", "дюбель", "хомут", "скоба", "зажим"),
-     ("Установка {предмет}",),
      ""),
     (("светильник", "прожектор", "щит", "шкаф", "бокс", "розетк", "выключател", "датчик",
       "извещател", "прибор", "блок", "автомат", "трансформатор", "привод", "двигател",
@@ -136,9 +351,8 @@ _DEFAULT_DECOMPOSE = (("Монтаж {предмет}",), "")
 
 
 def _decompose(name: str) -> tuple[tuple[str, ...], str]:
-    low = f" {(name or '').lower().replace('ё', 'е')} "
     for tokens, works, note in _DECOMPOSE:
-        if any(t.replace("ё", "е") in low for t in tokens):
+        if any(_token_in_name(name, t) for t in tokens):
             return works, note
     return _DEFAULT_DECOMPOSE
 
@@ -179,6 +393,7 @@ def spec_rows_to_work_lines_v2(rows: list[dict]) -> list[WorkLine]:
         pos = str(row.get("pos") or row.get("position") or "").strip()
         src = str(row.get("source_file") or "").strip()
         ref = f"{src}#{pos}" if pos else src
+        row_note = str(row.get("note") or "").strip()
         for tmpl in works:
             work = tmpl.replace("{предмет}", name)
             key = (section.casefold(), _normalize_name(work), unit)
@@ -187,8 +402,12 @@ def spec_rows_to_work_lines_v2(rows: list[dict]) -> list[WorkLine]:
                 note = f"объём = кол-ву по спецификации (поз. {pos})" if pos else "объём = кол-ву по спецификации"
                 if dnote:
                     note += "; " + dnote
+                if row_note:
+                    note += "; " + row_note
                 line = WorkLine(section=section, work=work, unit=unit, chertezh=chertezh, note=note)
                 lines[key] = line
+            elif row_note and row_note not in line.note:
+                line.note = f"{line.note}; {row_note}" if line.note else row_note
             if qty is None:
                 line.qty_missing_rows += 1
             else:
@@ -249,14 +468,27 @@ def _wants_vor(question: str) -> bool:
     )
 
 
+def _asks_for_lsr_or_estimate(question: str) -> bool:
+    """ЛСР/смета — document path; не путать с «ВОР из спецификации»."""
+    q = (question or "").lower().replace("ё", "е")
+    return bool(
+        re.search(r"\bлср\b", q)
+        or re.search(r"\bсмет[ауыеой]*\b", q)
+        or re.search(r"\bстоимост[ьяиюе]*\b", q)
+    )
+
+
 def is_spec_to_bor_query(question: str, *, has_attachment: bool = False) -> bool:
     """Намерение «сделай ВОР из спецификации» / ВОР по tabular-вложению.
 
     Без вложения: нужна явная спецификация/форма + ВОР.
     С tabular read-вложением: достаточно ВОР/ведомости работ (файл уже источник).
+    «Собери ЛСР по приложенной ВОР» — не этот канал: ВОР уже вход, нужен document LSR.
     """
     q = (question or "").lower().replace("ё", "е")
     if not _wants_vor(q):
+        return False
+    if _asks_for_lsr_or_estimate(q):
         return False
     if has_attachment:
         return True
@@ -278,11 +510,13 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "section": ("раздел", "section", "объект", "зона"),
     "code": ("артикул", "код", "code", "шифр"),
     "mark": ("марка", "тип", "mark", "обозначение"),
+    "pos": ("поз.", "поз", "позиция", "№ п/п", "no."),
 }
 
 
 def _normalize_header(value: object) -> str:
     text = str(value or "").strip().lower().replace("ё", "е")
+    text = text.replace("\n", " ")
     text = re.sub(r"\s+", " ", text)
     return text
 
@@ -294,6 +528,9 @@ def _map_headers(cells: list[object]) -> dict[str, int]:
     for idx, header in enumerate(normalized):
         if not header:
             continue
+        # Mass / weight columns are never quantity for VOR volumes.
+        if "масс" in header or header in {"вес", "weight"}:
+            continue
         for field, aliases in _HEADER_ALIASES.items():
             if field in found:
                 continue
@@ -301,6 +538,65 @@ def _map_headers(cells: list[object]) -> dict[str, int]:
                 found[field] = idx
                 break
     return found
+
+
+def _spec_rows_from_matrix(
+    rows_iter: Iterable[object],
+    *,
+    source: str,
+    pos_start: int = 0,
+) -> tuple[list[dict], int]:
+    """Parse name/qty/unit rows from a 2D table matrix. 0 LLM."""
+    header_map: dict[str, int] | None = None
+    out: list[dict] = []
+    pos = pos_start
+    for raw in rows_iter:
+        cells = list(raw or ())
+        if not any(c is not None and str(c).strip() for c in cells):
+            continue
+        if header_map is None:
+            mapped = _map_headers(cells)
+            if "name" in mapped:
+                header_map = mapped
+            continue
+        assert header_map is not None
+        name_idx = header_map["name"]
+        if name_idx >= len(cells):
+            continue
+        name = str(cells[name_idx] or "").replace("\n", " ").strip()
+        name = re.sub(r"\s+", " ", name)
+        if not name or _is_noise_name(name):
+            continue
+
+        def _cell(field: str, _cells=cells, _header=header_map) -> object:
+            idx = _header.get(field)
+            if idx is None or idx >= len(_cells):
+                return None
+            return _cells[idx]
+
+        qty = parse_ru_number(_cell("qty"))
+        code = str(_cell("code") or "").strip()
+        mark = str(_cell("mark") or "").strip()
+        source_pos = str(_cell("pos") or "").strip()
+        pos += 1
+        out.append(
+            {
+                "doc_type": "SPEC",
+                "name": name,
+                "unit": _cell("unit"),
+                "qty": qty,
+                "section": str(_cell("section") or "").strip(),
+                "code": code,
+                "mark": mark or code,
+                # Only Form-9 «Поз.»; blank cells stay empty so coalesce can keep
+                # the parent position and renumber only truly missing ones.
+                "pos": source_pos,
+                "source_file": source,
+                "note": "",
+            }
+        )
+    coalesced = _coalesce_form9_rows(out)
+    return coalesced, pos_start + len(coalesced)
 
 
 def rows_from_spec_xlsx(path: Path | str, *, source_label: str = "") -> list[dict]:
@@ -313,59 +609,51 @@ def rows_from_spec_xlsx(path: Path | str, *, source_label: str = "") -> list[dic
     wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
     try:
         ws = wb.active
-        rows_iter = ws.iter_rows(values_only=True)
-        header_map: dict[str, int] | None = None
-        source = source_label or file_path.name
-        out: list[dict] = []
-        pos = 0
-        for raw in rows_iter:
-            cells = list(raw or ())
-            if not any(c is not None and str(c).strip() for c in cells):
-                continue
-            if header_map is None:
-                mapped = _map_headers(cells)
-                if "name" in mapped:
-                    header_map = mapped
-                continue
-            assert header_map is not None
-            name_idx = header_map["name"]
-            if name_idx >= len(cells):
-                continue
-            name = str(cells[name_idx] or "").strip()
-            if not name or _is_noise_name(name):
-                continue
-            pos += 1
-
-            def _cell(field: str) -> object:
-                idx = header_map.get(field)
-                if idx is None or idx >= len(cells):
-                    return None
-                return cells[idx]
-
-            qty_raw = _cell("qty")
-            qty: float | None
-            try:
-                qty = float(qty_raw) if qty_raw is not None and str(qty_raw).strip() != "" else None
-            except (TypeError, ValueError):
-                qty = None
-            code = str(_cell("code") or "").strip()
-            mark = str(_cell("mark") or "").strip()
-            out.append(
-                {
-                    "doc_type": "SPEC",
-                    "name": name,
-                    "unit": _cell("unit"),
-                    "qty": qty,
-                    "section": str(_cell("section") or "").strip(),
-                    "code": code,
-                    "mark": mark or code,
-                    "pos": str(pos),
-                    "source_file": source,
-                }
-            )
-        return out
+        rows, _ = _spec_rows_from_matrix(
+            ws.iter_rows(values_only=True),
+            source=source_label or file_path.name,
+        )
+        return rows
     finally:
         wb.close()
+
+
+def rows_from_spec_pdf(path: Path | str, *, source_label: str = "") -> list[dict]:
+    """Read materials/spec tables from a PDF via pdfplumber. 0 LLM."""
+    try:
+        import pdfplumber
+    except ImportError as exc:  # pragma: no cover - environment capability
+        raise RuntimeError("pdfplumber is required for PDF spec→ВОР") from exc
+
+    file_path = Path(path)
+    if file_path.suffix.lower() != ".pdf":
+        raise ValueError(f"unsupported attachment type for PDF spec→ВОР: {file_path.suffix}")
+    source = source_label or file_path.name
+    out: list[dict] = []
+    pos = 0
+    with pdfplumber.open(file_path) as pdf:
+        for page in pdf.pages:
+            for table in page.extract_tables() or []:
+                if not table:
+                    continue
+                rows, pos = _spec_rows_from_matrix(table, source=source, pos_start=pos)
+                out.extend(rows)
+    # Tables/pages often split one Form-9 position; matrix coalesce is local —
+    # one more pass joins size-branches that landed in the next table.
+    return _coalesce_form9_rows(out)
+
+
+def rows_from_spec_document(path: Path | str, *, source_label: str = "") -> list[dict]:
+    """Dispatch PDF/XLSX/XLSM into the same spec→VOR row contract."""
+    from proxy.smeta_core.source_intake import TABLE_DOCUMENT_SUFFIXES
+
+    file_path = Path(path)
+    suffix = file_path.suffix.lower()
+    if suffix not in TABLE_DOCUMENT_SUFFIXES:
+        raise ValueError(f"unsupported attachment type for spec→ВОР: {suffix or 'none'}")
+    if suffix == ".pdf":
+        return rows_from_spec_pdf(file_path, source_label=source_label)
+    return rows_from_spec_xlsx(file_path, source_label=source_label)
 
 
 def generate_spec_bor_from_rows(

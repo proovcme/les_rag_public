@@ -333,6 +333,7 @@ def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned(
     assert '$env:RERANKER_ENABLED = "true"' in text
     assert '$env:RERANKER_BACKEND = "sentence_transformers"' in text
     assert '$env:RERANK_MODEL' in text
+    assert "config\\local\\secrets.env" in text
 
 
 def test_windows_production_defaults_to_ollama_and_reads_persisted_choice():
@@ -449,6 +450,10 @@ def test_desktop_les_start_bootstraps_native_qdrant_and_fixed_ports():
     assert "tools\\bin\\qdrant.exe" in start
     assert "config\\qdrant.local.yaml" in start
     assert "config\\local\\windows-cuda.env" in start
+    assert "config\\local\\secrets.env" in start
+    gitignore = (root / ".gitignore").read_text(encoding="utf-8")
+    assert "config/local/secrets.env" in gitignore
+    assert "LES_ETM_PASSWORD=" not in cuda_env
     assert '"-ProxyPort", "8050"' in start
     assert '"-UiPort", "8051"' in start
     assert "/api/version" in start
@@ -456,6 +461,7 @@ def test_desktop_les_start_bootstraps_native_qdrant_and_fixed_ports():
     assert "Do NOT capture start-light stdout/stderr" in start
     assert "2>&1" not in start
     assert "RERANK_DEVICE" in start
+    assert "cuda_available" in start
     assert '-WindowStyle Hidden' in start or "-WindowStyle Hidden" in start
     assert "stop-light.ps1" in stop
     assert 'Get-Process -Name "qdrant"' in stop
@@ -464,3 +470,5 @@ def test_desktop_les_start_bootstraps_native_qdrant_and_fixed_ports():
     assert "storage_path: ./data/qdrant" in qdrant_cfg
     assert "http_port: 6333" in qdrant_cfg
     assert "RERANK_DEVICE=cuda" in cuda_env
+    assert "LES_SMETA_DOCUMENT_TEMPERATURE=0.0" in cuda_env
+    assert "LES_SMETA_DOCUMENT_TOP_P=1.0" in cuda_env

@@ -182,6 +182,83 @@ def test_existing_otdel_prefixes_resume(tmp_path: Path):
     assert _existing_otdel_prefixes(tmp_path / "nope.parquet") == set()
 
 
+def test_raw_cache_looks_complete_uses_prefix_floor(tmp_path: Path):
+    import pandas as pd
+
+    from tools.gesn_import import RESOURCE_FIELDS
+    from tools import gesn_bulk_import as bulk
+
+    rows = []
+    for idx in range(5):
+        rows.append(
+            {
+                **{f: None for f in RESOURCE_FIELDS},
+                "norm_code": f"12-0{idx+1}-001-01",
+                "kind": "labor",
+                "per_unit": 1.0,
+            }
+        )
+    path = tmp_path / "raw.parquet"
+    pd.DataFrame(rows, columns=list(RESOURCE_FIELDS)).to_parquet(path, index=False)
+    assert bulk.raw_cache_looks_complete(path, floor=5) is True
+    assert bulk.raw_cache_looks_complete(path, floor=6) is False
+
+
+def test_bulk_import_skips_cached_empty_otdels_without_fetch(monkeypatch, tmp_path: Path):
+    from tools import gesn_bulk_import as bulk
+
+    out = tmp_path / "raw.parquet"
+    bulk._save_empty_otdel_prefixes(out, {"01-02"})
+    calls: list[str] = []
+
+    monkeypatch.setattr(bulk, "_otdel_codes", lambda *_a, **_k: ["01-01", "01-02", "01-03"])
+    monkeypatch.setattr(bulk, "_existing_otdel_prefixes", lambda _path: {"01-01"})
+    monkeypatch.setattr(
+        bulk,
+        "_fetch_with_retry",
+        lambda prefix: calls.append(prefix) or [],
+    )
+
+    stats = bulk.run(sborniki=[1], out_path=out, rate=0, resume=True, flush_every=10)
+    assert stats["otdels_skipped"] == 1
+    assert stats["otdels_empty"] >= 1
+    assert "01-02" not in calls
+    assert "01-03" in calls
+
+
+def test_gesn_update_skips_network_when_raw_cache_complete(tmp_path: Path, monkeypatch):
+    from tools import gesn_update_from_fgis as updater
+
+    calls: list[str] = []
+    monkeypatch.setattr(updater.gesn_bulk_import, "raw_cache_looks_complete", lambda *_a, **_k: True)
+    monkeypatch.setattr(updater.gesn_bulk_import, "_existing_otdel_prefixes", lambda *_a, **_k: {"01-01", "12-03"})
+    monkeypatch.setattr(
+        updater.gesn_bulk_import,
+        "run",
+        lambda **_: calls.append("download") or (_ for _ in ()).throw(AssertionError("must skip download")),
+    )
+    monkeypatch.setattr(updater, "build_unified", lambda **_: {"norm_keys": 2})
+    monkeypatch.setattr(updater, "build_structured_base", lambda **_: {"norms": 2})
+    monkeypatch.setattr(updater.build_smeta_service_rag, "build", lambda *_a, **_k: {"ok": True})
+    monkeypatch.setattr(
+        "proxy.smeta_core.base_registry.active_base",
+        lambda: {"minimum_norms": 1},
+    )
+
+    result = updater.run_update(
+        raw_out=tmp_path / "raw.parquet",
+        unified_out=tmp_path / "unified.parquet",
+        audit_out=tmp_path / "audit.json",
+        structured_out=tmp_path / "base.sqlite",
+        structured_manifest_out=tmp_path / "manifest.json",
+        service_rag_out=tmp_path / "rag",
+        status_out=tmp_path / "status.json",
+    )
+    assert calls == []
+    assert result["download"]["resumed_complete"] is True
+    assert result["download"]["otdels_skipped"] == 2
+
+
 def test_bulk_import_flushes_departments_in_batches(monkeypatch, tmp_path: Path):
     records = [{"normTableJson": json.dumps([{"number": "01-01-001-01"}])}]
     rows = [{"norm_code": "ГЭСН01-01-001-01", "kind": "labor", "per_unit": 1.0}]

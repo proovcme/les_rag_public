@@ -78,6 +78,25 @@ class EtmPriceLookupBatch(BaseModel):
     )
 
 
+class EtmGoodsBrowse(BaseModel):
+    query: str = Field(min_length=1, max_length=120)
+    code_type: str = Field(default="etm", pattern="^(cli|etm|mnf)$")
+    manufacturer_code: Optional[str] = Field(default=None, max_length=120)
+    limit: int = Field(default=20, ge=1, le=50)
+
+
+class EtmKacMapRequest(BaseModel):
+    items: list[EtmPriceItem] = Field(min_length=1, max_length=500)
+    resource_codes: dict[str, str] = Field(default_factory=dict)
+    code_type: str = Field(default="etm", pattern="^(cli|etm|mnf)$")
+    manufacturer_code: Optional[str] = Field(default=None, max_length=120)
+    price_field: str = Field(
+        default="pricewnds",
+        pattern="^(price|pricewnds|price_tarif|price_retail)$",
+    )
+    existing: dict[str, float] = Field(default_factory=dict)
+
+
 @router.get("/books")
 async def prices_books(_user=Depends(require_user)):
     """Список доступных ценовых баз (книг)."""
@@ -165,6 +184,52 @@ async def prices_etm_lookup_batch(
             code_type=req.code_type,
             manufacturer_code=req.manufacturer_code,
             price_field=req.price_field,
+        )
+    except etm.EtmNotConfiguredError as error:
+        raise HTTPException(503, str(error)) from error
+    except etm.EtmPriceError as error:
+        raise HTTPException(502, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@router.post("/etm/browse")
+async def prices_etm_browse(req: EtmGoodsBrowse, _user=Depends(require_user)):
+    """Goods v2 candidates only; model/user must select a code before price lookup."""
+    try:
+        return await asyncio.to_thread(
+            etm.get_client().browse_goods,
+            req.query,
+            code_type=req.code_type,
+            manufacturer_code=req.manufacturer_code,
+            limit=req.limit,
+        )
+    except etm.EtmNotConfiguredError as error:
+        raise HTTPException(503, str(error)) from error
+    except etm.EtmPriceError as error:
+        raise HTTPException(502, str(error)) from error
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@router.post("/etm/kac-map")
+async def prices_etm_kac_map(req: EtmKacMapRequest, _user=Depends(require_user)):
+    """ETM quotes → net kac_map keys (material name + resource/product code)."""
+    payload_items = []
+    for item in req.items:
+        row = item.model_dump()
+        resource_code = str(req.resource_codes.get(item.code) or "").strip()
+        if resource_code:
+            row["resource_code"] = resource_code
+        payload_items.append(row)
+    try:
+        return await asyncio.to_thread(
+            etm.fetch_kac_map_for_materials,
+            payload_items,
+            code_type=req.code_type,
+            manufacturer_code=req.manufacturer_code,
+            price_field=req.price_field,
+            existing=req.existing,
         )
     except etm.EtmNotConfiguredError as error:
         raise HTTPException(503, str(error)) from error
