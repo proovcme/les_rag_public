@@ -9,6 +9,19 @@ scripts/smoke_unified_v08.py` (фикстура) или `--dataset-id <ds>` (р�
 `query_route.version=unified_construction_harness_v0_8` + `unified_trace` + `evidence_summary`.
 Выключить: убрать env-переменную. Runtime (`/Users/ovc/LES/.env`) НЕ трогался — флаг ставит оператор.
 
+## Operational incident 2026-08-12: PR CI depended on a deleted baseline release
+
+Public PR #10 was mergeable, but both hosted platform jobs stopped before tests because
+`.github/workflows/verify.yml` downloaded the fixed tag `ci-smeta-baseline-20260728`, which
+no longer existed. The failure did not originate in the PR code. The hosted PR gate now
+uses hermetic baseline contract tests and no longer provisions a production-sized runtime
+root. Creation, full verification and packaging of the real normative payload remain in
+the production release orchestrator.
+
+**Rule:** ephemeral or manually rotated release assets cannot be prerequisites for the
+general PR gate. Full operator-owned data belongs to release acceptance; PR CI verifies
+its code contract with fixtures.
+
 ## Operational incident 2026-07-15: Gemma returned prose instead of the required smeta tool call
 
 На реальной ВОР из 19 строк обычная модель чата `gemma4:12b` неявно стала моделью document workflow

@@ -369,6 +369,8 @@ def test_platform_workflows_cover_mac_windows_builds_and_atomic_release():
     assert "windows-2022" in verify
     assert "platform_release_gate.py test" in verify
     assert "platform_release_gate.py build" in verify
+    assert "ci-smeta-baseline" not in verify
+    assert "smeta_release_baseline provision" not in verify
     assert "environment: production" in release
     assert "LES_RELEASE_TOKEN" in release
     assert "tools/multiplatform_release.py" in release

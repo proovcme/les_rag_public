@@ -7,6 +7,32 @@
 ## Текущее состояние (2026-08-12)
 
 ```
+версия продукта (SemVer):  0.27.85
+номер сборки:              602
+версия Tauri/NSIS:         5.1.602
+ветка выпуска:             codex/public-ci-baseline-fix
+dev implementation:       PR CI independent from boxed smeta baseline asset
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.23
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.27.35
+следующий выпуск:          LES-Setup.exe 0.27.85
+рантайм /api/version:      после redeploy/restart
+```
+
+> 0.27.85 / build 602 — PR CI не зависит от удаляемого baseline release
+>
+> Дата: 2026-08-12
+> Статус: CI-only patch поверх v0.27.84; runtime и данные не менялись.
+>
+> **Что вошло:** hosted macOS/Windows PR gate больше не скачивает исторический
+> `ci-smeta-baseline-20260728` и не проверяет runtime root. Контракт архива остаётся
+> покрыт hermetic `tests/test_smeta_release_baseline.py`; реальный полный payload
+> создаётся и проверяется только production release-оркестратором до упаковки.
+>
+> **Гейт:** workflow contract tests + `make verify` + `make test`.
+
+## Предыдущее состояние (2026-08-12)
+
+```
 версия продукта (SemVer):  0.27.84
 номер сборки:              601
 версия Tauri/NSIS:         5.1.601
