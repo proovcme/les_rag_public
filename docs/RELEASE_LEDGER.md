@@ -28,6 +28,9 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > покрыт hermetic `tests/test_smeta_release_baseline.py`; реальный полный payload
 > создаётся и проверяется только production release-оркестратором до упаковки.
 >
+> Windows `LES-STOP.ps1` также снова делегирует остановку canonical `stop-light.ps1` и не
+> завершает процессы напрямую по имени или совпавшему порту.
+>
 > **Гейт:** workflow contract tests + `make verify` + `make test`.
 
 ## Предыдущее состояние (2026-08-12)

@@ -464,7 +464,8 @@ def test_desktop_les_start_bootstraps_native_qdrant_and_fixed_ports():
     assert "cuda_available" in start
     assert '-WindowStyle Hidden' in start or "-WindowStyle Hidden" in start
     assert "stop-light.ps1" in stop
-    assert 'Get-Process -Name "qdrant"' in stop
+    assert 'Get-Process -Name "qdrant"' not in stop
+    assert "Stop-Process" not in stop
     assert "Stop-Port 8050" not in stop  # ownership-aware; no blind port kill
     assert "LES-START.ps1" in bat
     assert "storage_path: ./data/qdrant" in qdrant_cfg
