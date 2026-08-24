@@ -582,6 +582,27 @@ def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_p
     assert result["retrieval_trace"]["rerank_status"] == "disabled_by_caller"
 
 
+def test_reranker_exception_returns_fallback_input_order(monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
+
+    class BoomReranker:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def rerank(self, *_args, **_kwargs):
+            raise RuntimeError("sentence-transformers missing")
+
+    monkeypatch.setattr(norm_browser, "select_reranker_cls", lambda: BoomReranker)
+
+    ranked, used, status = norm_browser._rerank_cards("query", cards, limit=4)
+
+    assert used is False
+    assert status == "fallback_input_order"
+    assert [item["norm_code"] for item in ranked] == ["N-0", "N-1", "N-2", "N-3"]
+
+
 def test_reranker_partial_response_is_filled_from_fused_order(monkeypatch):
     from proxy.smeta_core import norm_browser
 
@@ -638,7 +659,7 @@ def test_reranker_is_fused_with_original_rrf_instead_of_erasing_it(monkeypatch):
     assert {item["norm_code"] for item in ranked[:3]} & {"GOOD-1", "GOOD-2"}
 
 
-def test_reranker_failure_is_visible_and_preserves_raw_order(monkeypatch):
+def test_reranker_timeout_falls_back_and_preserves_raw_order(monkeypatch):
     from proxy.smeta_core import norm_browser
 
     cards = [{"norm_code": f"N-{i}", "title": str(i)} for i in range(6)]
@@ -655,7 +676,7 @@ def test_reranker_failure_is_visible_and_preserves_raw_order(monkeypatch):
     ranked, used, status = norm_browser._rerank_cards("query", cards, limit=4)
 
     assert used is False
-    assert status == "error:TimeoutError"
+    assert status == "fallback_input_order"
     assert ranked == cards[:4]
 
 

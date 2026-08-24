@@ -76,6 +76,7 @@ def classify_document(probe: DocumentProbe) -> DocumentRoute:
     content_type = _classify_content_type(probe)
     complexity = _classify_complexity(probe, content_type)
     pipeline = _select_pipeline(probe, content_type, complexity)
+    doc_passport = _extract_document_passport_probe(probe, doc_type)
     dataset_name = f"{domain}_Index"
     return DocumentRoute(
         domain=domain,
@@ -97,8 +98,55 @@ def classify_document(probe: DocumentProbe) -> DocumentRoute:
             "sheet_count": probe.sheet_count,
             "row_count_hint": probe.row_count_hint,
             "column_count_hint": probe.column_count_hint,
+            "doc_passport": doc_passport,
         },
     )
+
+
+def _extract_document_passport_probe(probe: DocumentProbe, doc_type: str) -> dict[str, Any]:
+    text = probe.text_sample or ""
+    name = probe.path.name
+
+    doc_number = ""
+    num_match = re.search(r"(?:№|№\s*|номер\s+|договор\s+№\s*|акта?\s+№\s*)([A-Za-z0-9а-яА-Я/\-\.]{1,30})", text, re.IGNORECASE)
+    if not num_match:
+        num_match = re.search(r"(?:№|№\s*|номер\s+|договор\s+№\s*|акта?\s+№\s*)([A-Za-z0-9а-яА-Я/\-\.]{1,30})", name, re.IGNORECASE)
+    if num_match:
+        doc_number = num_match.group(1).strip(".,")
+
+    doc_date = ""
+    date_match = re.search(r"\b(\d{1,2}\.\d{1,2}\.\d{4}|\d{1,2}\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)\s+\d{4})\b", text, re.IGNORECASE)
+    if not date_match:
+        date_match = re.search(r"\b(\d{1,2}\.\d{1,2}\.\d{4})\b", name)
+    if date_match:
+        doc_date = date_match.group(1)
+
+    parties = []
+    text_lower = text.lower()
+    for role_name, key in [
+        ("Заказчик", "заказчик"),
+        ("Подрядчик", "подрядчик"),
+        ("Исполнитель", "исполнитель"),
+        ("Поставщик", "поставщик"),
+        ("Покупатель", "покупатель"),
+        ("Арендодатель", "арендодатель"),
+        ("Арендатор", "арендатор"),
+    ]:
+        if key in text_lower:
+            parties.append(role_name)
+
+    amount_summary = ""
+    amount_match = re.search(r"\b(\d{1,3}(?:[\s\xa0]\d{3})*(?:[,\.]\d{2})?\s*(?:руб|рублей|рубля|руб\.|eur|usd))\b", text, re.IGNORECASE)
+    if amount_match:
+        amount_summary = amount_match.group(1)
+
+    return {
+        "doc_title": name,
+        "doc_number": doc_number,
+        "doc_date": doc_date,
+        "contracting_parties": parties,
+        "amount_summary": amount_summary,
+    }
 
 
 def _probe_pdf(path: Path, size_bytes: int) -> DocumentProbe:
@@ -287,9 +335,124 @@ def _classify_doc_type(probe: DocumentProbe) -> str:
         return "SMETA"
     if not _has_project_design_signal(text) and any(token in text for token in ("гост", "сп ", "снип", "санпин", "норматив", "постановление")):
         return "NORMATIVE"
+    if _has_addendum_signal(text, name):
+        return "ADDENDUM"
+    if _has_invoice_bill_signal(text, name):
+        return "INVOICE_BILL"
+    if _has_general_act_signal(text, name):
+        return "ACT_GENERAL"
+    if _has_contract_signal(text, name):
+        return "CONTRACT"
+    if _has_tz_tor_signal(text, name):
+        return "TZ_TOR"
+    if _has_letter_signal(text, name):
+        return "LETTER"
+    if _has_passport_cert_signal(text, name):
+        return "PASSPORT_CERT"
+    if _has_drawing_signal(text, name):
+        return "DRAWING"
     if probe.suffix in TABLE_SUFFIXES:
         return "TABLE"
     return "DOCUMENT"
+
+
+def _has_addendum_signal(text: str, name: str) -> bool:
+    if any(token in name for token in ("допсоглашение", "доп_соглашение", "доп.соглашение", "доп соглашение", "дополнительное соглашение")):
+        return True
+    if any(token in text for token in ("дополнительное соглашение", "доп. соглашение", "доп соглашение", "допсоглашение")):
+        return True
+    if "приложение к договору" in text or "приложение №" in text or "приложение к контракту" in text:
+        return True
+    return False
+
+
+def _has_invoice_bill_signal(text: str, name: str) -> bool:
+    if any(token in name for token in ("счет-фактура", "счет_фактура", "счет на оплату", "счет_на_оплату", "упд", "счет №", "счет_№")):
+        return True
+    if any(token in text for token in ("счет на оплату", "счёт на оплату", "счет-фактура", "счёт-фактура", "универсальный передаточный документ")):
+        return True
+    if re.search(r"\bупд\b", text) or re.search(r"\bупд\b", name):
+        return True
+    return False
+
+
+def _has_general_act_signal(text: str, name: str) -> bool:
+    if any(token in text for token in (
+        "акт выполненных работ", "акт выполненных услуг", "акт приёма-передачи", "акт приема-передачи",
+        "акт сдачи-приемки", "акт сдачи-приёмки", "акт оказанных услуг", "акт оказания услуг",
+        "акт сверки", "акт приемки-передачи", "акт приёмки-передачи", "акт передачи"
+    )):
+        return True
+    if any(token in name for token in ("акт_выполненных", "акт_приема", "акт_приёмка", "акт_сверки", "акт_приема_передачи")):
+        return True
+    if re.search(r"(^|[^а-яa-z])акт\s*(№|\d|выполненных|оказанных|приема|приёмки|сверки)", name):
+        return True
+    return False
+
+
+def _has_contract_signal(text: str, name: str) -> bool:
+    strong_name = any(token in name for token in ("договор", "контракт", "agreement", "contract"))
+    if strong_name:
+        return True
+    strong_text = (
+        "договор подряда" in text
+        or "договор поставки" in text
+        or "договор аренды" in text
+        or "договор возмездного оказания" in text
+        or "договор купли-продажи" in text
+        or "муниципальный контракт" in text
+        or "государственный контракт" in text
+        or "договор генерального подряда" in text
+    )
+    if strong_text:
+        return True
+    contract_anchors = (
+        "предмет договора",
+        "настоящий договор",
+        "настоящий контракт",
+        "права и обязанности сторон",
+        "адреса и реквизиты сторон",
+        "адреса, реквизиты и подписи сторон",
+    )
+    if any(token in text for token in contract_anchors):
+        return True
+    return False
+
+
+def _has_tz_tor_signal(text: str, name: str) -> bool:
+    if any(token in name for token in ("техзадание", "тех_задание", "тех.задание", "техническое_задание", "техническое задание")):
+        return True
+    if re.search(r"(^|[^а-яa-z])тз\s*(№|\d|_|\.|\b)", name):
+        return True
+    if any(token in text for token in ("техническое задание", "задание на проектирование", "задание на закупку", "задание на выполнение работ", "технические требования")):
+        return True
+    return False
+
+
+def _has_letter_signal(text: str, name: str) -> bool:
+    if any(token in name for token in ("письмо", "протокол", "уведомление", "обращение", "исх_", "вх_")):
+        return True
+    if any(token in text for token in ("исходящее письмо", "входящее письмо", "официальное письмо", "протокол совещания", "протокол рассмотрения", "уведомление №", "исх. №")):
+        return True
+    return False
+
+
+def _has_passport_cert_signal(text: str, name: str) -> bool:
+    if any(token in name for token in ("паспорт", "сертификат", "формуляр", "руководство_эксплуатации")):
+        return True
+    if any(token in text for token in ("паспорт изделия", "паспорт оборудования", "паспорт качества", "сертификат соответствия", "сертификат качества", "руководство по эксплуатации", "инструкция по эксплуатации", "паспорт объекта")):
+        return True
+    return False
+
+
+def _has_drawing_signal(text: str, name: str) -> bool:
+    if probe_suffix_drawing := name.endswith((".dwg", ".dxf", ".dwf")):
+        return True
+    if any(token in name for token in ("чертеж", "чертёж", "схема", "план_этажа", "генплан")):
+        return True
+    if any(token in text for token in ("сборочный чертеж", "сборочный чертёж", "однолинейная схема", "план этажа", "схема подсоединения", "рабочие чертежи")):
+        return True
+    return False
 
 
 def _has_explicit_smeta_signal(probe: DocumentProbe, text: str, name: str) -> bool:
@@ -390,7 +553,9 @@ def _classify_domain(probe: DocumentProbe, doc_type: str) -> str:
     if "87" in name and "постановлен" in name:
         return "GKRF"
 
-    if doc_type in {"KS2", "AOSR", "SMETA", "SPEC", "TABLE"}:
+    if doc_type in {"KS2", "AOSR", "SMETA", "SPEC", "TABLE"} or (
+        doc_type in {"CONTRACT", "ACT_GENERAL", "ADDENDUM", "INVOICE_BILL", "TZ_TOR", "LETTER", "PASSPORT_CERT", "DRAWING"} and probe.suffix in TABLE_SUFFIXES
+    ):
         return f"TABLE_{doc_type}"
 
     if _is_industrial_chimney_norm(text, name):

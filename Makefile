@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
+.PHONY: version-sync verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
 
 PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
@@ -8,11 +8,12 @@ AUDIT_RAG_UPDATE_ARGS ?=
 MAC_UPDATE_BRANCH ?= codex/audit-rag
 WINDOWS_UPDATE_ARGS ?=
 WINDOWS_SHELL_ARGS ?=
+DEPLOY_FORCE_FILES ?=
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
 FOCUS_TESTS ?= tests/test_rim_agent_turn.py tests/test_rim_next_step_service.py tests/test_rim_session.py tests/test_rim_scenarios.py tests/test_rim_api.py tests/test_rag_hierarchy.py tests/test_rag_config.py tests/test_rag_rrf_readiness.py tests/test_smeta_application_boundary.py tests/test_runtime_router.py tests/test_sovushka_uikit.py tests/test_sovushka_chat.py tests/test_web_search_service.py tests/test_mail_router.py tests/test_outlook_mail_poller.py
-RAG_CORE_TESTS ?= tests/test_datasets_router.py tests/test_rag_config.py tests/test_qdrant_adapter_parse.py tests/test_build_rag_contract_sibling.py tests/test_system_dataset_service.py tests/test_retrieval_quality_service.py tests/test_retrieval_service.py tests/test_saferag_service.py tests/test_source_excerpts.py tests/test_evidence_packet_service.py tests/test_rag_golden_set.py tests/test_rag_index_contract_audit.py tests/test_notebook_study_service.py
+RAG_CORE_TESTS ?= tests/test_datasets_router.py tests/test_rag_config.py tests/test_qdrant_adapter_parse.py tests/test_build_rag_contract_sibling.py tests/test_rag_generation_supervisor.py tests/test_rag_rrf_readiness.py tests/test_system_dataset_service.py tests/test_retrieval_quality_service.py tests/test_retrieval_service.py tests/test_saferag_service.py tests/test_source_excerpts.py tests/test_evidence_packet_service.py tests/test_rag_golden_set.py tests/test_rag_index_contract_audit.py tests/test_notebook_study_service.py tests/test_runtime_config_registry_service.py tests/test_rag_advanced_policy_service.py tests/test_rag_advanced_preflight_service.py tests/test_rag_pipeline_status_service.py tests/test_colbert_late_interaction.py tests/test_colbert_generation_service.py tests/test_raptor_tree.py tests/test_raptor_publication_worker.py tests/test_raptor_qdrant_store.py tests/test_raptor_summarizer.py tests/test_raptor_publication_service.py tests/test_raptor_retrieval.py tests/test_parse_resume.py tests/test_basic_function_smoke.py tests/test_rag_advanced_synthetic_benchmark.py
 RELEASE_CRITICAL_TESTS ?= tests/test_fgis_full_update.py tests/test_smeta_release_baseline.py tests/test_qdrant_collection_layout.py tests/test_datasets_router.py tests/test_rag_config.py tests/test_document_explorer_service.py tests/test_process_status.py
 UNIT_TESTS ?= tests/test_answer_contract_service.py tests/test_candidate_selection_service.py tests/test_evidence_contract.py tests/test_numeric_provenance.py tests/test_publication_check.py tests/test_query_router.py tests/test_smeta_resource_normalizer.py
 MEMORY_TESTS ?= tests/test_memory_core.py tests/test_memory_api.py tests/test_memory_ui_contract.py tests/test_smeta_memory_isolation.py
@@ -53,15 +54,16 @@ help:
 	@echo "make smeta-base-source — пересобрать raw/cache → unified parquet → smeta-base без скачивания"
 	@echo "make smeta-base-update — скачать/обновить ГЭСН из ФГИС и прогнать полный smeta-base pipeline; args: SMETA_BASE_UPDATE_ARGS='--all --rate 1.0'"
 	@echo "make smoke-active-artifacts — проверить фактическую active smeta-base/FSEM, SHA и provenance"
-	@echo "make smoke-smeta-rerank — живой A/B smoke Qdrant→reranker; ошибка/обход reranker блокирует ship"
+	@echo "make smoke-general-native-rrf — живой release smoke общего dense+sparse→native RRF без reranker/LLM"
+	@echo "make smoke-smeta-rerank — отдельный opt-in A/B smoke Qdrant→reranker для сметной диагностики"
 	@echo "make smoke-basic  — L1 HTTP-smoke базовых функций против живого runtime (:8050/:8051)"
 	@echo "make smoke-basic-release — тот же L1 smoke, но P1 блокирует выкат"
 	@echo "make public-check — guardrail перед публичным git: tracked data/secrets/license/docs"
-	@echo "make ship-check   — быстрый гейт без деплоя: verify → test-focused → smoke-basic"
-	@echo "make ship-full-check — полный гейт без деплоя: verify → test → smoke-basic"
-	@echo "make deploy-runtime — dev→runtime cp-деплой + restart + deploy stamp"
-	@echo "make ship         — быстрый выкат: ship-check → deploy-runtime → post-deploy-smoke"
-	@echo "make ship-full    — полный выкат версии: ship-full-check → deploy-runtime → post-deploy-smoke"
+	@echo "make ship-check   — быстрый pre-deploy гейт: verify → test-focused → test-rag-core → active artifacts"
+	@echo "make ship-full-check — полный pre-deploy гейт: verify → test → active artifacts"
+	@echo "make deploy-runtime — dev→runtime cp-деплой + restart + stamp; только проверенные divergent-файлы через DEPLOY_FORCE_FILES='path ...'"
+	@echo "make ship         — быстрый выкат: ship-check → deploy-runtime → native-RRF smoke → post-deploy-smoke"
+	@echo "make ship-full    — полный выкат версии: ship-full-check → deploy-runtime → native-RRF smoke → post-deploy-smoke"
 	@echo "make patch-release — Windows: gates → Legion build/install/RRF-smoke → artifacts; публикация только PATCH_RELEASE_ARGS='--publish --notes-file ...'"
 	@echo "make release-multiplatform — macOS app/DMG + Legion Windows gates/build + одна атомарная GitHub release"
 	@echo "make prepare-mac-update — собрать малый пакет изменённых runtime-файлов из чистого pushed commit"
@@ -150,6 +152,9 @@ smeta-base-update:
 smoke-active-artifacts:
 	uv run python -m tools.smeta_release_baseline verify-root --root .
 
+smoke-general-native-rrf:
+	uv run python tools/rag_golden_set.py --cases golden/general_native_rrf_release_smoke.json --require-native-rrf
+
 smoke-smeta-rerank:
 	uv run python -m tools.smeta_rerank_ab_probe --require-ok --require-hybrid --require-quality \
 		--query "монтаж блока аварийного питания светильника" \
@@ -169,16 +174,19 @@ public-check:
 	uv run python tools/publication_check.py
 
 # Быстрый prod-гейт без деплоя: для малых итераций внутри версии.
-ship-check: verify test-focused test-rag-core smoke-active-artifacts smoke-smeta-rerank smoke-basic-release
+ship-check: verify test-focused test-rag-core smoke-active-artifacts
 	@echo ""
-	@echo "== ship-check ЗЕЛЁНЫЙ: verify → test-focused → test-rag-core → active artifacts → smoke-basic."
+	@echo "== ship-check ЗЕЛЁНЫЙ: verify → test-focused → test-rag-core → active artifacts."
 
 # Полный prod-гейт без деплоя: запускать на границе версии/релиза и перед большими изменениями.
-ship-full-check: verify test smoke-active-artifacts smoke-smeta-rerank smoke-basic-release
+ship-full-check: verify test smoke-active-artifacts
 	@echo ""
-	@echo "== ship-full-check ЗЕЛЁНЫЙ: verify → test → active artifacts → smoke-basic."
+	@echo "== ship-full-check ЗЕЛЁНЫЙ: verify → test → active artifacts."
 
 deploy-runtime:
+ifneq ($(strip $(DEPLOY_FORCE_FILES)),)
+	uv run python -m tools.deploy_to_runtime --apply --force --files $(DEPLOY_FORCE_FILES)
+endif
 	uv run python -m tools.deploy_to_runtime --apply --restart
 
 post-deploy-smoke:
@@ -195,13 +203,27 @@ post-deploy-smoke:
 	echo "post-deploy smoke не поднялся после $(POST_DEPLOY_RETRIES) попыток"; \
 	exit 1
 
+post-deploy-rag-smoke:
+	@set -e; \
+	for i in $$(seq 1 $(POST_DEPLOY_RETRIES)); do \
+		if uv run python tools/rag_golden_set.py --cases golden/general_native_rrf_release_smoke.json --require-native-rrf; then \
+			echo ""; \
+			echo "== post-deploy native-RRF smoke ЗЕЛЁНЫЙ."; \
+			exit 0; \
+		fi; \
+		echo "post-deploy native-RRF smoke attempt $$i/$(POST_DEPLOY_RETRIES) failed; waiting $(POST_DEPLOY_DELAY)s..."; \
+		sleep $(POST_DEPLOY_DELAY); \
+	done; \
+	echo "post-deploy native-RRF smoke failed after $(POST_DEPLOY_RETRIES) attempts"; \
+	exit 1
+
 # Быстрый выкат: версия/леджер должны быть обновлены в этом же изменении ДО запуска.
-ship: ship-check deploy-runtime post-deploy-smoke
+ship: ship-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke
 	@echo ""
 	@echo "== ship ЗЕЛЁНЫЙ: код проверен, runtime обновлён, post-deploy smoke прошёл."
 
 # Полный выкат версии: длинную сюиту гоняем на границе версии, а не на каждой мелкой UI-итерации.
-ship-full: ship-full-check deploy-runtime post-deploy-smoke
+ship-full: ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke
 	@echo ""
 	@echo "== ship-full ЗЕЛЁНЫЙ: полный gate, runtime обновлён, post-deploy smoke прошёл."
 

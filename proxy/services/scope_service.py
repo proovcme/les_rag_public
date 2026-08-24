@@ -13,6 +13,8 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Optional
 
+from proxy.services.system_dataset_service import system_dataset_spec
+
 _VALID_TYPES = ("all", "project", "projects", "dataset", "datasets", "mixed")
 
 # роли датасета в проекте (для отображения; не влияют на ретрив)
@@ -224,10 +226,13 @@ def scope_options(datasets: list[dict], projects: list[dict],
             if dataset_scope.casefold() == "system"
             else d.get("source_type") or d.get("origin") or "unknown"
         )
+        registered_spec = system_dataset_spec(name)
         rec = {
             "id": did, "name": name,
+            "display_name": registered_spec.display_name if registered_spec else name,
             "source_type": source_type,
             "file_count": d.get("file_count", d.get("files", d.get("document_count", 0))),
+            "chunk_count": d.get("chunk_count", d.get("chunks", 0)),
             "sidecar_status": d.get("sidecar_status", "unknown"),
             "lexical_status": d.get("lexical_status", "unknown"),
             "qdrant_status": d.get("qdrant_status", d.get("chunk_count", 0) and "indexed" or "unknown"),

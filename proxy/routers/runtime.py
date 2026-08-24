@@ -191,6 +191,12 @@ def _provider_status() -> dict[str, str]:
             "base_url": os.getenv("LEMONADE_BASE_URL", "http://127.0.0.1:13305/api/v1"),
             "model": os.getenv("LEMONADE_MODEL", ""),
         }
+    if provider == "freetoken":
+        return {
+            "provider": provider,
+            "base_url": os.getenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1"),
+            "model": os.getenv("FREETOKEN_MODEL", "").strip() or os.getenv("LLM_MODEL", ""),
+        }
     return {
         "provider": "mlx",
         "base_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),

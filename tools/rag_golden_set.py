@@ -230,8 +230,25 @@ def evaluate_response(
         trace = response.get("retrieval_trace") or {}
         if str(trace.get("status") or "") != "ok":
             failures.append(f"retrieval_status={trace.get('status') or '-'} != ok")
-        if str(trace.get("fusion") or "").casefold() != "rrf":
-            failures.append(f"fusion={trace.get('fusion') or '-'} != rrf")
+        mode = str(trace.get("mode") or "")
+        if not mode.startswith("qdrant_native_hybrid"):
+            failures.append(f"mode={mode or '-'} does not start with qdrant_native_hybrid")
+        fusion = str(trace.get("fusion") or "").casefold()
+        if fusion not in {"rrf", "qdrant_rrf+lexical_safety_rrf"}:
+            failures.append(f"fusion={trace.get('fusion') or '-'} is not native RRF")
+        channels = {str(channel) for channel in (trace.get("retrieval_channels") or [])}
+        missing_channels = {"dense", "qdrant_sparse"} - channels
+        if missing_channels:
+            failures.append("missing retrieval channels: " + ", ".join(sorted(missing_channels)))
+        rerank = trace.get("rerank") if isinstance(trace.get("rerank"), dict) else {}
+        if str(rerank.get("status") or "") != "bypassed":
+            failures.append(f"rerank_status={rerank.get('status') or '-'} != bypassed")
+        if str(rerank.get("reason") or "") != "disabled":
+            failures.append(f"rerank_reason={rerank.get('reason') or '-'} != disabled")
+        if str(rerank.get("preserved_order") or "") != "native_rrf":
+            failures.append(
+                f"preserved_order={rerank.get('preserved_order') or '-'} != native_rrf"
+            )
 
     if failures:
         return GoldenResult(case.id, False, "; ".join(failures), elapsed, len(chunks), top_score, sources)

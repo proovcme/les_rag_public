@@ -10,6 +10,11 @@ root-admin verified-pattern review). A calculated row with
 project-scoped and `is_evidence=false`; it may shorten catalog navigation but
 cannot select a norm or skip current typed evidence.
 
+The observer also rejects empty/`MISSING` norm codes and every work item named
+by a professional conflict. Therefore an explicit lock can promote only a
+bound, non-conflicted precedent; an unresolved attempt never becomes a
+"successful move" merely because the surrounding mapping was accepted.
+
 ## Назначение и границы
 
 Memory Core сохраняет подтверждённые grounded-turns в durable queue, извлекает из них кандидаты проектных фактов локальной моделью и хранит compact traces опубликованных смет. Источником истины остаются документы, typed readers и нормативные каталоги. Memory не является evidence текущего ответа и никогда не выбирает норму.

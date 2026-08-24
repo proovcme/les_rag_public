@@ -5,6 +5,7 @@ import pytest
 
 from proxy.services import agent_router_service as ar
 from proxy.services import project_registry_chat_service as reg
+from proxy.services.query_router import QueryIntent
 
 
 # ── реестр ──
@@ -83,6 +84,64 @@ def test_router_runtime_config_uses_cloud_only_with_key(monkeypatch):
     assert cfg["base"] == "https://openai.api.proxyapi.ru/v1"
     assert cfg["model"] == "gpt-4.1"
     assert cfg["key"] == "secret"
+
+
+def test_query_intent_exposes_channel_as_compatibility_intent():
+    route = QueryIntent("rag", "NTD_FIRE", "fire_safety_keyword")
+
+    assert route.intent == "rag"
+
+
+def test_router_runtime_config_uses_active_freetoken(monkeypatch):
+    for key in (
+        "LES_ROUTER_BASE_URL",
+        "LES_ROUTER_MODEL",
+        "LES_ROUTER_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+        "OPENAI_API_KEY",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("LES_LLM_PROVIDER", "freetoken")
+    monkeypatch.setenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1")
+    monkeypatch.setenv("FREETOKEN_MODEL", "Qwen3.6-35B-A3B-NVFP4")
+
+    cfg = ar._router_runtime_config()
+
+    assert cfg["provider"] == "freetoken"
+    assert cfg["base"] == "http://127.0.0.1:1919/v1"
+    assert cfg["model"] == "Qwen3.6-35B-A3B-NVFP4"
+    assert cfg["key"] == "local"
+
+
+def test_route_llm_text_applies_freetoken_no_thinking(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "freetoken")
+    monkeypatch.setenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1")
+    monkeypatch.setenv("FREETOKEN_MODEL", "Qwen3.6-35B-A3B-NVFP4")
+    monkeypatch.setenv("LES_ROUTER_TIMEOUT", "5")
+    for key in ("LES_ROUTER_BASE_URL", "LES_ROUTER_MODEL", "LES_ROUTER_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"tool":"project_registry"}'}}]}
+
+    def fake_post(url, *, headers, timeout, json):
+        captured.update({"url": url, "headers": headers, "timeout": timeout, "json": json})
+        return Response()
+
+    monkeypatch.setattr("httpx.post", fake_post)
+
+    result = ar._route_llm_text("route this", max_tokens=40)
+
+    assert result == '{"tool":"project_registry"}'
+    assert captured["url"] == "http://127.0.0.1:1919/v1/chat/completions"
+    assert captured["json"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["json"]["max_tokens"] == 40
 
 
 def test_route_with_name_router_unavailable_sentinel(monkeypatch):

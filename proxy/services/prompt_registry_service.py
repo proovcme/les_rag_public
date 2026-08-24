@@ -387,6 +387,22 @@ def build_mode_system_prompt(mode: str, *, notebook_context: str = "", extra: st
     return "\n\n".join(p for p in parts if p)
 
 
+def build_factory_mode_system_prompt(mode: str, *, extra: str = "") -> str:
+    """Build code-owned Base text without reading mutable operator overrides."""
+
+    mode_id = (mode or "").strip().lower()
+    return "\n\n".join(
+        part
+        for part in (
+            LES_SYSTEM_PROMPT,
+            LES_TONE_PROMPT,
+            MODE_PROMPTS.get(mode_id, ""),
+            str(extra or "").strip(),
+        )
+        if part
+    )
+
+
 def build_smeta_batch_system_prompt(tool_contract: str, *, notebook_context: str | None = None) -> str:
     nb = notebook_context if notebook_context is not None else gesn_notebook_prompt_excerpt()
     contract = tool_contract.replace("/no_think", "", 1).lstrip()

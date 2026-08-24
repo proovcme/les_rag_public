@@ -7,9 +7,9 @@
 
 | Поле | Значение | Назначение |
 |---|---:|---|
-| Версия продукта | `0.27.39` | Единственный пользовательский номер по схеме `X.Y.Z` |
-| Номер сборки | `556` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
-| Версия пакета Tauri/NSIS | `5.1.556` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
+| Версия продукта | `0.28.0` | Единственный пользовательский номер по схеме `X.Y.Z` |
+| Номер сборки | `587` | Монотонный номер Windows-пакета; не является четвёртой частью версии |
+| Версия пакета Tauri/NSIS | `5.1.587` | Внутренняя монотонная версия установщика для обновления существующих `5.1.x` |
 | Схема строительного контура | `0.24` | Внутренняя версия контракта; в пользовательский номер не входит |
 
 Полный Windows-релиз `0.24.16` / `427` является базой VPS-канала. `0.24.17` / `438` доставлен
@@ -32,7 +32,11 @@
 | Qdrant | `qdrant/qdrant:v1.17.1` | `1.17.1` | Dense и sparse индексы, нативный RRF |
 | Ollama | setup wizard предлагает установку `Ollama.Ollama` через winget или официальный адрес; обновляется оператором | `0.31.1` | Локальная генерация и эмбеддинги |
 | Основная модель | любой установленный Ollama-тег, выбранный пользователем; `qwen3.5:9b` рекомендуется | `qwen3.5:9b` | Ответы и работа с инструментами |
+| FreeToken | внешний loopback OpenAI-compatible runtime, запускаемый своим GUI | `0.1.1+g30aa89115` | Альтернативная локальная генерация; ЛЕС не запускает второй engine |
+| FreeToken Big Qwen | выбирается оператором в FreeToken GUI | `Qwen3.6-35B-A3B-NVFP4`, API metadata context `262144`; live accepted `28001` input + `512` reserve, GUI window `30000`; derived LES prompt cap `57600` chars | Большая локальная MoE-модель; transport принудительно отключает thinking, сохраняет dialogue memory и наполняет общий multi-document evidence до безопасной capacity |
 | Эмбеддер | `bge-m3:latest`, размерность `1024` | `bge-m3:latest` | Dense-векторы |
+| ColBERT late interaction | `BAAI/bge-m3`, token vectors `1024`; optional, GUI-controlled | требует live preflight/сборку sibling generation для `0.27.54` | MaxSim rerank до общего cross-encoder |
+| RAPTOR summarizer | local Ollama `qwen3.5:9b` или deterministic extractive fallback; optional, GUI-controlled | требует live publication acceptance для `0.27.54` | Navigation-only summary tree; не evidence |
 | Реранжировщик | `BAAI/bge-reranker-v2-m3` | отдельный проверенный `sentence-transformers` вес | Общий реранк после RRF |
 
 `latest` запрещён для Qdrant: изменение серверной версии способно изменить формат хранения и

@@ -11,13 +11,20 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from proxy.config import docker_control_enabled
 from proxy.security import require_admin, require_user
 from proxy.local_model_registry import (
     DEFAULT_LOCAL_MLX_MODEL,
     LOCAL_MLX_MODEL_CHOICES,
+)
+from proxy.services.llm_transport_profile_service import provider_prompt_max_chars
+from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
+from proxy.services.runtime_config_registry_service import (
+    RuntimeConfigRegistryError,
+    registry_snapshot,
+    update_factors,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,6 +92,10 @@ class SettingsRequest(BaseModel):
     lemonade_model: Optional[str] = None
     lemonade_api_key: Optional[str] = None
     lemonade_api_key_clear: Optional[bool] = None
+    freetoken_base_url: Optional[str] = None
+    freetoken_model: Optional[str] = None
+    freetoken_context_tokens: Optional[int] = None
+    freetoken_prompt_max_chars: Optional[int] = None
     mail_imap_host: Optional[str] = None
     mail_imap_port: Optional[int] = None
     mail_imap_ssl: Optional[bool] = None
@@ -99,6 +110,36 @@ class SettingsRequest(BaseModel):
     mail_attachment_vlm_enabled: Optional[bool] = None
     mail_vlm_url: Optional[str] = None
     mail_vlm_model: Optional[str] = None
+
+
+class RuntimeRegistryUpdateRequest(BaseModel):
+    updates: dict[str, str]
+    danger_confirmations: list[str] = Field(default_factory=list)
+
+
+@router.get("/runtime-registry")
+async def get_runtime_registry(_admin=Depends(require_admin)):
+    """Return every discovered runtime factor without exposing secret values."""
+    try:
+        return await asyncio.to_thread(registry_snapshot)
+    except (OSError, UnicodeError, RuntimeConfigRegistryError) as exc:
+        raise HTTPException(503, detail=f"RUNTIME_CONFIG_REGISTRY_UNAVAILABLE: {exc}") from exc
+
+
+@router.put("/runtime-registry")
+async def put_runtime_registry(
+    req: RuntimeRegistryUpdateRequest,
+    _admin=Depends(require_admin),
+):
+    """Persist guarded changes atomically; Danger factors require exact confirmation."""
+    try:
+        return await asyncio.to_thread(
+            update_factors,
+            req.updates,
+            danger_confirmations=set(req.danger_confirmations),
+        )
+    except RuntimeConfigRegistryError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 
 @router.get("")
@@ -173,6 +214,7 @@ async def save_settings(req: SettingsRequest, restart: bool = False, _admin=Depe
         (req.openai_base_url, "OPENAI_BASE_URL"),
         (req.ollama_base_url, "OLLAMA_BASE_URL"),
         (req.lemonade_base_url, "LEMONADE_BASE_URL"),
+        (req.freetoken_base_url, "FREETOKEN_BASE_URL"),
     ):
         if field and not field.startswith(("http://", "https://")):
             raise HTTPException(400, f"{env_key} должен начинаться с http:// или https://")
@@ -234,6 +276,17 @@ def _env_bool(name: str, default: str = "false") -> bool:
 
 def _provider_settings_payload() -> dict[str, object]:
     active = os.getenv("LES_LLM_PROVIDER", "mlx")
+    freetoken_base = os.getenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1")
+    freetoken_context = int(os.getenv("FREETOKEN_CONTEXT_TOKENS", "8253") or "8253")
+    cache = (
+        reconcile_freetoken_cache(freetoken_base, freetoken_context)
+        if active.strip().casefold() == "freetoken"
+        else {
+            "status": "inactive",
+            "desired_kv_tokens": freetoken_context,
+            "effective_kv_tokens": None,
+        }
+    )
     return {
         "active": active,
         "effective": _effective_provider_payload(active),
@@ -259,6 +312,13 @@ def _provider_settings_payload() -> dict[str, object]:
             "base_url": os.getenv("LEMONADE_BASE_URL", "http://127.0.0.1:13305/api/v1"),
             "model": os.getenv("LEMONADE_MODEL", ""),
             "api_key_set": bool(os.getenv("LEMONADE_API_KEY", "")),
+        },
+        "freetoken": {
+            "base_url": freetoken_base,
+            "model": os.getenv("FREETOKEN_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip(),
+            "context_tokens": freetoken_context,
+            "prompt_max_chars": provider_prompt_max_chars("freetoken"),
+            "cache": cache,
         },
     }
 
@@ -345,10 +405,23 @@ def _provider_updates(req: SettingsRequest) -> dict[str, str]:
         "ollama_model": "OLLAMA_MODEL",
         "lemonade_base_url": "LEMONADE_BASE_URL",
         "lemonade_model": "LEMONADE_MODEL",
+        "freetoken_base_url": "FREETOKEN_BASE_URL",
+        "freetoken_model": "FREETOKEN_MODEL",
     }
     for field, env_key in string_map.items():
         if field in fields:
             updates[env_key] = str(getattr(req, field) or "").strip()
+
+    int_map = {
+        "freetoken_context_tokens": "FREETOKEN_CONTEXT_TOKENS",
+        "freetoken_prompt_max_chars": "FREETOKEN_PROMPT_MAX_CHARS",
+    }
+    for field, env_key in int_map.items():
+        if field in fields:
+            value = getattr(req, field)
+            if value is not None and value <= 0:
+                raise HTTPException(400, f"{env_key} должен быть положительным")
+            updates[env_key] = "" if value is None else str(value)
 
     if "openrouter_api_key" in fields and req.openrouter_api_key:
         updates["OPENROUTER_API_KEY"] = req.openrouter_api_key.strip()

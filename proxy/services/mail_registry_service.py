@@ -23,7 +23,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 
-from backend.mail_threads import parse_mail_message
+from backend.mail_threads import normalize_subject, parse_mail_message
 
 
 MAIL_ACCOUNT_KINDS = {"imap", "outlook_classic"}
@@ -700,6 +700,33 @@ class MailRegistry:
                     (internal_id, folder_native_id or folder_path, folder_path, now, now),
                 )
         return self.get_message(internal_id), not bool(exists)
+
+    def rebuild_threads(self, account_id: str | None = None) -> int:
+        """Re-group all indexed messages into threads by subject / Message-ID / In-Reply-To."""
+        with self._lock, self._connect() as conn:
+            where_clause = "WHERE account_id = ?" if account_id else ""
+            params = (account_id,) if account_id else ()
+            rows = conn.execute(
+                f"SELECT id, subject, internet_message_id, raw_path FROM mail_messages {where_clause}",
+                params,
+            ).fetchall()
+            if not rows:
+                return 0
+            updated_count = 0
+            for row in rows:
+                msg_id = row["id"]
+                subject = str(row["subject"] or "").strip()
+                norm_sub = normalize_subject(subject)
+                raw_path = str(row["raw_path"] or "")
+                if norm_sub:
+                    new_thread_key = "subject_" + hashlib.sha256(norm_sub.encode("utf-8")).hexdigest()[:12]
+                elif raw_path:
+                    new_thread_key = "file_" + hashlib.sha256(raw_path.encode("utf-8")).hexdigest()[:12]
+                else:
+                    new_thread_key = "msg_" + hashlib.sha256(msg_id.encode("utf-8")).hexdigest()[:12]
+                conn.execute("UPDATE mail_messages SET thread_key = ? WHERE id = ?", (new_thread_key, msg_id))
+                updated_count += 1
+            return updated_count
 
     def reconcile_folder_locations(
         self,

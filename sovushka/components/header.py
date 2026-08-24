@@ -9,10 +9,30 @@ import sys
 from nicegui import app, ui
 
 from backend.auth import logout
+from proxy.services.llm_transport_profile_service import freetoken_prompt_chars_for_context
 from sovushka.components.charts import _html
 from sovushka.state import api_get, last_api_error_text, proxy_online
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
 from sovushka.uikit.components import acronym_identity
+
+
+def _smeta_runtime_settings(engine: str, model: str) -> dict[str, str]:
+    """Native smeta follows the active LES runtime instead of a shadow route."""
+
+    if str(engine or "native").strip().lower() == "native":
+        return {
+            "smeta_document_provider": "",
+            "smeta_document_model": "",
+        }
+    return {
+        "smeta_document_provider": "",
+        "smeta_document_model": str(model or "").strip(),
+    }
+
+
+def visible_workspace_sections() -> tuple[str, ...]:
+    """Product-visible workspace sections; legacy RIM remains data-compatible only."""
+    return ("chat", "samovar", "documents", "studio", "cad_bim", "mail", "history")
 
 
 def build_header(
@@ -24,7 +44,6 @@ def build_header(
     include_chat: bool = True,
     include_documents: bool = False,
     include_datasets: bool = False,
-    include_rim: bool = False,
     include_mail: bool = True,
     admin_link: bool = False,
     chat_link: bool = False,
@@ -90,8 +109,13 @@ def build_header(
                 ("Sidecar write", "ON" if fl.get("LES_ALLOW_RUNTIME_SIDECAR_WRITE") else "OFF"),
             ]
 
-        def _open_version_dialog() -> None:
-            info = _ver_state["info"] or {}
+        async def _open_version_dialog() -> None:
+            info = await api_get("/api/version")
+            if isinstance(info, dict) and info:
+                _ver_state["info"] = info
+            else:
+                info = _ver_state["info"] or {}
+
             with ui.dialog() as dlg, ui.card().style(
                 "background:var(--bg-panel);border:1px solid var(--border);min-width:440px;padding:18px;"
             ):
@@ -113,7 +137,7 @@ def build_header(
                     )).props("flat dense no-caps").style("color:var(--accent);font-size:.62rem;margin-top:8px;")
             dlg.open()
 
-        ver_badge.on("click", lambda: _open_version_dialog())
+        ver_badge.on("click", _open_version_dialog)
 
         async def _load_version() -> None:
             info = await api_get("/api/version")
@@ -219,6 +243,7 @@ def build_header(
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
                 tab_refs["mail_settings"] = ui.tab("Почта", icon="o_mark_email_read")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
+                tab_refs["profiles"] = ui.tab("Профили", icon="o_manage_accounts")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
             if include_chat:
@@ -233,8 +258,6 @@ def build_header(
                         "sov-primary-tab-mirrored"
                     )
                     tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
-                if include_rim and "rim" not in tab_refs:
-                    tab_refs["rim"] = ui.tab("Сметный проект", icon="o_calculate")
                 if include_mail and "mail" not in tab_refs:
                     tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
@@ -244,11 +267,11 @@ def build_header(
             "samovar": "Датасеты",
             "documents": "Документы",
             "cad_bim": "CAD/BIM",
-            "rim": "Сметный проект",
             "mail": "Почта",
             "history": "История",
             "mail_settings": "Настройка почты",
             "instrumenty": "Инструменты",
+            "profiles": "Профили чата",
             "qdrant_viz": "Визуализация Qdrant",
             "volk": "Доступ",
         }.items():
@@ -260,11 +283,11 @@ def build_header(
             ("samovar", "Датасеты"),
             ("documents", "Документы"),
             ("cad_bim", "CAD/BIM"),
-            ("rim", "Сметный проект"),
             ("mail", "Почта"),
             ("history", "История"),
             ("mail_settings", "Настройка почты"),
             ("instrumenty", "Инструменты"),
+            ("profiles", "Профили"),
             ("qdrant_viz", "Визуал"),
             ("volk", "Доступ"),
         )
@@ -412,6 +435,7 @@ def build_header(
                         ui.button("⚖ Микс", on_click=lambda: _apply_preset("mix")).props("no-caps flat").style(
                             "border:1px solid var(--border);color:var(--accent);background:transparent;flex:1;")
                     provider_options = {
+                        "freetoken": "FreeToken — локально",
                         "ollama": "Ollama — локально",
                         "openrouter": "OpenRouter — облако",
                         "openai": "OpenAI-compatible — облако",
@@ -434,7 +458,7 @@ def build_header(
                     mlx_settings.set_visibility(not is_windows)
 
                     async def _apply_mlx_model(e) -> None:
-                        if _mlx_loading["v"]:
+                        if _mlx_loading["v"] or is_windows:
                             return
                         model = getattr(e, "value", None) or set_llm.value
                         if not model:
@@ -455,32 +479,36 @@ def build_header(
                     set_llm.on_value_change(_apply_mlx_model)
                     set_ollama_url = ui.input("Адрес Ollama", value="http://127.0.0.1:11434").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
                     set_ollama_model = ui.input("Модель Ollama, например gemma4:12b", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_smeta_engine = ui.select(
-                        {
-                            "native": "Native loop (контрольный)",
-                            "qwen_agent": "Qwen-Agent (локально)",
-                            "google_adk": "Google ADK (облако)",
-                        },
-                        value="native",
-                        label="Движок сметчика",
+                    set_freetoken_url = ui.input(
+                        "Адрес FreeToken", value="http://127.0.0.1:1919/v1"
                     ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_smeta_model = ui.input("Модель для смет", value="qwen3.5:9b").props(
-                        'hint="Можно указать gemma4:12b для чистой проверки"'
+                    set_freetoken_model = ui.input(
+                        "Модель FreeToken", value=""
                     ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_smeta_fallback_model = ui.input(
-                        "Резервная модель для смет", value="qwen3.5:9b"
-                    ).props('hint="Очисти поле, чтобы проверять выбранную модель без подстраховки"').style(
-                        "background:var(--bg);color:var(--text);font-family:var(--font);width:100%;"
-                    )
-                    set_google_model = ui.input(
-                        "Google model для смет", value="gemini-3.5-flash"
-                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_google_key = ui.input(
-                        "Google API Key", value="", password=True, password_toggle_button=True
-                    ).style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
-                    set_google_clear = ui.checkbox("Сбросить Google API key", value=False).style(
-                        "color:var(--text);font-family:var(--font);"
-                    )
+                    with ui.row().classes("w-full gap-2"):
+                        set_freetoken_context = ui.number(
+                            "Контекст FreeToken, токены", value=8253, min=1024, step=1
+                        ).style("background:var(--bg);color:var(--text);font-family:var(--font);flex:1;")
+                        set_freetoken_prompt = ui.number(
+                            "Лимит промта, символы",
+                            value=freetoken_prompt_chars_for_context(8253),
+                            min=1024,
+                            step=1,
+                        ).style("background:var(--bg);color:var(--text);font-family:var(--font);flex:1;")
+
+                        def _sync_freetoken_prompt_budget(event) -> None:
+                            try:
+                                context_tokens = int(float(event.value or 8253))
+                            except (TypeError, ValueError):
+                                context_tokens = 8253
+                            set_freetoken_prompt.set_value(
+                                freetoken_prompt_chars_for_context(context_tokens)
+                            )
+
+                        set_freetoken_context.on_value_change(_sync_freetoken_prompt_budget)
+                    freetoken_cache_label = ui.label(
+                        "Физический KV: проверяется"
+                    ).classes("text-caption").style("color:var(--dim);")
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("Облачные провайдеры").style("color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;")
                     set_openrouter_url = ui.input("OpenRouter Base URL", value="").style("background:var(--bg);color:var(--text);font-family:var(--font);width:100%;")
@@ -532,6 +560,7 @@ def build_header(
                         model_by_provider = {
                             "mlx": llm_fallback,
                             "ollama": (providers.get("ollama") or {}).get("model") or llm_fallback,
+                            "freetoken": (providers.get("freetoken") or {}).get("model") or llm_fallback,
                             "openrouter": openrouter_model,
                             "openai": openai_model,
                         }
@@ -572,18 +601,32 @@ def build_header(
                             ollama = providers.get("ollama") or {}
                             set_ollama_url.set_value(ollama.get("base_url", "http://127.0.0.1:11434"))
                             set_ollama_model.set_value(ollama.get("model", ""))
-                            set_smeta_model.set_value(d.get("smeta_document_model") or "qwen3.5:9b")
-                            set_smeta_fallback_model.set_value(d.get("smeta_document_fallback_model", "qwen3.5:9b"))
-                            smeta_engine = d.get("smeta_agent_engine") or "native"
-                            set_smeta_engine.set_value(
-                                smeta_engine if smeta_engine in {"native", "qwen_agent", "google_adk"} else "native"
+                            freetoken = providers.get("freetoken") or {}
+                            set_freetoken_url.set_value(
+                                freetoken.get("base_url", "http://127.0.0.1:1919/v1")
                             )
-                            set_google_model.set_value(d.get("smeta_google_model") or "gemini-3.5-flash")
-                            set_google_key.set_value("")
-                            set_google_key.props(
-                                f"placeholder=\"{'key уже задан; оставь пустым, чтобы не менять' if d.get('google_api_key_set') else 'Google API key'}\""
+                            set_freetoken_model.set_value(freetoken.get("model", ""))
+                            set_freetoken_context.set_value(freetoken.get("context_tokens", 8253))
+                            set_freetoken_prompt.set_value(
+                                freetoken.get(
+                                    "prompt_max_chars",
+                                    freetoken_prompt_chars_for_context(
+                                        int(freetoken.get("context_tokens", 8253) or 8253)
+                                    ),
+                                )
                             )
-                            set_google_clear.set_value(False)
+                            cache = freetoken.get("cache") or {}
+                            effective_kv = cache.get("effective_kv_tokens")
+                            desired_kv = cache.get("desired_kv_tokens")
+                            cache_status = str(cache.get("status") or "unknown")
+                            if effective_kv:
+                                freetoken_cache_label.set_text(
+                                    f"Физический KV: {effective_kv} / {desired_kv} · {cache_status}"
+                                )
+                            else:
+                                freetoken_cache_label.set_text(
+                                    f"Физический KV: недоступен · {cache_status}"
+                                )
                             openrouter = providers.get("openrouter") or {}
                             openai = providers.get("openai_compatible") or {}
                             set_openrouter_url.set_value(openrouter.get("base_url", "https://openrouter.ai/api/v1"))
@@ -803,15 +846,15 @@ def build_header(
                                 "llm_provider": set_provider.value or ("ollama" if is_windows else "mlx"),
                                 "ollama_base_url": set_ollama_url.value or "",
                                 "ollama_model": set_ollama_model.value or "",
-                                "smeta_agent_engine": set_smeta_engine.value or "native",
-                                "smeta_document_provider": (
-                                    "ollama" if is_windows and set_smeta_engine.value == "native" else ""
+                                "freetoken_base_url": set_freetoken_url.value or "",
+                                "freetoken_model": set_freetoken_model.value or "",
+                                "freetoken_context_tokens": int(set_freetoken_context.value or 8253),
+                                "freetoken_prompt_max_chars": int(
+                                    set_freetoken_prompt.value
+                                    or freetoken_prompt_chars_for_context(
+                                        int(set_freetoken_context.value or 8253)
+                                    )
                                 ),
-                                "smeta_document_model": set_smeta_model.value or "",
-                                "smeta_document_fallback_model": set_smeta_fallback_model.value or "",
-                                "smeta_google_model": set_google_model.value or "gemini-3.5-flash",
-                                "google_api_key": set_google_key.value or None,
-                                "google_api_key_clear": bool(set_google_clear.value),
                                 "openrouter_base_url": set_openrouter_url.value or "",
                                 "openrouter_model": set_openrouter_model.value or "",
                                 "openrouter_api_key": set_openrouter_key.value or None,

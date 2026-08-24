@@ -50,6 +50,8 @@ class RetrievalTrace:
     retrieval_channels: list[str] = field(default_factory=list)
     fusion: str = "none"
     rerank: dict[str, Any] = field(default_factory=dict)
+    raptor: dict[str, Any] = field(default_factory=dict)
+    colbert: dict[str, Any] = field(default_factory=dict)
     retry: dict[str, Any] = field(default_factory=dict)
     parent_hydration: dict[str, Any] = field(default_factory=dict)
 
@@ -74,6 +76,8 @@ class RetrievalTrace:
             "retrieval_channels": self.retrieval_channels,
             "fusion": self.fusion,
             "rerank": self.rerank,
+            "raptor": self.raptor,
+            "colbert": self.colbert,
             "retry": self.retry,
             "parent_hydration": self.parent_hydration,
         }

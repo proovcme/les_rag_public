@@ -262,6 +262,70 @@ async def test_save_settings_updates_provider_keys_without_exposing_secret(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_save_settings_exposes_and_updates_freetoken_runtime(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    env_path.write_text("LES_LLM_PROVIDER=ollama\n", encoding="utf-8")
+    monkeypatch.setattr(settings, "ENV_PATH", env_path)
+    monkeypatch.setattr(
+        settings,
+        "reconcile_freetoken_cache",
+        lambda _base, desired: {
+            "status": "aligned",
+            "desired_kv_tokens": desired,
+            "effective_kv_tokens": desired,
+        },
+    )
+
+    result = await settings.save_settings(
+        settings.SettingsRequest(
+            llm_provider="freetoken",
+            freetoken_base_url="http://127.0.0.1:1919/v1",
+            freetoken_model="Qwen3.5-35B-A3B",
+            freetoken_context_tokens=8253,
+            freetoken_prompt_max_chars=8816,
+        ),
+        restart=False,
+        _admin=object(),
+    )
+
+    assert result["updated"] == {
+        "LES_LLM_PROVIDER": "freetoken",
+        "FREETOKEN_BASE_URL": "http://127.0.0.1:1919/v1",
+        "FREETOKEN_MODEL": "Qwen3.5-35B-A3B",
+        "FREETOKEN_CONTEXT_TOKENS": "8253",
+        "FREETOKEN_PROMPT_MAX_CHARS": "8816",
+    }
+    payload = await settings.get_settings(_user=object())
+    freetoken = payload["providers"]["freetoken"]
+    assert {key: freetoken[key] for key in (
+        "base_url", "model", "context_tokens", "prompt_max_chars"
+    )} == {
+        "base_url": "http://127.0.0.1:1919/v1",
+        "model": "Qwen3.5-35B-A3B",
+        "context_tokens": 8253,
+        "prompt_max_chars": 8816,
+    }
+    assert freetoken["cache"]["desired_kv_tokens"] == 8253
+    assert freetoken["cache"]["status"] in {"aligned", "synchronized", "degraded"}
+
+
+@pytest.mark.asyncio
+async def test_settings_exposes_capacity_derived_freetoken_prompt_default(monkeypatch):
+    monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "8253")
+    monkeypatch.delenv("FREETOKEN_PROMPT_MAX_CHARS", raising=False)
+    monkeypatch.delenv("FREETOKEN_PROMPT_CHARS_PER_TOKEN", raising=False)
+
+    payload = await settings.get_settings(_user=object())
+
+    assert payload["providers"]["freetoken"]["prompt_max_chars"] == 14106
+
+    monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "30000")
+    payload = await settings.get_settings(_user=object())
+
+    assert payload["providers"]["freetoken"]["prompt_max_chars"] == 57600
+
+
+@pytest.mark.asyncio
 async def test_set_mlx_model_preserves_cloud_provider_settings(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
     env_path.write_text(

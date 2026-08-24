@@ -19,9 +19,24 @@ from sovushka.pages.chat import (
     _dataset_profile_operator_summary,
     _operator_status_chips,
     _operator_technical_chips,
+    _smeta_clarification_prompt,
+    _smeta_conflict_ui,
+    _smeta_decision_label,
+    _smeta_artifact_rows,
+    _smeta_progress_phase_label,
+    _smeta_progress_text,
+    _smeta_rows_markdown,
+    _runtime_guard_reason_label,
     should_skip_chat_resource_gate,
+    _preserved_attachment,
 )
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
+
+
+def test_chat_has_no_special_smeta_mode():
+    modes = getattr(chat_page, "visible_chat_modes", lambda: ("smeta",))()
+
+    assert "smeta" not in modes
 
 
 def test_chat_session_id_survives_ui_reopen(monkeypatch):
@@ -68,13 +83,88 @@ def test_smeta_operator_sees_live_tool_and_rrf_telemetry():
     assert 'event == "smeta_row"' in source
     assert "sov-smeta-live-table" in source
     assert "smeta_live_rows[work_id] = row" in source
+    assert '_show_artifact(' in source
+    assert 'Артефакт обновляется после каждой завершённой строки.' in source
     assert ".sov-smeta-live-table" in styles
     assert "font-variant-numeric: tabular-nums" in styles
     assert "Авточерновик" in source
     assert "Проверил — зафиксировать" in source
-    assert "Разобрать и зафиксировать" in source
+    assert "Разобрать замечания" in source
+    assert "Подготовить уточнение" in source
+    assert "Принять текущую привязку норм" in source
+    assert "on_click=review_smeta_mapping" in source
+    assert "asyncio.create_task(_lock_smeta_mapping" not in source
+    assert "Артефакт старого формата: прикрепите исходный файл повторно" in source
     assert "accepted_conflict_ids" in source
     assert ".sov-smeta-approval" in styles
+
+
+def test_smeta_ui_localizes_machine_progress_and_resource_guard():
+    assert _smeta_progress_phase_label("mapping_retry") == "Исправление решения"
+    assert _smeta_progress_phase_label("future_internal_phase") == "Этап расчёта"
+    assert _smeta_progress_text(
+        "Смета: модель исправляет решение — invalid unbound_evidence"
+    ) == "Смета: модель исправляет решение — недостаточно обоснований для отсутствия нормы"
+    assert _smeta_progress_text("Смета: модель фиксирует mapping") == (
+        "Смета: модель фиксирует привязку норм"
+    )
+    assert _runtime_guard_reason_label("ram_free_gb=1.4 < 2.0") == (
+        "свободная память 1,4 ГБ ниже порога 2,0 ГБ"
+    )
+
+
+def test_smeta_final_artifact_includes_unfinished_rows_from_authoritative_lsr():
+    rows = _smeta_artifact_rows({
+        "rim_trace": {
+            "positions": [
+                {
+                    "work_id": "w1",
+                    "name": "Шкаф",
+                    "qty": 2,
+                    "unit": "шт.",
+                    "code": "MISSING",
+                }
+            ],
+            "sections": [
+                {
+                    "positions": [
+                        {
+                            "work_id": "w2",
+                            "name": "Кабель",
+                            "qty": 100,
+                            "unit": "м",
+                            "code": "ГЭСНм08-02-412-01",
+                        }
+                    ]
+                }
+            ],
+        }
+    })
+
+    assert rows == [
+        {
+            "work_id": "w1",
+            "title": "Шкаф",
+            "quantity": 2,
+            "unit": "шт.",
+            "norm_code": "",
+            "decision": "unbound",
+        },
+        {
+            "work_id": "w2",
+            "title": "Кабель",
+            "quantity": 100,
+            "unit": "м",
+            "norm_code": "ГЭСНм08-02-412-01",
+            "decision": "ГЭСНм08-02-412-01",
+        },
+    ]
+    markdown = _smeta_rows_markdown(rows)
+    assert "| 1 | Шкаф | 2 шт. | Норма не привязана |" in markdown
+    assert "| 2 | Кабель | 100 м | ГЭСНм08-02-412-01 |" in markdown
+    assert "for msg in reversed(state.get(\"chat_history\", []))" in inspect.getsource(
+        chat_page.build_chat
+    )
 
 
 def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
@@ -83,7 +173,7 @@ def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
 
     assert "Новый чат" in source
     assert "sov-new-chat-btn" in source
-    assert "model_chip = ui.label(\"MODEL -\")" in source
+    assert "model_chip = ui.label(\"МОДЕЛЬ —\")" in source
     assert "_refresh_active_model_chip" in source
     assert "api_get(\"/api/status\")" in source
     assert "_render_model_badge(meta)" in source
@@ -132,7 +222,7 @@ def test_chat_stream_keeps_reader_position_until_they_return_to_the_tail():
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():
     guidance = chat_page.CHAT_MODE_GUIDANCE
 
-    assert set(guidance) == {"text", "rag", "agent", "smeta", "doc_review"}
+    assert set(guidance) == {"search", "agent", "estimator", "engineer"}
     for item in guidance.values():
         assert item["title"]
         assert item["description"]
@@ -412,6 +502,84 @@ def test_attachment_payload_keeps_read_pdf_without_extracted_text():
     }
 
 
+def test_failed_document_run_restores_the_exact_sent_attachment():
+    sent = {
+        "id": "read_0123456789ab",
+        "name": "source.xlsx",
+        "mode": "read",
+        "rows": 5,
+    }
+
+    assert _preserved_attachment(
+        {
+            "attachment_retry": {
+                "preserved": True,
+                "id": "read_0123456789ab",
+                "name": "source.xlsx",
+                "mode": "read",
+            }
+        },
+        sent,
+    ) == sent
+    assert _preserved_attachment({}, sent) == {}
+    assert '"attachment_retry"' not in inspect.getsource(chat_router._run_chat)
+
+
+def test_smeta_clarification_prompt_keeps_questions_and_operator_owned_assumptions():
+    prompt = _smeta_clarification_prompt(
+        {
+            "open_items": [
+                {
+                    "work_id": "vor-0004",
+                    "title": "Кабель U/UTP Cat.6A",
+                    "quantity": 4,
+                    "unit": "шт.",
+                },
+                {
+                    "work_id": "vor-0005",
+                    "title": "Кабель оптический OM4",
+                    "quantity": 400,
+                    "unit": "м.п",
+                },
+            ]
+        },
+        "Прокладка в металлическом лотке; количество Cat.6A дано бухтами по 500 м.",
+    )
+
+    assert "задай один короткий уточняющий вопрос" in prompt
+    assert "ДОПУЩЕНИЕ" in prompt
+    assert "vor-0004: Кабель U/UTP Cat.6A — 4 шт." in prompt
+    assert "vor-0005: Кабель оптический OM4 — 400 м.п" in prompt
+    assert "Прокладка в металлическом лотке" in prompt
+
+
+def test_smeta_clarification_prompt_does_not_invent_missing_assumptions():
+    prompt = _smeta_clarification_prompt({"open_items": []})
+
+    assert "[не указаны — выбери явное ДОПУЩЕНИЕ или задай один вопрос]" in prompt
+    assert "Не оставляй строку пустой" in prompt
+    assert "существенно меняет применимость нормы/стоимость" in prompt
+
+
+def test_smeta_machine_decisions_are_localized_for_operator_ui():
+    assert _smeta_decision_label("unbound") == "Норма не привязана"
+    assert _smeta_decision_label("bind") == "Норма привязана"
+    assert _smeta_decision_label("ГЭСНм10") == "ГЭСНм10"
+
+
+def test_smeta_conflict_codes_are_localized_at_ui_boundary():
+    assert _smeta_conflict_ui({
+        "code": "unbound_search_intent_narrow",
+        "claim": "Unbound is based on one intent",
+    }) == (
+        "Узкий поиск нормы",
+        "Норма оставлена без привязки после слишком узкого поиска. Расширьте варианты или примите решение явно.",
+    )
+    assert _smeta_conflict_ui({"code": "new_machine_code", "claim": "Raw English"})[1] == (
+        "Проверьте условия выбора нормы перед фиксацией."
+    )
+
+
 def test_attachment_source_label_uses_filename():
     assert _attachment_source_label("Файл: ТЗ.docx\n\nТекст файла") == "attachment:ТЗ.docx"
     assert _attachment_source_label("Текст без имени") == "attachment"
@@ -446,6 +614,7 @@ class _FakeAsyncClient:
         return False
 
     async def post(self, url, *, headers=None, json=None):
+        self.__class__.last_url = url
         self.__class__.last_json = json
         return _FakeLlmResponse()
 
@@ -464,6 +633,7 @@ async def test_free_mode_injects_session_memory(monkeypatch):
     prompt = _FakeAsyncClient.last_json["messages"][1]["content"]
     assert "ПАМЯТЬ СЕССИИ" in prompt
     assert prompt.index("ПАМЯТЬ СЕССИИ") < prompt.index("продолжи")
+    assert _FakeAsyncClient.last_url == "http://llm/chat"
     assert answer.endswith("ответ")
 
 
@@ -531,7 +701,7 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert "format_project_inventory_prompt" in source
     assert "format_project_inventory_context" in source
     assert 'retrieval_trace["project_inventory"]' in source
-    assert 'f"{project_inventory_prompt}\\n\\n"' in source
+    assert '("inventory_navigation", project_inventory_prompt)' in source
     assert "project_inventory_artifact_text" in source
     assert 'response["project_inventory"] = project_inventory_payload or {}' in source
     assert "generation_budget = max(generation_budget, 2048)" not in source
@@ -550,6 +720,20 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert '"title": "Реестр файлов"' in source
     assert 'retrieval_trace["prompt_layers"]' in source
     assert '"inventory_navigation"' in source
+
+
+def test_freetoken_prompt_preserves_dialogue_then_evidence_before_tool_navigation():
+    source = inspect.getsource(
+        chat_evidence_application_service._execute_chat_evidence_application
+    )
+
+    assert source.index('(\"session_memory\", session_block)') < source.index(
+        '(\"evidence\", f\"Материалы'
+    )
+    assert source.index('(\"working_memory\", memory_block)') < source.index(
+        '(\"evidence\", f\"Материалы'
+    )
+    assert source.index('(\"evidence\", f\"Материалы') < source.index('(\"tools\", tool_context)')
 
 
 def test_chat_ui_renders_clickable_project_inventory_artifact():
@@ -581,6 +765,8 @@ def test_chat_ui_shows_selected_dataset_files_panel():
     assert "scope_files_panel" in source
     assert "_refresh_scope_files_panel" in source
     assert "/api/notebooks/{_q(dsid, safe='')}/memory" in source
+    assert "/api/rag/documents?dataset_id=" in source
+    assert "registry.get(\"documents\")" in source
     assert "Файлы выбранной области" in source
     assert "Файлы датасета" in source
     assert "_ask_about_scope_file" in source
@@ -592,6 +778,17 @@ def test_chat_ui_shows_selected_dataset_files_panel():
     assert "base_name.startswith(\"_les_\")" in source
     assert ".sov-scope-files-panel" in styles
     assert ".sov-scope-file-chip" in styles
+
+
+def test_scope_selector_uses_human_cards_and_visible_selection_count():
+    source = inspect.getsource(chat_page.build_chat)
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+
+    assert "sov-scope-option-card" in source
+    assert "display_name" in source
+    assert "Выбрано:" in source
+    assert "Применить выбор" in source
+    assert ".sov-scope-option-card" in styles
     assert ".sov-scope-file-badge" in styles
     assert ".sov-scope-file-ask" in styles
 
@@ -602,6 +799,17 @@ def test_chat_history_restores_saved_file_artifacts():
     assert '_register_artifact_downloads(msg.get("meta"))' in source
     assert "def _clear_file_artifacts" in source
     assert "_clear_file_artifacts()" in source
+
+
+def test_chat_sources_use_stable_links_and_consolidated_artifact():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "citation_sources" in source
+    assert '(meta or {}).get("source_map")' in source
+    assert "Источники и цитаты" in source
+    assert "Источники ответа" in source
+    assert "_show_sources_artifact" in source
+    assert 'if not isinstance(meta.get("source_map"), list)' in source
 
 
 def test_operator_status_chips_hide_internal_trace_from_first_layer():

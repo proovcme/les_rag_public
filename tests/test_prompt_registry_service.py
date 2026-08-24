@@ -65,7 +65,8 @@ def test_each_editable_mode_prompt_has_a_real_runtime_callsite():
     assert 'build_mode_system_prompt("free")' in chat
     assert '"review",' in chat.split("build_mode_system_prompt(", 2)[2]
     assert '"smeta_direct",' in chat
-    assert '"rag",' in evidence.split("build_mode_system_prompt(", 1)[1]
+    assert 'build_mode_system_prompt("rag")' in evidence
+    assert "profile_system_prompt(profile_snapshot" in evidence
     assert "build_smeta_batch_system_prompt(" in harness
 
 

@@ -41,6 +41,8 @@ new design rules.
 
 ## Non-negotiable design rules
 
+- Operator-facing labels, statuses, buttons, notices, tooltips and generated UI prompts are written in Russian. Machine/API states such as `unbound`, `mapping`, `lock`, `checkpoint`, `immutable`, `global review` and `ASSUMED` must be translated at the UI boundary; raw values may remain only in APIs, stored traces and technical diagnostics. Product/model names and file-format abbreviations are allowed when they are proper names rather than interface jargon.
+
 - Use one system sans-serif; reserve mono for identifiers and numeric diagnostics.
 - Use the shared spacing, radius, color and type tokens.
 - Keep icon column at 20 px and icon-to-label gap at 8 px.

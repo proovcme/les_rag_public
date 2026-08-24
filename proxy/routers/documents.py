@@ -10,10 +10,11 @@ import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 from proxy.security import require_admin, require_user
 from proxy.services.document_explorer_service import explorer
+from proxy.services.file_viewer_service import file_viewer_html, is_viewable_file
 from proxy.services.native_open_service import open_native_file
 from proxy.services.pdf_contour_service import audit_pdf, render_page_preview
 
@@ -71,6 +72,64 @@ async def document_by_id(
     if document is None:
         raise HTTPException(status_code=404, detail="document not found")
     return {"document": document}
+
+
+@router.get("/by-id/{doc_id}/raw")
+async def document_raw_by_id(
+    doc_id: str,
+    _user=Depends(require_user),
+):
+    """Return the indexed original through stable metadata identity.
+
+    Chat citations must not reconstruct a storage path from a display filename:
+    uploaded and external documents live under different guarded roots.
+    """
+    try:
+        document = explorer().get_document(doc_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    source_path = _resolved_document_source(document)
+    if source_path is None:
+        raise HTTPException(status_code=404, detail="document has no source_path")
+    return FileResponse(
+        source_path,
+        filename=str(document.get("file_name") or source_path.name),
+        content_disposition_type="inline",
+    )
+
+
+@router.get("/by-id/{doc_id}/viewer", response_class=HTMLResponse)
+async def document_viewer_by_id(
+    doc_id: str,
+    locator: str = Query(default="", max_length=240),
+    sheet: str = Query(default="", max_length=180),
+    _user=Depends(require_user),
+):
+    """Render office/text evidence through stable document identity."""
+    try:
+        document = explorer().get_document(doc_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if document is None:
+        raise HTTPException(status_code=404, detail="document not found")
+    source_path = _resolved_document_source(document)
+    if source_path is None:
+        raise HTTPException(status_code=404, detail="document has no source_path")
+    if not is_viewable_file(source_path) or source_path.suffix.lower() == ".pdf":
+        raise HTTPException(status_code=415, detail="embedded viewer is unavailable for this format")
+    try:
+        content = await asyncio.to_thread(
+            file_viewer_html,
+            source_path,
+            path_id=doc_id,
+            locator=locator,
+            sheet=sheet,
+        )
+    except (FileNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail=f"Не удалось открыть предпросмотр: {str(exc)[:240]}") from exc
+    return HTMLResponse(content, headers={"Cache-Control": "private, no-store"})
 
 
 def _pdf_document_source(doc_id: str) -> tuple[dict, str]:

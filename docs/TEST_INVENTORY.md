@@ -1,5 +1,60 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.27.77 ordinary smeta RAG and physical KV:**
+> `tests/test_publish_smeta_norm_dataset.py` фиксирует read-only card rendering
+> и unified point payload; `tests/test_system_dataset_service.py` — стабильный
+> `SMETA_NORMS_Index`; UI-тесты запрещают отдельные RIM/smeta controls.
+> `tests/test_freetoken_provider.py` воспроизводит physical cache rebuild
+> `8226 → 30000`, а settings tests показывают desired/effective state без живой
+> внешней мутации.
+
+> **0.27.76 FreeToken capacity:** `tests/test_freetoken_provider.py` защищает
+> вывод prompt ceiling из GUI-owned token window (`8253 → 14106`,
+> `30000 → 57600`), сохранение multi-document evidence и явного override.
+> `tests/test_source_excerpts.py` запрещает возврат provider-specific лимита
+> четырёх чанков/5000 символов; `tests/test_sovushka_chat.py` фиксирует порядок
+> dialogue memory → evidence → tools. `tests/test_proxy_routers.py` проверяет,
+> что Совушка показывает тот же derived effective value.
+
+> **0.27.75 FreeToken SSE:** `tests/test_freetoken_provider.py` воспроизводит
+> живой формат `delta.reasoning_content` от
+> `Qwen3.6-35B-A3B-NVFP4`; общий transport parser обязан вернуть текст вместо
+> ложного `Пустой ответ LLM (stream=True)`. Смежные проверки
+> `tests/test_reasoning_answer.py` и `tests/test_chat_stream_w51.py` защищают
+> non-stream reasoning и клиентский SSE-контракт.
+
+> **0.27.74 reranker-free general RAG:** `tests/test_retrieval_service.py`
+> защищает native-RRF evidence и его исходный порядок при выключенном reranker,
+> а `tests/test_installer_windows.py` фиксирует безопасный Windows default
+> `RERANKER_ENABLED=false`.
+> `tests/test_rag_golden_set.py` защищает release-smoke contract: mode
+> `qdrant_native_hybrid`, оба Qdrant-канала, допустимый lexical safety merge и
+> `rerank.status=bypassed` с сохранённым native-RRF порядком.
+> `tests/test_test_profiles.py` фиксирует post-deploy порядок native-RRF smoke и
+> узкий `DEPLOY_FORCE_FILES`, который выполняется до обычного restart/stamp deploy.
+> Тот же contract не позволяет pre-deploy `ship-check` проверять stale live runtime;
+> basic HTTP release smoke обязан находиться после candidate deploy.
+> Dry-run contract также требует bounded `post-deploy-rag-smoke` retry, защищая
+> Windows startup window без ослабления финального native-RRF результата.
+
+> **0.27.73 smeta retrieval probe:**
+> `tests/test_smeta_retrieval_recall_probe.py` защищает active-base embedding
+> contract и строгую/нестрогую трактовку retrieval cases. Живая диагностика
+> `tools/smeta_retrieval_recall_probe.py` измеряет top-k без LLM, reranker и
+> каталожного маршрута и явно показывает, работал ли Qdrant hybrid или только FTS.
+
+> **0.27.66 source links:** `tests/test_answer_render_v16.py`,
+> `tests/test_source_excerpts.py`, `tests/test_document_explorer_service.py` и
+> `tests/test_sovushka_chat.py` защищают `source_map.doc_id`, raw-доступ по стабильной
+> identity, точную PDF-страницу, кликабельные строки и единый артефакт без legacy-дубля.
+> Тот же render-contract удаляет видимые inline-LaTeX `$...$`, не затрагивая escaped currency.
+>
+> **0.27.65 public smeta sync:** `tests/test_smeta_core.py` защищает XLSX intake
+> с заголовком `Ко-во` ниже длинной договорной шапки и bounded terminal
+> candidate promotion; `tests/test_smeta_chat_application_service.py` покрывает
+> local Ollama/Qwen scoped fast-profile и soft-continue; `tests/test_smeta_norm_browser.py`
+> проверяет сохранение исходного порядка при недоступном reranker.
+
 > **0.27.35 PR #8 acceptance contracts:**
 > `tests/test_ks_forms_service.py` covers project isolation, draft status,
 > confirmed KS-6а input, MCP/chat output and XLSX formula safety;
@@ -103,9 +158,10 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_deterministic_policy_v18.py` | 27 | DeterministicFinalPolicy: glossary-final только при литеральном термине, registry только глобальный, source-scoped/descriptive→reject; professional-domain candidates (`smeta/asbuilt/doc_registry/field`) не становятся final-ответом кода |
 | `tests/test_version_service_v19.py` | 22 | `/api/version` 200, no-secrets, git-unavailable-safe, runtime_alignment (aligned/divergent/missing/dev-only/unknown), version_info в trace, route-регрессия |
 | `tests/test_v020_deploy_stamp_ui.py` | 23 | deploy stamp (missing/ok/stale/hash-mismatch), `deployed_commit` в endpoint, copy plain/markdown/with-sources/no-trace, prompt-chips→меню «Примеры» |
-| `tests/test_scope_model_v21.py` | 33 | Scope-резолвер (all/project/projects/dataset/datasets/mixed/legacy/filter-warning/scope>legacy); scope_options (админ-датасет/unassigned/system-reason/counts); scope в trace; document-prep labels |
+| `tests/test_scope_model_v21.py` | 34 | Scope-резолвер (all/project/projects/dataset/datasets/mixed/legacy/filter-warning/scope>legacy); scope_options (админ-датасет/unassigned/system-reason/counts, human display name и chunk count системной базы); scope в trace; document-prep labels |
 | `tests/test_scope_clarification_v22.py` | 19 | §1 needs_project_scope and scope UI helpers remain, but chat no longer returns final `scope_clarification` for project questions at scope=all; `scope_all_for_project_query` is trace warning only, generic empty retrieval continues to model instead of code `NO_DATA` final |
 | `tests/test_prompt_registry_service.py` | focused | prompt registry: common/tone/mode prompts, smeta role-pack, editable prompt overrides, plus live native-smеta loading of the GESN/typed-storage reference |
+| `tests/test_chat_profile_service.py`, `tests/test_profiles_router.py`, `tests/test_chat_profile_runtime.py`, `tests/test_profiles_ui.py` | focused | immutable Factory Base/user revisions, active and per-chat snapshot binding, legacy override migration, auth/API lifecycle, four explicit modes with Agent default, prompt+skill compilation, tool allowlist, model/RAG policies, Markdown editor and explicit create/copy/select/delete/activate/apply actions |
 | `tests/test_module_router.py`, `tests/test_active_state.py`, `tests/test_scoped_rag.py`, `tests/test_skill_snippet_registry.py`, `tests/test_tool_trace_policy.py` | 23 | лёгкий LES core: module routing, active state as working memory, typed scoped evidence packet, short skill snippets instead of full skill injection, and transparent tool trace policy |
 | `tests/test_tool_harness_service.py`, `tests/test_web_search_service.py` | focused | controlled tool-harness: typed read-only registry, indexed source search/read, PDF/Excel reader warnings, filesystem whitelist read/list/search/hash, bounded public web titles/snippets/direct URLs, Agent shortlist and `/api/tools/call` dry-run |
 | `tests/test_service_source_registry.py` | 4 | service-source registry and Play contract: required files/folders, canonical smeta/normcontrol sources, `SMETA_SERVICE` required-documents manifest, non-mutating operator messages, and normative base quarantine when semantic integrity report is absent |
@@ -114,9 +170,14 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_smeta_artifact_service.py` | 10 | smeta direct artifact layer: extracts model-written Markdown estimate tables, totals visible `Сумма/Стоимость` columns, keeps long model tables visible by default, keeps legacy compaction opt-in, and writes XLSX/CSV downloads without changing model-selected works |
 | `tests/test_project_summary_inventory.py` | 5 | MetaDB `documents` inventory for dataset file registers, extension/folder grouping, inventory prompt context, `что это за датасет` inventory intent, and explicit inventory intent distinct from broad project summary |
 | `tests/test_estimate_harness.py` | 74 | smeta model-first harness: norm search/tool loop, direct mass/volume slots, duplicate direct-quantity guard, scenario assumptions, Russian dialog state, norm applicability questions (`norm_questions`), and `search_norm.norm_navigation` for model-facing shortlist guidance |
-| `tests/test_smeta_core.py`, `tests/test_smeta_professional_review.py`, `tests/test_smeta_agent_runners.py`, `tests/test_smeta_chat_application_service.py`; live `tools/smeta_document_live_smoke.py` | focused + live model/XLSX | smeta-core boundaries: code cannot own norm binding; bind requires selected/applicable; invalid model output never falls back to top candidate; append-only row/global/user-lock revisions; conflict-validator не меняет решения и флагирует возможный cross-row double count; раздельный evidence budget; `unbound_evidence` обязан ссылаться на фактический tool trace; repeatable Qwen transport фиксирует seed, сортирует только model-authored запросы и использует local batch=5; Qwen ordinary-text получает same-model terminal recovery; обязательный model-owned cross-row review; автoрасчёт остаётся draft; финальный расчёт требует user lock; wrong-bind/unbound/coverage/unopened-card/unit/resource/price metrics; live smoke требует real ВОР→model tools→non-empty XLSX без fallback |
+| `tests/test_smeta_core.py`, `tests/test_smeta_professional_review.py`, `tests/test_smeta_agent_runners.py`, `tests/test_smeta_chat_application_service.py`; live `tools/smeta_document_live_smoke.py` | focused + live model/XLSX | smeta-core boundaries: code cannot own norm binding; bind requires selected/applicable; invalid model output never falls back to top candidate; append-only row/global/user-lock revisions; conflict-validator не меняет решения и флагирует возможный cross-row double count; раздельный evidence budget; `unbound_evidence` обязан ссылаться на фактический tool trace; local Ollama/Qwen and FreeToken use one-row batches with durable resume; FreeToken agent tool turns reserve at most 1024 output tokens inside its shared KV budget, and terminal mapping is a forced same-model tool-call without unsupported `response_format`; Qwen ordinary-text получает same-model terminal recovery; обязательный model-owned cross-row review; автoрасчёт остаётся draft; финальный расчёт требует user lock; wrong-bind/unbound/coverage/unopened-card/unit/resource/price metrics; live smoke требует real ВОР→model tools→non-empty XLSX без fallback |
+| `tools/freetoken_context_probe.py` | isolated live transport | FreeToken own-tokenizer input sizing + exactly one forced tool call; proves prompt+tools+generation KV capacity without loading a dataset or starting the smeta document workflow |
 | `tests/test_rim_*.py`, `tests/test_sovushka_uikit.py` | focused + isolated Mac UI/live model smoke | persistent owner-scoped RIM sessions and immutable parent graph; XLSX/CSV intake and mapping round-trip; typed FSNB nodes and strict adjacency; simple continue/ask/broaden/unbound phase tools; evidence refs only to shown fields; selected-vs-rejected conflict rejection; per-work scope without batch inheritance; strict table-scoped search→batch read→submit; accepted/rejected durable route trace; lifetime evidence vs bounded resume-slice; stable MLX prefix cache; unit-scoped bind schema; persisted model conflict + final agent audit; navigation-card vs structured-card evidence; questions with options; saved-mapping continuation after answer; explicit session `next_step`; global review/mapping lock; authored scenario limits; canonical calculation requirements; mandatory recalculation after KAC/coefficient resolution; final lock/export/audit; responsive lazy RIM workbench |
 | `tests/test_rag_hierarchy.py`, `tests/test_rag_config.py`, `tests/test_rag_rrf_readiness.py` | offline contract | deterministic hierarchy ids/ancestors; navigation is never evidence; global evidence survives route miss; v3 contract/readiness requires hierarchy and navigation policy |
+| `tests/test_raptor_tree.py`, `tests/test_raptor_publication_worker.py`, `tests/test_raptor_qdrant_store.py`, `tests/test_raptor_summarizer.py`, `tests/test_raptor_publication_service.py`, `tests/test_raptor_retrieval.py` | hermetic contract/integration | deterministic RAPTOR tree; per-document checkpoint/resume; separate generation-bound dense+sparse store; source-generation staleness guard; local Ollama/extractive summary contract; exact descendant evidence retrieval; summary nodes never citable |
+| `tests/test_colbert_late_interaction.py`, `tests/test_colbert_generation_service.py`, `tests/test_rag_advanced_preflight_service.py`, `tests/test_rag_generation_supervisor.py`, `tests/test_build_rag_contract_sibling.py` | hermetic contract/integration | BGE-M3 MaxSim, lazy/circuit behavior, no-load model/cache/disk estimate, complete required-vector readiness, resumable sibling build and atomic activation; active generation is never backfilled in place |
+| `tests/test_rag_advanced_synthetic_benchmark.py`, `tools/rag_advanced_synthetic_benchmark.py` | synthetic A/B | ColBERT MRR/Recall@1 must improve over baseline cases; RAPTOR descent must cover every exact leaf and navigation summaries remain non-citable. This is algorithmic evidence, not live corpus quality acceptance |
+| `tests/test_parse_resume.py`, `tests/test_basic_function_smoke.py`, recovery cases in `tests/test_qdrant_adapter_parse.py` | offline recovery/smoke | explicit skipped/retryable/terminal dispositions, bounded attempts/backoff, allowlisted capped startup repair excluding module datasets, persisted GUI diagnostics; dev smoke warns/skips chat during indexing while release smoke fails with `INDEXING_IN_PROGRESS` |
 | `tests/test_smeta_user_message_service.py` | focused | машинные smeta-статусы не попадают в обычный ответ; частичная сумма названа стоимостью рассчитанной части; автoрасчёт явно назван проверяемым черновиком и не выдаётся за финальную смету; рубли форматируются по-русски; covered/open строки описываются человеческим языком |
 | `tests/test_chat_attachment_service.py` | 3 | server-owned read attachments: opaque id/path containment, SHA/size validation, consume and TTL cleanup |
 | `tests/test_request_idempotency_service.py` | focused | внешний контракт ЛСР: пользовательское временное вложение, привязка ключа к файлу/телу/пользователю, replay готового ответа без второго model call, `409` на конкурентный или конфликтующий повтор |
@@ -144,7 +205,7 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_build_rag_contract_sibling.py` | focused | contract-clean migration safety: exact indexed-user scope manifest excludes module-owned ARTEL and becomes stale on corpus change; deterministic ids, atomic checkpoint, retry, immutable-contract env restore and explicit punctuation/noise exclusion without synthetic sparse tokens |
 | `tests/test_rag_generation_supervisor.py` | focused | supervisor restarts only on unsuccessful exit and carries the same scope manifest through build/readiness/activation arguments |
 | `tests/test_rag_rrf_readiness.py` | focused | fail-closed activation gate: scope manifest hash must match migration; every selected dataset/destination point needs fingerprint+dense+sparse, source/child/exclusion accounting, complete FTS and contract-model/backend identity-checked live RRF endpoint |
-| `tests/test_activate_qdrant_generation.py` | focused | stable alias activation requires green structural+FTS+live-RRF report; Qdrant/SQLite alias rollback clears or restores lexical projection; direct activation reconciles supervisor state |
+| `tests/test_activate_qdrant_generation.py` | focused | stable alias activation requires green structural+FTS+live-RRF report; Qdrant/SQLite alias rollback clears or restores lexical projection; direct activation reconciles supervisor state and immediately runs fail-closed navigation-count MetaDB reconciliation |
 | `tests/test_rag_readiness_service.py` | focused | GUI readiness reports honest ready/degraded/building/awaiting-activation states from contract, dense, sparse, fingerprint, FTS and alias coverage |
 | `tests/test_deploy_to_runtime.py` | focused | service restart routing, clean-release scope from `deploy_stamp.deployed_commit..HEAD`, and safe distinction between a file matching the deployed commit and true runtime-only drift |
 | `tests/test_internal_dual_deploy.py`; `tests/test_{installer_windows,tauri_desktop}.py`; `tools/browser_layout_smoke.py` | focused + installed Windows + live browser | prepare-once/apply-fast exact safe branch: checksum-valid local bundle cache, unchanged baseline transfer skipped, separate Windows prepare/apply, no pytest/build on apply, no publish path, Mac atomic replace/rollback and Legion application rollback without user state; Windows GUI subsystem, single-instance/in-flight lifecycle, direct Python PID contract, no LES-owned `cmd.exe`, no repeated bootstrap at desktop handoff; `/`, `/classic`, `/les/classic` on desktop/mobile without overflow, clipped actions or hidden focus |
@@ -215,3 +276,13 @@ health/diagnostics do not hide FAIL; чистый runtime без проверя�
 3. Профильные тесты версии + регрессия зелёные.
 4. Deploy stamp пишется на `--apply` (или вручную `write_deploy_stamp` при cp).
 5. `docs/RELEASE_LEDGER.md` обновлён; версии внешнего ПО сверены с `docs/SOFTWARE_VERSIONS.md`.
+## Advanced RAG / GUI-first configuration (0.27.47)
+
+- `tests/test_runtime_config_registry_service.py` — полный GUI-visible factor registry, secret masking, Danger confirmation, read-only/unknown guards, Unicode/quotes/spaces.
+- `tests/test_rag_advanced_policy_service.py` — versioned atomic RAPTOR/ColBERT policy and stable status/error codes.
+- `tests/test_colbert_late_interaction.py` — MaxSim ordering and self-recovering circuit breaker.
+- `tests/test_raptor_tree.py` — deterministic navigation-only tree, checkpoint and exact leaf descent.
+- `tests/test_qdrant_adapter_parse.py::test_hierarchy_navigation_nodes_receive_prevalidated_sparse_vectors` — hierarchy не может добавить navigation node после sparse prevalidation.
+- `tests/test_qdrant_adapter_parse.py::test_file_upsert_waits_before_exact_count_verification` — exact Qdrant count выполняется только после `wait=True` upsert acknowledgement.
+- `tests/test_parse_resume.py::{test_legacy_navigation_count_repair_requires_exact_safe_delta,test_metadb_applies_navigation_count_repairs_atomically}` — metadata-only repair допустим только когда весь delta состоит из явных hierarchy navigation points и dense/sparse/lexical полностью совпадают; SQLite обновляется атомарно.
+- `tests/test_rag_advanced_synthetic_benchmark.py` / `tools/rag_advanced_synthetic_benchmark.py` — hermetic A/B: baseline RRF order vs ColBERT MRR/Recall@1 plus RAPTOR citation boundary.

@@ -7,6 +7,7 @@ import logging
 import os
 import socket
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -101,8 +102,27 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     await _check("Qdrant :6333", _chk_qdrant())
 
     async def _chk_llm():
-        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+        provider = os.getenv("LES_LLM_PROVIDER", "").strip().lower()
         llm_model = os.getenv("LLM_MODEL", "?")
+        if provider == "ollama":
+            llm_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+            configured = os.getenv("OLLAMA_MODEL", llm_model)
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(llm_url),
+                timeout=5.0,
+            ) as client:
+                response = await client.get(f"{llm_url}/api/tags")
+                response.raise_for_status()
+                models = response.json().get("models", [])
+            names = {str(row.get("name") or "") for row in models if isinstance(row, dict)}
+            available = configured in names or any(name.split(":", 1)[0] == configured.split(":", 1)[0] for name in names)
+            return (
+                "ok" if available else "warn",
+                configured,
+                "installed",
+                f"Ollama · {'model ready' if available else 'model missing'}",
+            )
+        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
         try:
             async with httpx.AsyncClient(
                 trust_env=trust_env_for_url(llm_url),
@@ -120,15 +140,16 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
         except Exception as e:
             return "err", "?", "loaded", str(e)
 
-    await _check("MLX Backend", _chk_llm())
+    await _check("LLM Backend", _chk_llm())
 
     async def _chk_ram():
         vm = psutil.virtual_memory()
         pct = vm.percent
         used = vm.used / 1024**3
         total = vm.total / 1024**3
-        status = "ok" if pct < 85 else ("warn" if pct < 95 else "err")
-        return status, f"{used:.1f}/{total:.1f} GB ({pct:.0f}%)", "<85%", ""
+        status = "ok" if pct < 85 else ("warn" if pct < 98 else "err")
+        message = "давление памяти; тяжёлые модели выгрузятся по TTL" if pct >= 85 else ""
+        return status, f"{used:.1f}/{total:.1f} GB ({pct:.0f}%)", "<85%", message
 
     await _check("RAM", _chk_ram())
 
@@ -147,6 +168,8 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     await _check("Диск", _chk_disk())
 
     async def _chk_no_docker():
+        if sys.platform.startswith("win"):
+            return "ok", "Qdrant reachable", "reachable", "Windows production · Docker Qdrant"
         return "ok", "removed", "no Docker", "Qdrant/proxy/UI/MLX run on host LaunchAgents"
 
     await _check("Docker runtime", _chk_no_docker())
@@ -166,18 +189,24 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
 
     async def _chk_chat():
         started = time.time()
-        llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+        provider = os.getenv("LES_LLM_PROVIDER", "").strip().lower()
+        if provider == "ollama":
+            llm_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434").rstrip("/")
+            health_path = "/api/tags"
+        else:
+            llm_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
+            health_path = "/api/health"
         async with httpx.AsyncClient(
             trust_env=trust_env_for_url(llm_url),
             timeout=30.0,
         ) as client:
-            response = await client.get(f"{llm_url}/api/health")
+            response = await client.get(f"{llm_url}{health_path}")
         ms = (time.time() - started) * 1000
         ok = response.status_code == 200
         status = "ok" if ms < 5000 else ("warn" if ms < 15000 else "err")
         return status, f"{ms:.0f} ms", "<5000 ms", "MLX health OK" if ok else f"HTTP {response.status_code}"
 
-    await _check("MLX latency", _chk_chat())
+    await _check("LLM latency", _chk_chat())
 
     async def _chk_net():
         def _ping():

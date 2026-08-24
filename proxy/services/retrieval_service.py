@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -20,6 +21,8 @@ from proxy.services.retrieval_quality_service import (
     evaluate_retrieval_quality,
     expanded_quality_query,
 )
+from backend.colbert_late_interaction import CircuitBreaker
+from proxy.services.rag_advanced_policy_service import load_policy, load_status, save_status
 
 
 CHAT_TOP_K = int(os.getenv("RAG_CHAT_TOP_K", "64"))
@@ -28,6 +31,15 @@ RERANK_TOP_K = int(os.getenv("RAG_CHAT_RERANK_TOP_K", "64"))
 RERANK_CANDIDATE_K = int(
     os.getenv("RAG_CHAT_RERANK_CANDIDATE_K", str(RERANK_TOP_K))
 )
+_COLBERT_BREAKER = CircuitBreaker()
+_RAPTOR_BREAKER = CircuitBreaker()
+
+
+def _save_advanced_status_safely(payload: dict[str, Any]) -> None:
+    try:
+        save_status(payload)
+    except Exception as exc:  # telemetry must never erase a valid evidence shortlist
+        logging.getLogger(__name__).warning("[RAG-STATUS] status persistence skipped: %s", exc)
 _SOURCE_EXACT_RE = re.compile(
     r"(?iu)(?:"
     r"[\w./\\:-]+\.(?:md|json|jsonl|dwg|dxf|rvt|rfa|ifc|ifczip|pdf|xlsx?|docx?)"
@@ -75,13 +87,13 @@ _SOURCE_NAME_STOPWORDS = {
 
 
 def required_reranker_policy(requested: Optional[bool] = None) -> tuple[bool, dict[str, Any]]:
-    """Resolve the production reranker from runtime policy, never from a client toggle.
+    """Resolve the optional reranker from runtime policy, never from a client toggle.
 
     ``reranker_enabled`` remains accepted by the chat API for backward compatibility,
-    but production retrieval cannot be weakened by an old UI or API client. Operators
-    can still fail the contour closed through ``RERANKER_ENABLED=false``.
+    but an old UI or API client cannot silently change the server's retrieval path.
+    Native RRF is the production ranking contract; reranking is opt-in.
     """
-    runtime_enabled = os.getenv("RERANKER_ENABLED", "true").strip().casefold() in {
+    runtime_enabled = os.getenv("RERANKER_ENABLED", "false").strip().casefold() in {
         "1",
         "true",
         "yes",
@@ -89,7 +101,7 @@ def required_reranker_policy(requested: Optional[bool] = None) -> tuple[bool, di
     }
     return runtime_enabled, {
         "enabled": runtime_enabled,
-        "reason": "mandatory_runtime_contract",
+        "reason": "optional_runtime_stage",
         "explicit_override": requested is not None,
         "legacy_request_ignored": requested is not None,
         "legacy_request_value": requested,
@@ -788,6 +800,112 @@ async def retrieve_chat_chunks(
         logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
     logger.info("[RETR] подфазы=%s", _rt)
     trace.query_embedding = query_embedding_instruction_id()
+    advanced_policy = load_policy()
+    advanced_status = load_status()
+    raptor_policy = advanced_policy["raptor"]
+    raptor_status = advanced_status["raptor"]
+    raptor_mode = str(raptor_policy["mode"])
+    raptor_ready = str(raptor_status.get("readiness") or "") == "ready"
+    raptor_should_run = (
+        raptor_mode != "off"
+        and raptor_ready
+        and len(chunks) > 0
+        and hasattr(rag_backend, "retrieve_raptor_evidence")
+        and (
+            raptor_mode == "always"
+            or is_structured
+            or is_technical_or_legal
+            or len(question.split()) >= 6
+        )
+    )
+    _RAPTOR_BREAKER.failure_limit = int(raptor_policy["circuit_breaker_failures"])
+    _RAPTOR_BREAKER.cooldown_sec = int(raptor_policy["circuit_breaker_cooldown_sec"])
+    raptor_chunks: list[Any] = []
+    if raptor_should_run and _RAPTOR_BREAKER.allow():
+        started = time.monotonic()
+        try:
+            raptor_chunks = await asyncio.wait_for(
+                rag_backend.retrieve_raptor_evidence(
+                    retrieval_query,
+                    target_collection=str(raptor_status.get("target_collection") or ""),
+                    source_collection=str(raptor_status.get("source_collection") or ""),
+                    dataset_ids=dataset_ids,
+                    doc_filter=effective_doc_filter or None,
+                    route_k=int(raptor_policy["route_k"]),
+                    top_k=min(
+                        merged_top_k,
+                        int(raptor_policy["route_k"]) * int(raptor_policy["fanout"]),
+                    ),
+                ),
+                timeout=int(raptor_policy["latency_budget_ms"]) / 1000.0,
+            )
+            if raptor_chunks:
+                from backend.rag_hierarchy import reciprocal_rank_fuse
+
+                chunks = reciprocal_rank_fuse([chunks, raptor_chunks], limit=merged_top_k)
+                trace.mode = f"{trace.mode}+raptor"
+                trace.fusion = f"{trace.fusion}+raptor_rrf"
+            elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+            _RAPTOR_BREAKER.success()
+            trace.raptor = {
+                "status": "applied" if raptor_chunks else "no_routes",
+                "mode": raptor_mode,
+                "routes_collection": str(raptor_status.get("target_collection") or ""),
+                "evidence_count": len(raptor_chunks),
+                "latency_ms": elapsed_ms,
+            }
+            _save_advanced_status_safely(
+                {
+                    "raptor": {
+                        "last_error_code": "",
+                        "last_bypass_reason": "",
+                        "circuit_state": "closed",
+                    },
+                    "last_route": {
+                        "stages": ["native_rrf", "hierarchy", "raptor"],
+                        "latency_ms": {"raptor": elapsed_ms},
+                    },
+                }
+            )
+        except Exception as raptor_error:
+            _RAPTOR_BREAKER.failure()
+            code = (
+                "RAPTOR_TIMEOUT"
+                if isinstance(raptor_error, TimeoutError)
+                else "RAPTOR_RETRIEVAL_FAILED"
+            )
+            trace.raptor = {
+                "status": "bypassed",
+                "error_code": code,
+                "detail": type(raptor_error).__name__,
+            }
+            _save_advanced_status_safely(
+                {
+                    "raptor": {
+                        "last_error_code": code,
+                        "last_bypass_reason": code,
+                        "circuit_state": "open" if not _RAPTOR_BREAKER.allow() else "closed",
+                    }
+                }
+            )
+            logger.warning("[RAPTOR] fallback to native hierarchy: %s", raptor_error)
+    else:
+        raptor_reason = (
+            "disabled"
+            if raptor_mode == "off"
+            else "not_ready"
+            if not raptor_ready
+            else "circuit_open"
+            if not _RAPTOR_BREAKER.allow()
+            else "adaptive_bypass"
+            if raptor_mode == "adaptive"
+            else "backend_unavailable"
+        )
+        trace.raptor = {
+            "status": "bypassed",
+            "reason": raptor_reason,
+            "mode": raptor_mode,
+        }
     chunks, exact_terms = _promote_exact_source_matches(chunks, question)
     if exact_terms:
         if "source_exact" not in trace.mode:
@@ -896,6 +1014,16 @@ async def retrieve_chat_chunks(
                     "top_k_before": merged_top_k,
                     "top_k_after": retry_top_k,
                 }
+                if trace.raptor.get("status") == "applied" and raptor_chunks:
+                    from backend.rag_hierarchy import reciprocal_rank_fuse
+
+                    retry_chunks = reciprocal_rank_fuse(
+                        [retry_chunks, raptor_chunks],
+                        limit=retry_top_k,
+                    )
+                    retry_trace.raptor = dict(trace.raptor)
+                    retry_trace.mode = f"{retry_trace.mode}+raptor"
+                    retry_trace.fusion = f"{retry_trace.fusion}+raptor_rrf"
                 retry_quality = evaluate_retrieval_quality(
                     question=question,
                     chunks=retry_chunks,
@@ -913,13 +1041,77 @@ async def retrieve_chat_chunks(
                     "error": type(retry_error).__name__,
                 }
 
+    # Late interaction sits strictly between RRF/hierarchy and cross-encoder.
+    # It is evidence-only and fail-soft: a missing optional vector never erases
+    # the already valid native-RRF shortlist.
+    colbert_policy = advanced_policy["colbert"]
+    colbert_mode = str(colbert_policy["mode"])
+    exact_early_exit = bool(advanced_policy["execution"]["exact_early_exit"])
+    colbert_should_run = (
+        colbert_mode != "off"
+        and len(chunks) > 1
+        and hasattr(rag_backend, "rerank_colbert")
+        and not (colbert_mode == "adaptive" and exact_early_exit and (exact_terms or exact_norm_refs))
+    )
+    _COLBERT_BREAKER.failure_limit = int(colbert_policy["circuit_breaker_failures"])
+    _COLBERT_BREAKER.cooldown_sec = int(colbert_policy["circuit_breaker_cooldown_sec"])
+    if colbert_should_run and _COLBERT_BREAKER.allow():
+        started = time.monotonic()
+        candidate_count = min(int(colbert_policy["candidate_k"]), len(chunks))
+        try:
+            ranked_head = await asyncio.wait_for(
+                rag_backend.rerank_colbert(
+                    retrieval_query,
+                    chunks[:candidate_count],
+                    top_k=min(int(colbert_policy["output_k"]), candidate_count),
+                    max_query_tokens=int(colbert_policy["max_query_tokens"]),
+                ),
+                timeout=int(colbert_policy["latency_budget_ms"]) / 1000.0,
+            )
+            chunks = ranked_head + chunks[candidate_count:]
+            elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+            _COLBERT_BREAKER.success()
+            trace.colbert = {
+                "status": "applied", "mode": colbert_mode,
+                "model": colbert_policy["model"], "input_count": candidate_count,
+                "latency_ms": elapsed_ms,
+            }
+            _save_advanced_status_safely({
+                "colbert": {"readiness": "ready", "last_error_code": "", "last_bypass_reason": "", "circuit_state": "closed"},
+                "last_route": {"stages": ["native_rrf", "hierarchy", "colbert"], "latency_ms": {"colbert": elapsed_ms}},
+            })
+        except Exception as colbert_error:  # optional stage keeps the proven RRF order
+            _COLBERT_BREAKER.failure()
+            code = "COLBERT_TIMEOUT" if isinstance(colbert_error, TimeoutError) else "COLBERT_RERANK_FAILED"
+            trace.colbert = {"status": "bypassed", "error_code": code, "detail": type(colbert_error).__name__}
+            _save_advanced_status_safely({"colbert": {
+                "readiness": "degraded", "last_error_code": code,
+                "last_bypass_reason": code,
+                "circuit_state": "open" if not _COLBERT_BREAKER.allow() else "closed",
+            }})
+            logger.warning("[COLBERT] fallback to native RRF order: %s", colbert_error)
+    else:
+        reason = (
+            "disabled" if colbert_mode == "off" else
+            "exact_early_exit" if exact_early_exit and (exact_terms or exact_norm_refs) else
+            "circuit_open" if not _COLBERT_BREAKER.allow() else
+            "backend_unavailable"
+        )
+        trace.colbert = {"status": "bypassed", "reason": reason, "mode": colbert_mode}
+
     # W2.3: cross-encoder реранк гибридного пула — переупорядочивает, не режет
     # (downstream-фокусировка сама сузит). Сопоставление по индексу через
     # metadata._idx (не по тексту). Сбой → исходный гибридный порядок.
     if len(chunks) > 1 and (not reranker_enabled or not reranker_available or reranker_cls is None):
-        log_error("[RERANKER] required reranker is unavailable")
-        return blocked_result(
-            "reranker_unavailable" if reranker_enabled else "reranker_disabled",
+        bypass_reason = "disabled" if not reranker_enabled else "unavailable"
+        trace.rerank = {
+            "status": "bypassed",
+            "reason": bypass_reason,
+            "preserved_order": "native_rrf",
+        }
+        logger.info(
+            "[RERANKER] bypassed (%s); preserving native RRF order",
+            bypass_reason,
         )
     if reranker_available and reranker_enabled and len(chunks) > 1:
         try:

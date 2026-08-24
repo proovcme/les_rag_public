@@ -168,6 +168,53 @@ def test_citation_drawer_item_opens_file_like_refs():
     assert "locator=para85" in item["viewer_url"]
 
 
+def test_citation_sources_prefers_exact_source_map_over_legacy_names():
+    result = ar.citation_sources(
+        ["Титул.docx"],
+        [{
+            "doc_id": "doc-31",
+            "doc_name": "Титул.docx",
+            "source_ref": "Титул.docx#para4",
+            "snippet": "Проверяемый фрагмент",
+        }],
+    )
+
+    assert result[0]["doc_id"] == "doc-31"
+    assert result[0]["file"] == "Титул.docx"
+    assert result[0]["excerpt"] == "Проверяемый фрагмент"
+
+
+def test_citation_drawer_item_uses_stable_document_id_for_raw_link():
+    item = ar.citation_drawer_item({
+        "doc_id": "doc 31",
+        "doc_name": "Титул.pdf",
+        "source_ref": "Титул.pdf#p4",
+        "snippet": "Фрагмент",
+    })
+
+    assert item["open_url"] == "/api/documents/by-id/doc%2031/raw#page=4"
+    assert item["viewer_url"] == "/api/documents/by-id/doc%2031/raw#page=4"
+    assert item["native_open_url"] == "/api/documents/by-id/doc%2031/open-native"
+    assert item["locator"] == "стр.4"
+
+
+def test_citation_drawer_item_uses_stable_document_id_for_office_preview():
+    item = ar.citation_drawer_item({
+        "doc_id": "doc-31",
+        "doc_name": "Титул.docx",
+        "source_ref": "Титул.docx#para4",
+    })
+
+    assert item["open_url"] == "/api/documents/by-id/doc-31/raw"
+    assert item["viewer_url"] == "/api/documents/by-id/doc-31/viewer?locator=para4"
+
+
+def test_inline_latex_delimiters_do_not_leak_into_chat_text():
+    text = "Шинопровод: $P_{уст} = 841,4$ кВт; цена \\$100; display $$x=1$$."
+
+    assert ar.normalize_inline_math(text) == "Шинопровод: P\\_уст = 841,4 кВт; цена \\$100; display $$x=1$$."
+
+
 def test_citation_drawer_item_opens_pdf_on_exact_page():
     item = ar.citation_drawer_item({
         "source_ref": "RAG_Content/PROJECT/План этажа.pdf#p12",

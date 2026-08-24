@@ -14,6 +14,7 @@ from tools.basic_function_smoke import (
     check_chat_project_noscope,
     check_diagnostics,
     check_health,
+    check_indexing_state,
     compute_exit,
     failures,
 )
@@ -113,6 +114,36 @@ def test_health_degraded_is_explicit_warning():
     assert result["reason"] == "runtime degraded"
 
 
+def test_active_indexing_warns_in_dev_but_fails_release():
+    response = _Response(200, {
+        "status": "degraded",
+        "rag": {"status": "degraded", "totals": {"pending_files": 7}, "datasets": []},
+    })
+
+    dev, active = check_indexing_state(_Client(response), "http://example.test", release=False)
+    release, release_active = check_indexing_state(_Client(response), "http://example.test", release=True)
+
+    assert active is release_active is True
+    assert dev["status"] == "warn"
+    assert release["status"] == "fail"
+    assert dev["evidence"]["error_code"] == "INDEXING_IN_PROGRESS"
+    assert compute_exit([release], release=True) == 1
+
+
+def test_completed_indexing_allows_chat_probes():
+    result, active = check_indexing_state(
+        _Client(_Response(200, {
+            "status": "ok",
+            "rag": {"status": "ready", "totals": {"pending_files": 0}, "datasets": []},
+        })),
+        "http://example.test",
+        release=True,
+    )
+
+    assert active is False
+    assert result["status"] == "pass"
+
+
 def test_diagnostics_error_is_not_hidden_by_http_200():
     result = check_diagnostics(_Client(_Response(200, {"overall": "err"})), "http://example.test")
 
@@ -167,8 +198,11 @@ def test_project_noscope_smoke_rejects_glossary_hijack():
 @pytest.mark.skipif(shutil.which("make") is None, reason="Makefile contract is checked on Unix runners")
 def test_ship_paths_escalate_smoke_p1_to_release():
     root = Path(__file__).resolve().parents[1]
-    for target in ("ship-check", "ship-full-check"):
+    for target in ("ship", "ship-full"):
         plan = subprocess.run(
             ["make", "-n", target], cwd=root, text=True, capture_output=True, check=True,
         ).stdout
         assert "tools/basic_function_smoke.py --release" in plan
+        assert plan.index("tools.deploy_to_runtime --apply --restart") < plan.index(
+            "tools/basic_function_smoke.py --release"
+        )

@@ -70,3 +70,5 @@ rag_engineer_v3.pptx
 ARTICLE_CAD_BIM_RAG.md
 ifc_sample/*.ifc
 .deploy_manifest.json
+.test-tmp/
+recovery/

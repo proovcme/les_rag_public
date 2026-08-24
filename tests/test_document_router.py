@@ -1,6 +1,5 @@
 from pathlib import Path
 from zipfile import ZipFile
-
 from backend.document_router import DocumentProbe, classify_document, probe_document, route_document
 from backend.qdrant_adapter import QdrantLlamaIndexAdapter
 
@@ -616,3 +615,130 @@ def test_generic_ntd_normative_uses_general_bucket():
 
     assert route.domain == "NTD_GENERAL"
     assert route.dataset_name == "NTD_GENERAL_Index"
+
+
+def test_route_contract_pdf_and_docx():
+    contract_docx = classify_document(
+        DocumentProbe(
+            path=Path("Договор_подряда_№123-2025.docx"),
+            suffix=".docx",
+            size_bytes=25_000,
+            text_sample="Договор подряда №123-2025. Настоящий договор заключен между Подрядчиком и Заказчиком. Предмет договора: выполнение строительно-монтажных работ.",
+        )
+    )
+    contract_pdf = classify_document(
+        DocumentProbe(
+            path=Path("Contract_Services_2025.pdf"),
+            suffix=".pdf",
+            size_bytes=50_000,
+            text_sample="Настоящий контракт регулирует права и обязанности сторон. Адреса и реквизиты сторон.",
+        )
+    )
+
+    assert contract_docx.doc_type == "CONTRACT"
+    assert contract_pdf.doc_type == "CONTRACT"
+
+
+def test_route_general_act_and_addendum():
+    act = classify_document(
+        DocumentProbe(
+            path=Path("Акт_выполненных_работ_№5.pdf"),
+            suffix=".pdf",
+            size_bytes=15_000,
+            text_sample="Акт сдачи-приемки оказанных услуг. Работы выполнены в полном объеме.",
+        )
+    )
+    addendum = classify_document(
+        DocumentProbe(
+            path=Path("Доп_соглашение_№1_к_договору_123.docx"),
+            suffix=".docx",
+            size_bytes=12_000,
+            text_sample="Дополнительное соглашение №1 к договору подряда. Приложение №1 является неотъемлемой частью.",
+        )
+    )
+
+    assert act.doc_type == "ACT_GENERAL"
+    assert addendum.doc_type == "ADDENDUM"
+
+
+def test_route_invoice_bill():
+    invoice = classify_document(
+        DocumentProbe(
+            path=Path("Счет_на_оплату_№45.pdf"),
+            suffix=".pdf",
+            size_bytes=10_000,
+            text_sample="Счёт на оплату №45 от 12.02.2025. Всего к оплате: 150 000 руб.",
+        )
+    )
+    upd = classify_document(
+        DocumentProbe(
+            path=Path("УПД_0012.xlsx"),
+            suffix=".xlsx",
+            size_bytes=8_000,
+            text_sample="Универсальный передаточный документ (УПД). Счет-фактура №12.",
+            has_tables=True,
+        )
+    )
+
+    assert invoice.doc_type == "INVOICE_BILL"
+    assert upd.doc_type == "INVOICE_BILL"
+    assert upd.domain == "TABLE_INVOICE_BILL"
+
+
+def test_route_tz_tor_letter_passport_drawing():
+    tz = classify_document(
+        DocumentProbe(
+            path=Path("ТЗ_на_проектирование_ЭОМ.docx"),
+            suffix=".docx",
+            size_bytes=18_000,
+            text_sample="Техническое задание на выполнение проектных работ. Требования к оборудованию.",
+        )
+    )
+    letter = classify_document(
+        DocumentProbe(
+            path=Path("Исходящее_письмо_№105.pdf"),
+            suffix=".pdf",
+            size_bytes=10_000,
+            text_sample="Исходящее письмо №105. Направляем согласованный протокол совещания.",
+        )
+    )
+    passport = classify_document(
+        DocumentProbe(
+            path=Path("Паспорт_оборудования_ИБП.pdf"),
+            suffix=".pdf",
+            size_bytes=40_000,
+            text_sample="Паспорт изделия и руководство по эксплуатации. Сертификат соответствия.",
+        )
+    )
+    drawing = classify_document(
+        DocumentProbe(
+            path=Path("Однолинейная_схема_ЭОМ.pdf"),
+            suffix=".pdf",
+            size_bytes=80_000,
+            text_sample="Однолинейная схема щита ЩО-1. Сборочный чертеж.",
+        )
+    )
+
+    assert tz.doc_type == "TZ_TOR"
+    assert letter.doc_type == "LETTER"
+    assert passport.doc_type == "PASSPORT_CERT"
+    assert drawing.doc_type == "DRAWING"
+
+
+def test_route_extracts_doc_passport_metadata():
+    route = classify_document(
+        DocumentProbe(
+            path=Path("Договор_подряда_№123-2025_от_15.01.2025.pdf"),
+            suffix=".pdf",
+            size_bytes=45_000,
+            text_sample="Договор подряда № 123-2025 от 15.01.2025. Заказчик: ООО Вектор. Подрядчик: ООО СтройСервис. Сумма договора: 1 500 000 руб.",
+        )
+    )
+
+    doc_passport = route.metadata.get("doc_passport") or {}
+
+    assert doc_passport.get("doc_number") == "123-2025"
+    assert doc_passport.get("doc_date") == "15.01.2025"
+    assert "Заказчик" in doc_passport.get("contracting_parties", [])
+    assert "Подрядчик" in doc_passport.get("contracting_parties", [])
+    assert "1 500 000 руб" in doc_passport.get("amount_summary", "")

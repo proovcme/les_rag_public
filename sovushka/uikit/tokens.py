@@ -462,6 +462,8 @@ html {
 .sov-ui-status {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
+  white-space: nowrap;
   min-height: 24px;
   padding: 2px 9px;
   border: 1px solid currentColor;
@@ -2186,7 +2188,7 @@ html {
   display: grid;
   width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(240px, 1fr) minmax(300px, 1.4fr) auto;
+  grid-template-columns: minmax(280px, 1.2fr) minmax(260px, 1fr) auto;
   grid-template-areas:
     "head facts actions"
     "progress progress actions"
@@ -2208,6 +2210,9 @@ html {
 
 .sov-dataset-row__head {
   grid-area: head;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   min-width: 0;
   gap: 10px;
   flex-wrap: nowrap;

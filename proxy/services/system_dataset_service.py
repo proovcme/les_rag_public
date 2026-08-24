@@ -27,6 +27,7 @@ SYSTEM_DATASETS: tuple[SystemDatasetSpec, ...] = (
     SystemDatasetSpec("NORMATIVE_SERVICE_Index", "normcontrol", "normative_reference", "Нормативы и чек-листы", 10),
     SystemDatasetSpec("PRICE_SERVICE_Index", "smeta", "price_reference", "Прайсы", 20),
     SystemDatasetSpec("SMETA_SERVICE_Index", "smeta", "module_navigation", "Сметные источники", 30),
+    SystemDatasetSpec("SMETA_NORMS_Index", "smeta", "normative_reference", "Сметные нормы", 40),
 )
 EXTERNAL_SYSTEM_DATASETS: tuple[SystemDatasetSpec, ...] = (
     SystemDatasetSpec("ARTEL_Index", "artel", "integration_knowledge", "ARTEL", 5),
@@ -53,6 +54,7 @@ def ensure_system_datasets(conn: sqlite3.Connection) -> list[str]:
     """Idempotently provision operator-owned service datasets in MetaDB."""
     created: list[str] = []
     for spec in SYSTEM_DATASETS:
+        dataset_id = str(uuid.uuid5(_SYSTEM_DATASET_NAMESPACE, spec.dataset_name))
         row = conn.execute("SELECT id FROM datasets WHERE name=? LIMIT 1", (spec.dataset_name,)).fetchone()
         if row:
             conn.execute(
@@ -60,7 +62,13 @@ def ensure_system_datasets(conn: sqlite3.Connection) -> list[str]:
                 (spec.module_id, str(row[0])),
             )
             continue
-        dataset_id = str(uuid.uuid5(_SYSTEM_DATASET_NAMESPACE, spec.dataset_name))
+        stable_row = conn.execute("SELECT id FROM datasets WHERE id=? LIMIT 1", (dataset_id,)).fetchone()
+        if stable_row:
+            conn.execute(
+                "UPDATE datasets SET name=?, dataset_scope='system', module_id=? WHERE id=?",
+                (spec.dataset_name, spec.module_id, dataset_id),
+            )
+            continue
         conn.execute(
             "INSERT INTO datasets (id, name, status, dataset_scope, module_id) "
             "VALUES (?, ?, 'IDLE', 'system', ?)",

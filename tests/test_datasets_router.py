@@ -4,7 +4,6 @@ from collections import deque
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
-
 import pytest
 from fastapi import UploadFile
 
@@ -974,7 +973,11 @@ async def test_upload_background_parse_failure_is_persisted(tmp_path, monkeypatc
     await tasks[0]
 
     assert dataset_state.document_errors == [
-        ("ds-1", "doc-1", "index contract missing"),
+        (
+            "ds-1",
+            "doc-1",
+            "BACKGROUND_PARSE_FAILED [RuntimeError]: index contract missing",
+        ),
     ]
 
 
@@ -997,6 +1000,60 @@ async def test_attach_read_returns_text_context(tmp_path, monkeypatch, dataset_s
     assert saved_path.read_bytes() == "Прочитай меня как задание".encode("utf-8")
     assert metadata["original_name"] == "note.txt"
     assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_attach_quick_pdf_is_promoted_to_read(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+    calls = []
+
+    async def fake_prepare(temp_path, original_name, **_kwargs):
+        calls.append(original_name)
+        return {
+            "attachment_id": "read_abcdef123456",
+            "mode": "read",
+            "name": original_name,
+            "chars": 11,
+            "text": "pdf context",
+            "truncated": False,
+        }
+
+    monkeypatch.setattr(datasets, "_prepare_read_attachment", fake_prepare)
+    result = await datasets.attach_chat_file(
+        file=_upload("ВОР монтаж.pdf", b"%PDF-1.4 fake"),
+        mode="quick",
+        _admin=object(),
+    )
+
+    assert result["mode"] == "read"
+    assert result["attachment_id"].startswith("read_")
+    assert calls == ["ВОР монтаж.pdf"]
+    assert dataset_state.uploads == []
+
+
+@pytest.mark.asyncio
+async def test_attach_read_preserves_pdf_without_extracted_text(tmp_path, monkeypatch, dataset_state):
+    monkeypatch.chdir(tmp_path)
+
+    def empty_converter(_path):
+        return ""
+
+    import backend.converter
+
+    monkeypatch.setattr(backend.converter, "convert_to_markdown", empty_converter)
+    monkeypatch.setattr(datasets, "_format_tabular_attachment_context", lambda *_args, **_kwargs: None)
+    result = await datasets.attach_chat_file(
+        file=_upload("empty_vor.pdf", b"%PDF-1.4 binary"),
+        mode="read",
+        _admin=object(),
+    )
+
+    assert result["mode"] == "read"
+    assert "preserved for LSR intake" in result["text"]
+    from proxy.services.chat_attachment_service import resolve_read_attachment
+
+    saved_path, _metadata = resolve_read_attachment(result["attachment_id"])
+    assert saved_path.read_bytes() == b"%PDF-1.4 binary"
 
 
 @pytest.mark.asyncio
@@ -1430,3 +1487,29 @@ async def test_parse_scheduler_warm_embedder_skips_between_batch_unload(monkeypa
     assert "unload" not in result["batches"][0]
     assert result["final_unload"] == {"ok": True}
     assert len(unloads) == 1
+
+
+@pytest.mark.asyncio
+async def test_set_dataset_name_and_group_user_permission(monkeypatch):
+    class DummyBackend:
+        def __init__(self):
+            self.groups = {}
+            self.names = {}
+        async def set_dataset_group(self, dataset_id: str, group_name: str):
+            self.groups[dataset_id] = group_name
+        async def set_dataset_name(self, dataset_id: str, name: str):
+            self.names[dataset_id] = name
+
+    dummy = DummyBackend()
+    @dataclass
+    class State:
+        backend: object
+    monkeypatch.setattr(datasets, "get_dataset_state", lambda: State(backend=dummy))
+
+    res_grp = await datasets.set_dataset_group("ds-10", group="Проекты", payload=datasets.DatasetGroupPayload(group="Проекты"), _user=object())
+    assert res_grp == {"id": "ds-10", "group_name": "Проекты"}
+    assert dummy.groups["ds-10"] == "Проекты"
+
+    res_nm = await datasets.set_dataset_name("ds-10", name="Новый Датасет", payload=datasets.DatasetNamePayload(name="Новый Датасет"), _user=object())
+    assert res_nm == {"id": "ds-10", "name": "Новый Датасет"}
+    assert dummy.names["ds-10"] == "Новый Датасет"

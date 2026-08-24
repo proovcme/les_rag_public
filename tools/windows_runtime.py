@@ -159,7 +159,7 @@ def runtime_environment(
                 or "bge-m3",
                 "EMBED_BACKEND": "ollama",
                 "RAG_VECTOR_SIZE": "1024",
-                "RERANKER_ENABLED": "true",
+                "RERANKER_ENABLED": "false",
                 "RERANKER_BACKEND": "sentence_transformers",
                 "RERANK_MODEL": environment.get("RERANK_MODEL", "").strip()
                 or "BAAI/bge-reranker-v2-m3",

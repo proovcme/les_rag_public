@@ -2515,6 +2515,45 @@ def build_documents(*, surface: str = "documents") -> None:
             if len(filtered) > 90:
                 _label(f"Показаны первые 90 из {len(filtered)}. Уточните фильтр.", size="11px", color="var(--dim)").style("margin-top:8px;")
 
+    async def _prompt_rename_dataset(dataset_id: str, current_name: str) -> None:
+        with ui.dialog() as dlg, ui.card().classes("p-4 w-96"):
+            ui.label("Переименование датасета").classes("text-base font-bold mb-2")
+            inp = ui.input("Название датасета", value=current_name).classes("w-full mb-4")
+            with ui.row().classes("justify-end w-full gap-2"):
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+                async def _save():
+                    new_val = inp.value.strip()
+                    if not new_val:
+                        ui.notify("Название не может быть пустым", type="warning")
+                        return
+                    res = await api_patch(f"/api/rag/datasets/{quote(dataset_id, safe='')}/name", {"name": new_val})
+                    if res:
+                        ui.notify("Датасет переименован", type="positive")
+                        dlg.close()
+                        await _load_datasets(select_first=False)
+                    else:
+                        ui.notify(last_api_error_text("Ошибка переименования"), type="negative")
+                ui.button("Сохранить", on_click=_save).props("primary")
+        dlg.open()
+
+    async def _prompt_set_group_dataset(dataset_id: str, current_group: str) -> None:
+        with ui.dialog() as dlg, ui.card().classes("p-4 w-96"):
+            ui.label("Изменить группу датасета").classes("text-base font-bold mb-2")
+            inp = ui.input("Имя группы (например, Проекты, Почта)", value=current_group).classes("w-full mb-4")
+            with ui.row().classes("justify-end w-full gap-2"):
+                ui.button("Отмена", on_click=dlg.close).props("flat")
+                async def _save():
+                    new_val = inp.value.strip()
+                    res = await api_patch(f"/api/rag/datasets/{quote(dataset_id, safe='')}/group", {"group": new_val})
+                    if res:
+                        ui.notify("Группа обновлена", type="positive")
+                        dlg.close()
+                        await _load_datasets(select_first=False)
+                    else:
+                        ui.notify(last_api_error_text("Ошибка изменения группы"), type="negative")
+                ui.button("Сохранить", on_click=_save).props("primary")
+        dlg.open()
+
     def _render_datasets() -> None:
         panel = refs.get("datasets")
         if panel is None:
@@ -2555,6 +2594,18 @@ def build_documents(*, surface: str = "documents") -> None:
                         with ui.element("div").classes("sov-dataset-icon"):
                             ui.icon("o_push_pin" if _is_system_dataset(row) else "o_folder_open")
                         _label(_dataset_title(row), size="13px", weight=850).classes("sov-dataset-name")
+                        if not _is_system_dataset(row):
+                            d_name = _dataset_title(row)
+                            d_grp = str(row.get("group_name") or "")
+                            with ui.row().classes("items-center gap-0.5 ml-auto"):
+                                ui.button(
+                                    icon="o_edit",
+                                    on_click=lambda _e, id=did, nm=d_name: _schedule(_prompt_rename_dataset(id, nm)),
+                                ).props('flat dense round aria-label="Переименовать"').tooltip("Переименовать датасет")
+                                ui.button(
+                                    icon="o_label",
+                                    on_click=lambda _e, id=did, gr=d_grp: _schedule(_prompt_set_group_dataset(id, gr)),
+                                ).props('flat dense round aria-label="Группа"').tooltip("Изменить группу датасета")
                         ui.icon("o_chevron_right").classes("sov-dataset-chevron")
                     status_ready = str(row.get("status", "")).upper() in {"IDLE", "INDEXED"}
                     meta = [

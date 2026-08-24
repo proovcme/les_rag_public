@@ -174,7 +174,20 @@ def test_native_rrf_gate_checks_successful_trace():
 
     passed = golden.evaluate_response(
         case,
-        {"chunks": [chunk], "retrieval_trace": {"status": "ok", "fusion": "rrf"}},
+        {
+            "chunks": [chunk],
+            "retrieval_trace": {
+                "status": "ok",
+                "mode": "qdrant_native_hybrid",
+                "fusion": "rrf",
+                "retrieval_channels": ["dense", "qdrant_sparse"],
+                "rerank": {
+                    "status": "bypassed",
+                    "reason": "disabled",
+                    "preserved_order": "native_rrf",
+                },
+            },
+        },
         require_native_rrf=True,
     )
     failed = golden.evaluate_response(
@@ -186,4 +199,41 @@ def test_native_rrf_gate_checks_successful_trace():
     assert passed.ok is True
     assert failed.ok is False
     assert "retrieval_status=degraded != ok" in failed.detail
-    assert "fusion=dense != rrf" in failed.detail
+    assert "fusion=dense is not native RRF" in failed.detail
+
+
+def test_native_rrf_release_gate_requires_channels_and_reranker_bypass():
+    case = golden.GoldenCase(id="release-rrf", question="project documentation", min_chunks=1)
+    chunk = {"score": 0.8, "doc_name": "source.pdf", "preview": "evidence"}
+    trace = {
+        "status": "ok",
+        "mode": "qdrant_native_hybrid+parent_card",
+        "fusion": "qdrant_rrf+lexical_safety_rrf",
+        "retrieval_channels": ["dense", "qdrant_sparse", "lexical"],
+        "rerank": {
+            "status": "bypassed",
+            "reason": "disabled",
+            "preserved_order": "native_rrf",
+        },
+    }
+
+    passed = golden.evaluate_response(
+        case,
+        {"chunks": [chunk], "retrieval_trace": trace},
+        require_native_rrf=True,
+    )
+    failed = golden.evaluate_response(
+        case,
+        {
+            "chunks": [chunk],
+            "retrieval_trace": {
+                **trace,
+                "rerank": {"status": "ok", "provider": "cross_encoder"},
+            },
+        },
+        require_native_rrf=True,
+    )
+
+    assert passed.ok is True
+    assert failed.ok is False
+    assert "rerank_status=ok != bypassed" in failed.detail

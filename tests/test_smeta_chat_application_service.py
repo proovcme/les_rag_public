@@ -7,9 +7,67 @@ import pytest
 
 from proxy.services import smeta_chat_application_service as service
 
+_SMETA_HOST_ENV = (
+    "LES_SMETA_DOCUMENT_BATCH_SIZE",
+    "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
+    "LES_SMETA_DOCUMENT_NUM_CTX",
+    "LES_SMETA_DOCUMENT_TEMPERATURE",
+    "LES_SMETA_DOCUMENT_TOP_P",
+    "LES_SMETA_LOCAL_GLOBAL_REVIEW",
+)
+
+
+def _clear_smeta_host_env(monkeypatch) -> None:
+    """Host LES-START / windows-cuda.env must not leak into unit expectations."""
+    for name in _SMETA_HOST_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
+def test_approval_open_items_projects_only_unresolved_rows():
+    workflow = {
+        "lsr": {
+            "sections": [
+                {
+                    "positions": [
+                        {
+                            "work_id": "w-bound",
+                            "name": "Организатор",
+                            "code": "ГЭСНм37-01-014-08",
+                            "qty": 8,
+                            "unit": "шт.",
+                            "summary": {"result_status": "priced"},
+                        },
+                        {
+                            "work_id": "w-open",
+                            "name": "Кабель OM4",
+                            "code": "",
+                            "qty": 400,
+                            "unit": "м.п",
+                            "summary": {
+                                "result_status": "norm_selection_required",
+                                "flags": ["нужны условия прокладки"],
+                            },
+                        },
+                    ]
+                }
+            ]
+        }
+    }
+
+    assert service._approval_open_items(workflow) == [
+        {
+            "work_id": "w-open",
+            "title": "Кабель OM4",
+            "quantity": 400,
+            "unit": "м.п",
+            "reason": "нужны условия прокладки",
+        }
+    ]
+
 
 @pytest.mark.asyncio
 async def test_document_application_preserves_stream_artifact_and_trace(tmp_path, monkeypatch):
+    _clear_smeta_host_env(monkeypatch)
     source = tmp_path / "source.pdf"
     source.write_bytes(b"%PDF-test")
     consumed = []
@@ -124,7 +182,13 @@ async def test_document_application_preserves_stream_artifact_and_trace(tmp_path
     assert workflow_call["source_name"] == "ВОР тест.pdf"
     assert workflow_call["user_request"] == "Сделай ЛСР"
     assert exchange_attempts == 2
-    assert consumed == ["read_0123456789ab"]
+    assert consumed == []
+    assert result.extra["artifact"]["approval"]["attachment"] == {
+        "id": "read_0123456789ab",
+        "name": "ВОР тест.pdf",
+        "mode": "read",
+    }
+    assert result.extra["artifact"]["approval"]["open_items"][0]["work_id"] == "w1"
     assert [(event["event"], event["data"]["phase"]) for event in events] == [
         ("smeta_step", "document_workflow"),
         ("smeta_step", "batch_search"),
@@ -173,6 +237,12 @@ async def test_document_application_keeps_attachment_after_workflow_failure(tmp_
     assert result.operation == "smeta_document_failed"
     assert result.crag == "ERROR"
     assert "Вложение сохранено" in result.answer
+    assert result.extra["attachment_retry"] == {
+        "preserved": True,
+        "id": "read_0123456789ab",
+        "name": "source.pdf",
+        "mode": "read",
+    }
     assert consumed == []
     checkpoint_path = (
         tmp_path / "artifacts" / ".checkpoints" / "read_0123456789ab.json"
@@ -305,6 +375,7 @@ def test_document_application_contains_no_professional_selector():
 
 @pytest.mark.asyncio
 async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_path, monkeypatch):
+    _clear_smeta_host_env(monkeypatch)
     source = tmp_path / "source.pdf"
     source.write_bytes(b"%PDF-test")
     monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
@@ -350,9 +421,9 @@ async def test_gemma_document_application_uses_one_model_owned_conversation(tmp_
 
 @pytest.mark.asyncio
 async def test_local_ollama_qwen_document_application_uses_single_row_batches(tmp_path, monkeypatch):
+    _clear_smeta_host_env(monkeypatch)
     source = tmp_path / "source.pdf"
     source.write_bytes(b"%PDF-test")
-    monkeypatch.delenv("LES_SMETA_DOCUMENT_BATCH_SIZE", raising=False)
     monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
         source,
         {"original_name": "source.pdf", "sha256": "sha"},
@@ -393,7 +464,156 @@ async def test_local_ollama_qwen_document_application_uses_single_row_batches(tm
     assert result is not None
     assert seen["batch_size"] == 1
     assert seen["accumulate_task_state"] is False
-    assert seen["require_global_review"] is True
+    # Local Qwen defaults to review-off for demo latency; force via env if needed.
+    assert seen["require_global_review"] is False
+    assert seen["require_scoped_search"] is True
+
+
+@pytest.mark.asyncio
+async def test_local_freetoken_document_application_uses_single_row_batches(tmp_path, monkeypatch):
+    _clear_smeta_host_env(monkeypatch)
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"xlsx")
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source,
+        {"original_name": "source.xlsx", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+    seen = {}
+
+    def run_workflow(_path, **kwargs):
+        seen.update(kwargs)
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {"summary": {
+                "result_status": "priced_complete",
+                "input_rows": 1,
+                "bound_rows": 1,
+                "open_rows": 0,
+            }, "positions": []},
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="freetoken",
+        model_name="Qwen3.6-35B-A3B-NVFP4",
+        cloud_provider=False,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result is not None
+    assert seen["batch_size"] == 1
+    assert seen["max_agent_turns"] == 8
+    assert seen["require_global_review"] is False
+    assert seen["require_scoped_search"] is True
+
+
+@pytest.mark.asyncio
+async def test_ollama_qwen_document_uses_fast_local_defaults(tmp_path, monkeypatch):
+    import os
+
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"xlsx")
+    seen = {}
+    monkeypatch.delenv("LES_SMETA_AGENT_ENGINE", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_BATCH_SIZE", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_MAX_TOOL_TURNS", raising=False)
+    monkeypatch.delenv("LES_SMETA_SEARCH_BUDGET", raising=False)
+    monkeypatch.delenv("LES_SMETA_READ_BUDGET", raising=False)
+    monkeypatch.delenv("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", raising=False)
+    monkeypatch.delenv("LES_SMETA_NORM_RERANK", raising=False)
+    monkeypatch.delenv("LES_SMETA_LOCAL_GLOBAL_REVIEW", raising=False)
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source, {"original_name": "source.xlsx", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+
+    def run_workflow(_path, **kwargs):
+        seen.update(kwargs)
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {"summary": {
+                "result_status": "priced_complete",
+                "input_rows": 1,
+                "bound_rows": 1,
+                "open_rows": 0,
+            }, "positions": []},
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    result = await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="ollama",
+        model_name="qwen3.5:9b",
+        cloud_provider=False,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert result is not None
+    assert seen["batch_size"] == 1
+    assert seen["max_agent_turns"] == 8
+    assert seen["require_scoped_search"] is True
+    assert seen["require_global_review"] is False
+    assert os.environ["LES_SMETA_SEARCH_BUDGET"] == "3"
+    assert os.environ["LES_SMETA_READ_BUDGET"] == "3"
+    assert os.environ["LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS"] == "1"
+    assert "LES_SMETA_NORM_RERANK" not in os.environ
+
+
+@pytest.mark.asyncio
+async def test_ollama_qwen_document_keeps_explicit_max_turns_override(tmp_path, monkeypatch):
+    source = tmp_path / "source.xlsx"
+    source.write_bytes(b"xlsx")
+    seen = {}
+    monkeypatch.delenv("LES_SMETA_AGENT_ENGINE", raising=False)
+    monkeypatch.delenv("LES_SMETA_DOCUMENT_BATCH_SIZE", raising=False)
+    monkeypatch.setenv("LES_SMETA_DOCUMENT_MAX_TOOL_TURNS", "12")
+    monkeypatch.setattr(service, "resolve_read_attachment", lambda _attachment_id: (
+        source, {"original_name": "source.xlsx", "sha256": "sha"},
+    ))
+    monkeypatch.setattr(service, "consume_read_attachment", lambda _attachment_id: None)
+
+    def run_workflow(_path, **kwargs):
+        seen.update(kwargs)
+        Path(kwargs["out_xlsx"]).write_bytes(b"xlsx")
+        Path(kwargs["out_report"]).write_text("{}", encoding="utf-8")
+        return {
+            "schema": "smeta_document_workflow_v2",
+            "agent_trace": {},
+            "model_trace": [],
+            "lsr": {"summary": {
+                "result_status": "priced_complete",
+                "input_rows": 1,
+                "bound_rows": 1,
+                "open_rows": 0,
+            }, "positions": []},
+        }
+
+    monkeypatch.setattr(service, "run_vor_document_workflow", run_workflow)
+    await service.run_smeta_document_application(
+        attachment_id="read_0123456789ab",
+        user_request="Сделай ЛСР",
+        model_exchange=lambda _messages, _tools: {},
+        model_provider="ollama",
+        model_name="qwen3.5:9b",
+        cloud_provider=False,
+        artifact_dir=tmp_path / "artifacts",
+    )
+
+    assert seen["max_agent_turns"] == 12
 
 
 @pytest.mark.asyncio
@@ -445,11 +665,13 @@ async def test_qwen_document_application_defaults_to_accumulated_single_rows(tmp
 def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monkeypatch):
     from proxy.services import smeta_chat_adapter_service as adapter
 
+    _clear_smeta_host_env(monkeypatch)
     bodies = []
     urls = []
 
     class Response:
         status_code = 200
+        text = ""
 
         def __init__(self, message):
             self._message = message
@@ -538,10 +760,12 @@ def test_document_exchange_makes_one_ollama_request_without_hidden_fallback(monk
 def test_document_mapping_exchange_uses_ollama_json_schema(monkeypatch):
     from proxy.services import smeta_chat_adapter_service as adapter
 
+    _clear_smeta_host_env(monkeypatch)
     captured = {}
 
     class Response:
         status_code = 200
+        text = ""
 
         def raise_for_status(self):
             return None
@@ -853,6 +1077,306 @@ def test_document_exchange_bounds_single_question_generation(monkeypatch):
     )
 
     assert captured["max_tokens"] == 512
+
+
+def test_document_exchange_uses_freetoken_transport_profile(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["body"] = kwargs["json"]
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "freetoken",
+        "http://127.0.0.1:1919/v1",
+        "http://127.0.0.1:1919/v1/chat/completions",
+        "Qwen3.6-35B-A3B-NVFP4",
+        "",
+        False,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Подбери норму"}],
+        [{"type": "function", "function": {"name": "search_fsnb"}}],
+    )
+
+    assert captured["url"] == "http://127.0.0.1:1919/v1/chat/completions"
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+    assert captured["body"]["max_tokens"] == 1024
+    assert result["content"] == "ok"
+
+
+def test_freetoken_transport_keeps_authoritative_working_set_not_audit_history(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            captured["body"] = kwargs["json"]
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "freetoken",
+        "http://127.0.0.1:1919/v1",
+        "http://127.0.0.1:1919/v1/chat/completions",
+        "Qwen3.6-35B-A3B-NVFP4",
+        "",
+        False,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+    messages = [
+        {"role": "system", "content": "skill"},
+        {"role": "user", "content": "source row"},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "old-call"}]},
+        {"role": "tool", "tool_call_id": "old-call", "content": "old audit evidence" * 1000},
+        {"role": "assistant", "content": None, "tool_calls": [{"id": "live-call"}]},
+        {"role": "tool", "tool_call_id": "live-call", "content": "latest typed evidence"},
+        {
+            "role": "user",
+            "content": '{"working_memory_contract":"smeta_norm_agent_working_memory_v1"}',
+        },
+        {"role": "user", "content": "Call the next tool now."},
+    ]
+
+    adapter._smeta_document_exchange(messages, [{"type": "function"}])
+
+    sent = captured["body"]["messages"]
+    assert sent[0:2] == messages[0:2]
+    assert all("old-call" not in str(message) for message in sent)
+    assert any("live-call" in str(message) for message in sent)
+    assert sent[-2:] == messages[-2:]
+
+
+def test_mapping_exchange_uses_terminal_tool_when_freetoken_has_no_json_schema(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    captured = {}
+    schema = {
+        "type": "object",
+        "properties": {"rows": {"type": "array", "maxItems": 1}},
+        "required": ["rows"],
+    }
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "choices": [{
+                    "message": {
+                        "tool_calls": [{
+                            "id": "mapping-1",
+                            "type": "function",
+                            "function": {
+                                "name": "submit_estimate_mapping",
+                                "arguments": '{"rows":[{"work_id":"vor-0001","decision":"unbound"}]}',
+                            },
+                        }]
+                    }
+                }]
+            }
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, url, **kwargs):
+            captured["url"] = url
+            captured["body"] = kwargs["json"]
+            return Response()
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "freetoken",
+        "http://127.0.0.1:1919/v1",
+        "http://127.0.0.1:1919/v1/chat/completions",
+        "Qwen3.6-35B-A3B-NVFP4",
+        "",
+        False,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_mapping_exchange(
+        [{"role": "user", "content": "Зафиксируй решение"}], schema
+    )
+
+    assert "response_format" not in captured["body"]
+    assert captured["body"]["tools"][0]["function"] == {
+        "name": "submit_estimate_mapping",
+        "description": "Зафиксировать выбранное моделью решение без его изменения.",
+        "parameters": schema,
+    }
+    assert captured["body"]["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_estimate_mapping"},
+    }
+    assert result["rows"][0]["work_id"] == "vor-0001"
+
+
+def test_document_exchange_retries_ollama_tool_xml_syntax_error(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    posts: list[int] = []
+
+    class Response:
+        def __init__(self, status_code: int, text: str = "", message=None):
+            self.status_code = status_code
+            self.text = text
+            self._message = message or {"content": "ok"}
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise adapter.httpx.HTTPStatusError(
+                    "boom",
+                    request=adapter.httpx.Request("POST", "http://x"),
+                    response=self,
+                )
+
+        def json(self):
+            return {"message": self._message, "done_reason": "stop"}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **_kwargs):
+            posts.append(1)
+            if len(posts) == 1:
+                return Response(
+                    500,
+                    text='{"error":"XML syntax error on line 4: '
+                    'element <parameter> closed by </function>"}',
+                )
+            return Response(200, message={"content": "retry-ok"})
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Собери ЛСР"}],
+        [{"type": "function", "function": {"name": "continue_norm_catalog"}}],
+    )
+
+    assert len(posts) == 2
+    assert result["content"] == "retry-ok"
+
+
+def test_document_exchange_soft_degrades_after_repeated_xml_tool_error(monkeypatch):
+    from proxy.services import smeta_chat_adapter_service as adapter
+
+    posts: list[dict] = []
+
+    class Response:
+        def __init__(self, status_code: int, text: str = ""):
+            self.status_code = status_code
+            self.text = text
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise adapter.httpx.HTTPStatusError(
+                    "boom",
+                    request=adapter.httpx.Request("POST", "http://x"),
+                    response=self,
+                )
+
+        def json(self):
+            return {"message": {"content": "unreachable"}}
+
+    class Client:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def post(self, _url, **kwargs):
+            posts.append(kwargs.get("json") or {})
+            return Response(
+                500,
+                text='{"error":"XML syntax error on line 4: '
+                'element <parameter> closed by </function>"}',
+            )
+
+    monkeypatch.setattr(adapter, "_smeta_model_runtime", lambda _name: adapter.LlmRuntime(
+        "ollama", "http://127.0.0.1:11434/v1", "http://127.0.0.1:11434/v1/chat/completions",
+        "qwen3.5:9b", "", True,
+    ))
+    monkeypatch.setattr(adapter.httpx, "Client", Client)
+
+    result = adapter._smeta_document_exchange(
+        [{"role": "user", "content": "Собери ЛСР"}],
+        [{"type": "function", "function": {"name": "continue_norm_catalog"}}],
+    )
+
+    assert len(posts) == 2
+    assert posts[1]["options"]["seed"] == 1
+    assert result["tool_calls"] == []
+    assert "xml" in str(result.get("_les_xml_tool_error") or "").casefold()
 
 
 @pytest.mark.asyncio

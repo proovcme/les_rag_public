@@ -202,6 +202,18 @@ def test_openai_provider_status_defaults_to_gpt_model(monkeypatch):
     assert status["model"] == "gpt-5.4"
 
 
+def test_freetoken_provider_status_uses_external_runtime(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "freetoken")
+    monkeypatch.setenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1")
+    monkeypatch.setenv("FREETOKEN_MODEL", "Qwen3.6-35B-A3B-NVFP4")
+
+    assert runtime._provider_status() == {
+        "provider": "freetoken",
+        "base_url": "http://127.0.0.1:1919/v1",
+        "model": "Qwen3.6-35B-A3B-NVFP4",
+    }
+
+
 @pytest.mark.asyncio
 async def test_chat_admission_counts_active_dispatcher_reindex(runtime_state, monkeypatch):
     class FakeDispatcher:

@@ -106,6 +106,14 @@ def test_deterministic_point_id_is_idempotent_and_child_specific():
     )
 
 
+def test_builder_pins_physical_source_but_keeps_stable_logical_identity():
+    source = Path("tools/build_rag_contract_sibling.py").read_text(encoding="utf-8")
+
+    assert '"--source-identity"' in source
+    assert "source_collection=args.source_identity or args.src" in source
+    assert '"source_physical_collection": args.src' in source
+
+
 def test_embedding_preflight_checks_count_and_vector_size():
     class Embed:
         def encode_sync(self, texts):

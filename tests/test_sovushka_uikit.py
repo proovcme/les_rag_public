@@ -9,6 +9,7 @@ from sovushka.pages.rim import (
     _human_source_ref,
     _progress_codes_display,
     _progress_result_display,
+    _selection_status_display,
 )
 from sovushka.uikit import components as components_module
 from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS, tab_name
@@ -269,43 +270,12 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
     assert "text_field(" in documents
 
 
-def test_rim_surface_uses_uikit_and_exposes_auditable_workflow():
-    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
-    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
-    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+def test_workspace_navigation_has_no_separate_smeta_project():
+    from sovushka.components import header as header_module
 
-    assert 'tab_refs["rim"] = ui.tab("Сметный проект"' in header
-    assert "build_rim" in shell
-    assert "sov-rim-question__choices" in rim
-    assert "await send_message()" in rim
-    assert 'session.get("next_step")' in rim
-    assert 'ui.label(text or "Продолжить текущий шаг")' not in rim
-    assert 'dialog_state.set_text("Следующий шаг")' not in rim
-    assert '"Следующий шаг"' in rim
-    assert "Сохранённая сессия" in rim
-    assert 'api_get("/api/rim/sessions?limit=100")' in rim
-    assert "if session_id not in session_options:" in rim
-    for primitive in (
-        "action_button(",
-        "panel(",
-        "section_heading(",
-        "status_badge(",
-        "render_feedback_state(",
-        "select_field(",
-        "text_field(",
-    ):
-        assert primitive in rim
-    for label in (
-        "ВОР",
-        "Кандидаты ГЭСН",
-        "Проверка",
-        "Недостающие данные",
-        "Черновики ЛСР",
-        "Финализация",
-    ):
-        assert label in rim
-    assert "sov-rim-page" in UIKIT_CSS
-    assert "@media (max-width: 520px)" in UIKIT_CSS
+    sections = getattr(header_module, "visible_workspace_sections", lambda: ("rim",))()
+
+    assert "rim" not in sections
 
 
 def test_chat_ui_cannot_disable_required_reranker():
@@ -402,6 +372,25 @@ def test_configuration_home_uses_uikit_and_progressive_disclosure():
     assert 'variant="primary"' in diag
     assert '"Проверить систему"' in diag
     assert '"Рабочие контуры"' in diag
+    assert '"Контур RAG"' in diag
+    for stage in (
+        "Native RRF",
+        "Иерархия",
+        "RAPTOR",
+        "ColBERT",
+        "Cross-encoder",
+        "Parent / context",
+        "Exact evidence",
+    ):
+        assert stage in diag
+    assert 'status_badge("Загрузка…", "muted")' in diag
+    assert 'api_get("/api/health")' in diag
+    assert 'api_get("/api/rag/advanced/preflight")' in diag
+    assert 'api_post("/api/rag/advanced/raptor/build", {})' in diag
+    assert '"Danger · построить RAPTOR"' in diag
+    assert '"Preflight без загрузки модели"' in diag
+    assert '"Ошибок до stop ColBERT"' in diag
+    assert '"Локальный API резюме"' in diag
     for disclosure in (
         "Детали последней проверки",
         "С.У.Х.А.Р.И.К. · Резервные копии",
@@ -418,6 +407,14 @@ def test_configuration_home_uses_uikit_and_progressive_disclosure():
     assert ".sov-config-status-strip" in UIKIT_CSS
     assert ".sov-config-contours" in UIKIT_CSS
     assert ".sov-config-disclosure" in UIKIT_CSS
+
+
+def test_diag_initial_pipeline_timer_is_registered_after_loader_definition():
+    source = Path("sovushka/pages/diag.py").read_text(encoding="utf-8")
+
+    assert source.index("async def load_rag_pipeline()") < source.index(
+        "ui.timer(0.1, lambda: asyncio.create_task(load_rag_pipeline())"
+    )
 
 
 def test_dataset_registry_uses_uikit_and_keeps_operator_controls_secondary():
@@ -599,6 +596,22 @@ def test_rim_ui_shows_durable_qwen_mapping_progress():
     assert "маршрутов принято/отклонено:" in rim
 
 
+def test_rim_localizes_machine_states_and_has_no_service_anglicisms_in_labels():
+    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
+
+    assert _selection_status_display({"selection_kind": "unbound"}) == "Норма не привязана"
+    assert _selection_status_display({"selection_status": "accepted"}) == "Принято"
+    for forbidden in (
+        '"Global review',
+        '"Mapping lock',
+        '"Mapping заблокирован',
+        '"Заблокировать mapping"',
+        '"XLSX принят новой immutable-',
+        '"Активного checkpoint',
+    ):
+        assert forbidden not in rim
+
+
 def test_rim_progress_table_keeps_codes_and_model_reason_compact():
     row = {
         "candidate_count": 8,
@@ -640,3 +653,21 @@ def test_rim_progress_table_shows_rejected_route_error_and_qwen_time():
         "selected node is also present in rejected_nodes · Qwen: 133.49 с"
     )
     assert len(result) < 210
+
+
+def test_samovar_exposes_index_recovery_dispositions_and_skips():
+    samovar = Path("sovushka/pages/samovar.py").read_text(encoding="utf-8")
+
+    assert '("skip",   "Пропущено"' in samovar
+    assert '"SKIPPED": "SKIPPED"' in samovar
+    assert "retryable:" in samovar
+    assert "terminal:" in samovar
+    assert "auto-repair:" in samovar
+    assert "item.get('error_code')" in samovar
+
+
+def test_rag_advanced_polling_obeys_lazy_tab_lifecycle():
+    diagnostics = Path("sovushka/pages/diag.py").read_text(encoding="utf-8")
+
+    assert "advanced_status_timer = ui.timer(3.0" in diagnostics
+    assert 'return {"timers": [advanced_status_timer]}' in diagnostics

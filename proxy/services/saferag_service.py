@@ -291,6 +291,7 @@ def source_map_for_context(
             "original_chunk_index": original_index,
             "label": f"Источник {index}",
             "doc_name": chunk.doc_name,
+            "doc_id": str(getattr(chunk, "doc_id", "") or ""),
             "header": label,
             "snippet": clean[:snippet_chars].strip(),
         }

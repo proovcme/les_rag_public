@@ -18,6 +18,11 @@ class QueryIntent:
     dataset_filter: Optional[str]
     reason: str
 
+    @property
+    def intent(self) -> QueryChannel:
+        """Compatibility name used by model-owned tool/research routing."""
+        return self.channel
+
 
 _TOKEN_RE_CACHE: dict[str, "re.Pattern[str]"] = {}
 

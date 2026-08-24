@@ -61,6 +61,7 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 
 ## Грабли и осторожность
 - **uv-проект:** зависимости/запуск через `uv run`. Не ставить пакеты без одобрения (`uv add` меняет lock).
+- **Windows-гейт:** если `make` отсутствует, сначала проверить команду и выполнить точные `uv`-команды цели из `Makefile`; pytest запускать с workspace-local `--basetemp=.test-tmp/<gate>`, потому что системный `%TEMP%\pytest-of-Oleg` на Legion может быть недоступен. Не считать setup `PermissionError` провалом кода и не повторять запуск без `--basetemp`.
 - **НЕ дёргать сервисы** (launchd: qdrant/mlx/proxy/sovushka/pauk) без явной нужды — это живой рантайм. Рестарты — `tools/les_runtime_control.py` / `lesctl.py`, осознанно.
 - **Деструктивное — запрещено без явной просьбы** (Guardrails в [SKILL.md](SKILL.md)): не удалять `data/qdrant/`, `data/les_meta_qwen.db`, `storage/`, `RAG_Content/`; не запускать полный реиндекс; беречь таблицу `structured_rules`; `VALIDATOR_BACKEND=rules` — текущий стабильный дефолт.
 - **MLX/память:** модели TTL-выгружаются, metal-семафор; не ломать `backend/mlx_adapter.py` логику памяти.
@@ -69,6 +70,8 @@ domain-prose в query и dataset/case-specific boosts запрещены.
   **ЗАПРЕЩЕНО ИЗМЕНЯТЬ БЕЗ ПРЯМОГО УКАЗАНИЯ И ПРОГОНА БЕНЧМАРКА:**
   `uv run python tools/smeta_model_quality_benchmark.py tests/fixtures/sks_4.xlsx --profile qwen=qwen3.5:9b --allow-single-profile --max-turns 10 --candidate-limit 6 --num-ctx 8192 --interrupt-after-rows 5 --out-dir storage/ab_verify`.
   Ожидается 5/5 строк с решениями (covered_by / unbound / bind) и корректная гибридная авто-привязка норм. Детали защищённых участков — в docstring модуля.
+- **Текущий контур стабилизации RAG/UI не включает сметный модуль:** не изменять `proxy/smeta_core/**`, сметные алгоритмы, mapping, нормы, расчёты, формы и их product defaults. Сметные тесты разрешено запускать только как регрессионный предохранитель. Изменение сметного поведения требует нового прямого указания владельца и отдельного benchmark-гейта выше.
+- **Public merge отложен до финальной приёмки владельцем на Legion:** не commit/push/PR/release. В финале работ подготовить отдельный план merge в public с точным составом коммитов, исключением runtime/data/secrets, локальными и live-гейтами, ручной GUI-приёмкой, rollback и последовательностью публикации.
 - Правка движка CAD/BIM (`frontend/cad_bim_viewer/`) — отдельная Vite-сборка, не править собранный `dist/`.
 
 ## Что НЕ читать (токены/секреты)
@@ -76,6 +79,8 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 
 ## Правила
 - Не добавлять зависимости без одобрения. Не ослаблять/скипать тесты ради зелёного. Не глушить ошибки широко. Секреты не читать и не печатать.
+- **GUI-first для всего ЛЕС:** каждый активный runtime/env-фактор обязан быть видим в Совушке вместе с effective value, источником и признаком restart. Обычные параметры редактируются из GUI; опасные помечаются `Danger`, требуют явного подтверждения и имеют rollback; секреты показываются только как `задан/не задан` и заменяются masked-вводом; bootstrap paths/ports могут быть read-only, но не скрыты. Незарегистрированный фактор — диагностическая ошибка `UNREGISTERED_RUNTIME_FACTOR`, а не тайный override.
+- **Windows / Unicode / PowerShell:** не передавать кириллицу в Python через PowerShell stdin/here-string и не собирать команды строковой конкатенацией. Для повторяемых операций использовать checked-in CLI/API-клиент, аргументы/JSON в UTF-8 и списки аргументов `subprocess`; Python entrypoint обязан включать UTF-8 output. Перед изменением runtime — dry-run с фактическим `%LOCALAPPDATA%\\Programs\\LES\\runtime`. Пути с кириллицей, пробелами и кавычками покрывать тестом.
 - **Целостность решения модели в сметах:** в режиме `estimate` код и Codex-аудитор не заменяют,
   не удаляют и не «улучшают» выбранные моделью нормы, аналоги, coverage, ресурсы или коэффициенты.
   Код исполняет инструменты, проверяет структурную ссылочную целостность/единицы/provenance и считает.

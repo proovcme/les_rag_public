@@ -1,6 +1,30 @@
 from tools import deploy_to_runtime
 
 
+def test_windows_default_runtime_home_uses_installed_runtime(monkeypatch):
+    monkeypatch.delenv("LES_RUNTIME_HOME", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", r"C:\Users\operator\AppData\Local")
+    monkeypatch.setattr(deploy_to_runtime.os, "name", "nt")
+
+    assert deploy_to_runtime._default_runtime_home() == (
+        deploy_to_runtime.Path(r"C:\Users\operator\AppData\Local")
+        / "Programs"
+        / "LES"
+        / "runtime"
+    )
+
+
+def test_explicit_runtime_home_wins_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setenv("LES_RUNTIME_HOME", str(tmp_path))
+    monkeypatch.setattr(deploy_to_runtime.os, "name", "nt")
+
+    assert deploy_to_runtime._default_runtime_home() == tmp_path
+
+
+def test_windows_runtime_scripts_are_deployable():
+    assert deploy_to_runtime._allowed("installers/windows/start-light.ps1")
+
+
 def test_mlx_host_change_restarts_the_mlx_service():
     assert deploy_to_runtime._service_for_path("mlx_host.py") == "me.ovc.les.mlx"
 

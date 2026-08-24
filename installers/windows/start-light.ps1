@@ -3,7 +3,7 @@ param(
   [int]$UiPort = 8051,
   [int]$QdrantPort = 6333,
   [int]$LemonadeHostPort = 18080,
-  [ValidateSet("", "mlx", "openrouter", "openai", "ollama", "lemonade", "openai-compatible")]
+  [ValidateSet("", "mlx", "openrouter", "openai", "ollama", "lemonade", "freetoken", "openai-compatible")]
   [string]$Provider = "",
   [string]$Model = "",
   [switch]$StartQdrant,
@@ -19,6 +19,8 @@ $ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")
 $UiPortExplicit = $PSBoundParameters.ContainsKey("UiPort")
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
+$env:LES_RUNTIME_HOME = $Root.Path
+$env:LES_REPO_ROOT = $Root.Path
 . (Join-Path $PSScriptRoot "runtime-process.ps1")
 
 $StateRoot = if ($env:LES_WINDOWS_STATE_ROOT) { [System.IO.Path]::GetFullPath($env:LES_WINDOWS_STATE_ROOT) } else { "" }
@@ -46,6 +48,7 @@ if (-not $Model) {
     "openai" { "OPENAI_MODEL" }
     "openai-compatible" { "OPENAI_MODEL" }
     "lemonade" { "LEMONADE_MODEL" }
+    "freetoken" { "FREETOKEN_MODEL" }
     default { "MLX_MODEL" }
   }
   $Model = Get-LesDotEnvValue $modelKey
@@ -131,14 +134,20 @@ function Wait-LesHttp([string]$Url, [int]$Seconds = 30) {
 if ($ProxyPortExplicit) {
   Stop-LesPortProcess -Port $ProxyPort
 } elseif (-not (Test-LesPortFree -Port $ProxyPort)) {
-  $ProxyPort = Get-LesFreePort -StartPort ($ProxyPort + 1)
+  try { Stop-LesPortProcess -Port $ProxyPort } catch {}
+  if (-not (Test-LesPortFree -Port $ProxyPort)) {
+    $ProxyPort = Get-LesFreePort -StartPort ($ProxyPort + 1)
+  }
 }
 
 if (-not $NoUi) {
   if ($UiPortExplicit) {
     Stop-LesPortProcess -Port $UiPort
   } elseif ((-not (Test-LesPortFree -Port $UiPort)) -or ($UiPort -eq $ProxyPort)) {
-    $UiPort = Get-LesFreePort -StartPort ($UiPort + 1) -Reserved @($ProxyPort)
+    try { Stop-LesPortProcess -Port $UiPort } catch {}
+    if ((-not (Test-LesPortFree -Port $UiPort)) -or ($UiPort -eq $ProxyPort)) {
+      $UiPort = Get-LesFreePort -StartPort ($UiPort + 1) -Reserved @($ProxyPort)
+    }
   }
 }
 
@@ -175,6 +184,19 @@ $env:PROXY_URL = "http://127.0.0.1:$ProxyPort"
 $env:CORS_ALLOWED_ORIGINS = "http://127.0.0.1:$ProxyPort,http://127.0.0.1:$UiPort,http://localhost:$ProxyPort,http://localhost:$UiPort"
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "logs") | Out-Null
 
+function Set-LesOllamaEmbeddings {
+  $env:OLLAMA_BASE_URL = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL } else { "http://127.0.0.1:11434" }
+  $env:MLX_URL = $env:OLLAMA_BASE_URL
+  $env:EMBED_URL_PARSE = $env:OLLAMA_BASE_URL
+  $env:EMBED_MODEL = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "bge-m3:latest" }
+  $env:EMBEDDING_MODEL = if ($env:EMBEDDING_MODEL) { $env:EMBEDDING_MODEL } else { "bge-m3" }
+  $env:EMBED_BACKEND = "ollama"
+  $env:RAG_VECTOR_SIZE = "1024"
+  if (-not $env:RERANKER_ENABLED) { $env:RERANKER_ENABLED = "false" }
+  $env:RERANKER_BACKEND = "sentence_transformers"
+  $env:RERANK_MODEL = if ($env:RERANK_MODEL) { $env:RERANK_MODEL } else { "BAAI/bge-reranker-v2-m3" }
+}
+
 switch ($Provider) {
   "openrouter" {
     $env:OPENROUTER_BASE_URL = if ($env:OPENROUTER_BASE_URL) { $env:OPENROUTER_BASE_URL } else { "https://openrouter.ai/api/v1" }
@@ -189,24 +211,26 @@ switch ($Provider) {
     if ($Model) { $env:OPENAI_MODEL = $Model }
   }
   "ollama" {
-    $env:OLLAMA_BASE_URL = if ($env:OLLAMA_BASE_URL) { $env:OLLAMA_BASE_URL } else { "http://127.0.0.1:11434" }
     if ($Model) { $env:OLLAMA_MODEL = $Model }
     # Эмбеддер (EmbedClient → {MLX_URL}/v1/embeddings) на Windows идёт в ollama (bge-m3),
     # а не в несуществующий MLX-хост :18080. Иначе RAG-индексация/ретрив падают (#3/#4).
-    $env:MLX_URL = $env:OLLAMA_BASE_URL
     # env.example содержит Mac/dev sidecar :8081. Windows production не поднимает этот процесс:
     # parse и query embeddings обязаны идти в один проверенный Ollama endpoint.
-    $env:EMBED_URL_PARSE = $env:OLLAMA_BASE_URL
-    $env:EMBED_MODEL = if ($env:EMBED_MODEL) { $env:EMBED_MODEL } else { "bge-m3:latest" }
-    $env:EMBEDDING_MODEL = if ($env:EMBEDDING_MODEL) { $env:EMBEDDING_MODEL } else { "bge-m3" }
-    $env:EMBED_BACKEND = "ollama"
-    $env:RAG_VECTOR_SIZE = "1024"
     # Ollama has no cross-encoder rerank endpoint. A native local
     # sentence-transformers cross-encoder keeps the 9B answer model out of
     # retrieval scoring.
-    $env:RERANKER_ENABLED = "true"
-    $env:RERANKER_BACKEND = "sentence_transformers"
-    $env:RERANK_MODEL = if ($env:RERANK_MODEL) { $env:RERANK_MODEL } else { "BAAI/bge-reranker-v2-m3" }
+    Set-LesOllamaEmbeddings
+  }
+  "freetoken" {
+    $env:FREETOKEN_BASE_URL = if ($env:FREETOKEN_BASE_URL) { $env:FREETOKEN_BASE_URL } else { "http://127.0.0.1:1919/v1" }
+    $env:FREETOKEN_CONTEXT_TOKENS = if ($env:FREETOKEN_CONTEXT_TOKENS) { $env:FREETOKEN_CONTEXT_TOKENS } else { "8253" }
+    if (-not $env:FREETOKEN_PROMPT_MAX_CHARS) {
+        $freeTokenContext = [int]$env:FREETOKEN_CONTEXT_TOKENS
+        $freeTokenUsable = [Math]::Max(512, $freeTokenContext - 1200)
+        $env:FREETOKEN_PROMPT_MAX_CHARS = [string]([Math]::Max(2000, $freeTokenUsable * 2))
+    }
+    if ($Model) { $env:FREETOKEN_MODEL = $Model }
+    Set-LesOllamaEmbeddings
   }
   "lemonade" {
     $env:LEMONADE_BASE_URL = if ($env:LEMONADE_BASE_URL) { $env:LEMONADE_BASE_URL } else { "http://127.0.0.1:13305/api/v1" }

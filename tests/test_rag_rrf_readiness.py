@@ -7,8 +7,9 @@ from tools.rag_rrf_readiness import audit_rrf_readiness, select_compatible_embed
 
 
 class FakeClient:
-    def __init__(self, *, sparse_points: int = 2):
+    def __init__(self, *, sparse_points: int = 2, colbert_points: int = 2):
         self.sparse_points = sparse_points
+        self.colbert_points = colbert_points
 
     def count(self, _collection, *, count_filter=None, exact=True):
         assert exact is True
@@ -35,6 +36,12 @@ class FakeClient:
             for item in conditions
         ):
             base = min(base, self.sparse_points if not dataset else int(self.sparse_points > 0))
+        if any(
+            isinstance(item, models.HasVectorCondition)
+            and item.has_vector == "colbert"
+            for item in conditions
+        ):
+            base = min(base, self.colbert_points if not dataset else int(self.colbert_points > 0))
         return SimpleNamespace(count=base)
 
 
@@ -141,6 +148,49 @@ def test_rrf_readiness_blocks_collection_with_missing_sparse_vectors():
 
     assert report["ready"] is False
     assert report["sparse_points"] == 1
+
+
+def test_rrf_readiness_blocks_incomplete_required_colbert_vectors():
+    contract = _contract()
+    contract.update(
+        {
+            "colbert_vector_name": "colbert",
+            "colbert_schema": "les.rag.colbert.v1",
+        }
+    )
+    report = audit_rrf_readiness(
+        client=FakeClient(colbert_points=1),
+        collection="clean-v2",
+        contract=contract,
+        datasets=[{"id": "a", "name": "A"}, {"id": "b", "name": "B"}],
+        migration_report=_migration_report(),
+        lexical_status=_lexical_status(),
+    )
+
+    assert report["ready"] is False
+    assert report["colbert_required"] is True
+    assert report["colbert_points"] == 1
+
+
+def test_rrf_readiness_accepts_complete_required_colbert_vectors():
+    contract = _contract()
+    contract.update(
+        {
+            "colbert_vector_name": "colbert",
+            "colbert_schema": "les.rag.colbert.v1",
+        }
+    )
+    report = audit_rrf_readiness(
+        client=FakeClient(),
+        collection="clean-v2",
+        contract=contract,
+        datasets=[{"id": "a", "name": "A"}, {"id": "b", "name": "B"}],
+        migration_report=_migration_report(),
+        lexical_status=_lexical_status(),
+    )
+
+    assert report["ready"] is True
+    assert report["colbert_points"] == report["points"]
 
 
 def test_rrf_readiness_blocks_missing_alias_fts_projection():

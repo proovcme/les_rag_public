@@ -122,6 +122,25 @@ def test_typed_module_dataset_is_grouped_as_system_without_name_hint():
     assert options["system_datasets"][0]["source_type"] == "module:smeta"
     assert "smeta" in options["system_datasets"][0]["hidden_reason"]
 
+
+def test_registered_system_dataset_exposes_human_title_and_chunk_count():
+    options = s.scope_options(
+        [{
+            "id": "norms",
+            "name": "SMETA_NORMS_Index",
+            "dataset_scope": "system",
+            "module_id": "smeta",
+            "files": 1,
+            "chunk_count": 49_818,
+        }],
+        [],
+        {},
+    )
+
+    card = options["system_datasets"][0]
+    assert card["display_name"] == "Сметные нормы"
+    assert card["chunk_count"] == 49_818
+
 def test_scope_options_counts():
     o = s.scope_options(_DS, _PROJ, _LINKS)["counts"]
     assert o["datasets_total"] == 4 and o["datasets_unassigned"] == 1 and o["datasets_system"] == 1

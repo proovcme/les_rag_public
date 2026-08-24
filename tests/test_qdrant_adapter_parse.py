@@ -428,7 +428,7 @@ def test_sync_parse_updates_legacy_pending_file_name(tmp_path, monkeypatch):
         def __init__(self, url, **kwargs):
             self.url = url
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             return None
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
@@ -477,7 +477,7 @@ def test_sync_parse_prefers_exact_relative_path_over_legacy_basename(tmp_path, m
         def __init__(self, url, **kwargs):
             self.url = url
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             return None
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
@@ -513,7 +513,7 @@ def test_sync_parse_marks_error_when_qdrant_count_mismatches(tmp_path, monkeypat
         def __init__(self, url, **kwargs):
             self.url = url
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             return None
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
@@ -569,7 +569,7 @@ def test_sync_parse_reuses_existing_vector_by_content_hash(tmp_path, monkeypatch
                 )
             ], None
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             upserts.extend(points)
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
@@ -619,7 +619,7 @@ def test_sync_parse_skips_empty_sparse_noise_without_rejecting_pdf(tmp_path, mon
         def __init__(self, url, **kwargs):
             self.url = url
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             upserts.extend(points)
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
@@ -680,7 +680,7 @@ def test_sync_parse_ignores_cached_vector_with_different_embedding_fingerprint(t
                 )
             ], None
 
-        def upsert(self, collection_name, points):
+        def upsert(self, collection_name, points, *, wait=False):
             upserts.extend(points)
 
     monkeypatch.setattr("backend.qdrant_adapter.qdrant_client.QdrantClient", FakeQdrant)
@@ -799,6 +799,34 @@ def test_adapter_adds_parent_and_neighbor_context_metadata():
     assert len(nodes) == 3
     assert nodes[2]["payload"]["node_role"] == "navigation"
     assert nodes[2]["payload"]["evidence_admissible"] is False
+
+
+def test_hierarchy_navigation_nodes_receive_prevalidated_sparse_vectors():
+    from backend.qdrant_adapter import (
+        _apply_context_metadata_to_nodes,
+        _prepare_named_sparse_nodes,
+    )
+
+    nodes = [{
+        "text": "## Пожарная безопасность\nТребования к путям эвакуации",
+        "doc_id": "leaf-1",
+        "payload": {},
+    }]
+    _apply_context_metadata_to_nodes(nodes, "dataset-1", "Раздел АППЗ.pdf")
+    assert any(node.get("payload", {}).get("node_role") == "navigation" for node in nodes)
+
+    prepared = _prepare_named_sparse_nodes(nodes, "Раздел АППЗ.pdf")
+    assert len(prepared) == len(nodes)
+    assert all(node.get("_rrf_sparse_vector") for node in prepared)
+
+
+def test_file_upsert_waits_before_exact_count_verification():
+    from pathlib import Path
+
+    source = Path("backend/qdrant_adapter.py").read_text(encoding="utf-8")
+    upsert = source.index("sync_qdrant.upsert(", source.index("_stage(db_file_key, \"UPSERT\")"))
+    count = source.index("_sync_count_file_points", upsert)
+    assert "wait=True" in source[upsert:count]
 
 
 def test_adapter_builds_mail_profile_nodes_with_attachment_payload(tmp_path, monkeypatch):

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from html import escape
 from datetime import datetime
 from urllib.parse import quote, urlencode
@@ -524,6 +525,177 @@ def build_samovar():
             return
         ui.navigate.to(f"/classic?{urlencode({'tab': 'documents', 'dataset_id': ds_id})}")
 
+    registry_dialog = ui.dialog()
+
+    async def _open_registry(r):
+        if not isinstance(r, dict):
+            return
+        ds_id = str((r or {}).get("id") or (r or {}).get("dataset_id") or "").strip()
+        ds_name = str((r or {}).get("name") or (r or {}).get("folder") or "Датасет")
+
+        registry_dialog.clear()
+        with registry_dialog, ui.card().classes("sov-advanced-dialog").style("width:min(1180px,96vw);max-width:96vw;max-height:90vh;"):
+            with ui.row().classes("items-center justify-between w-full gap-3"):
+                with ui.column().classes("gap-0"):
+                    ui.label(f"РЕЕСТР ФАЙЛОВ // {ds_name}").classes("sov-panel-title")
+                    ui.label(f"dataset_id: {ds_id} · всего файлов: {r.get('total', 0)}").classes("sov-muted")
+                ui.button(icon="o_close", on_click=registry_dialog.close).props("flat round dense")
+
+            with ui.row().classes("w-full gap-3"):
+                reg_kpi = {}
+                for k, lbl, col in [
+                    ("total", "Файлов", "var(--text)"),
+                    ("indexed", "В индексе", "var(--ok)"),
+                    ("pending", "Ожидают", "var(--warn)"),
+                    ("errors", "Ошибки", "var(--err)"),
+                    ("chunks", "Чанков", "var(--text)"),
+                ]:
+                    with ui.card().classes("kpi-box flex-1"):
+                        reg_kpi[k] = ui.label("—").classes("kpi-val").style(f"color:{col};font-size:1.35rem;font-weight:900;")
+                        ui.label(lbl).classes("kpi-lbl").style("font-size:.6rem;text-transform:uppercase;color:var(--dim);margin-top:4px;")
+
+            with ui.row().classes("items-center gap-2 w-full"):
+                status_sel = ui.select(
+                    {"": "Все статусы", "INDEXED": "INDEXED", "PENDING": "PENDING", "ERROR": "ERROR", "MISSING": "MISSING"},
+                    value="",
+                    label="Статус",
+                ).props("dense outlined emit-value map-options").style("width:150px;font-size:.7rem;")
+                q_in = ui.input(placeholder="Поиск по имени файла, ошибке...").props("dense outlined clearable").classes("flex-1").style("font-size:.7rem;")
+                limit_sel = ui.select([50, 100, 250, 500], value=100, label="Лимит").props("dense outlined").style("width:90px;font-size:.7rem;")
+
+                async def _load_docs():
+                    params = {"dataset_id": ds_id, "limit": limit_sel.value or 100}
+                    if status_sel.value:
+                        params["status"] = status_sel.value
+                    if (q_in.value or "").strip():
+                        params["q"] = (q_in.value or "").strip()
+                    res = await api_get(f"/api/rag/documents?{urlencode(params)}")
+                    if not isinstance(res, dict):
+                        _notify(last_api_error_text("Ошибка загрузки файлов из реестра"), type="negative")
+                        return
+                    docs = res.get("documents", [])
+                    summary = res.get("summary", {}) if isinstance(res.get("summary"), dict) else {}
+                    idx_cnt = summary.get("INDEXED", {}).get("files", 0)
+                    pnd_cnt = summary.get("PENDING", {}).get("files", 0)
+                    err_cnt = summary.get("ERROR", {}).get("files", 0)
+                    tot_cnt = res.get("total", len(docs))
+                    chunks_cnt = sum(int(v.get("chunks") or 0) for v in summary.values() if isinstance(v, dict))
+
+                    reg_kpi["total"].set_text(str(tot_cnt))
+                    reg_kpi["indexed"].set_text(str(idx_cnt))
+                    reg_kpi["pending"].set_text(str(pnd_cnt))
+                    reg_kpi["errors"].set_text(str(err_cnt))
+                    reg_kpi["chunks"].set_text(str(chunks_cnt))
+
+                    doc_rows = []
+                    for doc in docs:
+                        if not isinstance(doc, dict):
+                            continue
+                        doc_rows.append({
+                            "id": doc.get("id", ""),
+                            "status": doc.get("status", "PENDING"),
+                            "file": doc.get("file_name") or doc.get("name") or "—",
+                            "chunks": doc.get("chunk_count", 0),
+                            "size": f"{(doc.get('file_size') or 0)/1024:.1f} KB" if doc.get("file_size") else "—",
+                            "source": doc.get("source_path") or doc.get("path") or "",
+                            "error": doc.get("last_error") or "",
+                        })
+                    doc_grid.rows = doc_rows
+                    doc_grid.update()
+
+                ui.button(icon="o_search", on_click=lambda: asyncio.create_task(_load_docs())).props("flat round dense").tooltip("Поиск")
+                ui.button(icon="o_done_all", on_click=lambda: (setattr(status_sel, "value", "INDEXED"), asyncio.create_task(_load_docs()))).props("flat round dense").tooltip("Только INDEXED")
+                ui.button(icon="o_pending_actions", on_click=lambda: (setattr(status_sel, "value", "PENDING"), asyncio.create_task(_load_docs()))).props("flat round dense").tooltip("Только PENDING")
+                ui.button(icon="o_error_outline", on_click=lambda: (setattr(status_sel, "value", "ERROR"), asyncio.create_task(_load_docs()))).props("flat round dense").tooltip("Только ERROR")
+
+            cols = [
+                {"name": "status", "label": "Статус", "field": "status", "align": "left", "sortable": True},
+                {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
+                {"name": "chunks", "label": "Чанков", "field": "chunks", "align": "center", "sortable": True},
+                {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
+                {"name": "source", "label": "Путь к файлу", "field": "source", "align": "left"},
+                {"name": "error", "label": "Ошибка", "field": "error", "align": "left"},
+            ]
+            doc_grid = ui.table(columns=cols, rows=[], row_key="id", pagination=20).classes("w-full").props("dense wrap-cells").style(
+                "background:var(--bg-panel);color:var(--text);font-family:var(--font);"
+            )
+            doc_grid.add_slot("body-cell-status", """
+                <q-td :props="props">
+                  <span :style="{color: props.value === 'INDEXED' ? '#10b981' : props.value === 'ERROR' ? '#ef4444' : '#f59e0b', fontWeight:'900'}">
+                    {{ props.value }}
+                  </span>
+                </q-td>""")
+            doc_grid.add_slot("body-cell-file", """
+                <q-td :props="props">
+                  <div :title="props.value" style="max-width:380px;white-space:normal;word-break:break-word;font-family:var(--font-chat);font-size:.68rem;font-weight:700;">
+                    {{ props.value }}
+                  </div>
+                </q-td>""")
+            doc_grid.add_slot("body-cell-source", """
+                <q-td :props="props">
+                  <span v-if="props.value" :title="props.value" style="color:var(--dim);white-space:normal;word-break:break-all;font-size:.62rem;font-family:var(--font-chat);">
+                    {{ props.value }}
+                  </span>
+                  <span v-else style="color:var(--dim);">—</span>
+                </q-td>""")
+            doc_grid.add_slot("body-cell-error", """
+                <q-td :props="props">
+                  <span v-if="props.value" :title="props.value" style="color:#ef4444;white-space:normal;word-break:break-word;font-size:.66rem;">
+                    {{ props.value }}
+                  </span>
+                  <span v-else style="color:var(--dim);">—</span>
+                </q-td>""")
+
+            status_sel.on("update:model-value", lambda e: asyncio.create_task(_load_docs()))
+            q_in.on("keydown.enter", lambda e: asyncio.create_task(_load_docs()))
+            limit_sel.on("update:model-value", lambda e: asyncio.create_task(_load_docs()))
+
+            registry_dialog.open()
+            await _load_docs()
+
+    def _rename_dataset(r):
+        dlg = ui.dialog()
+        with dlg, panel(variant="raised", classes="p-4 rounded-xl min-w-[360px]"):
+            ui.label(f"Переименование «{r['name']}»").classes("text-subtitle1 font-bold mb-2")
+            inp = text_field(label="Новое название датасета", value=r["name"], classes="w-full")
+            async def _save():
+                val = inp.value.strip()
+                if not val:
+                    ui.notify("Название не может быть пустым", type="warning")
+                    return
+                res = await api_patch(f"/api/rag/datasets/{quote(r['id'], safe='')}/name?name={quote(val, safe='')}")
+                dlg.close()
+                if res and res.get("name") == val:
+                    ui.notify(f"Датасет переименован в «{val}»", type="positive")
+                    await _refresh()
+                else:
+                    ui.notify("Не удалось переименовать датасет", type="negative")
+            with ui.row().classes("justify-end w-full mt-4 gap-2"):
+                action_button("Отмена", on_click=dlg.close, variant="quiet", compact=True)
+                action_button("Сохранить", icon="o_save", on_click=_save, variant="primary", compact=True)
+        dlg.open()
+
+    def _change_group(r):
+        dlg = ui.dialog()
+        with dlg, panel(variant="raised", classes="p-4 rounded-xl min-w-[360px]"):
+            ui.label(f"Группа датасета «{r['name']}»").classes("text-subtitle1 font-bold mb-2")
+            ui.label("Группируйте датасеты (например: Почта, Рабочая документация)").classes("sov-muted mb-2")
+            inp = text_field(label="Название группы", value=r.get("group") or "", placeholder="Например: Почта", classes="w-full")
+            async def _save():
+                val = inp.value.strip()
+                res = await api_patch(f"/api/rag/datasets/{quote(r['id'], safe='')}/group?group={quote(val, safe='')}")
+                dlg.close()
+                if res is not None:
+                    msg = f"Группа установлена: «{val}»" if val else "Группа сброшена"
+                    ui.notify(msg, type="positive")
+                    await _refresh()
+                else:
+                    ui.notify("Не удалось обновить группу", type="negative")
+            with ui.row().classes("justify-end w-full mt-4 gap-2"):
+                action_button("Отмена", on_click=dlg.close, variant="quiet", compact=True)
+                action_button("Сохранить", icon="o_save", on_click=_save, variant="primary", compact=True)
+        dlg.open()
+
     add_dialog = ui.dialog()
 
     def _open_add():
@@ -736,9 +908,9 @@ def build_samovar():
             compact=True,
         )
         action_button(
-            "О проекте",
-            icon="o_account_tree",
-            on_click=_ui_handler(_ask_project, r),
+            "Реестр файлов",
+            icon="o_table_chart",
+            on_click=_ui_handler(_open_registry, r),
             variant="secondary",
             compact=True,
         )
@@ -751,6 +923,18 @@ def build_samovar():
             classes="sov-dataset-more",
         ):
             with ui.menu().classes("sov-dataset-actions-menu"):
+                ui.menu_item(
+                    "Переименовать датасет",
+                    on_click=_ui_handler(_rename_dataset, r),
+                )
+                ui.menu_item(
+                    "Изменить группу",
+                    on_click=_ui_handler(_change_group, r),
+                )
+                ui.menu_item(
+                    "О проекте",
+                    on_click=_ui_handler(_ask_project, r),
+                )
                 ui.menu_item(
                     "Запустить одну партию",
                     on_click=_ui_handler(_parse, r),
@@ -960,48 +1144,6 @@ def build_samovar():
                         _refs["stats"][_k] = ui.label("—").classes("sov-dataset-summary__value")
                         ui.label(_lbl).classes("sov-dataset-summary__label")
 
-        with panel(variant="plain", classes="sov-dataset-registry-panel"):
-            with ui.row().classes("items-center w-full sov-dataset-section-head"):
-                section_heading(
-                    "Датасеты",
-                    "Найдите набор, проверьте его состав и откройте нужные файлы.",
-                )
-                ui.element("div").classes("sov-flex-spacer")
-                action_button(
-                    icon="o_refresh",
-                    on_click=_refresh,
-                    variant="quiet",
-                    compact=True,
-                    icon_only=True,
-                    aria_label="Обновить список датасетов",
-                    classes="sov-dataset-refresh",
-                )
-            _refs["fbtn"] = {}
-            with ui.element("div").classes("sov-dataset-toolbar"):
-                _fsearch = text_field(
-                    placeholder="Найти датасет по названию",
-                    clearable=True,
-                    classes="sov-dataset-search",
-                )
-                _fsearch.on_value_change(lambda *_: (_S.update(q=(_fsearch.value or "")), _render_rows()))
-                with ui.row().classes("items-center sov-dataset-filters"):
-                    for _fk, _flbl in (
-                        ("all", "Все"),
-                        ("indexed", "Готовы"),
-                        ("pending", "Ждут"),
-                        ("error", "Ошибки"),
-                        ("empty", "Пустые"),
-                    ):
-                        active_class = " sov-dataset-filter--active" if _fk == "all" else ""
-                        _refs["fbtn"][_fk] = action_button(
-                            _flbl,
-                            on_click=lambda k=_fk: _set_filter(k),
-                            variant="quiet",
-                            compact=True,
-                            classes=f"sov-dataset-filter{active_class}",
-                        )
-            _refs["disp"] = ui.column().classes("w-full sov-dataset-results")
-
         with ui.expansion(
             "Управление индексатором",
             icon="o_settings_input_component",
@@ -1065,14 +1207,25 @@ def build_samovar():
                         "dense outlined"
                     )
                 with ui.row().classes("items-center w-full sov-dataset-settings__switches"):
-                    unload_between_sw = ui.switch(
-                        "Выгружать MLX между партиями",
-                        value=_setting("unload_between_batches"),
-                    )
-                    unload_before_sw = ui.switch(
-                        "Выгрузить MLX перед стартом",
-                        value=_setting("unload_before_start"),
-                    )
+                    if sys.platform != "win32":
+                        unload_between_sw = ui.switch(
+                            "Выгружать MLX между партиями",
+                            value=_setting("unload_between_batches"),
+                        )
+                        unload_before_sw = ui.switch(
+                            "Выгрузить MLX перед стартом",
+                            value=_setting("unload_before_start"),
+                        )
+                        unload_between_sw.on_value_change(
+                            lambda *_: _set_setting("unload_between_batches", unload_between_sw.value)
+                        )
+                        unload_before_sw.on_value_change(
+                            lambda *_: _set_setting("unload_before_start", unload_before_sw.value)
+                        )
+                        _refs["settings"]["unload_between_batches"] = unload_between_sw
+                        _refs["settings"]["unload_before_start"] = unload_before_sw
+                    else:
+                        ui.label("Используется Ollama / облачный провайдер — выгрузка MLX не требуется").classes("sov-dataset-settings__note")
                     ui.element("div").classes("sov-flex-spacer")
                     action_button(
                         "По умолчанию",
@@ -1088,8 +1241,6 @@ def build_samovar():
                     "min_free_gb": min_ram_in,
                     "max_swap_pct": swap_in,
                     "row_batch_limit": row_batch_in,
-                    "unload_between_batches": unload_between_sw,
-                    "unload_before_start": unload_before_sw,
                 })
                 batch_in.on_value_change(lambda *_: _set_setting("batch_limit", batch_in.value))
                 max_in.on_value_change(lambda *_: _set_setting("max_batches", max_in.value))
@@ -1097,12 +1248,48 @@ def build_samovar():
                 min_ram_in.on_value_change(lambda *_: _set_setting("min_free_gb", min_ram_in.value))
                 swap_in.on_value_change(lambda *_: _set_setting("max_swap_pct", swap_in.value))
                 row_batch_in.on_value_change(lambda *_: _set_setting("row_batch_limit", row_batch_in.value))
-                unload_between_sw.on_value_change(
-                    lambda *_: _set_setting("unload_between_batches", unload_between_sw.value)
+
+        with panel(variant="plain", classes="sov-dataset-registry-panel"):
+            with ui.row().classes("items-center w-full sov-dataset-section-head"):
+                section_heading(
+                    "Датасеты",
+                    "Найдите набор, проверьте его состав и откройте нужные файлы.",
                 )
-                unload_before_sw.on_value_change(
-                    lambda *_: _set_setting("unload_before_start", unload_before_sw.value)
+                ui.element("div").classes("sov-flex-spacer")
+                action_button(
+                    icon="o_refresh",
+                    on_click=_refresh,
+                    variant="quiet",
+                    compact=True,
+                    icon_only=True,
+                    aria_label="Обновить список датасетов",
+                    classes="sov-dataset-refresh",
                 )
+            _refs["fbtn"] = {}
+            with ui.element("div").classes("sov-dataset-toolbar"):
+                _fsearch = text_field(
+                    placeholder="Найти датасет по названию",
+                    clearable=True,
+                    classes="sov-dataset-search",
+                )
+                _fsearch.on_value_change(lambda *_: (_S.update(q=(_fsearch.value or "")), _render_rows()))
+                with ui.row().classes("items-center sov-dataset-filters"):
+                    for _fk, _flbl in (
+                        ("all", "Все"),
+                        ("indexed", "Готовы"),
+                        ("pending", "Ждут"),
+                        ("error", "Ошибки"),
+                        ("empty", "Пустые"),
+                    ):
+                        active_class = " sov-dataset-filter--active" if _fk == "all" else ""
+                        _refs["fbtn"][_fk] = action_button(
+                            _flbl,
+                            on_click=lambda k=_fk: _set_filter(k),
+                            variant="quiet",
+                            compact=True,
+                            classes=f"sov-dataset-filter{active_class}",
+                        )
+            _refs["disp"] = ui.column().classes("w-full sov-dataset-results")
 
     ui.timer(0.1, _refresh, once=True)
     # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
@@ -1152,6 +1339,7 @@ def build_samovar_legacy():
                 ("idx",    "В индексе",        "var(--ok)"),
                 ("pend",   "Ожидают",          "var(--warn)"),
                 ("err",    "Ошибок",           "var(--err)"),
+                ("skip",   "Пропущено",        "var(--warn)"),
                 ("miss",   "Пропало",          "var(--err)"),
                 ("chunks", "Чанков Qdrant",    "var(--text)"),
             ]:
@@ -1246,6 +1434,7 @@ def build_samovar_legacy():
             {"name": "indexed",  "label": "В индексе", "field": "indexed",  "align": "right",  "sortable": True},
             {"name": "pending",  "label": "Ожидают",  "field": "pending",  "align": "right",  "sortable": True},
             {"name": "errors",   "label": "Ошибки",   "field": "errors",   "align": "right",  "sortable": True},
+            {"name": "skipped",  "label": "Пропущено", "field": "skipped", "align": "right", "sortable": True},
             {"name": "missing",  "label": "Пропало",  "field": "missing",  "align": "right",  "sortable": True},
             {"name": "chunks",   "label": "Чанков",   "field": "chunks",   "align": "right",  "sortable": True},
             {"name": "status",   "label": "Статус",   "field": "status",   "align": "left"},
@@ -2088,7 +2277,7 @@ def build_samovar_legacy():
                     label="dataset",
                 ).props("dense outlined emit-value map-options").style("min-width:230px;font-size:.7rem;")
                 doc_status_select = ui.select(
-                    {"": "Все статусы", "ERROR": "ERROR", "PENDING": "PENDING", "INDEXED": "INDEXED"},
+                    {"": "Все статусы", "ERROR": "ERROR", "PENDING": "PENDING", "INDEXED": "INDEXED", "SKIPPED": "SKIPPED"},
                     value="INDEXED",
                     label="status",
                 ).props("dense outlined emit-value map-options").style("width:150px;font-size:.7rem;")
@@ -2128,6 +2317,7 @@ def build_samovar_legacy():
                 {"name": "size", "label": "Размер", "field": "size", "align": "right", "sortable": True},
                 {"name": "file", "label": "Файл", "field": "file", "align": "left", "sortable": True},
                 {"name": "pipeline", "label": "Pipeline", "field": "pipeline", "align": "left"},
+                {"name": "recovery", "label": "Восстановление", "field": "recovery", "align": "left"},
                 {"name": "error", "label": "Last error", "field": "error", "align": "left"},
             ]
             docs_grid = ui.table(
@@ -2203,6 +2393,11 @@ def build_samovar_legacy():
                 "file": item.get("file_name", ""),
                 "source": item.get("source_path", ""),
                 "pipeline": item.get("pipeline", ""),
+                "recovery": (
+                    f"{item.get('error_code') or '—'} · "
+                    f"{'повторится' if item.get('retryable') else ('пропущен' if item.get('status') == 'SKIPPED' else 'terminal')} · "
+                    f"попытка {item.get('parse_attempts', 0)}"
+                ) if item.get("status") in {"ERROR", "SKIPPED"} else "—",
                 "error": item.get("last_error", ""),
             }
 
@@ -2493,7 +2688,7 @@ def build_samovar_legacy():
                     ext_dataset_select.value = None
                 ext_dataset_select.update()
 
-            tot_src = tot_idx = tot_pending = tot_errors = tot_missing = tot_chunks = 0
+            tot_src = tot_idx = tot_pending = tot_errors = tot_skipped = tot_missing = tot_chunks = 0
             rows = []
             seen_ds = set()
             active_job_labels = {
@@ -2510,6 +2705,7 @@ def build_samovar_legacy():
                 indexed = ds.get("indexed_files", src.get("indexed_files", 0))
                 pending = ds.get("pending_files", max(0, total - indexed))
                 errors  = ds.get("error_files", 0)
+                skipped = ds.get("skipped_files", 0)
                 missing = ds.get("missing_files", src.get("missing_files", 0))
                 chunks  = ds.get("chunks", ds.get("chunk_count", 0) or 0)
                 status  = ds.get("status", src.get("dataset_status", "NOT_CREATED"))
@@ -2517,6 +2713,7 @@ def build_samovar_legacy():
                 tot_idx    += indexed
                 tot_pending += pending
                 tot_errors  += errors
+                tot_skipped += skipped
                 tot_missing += missing
                 tot_chunks += chunks
                 if src.get("dataset_id"):
@@ -2549,6 +2746,7 @@ def build_samovar_legacy():
                     "indexed":    indexed,
                     "pending":    pending,
                     "errors":     errors,
+                    "skipped":    skipped,
                     "missing":    missing,
                     "chunks":     chunks,
                     "status":     _computed_index_status(
@@ -2575,6 +2773,7 @@ def build_samovar_legacy():
                 indexed = ds.get("indexed_files", ds.get("doc_count", 0) or 0)
                 pending = ds.get("pending_files", 0)
                 errors = ds.get("error_files", 0)
+                skipped = ds.get("skipped_files", 0)
                 missing = ds.get("missing_files", 0)
                 chunks = ds.get("chunks", ds.get("chunk_count", 0) or 0)
                 active_row = ds.get("name", ds_id) in active_job_labels or ds_id in active_job_labels
@@ -2582,6 +2781,7 @@ def build_samovar_legacy():
                 tot_idx += indexed
                 tot_pending += pending
                 tot_errors += errors
+                tot_skipped += skipped
                 tot_missing += missing
                 tot_chunks += chunks
                 rows.append({
@@ -2591,6 +2791,7 @@ def build_samovar_legacy():
                     "indexed":    indexed,
                     "pending":    pending,
                     "errors":     errors,
+                    "skipped":    skipped,
                     "missing":    missing,
                     "chunks":     chunks,
                     "status":     _computed_index_status(
@@ -2614,6 +2815,7 @@ def build_samovar_legacy():
                 tot_idx = totals.get("indexed_files", tot_idx)
                 tot_pending = totals.get("pending_files", tot_pending)
                 tot_errors = totals.get("error_files", tot_errors)
+                tot_skipped = totals.get("skipped_files", tot_skipped)
                 tot_missing = totals.get("missing_files", tot_missing)
                 tot_chunks = totals.get("chunks", tot_chunks)
 
@@ -2622,6 +2824,7 @@ def build_samovar_legacy():
             sam_kpi["idx"].set_text(str(tot_idx))
             sam_kpi["pend"].set_text(str(tot_pending))
             sam_kpi["err"].set_text(str(tot_errors))
+            sam_kpi["skip"].set_text(str(tot_skipped))
             sam_kpi["miss"].set_text(str(tot_missing))
             sam_kpi["chunks"].set_text(str(tot_chunks))
             scheduler_jobs = [
@@ -2660,8 +2863,12 @@ def build_samovar_legacy():
                 start_scheduler_btn.props("disabled")
             else:
                 start_scheduler_btn.props(remove="disabled")
+            recovery = rag.get("indexing_recovery", {}) if isinstance(rag.get("indexing_recovery"), dict) else {}
+            repair = recovery.get("bounded_repair", {}) if isinstance(recovery.get("bounded_repair"), dict) else {}
             scheduler_status.set_text(
-                f"pending: {tot_pending} · errors: {tot_errors} · missing: {tot_missing} · "
+                f"pending: {tot_pending} · retryable: {recovery.get('retryable_errors', 0)} · "
+                f"terminal: {recovery.get('terminal_errors', 0)} · skipped: {tot_skipped} · missing: {tot_missing} · "
+                f"auto-repair: {repair.get('status', 'never')} {repair.get('repaired_files', 0)}/{repair.get('eligible_files', 0)} · "
                 f"job: {(last_scheduler[0][:12] + ' ' + last_scheduler[1].get('status','')) if last_scheduler else '—'}"
                 + (" · старт заблокирован preflight guard" if parse_blocked else "")
             )

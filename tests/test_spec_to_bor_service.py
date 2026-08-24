@@ -9,7 +9,9 @@ import pytest
 from backend.parquet_writer import save_parquet
 from proxy.services.spec_to_bor_service import (
     generate_spec_bor,
+    generate_spec_bor_from_rows,
     is_spec_to_bor_query,
+    rows_from_spec_xlsx,
     spec_rows_to_work_lines,
     work_verb,
 )
@@ -22,6 +24,9 @@ def test_is_spec_to_bor_query_word_boundary():
     # легитимные «ВОР из спецификации» — должны
     assert is_spec_to_bor_query("сделай ВОР из спецификации формы 9") is True
     assert is_spec_to_bor_query("ведомость объёмов работ из спецификации") is True
+    # с tabular-вложением достаточно «ВОР», без слова «спецификация»
+    assert is_spec_to_bor_query("Собери ВОР в разрезе ЛВЖ, Компрессор и зарядка", has_attachment=True) is True
+    assert is_spec_to_bor_query("Собери ВОР в разрезе ЛВЖ, Компрессор и зарядка", has_attachment=False) is False
 
 
 def _spec(name, unit="шт", qty=1.0, **kw):
@@ -177,6 +182,58 @@ def test_v2_groups_and_sums_same_work():
     lines = spec_rows_to_work_lines_v2(rows)
     razm = [l for l in lines if l.work.startswith("Разметка трассы")]
     assert len(razm) == 1 and razm[0].qty == 150.0  # свод одинаковой работы
+
+
+def _write_kamenka_like_xlsx(path: Path) -> None:
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Лист2"
+    ws.append(["Раздел", "Объем", "Наименование", "Артикул", "Производитель", "Ед. изм.", "Кол-во ФАКТ"])
+    ws.append(["ЛВЖ", "осн.", "Кабель КПСнг(А)-FRLS 1*2*1,0", "1*2*1,0", "Россия", "м.", 2000])
+    ws.append(["ЛВЖ", "доп.", "Шайба кузовная оцинкованная 12x37 мм DIN 9021 (30 шт.)", "", "", "шт", 1])
+    ws.append(["Компрессор", "осн.", "Кабель ППГ нг(А) HF 1*150", "", "Кабэкс", "м.", 200])
+    ws.append(["Компрессор", "осн.", "Лоток глухой 200*50*3000", "35024", "ДКС", "м.", 33])
+    ws.append(["Зарядка", "осн.", "Кабель силовой ВВГнг(А)-LS 4х16 ок", "", "", "м.", 80])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    wb.save(path)
+
+
+def test_rows_from_spec_xlsx_kamenka_like(tmp_path):
+    src = tmp_path / "kamenka.xlsx"
+    _write_kamenka_like_xlsx(src)
+    rows = rows_from_spec_xlsx(src, source_label="Общая по Каменке.xlsx")
+    assert len(rows) == 5
+    sections = {r["section"] for r in rows}
+    assert sections == {"ЛВЖ", "Компрессор", "Зарядка"}
+    by_name = {r["name"]: r for r in rows}
+    assert by_name["Кабель КПСнг(А)-FRLS 1*2*1,0"]["qty"] == 2000.0
+    assert by_name["Кабель силовой ВВГнг(А)-LS 4х16 ок"]["section"] == "Зарядка"
+
+
+def test_generate_spec_bor_from_xlsx_has_works_no_prices(tmp_path):
+    src = tmp_path / "kamenka.xlsx"
+    _write_kamenka_like_xlsx(src)
+    rows = rows_from_spec_xlsx(src)
+    res = generate_spec_bor_from_rows(
+        rows, output_dir=tmp_path / "out", title="ВОР Каменка", source_id="read_test"
+    )
+    assert res["source_rows"] == 5
+    assert res["bor_lines"] >= 5
+    assert Path(res["xlsx_path"]).exists()
+    joined = "\n".join(l["name"] for l in res["lines"])
+    assert "Прокладка" in joined or "Разметка" in joined
+    assert "Монтаж" in joined or "Установка" in joined
+    # no price columns in ГОСТ VOR xlsx
+    import openpyxl
+
+    ws = openpyxl.load_workbook(res["xlsx_path"]).active
+    header = [ws.cell(2, c).value for c in range(1, 8)]
+    header_text = " ".join(str(h or "") for h in header).lower()
+    assert "цена" not in header_text and "стоимость" not in header_text
+    assert any(l.get("section") == "ЛВЖ" for l in res["lines"])
+    assert any(l.get("section") == "Компрессор" for l in res["lines"])
 
 
 def test_v2_xlsx_has_gost_columns(tmp_path):

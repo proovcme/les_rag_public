@@ -1,5 +1,6 @@
 import sqlite3
 import time
+from pathlib import Path
 
 import pytest
 
@@ -283,3 +284,44 @@ async def test_documents_router_uses_explorer(monkeypatch, explorer):
     assert by_id["document"]["id"] == "doc-1"
     assert by_id["total"] == 2
     assert quality["totals"]["indexed_chunks"] == 4
+
+
+@pytest.mark.asyncio
+async def test_document_raw_by_id_uses_metadata_identity(monkeypatch, tmp_path):
+    source = tmp_path / "Титул.docx"
+    source.write_bytes(b"docx")
+
+    class StubExplorer:
+        def get_document(self, doc_id):
+            assert doc_id == "doc-31"
+            return {
+                "id": doc_id,
+                "dataset_id": "project",
+                "file_name": "Титул.docx",
+                "source_path": str(source),
+            }
+
+    monkeypatch.setattr(documents_router, "explorer", lambda: StubExplorer())
+
+    response = await documents_router.document_raw_by_id("doc-31", _user=object())
+
+    assert Path(response.path).resolve() == source.resolve()
+    assert response.filename == "Титул.docx"
+
+
+@pytest.mark.asyncio
+async def test_document_viewer_by_id_uses_metadata_identity(monkeypatch, tmp_path):
+    source = tmp_path / "Титул.docx"
+    source.write_bytes(b"docx")
+
+    class StubExplorer:
+        def get_document(self, doc_id):
+            return {"id": doc_id, "dataset_id": "project", "file_name": source.name, "source_path": str(source)}
+
+    monkeypatch.setattr(documents_router, "explorer", lambda: StubExplorer())
+    monkeypatch.setattr(documents_router, "is_viewable_file", lambda _path: True)
+    monkeypatch.setattr(documents_router, "file_viewer_html", lambda path, **kwargs: f"<p>{Path(path).name}:{kwargs['locator']}</p>")
+
+    response = await documents_router.document_viewer_by_id("doc-31", locator="para4", _user=object())
+
+    assert "Титул.docx:para4" in response.body.decode("utf-8")

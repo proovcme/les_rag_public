@@ -18,9 +18,11 @@ import os
 import re
 import shutil
 import sqlite3
+import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional
@@ -97,6 +99,100 @@ def _sha256_file(path: Path) -> str:
 
 class UnsupportedIndexingSourceError(RuntimeError):
     """Raised when intake accepted a source that needs a typed converter first."""
+
+
+@dataclass(frozen=True)
+class ParseFailureDisposition:
+    """Stable, UI-safe classification of one indexing failure."""
+
+    error_code: str
+    disposition: str
+    retryable: bool
+    retry_after: float
+    attempts: int
+    max_attempts: int
+
+
+def _classify_parse_failure(error: Exception, *, attempts: int) -> ParseFailureDisposition:
+    """Classify a failure without leaking exception text as product state."""
+    attempts = max(0, int(attempts or 0))
+    try:
+        max_attempts = max(1, int(os.getenv("RAG_PARSE_MAX_ATTEMPTS", "4")))
+    except ValueError:
+        max_attempts = 4
+
+    if isinstance(error, UnsupportedIndexingSourceError):
+        return ParseFailureDisposition(
+            error_code="UNSUPPORTED_INDEXING_SOURCE",
+            disposition="skipped",
+            retryable=False,
+            retry_after=0.0,
+            attempts=attempts,
+            max_attempts=max_attempts,
+        )
+
+    message = str(error or "").casefold()
+    transient_codes = (
+        ("missing prevalidated sparse vector", "SPARSE_VECTOR_PREVALIDATION_MISSING"),
+        ("qdrant point count mismatch", "QDRANT_POINT_COUNT_MISMATCH"),
+        ("embedding count mismatch", "EMBEDDING_COUNT_MISMATCH"),
+        ("timed out", "PARSE_TIMEOUT"),
+        ("timeout", "PARSE_TIMEOUT"),
+        ("temporarily unavailable", "DEPENDENCY_UNAVAILABLE"),
+        ("all connection attempts failed", "DEPENDENCY_UNAVAILABLE"),
+        ("connection", "DEPENDENCY_UNAVAILABLE"),
+    )
+    error_code = next((code for marker, code in transient_codes if marker in message), "PARSE_FAILED")
+    transient = error_code != "PARSE_FAILED"
+    retryable = transient and attempts < max_attempts
+    delay = min(300.0, 5.0 * (2 ** max(0, attempts - 1))) if retryable else 0.0
+    return ParseFailureDisposition(
+        error_code=error_code,
+        disposition="retryable" if retryable else "terminal",
+        retryable=retryable,
+        retry_after=time.time() + delay if retryable else 0.0,
+        attempts=attempts,
+        max_attempts=max_attempts,
+    )
+
+
+def _parse_failure_policy(error: Exception, *, attempts: int) -> tuple[str, bool, float]:
+    """Return stable code, bounded retry decision and absolute retry time."""
+    classified = _classify_parse_failure(error, attempts=attempts)
+    return classified.error_code, classified.retryable, classified.retry_after
+
+
+def _point_fingerprint_coverage_ready(*, points: int, matching: int) -> bool:
+    return points == 0 or (matching == points and matching > 0)
+
+
+def _legacy_navigation_count_candidate(
+    *,
+    expected: int,
+    actual: int,
+    navigation: int,
+    dense: int,
+    sparse: int,
+    lexical_matches: bool,
+    source_actual: int | None = None,
+    source_navigation: int | None = None,
+) -> bool:
+    """Allow metadata-only repair only when every extra point is explicit navigation."""
+    navigation_delta = navigation
+    source_matches = True
+    if source_actual is not None:
+        source_matches = source_actual == expected
+        navigation_delta = navigation - max(0, int(source_navigation or 0))
+    return bool(
+        expected > 0
+        and actual > expected
+        and source_matches
+        and navigation_delta > 0
+        and actual - expected == navigation_delta
+        and dense == actual
+        and sparse == actual
+        and lexical_matches
+    )
 
 
 def _is_raw_cad_bim_source(file_path: Path, route: DocumentRoute | None) -> bool:
@@ -583,6 +679,25 @@ def _apply_context_metadata_to_nodes(file_nodes: list[dict], dataset_id: str, fi
         if idx + 1 < len(file_nodes) and file_nodes[idx + 1].get("payload", {}).get("parent_id") == parent_id:
             payload.setdefault("context_after", _compact_text(str(file_nodes[idx + 1].get("text") or "")))
     file_nodes.extend(navigation_nodes.values())
+
+
+def _prepare_named_sparse_nodes(file_nodes: list[dict], file_key: str) -> list[dict]:
+    """Attach sparse vectors after every evidence/navigation node is finalized."""
+    from backend.inference.bm25_sparse import encode_bm25
+
+    searchable_nodes: list[dict] = []
+    for node in file_nodes:
+        sparse_vec = encode_bm25(str(node["text"]))
+        if not sparse_vec:
+            logger.warning(
+                "Skipping non-searchable node with empty sparse vector: file=%s doc_id=%s",
+                file_key,
+                node.get("doc_id", ""),
+            )
+            continue
+        node["_rrf_sparse_vector"] = sparse_vec
+        searchable_nodes.append(node)
+    return searchable_nodes
 # ── Прямой клиент эмбеддингов (httpx, без llama-index) ───────────────────────
 
 class EmbedClient:
@@ -599,11 +714,12 @@ class EmbedClient:
     ):
         self.url   = f"{base_url.rstrip('/')}/v1/embeddings"
         self.model = model
-        self.backend = (
-            str(backend).strip().lower()
-            if backend is not None
-            else os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
-        )
+        if backend is not None:
+            self.backend = str(backend).strip().lower()
+        elif "11434" in base_url or "ollama" in base_url or os.getenv("EMBED_BACKEND") == "ollama":
+            self.backend = "ollama"
+        else:
+            self.backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
 
     @staticmethod
     def _normalise_model_id(value: object) -> str:
@@ -622,7 +738,7 @@ class EmbedClient:
         # Ollama's OpenAI-compatible endpoint selects the requested model and
         # reports it in the standard ``model`` field.  LES-owned MLX/CoreML
         # hosts must keep reporting the stronger explicit contract fields.
-        ollama_contract = self.backend == "ollama" and bool(reported_openai_model)
+        ollama_contract = (self.backend == "ollama" or "11434" in self.url or "ollama" in self.url) and bool(reported_openai_model)
         actual_model = reported_embedding_model or (reported_openai_model if ollama_contract else "")
         actual_backend = str(payload.get("embedding_backend") or "").strip().lower()
         if not actual_backend and ollama_contract:
@@ -813,6 +929,11 @@ class MetaDB:
                 ("last_error",   "TEXT DEFAULT ''"),
                 ("stage",        "TEXT DEFAULT ''"),  # W1.4: текущая стадия конвейера (CONVERT/EMBED/UPSERT)
                 ("source_path",  "TEXT DEFAULT ''"),  # внешний in-place источник (абсолютный путь, без копии в storage)
+                ("parse_attempts", "INTEGER DEFAULT 0"),
+                ("last_attempt_at", "REAL DEFAULT 0"),
+                ("retryable", "INTEGER DEFAULT 0"),
+                ("retry_after", "REAL DEFAULT 0"),
+                ("error_code", "TEXT DEFAULT ''"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE documents ADD COLUMN {col} {typedef}")
@@ -855,6 +976,25 @@ class MetaDB:
                 "UPDATE datasets SET dataset_scope='system', module_id='artel' "
                 "WHERE name='ARTEL_Index'"
             )
+            # Normalize the stable code only. Requeueing is performed later by
+            # the explicit bounded repair pass, never as an unbounded migration.
+            conn.execute(
+                "UPDATE documents SET error_code='SPARSE_VECTOR_PREVALIDATION_MISSING' "
+                "WHERE status='ERROR' AND last_error='missing prevalidated sparse vector'"
+            )
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS indexing_repair_state (
+                    singleton       INTEGER PRIMARY KEY CHECK(singleton=1),
+                    ran_at          REAL DEFAULT 0,
+                    repaired_files  INTEGER DEFAULT 0,
+                    eligible_files  INTEGER DEFAULT 0,
+                    max_files       INTEGER DEFAULT 0,
+                    status          TEXT DEFAULT 'never'
+                )
+            """)
+            conn.execute(
+                "INSERT OR IGNORE INTO indexing_repair_state(singleton) VALUES (1)"
+            )
 
     def ensure_system_datasets(self) -> list[str]:
         """Provision module-owned datasets only from the real runtime bootstrap.
@@ -893,8 +1033,147 @@ class MetaDB:
 
     def recover_interrupted_parsing(self) -> int:
         with self._get_conn() as conn:
-            cur = conn.execute("UPDATE datasets SET status='IDLE' WHERE status='PARSING'")
-            return int(cur.rowcount or 0)
+            dataset_cur = conn.execute("UPDATE datasets SET status='IDLE' WHERE status='PARSING'")
+            max_attempts = max(1, int(os.getenv("RAG_PARSE_MAX_ATTEMPTS", "4")))
+            now = time.time()
+            cur = conn.execute(
+                "UPDATE documents SET status='PENDING', stage='', retryable=0 "
+                "WHERE (status IN ('QUEUED','PARSING','RUNNING')) "
+                "OR (status='PENDING' AND COALESCE(stage,'')<>'') "
+                "OR (status='ERROR' AND COALESCE(retryable,0)=1 "
+                "AND COALESCE(parse_attempts,0)<? AND COALESCE(retry_after,0)<=?)",
+                (max_attempts, now),
+            )
+            return int(dataset_cur.rowcount or 0) + int(cur.rowcount or 0)
+
+    def requeue_repairable_errors(
+        self,
+        *,
+        error_codes: tuple[str, ...] = (
+            "SPARSE_VECTOR_PREVALIDATION_MISSING",
+            "QDRANT_POINT_COUNT_MISMATCH",
+        ),
+        max_files: int = 50,
+        max_attempts: int | None = None,
+    ) -> dict[str, Any]:
+        """Requeue a small allowlisted batch after a fixed systemic failure.
+
+        This deliberately excludes module-owned datasets and never scans or
+        resets successful documents. The returned counters are persisted for
+        diagnostics and the GUI.
+        """
+        max_files = max(0, min(int(max_files or 0), 500))
+        if max_attempts is None:
+            try:
+                max_attempts = max(1, int(os.getenv("RAG_PARSE_MAX_ATTEMPTS", "4")))
+            except ValueError:
+                max_attempts = 4
+        max_attempts = max(1, int(max_attempts))
+        codes = tuple(dict.fromkeys(str(code).strip() for code in error_codes if str(code).strip()))
+        now = time.time()
+        with self._get_conn() as conn:
+            if not codes or max_files == 0:
+                eligible = 0
+                selected: list[sqlite3.Row] = []
+            else:
+                placeholders = ",".join("?" for _ in codes)
+                where = (
+                    "doc.status='ERROR' "
+                    f"AND COALESCE(doc.error_code,'') IN ({placeholders}) "
+                    "AND COALESCE(doc.parse_attempts,0)<? "
+                    "AND COALESCE(ds.module_id,'')=''"
+                )
+                params: tuple[Any, ...] = (*codes, max_attempts)
+                eligible = int(conn.execute(
+                    f"SELECT COUNT(*) FROM documents doc JOIN datasets ds ON ds.id=doc.dataset_id WHERE {where}",
+                    params,
+                ).fetchone()[0] or 0)
+                selected = conn.execute(
+                    f"SELECT doc.id FROM documents doc JOIN datasets ds ON ds.id=doc.dataset_id "
+                    f"WHERE {where} ORDER BY COALESCE(doc.last_attempt_at,0), doc.id LIMIT ?",
+                    (*params, max_files),
+                ).fetchall()
+            ids = [str(row[0]) for row in selected]
+            if ids:
+                id_placeholders = ",".join("?" for _ in ids)
+                conn.execute(
+                    "UPDATE documents SET status='PENDING', stage='', retryable=0, retry_after=0 "
+                    f"WHERE id IN ({id_placeholders})",
+                    ids,
+                )
+            status = "repaired" if ids else ("eligible_but_disabled" if eligible else "nothing_to_repair")
+            conn.execute(
+                "UPDATE indexing_repair_state SET ran_at=?, repaired_files=?, eligible_files=?, "
+                "max_files=?, status=? WHERE singleton=1",
+                (now, len(ids), eligible, max_files, status),
+            )
+        return {
+            "status": status,
+            "ran_at": now,
+            "repaired_files": len(ids),
+            "eligible_files": eligible,
+            "remaining_files": max(0, eligible - len(ids)),
+            "max_files": max_files,
+            "error_codes": list(codes),
+        }
+
+    def mark_document_skipped(
+        self,
+        dataset_id: str,
+        file_name: str,
+        *,
+        message: str,
+        error_code: str = "UNSUPPORTED_INDEXING_SOURCE",
+    ) -> None:
+        with self._get_conn() as conn:
+            cur = conn.execute(
+                "UPDATE documents SET status='SKIPPED', chunk_count=0, last_error=?, stage='', "
+                "error_code=?, retryable=0, retry_after=0 WHERE dataset_id=? AND file_name=?",
+                (str(message)[:2000], str(error_code)[:120], dataset_id, file_name),
+            )
+            if cur.rowcount != 1:
+                raise RuntimeError(
+                    f"document skip update affected {cur.rowcount} rows "
+                    f"for dataset_id={dataset_id}, file_name={file_name}"
+                )
+
+    def begin_document_attempt(self, dataset_id: str, file_name: str) -> int:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE documents SET parse_attempts=COALESCE(parse_attempts,0)+1, "
+                "last_attempt_at=?, retryable=0, retry_after=0, error_code='', last_error='' "
+                "WHERE dataset_id=? AND file_name=?",
+                (time.time(), dataset_id, file_name),
+            )
+            row = conn.execute(
+                "SELECT COALESCE(parse_attempts,0) FROM documents WHERE dataset_id=? AND file_name=?",
+                (dataset_id, file_name),
+            ).fetchone()
+            return int(row[0] or 0) if row else 0
+
+    def mark_document_parse_error(
+        self,
+        dataset_id: str,
+        file_name: str,
+        *,
+        message: str,
+        error_code: str,
+        retryable: bool,
+        retry_after: float,
+    ) -> None:
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE documents SET status='ERROR', chunk_count=0, last_error=?, stage='', "
+                "error_code=?, retryable=?, retry_after=? WHERE dataset_id=? AND file_name=?",
+                (
+                    str(message)[:2000],
+                    str(error_code)[:120],
+                    1 if retryable else 0,
+                    float(retry_after or 0),
+                    dataset_id,
+                    file_name,
+                ),
+            )
 
     def list_datasets(self) -> List[DatasetInfo]:
         with self._get_conn() as conn:
@@ -947,6 +1226,16 @@ class MetaDB:
         with self._get_conn() as conn:
             conn.execute(
                 "UPDATE datasets SET group_name=? WHERE id=?", (grp, dataset_id)
+            )
+
+    def set_dataset_name(self, dataset_id: str, name: str) -> None:
+        """Переименование датасета."""
+        nm = str(name or "").strip()[:120]
+        if not nm:
+            return
+        with self._get_conn() as conn:
+            conn.execute(
+                "UPDATE datasets SET name=? WHERE id=?", (nm, dataset_id)
             )
 
     def add_document(
@@ -1022,6 +1311,8 @@ class MetaDB:
                     route.pipeline,
                 ])
             values.extend([dataset_id, file_name])
+            if status == "INDEXED":
+                fields.extend(["retryable=0", "retry_after=0", "error_code=''"])
             cur = conn.execute(
                 f"UPDATE documents SET {', '.join(fields)} "
                 "WHERE dataset_id=? AND file_name=?",
@@ -1169,6 +1460,36 @@ class MetaDB:
                 "UPDATE datasets SET chunk_count=? WHERE id=?",
                 (row["total"] if row else 0, dataset_id),
             )
+
+    def apply_document_chunk_count_repairs(
+        self,
+        repairs: list[tuple[str, str, int]],
+    ) -> int:
+        """Atomically repair only INDEXED document counters and affected dataset totals."""
+        if not repairs:
+            return 0
+        affected: set[str] = set()
+        updated = 0
+        with self._get_conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            for dataset_id, file_name, chunk_count in repairs:
+                cur = conn.execute(
+                    "UPDATE documents SET chunk_count=? "
+                    "WHERE dataset_id=? AND file_name=? AND status='INDEXED'",
+                    (max(0, int(chunk_count)), dataset_id, file_name),
+                )
+                if int(cur.rowcount or 0):
+                    updated += 1
+                    affected.add(dataset_id)
+            for dataset_id in sorted(affected):
+                conn.execute(
+                    "UPDATE datasets SET chunk_count=("
+                    "SELECT COALESCE(SUM(chunk_count),0) FROM documents "
+                    "WHERE dataset_id=? AND status='INDEXED') WHERE id=?",
+                    (dataset_id, dataset_id),
+                )
+            conn.commit()
+        return updated
 
     def get_pending_files(self, dataset_id: str, limit: int | None = None) -> List[str]:
         sql = (
@@ -1333,6 +1654,7 @@ class MetaDB:
                        SUM(CASE WHEN doc.status='INDEXED' THEN 1 ELSE 0 END) AS indexed_files,
                        SUM(CASE WHEN doc.status='PENDING' THEN 1 ELSE 0 END) AS pending_files,
                        SUM(CASE WHEN doc.status='ERROR' THEN 1 ELSE 0 END) AS error_files,
+                       SUM(CASE WHEN doc.status='SKIPPED' THEN 1 ELSE 0 END) AS skipped_files,
                        SUM(CASE WHEN doc.status='MISSING' THEN 1 ELSE 0 END) AS missing_files,
                        COALESCE(SUM(CASE WHEN doc.status='INDEXED' THEN doc.chunk_count ELSE 0 END), 0) AS indexed_chunks
                 FROM datasets d
@@ -1360,6 +1682,29 @@ class MetaDB:
                 GROUP BY COALESCE(NULLIF(doc_type, ''), 'UNCLASSIFIED')
                 ORDER BY files DESC
             """).fetchall()
+            retry_rows = conn.execute("""
+                SELECT COALESCE(NULLIF(error_code, ''), 'UNCLASSIFIED') AS error_code,
+                       COUNT(*) AS files,
+                       SUM(CASE WHEN COALESCE(retryable,0)=1 THEN 1 ELSE 0 END) AS retryable_files,
+                       MAX(COALESCE(parse_attempts,0)) AS max_attempts,
+                       MIN(CASE WHEN COALESCE(retryable,0)=1 THEN NULLIF(retry_after,0) END) AS next_retry_at
+                FROM documents
+                WHERE status='ERROR'
+                GROUP BY COALESCE(NULLIF(error_code, ''), 'UNCLASSIFIED')
+                ORDER BY files DESC, error_code
+            """).fetchall()
+            skipped_rows = conn.execute("""
+                SELECT COALESCE(NULLIF(error_code, ''), 'UNCLASSIFIED') AS error_code,
+                       COUNT(*) AS files
+                FROM documents
+                WHERE status='SKIPPED'
+                GROUP BY COALESCE(NULLIF(error_code, ''), 'UNCLASSIFIED')
+                ORDER BY files DESC, error_code
+            """).fetchall()
+            repair_row = conn.execute(
+                "SELECT ran_at, repaired_files, eligible_files, max_files, status "
+                "FROM indexing_repair_state WHERE singleton=1"
+            ).fetchone()
 
         datasets = [
             {
@@ -1370,6 +1715,7 @@ class MetaDB:
                 "indexed_files": row["indexed_files"] or 0,
                 "pending_files": row["pending_files"] or 0,
                 "error_files": row["error_files"] or 0,
+                "skipped_files": row["skipped_files"] or 0,
                 "missing_files": row["missing_files"] or 0,
                 "chunks": row["indexed_chunks"] or 0,
                 "dataset_scope": row["dataset_scope"] or "user",
@@ -1383,6 +1729,7 @@ class MetaDB:
             "indexed_files": sum(item["indexed_files"] for item in datasets),
             "pending_files": sum(item["pending_files"] for item in datasets),
             "error_files": sum(item["error_files"] for item in datasets),
+            "skipped_files": sum(item["skipped_files"] for item in datasets),
             "missing_files": sum(item["missing_files"] for item in datasets),
             "chunks": sum(item["chunks"] for item in datasets),
         }
@@ -1400,6 +1747,37 @@ class MetaDB:
             "by_doc_type": {
                 row["doc_type"]: {"files": row["files"], "chunks": row["chunks"]}
                 for row in doc_type_rows
+            },
+            "indexing_recovery": {
+                "skipped_files": totals["skipped_files"],
+                "retryable_errors": sum(int(row["retryable_files"] or 0) for row in retry_rows),
+                "terminal_errors": sum(
+                    int(row["files"] or 0) - int(row["retryable_files"] or 0)
+                    for row in retry_rows
+                ),
+                "next_retry_at": min(
+                    (float(row["next_retry_at"]) for row in retry_rows if row["next_retry_at"] is not None),
+                    default=0.0,
+                ),
+                "by_error_code": {
+                    row["error_code"]: {
+                        "files": int(row["files"] or 0),
+                        "retryable_files": int(row["retryable_files"] or 0),
+                        "max_attempts": int(row["max_attempts"] or 0),
+                    }
+                    for row in retry_rows
+                },
+                "skipped_by_error_code": {
+                    row["error_code"]: {"files": int(row["files"] or 0), "disposition": "skipped"}
+                    for row in skipped_rows
+                },
+                "bounded_repair": {
+                    "status": str(repair_row["status"] or "never") if repair_row else "never",
+                    "ran_at": float(repair_row["ran_at"] or 0) if repair_row else 0.0,
+                    "repaired_files": int(repair_row["repaired_files"] or 0) if repair_row else 0,
+                    "eligible_files": int(repair_row["eligible_files"] or 0) if repair_row else 0,
+                    "max_files": int(repair_row["max_files"] or 0) if repair_row else 0,
+                },
             },
             "datasets": datasets,
         }
@@ -1448,6 +1826,23 @@ class MetaDB:
 # ── Основной адаптер ──────────────────────────────────────────────────────────
 
 class QdrantLlamaIndexAdapter(RAGBackend):
+    @classmethod
+    def for_catalog_maintenance(
+        cls,
+        *,
+        qdrant_url: str,
+        collection_name: str,
+        meta_db_path: str | Path,
+        sync_qdrant_client: Any | None = None,
+    ) -> "QdrantLlamaIndexAdapter":
+        """Create a narrow maintenance view without models, storage or runtime startup."""
+        adapter = cls.__new__(cls)
+        adapter.qdrant_url = str(qdrant_url)
+        adapter.collection_name = str(collection_name)
+        adapter.db = MetaDB(str(meta_db_path))
+        adapter._catalog_sync_qdrant = sync_qdrant_client
+        return adapter
+
     def __init__(
         self,
         qdrant_url:       str,
@@ -1459,6 +1854,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.content_dir.mkdir(parents=True, exist_ok=True)
         self.db              = MetaDB()
         self.db.ensure_system_datasets()
+        try:
+            repair_limit = max(0, int(os.getenv("RAG_BOUNDED_REPAIR_MAX_FILES", "50")))
+        except ValueError:
+            repair_limit = 50
+        repair = self.db.requeue_repairable_errors(max_files=repair_limit)
+        if repair["repaired_files"]:
+            logger.warning(
+                "[INIT] Bounded indexing repair requeued %s/%s eligible files",
+                repair["repaired_files"],
+                repair["eligible_files"],
+            )
         recovered = self.db.recover_interrupted_parsing()
         if recovered:
             logger.info("[INIT] Recovered %s interrupted parsing dataset(s)", recovered)
@@ -1468,13 +1874,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self.aclient         = qdrant_client.AsyncQdrantClient(
             url=qdrant_url, timeout=60.0, check_compatibility=False)
         self.qdrant_url      = qdrant_url
-        self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""))
+        if (sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama") and ("8080" in mlx_url or not mlx_url):
+            mlx_url = "http://127.0.0.1:11434"
+        embed_backend = "ollama" if ("11434" in mlx_url or sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama") else None
+        self.embed           = EmbedClient(mlx_url, model=embed_model_name.replace(":latest", ""), backend=embed_backend)
         # Отдельный эмбеддер для ПАРСА (опц.): EMBED_URL_PARSE → парс-эмбеддинги уходят на
         # ВТОРОЙ инстанс, не голодая чат-эмбеддинг на основном :8080 во время индексации.
         # Дефолт = основной URL (ноль изменений, пока env не задан). Активация: поднять второй
         # MLX-эмбеддер на альт-порту + EMBED_URL_PARSE=http://127.0.0.1:<порт>.
         _parse_url = os.getenv("EMBED_URL_PARSE", "").strip() or mlx_url
-        self.embed_parse     = EmbedClient(_parse_url, model=embed_model_name.replace(":latest", ""))
+        parse_backend = "ollama" if ("11434" in _parse_url or sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama") else None
+        self.embed_parse     = EmbedClient(_parse_url, model=embed_model_name.replace(":latest", ""), backend=parse_backend)
         if _parse_url != mlx_url:
             logger.info("[INIT] парс-эмбеддер на отдельном инстансе: %s", _parse_url)
         self.collection_name = rag_collection_name()
@@ -1636,6 +2046,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
     async def health_snapshot(self) -> Dict[str, Any]:
         ok = await self.health()
         snapshot = self.db.health_snapshot()
+        try:
+            from proxy.services.rag_catalog_guard_service import catalog_guard_state
+
+            snapshot["catalog_guard"] = catalog_guard_state()
+        except Exception as error:
+            snapshot["catalog_guard"] = {
+                "status": "unknown",
+                "error_code": "RAG_CATALOG_GUARD_STATE_FAILED",
+                "exception_type": type(error).__name__,
+                "message": str(error) or type(error).__name__,
+            }
         snapshot["qdrant"] = {"ok": ok, "collection": self.collection_name}
         contract = index_contract_status()
         snapshot["index_contract"] = contract
@@ -1647,6 +2068,101 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 collection = await self.aclient.get_collection(self.collection_name)
                 points = collection.points_count or 0
                 snapshot["qdrant"]["points"] = points
+                physical_collection = self.collection_name
+                try:
+                    aliases = await self.aclient.get_aliases()
+                    physical_collection = next(
+                        (
+                            str(item.collection_name)
+                            for item in aliases.aliases
+                            if str(item.alias_name) == self.collection_name
+                        ),
+                        self.collection_name,
+                    )
+                except Exception:
+                    pass
+                snapshot["qdrant"]["physical_collection"] = physical_collection
+                expected_point_fingerprint = str(
+                    (contract.get("actual") or {}).get("point_embedding_fingerprint")
+                    or point_embedding_fingerprint()
+                )
+                matching = await self.aclient.count(
+                    collection_name=self.collection_name,
+                    count_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="embedding_fingerprint",
+                                match=models.MatchValue(value=expected_point_fingerprint),
+                            )
+                        ]
+                    ),
+                    exact=True,
+                )
+                matching_points = int(matching.count or 0)
+                fingerprint_ready = _point_fingerprint_coverage_ready(
+                    points=points,
+                    matching=matching_points,
+                )
+                snapshot["qdrant"]["compatible_fingerprint_points"] = matching_points
+                snapshot["qdrant"]["point_fingerprint_match"] = fingerprint_ready
+                evidence_count = await self.aclient.count(
+                    collection_name=self.collection_name,
+                    count_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="node_role",
+                                match=models.MatchValue(value="evidence"),
+                            )
+                        ]
+                    ),
+                    exact=True,
+                )
+                navigation_count = await self.aclient.count(
+                    collection_name=self.collection_name,
+                    count_filter=models.Filter(
+                        must=[
+                            models.FieldCondition(
+                                key="node_role",
+                                match=models.MatchValue(value="navigation"),
+                            )
+                        ]
+                    ),
+                    exact=True,
+                )
+                snapshot["qdrant"]["evidence_points"] = int(evidence_count.count or 0)
+                snapshot["qdrant"]["hierarchy_navigation_points"] = int(
+                    navigation_count.count or 0
+                )
+                actual_contract = contract.get("actual") or {}
+                colbert_required = bool(actual_contract.get("colbert_schema"))
+                colbert_points = 0
+                if colbert_required:
+                    colbert_count = await self.aclient.count(
+                        collection_name=self.collection_name,
+                        count_filter=models.Filter(
+                            must=[
+                                models.HasVectorCondition(
+                                    has_vector=str(
+                                        actual_contract.get("colbert_vector_name") or "colbert"
+                                    )
+                                )
+                            ]
+                        ),
+                        exact=True,
+                    )
+                    colbert_points = int(colbert_count.count or 0)
+                snapshot["qdrant"]["colbert_required"] = colbert_required
+                snapshot["qdrant"]["colbert_points"] = colbert_points
+                snapshot["colbert_verified"] = bool(
+                    colbert_required
+                    and colbert_points == int(points)
+                    and colbert_points > 0
+                )
+                snapshot["dense_available"] = bool(
+                    ok and contract.get("compatible") and fingerprint_ready
+                )
+                if not fingerprint_ready:
+                    snapshot["status"] = "degraded"
                 expected_chunks = snapshot.get("totals", {}).get("chunks") or 0
                 snapshot["qdrant"]["points_match_sqlite_chunks"] = points == expected_chunks
                 if points != expected_chunks:
@@ -1655,8 +2171,26 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         "qdrant_points": points,
                     }
                     snapshot["status"] = "degraded"
+                guard_status = str((snapshot.get("catalog_guard") or {}).get("status") or "")
+                if guard_status in {"degraded", "blocked"}:
+                    snapshot["status"] = "degraded"
             except Exception as error:
                 snapshot["qdrant"].update({"ok": False, "error": str(error)})
+        try:
+            from proxy.services.rag_pipeline_status_service import (
+                build_retrieval_pipeline_status,
+            )
+
+            snapshot["retrieval_pipeline"] = build_retrieval_pipeline_status(snapshot)
+        except Exception as error:
+            snapshot["retrieval_pipeline"] = {
+                "schema": "les.rag.retrieval-pipeline-status.v1",
+                "status": "unknown",
+                "error_code": "RAG_PIPELINE_STATUS_FAILED",
+                "exception_type": type(error).__name__,
+                "message": str(error) or type(error).__name__,
+                "stages": {},
+            }
         return snapshot
 
     # ── RAGBackend interface ───────────────────────────────────────────────────
@@ -1672,6 +2206,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
 
     async def set_dataset_group(self, dataset_id: str, group_name: str) -> None:
         self.db.set_dataset_group(dataset_id, group_name)
+
+    async def set_dataset_name(self, dataset_id: str, name: str) -> None:
+        self.db.set_dataset_name(dataset_id, name)
 
     async def upload_file(self, dataset_id: str, file_path: Path, relative_path: Optional[str] = None) -> str:
         dest_dir  = self.content_dir / dataset_id
@@ -1912,6 +2449,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             for i, (file_path, file_key, db_file_key) in enumerate(files_to_parse, 1):
                 if i % 50 == 0 or i == total:
                     logger.info(f"[PARSE] {i}/{total} ({_t.time()-t0:.0f}с)")
+                begin_attempt = getattr(self.db, "begin_document_attempt", None)
+                attempts = int(begin_attempt(dataset_id, db_file_key) or 1) if begin_attempt else 1
                 try:
                     _stage(db_file_key, "CONVERT")
                     if next_convert is not None:
@@ -1951,27 +2490,17 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     )
                     _add_timing("chunk_sec", phase_start)
 
+                    # Hierarchy may append navigation nodes. It must run before
+                    # sparse prevalidation so every final node has both channels.
+                    _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)
+
                     # Native RRF is a corpus-wide invariant: a named-schema
                     # point is never allowed to enter the collection without
                     # its sparse companion.  Validate before deleting the old
                     # file points, so an invalid replacement cannot erase a
                     # previously usable document.
                     if _qdrant_schema_mode() == "named":
-                        from backend.inference.bm25_sparse import encode_bm25
-
-                        searchable_nodes = []
-                        for node in file_nodes:
-                            sparse_vec = encode_bm25(str(node["text"]))
-                            if not sparse_vec:
-                                logger.warning(
-                                    "Skipping non-searchable node with empty sparse vector: file=%s doc_id=%s",
-                                    file_key,
-                                    node.get("doc_id", ""),
-                                )
-                                continue
-                            node["_rrf_sparse_vector"] = sparse_vec
-                            searchable_nodes.append(node)
-                        file_nodes = searchable_nodes
+                        file_nodes = _prepare_named_sparse_nodes(file_nodes, file_key)
 
                     phase_start = _t.time()
                     existing_vectors = (
@@ -1998,8 +2527,6 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         self.db.update_document_status(dataset_id, db_file_key, "INDEXED", 0, route=route)
                         _add_timing("db_sec", phase_start)
                         continue
-
-                    _apply_context_metadata_to_nodes(file_nodes, dataset_id, file_key)
 
                     # Стираем старые правила для этого файла перед переиндексацией
                     self.db.clear_structured_rules(file_key)
@@ -2104,6 +2631,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                         sync_qdrant.upsert(
                             collection_name=self.collection_name,
                             points=points[point_start:point_start + UPSERT_BATCH],
+                            wait=True,
                         )
                         _add_timing("upsert_sec", phase_start)
                     _upsert_file_lexical(points)
@@ -2146,9 +2674,18 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 except UnsupportedIndexingSourceError as file_err:
                     logger.info("[PARSE] SKIPPED %s: %s", file_key, file_err)
                     phase_start = _t.time()
-                    self.db.update_document_status(
-                        dataset_id, db_file_key, "SKIPPED", 0, last_error=str(file_err)
-                    )
+                    mark_skipped = getattr(self.db, "mark_document_skipped", None)
+                    if mark_skipped:
+                        mark_skipped(
+                            dataset_id,
+                            db_file_key,
+                            message=str(file_err),
+                            error_code="UNSUPPORTED_INDEXING_SOURCE",
+                        )
+                    else:
+                        self.db.update_document_status(
+                            dataset_id, db_file_key, "SKIPPED", 0, last_error=str(file_err)
+                        )
                     _add_timing("db_sec", phase_start)
 
                 except Exception as file_err:
@@ -2159,9 +2696,31 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                     except Exception as cleanup_err:
                         logger.error("[PARSE] cleanup failed %s: %s", file_key, cleanup_err)
                     phase_start = _t.time()
-                    self.db.update_document_status(
-                        dataset_id, db_file_key, "ERROR", 0, last_error=str(file_err)
+                    error_code, retryable, retry_after = _parse_failure_policy(
+                        file_err,
+                        attempts=attempts,
                     )
+                    mark_parse_error = getattr(self.db, "mark_document_parse_error", None)
+                    if mark_parse_error:
+                        mark_parse_error(
+                            dataset_id,
+                            db_file_key,
+                            message=(
+                                f"{error_code} [{type(file_err).__name__}]: "
+                                f"{str(file_err) or 'exception without message'}"
+                            ),
+                            error_code=error_code,
+                            retryable=retryable,
+                            retry_after=retry_after,
+                        )
+                    else:
+                        self.db.update_document_status(
+                            dataset_id,
+                            db_file_key,
+                            "ERROR",
+                            0,
+                            last_error=str(file_err) or type(file_err).__name__,
+                        )
                     _add_timing("db_sec", phase_start)
                     errors += 1
 
@@ -2413,6 +2972,8 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         self,
         sync_qdrant: qdrant_client.QdrantClient,
         dataset_id: str,
+        *,
+        collection_name: str | None = None,
     ) -> dict[str, dict[str, Any]]:
         projection: dict[str, dict[str, Any]] = {}
         offset = None
@@ -2426,7 +2987,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         )
         while True:
             points, offset = sync_qdrant.scroll(
-                collection_name=self.collection_name,
+                collection_name=collection_name or self.collection_name,
                 scroll_filter=dataset_filter,
                 limit=256,
                 offset=offset,
@@ -2436,8 +2997,13 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             for point in points:
                 payload = getattr(point, "payload", None) or {}
                 file_name = str(payload.get("file_name") or payload.get("doc_name") or "")
-                row = projection.setdefault(file_name, {"ids": set(), "pages": set()})
+                row = projection.setdefault(
+                    file_name,
+                    {"ids": set(), "pages": set(), "navigation_points": 0},
+                )
                 row["ids"].add(str(getattr(point, "id", "") or ""))
+                if str(payload.get("node_role") or "") == "navigation":
+                    row["navigation_points"] += 1
                 if payload.get("type") == "pdf_page_text" and payload.get("page") is not None:
                     try:
                         row["pages"].add(int(payload["page"]))
@@ -2446,6 +3012,167 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             if offset is None:
                 break
         return projection
+
+    def _discover_generation_source_collection(
+        self,
+        sync_qdrant: qdrant_client.QdrantClient,
+    ) -> str:
+        contract = index_contract_status().get("actual") or {}
+        explicit = str(contract.get("generation_source_collection") or "").strip()
+        if explicit and sync_qdrant.collection_exists(explicit):
+            return explicit
+        expected = int(contract.get("generation_source_points") or 0)
+        if expected <= 0:
+            return ""
+        aliases = {
+            item.alias_name: item.collection_name
+            for item in sync_qdrant.get_aliases().aliases
+        }
+        active = aliases.get(self.collection_name, self.collection_name)
+        matches: list[str] = []
+        for item in sync_qdrant.get_collections().collections:
+            name = str(item.name)
+            if name == active:
+                continue
+            try:
+                if int(sync_qdrant.count(name, exact=True).count or 0) == expected:
+                    matches.append(name)
+            except Exception:
+                continue
+        return matches[0] if len(matches) == 1 else ""
+
+    def reconcile_legacy_navigation_counts(
+        self,
+        *,
+        apply: bool = False,
+        source_collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Repair stale MetaDB counters created by hierarchy-expanding sibling builds.
+
+        This never deletes or reindexes content. A row is eligible only when every
+        point above the stored count is explicitly a navigation point and dense,
+        sparse and lexical projections all contain the same exact point ids/count.
+        """
+        sync_qdrant = getattr(self, "_catalog_sync_qdrant", None)
+        owns_client = sync_qdrant is None
+        if sync_qdrant is None:
+            sync_qdrant = qdrant_client.QdrantClient(
+                url=self.qdrant_url,
+                timeout=60.0,
+                check_compatibility=False,
+            )
+        source_collection = str(source_collection or "").strip() or (
+            self._discover_generation_source_collection(sync_qdrant)
+        )
+        candidates: list[tuple[str, str, int, int]] = []
+        rejected: list[dict[str, Any]] = []
+        checked_files = 0
+        try:
+            for dataset in self.db.list_datasets():
+                if int(dataset.indexed_files or 0) <= 0:
+                    continue
+                dataset_id = str(dataset.id)
+                projection = self._sync_dataset_point_projection(sync_qdrant, dataset_id)
+                source_projection: dict[str, dict[str, Any]] = {}
+                if source_collection:
+                    source_projection = self._sync_dataset_point_projection(
+                        sync_qdrant,
+                        dataset_id,
+                        collection_name=source_collection,
+                    )
+                lexical = self.db.lexical_integrity_projection(dataset_id)
+                lexical_files: dict[str, set[str]] = lexical.get("files") or {}
+                for file_name, expected in self.db.indexed_files_with_counts(dataset_id):
+                    checked_files += 1
+                    qrow = projection.get(file_name) or {
+                        "ids": set(),
+                        "navigation_points": 0,
+                    }
+                    qids = set(qrow.get("ids") or set())
+                    actual = len(qids)
+                    if actual <= expected:
+                        continue
+                    navigation = int(qrow.get("navigation_points") or 0)
+                    dense = self._sync_count_file_vector_points(
+                        sync_qdrant,
+                        dataset_id,
+                        file_name,
+                        _dense_vector_name(),
+                    )
+                    sparse = self._sync_count_file_vector_points(
+                        sync_qdrant,
+                        dataset_id,
+                        file_name,
+                        _sparse_vector_name(),
+                    )
+                    lexical_matches = set(lexical_files.get(file_name) or set()) == qids
+                    source_row = source_projection.get(file_name) or {}
+                    source_ids = set(source_row.get("ids") or set())
+                    source_actual = len(source_ids) if source_collection else None
+                    source_navigation = (
+                        int(source_row.get("navigation_points") or 0)
+                        if source_collection
+                        else None
+                    )
+                    if _legacy_navigation_count_candidate(
+                        expected=int(expected),
+                        actual=actual,
+                        navigation=navigation,
+                        dense=dense,
+                        sparse=sparse,
+                        lexical_matches=lexical_matches,
+                        source_actual=source_actual,
+                        source_navigation=source_navigation,
+                    ):
+                        candidates.append((dataset_id, file_name, int(expected), actual))
+                    else:
+                        rejected.append(
+                            {
+                                "dataset_id": dataset_id,
+                                "file": file_name,
+                                "expected": int(expected),
+                                "actual": actual,
+                                "navigation": navigation,
+                                "dense": dense,
+                                "sparse": sparse,
+                                "lexical_matches": lexical_matches,
+                                "source_actual": source_actual,
+                                "source_navigation": source_navigation,
+                            }
+                        )
+        finally:
+            if owns_client:
+                sync_qdrant.close()
+
+        repairs = [
+            (dataset_id, file_name, actual)
+            for dataset_id, file_name, _expected, actual in candidates
+        ]
+        updated = (
+            self.db.apply_document_chunk_count_repairs(repairs)
+            if apply and not rejected
+            else 0
+        )
+        return {
+            "schema": "les.rag.navigation-count-reconcile.v1",
+            "status": (
+                "blocked"
+                if rejected
+                else "repaired"
+                if updated
+                else "ready"
+                if not candidates
+                else "repairable"
+            ),
+            "checked_files": checked_files,
+            "candidate_files": len(candidates),
+            "candidate_points": sum(actual for _, _, _, actual in candidates),
+            "candidate_delta": sum(actual - expected for _, _, expected, actual in candidates),
+            "rejected_files": len(rejected),
+            "updated_files": updated,
+            "source_collection": source_collection,
+            "details": rejected[:20],
+        }
 
     @staticmethod
     def _expected_pdf_text_pages(path: Path) -> set[int]:
@@ -3353,7 +4080,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 doc_id=p.payload.get("doc_id", ""),
                 doc_name=p.payload.get("file_name", "unknown"),
                 score=p.score,
-                meta=p.payload,
+                meta={**p.payload, "qdrant_point_id": str(p.id)},
             )
             for p in results.points
             if not _is_binary_garbage(p.payload.get("text", ""))
@@ -3430,7 +4157,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 doc_id=p.payload.get("doc_id", ""),
                 doc_name=p.payload.get("file_name", "unknown"),
                 score=p.score,
-                meta=p.payload,
+                meta={**p.payload, "qdrant_point_id": str(p.id)},
             )
             for p in results.points
             if len(p.payload.get("text", "")) >= 1
@@ -3483,6 +4210,175 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             [global_evidence, descendant_evidence],
             limit=top_k,
         )
+
+    async def rerank_colbert(
+        self,
+        query: str,
+        chunks: list[Chunk],
+        *,
+        top_k: int,
+        max_query_tokens: int = 48,
+        vector_name: str = "colbert",
+    ) -> list[Chunk]:
+        """Qdrant MaxSim rerank over an RRF shortlist of exact evidence ids."""
+        import asyncio
+        from backend.colbert_late_interaction import BgeM3ColbertEncoder
+
+        point_ids = [
+            str((chunk.meta or {}).get("qdrant_point_id") or "")
+            for chunk in chunks
+        ]
+        point_ids = [point_id for point_id in point_ids if point_id]
+        if len(point_ids) != len(chunks):
+            raise RuntimeError("COLBERT_POINT_ID_MISSING")
+        encoder = getattr(self, "_colbert_encoder", None)
+        if encoder is None:
+            encoder = BgeM3ColbertEncoder("BAAI/bge-m3")
+            self._colbert_encoder = encoder
+        query_vectors = (
+            await asyncio.to_thread(
+                encoder.encode, [query], max_length=max_query_tokens
+            )
+        )[0]
+        results = await self.aclient.query_points(
+            collection_name=self.collection_name,
+            query=query_vectors,
+            using=vector_name,
+            query_filter=models.Filter(
+                must=[models.HasIdCondition(has_id=point_ids)]
+            ),
+            limit=min(max(1, int(top_k)), len(chunks)),
+            with_payload=False,
+        )
+        by_id = {point_id: chunk for point_id, chunk in zip(point_ids, chunks, strict=True)}
+        ranked: list[Chunk] = []
+        seen: set[str] = set()
+        for rank, point in enumerate(results.points, start=1):
+            point_id = str(point.id)
+            chunk = by_id.get(point_id)
+            if chunk is None:
+                continue
+            seen.add(point_id)
+            chunk.meta["colbert_rank"] = rank
+            chunk.meta["colbert_score"] = float(point.score or 0.0)
+            ranked.append(chunk)
+        ranked.extend(chunk for point_id, chunk in by_id.items() if point_id not in seen)
+        return ranked
+
+    async def retrieve_raptor_evidence(
+        self,
+        query: str,
+        *,
+        target_collection: str,
+        source_collection: str,
+        dataset_ids: Optional[List[str]] = None,
+        doc_filter: Optional[List[str]] = None,
+        route_k: int = 8,
+        top_k: int = 32,
+    ) -> List[Chunk]:
+        """Route through summary nodes, then return only exact evidence leaves."""
+        from backend.inference.bm25_sparse import encode_bm25
+
+        aliases = await self.aclient.get_aliases()
+        active_physical = next(
+            (
+                str(item.collection_name)
+                for item in aliases.aliases
+                if str(item.alias_name) == self.collection_name
+            ),
+            self.collection_name,
+        )
+        if active_physical != str(source_collection or ""):
+            raise RuntimeError("RAPTOR_SOURCE_GENERATION_STALE")
+        dense = (await self.embed.encode_async([query], query=True))[0]
+        sparse = encode_bm25(query)
+        if not sparse:
+            raise RuntimeError("RAPTOR_SPARSE_QUERY_EMPTY")
+        must = [
+            models.FieldCondition(
+                key="node_role", match=models.MatchValue(value="navigation")
+            )
+        ]
+        if dataset_ids:
+            must.append(
+                models.FieldCondition(
+                    key="dataset_id", match=models.MatchAny(any=dataset_ids)
+                )
+            )
+        if doc_filter:
+            must.append(
+                models.FieldCondition(
+                    key="file_name", match=models.MatchAny(any=doc_filter)
+                )
+            )
+        query_filter = models.Filter(must=must)
+        routes = await self.aclient.query_points(
+            collection_name=target_collection,
+            prefetch=[
+                models.Prefetch(
+                    query=dense,
+                    using=_dense_vector_name(),
+                    filter=query_filter,
+                    limit=max(16, int(route_k) * 2),
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(
+                        indices=list(sparse), values=list(sparse.values())
+                    ),
+                    using=_sparse_vector_name(),
+                    filter=query_filter,
+                    limit=max(16, int(route_k) * 2),
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=max(1, int(route_k)),
+            with_payload=True,
+        )
+        leaf_routes: dict[str, tuple[int, str]] = {}
+        for route_rank, point in enumerate(routes.points, start=1):
+            payload = dict(point.payload or {})
+            route_id = str(payload.get("node_id") or point.id)
+            for leaf_id in payload.get("descendant_leaf_ids") or []:
+                leaf_routes.setdefault(str(leaf_id), (route_rank, route_id))
+                if len(leaf_routes) >= max(1, int(top_k)):
+                    break
+            if len(leaf_routes) >= max(1, int(top_k)):
+                break
+        if not leaf_routes:
+            return []
+        points = await self.aclient.retrieve(
+            collection_name=self.collection_name,
+            ids=list(leaf_routes),
+            with_payload=True,
+            with_vectors=False,
+        )
+        by_id = {str(point.id): point for point in points}
+        chunks: list[Chunk] = []
+        for leaf_id, (route_rank, route_id) in leaf_routes.items():
+            point = by_id.get(leaf_id)
+            if point is None:
+                continue
+            payload = dict(point.payload or {})
+            if str(payload.get("node_role") or "") != "evidence":
+                continue
+            text = str(payload.get("text") or "")
+            if not text:
+                continue
+            chunks.append(
+                Chunk(
+                    content=text,
+                    doc_id=str(payload.get("doc_id") or ""),
+                    doc_name=str(payload.get("file_name") or "unknown"),
+                    score=1.0 / (60.0 + route_rank),
+                    meta={
+                        **payload,
+                        "qdrant_point_id": leaf_id,
+                        "raptor_route_id": route_id,
+                        "raptor_route_rank": route_rank,
+                    },
+                )
+            )
+        return chunks
 
     async def retrieve_table_rows(
         self,

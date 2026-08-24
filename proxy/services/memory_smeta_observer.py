@@ -57,6 +57,13 @@ def observe_published_smeta(
     selections = workflow.get("selections") or {}
     raw_routes = workflow.get("route_evidence_cache") or []
     opened_by_work = workflow.get("opened_cards") or {}
+    conflicted_work_ids = {
+        str(work_id)
+        for conflict in (workflow.get("professional_conflicts") or [])
+        if isinstance(conflict, dict)
+        for work_id in (conflict.get("work_ids") or [])
+        if str(work_id).strip()
+    }
     captured = 0
     request_signature = hashlib.sha256(user_request.strip().casefold().encode()).hexdigest()
     for work in (workflow.get("intake") or {}).get("work_items") or []:
@@ -69,6 +76,11 @@ def observe_published_smeta(
         if str(selection.get("review_status") or "") == "model_batch_candidate":
             continue
         norm_code = str(selection.get("norm_code") or "").strip()
+        # Memory is a precedent cache, not a diary of every attempted row.
+        # Unbound/MISSING and professionally conflicted decisions must never be
+        # promoted later merely because the surrounding mapping was locked.
+        if not norm_code or norm_code == "MISSING" or work_id in conflicted_work_ids:
+            continue
         features = {
             "title": str(work.get("title") or ""),
             "unit": str(work.get("unit") or ""),

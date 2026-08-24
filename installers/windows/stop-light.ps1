@@ -43,8 +43,18 @@ if ($StateRoot) {
 }
 $helper = Join-Path $RuntimeRoot "tools\windows_runtime.py"
 if ($python -and (Test-Path -LiteralPath $helper) -and $StateRoot) {
-  $stopOut = & $python $helper stop --runtime $RuntimeRoot --state $StateRoot --proxy-port $ProxyPort --ui-port $UiPort 2>&1
-  if ($LASTEXITCODE -ne 0) {
+  # PowerShell 5.1 can promote native stderr to NativeCommandError before the
+  # real process exit code is inspected. Capture output under Continue, then
+  # restore strict script handling and decide exclusively by LASTEXITCODE.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $stopOut = @(& $python $helper stop --runtime $RuntimeRoot --state $StateRoot --proxy-port $ProxyPort --ui-port $UiPort 2>&1)
+    $stopExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  if ($stopExitCode -ne 0) {
     $detail = (($stopOut | ForEach-Object { "$_" }) -join " ").Trim()
     if ($detail -match 'foreign_port_owner') { throw $detail }
     throw "LES runtime stop failed: $detail"

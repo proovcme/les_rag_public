@@ -320,6 +320,10 @@ def main() -> int:
             )
         else:
             client.delete_collection(args.alias)
+    if contract_payload is not None:
+        contract_payload["generation_source_collection"] = (
+            previous_target or args.lexical_source_collection
+        )
     operations: list[models.AliasOperations] = []
     if args.alias in existing:
         operations.append(
@@ -337,6 +341,7 @@ def main() -> int:
     }
     lexical_index = None
     lexical_promoted = False
+    navigation_count_reconcile: dict[str, Any] | None = None
     try:
         if not client.update_collection_aliases(operations):
             raise RuntimeError("Qdrant rejected alias update")
@@ -362,6 +367,24 @@ def main() -> int:
             ready_report.get("points") or 0
         ):
             raise RuntimeError("lexical alias postcondition failed")
+        from backend.qdrant_adapter import QdrantLlamaIndexAdapter
+
+        maintenance = QdrantLlamaIndexAdapter.for_catalog_maintenance(
+            qdrant_url=args.qdrant_url,
+            collection_name=args.alias,
+            meta_db_path=args.lexical_db,
+            sync_qdrant_client=client,
+        )
+        navigation_count_reconcile = maintenance.reconcile_legacy_navigation_counts(
+            apply=True,
+            source_collection=previous_target or args.lexical_source_collection,
+        )
+        if navigation_count_reconcile.get("status") == "blocked":
+            raise RuntimeError("navigation count reconciliation blocked activation")
+        if int(navigation_count_reconcile.get("candidate_files") or 0) != int(
+            navigation_count_reconcile.get("updated_files") or 0
+        ):
+            raise RuntimeError("navigation count reconciliation incomplete")
     except Exception:
         try:
             current_aliases = {
@@ -404,6 +427,7 @@ def main() -> int:
                 "alias": args.alias,
                 "target": args.target,
                 "legacy_archive": legacy_archive,
+                "navigation_count_reconcile": navigation_count_reconcile,
             }
         )
     )

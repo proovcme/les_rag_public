@@ -1,12 +1,11 @@
 """ProfileResolver — единый контракт маршрутизации (ревью Codex §10.1A, §10.2).
 
 Все источники выбора пути (явный режим, команда, retrieval-intent, LLM-router,
-fallback) приводятся к ОДНОМУ результату `ProfileResolution`. Формализован ЯВНЫЙ РЕЖИМ
-(mode→Profile) И auto-путь: когда режим не задан, `resolve` возвращает профиль `auto` в
-состоянии `pending` («какой задачу решаю — ещё не решено»), а конвейер чата уточняет
-резолюцию через `refine(...)`, как только конкретный источник (command/keyword/
-llm_router/fallback) выбрал канал. Так «какой канал дёрнут» перестаёт быть неявным
-control-flow и становится одним записанным контрактом (`query_route.profile`).
+fallback) приводятся к ОДНОМУ результату `ProfileResolution`. В продукте есть четыре
+явных профиля; при отсутствии или неизвестном режиме безопасный default — `agent`.
+Конвейер уточняет резолюцию через `refine(...)`, когда конкретный источник выбрал
+канал. Так «какой канал дёрнут» перестаёт быть неявным control-flow и становится
+одним записанным контрактом (`query_route.profile`).
 
 Инвариант (§10.3 №4): резолвер НЕ отвечает пользователю — только выбирает профиль.
 
@@ -20,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal, Optional
 
-# pending = режим не задан, конкретный источник резолвится ниже по конвейеру (refine).
+# pending сохраняется только для совместимости старых trace readers.
 RouteSource = Literal[
     "explicit_mode", "command", "regex", "keyword", "llm_router", "fallback", "pending"
 ]
@@ -44,52 +43,55 @@ class Profile:
     output_contract: str            # id схемы вывода | "prose"
 
 
-# Реестр профилей.
+# Реестр профилей.  Runtime text/tool revisions live in chat_profile_service;
+# this compact policy registry keeps routing and answer contracts explicit.
 PROFILES: dict[str, Profile] = {
-    "normcontrol": Profile(
-        id="normcontrol", executor="router", role="нормоконтролёр",
+    "engineer": Profile(
+        id="engineer", executor="router", role="инженер",
         tools=("run_normcontrol", "retrieval", "citation_check"), grounded=True,
         validation_policy="require_citations", escalation_policy="on_tool_failure",
         failure_policy="say_no_data", output_contract="findings_table_v1",
     ),
-    "grounded_rag": Profile(
-        id="grounded_rag", executor="router", role="эксперт-заземление",
+    "search": Profile(
+        id="search", executor="router", role="исследователь",
         tools=("retrieval", "citation_check", "table_lookup"), grounded=True,
         validation_policy="fail_warn", escalation_policy="on_low_confidence",
         failure_policy="say_no_data", output_contract="grounded_answer_v1",
     ),
-    "free_llm": Profile(
-        id="free_llm", executor="local_large", role="вольный", tools=(), grounded=False,
-        validation_policy="fail_open", escalation_policy="none",
-        failure_policy="mark_preliminary", output_contract="prose",
+    "agent": Profile(
+        id="agent", executor="router", role="универсальный агент", tools=("*",), grounded=True,
+        validation_policy="fail_warn", escalation_policy="on_tool_failure",
+        failure_policy="say_no_data", output_contract="grounded_answer_v1",
     ),
     # Совместимый id старого профиля; активный route режима «Смета» отвечает model+RAG.
-    "estimate_harness": Profile(
-        id="estimate_harness", executor="cloud_large", role="сметчик",
+    "estimator": Profile(
+        id="estimator", executor="cloud_large", role="сметчик",
         tools=("rag_context", "estimate_reasoning", "search_norm", "add_position"), grounded=True,
         validation_policy="require_numeric_provenance", escalation_policy="none",
         failure_policy="mark_preliminary", output_contract="estimate_preliminary_v1",
-    ),
-    # auto — нет явного режима: путь решают router/каскад/RAG ниже по конвейеру.
-    "auto": Profile(
-        id="auto", executor="router", role="—", tools=("*",), grounded=True,
-        validation_policy="fail_warn", escalation_policy="on_low_confidence",
-        failure_policy="say_no_data", output_contract="auto",
     ),
 }
 
 # Явный режим UI → профиль.
 MODE_TO_PROFILE: dict[str, str] = {
-    "smeta": "estimate_harness",
-    "review": "normcontrol",
-    "kp": "grounded_rag",
-    "rag": "grounded_rag",
-    "free": "free_llm",
-    "smeta_harness": "estimate_harness",
+    "search": "search",
+    "rag": "search",
+    "agent": "agent",
+    "text": "agent",
+    "free": "agent",
+    "auto": "agent",
+    "estimator": "estimator",
+    "smeta": "estimator",
+    "smeta_harness": "estimator",
+    "engineer": "engineer",
+    "review": "engineer",
+    "doc_review": "engineer",
+    "normcontrol": "engineer",
+    "kp": "agent",
 }
 
 
-# ── channel → честный route_source (auto-путь). Объявлено ОДНОЙ таблицей, а не неявно
+# ── channel → честный route_source. Объявлено ОДНОЙ таблицей, а не неявно
 #    разбросано по control-flow chat.py: «какой канал → каким источником выбран». ──
 CHANNEL_SOURCES: dict[str, RouteSource] = {
     "command": "command",
@@ -108,7 +110,7 @@ _SOURCE_CONFIDENCE: dict[str, float] = {
 
 
 def route_source_for_channel(channel: str) -> RouteSource:
-    """Канал auto-пути → честный источник выбора. Неизвестный канал → fallback."""
+    """Фактический канал → честный источник выбора. Неизвестный канал → fallback."""
     return CHANNEL_SOURCES.get((channel or "").strip().lower(), "fallback")
 
 
@@ -120,14 +122,14 @@ def confidence_for_source(source: str) -> float:
 class ProfileResolution:
     """Единый результат маршрутизации (Codex §10.1A).
 
-    Для auto-пути резолюция доуточняется конвейером через ``refine`` (см. модуль-докстринг):
-    режим даёт профиль и `pending`, а сработавший канал — честный `route_source`/`channel`.
+    Резолюция доуточняется конвейером через ``refine``: режим даёт профиль,
+    а сработавший канал — честный `route_source`/`channel`.
     """
     profile_id: str
     route_source: RouteSource
     confidence: float
     reasons: list[str] = field(default_factory=list)
-    channel: Optional[str] = None      # конкретный сработавший канал (auto-путь)
+    channel: Optional[str] = None      # конкретный сработавший канал
     operation: Optional[str] = None    # операция канала (для trace)
 
     @property
@@ -137,7 +139,7 @@ class ProfileResolution:
     def refine(self, *, route_source: RouteSource, channel: str | None = None,
                operation: str | None = None, confidence: float | None = None,
                reason: str | None = None) -> "ProfileResolution":
-        """Уточнить резолюцию выбранным каналом. Профиль НЕ меняется (auto остаётся auto):
+        """Уточнить резолюцию выбранным каналом. Профиль НЕ меняется:
         фиксируем КАК принят маршрут и КАКОЙ канал сработал. Чейнится, мутирует и возвращает self."""
         self.route_source = route_source
         if channel is not None:
@@ -168,16 +170,11 @@ class ProfileResolution:
 
 
 def resolve(*, mode: str | None, question: str) -> ProfileResolution:
-    """Запрос → ProfileResolution. Приоритет: ЯВНЫЙ РЕЖИМ → иначе auto в состоянии `pending`.
-
-    Без режима резолвер не угадывает источник (это была бы ложь в trace): он отдаёт профиль
-    `auto`/`pending`, а конкретный источник проставляет конвейер через `refine`, когда канал
-    реально выбран. Резолвер чистый и детерминированный — без сети и сайд-эффектов."""
+    """Запрос → explicit profile resolution; Agent is the product default."""
     m = (mode or "").strip().lower()
     if m in MODE_TO_PROFILE:
         pid = MODE_TO_PROFILE[m]
         return ProfileResolution(pid, "explicit_mode", 1.0, [f"user selected mode={m}"])
     if m:
-        # неизвестный режим — не падаем, идём общим путём
-        return ProfileResolution("auto", "fallback", 0.0, [f"unknown mode={m!r} → auto"])
-    return ProfileResolution("auto", "pending", 0.0, ["no explicit mode → pipeline resolves channel"])
+        return ProfileResolution("agent", "fallback", 0.0, [f"unknown mode={m!r} → agent"])
+    return ProfileResolution("agent", "fallback", 1.0, ["no explicit mode → default agent"])

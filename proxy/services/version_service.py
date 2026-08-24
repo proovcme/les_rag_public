@@ -31,9 +31,11 @@ EVIDENCE_SCHEMA_VERSION = "1.0"
 EXTRACTION_SCHEMA_VERSION = "1.0"
 RESOURCE_CALC_VERSION = "0.6"
 
-# корни для проверки divergence (можно переопределить env'ом)
-_REPO_ROOT = Path(os.getenv("LES_REPO_ROOT", "/Users/ovc/Projects/LES_v2"))
-_RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
+# Корни для проверки divergence. Без env безопаснее считать корнем фактический
+# code tree, чем публиковать чужой platform-specific путь.
+_CODE_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(os.getenv("LES_REPO_ROOT", "").strip() or _CODE_ROOT)
+_RUNTIME_ROOT = Path(os.getenv("LES_RUNTIME_HOME", "").strip() or _CODE_ROOT)
 CREATE_NO_WINDOW = 0x08000000
 
 # критичные файлы, по которым ловим расхождение repo↔runtime (хэш, не полный diff).

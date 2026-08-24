@@ -27,6 +27,17 @@ def _dry_make(target: str) -> str:
     return completed.stdout
 
 
+def _dry_make_with_variable(target: str, name: str, value: str) -> str:
+    completed = subprocess.run(
+        ["make", "-n", target, f"{name}={value}"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout
+
+
 def test_current_les_gate_is_explicit_and_does_not_collect_the_old_full_suite() -> None:
     for target in ("verify", "test", "test-release", "test-architecture"):
         command = _dry_make(target)
@@ -71,12 +82,39 @@ def test_release_profile_requires_real_active_artifact_smoke() -> None:
     assert "tests/test_rim_session.py" in command
 
 
-def test_ship_profiles_require_active_artifact_and_live_runtime_smokes() -> None:
+def test_ship_preflight_requires_active_artifacts_without_candidate_live_smoke() -> None:
     for target in ("ship-check", "ship-full-check"):
         command = _dry_make(target)
         assert "tools.smeta_release_baseline verify-root --root ." in command
-        assert "tools.smeta_rerank_ab_probe --require-ok" in command
-        assert "tools/basic_function_smoke.py --release" in command
+        assert "golden/general_native_rrf_release_smoke.json --require-native-rrf" not in command
+        assert "tools.smeta_rerank_ab_probe --require-ok" not in command
+        assert "tools/basic_function_smoke.py --release" not in command
+
+
+def test_ship_runs_native_rrf_smoke_only_after_candidate_deploy() -> None:
+    for target in ("ship", "ship-full"):
+        command = _dry_make(target)
+        deploy = command.index("tools.deploy_to_runtime --apply --restart")
+        native_rrf = command.index(
+            "golden/general_native_rrf_release_smoke.json --require-native-rrf"
+        )
+        basic = command.index("tools/basic_function_smoke.py --release")
+
+        assert deploy < native_rrf
+        assert deploy < basic
+        assert "post-deploy native-RRF smoke attempt" in command
+
+
+def test_deploy_runtime_can_force_only_explicitly_reviewed_files() -> None:
+    command = _dry_make_with_variable(
+        "deploy-runtime",
+        "DEPLOY_FORCE_FILES",
+        "config/version.json",
+    )
+
+    forced = command.index("--apply --force --files config/version.json")
+    regular = command.index("tools.deploy_to_runtime --apply --restart")
+    assert forced < regular
 
 
 def test_raw_pytest_defaults_to_current_les_collection() -> None:

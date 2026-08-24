@@ -7,6 +7,7 @@ import collections
 import logging
 import os
 import sqlite3
+import sys
 import time
 from collections import defaultdict
 
@@ -47,6 +48,7 @@ from proxy.routers.les_md import router as les_md_router
 from proxy.routers.normcontrol import router as normcontrol_router
 from proxy.routers.notebooks import router as notebooks_router
 from proxy.routers.prompts import router as prompts_router
+from proxy.routers.profiles import router as profiles_router
 from proxy.routers.doc_review import router as doc_review_router
 from proxy.routers.checklist_review import router as checklist_review_router
 from proxy.routers.documents import router as documents_router
@@ -79,6 +81,7 @@ def _select_reranker_cls():
 
 from proxy.routers.runtime import RuntimeRouterState, router as runtime_router, set_runtime_state
 from proxy.routers.settings import router as settings_router
+from proxy.routers.rag_advanced import router as rag_advanced_router
 from proxy.routers.updates import router as updates_router
 from proxy.routers.service_sources import router as service_sources_router
 from proxy.routers.speckle import cad_bim_router
@@ -347,9 +350,18 @@ async def startup():
         logger.error("[INIT] Failed to init chat_history table: %s", e)
 
     try:
+        import torch
+        max_threads = max(1, (os.cpu_count() or 4) // 2)
+        torch.set_num_threads(max_threads)
+        logger.info("[INIT] PyTorch threads capped at %s to prevent CPU fan noise", max_threads)
+    except Exception:
+        pass
+
+    try:
+        default_mlx_url = "http://127.0.0.1:11434" if sys.platform == "win32" or os.getenv("EMBED_BACKEND") == "ollama" else "http://127.0.0.1:8080"
         rag_backend = QdrantLlamaIndexAdapter(
             qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
-            mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+            mlx_url=os.getenv("MLX_URL", default_mlx_url),
             embed_model_name=embedding_api_model(),
         )
         await rag_backend.health()
@@ -361,9 +373,190 @@ async def startup():
         if recovered_outlook:
             logger.info("[INIT] Resumed %s durable Outlook spool item(s)", recovered_outlook)
         asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
+        asyncio.create_task(_catalog_self_heal())
+        asyncio.create_task(_parse_resume_supervisor())
+        asyncio.create_task(_raptor_resume_supervisor())
     except Exception as e:
         logger.error("[INIT] Backend initialization failed: %s", e)
         raise
+
+
+async def _catalog_self_heal():
+    """One bounded additive recovery pass after Qdrant startup."""
+    await asyncio.sleep(2)
+    from proxy.services.rag_catalog_guard_service import run_catalog_guard
+
+    result = await run_catalog_guard(
+        qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+        collection=rag_backend.collection_name,
+        meta_db_path=rag_meta_db_path(),
+        apply=os.getenv("LES_RAG_CATALOG_SELF_HEAL", "true").lower() in {"1", "true", "yes", "on"},
+    )
+    navigation_counts = None
+    if result.get("status") != "blocked":
+        navigation_counts = await asyncio.to_thread(
+            rag_backend.reconcile_legacy_navigation_counts,
+            apply=True,
+        )
+        result["navigation_count_reconcile"] = navigation_counts
+    if result.get("status") == "blocked":
+        logger.error(
+            "[CATALOG_GUARD] code=%s phase=%s type=%s message=%s",
+            result.get("error_code"),
+            result.get("phase"),
+            result.get("exception_type"),
+            result.get("message"),
+        )
+    else:
+        logger.info("[CATALOG_GUARD] %s", result)
+
+
+async def _parse_resume_supervisor():
+    """Durable SQLite-backed resume for interrupted and bounded-retry work."""
+    await asyncio.sleep(6)
+    while True:
+        try:
+            recovered = await asyncio.to_thread(rag_backend.db.recover_interrupted_parsing)
+            if recovered:
+                logger.info("[PARSE_RESUME] requeued=%s", recovered)
+            from proxy.routers.datasets import active_parse_scheduler_job, get_dataset_state
+
+            state = get_dataset_state()
+            if active_parse_scheduler_job(state) is None:
+                with sqlite3.connect(rag_meta_db_path()) as conn:
+                    pending = int(
+                        conn.execute(
+                            "SELECT COUNT(*) FROM documents WHERE upper(status)='PENDING'"
+                        ).fetchone()[0]
+                        or 0
+                    )
+                if pending:
+                    await _auto_resume_pending_parse()
+        except Exception as exc:
+            logger.error(
+                "[PARSE_RESUME] code=PARSE_RESUME_SUPERVISOR_FAILED type=%s message=%s",
+                type(exc).__name__,
+                str(exc) or type(exc).__name__,
+            )
+        await asyncio.sleep(max(10.0, float(os.getenv("RAG_PARSE_RESUME_POLL_SEC", "30"))))
+
+
+async def _raptor_resume_supervisor():
+    """Resume interrupted RAPTOR work and refresh a previously ready tree."""
+    await asyncio.sleep(15)
+    while True:
+        try:
+            from proxy.services.raptor_publication_service import (
+                raptor_auto_action_needed,
+                run_raptor_publication,
+            )
+
+            needed = await asyncio.to_thread(raptor_auto_action_needed, rag_backend)
+            if needed:
+                await asyncio.to_thread(run_raptor_publication, rag_backend)
+            from proxy.services.colbert_generation_service import (
+                colbert_auto_resume_needed,
+                run_colbert_generation,
+            )
+
+            if colbert_auto_resume_needed():
+                await asyncio.to_thread(run_colbert_generation, rag_backend)
+        except RuntimeError as error:
+            if "RAPTOR_BUILD_ALREADY_RUNNING" not in str(error):
+                logger.error(
+                    "[RAPTOR_RESUME] code=RAPTOR_RESUME_FAILED type=%s message=%s",
+                    type(error).__name__,
+                    str(error) or type(error).__name__,
+                )
+        except Exception as error:
+            logger.error(
+                "[RAPTOR_RESUME] code=RAPTOR_RESUME_FAILED type=%s message=%s",
+                type(error).__name__,
+                str(error) or type(error).__name__,
+            )
+        await asyncio.sleep(60)
+
+
+async def _auto_resume_pending_parse():
+    """Автоматическое возобновление индексации ожидающих документов при запуске серверов."""
+    await asyncio.sleep(6)  # Дать бэкенду и Qdrant завершить стартовые задачи
+    try:
+        db_path = rag_meta_db_path()
+        conn = sqlite3.connect(db_path)
+        pending_count = int(conn.execute("SELECT COUNT(*) FROM documents WHERE upper(status) = 'PENDING'").fetchone()[0] or 0)
+        conn.close()
+        if pending_count > 0:
+            logger.info("[INIT] Авто-возобновление индексации для %s ожидающих файлов...", pending_count)
+            from proxy.routers.datasets import ParseSchedulerRequest, get_dataset_state, run_parse_scheduler
+            state = get_dataset_state()
+            req = ParseSchedulerRequest(
+                batch_limit=1,
+                max_batches=10000,
+                cooldown_sec=2.0,
+                background=True,
+                min_free_gb=2.5,
+                unload_before_start=False,
+                unload_between_batches=False,
+                warm_embedder=True,
+                unload_after_finish=False,
+            )
+            job = state.job_service.create(
+                "rag_parse_scheduler",
+                source="auto_resume",
+                status="running",
+                message=f"Auto-resumed indexing for {pending_count} pending files",
+                total=pending_count,
+            )
+            job_id = job["id"]
+            state.job_tracker[job_id] = {
+                "type": "rag_parse_scheduler",
+                "status": "QUEUED",
+                "total": req.max_batches,
+                "processed": 0,
+                "started_at": job["started_at"],
+                "message": f"Auto-resumed indexing for {pending_count} pending files",
+            }
+
+            async def _run():
+                try:
+                    await run_parse_scheduler(state, req, job_id=job_id)
+                    # Остаток подхватит постоянный supervisor. Отдельную рекурсивную
+                    # задачу не создаём: это исключает два параллельных scheduler job.
+                    conn_check = sqlite3.connect(db_path)
+                    rem = int(conn_check.execute("SELECT COUNT(*) FROM documents WHERE upper(status) = 'PENDING'").fetchone()[0] or 0)
+                    conn_check.close()
+                    if rem > 0:
+                        logger.info("[AUTO_RESUME_PARSE] remaining=%s; supervisor will continue", rem)
+                except Exception as err:
+                    logger.error("[AUTO_RESUME_PARSE %s] Error: %s", job_id, err, exc_info=True)
+
+            asyncio.create_task(_run())
+    except Exception as exc:
+        logger.warning("[INIT] Auto-resume parse check failed: %s", exc)
+
+async def _warmup_reranker() -> bool:
+    from proxy.services.retrieval_service import required_reranker_policy
+
+    enabled, _trace = required_reranker_policy()
+    if not enabled:
+        logger.info("[WARMUP] production reranker disabled by runtime policy")
+        return False
+    reranker_cls = _select_reranker_cls()
+    mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+    reranker = reranker_cls(mlx_url=mlx, mode="batch")
+    ranked = await reranker.rerank(
+        "прогрев",
+        [
+            {"text": "прогрев первый документ", "score": 1.0, "metadata": {}},
+            {"text": "прогрев второй документ", "score": 0.5, "metadata": {}},
+        ],
+        top_k=1,
+    )
+    if not ranked:
+        raise RuntimeError("reranker warmup returned no ranked fragments")
+    logger.info("[WARMUP] production reranker %s прогрет", reranker_cls.__name__)
+    return True
+
 
 async def _warmup_models():
     """№2 латентность: прогрев эмбеддера и фактического production-реранкера.
@@ -385,20 +578,7 @@ async def _warmup_models():
     except Exception as exc:
         logger.warning("[WARMUP] embed: %s", exc)
     try:
-        reranker_cls = _select_reranker_cls()
-        mlx = os.getenv("MLX_URL", "http://127.0.0.1:8080")
-        reranker = reranker_cls(mlx_url=mlx, mode="batch")
-        ranked = await reranker.rerank(
-            "прогрев",
-            [
-                {"text": "прогрев первый документ", "score": 1.0, "metadata": {}},
-                {"text": "прогрев второй документ", "score": 0.5, "metadata": {}},
-            ],
-            top_k=1,
-        )
-        if not ranked:
-            raise RuntimeError("reranker warmup returned no ranked fragments")
-        logger.info("[WARMUP] production reranker %s прогрет", reranker_cls.__name__)
+        await _warmup_reranker()
     except Exception as exc:
         logger.warning("[WARMUP] rerank: %s", exc)
     try:
@@ -521,12 +701,14 @@ def create_app():
     fastapi_app.include_router(normcontrol_router)
     fastapi_app.include_router(notebooks_router)
     fastapi_app.include_router(prompts_router)
+    fastapi_app.include_router(profiles_router)
     fastapi_app.include_router(doc_review_router)
     fastapi_app.include_router(checklist_review_router)
     fastapi_app.include_router(documents_router)
     fastapi_app.include_router(tools_router)
     fastapi_app.include_router(service_sources_router)
     fastapi_app.include_router(settings_router)
+    fastapi_app.include_router(rag_advanced_router)
     fastapi_app.include_router(updates_router)
     fastapi_app.include_router(cad_bim_router)
     fastapi_app.include_router(chat_history_router)

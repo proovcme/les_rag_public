@@ -25,17 +25,32 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 DEV = Path(__file__).resolve().parents[1]
-RT = Path(os.getenv("LES_RUNTIME_HOME", "/Users/ovc/LES"))
+
+
+def _default_runtime_home() -> Path:
+    configured = os.getenv("LES_RUNTIME_HOME", "").strip()
+    if configured:
+        return Path(configured)
+    if os.name == "nt":
+        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        if not local_app_data:
+            raise RuntimeError("LES_RUNTIME_HOME and LOCALAPPDATA are unavailable")
+        return Path(local_app_data) / "Programs" / "LES" / "runtime"
+    return Path("/Users/ovc/LES")
+
+
+RT = _default_runtime_home()
 # Манифест last-deployed: {path: sha256 файла на момент моей выкатки}. Чинит ложный DIVERGENT —
 # tracked-файл, который я уже выкатил, иначе метится «рантайм ≠ HEAD» (а рантайм = МОЯ копия).
 MANIFEST = DEV / ".deploy_manifest.json"
 
-ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/", "skills/")
+ALLOWED_DIRS = ("proxy/", "backend/", "sovushka/", "tools/", "config/", "docs/", "skills/", "installers/windows/")
 ALLOWED_FILES = {"sovushka_ng.py", "proxy_server.py", "mlx_host.py"}
-ALLOWED_SUFFIX = {".py", ".yaml", ".yml", ".json", ".md", ".txt"}
+ALLOWED_SUFFIX = {".py", ".ps1", ".yaml", ".yml", ".json", ".md", ".txt"}
 
 
 def _sha(b: bytes) -> str:
@@ -138,6 +153,49 @@ def _service_for_path(path: str) -> str | None:
     return None
 
 
+def _restart_changed_services(services: set[str]) -> None:
+    if not services:
+        return
+    if os.name == "nt":
+        state = os.getenv("LES_WINDOWS_STATE_ROOT", "").strip()
+        local_app_data = os.getenv("LOCALAPPDATA", "").strip()
+        if not state and not local_app_data:
+            raise RuntimeError("LES Windows state root is unavailable")
+        state_root = Path(state) if state else Path(local_app_data) / "LES"
+        scripts = RT / "installers" / "windows"
+        environment = os.environ.copy()
+        environment["LES_WINDOWS_STATE_ROOT"] = str(state_root)
+        environment["LES_RUNTIME_HOME"] = str(RT)
+        environment["LES_REPO_ROOT"] = str(RT)
+        for name in ("stop-light.ps1", "start-light.ps1"):
+            script = scripts / name
+            if not script.is_file():
+                raise RuntimeError(f"Windows runtime control script is missing: {script}")
+            subprocess.run(
+                [
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(script),
+                ],
+                cwd=RT,
+                env=environment,
+                check=True,
+            )
+        print("  restart Windows proxy/UI")
+        return
+    uid = os.getuid()
+    for service in sorted(services):
+        subprocess.run(
+            ["launchctl", "kickstart", "-k", f"gui/{uid}/{service}"],
+            check=True,
+        )
+        print(f"  restart {service}")
+
+
 def classify(
     path: str,
     manifest: dict[str, str],
@@ -167,6 +225,8 @@ def classify(
 
 
 def main(argv: list[str] | None = None) -> int:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(description="Выкатка dev → рантайм-клон")
     ap.add_argument("--apply", action="store_true", help="скопировать безопасные (иначе dry-run)")
     ap.add_argument("--restart", action="store_true", help="kickstart затронутых сервисов")
@@ -225,10 +285,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  ⚠ deploy stamp не записан: {_e}")
         print(f"Скопировано: {len(copied)}.")
         if args.restart and services:
-            uid = os.getuid()
-            for svc in sorted(services):
-                subprocess.run(["launchctl", "kickstart", "-k", f"gui/{uid}/{svc}"])
-                print(f"  ↻ рестарт {svc}")
+            _restart_changed_services(services)
         elif services:
             print(f"Рестарт нужен (добавь --restart): {', '.join(sorted(services))}")
     return 0

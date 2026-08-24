@@ -16,11 +16,11 @@ from proxy.services.profile_resolver import (
 
 def test_explicit_modes_map_to_profiles():
     cases = {
-        "smeta": "estimate_harness",
-        "review": "normcontrol",
-        "kp": "grounded_rag",
-        "rag": "grounded_rag",
-        "free": "free_llm",
+        "smeta": "estimator",
+        "review": "engineer",
+        "kp": "agent",
+        "rag": "search",
+        "free": "agent",
     }
     for mode, expect in cases.items():
         r = resolve(mode=mode, question="x")
@@ -29,28 +29,26 @@ def test_explicit_modes_map_to_profiles():
         assert r.confidence == 1.0
 
 
-def test_no_mode_is_auto_pending():
-    # без режима резолвер НЕ угадывает источник (это была бы ложь в trace): профиль auto,
-    # источник pending — конкретный канал проставит конвейер через refine.
+def test_no_mode_defaults_to_agent():
     r = resolve(mode=None, question="что такое стеснённость")
-    assert r.profile_id == "auto"
-    assert r.route_source == "pending"
-    assert r.confidence == 0.0
+    assert r.profile_id == "agent"
+    assert r.route_source == "fallback"
+    assert r.confidence == 1.0
     assert r.channel is None
     r2 = resolve(mode="", question="x")
-    assert r2.profile_id == "auto"
-    assert r2.route_source == "pending"
+    assert r2.profile_id == "agent"
+    assert r2.route_source == "fallback"
 
 
 def test_unknown_mode_falls_back_not_crash():
     r = resolve(mode="boGUS", question="x")
-    assert r.profile_id == "auto"
+    assert r.profile_id == "agent"
     assert r.route_source == "fallback"
 
 
 def test_mode_case_insensitive():
-    assert resolve(mode="SMETA", question="x").profile_id == "estimate_harness"
-    assert resolve(mode=" Rag ", question="x").profile_id == "grounded_rag"
+    assert resolve(mode="SMETA", question="x").profile_id == "estimator"
+    assert resolve(mode=" Rag ", question="x").profile_id == "search"
 
 
 def test_every_mode_target_profile_exists():
@@ -64,7 +62,7 @@ def test_profile_carries_declarative_policy():
     assert p.validation_policy == "require_numeric_provenance"
     assert "search_norm" in p.tools and "add_position" in p.tools
     free = resolve(mode="free", question="x").profile
-    assert free.grounded is False                  # вольный — без ретрива
+    assert free.grounded is True                   # legacy free → Agent с evidence
     rag = resolve(mode="rag", question="x").profile
     assert rag.grounded is True                    # РАГ — заземлён
     review = resolve(mode="review", question="x").profile
@@ -75,7 +73,7 @@ def test_profile_carries_declarative_policy():
 
 def test_as_trace_compact():
     t = resolve(mode="smeta", question="x").as_trace()
-    assert t["profile_id"] == "estimate_harness"
+    assert t["profile_id"] == "estimator"
     assert t["route_source"] == "explicit_mode"
     assert t["executor"] == "cloud_large"
     # без refine канал/операция не протекают в trace
@@ -113,18 +111,18 @@ def test_confidence_ladder():
 
 
 def test_refine_keeps_profile_but_records_model_tool_channel():
-    # auto-путь: профиль НЕ меняется (auto остаётся auto), фиксируется КАК принят маршрут.
+    # Default Agent remains explicit while the concrete channel is recorded.
     r = resolve(mode=None, question="что такое ОЖР")
     out = r.refine(route_source=route_source_for_channel("agent"),
                    channel="agent", operation="term_explain")
     assert out is r                                  # чейнится, мутирует
-    assert r.profile_id == "auto"                    # профиль не подменён
+    assert r.profile_id == "agent"
     assert r.route_source == "llm_router"
     assert r.channel == "agent" and r.operation == "term_explain"
     assert r.confidence == confidence_for_source("llm_router")
     t = r.as_trace()
     assert t["channel"] == "agent" and t["operation"] == "term_explain"
-    assert t["route_source"] == "llm_router" and t["profile_id"] == "auto"
+    assert t["route_source"] == "llm_router" and t["profile_id"] == "agent"
 
 
 def test_refine_rag_fallback_vs_keyword():
@@ -147,11 +145,10 @@ def test_refine_explicit_confidence_override():
 # ── end-to-end: query_route.profile честен и протянут в каждый ответ (#2) ──
 
 def _mock_chat_state(chat_router):
-    """Мокнутый ChatRouterState: ретрив падает с AssertionError → доказывает, что
-    детерминированный канал ответил ДО ретрива."""
+    """Мокнутый ChatRouterState без пользовательского корпуса."""
     class _Backend:
         async def list_datasets(self):
-            raise AssertionError("retrieval must not run for a deterministic channel")
+            return []
 
         async def retrieve(self, *a, **k):
             raise AssertionError("retrieve must not run for a deterministic channel")
@@ -172,38 +169,43 @@ def test_professional_legacy_channels_cannot_claim_deterministic_route():
 
 @pytest.mark.asyncio
 async def test_query_route_carries_profile_for_explicit_mode(monkeypatch):
-    # Explicit-mode trace must be testable without entering any model/tool workflow.
     from proxy.routers import chat as chat_router
     _mock_chat_state(chat_router)
 
-    async def fake_free_mode(req, token_sink=None):
-        return "offline explicit-mode probe"
+    async def fake_evidence(request, _runtime, _boundary):
+        assert request.profile_snapshot["mode"] == "estimator"
+        return {
+            "answer": "offline explicit-mode probe",
+            "query_route": request.query_route_payload,
+            "sources": [],
+        }
 
-    monkeypatch.setattr(chat_router, "_run_free_mode", fake_free_mode)
+    monkeypatch.setattr(chat_router, "run_chat_evidence_application", fake_evidence)
     resp = await chat_router.chat(
-        chat_router.ChatRequest(question="что такое ОЖР", mode="free"), _user=object())
+        chat_router.ChatRequest(question="что такое ОЖР", mode="estimator"), _user=object())
     prof = resp["query_route"]["profile"]
-    assert prof["profile_id"] == "free_llm"
+    assert prof["profile_id"] == "estimator"
     assert prof["route_source"] == "explicit_mode"
-    assert prof["executor"] == "local_large"
+    assert prof["executor"] == "cloud_large"
+    assert resp["query_route"]["profile_snapshot"]["mode"] == "estimator"
 
 
 @pytest.mark.asyncio
-async def test_auto_work_estimate_reaches_model_owned_smeta_boundary(monkeypatch):
+async def test_default_agent_does_not_auto_hijack_work_estimate(monkeypatch):
     from proxy.routers import chat as chat_router
     _mock_chat_state(chat_router)
 
-    async def fake_model_owned_smeta(**kwargs):
-        assert kwargs["auto_estimate_work"] is True
-        return SimpleNamespace(
-            answer="Ответ сформулирован моделью по результатам сметных инструментов.",
-            operation="estimate_harness_auto_work",
-            channel="harness_mode",
-            crag="PRELIMINARY",
-            extra={"sources": [], "total_status": "partial"},
-        )
+    called = {"mode": ""}
 
-    monkeypatch.setattr(chat_router, "run_smeta_direct_application", fake_model_owned_smeta)
+    async def fake_evidence(request, _runtime, _boundary):
+        called["mode"] = request.profile_snapshot["mode"]
+        return {
+            "answer": "ordinary agent RAG",
+            "query_route": request.query_route_payload,
+            "sources": [],
+        }
+
+    monkeypatch.setattr(chat_router, "run_chat_evidence_application", fake_evidence)
     monkeypatch.setattr(
         chat_router,
         "_harness_complete",
@@ -221,10 +223,5 @@ async def test_auto_work_estimate_reaches_model_owned_smeta_boundary(monkeypatch
     )
 
     prof = resp["query_route"]["profile"]
-    assert prof["profile_id"] == "auto"
-    assert prof["route_source"] == "keyword"
-    assert prof["channel"] == "harness_mode"
-    assert prof["operation"] == "estimate_harness_auto_work"
-    assert resp["query_route"]["operation"] == "estimate_harness_auto_work"
-    assert resp["total_status"] == "partial"
-    assert resp["answer"].startswith("Ответ сформулирован моделью")
+    assert prof["profile_id"] == "agent"
+    assert called["mode"] == "agent"

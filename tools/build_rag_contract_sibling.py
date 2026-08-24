@@ -377,13 +377,25 @@ def _ensure_destination(client: Any, args: argparse.Namespace) -> bool:
     if not exists:
         if not args.create:
             raise RuntimeError("destination is missing; pass --create after reviewing --dry-run")
+        vector_config = {
+            args.dense_name: models.VectorParams(
+                size=rag_vector_size(), distance=models.Distance.COSINE
+            )
+        }
+        if getattr(args, "with_colbert", False):
+            vector_config[args.colbert_name] = models.VectorParams(
+                size=args.colbert_dimension,
+                distance=models.Distance.COSINE,
+                hnsw_config=models.HnswConfigDiff(m=0),
+                on_disk=True,
+                datatype=models.Datatype.FLOAT16,
+                multivector_config=models.MultiVectorConfig(
+                    comparator=models.MultiVectorComparator.MAX_SIM
+                ),
+            )
         client.create_collection(
             collection_name=args.dst,
-            vectors_config={
-                args.dense_name: models.VectorParams(
-                    size=rag_vector_size(), distance=models.Distance.COSINE
-                )
-            },
+            vectors_config=vector_config,
             sparse_vectors_config={
                 args.sparse_name: models.SparseVectorParams(modifier=models.Modifier.IDF)
             },
@@ -527,7 +539,7 @@ def _migrate_dataset(
             return
         for item in pending:
             item["point_id"] = deterministic_point_id(
-                source_collection=args.src,
+                source_collection=args.source_identity or args.src,
                 source_point_id=item["source_point_id"],
                 child_ord=int((item.get("payload") or {}).get("migration_child_ord") or 0),
                 text=item["text"],
@@ -583,8 +595,22 @@ def _migrate_dataset(
             raise RuntimeError(
                 f"embedding count mismatch: got {len(vectors)}, expected {len(missing)}"
             )
+        colbert_vectors = (
+            _retry_call(
+                lambda: args.colbert_encoder.encode(
+                    [item["text"] for item in missing],
+                    max_length=args.colbert_passage_tokens,
+                ),
+                label="colbert_embedding_batch",
+                attempts=args.retry_attempts,
+                base_delay_sec=args.retry_delay,
+            )
+            if getattr(args, "with_colbert", False) else [None] * len(missing)
+        )
+        if len(colbert_vectors) != len(missing):
+            raise RuntimeError("colbert embedding count mismatch")
         points = []
-        for item, dense in zip(missing, vectors, strict=True):
+        for item, dense, colbert in zip(missing, vectors, colbert_vectors, strict=True):
             sparse = item["sparse"]
             payload, removed_legacy_domain = canonicalize_dataset_payload(
                 dict(item["payload"]), dataset
@@ -603,7 +629,7 @@ def _migrate_dataset(
                     "embedding_coreml_compute_units": descriptor.get("coreml_compute_units", ""),
                     "embedding_coreml_fallback": descriptor.get("coreml_fallback", ""),
                     "migration_kind": "contract_reembed_v1",
-                    "migration_source_collection": args.src,
+                    "migration_source_collection": args.source_identity or args.src,
                     "migration_source_point_id": str(item["source_point_id"]),
                 }
             )
@@ -613,6 +639,15 @@ def _migrate_dataset(
                     indices=list(sparse.keys()), values=list(sparse.values())
                 ),
             }
+            if colbert is not None:
+                if not colbert or len(colbert[0]) != args.colbert_dimension:
+                    raise RuntimeError("COLBERT_VECTOR_DIMENSION_MISMATCH")
+                point_vector[args.colbert_name] = colbert
+                payload.update({
+                    "colbert_schema": "les.rag.colbert.bge-m3.v1",
+                    "colbert_model": "BAAI/bge-m3",
+                    "colbert_passage_tokens": args.colbert_passage_tokens,
+                })
             points.append(
                 models.PointStruct(
                     id=item["point_id"],
@@ -781,6 +816,11 @@ def _migrate_dataset(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--src", required=True)
+    parser.add_argument(
+        "--source-identity",
+        default="",
+        help="stable logical source name when --src is a pinned physical alias target",
+    )
     parser.add_argument("--dst", required=True)
     parser.add_argument("--source-db", type=Path, required=True)
     parser.add_argument("--contract-path", type=Path, required=True)
@@ -794,6 +834,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--dense-name", default="dense")
     parser.add_argument("--sparse-name", default="bm25_sparse")
+    parser.add_argument("--with-colbert", action="store_true")
+    parser.add_argument("--colbert-name", default="colbert")
+    parser.add_argument("--colbert-dimension", type=int, default=1024)
+    parser.add_argument("--colbert-passage-tokens", type=int, default=128)
     parser.add_argument("--page-size", type=int, default=128)
     parser.add_argument("--embed-batch", type=int, default=16)
     parser.add_argument("--limit", type=int, default=0, help="source points per dataset; 0 = all")
@@ -834,7 +878,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("no indexed datasets found")
     plan = {
         "schema": "les.rag.contract-sibling-plan.v1",
-        "source_collection": args.src,
+        "source_collection": args.source_identity or args.src,
+        "source_physical_collection": args.src,
         "destination_collection": args.dst,
         "contract_path": str(args.contract_path),
         "datasets": datasets,
@@ -849,6 +894,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     _configure_contract(args)
+    if args.with_colbert:
+        from backend.colbert_late_interaction import BgeM3ColbertEncoder
+
+        args.colbert_encoder = BgeM3ColbertEncoder("BAAI/bge-m3")
+    else:
+        args.colbert_encoder = None
     from backend.qdrant_adapter import EmbedClient
     from backend.rag_config import (
         embedding_api_model,
@@ -877,6 +928,17 @@ def main(argv: list[str] | None = None) -> int:
     created = _ensure_destination(client, args)
     if created:
         write_index_contract(replace=False)
+        if args.with_colbert:
+            contract_payload = _read_json(args.contract_path)
+            contract_payload.update({
+                "colbert_schema": "les.rag.colbert.bge-m3.v1",
+                "colbert_model": "BAAI/bge-m3",
+                "colbert_vector_name": args.colbert_name,
+                "colbert_dimension": args.colbert_dimension,
+                "colbert_datatype": "float16",
+                "colbert_passage_tokens": args.colbert_passage_tokens,
+            })
+            _write_json_atomic(args.contract_path, contract_payload)
     contract = index_contract_status()
     if not contract.get("compatible"):
         raise RuntimeError(f"destination contract is not compatible: {contract}")
@@ -898,7 +960,8 @@ def main(argv: list[str] | None = None) -> int:
     progress_payload: dict[str, Any] = {
         "schema": "les.rag.contract-sibling-progress.v1",
         "status": "building",
-        "source_collection": args.src,
+        "source_collection": args.source_identity or args.src,
+        "source_physical_collection": args.src,
         "destination_collection": args.dst,
         "source_points_snapshot": source_points,
         "scope_manifest_sha256": scope_manifest_digest,
@@ -998,7 +1061,8 @@ def main(argv: list[str] | None = None) -> int:
     report = {
         "schema": "les.rag.contract-sibling-result.v1",
         "status": "completed",
-        "source_collection": args.src,
+        "source_collection": args.source_identity or args.src,
+        "source_physical_collection": args.src,
         "destination_collection": args.dst,
         "contract": contract,
         "datasets": results,

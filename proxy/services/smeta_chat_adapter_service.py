@@ -11,6 +11,7 @@ from backend.inference.routing import is_cloud_provider
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.estimate_math_service import parse_ru_number, quantity_sum_audit
 from proxy.services.kot_service import analyze_question
+from proxy.services.llm_transport_profile_service import apply_transport_options
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.services.notebook_service import dataset_memory_prompt_excerpt
 from proxy.services.project_summary_service import resolve_inventory_file_reference
@@ -45,6 +46,19 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _http_response_text(response: Any) -> str:
+    """Body text for live httpx responses and lightweight test doubles."""
+    text = getattr(response, "text", None)
+    if text is None:
+        content = getattr(response, "content", b"")
+        if isinstance(content, (bytes, bytearray)):
+            text = bytes(content).decode("utf-8", errors="replace")
+        else:
+            text = content
+    return " ".join(str(text or "").split())
+
 
 def _smeta_source_row_count(text: str) -> int:
     raw = str(text or "")
@@ -132,6 +146,23 @@ def _cloud_body_for_model(body: dict, model: str, provider: str) -> dict:
 
 def _llm_runtime() -> LlmRuntime:
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider == "freetoken":
+        base_url = os.getenv(
+            "FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1"
+        ).strip()
+        model = (
+            os.getenv("FREETOKEN_MODEL", "").strip()
+            or os.getenv("LLM_MODEL", "").strip()
+        )
+        api_key = os.getenv("FREETOKEN_API_KEY", "").strip()
+        return LlmRuntime(
+            provider,
+            base_url,
+            _join_openai_path(base_url, "/chat/completions"),
+            model,
+            api_key,
+            False,
+        )
     if provider == "openrouter":
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
         model = os.getenv("OPENROUTER_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
@@ -487,10 +518,52 @@ def _ollama_native_messages(messages: list[dict[str, Any]]) -> list[dict[str, An
     return native
 
 
+def _freetoken_working_set_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Send authoritative live state while retaining full history in checkpoint.
+
+    Before every model call the smeta workflow emits typed
+    ``smeta_norm_agent_working_memory_v1`` state and treats older tool turns as
+    audit. FreeToken's prompt and generation share one finite KV pool, so its
+    transport keeps the stable system/source prefix, latest assistant/tool
+    exchange, and the current working memory plus any terminal instruction.
+    """
+    working_memory_index: int | None = None
+    for index in range(len(messages) - 1, -1, -1):
+        if "smeta_norm_agent_working_memory_v1" in str(
+            messages[index].get("content") or ""
+        ):
+            working_memory_index = index
+            break
+    if working_memory_index is None or working_memory_index <= 2:
+        return list(messages)
+
+    live_start = working_memory_index
+    for index in range(working_memory_index - 1, 1, -1):
+        if str(messages[index].get("role") or "") == "assistant":
+            live_start = index
+            break
+    projected = [*messages[:2], *messages[live_start:]]
+    logger.info(
+        "[SMETA_DOCUMENT] FreeToken working-set projection messages=%s->%s chars=%s->%s",
+        len(messages),
+        len(projected),
+        len(json.dumps(messages, ensure_ascii=False, default=str)),
+        len(json.dumps(projected, ensure_ascii=False, default=str)),
+    )
+    return projected
+
+
 def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[str, Any]:
     """Native tool-call exchange for one continuous smeta conversation."""
     runtime = _smeta_model_runtime("LES_SMETA_DOCUMENT_PROVIDER")
     max_tokens = _env_int("LES_SMETA_DOCUMENT_TOOL_MAX_TOKENS", 4096)
+    if runtime.provider == "freetoken":
+        # FreeToken's KV budget covers prompt plus generation.  Agent turns
+        # return compact tool arguments, so reserving 4K output tokens can
+        # reject an otherwise valid later turn before generation even starts.
+        max_tokens = min(max_tokens, 1024)
     tool_names = {
         str((tool.get("function") or {}).get("name") or "")
         for tool in tools
@@ -535,7 +608,11 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
             # MLX no-think assistant prefill is useful for visible prose, but here
             # it turns the next turn into prose continuation and suppresses
             # Qwen's tool_calls entirely.
-            "messages": messages,
+            "messages": (
+                _freetoken_working_set_messages(messages)
+                if runtime.provider == "freetoken"
+                else messages
+            ),
             "tools": tools,
             "temperature": _qwen_non_thinking_sampling()["temperature"],
             "top_p": _qwen_non_thinking_sampling()["top_p"],
@@ -545,38 +622,102 @@ def _smeta_document_exchange(messages: list[dict], tools: list[dict]) -> dict[st
         if applied_seed is not None:
             body["seed"] = applied_seed
         body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+        body = apply_transport_options(body, runtime.provider)
         chat_url = runtime.chat_url
     if is_cloud_provider(runtime.provider) and "glm" in str(runtime.model or "").casefold():
         body["thinking"] = {"type": "disabled"}
     headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
-    try:
+
+    def _post_chat(payload_body: dict[str, Any]) -> httpx.Response:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
-            response = client.post(chat_url, headers=headers, json=body)
-            if response.status_code == 400 and "thinking" in body:
-                fallback_body = dict(body)
+            response = client.post(chat_url, headers=headers, json=payload_body)
+            if response.status_code == 400 and "thinking" in payload_body:
+                fallback_body = dict(payload_body)
                 fallback_body.pop("thinking", None)
                 response = client.post(chat_url, headers=headers, json=fallback_body)
-            response.raise_for_status()
-            payload = response.json()
-            message = (
-                payload.get("message", {})
-                if native_ollama
-                else payload.get("choices", [{}])[0].get("message", {})
+            return response
+
+    def _is_xml_tool_error(response: httpx.Response) -> bool:
+        detail = _http_response_text(response)
+        return (
+            response.status_code >= 500
+            and "xml syntax error" in detail.casefold()
+        )
+
+    try:
+        response = _post_chat(body)
+        # Qwen/Ollama occasionally emits broken tool XML
+        # (`<parameter>` closed by `</function>`). Same-body retry is often
+        # identical (seed=0); bump seed once, then soft-degrade.
+        if native_ollama and _is_xml_tool_error(response):
+            detail_text = _http_response_text(response)
+            logger.warning(
+                "[SMETA_DOCUMENT] retrying after Ollama tool XML parse error: %s",
+                detail_text[:180],
             )
-            message = message if isinstance(message, dict) else {}
-            message["_les_done_reason"] = payload.get("done_reason")
-            message["_les_eval_count"] = payload.get("eval_count")
-            message["_les_generation_metrics"] = _generation_profile(payload)
-            message.setdefault("_les_model", runtime.model)
-            message.setdefault("_les_provider", runtime.provider)
-            if applied_seed is not None:
-                message.setdefault("_les_seed", applied_seed)
-            return message
+            retry_body = dict(body)
+            options = dict(retry_body.get("options") or {})
+            options["seed"] = int(options.get("seed") or seed or 0) + 1
+            retry_body["options"] = options
+            retry_messages = list(retry_body.get("messages") or [])
+            retry_messages.append({
+                "role": "user",
+                "content": (
+                    "Previous tool call XML was malformed. Call exactly one "
+                    "tool with well-formed parameters; do not nest tags."
+                ),
+            })
+            retry_body["messages"] = retry_messages
+            response = _post_chat(retry_body)
+            if _is_xml_tool_error(response):
+                detail_text = _http_response_text(response)
+                logger.warning(
+                    "[SMETA_DOCUMENT] soft-degrade after repeated Ollama tool "
+                    "XML parse error: %s",
+                    detail_text[:180],
+                )
+                # Do not kill the whole VOR batch: let the agent recover.
+                return {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [],
+                    "_les_xml_tool_error": detail_text[:240],
+                    "_les_done_reason": "xml_tool_error",
+                    "_les_model": runtime.model,
+                    "_les_provider": runtime.provider,
+                    "_les_seed": int(options.get("seed") or seed or 0),
+                }
+        response.raise_for_status()
+        payload = response.json()
+        message = (
+            payload.get("message", {})
+            if native_ollama
+            else payload.get("choices", [{}])[0].get("message", {})
+        )
+        message = message if isinstance(message, dict) else {}
+        message["_les_done_reason"] = payload.get("done_reason")
+        message["_les_eval_count"] = payload.get("eval_count")
+        message["_les_generation_metrics"] = _generation_profile(payload)
+        message.setdefault("_les_model", runtime.model)
+        message.setdefault("_les_provider", runtime.provider)
+        if applied_seed is not None:
+            message.setdefault("_les_seed", applied_seed)
+        return message
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] native agent exchange failed: %s", error)
         if isinstance(error, httpx.HTTPStatusError):
             response = error.response
-            detail = " ".join(str(response.text or "").split())[:300]
+            detail = _http_response_text(response)[:300]
+            if native_ollama and "xml syntax error" in detail.casefold():
+                return {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [],
+                    "_les_xml_tool_error": detail[:240],
+                    "_les_done_reason": "xml_tool_error",
+                    "_les_model": runtime.model,
+                    "_les_provider": runtime.provider,
+                }
             raise RuntimeError(
                 f"smeta provider HTTP {response.status_code}: {detail or response.reason_phrase}"
             ) from error
@@ -640,6 +781,22 @@ def _parse_mapping_message(message: dict[str, Any]) -> dict[str, Any] | None:
     return _extract_mapping_json(_strip_think(str(message.get("thinking") or "")))
 
 
+def _parse_mapping_tool_call(message: dict[str, Any]) -> dict[str, Any] | None:
+    """Read the model-owned mapping from the dedicated terminal tool call."""
+    for tool_call in message.get("tool_calls") or []:
+        if not isinstance(tool_call, dict):
+            continue
+        function = tool_call.get("function") or {}
+        if not isinstance(function, dict) or function.get("name") != "submit_estimate_mapping":
+            continue
+        arguments = function.get("arguments")
+        if isinstance(arguments, dict):
+            return arguments
+        if isinstance(arguments, str):
+            return _loads_json_dict(arguments)
+    return None
+
+
 def _smeta_document_mapping_exchange(
     messages: list[dict[str, Any]], schema: dict[str, Any],
 ) -> dict[str, Any]:
@@ -657,6 +814,7 @@ def _smeta_document_mapping_exchange(
     seed = _smeta_document_seed()
     applied_seed = None if is_cloud_provider(runtime.provider) else seed
     native_ollama = runtime.provider == "ollama"
+    freetoken_terminal_tool = runtime.provider == "freetoken"
     if native_ollama:
         body = {
             "model": runtime.model,
@@ -678,6 +836,30 @@ def _smeta_document_mapping_exchange(
         if ollama_root.casefold().endswith("/v1"):
             ollama_root = ollama_root[:-3]
         chat_url = f"{ollama_root}/api/chat"
+    elif freetoken_terminal_tool:
+        body = {
+            "model": runtime.model,
+            "messages": _freetoken_working_set_messages(messages),
+            "temperature": 0.0,
+            "max_tokens": max_tokens,
+            "parallel_tool_calls": False,
+            "tool_choice": {
+                "type": "function",
+                "function": {"name": "submit_estimate_mapping"},
+            },
+            "tools": [{
+                "type": "function",
+                "function": {
+                    "name": "submit_estimate_mapping",
+                    "description": "Зафиксировать выбранное моделью решение без его изменения.",
+                    "parameters": schema,
+                },
+            }],
+        }
+        if applied_seed is not None:
+            body["seed"] = applied_seed
+        body = apply_transport_options(body, runtime.provider)
+        chat_url = runtime.chat_url
     else:
         body = {
             "model": runtime.model,
@@ -697,6 +879,21 @@ def _smeta_document_mapping_exchange(
     try:
         with httpx.Client(timeout=_smeta_document_timeout(runtime)) as client:
             response = client.post(chat_url, headers=headers, json=body)
+            detail_text = _http_response_text(response)
+            if (
+                native_ollama
+                and response.status_code >= 500
+                and "xml syntax error" in detail_text.casefold()
+            ):
+                logger.warning(
+                    "[SMETA_DOCUMENT] mapping XML parse error; retry seed+1: %s",
+                    detail_text[:180],
+                )
+                retry_body = dict(body)
+                options = dict(retry_body.get("options") or {})
+                options["seed"] = int(options.get("seed") or seed or 0) + 1
+                retry_body["options"] = options
+                response = client.post(chat_url, headers=headers, json=retry_body)
             response.raise_for_status()
             response_payload = response.json()
             message = (
@@ -705,7 +902,11 @@ def _smeta_document_mapping_exchange(
                 else response_payload.get("choices", [{}])[0].get("message", {})
             )
             message = message if isinstance(message, dict) else {}
-            parsed = _parse_mapping_message(message)
+            parsed = (
+                _parse_mapping_tool_call(message)
+                if freetoken_terminal_tool
+                else None
+            ) or _parse_mapping_message(message)
             if parsed is None and native_ollama:
                 retry_body = dict(body)
                 length_limited = (
@@ -752,7 +953,7 @@ def _smeta_document_mapping_exchange(
     except Exception as error:
         logger.warning("[SMETA_DOCUMENT] structured mapping exchange failed: %s", error)
         if isinstance(error, httpx.HTTPStatusError):
-            detail = " ".join(str(error.response.text or "").split())[:300]
+            detail = _http_response_text(error.response)[:300]
             raise RuntimeError(
                 f"smeta provider HTTP {error.response.status_code}: "
                 f"{detail or error.response.reason_phrase}"
@@ -922,14 +1123,24 @@ async def _smeta_direct_rag_context(
         })
         return {"text": "", "trace": trace, "sources": [], "source_map": []}
 
-def _smeta_direct_light_system_prompt() -> str:
-    return (
+def _smeta_direct_light_system_prompt(profile_snapshot: dict[str, Any] | None = None) -> str:
+    base = (
         "Ты работаешь в сметном модуле ЛЕС. Самостоятельно реши задачу пользователя по переданному "
         "исходнику, доступным источникам и расчётной трассе. Используй источники и инструменты по "
         "необходимости; не следуй заранее заданному нормативному маршруту. Профессиональные решения "
         "принимает модель, код выполняет поиск, проверяет provenance и считает. Не подменяй отсутствующие "
         "данные выдуманными фактами. Верни непосредственно запрошенный пользователем результат."
     )
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    prompt = str(snapshot.get("prompt_text") or "").strip()
+    skill = str(snapshot.get("skill_text") or "").strip()
+    if not prompt and not skill:
+        return base
+    return "\n\n".join(item for item in (
+        prompt,
+        "Активный skill профиля (правила работы, не evidence):\n" + skill if skill else "",
+        base,
+    ) if item)
 
 def _smeta_request_needs_lsr_output(text: str) -> bool:
     low = str(text or "").casefold().replace("ё", "е")
@@ -949,7 +1160,7 @@ def _smeta_request_needs_lsr_output(text: str) -> bool:
         low,
     ))
     explicit_lsr_or_money_action = bool(re.search(
-        r"\b(?:сделай|составь|оформи|сформируй|подготовь|рассчитай|посчитай|оцени|дай)\b"
+        r"\b(?:сделай|составь|собери|оформи|сформируй|подготовь|рассчитай|посчитай|оцени|дай)\b"
         r"[^.\n]{0,100}\b(?:лср|смет[ауыеой]*|стоимост[ьяиюе]*|оценк[ауи]|сумм[ауыеой]*|рубл[яей]*|цен[ауыеой]*|итог[а-я]*)\b",
         low,
     ))
@@ -1002,17 +1213,27 @@ def _smeta_direct_max_tokens(harness_question: str, *, runtime_provider: str) ->
 def _smeta_direct_model_answer(
     harness_question: str,
     rag_context: str = "",
+    profile_snapshot: dict[str, Any] | None = None,
 ) -> str:
     """Visible smeta answer from the estimator model over prompt + attachment + RAG."""
     runtime = _smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER")
     numeric_audit_context = _smeta_direct_numeric_audit_context(harness_question)
-    sys_prompt = _smeta_direct_light_system_prompt()
+    sys_prompt = _smeta_direct_light_system_prompt(profile_snapshot)
     user_prompt = _smeta_direct_user_prompt(
         harness_question,
         rag_context,
         numeric_audit_context,
         light=True,
     )
+    try:
+        profile_temperature = float(
+            ((profile_snapshot or {}).get("model_policy") or {}).get(
+                "temperature",
+                _env_float("LES_SMETA_DIRECT_MODEL_TEMPERATURE", 0.0),
+            )
+        )
+    except (TypeError, ValueError):
+        profile_temperature = _env_float("LES_SMETA_DIRECT_MODEL_TEMPERATURE", 0.0)
     body = {
         "model": runtime.model,
         "messages": _mlx_prefill_no_think_messages(
@@ -1022,7 +1243,7 @@ def _smeta_direct_model_answer(
             ],
             runtime.provider,
         ),
-        "temperature": _env_float("LES_SMETA_DIRECT_MODEL_TEMPERATURE", 0.0),
+        "temperature": max(0.0, min(2.0, profile_temperature)),
         "max_tokens": _smeta_direct_max_tokens(harness_question, runtime_provider=runtime.provider),
     }
     body = _cloud_body_for_model(body, runtime.model, runtime.provider)
@@ -1043,6 +1264,21 @@ def _smeta_direct_model_answer(
     if not text or _voice_claims_source_truncated(text):
         return ""
     return text[:12000]
+
+
+def smeta_direct_model_answer_for_profile(
+    profile_snapshot: dict[str, Any] | None,
+) -> Callable[[str, str], str]:
+    """Bind an immutable chat profile without moving prompt ownership to the router."""
+
+    def answer(harness_question: str, rag_context: str = "") -> str:
+        return _smeta_direct_model_answer(
+            harness_question,
+            rag_context,
+            profile_snapshot=profile_snapshot,
+        )
+
+    return answer
 
 def _smeta_direct_norm_lookup_context(harness_question: str) -> dict[str, Any]:
     """Let the model choose norm lookup calls, then return lookup evidence for final smeta answer.

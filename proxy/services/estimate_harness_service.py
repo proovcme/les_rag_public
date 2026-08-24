@@ -352,14 +352,21 @@ def _work_item_intent_hints(item: dict[str, Any]) -> list[str]:
 
 
 def search_norm(work_description: str, *, work_family: str = "", element_type: str = "",
-                action: str = "", unit_hint: str = "", top_k: int = 6) -> dict[str, Any]:
+                action: str = "", unit_hint: str = "", top_k: int = 6,
+                rerank: bool = True) -> dict[str, Any]:
     """Universal norm retrieval. It returns cards; model/user owns applicability and choice."""
     if not str(work_description or "").strip():
         return {"status": "not_found", "candidates": [], "missing_inputs": ["work_description"]}
-    from proxy.smeta_core.norm_browser import browse_norms
+    from proxy.smeta_core.norm_browser import browse_norms, browse_norms_many
 
     uh = _canon_unit(unit_hint)
-    browse = browse_norms(work_description, limit=max(top_k, 1))
+    browse = (
+        browse_norms(work_description, limit=max(top_k, 1))
+        if rerank
+        else browse_norms_many(
+            [work_description], limit=max(top_k, 1), rerank=False,
+        )[work_description]
+    )
     cards = list(browse.get("cards") or [])
     if not cards:
         return {"status": "not_found", "candidates": [], "hint": "переформулируй work_description"}

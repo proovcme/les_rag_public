@@ -37,6 +37,10 @@ ALLOWED_SETTINGS = {
     "OLLAMA_MODEL",
     "LEMONADE_BASE_URL",
     "LEMONADE_MODEL",
+    "FREETOKEN_BASE_URL",
+    "FREETOKEN_MODEL",
+    "FREETOKEN_CONTEXT_TOKENS",
+    "FREETOKEN_PROMPT_MAX_CHARS",
     # W3.3 (ADR-9): маршрутизация локал/облако
     "LES_CLOUD_CONSENT",            # разрешить P2-данные в облако (P0 — никогда)
     "LES_CLOUD_PRICES",             # переопределение цен: "model:in/out,..."

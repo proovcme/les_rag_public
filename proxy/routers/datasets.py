@@ -73,7 +73,7 @@ DEFAULT_PARSE_BATCH_LIMIT = int(os.getenv("RAG_PARSE_BATCH_LIMIT", "5"))
 DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT = int(os.getenv("RAG_PARSE_SCHEDULER_BATCH_LIMIT", "1"))
 DEFAULT_PARSE_SCHEDULER_MAX_BATCHES = int(os.getenv("RAG_PARSE_SCHEDULER_MAX_BATCHES", "25"))
 DEFAULT_PARSE_DRAIN_MAX_BATCHES = int(os.getenv("RAG_PARSE_DRAIN_MAX_BATCHES", "500"))
-PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "7"))
+PARSE_MIN_FREE_GB = float(os.getenv("RAG_PARSE_MIN_FREE_GB", "2.5"))
 PARSE_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_MAX_SWAP_PCT", "45"))
 PARSE_POST_MAX_SWAP_PCT = float(os.getenv("RAG_PARSE_POST_MAX_SWAP_PCT", "60"))
 ACTIVE_PARSE_SCHEDULER_STATUSES = {"QUEUED", "PARSING", "RUNNING"}
@@ -96,7 +96,14 @@ class DatasetRouterState:
 
     @property
     def backend(self):
-        return self.rag_backend() if callable(self.rag_backend) else self.rag_backend
+        res = self.rag_backend() if callable(self.rag_backend) else self.rag_backend
+        if res is None:
+            try:
+                import proxy.app as _papp
+                return _papp.rag_backend
+            except Exception:
+                pass
+        return res
 
 
 class RetrievalDebugRequest(BaseModel):
@@ -180,7 +187,7 @@ class CloudDriveSyncRequest(BaseModel):
 
 class ParseSchedulerRequest(BaseModel):
     batch_limit: int = Field(default=DEFAULT_PARSE_SCHEDULER_BATCH_LIMIT, ge=1, le=25)
-    max_batches: int = Field(default=DEFAULT_PARSE_SCHEDULER_MAX_BATCHES, ge=1, le=500)
+    max_batches: int = Field(default=DEFAULT_PARSE_SCHEDULER_MAX_BATCHES, ge=1, le=50000)
     cooldown_sec: float = Field(default=20.0, ge=0, le=600)
     unload_between_batches: bool = True
     unload_before_start: bool = True
@@ -222,6 +229,48 @@ async def get_rag_readiness(
     return await asyncio.to_thread(rag_readiness, dataset_id=dataset_id, force=force)
 
 
+@router.get("/catalog-consistency")
+async def get_catalog_consistency(_user=Depends(require_user)):
+    from proxy.services.rag_catalog_guard_service import catalog_guard_state
+
+    return catalog_guard_state()
+
+
+@router.post("/catalog-consistency/repair")
+async def repair_catalog_consistency(_admin=Depends(require_root_admin)):
+    from proxy.services.rag_catalog_guard_service import run_catalog_guard
+
+    result = await run_catalog_guard(
+        qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+        collection=rag_collection_name(),
+        meta_db_path=rag_meta_db_path(),
+        apply=True,
+    )
+    if result.get("status") == "blocked":
+        raise HTTPException(status_code=503, detail=result)
+    return result
+
+
+@router.get("/catalog-consistency/navigation-counts")
+async def audit_navigation_count_consistency(_user=Depends(require_user)):
+    """Read-only audit of legacy hierarchy counters; visible to the operator."""
+    backend = get_dataset_state().backend
+    return await asyncio.to_thread(
+        backend.reconcile_legacy_navigation_counts,
+        apply=False,
+    )
+
+
+@router.post("/catalog-consistency/navigation-counts/repair")
+async def repair_navigation_count_consistency(_admin=Depends(require_root_admin)):
+    """Apply only exact navigation-only metadata deltas; never delete or reindex."""
+    backend = get_dataset_state().backend
+    return await asyncio.to_thread(
+        backend.reconcile_legacy_navigation_counts,
+        apply=True,
+    )
+
+
 _state: DatasetRouterState | None = None
 
 
@@ -231,8 +280,23 @@ def set_dataset_state(state: DatasetRouterState) -> None:
 
 
 def get_dataset_state() -> DatasetRouterState:
+    global _state
     if _state is None:
-        raise RuntimeError("dataset router state is not configured")
+        try:
+            from proxy.app import configure_router_state
+            configure_router_state()
+        except Exception:
+            pass
+    if _state is None:
+        from proxy.services.job_service import job_service
+        _state = DatasetRouterState(
+            rag_backend=lambda: None,
+            job_service=job_service,
+            job_tracker={},
+            log_history=None,
+            parse_semaphore=asyncio.Semaphore(1),
+            sync_parse_semaphore=asyncio.Semaphore(1),
+        )
     return _state
 
 
@@ -867,91 +931,63 @@ async def run_parse_scheduler(
 
 @router.delete("/datasets/{dataset_id}")
 async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
-    ds_dir = safe_dataset_storage_dir(dataset_id)
-    errors = []
-    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
-    dataset_filter = {"must": [{"key": "dataset_id", "match": {"value": dataset_id}}]}
-
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.post(
-                f"{qdrant_url}/collections/{rag_collection_name()}/points/delete",
-                json={"filter": dataset_filter},
-            )
-    except Exception as e:
-        errors.append(f"Qdrant: {e}")
-
-    try:
+        from proxy.services.dataset_deletion_service import delete_datasets_safely
         from proxy.services.lexical_index_service import LexicalIndex
-
-        await asyncio.to_thread(
-            LexicalIndex().delete_dataset,
-            rag_collection_name(),
-            dataset_id=dataset_id,
+        return await delete_datasets_safely(
+            dataset_ids=[dataset_id],
+            qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+            collection=rag_collection_name(),
+            meta_db_path=rag_meta_db_path(),
+            storage_root=Path("./storage/datasets"),
+            lexical_index=LexicalIndex(),
         )
-    except Exception as e:
-        errors.append(f"Lexical: {e}")
-
-    try:
-        with sqlite3.connect(rag_meta_db_path()) as conn:
-            conn.execute("BEGIN")
-            if _table_exists(conn, "structured_rules"):
-                conn.execute(
-                    "DELETE FROM structured_rules WHERE document_id=? OR file_key IN "
-                    "(SELECT file_name FROM documents WHERE dataset_id=?)",
-                    (dataset_id, dataset_id),
-                )
-            if _table_exists(conn, "les_project_links"):
-                conn.execute(
-                    "DELETE FROM les_project_links WHERE kind='dataset' AND ref=?",
-                    (dataset_id,),
-                )
-            conn.execute("DELETE FROM documents WHERE dataset_id=?", (dataset_id,))
-            conn.execute("DELETE FROM datasets WHERE id=?", (dataset_id,))
-            conn.execute("COMMIT")
-    except Exception as e:
-        errors.append(f"SQLite: {e}")
-
-    if ds_dir.exists():
-        await asyncio.to_thread(shutil.rmtree, ds_dir)
-
-    logger.info("[DELETE] Dataset %s removed", dataset_id)
-    return {"status": "deleted", "dataset_id": dataset_id, "errors": errors}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error("[DELETE] Dataset %s preserved after failed safe deletion: %s", dataset_id, exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.delete("/datasets")
-async def delete_all_datasets(_admin=Depends(require_root_admin)):
-    errors = []
-    qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333")
-
+async def delete_all_datasets(
+    confirm: Annotated[str | None, Header(alias="X-LES-Confirm")] = None,
+    _admin=Depends(require_root_admin),
+):
+    if confirm != "delete-all-datasets":
+        raise HTTPException(
+            status_code=409,
+            detail="Bulk deletion requires X-LES-Confirm: delete-all-datasets",
+        )
+    backend = get_dataset_state().backend
+    datasets = await backend.list_datasets()
+    dataset_ids = [str(item.id) for item in datasets]
+    if not dataset_ids:
+        return {"status": "empty", "dataset_ids": []}
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            await client.delete(f"{qdrant_url}/collections/{rag_collection_name()}")
-    except Exception as e:
-        errors.append(f"Qdrant delete: {e}")
-
-    try:
-        with sqlite3.connect(rag_meta_db_path()) as conn:
-            conn.execute("BEGIN")
-            conn.execute("DELETE FROM documents")
-            conn.execute("DELETE FROM datasets")
-            conn.execute("COMMIT")
-    except Exception as e:
-        errors.append(f"SQLite: {e}")
-
-    ds_root = Path("./storage/datasets")
-    if ds_root.exists():
-        for path in ds_root.iterdir():
-            if path.is_dir():
-                await asyncio.to_thread(shutil.rmtree, path)
-
-    logger.info("[DELETE] All datasets reset")
-    return {"status": "reset", "errors": errors}
+        from proxy.services.dataset_deletion_service import delete_datasets_safely
+        from proxy.services.lexical_index_service import LexicalIndex
+        result = await delete_datasets_safely(
+            dataset_ids=dataset_ids,
+            qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
+            collection=rag_collection_name(),
+            meta_db_path=rag_meta_db_path(),
+            storage_root=Path("./storage/datasets"),
+            lexical_index=LexicalIndex(),
+        )
+        result["status"] = "reset"
+        return result
+    except Exception as exc:
+        logger.error("[DELETE] Bulk reset preserved catalog after failure: %s", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/datasets")
 async def list_datasets(_user=Depends(require_user)):
-    return await get_dataset_state().backend.list_datasets()
+    b = get_dataset_state().backend
+    if not b:
+        raise HTTPException(503, "Backend is initializing, please retry in a few seconds")
+    return await b.list_datasets()
 
 
 @router.get("/documents")
@@ -1003,6 +1039,14 @@ async def list_documents(
 
     with sqlite3.connect(rag_meta_db_path()) as conn:
         conn.row_factory = sqlite3.Row
+        document_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(documents)").fetchall()
+        }
+        error_code_sql = "COALESCE(doc.error_code, '')" if "error_code" in document_columns else "''"
+        retryable_sql = "COALESCE(doc.retryable, 0)" if "retryable" in document_columns else "0"
+        attempts_sql = "COALESCE(doc.parse_attempts, 0)" if "parse_attempts" in document_columns else "0"
+        retry_after_sql = "COALESCE(doc.retry_after, 0)" if "retry_after" in document_columns else "0"
         summary_rows = conn.execute(
             f"""
             SELECT doc.status AS status, COUNT(*) AS files, COALESCE(SUM(doc.chunk_count),0) AS chunks
@@ -1039,7 +1083,11 @@ async def list_documents(
                 COALESCE(doc.complexity, '') AS complexity,
                 COALESCE(doc.pipeline, '') AS pipeline,
                 COALESCE(doc.source_path, '') AS source_path,
-                COALESCE(doc.last_error, '') AS last_error
+                COALESCE(doc.last_error, '') AS last_error,
+                {error_code_sql} AS error_code,
+                {retryable_sql} AS retryable,
+                {attempts_sql} AS parse_attempts,
+                {retry_after_sql} AS retry_after
             FROM documents doc
             LEFT JOIN datasets ds ON ds.id = doc.dataset_id
             {where_sql}
@@ -1102,7 +1150,7 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
         _rr_available = True
     except ImportError:
         _rr_cls, _rr_available = None, False
-    _rr_enabled = os.getenv("RERANKER_ENABLED", "true").lower() == "true"
+    _rr_enabled = os.getenv("RERANKER_ENABLED", "false").lower() == "true"
     retrieval = await retrieve_chat_chunks(
         question=req.question,
         dataset_ids=dataset_ids,
@@ -1167,10 +1215,25 @@ async def retrieve_debug(req: RetrievalDebugRequest, _user=Depends(require_user)
     }
 
 
+class CreateDatasetRequest(BaseModel):
+    name: str = ""
+
+
 @router.post("/datasets")
-async def create_dataset(name: str, _admin=Depends(require_admin)):
+async def create_dataset(
+    name: str = "",
+    req: CreateDatasetRequest | None = None,
+    _admin=Depends(require_admin),
+):
+    from urllib.parse import unquote
+
+    raw_name = (req.name if req and req.name else name) or ""
+    clean_name = unquote(raw_name).strip()
+    if not clean_name:
+        raise HTTPException(400, "Dataset name cannot be empty")
     state = get_dataset_state()
-    return {"id": await state.backend.create_dataset(name), "name": name}
+    ds_id = await state.backend.create_dataset(clean_name)
+    return {"id": ds_id, "name": clean_name}
 
 
 @router.patch("/datasets/{dataset_id}/sensitivity")
@@ -1183,12 +1246,31 @@ async def set_dataset_sensitivity(dataset_id: str, sensitivity: str, _admin=Depe
     return {"id": dataset_id, "sensitivity": level}
 
 
+class DatasetGroupPayload(BaseModel):
+    group: str = ""
+    group_name: str = ""
+
+class DatasetNamePayload(BaseModel):
+    name: str = ""
+
 @router.patch("/datasets/{dataset_id}/group")
-async def set_dataset_group(dataset_id: str, group: str = "", _admin=Depends(require_admin)):
+async def set_dataset_group(dataset_id: str, group: str = "", payload: DatasetGroupPayload | None = None, _user=Depends(require_user)):
     """Пользовательская группа датасета — организация списка в САМОВАРе (на поиск не влияет)."""
-    grp = (group or "").strip()[:60]
+    raw = (payload.group if payload and payload.group else (payload.group_name if payload and payload.group_name else group))
+    grp = (raw or "").strip()[:60]
     await get_dataset_state().backend.set_dataset_group(dataset_id, grp)
     return {"id": dataset_id, "group_name": grp}
+
+
+@router.patch("/datasets/{dataset_id}/name")
+async def set_dataset_name(dataset_id: str, name: str = "", payload: DatasetNamePayload | None = None, _user=Depends(require_user)):
+    """Переименование датасета."""
+    raw = (payload.name if payload and payload.name else name)
+    nm = (raw or "").strip()[:120]
+    if not nm:
+        raise HTTPException(400, "name cannot be empty")
+    await get_dataset_state().backend.set_dataset_name(dataset_id, nm)
+    return {"id": dataset_id, "name": nm}
 
 
 @router.get("/datasets/{dataset_id}/profile")
@@ -2167,70 +2249,39 @@ async def index_external(req: IndexExternalRequest, _admin=Depends(require_admin
         raise HTTPException(404, f"dataset_id не найден: {req.dataset_id} (создайте датасет заранее)")
 
     if req.background:
-        asyncio.create_task(_index_external_run(state, req, root, dataset))
+        asyncio.create_task(_index_external_run_safe(state, req, root, dataset))
         return {"status": "started", "dataset_id": req.dataset_id, "dataset_name": dataset.name,
                 "note": "регистрация и индексация идут в фоне — файлы появятся в датасете"}
     return await _index_external_run(state, req, root, dataset)
 
 
+async def _index_external_run_safe(state, req, root, dataset) -> dict:
+    try:
+        return await _index_external_run(state, req, root, dataset)
+    except Exception as err:
+        logger.error("[INDEX-EXT] Ошибка фонного индексирования %s: %s", req.dataset_id, err, exc_info=True)
+        try:
+            await state.backend.update_dataset_status(req.dataset_id, "ERROR")
+        except Exception:
+            pass
+        return {"status": "error", "error": str(err)}
+
+
 async def _index_external_run(state, req, root, dataset) -> dict:
     """Тело in-place индексации: нарезка крупных PDF + регистрация файлов + LES.md + (опц.) парс.
     Выносимо в фон (req.background) — не зависит от HTTP-таймаута на больших папках (758 файлов = ~47с)."""
-    # Авто-нарезка крупных PDF (штатная часть ЛЕСа, tools/pdf_preprocess): чистим+режем
-    # гиганты на части < split_max_mb (границы по оглавлению), оригиналы → в _originals/.
-    # Без этого 150–200МБ-каталог вешает конвертер (блокирует event loop). Не роняет индексацию.
-    split_summary = {"split_files": 0, "parts": 0}
-    if req.auto_split:
-        try:
-            from tools.pdf_preprocess import preprocess_dir
-            max_bytes = int(req.split_max_mb * 1024 * 1024)
-            results = await asyncio.to_thread(preprocess_dir, root, max_bytes)
-            for r in results:
-                if getattr(r, "action", "") == "clean+split" and getattr(r, "split", None):
-                    split_summary["split_files"] += 1
-                    split_summary["parts"] += len(r.split.parts)
-            if split_summary["split_files"]:
-                logger.info("[INDEX-EXT] авто-нарезка: %s гигантов → %s частей",
-                            split_summary["split_files"], split_summary["parts"])
-        except Exception as err:  # noqa: BLE001 — нарезка не должна ронять индексацию
-            logger.warning("[INDEX-EXT] авто-нарезка пропущена: %s", err)
-
-    # Auto-init ДО регистрации: дал папку индексировать → LES.md и карта появляются как
-    # первые документы датасета, а не остаются вне индекса до следующего синка.
-    les_md_summary = None
-    map_summary = None
-    intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
-    if int(intake_plan.get("accepted_count") or 0) <= 0:
-        raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
-    try:
-        from proxy.services.les_md_service import read_and_bind
-
-        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
-        intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
-        map_summary = await asyncio.to_thread(_ensure_external_dataset_map, root, intake_plan)
-        # #2 симметрия: привязать СОЗДАННЫЙ датасет к объекту (kind='dataset'), а не только папку.
-        # Иначе датасет и проект жили раздельно → режим датасета терял LES.md, обратный поиск пуст.
-        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
-        if _md_pid:
-            from proxy.services.project_service import link_entity
-
-            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
-        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
-            _auto_run_pipelines(root, les_md_summary)
-    except Exception as err:  # noqa: BLE001 — auto-init не должен ронять регистрацию документов
-        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
-
     suffixes = rag_upload_suffixes()
     registered = 0
     skipped_unsupported = 0
     skipped_outside_root = 0
     samples: list[str] = []
+
+    # 1. Сначала быстрая регистрация исходных файлов в SQLite: датасет мгновенно наполняется в UI.
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
-        if "_originals" in path.parts:  # архив оригиналов после нарезки — не индексируем
+        if "_originals" in path.parts:
             continue
-        # Анти-traversal: симлинк внутри папки, указывающий наружу корня, отбрасываем.
         if not is_within_external_root(path, root):
             skipped_outside_root += 1
             continue
@@ -2241,12 +2292,56 @@ async def _index_external_run(state, req, root, dataset) -> dict:
         if resolved.suffix.lower() not in suffixes:
             skipped_unsupported += 1
             continue
-        # file_name — путь относительно родителя корня: "<папка>/rel" (читаемо и уникально).
         file_name = resolved.relative_to(root.parent).as_posix()
         await state.backend.register_external_file(req.dataset_id, resolved, file_name)
         registered += 1
+        if registered % 20 == 0:
+            await asyncio.sleep(0)
         if len(samples) < 10:
             samples.append(file_name)
+
+    # 2. Авто-нарезка крупных PDF (tools/pdf_preprocess) после первичной регистрации
+    split_summary = {"split_files": 0, "parts": 0}
+    if req.auto_split:
+        try:
+            from tools.pdf_preprocess import preprocess_dir
+            max_bytes = int(req.split_max_mb * 1024 * 1024)
+            results = await asyncio.to_thread(preprocess_dir, root, max_bytes)
+            for r in results:
+                if getattr(r, "action", "") == "clean+split" and getattr(r, "split", None):
+                    split_summary["split_files"] += 1
+                    split_summary["parts"] += len(r.split.parts)
+                    for part_path in r.split.parts:
+                        if part_path.exists():
+                            p_res = part_path.resolve()
+                            p_name = p_res.relative_to(root.parent).as_posix()
+                            await state.backend.register_external_file(req.dataset_id, p_res, p_name)
+                            registered += 1
+            if split_summary["split_files"]:
+                logger.info("[INDEX-EXT] авто-нарезка: %s гигантов → %s частей",
+                            split_summary["split_files"], split_summary["parts"])
+        except Exception as err:  # noqa: BLE001
+            logger.warning("[INDEX-EXT] авто-нарезка пропущена: %s", err)
+
+    # 3. Auto-init LES.md
+    les_md_summary = None
+    map_summary = None
+    try:
+        intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
+        from proxy.services.les_md_service import read_and_bind
+
+        les_md_summary = await asyncio.to_thread(read_and_bind, root, write_draft=True)
+        intake_plan = await asyncio.to_thread(_external_intake_plan, root, dataset_name=dataset.name)
+        map_summary = await asyncio.to_thread(_ensure_external_dataset_map, root, intake_plan)
+        _md_pid = int((les_md_summary or {}).get("project_id") or 0)
+        if _md_pid:
+            from proxy.services.project_service import link_entity
+
+            await asyncio.to_thread(link_entity, _md_pid, "dataset", req.dataset_id)
+        if os.getenv("LES_AUTO_PIPELINES", "true").lower() in ("1", "true", "yes", "on"):
+            await asyncio.to_thread(_auto_run_pipelines, root, les_md_summary)
+    except Exception as err:  # noqa: BLE001
+        logger.warning("[LES.md] auto-init при индексации %s: %s", root, err)
 
     if registered == 0:
         raise HTTPException(400, f"в папке нет поддерживаемых документов: {root}")
@@ -3125,18 +3220,26 @@ async def parse_scheduler(req: ParseSchedulerRequest, _admin=Depends(require_adm
     if not req.background:
         return await run_parse_scheduler(state, req)
 
+    try:
+        conn = sqlite3.connect(rag_meta_db_path())
+        pending_count = int(conn.execute("SELECT COUNT(*) FROM documents WHERE upper(status) = 'PENDING'").fetchone()[0] or 0)
+        conn.close()
+    except Exception:
+        pending_count = req.max_batches
+    effective_total = min(req.max_batches, pending_count) if pending_count > 0 else req.max_batches
+
     job = state.job_service.create(
         "rag_parse_scheduler",
         source="pending",
         status="running",
         message="Parse scheduler queued",
-        total=req.max_batches,
+        total=effective_total,
     )
     job_id = job["id"]
     state.job_tracker[job_id] = {
         "type": "rag_parse_scheduler",
         "status": "QUEUED",
-        "total": req.max_batches,
+        "total": effective_total,
         "processed": 0,
         "started_at": job["started_at"],
         "message": "Parse scheduler queued",
@@ -3190,6 +3293,10 @@ async def _record_background_parse_error(
     error: Exception,
 ) -> None:
     """Make an asynchronous intake failure visible to API/UI operators."""
+    diagnostic = (
+        f"BACKGROUND_PARSE_FAILED [{type(error).__name__}]: "
+        f"{str(error) or 'exception without message'}"
+    )
     marker = getattr(state.backend, "mark_document_error", None)
     if not callable(marker):
         logger.error(
@@ -3201,7 +3308,7 @@ async def _record_background_parse_error(
         )
         return
     try:
-        await marker(dataset_id, document_id, str(error))
+        await marker(dataset_id, document_id, diagnostic)
     except Exception as marker_error:  # noqa: BLE001 - retain the original failure in logs
         logger.error(
             "[UPLOAD PARSE] failed to persist dataset=%s document=%s error: %s",
@@ -3385,12 +3492,19 @@ async def _prepare_read_attachment(
         truncated = len(text) > _READ_ATTACH_MAX_CHARS
 
     text = (text or "").strip()
+    suffix = Path(original_name).suffix.lower()
     if not text:
-        raise HTTPException(
-            422,
-            f"Не удалось прочитать текст из «{original_name}». "
-            "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
-        )
+        # PDF/XLSX VOR still needs the original bytes for document LSR intake even
+        # when chat-facing text extraction is empty.
+        if suffix in {".pdf", ".xlsx", ".xlsm"}:
+            text = f"[document attachment preserved for LSR intake: {original_name}]"
+            truncated = False
+        else:
+            raise HTTPException(
+                422,
+                f"Не удалось прочитать текст из «{original_name}». "
+                "Для таблиц попробуй режим быстрой сверки, для сканов — индексацию/OCR.",
+            )
 
     from proxy.services.chat_attachment_service import cleanup_expired, preserve_read_attachment
 
@@ -3523,7 +3637,11 @@ async def attach_chat_file(
     original_name = safe_upload_name(file.filename or "upload.bin", rag_upload_suffixes())
     temp_path = await save_upload_tmp(file, allowed_suffixes=rag_upload_suffixes(), max_bytes=max_upload_bytes())
 
-    if mode == "read":
+    suffix = Path(original_name).suffix.lower()
+    # PDF VOR/LSR needs the original bytes in chat_attachment storage. Quick
+    # parquet mode deletes the source and never sets ChatRequest.attachment_id,
+    # so «собери ЛСР» silently falls into estimate harness with 0 rows.
+    if mode == "read" or (mode == "quick" and suffix == ".pdf"):
         try:
             return await _prepare_read_attachment(temp_path, original_name)
         finally:

@@ -91,10 +91,22 @@ class ToolHarness:
             },
         }
 
-    def shortlist(self, question: str, *, mode: str = "", limit: int = 5) -> dict[str, Any]:
+    def shortlist(
+        self,
+        question: str,
+        *,
+        mode: str = "",
+        allowed_tools: list[str] | tuple[str, ...] | set[str] | None = None,
+        limit: int = 5,
+    ) -> dict[str, Any]:
         terms = _tokens(" ".join([question, mode]))
+        allowed = None if allowed_tools is None else {
+            str(name).strip() for name in allowed_tools if str(name).strip()
+        }
         scored: list[tuple[int, ToolSpec]] = []
         for spec, _handler in self._tools.values():
+            if allowed is not None and spec.name not in allowed:
+                continue
             haystack = " ".join([spec.name, spec.title, spec.summary, *spec.tags]).casefold()
             score = sum(1 for term in terms if term in haystack)
             if spec.category in {"dataset", "source"} and any(t in terms for t in ("датасет", "документ", "источник", "pdf", "excel")):
@@ -111,7 +123,7 @@ class ToolHarness:
             selected = [
                 self._tools[name][0].to_dict() | {"score": 0}
                 for name in ("dataset_map", "search_sources", "read_source")
-                if name in self._tools
+                if name in self._tools and (allowed is None or name in allowed)
             ][: max(1, limit)]
         return {"schema": "les_tool_shortlist_v1", "question": question, "mode": mode, "tools": selected}
 

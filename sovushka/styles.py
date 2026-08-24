@@ -732,9 +732,10 @@ body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
   font-weight: 900;
 }
 .sov-indexing-banner {
-  margin: 0 18px 10px;
-  padding: 9px 12px;
-  border-radius: 6px;
+  width: 100%;
+  margin: 0 0 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
   border: 1px solid rgba(245,158,11,.46);
   background: rgba(245,158,11,.13);
   color: var(--warn);
@@ -1824,6 +1825,93 @@ body, .nicegui-content {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.sov-scope-dialog-head {
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  margin-bottom: 4px;
+}
+.sov-scope-dialog-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: var(--accent);
+  background: rgba(52,211,153,.10);
+  box-shadow: inset 0 0 0 1px rgba(52,211,153,.22);
+}
+.sov-scope-dialog-title {
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 16px;
+  font-weight: 900;
+}
+.sov-scope-dialog-subtitle,
+.sov-scope-selection-note {
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: 11px;
+}
+.sov-scope-search { width: 100%; margin-top: 8px; }
+.sov-scope-selection-note { align-self: flex-end; margin-top: -4px; }
+.sov-scope-section-title {
+  margin: 14px 2px 6px;
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .09em;
+}
+.sov-scope-option-card {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 58px;
+  margin-bottom: 7px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-panel) 88%, var(--accent) 2%);
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+.sov-scope-option-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--bg-panel) 92%, var(--accent) 5%);
+  transform: translateY(-1px);
+}
+.sov-scope-option-icon {
+  color: var(--accent);
+  font-size: 20px;
+}
+.sov-scope-option-copy { min-width: 0; gap: 2px !important; }
+.sov-scope-option-title {
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sov-scope-option-meta {
+  color: var(--dim);
+  font-family: var(--font-ui);
+  font-size: 10px;
+}
+.sov-scope-option-disabled { opacity: .52; }
+.sov-scope-option-disabled:hover { transform: none; border-color: var(--border); }
+.sov-scope-dialog-actions {
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
 }
 .sov-chat-empty {
   align-self: center;

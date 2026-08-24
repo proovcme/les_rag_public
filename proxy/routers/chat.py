@@ -76,6 +76,12 @@ from proxy.services.project_summary_service import (
     resolve_inventory_file_reference,
 )
 from proxy.services.prompt_registry_service import build_mode_system_prompt
+from proxy.services.llm_transport_profile_service import (
+    apply_transport_options,
+    assistant_delta_text,
+    provider_prompt_max_chars,
+    provider_is_local,
+)
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
 from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
@@ -85,10 +91,7 @@ from proxy.services.smeta_artifact_service import (
 )
 from proxy.services.smeta_chat_application_service import (
     SMETA_ARTIFACT_DIR as _SMETA_ARTIFACT_DIR,
-    default_smeta_direct_dependencies,
     retry_smeta_transport as _retry_smeta_transport,
-    run_smeta_direct_application,
-    run_smeta_document_application,
 )
 from proxy.smeta_core.document_workflow import finalize_locked_mapping_revision
 from proxy.smeta_core.professional_review import create_user_lock_revision
@@ -230,6 +233,8 @@ class ChatRequest(BaseModel):
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
     response_length: Optional[str] = None  # short|standard|detailed|maximum; только бюджет/форма генерации
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
+    profile_revision_id: Optional[str] = None
+    apply_profile_revision: bool = False
     attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
     attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
@@ -432,12 +437,12 @@ def _model_needs_completion_tokens(model: str) -> bool:
 def _cloud_body_for_model(body: dict, model: str, provider: str) -> dict:
     """Облако: для GPT-5/o-моделей переименовать max_tokens→max_completion_tokens
     (один точечный фикс совместимости; для остальных тело без изменений)."""
+    normalized = body
     if (is_cloud_provider(provider) and "max_tokens" in body
             and _model_needs_completion_tokens(model)):
-        b = dict(body)
-        b["max_completion_tokens"] = b.pop("max_tokens")
-        return b
-    return body
+        normalized = dict(body)
+        normalized["max_completion_tokens"] = normalized.pop("max_tokens")
+    return apply_transport_options(normalized, provider)
 
 
 def _llm_runtime() -> LlmRuntime:
@@ -445,6 +450,18 @@ def _llm_runtime() -> LlmRuntime:
     if request_runtime is not None:
         return request_runtime
     provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    if provider == "freetoken":
+        base_url = os.getenv("FREETOKEN_BASE_URL", "http://127.0.0.1:1919/v1").strip()
+        model = os.getenv("FREETOKEN_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
+        api_key = os.getenv("FREETOKEN_API_KEY", "").strip()
+        return LlmRuntime(
+            provider,
+            base_url,
+            _join_openai_path(base_url, "/chat/completions"),
+            model,
+            api_key,
+            False,
+        )
     if provider == "openrouter":
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
         model = os.getenv("OPENROUTER_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
@@ -702,12 +719,25 @@ def _format_tool_results_for_model(results: list[dict[str, Any]]) -> str:
     )
 
 
-def _local_context_budget(*, local_big: bool, big_context: bool) -> dict[str, int]:
+def _local_context_budget(
+    *,
+    local_big: bool,
+    big_context: bool,
+    provider: str = "",
+) -> dict[str, int]:
     """Context budget for chat generation.
 
     Cloud can digest a large prompt quickly. Local MLX pays heavily for prefill,
     so technical/legal RAG gets a smaller default budget with env overrides.
     """
+    if provider_is_local(provider):
+        prompt_chars = provider_prompt_max_chars(provider)
+        return {
+            "focus_max_chunks": _env_int("FREETOKEN_FOCUS_MAX_CHUNKS", 0),
+            "context_max_chunks": _env_int("FREETOKEN_CONTEXT_MAX_CHUNKS", 0),
+            "context_chars_limit": _env_int("FREETOKEN_EVIDENCE_MAX_CHARS", prompt_chars),
+            "context_window_chars": _env_int("FREETOKEN_CONTEXT_WINDOW_CHARS", 1800),
+        }
     return {
         "focus_max_chunks": 0,
         "context_max_chunks": 0,
@@ -1679,7 +1709,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
 async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     """Режим «Свободный»: прямой вызов LLM БЕЗ ретрива (ответ из знаний модели) + мягкая
     плашка. Изолирован — RAG-конвейер не задействуется. Стримит токены, если token_sink задан."""
-    runtime = _smeta_model_runtime("LES_SMETA_WORKFLOW_DECISION_PROVIDER")
+    runtime = _llm_runtime()
     disclaimer = ("⚠️ Вольный режим — ответ модели без обращения к базе документов; "
                   "возможны неточности, проверяй факты.\n\n")
     sys_prompt = build_mode_system_prompt("free")
@@ -1732,7 +1762,7 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
                         _delta = ch[0].get("delta", {}) if ch else {}
                         # reasoning-модели стримят размышления в delta.reasoning, content пуст —
                         # берём reasoning как fallback, иначе стрим был бы пустым (#1, Windows ollama).
-                        piece = _delta.get("content") or _delta.get("reasoning") or ""
+                        piece = assistant_delta_text(_delta)
                         if piece:
                             acc.append(piece)
                             await token_sink({"event": "token", "data": piece})
@@ -3190,10 +3220,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             req.project_id = _scope_snap["project_ids"][0]
             pid = req.project_id
 
+    # Resolve one persistent profile snapshot before any professional route.
+    from proxy.services.chat_profile_service import resolve_chat_profile
+
+    try:
+        _profile_snapshot = resolve_chat_profile(
+            session_id=req.session_id,
+            requested_mode=req.mode,
+            requested_revision_id=req.profile_revision_id,
+            apply_revision=bool(req.apply_profile_revision),
+        )
+    except ValueError as error:
+        raise HTTPException(409, f"Профиль чата не применён: {error}") from error
+    req.mode = str(_profile_snapshot.get("mode") or "agent")
+
     # ── МАРШРУТИЗАЦИЯ ЧЕРЕЗ ProfileResolver (Codex §10.1A: единый контракт) ──
-    # Все источники выбора пути сводятся к ОДНОЙ ProfileResolution. Явный режим → профиль;
-    # auto-путь (command/regex/keyword/llm_router/fallback) доуточняет резолюцию через refine,
-    # как только канал реально выбран. Так «какой канал дёрнут» — один записанный контракт
+    # Все источники выбора пути сводятся к ОДНОЙ ProfileResolution. Явный режим → профиль,
+    # а фактически выбранный канал уточняет резолюцию через refine. Так «какой канал дёрнут» — один записанный контракт
     # (query_route.profile), а не неявный control-flow. Резолвер сам не отвечает (§10.3 №4).
     from proxy.services.profile_resolver import (
         resolve as _resolve_profile, route_source_for_channel)
@@ -3202,12 +3245,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # Model-final-only invariant: свободный запрос не может завершиться ответом
     # regex/SQL/Python обработчика. Код читает, ищет, считает и проверяет внутри
     # evidence/tool loop; видимый ответ формулирует модель.
-    _has_read_attachment = bool(req.attachment_context)
-
     def _profile_route(channel: str, operation: str | None, *,
                        base: dict | None = None, source: str | None = None) -> dict:
         """query_route c честным profile-трейсом: refine резолюции выбранным каналом + as_trace.
-        Профиль не меняется (auto остаётся auto) — фиксируем КАК принят маршрут и КАКОЙ канал."""
+        Профиль не меняется — фиксируем КАК принят маршрут и КАКОЙ канал."""
         _resolution.refine(route_source=(source or route_source_for_channel(channel)),
                             channel=channel, operation=operation)
         route = dict(base or {})
@@ -3215,6 +3256,13 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if operation is not None:
             route["operation"] = operation
         route["profile"] = _resolution.as_trace()
+        route["profile_snapshot"] = {
+            key: _profile_snapshot.get(key)
+            for key in (
+                "revision_id", "mode", "name", "revision_no", "prompt_revision_id",
+                "prompt_sha256", "skill_revision_id", "skill_sha256", "tools",
+            )
+        }
         return route
 
     # W11.17: /-команды (палитра). rewrite → переформулировать и пройти конвейером; иначе — детерм. ответ.
@@ -3275,129 +3323,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             "validation": {"enabled": False, "reason": "deterministic_ks_forms"},
             "command": ks_res.get("command"),
         }
-
-    def _mode_reply(
-        answer: str,
-        operation: str,
-        channel: str,
-        crag: str = "DETERMINISTIC",
-        *,
-        extra: dict[str, Any] | None = None,
-    ) -> dict:
-        """Единый shape ответа для режимных каналов (+ запись в историю + след профиля)."""
-        route = {"channel": channel, "operation": operation, "profile": _resolution.as_trace()}
-        extra = extra or {}
-        sources = extra.get("sources") or []
-        retrieval_trace = extra.get("retrieval_trace") or {}
-        hid = None
-        try:
-            history_sources = [
-                str(s.get("source_ref") or s.get("ref") or s.get("path") or s)
-                if isinstance(s, dict) else str(s)
-                for s in sources
-            ]
-            hid = save_chat_history(
-                question=req.question, answer=answer, sources=history_sources,
-                crag_status=crag, latency_sec=0.0, tokens=0,
-                session_id=req.session_id,
-                query_route=route, retrieval_trace=retrieval_trace,
-                artifact=extra.get("artifact") if isinstance(extra.get("artifact"), dict) else None,
-                validation_enabled=False,
-            )
-        except Exception as _hist_err:  # noqa: BLE001
-            logger.warning("[HISTORY] %s save failed: %s", channel, _hist_err)
-        payload = {
-            "answer": answer, "crag_status": crag, "sources": sources, "history_id": hid,
-            "query_route": route,
-            "retrieval_trace": retrieval_trace,
-            "validation": {"enabled": False, "reason": channel},
-            "versions": _version_stamp(),
-        }
-        for key in ("provenance", "defense", "evidence_summary", "notebook_context", "total_status", "artifact", "source_map"):
-            if key in extra:
-                payload[key] = extra[key]
-        return payload
-
-    if _PROFILE == "auto" and _has_read_attachment and not req.dataset_ids and not req.dataset_filter and not pid:
-        answer = await _run_attachment_mode(req, token_sink)
-        return _mode_reply(
-            answer,
-            "read_attachment",
-            "attachment_context",
-            crag="ATTACHMENT",
-            extra={
-                "sources": [_attachment_source_label(req.attachment_context)],
-                "retrieval_trace": {
-                    "mode": "attachment_context",
-                    "vector_count": 0,
-                    "lexical_count": 0,
-                    "merged_count": 0,
-                    "quality_status": "attachment_only",
-                },
-            },
-        )
-
-    if _PROFILE == "free_llm":
-        # Свободный: прямой LLM БЕЗ ретрива (отвечает из своих знаний) + мягкая плашка.
-        # Изолированный путь — RAG-конвейер не трогаем.
-        answer = await _run_free_mode(req, token_sink)
-        return _mode_reply(answer, "free", "free_mode", crag="")
-
-    _auto_estimate_work = False
-    if _PROFILE == "auto":
-        from proxy.services.estimate_harness_service import is_explicit_work_estimate_request
-        _auto_estimate_work = is_explicit_work_estimate_request(req.question)
-        if _auto_estimate_work:
-            _resolution.refine(
-                route_source="keyword",
-                channel="harness_mode",
-                operation="estimate_harness_auto_work",
-                reason="explicit work estimate request with quantity",
-            )
-
-    if _PROFILE == "estimate_harness" or _auto_estimate_work:
-        if req.attachment_id and _smeta_request_needs_lsr_output(req.question):
-            document_result = await run_smeta_document_application(
-                attachment_id=req.attachment_id,
-                project_id=req.project_id,
-                user_request=req.question,
-                token_sink=token_sink,
-                artifact_dir=_SMETA_ARTIFACT_DIR,
-            )
-            if document_result is not None:
-                return _mode_reply(
-                    document_result.answer,
-                    document_result.operation,
-                    document_result.channel,
-                    crag=document_result.crag,
-                    extra=document_result.extra,
-                )
-        # Ordinary smeta mode: the model receives source/RAG/tool results; code calculates only
-        # when the user explicitly requests money or an LSR.
-        harness_question = _smeta_harness_question(req)
-        direct_result = await run_smeta_direct_application(
-            request=req,
-            harness_question=harness_question,
-            rag_backend=state.backend,
-            router_state=state,
-            dataset_ids=req.dataset_ids,
-            dataset_filter=req.dataset_filter,
-            pricing_requested=_smeta_request_needs_lsr_output(_question_with_attachment(req)),
-            auto_estimate_work=_auto_estimate_work,
-            dependencies=default_smeta_direct_dependencies(
-                active_state=_smeta_active_state_from_answer,
-            ),
-            rag_context_enabled=_env_bool("LES_SMETA_HARNESS_RAG_CONTEXT_ENABLED", True),
-            token_sink=token_sink,
-            artifact_dir=_SMETA_ARTIFACT_DIR,
-        )
-        return _mode_reply(
-            direct_result.answer,
-            direct_result.operation,
-            direct_result.channel,
-            crag=direct_result.crag,
-            extra=direct_result.extra,
-        )
 
     # Операторские заметки не создаются, не читаются и не подмешиваются в чат.
     # Контекст ниже содержит только явное вложение, LES.md, typed dataset passport
@@ -3593,9 +3518,23 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # #2: финальный resolved-канал = семантический RAG. default_rag (ни команда/regex/каскад
     # не поймали) → честный fallback; иначе keyword (route_query поймал по словарю). profile-
     # трейс кладём в payload — как у детерминированных каналов выше: один контракт в каждом route.
-    _resolution.refine(route_source=("fallback" if query_intent.reason == "default_rag" else "keyword"),
-                       channel=query_intent.channel, operation=query_intent.reason)
+    if _resolution.route_source == "explicit_mode":
+        _resolution.channel = query_intent.channel
+        _resolution.operation = query_intent.reason
+    else:
+        _resolution.refine(
+            route_source=("fallback" if query_intent.reason == "default_rag" else "keyword"),
+            channel=query_intent.channel,
+            operation=query_intent.reason,
+        )
     query_route_payload["profile"] = _resolution.as_trace()
+    query_route_payload["profile_snapshot"] = {
+        key: _profile_snapshot.get(key)
+        for key in (
+            "revision_id", "mode", "name", "revision_no", "prompt_revision_id",
+            "prompt_sha256", "skill_revision_id", "skill_sha256", "tools",
+        )
+    }
     cache = SemanticCache()
     cache_embedding = None
     cache_scope = ""
@@ -3734,6 +3673,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         route=query_intent,
         table_result=table_result,
         request_started_at=t_request_start,
+        profile_snapshot=_profile_snapshot,
     )
     evidence_runtime = EvidenceRuntimeDeps(
         state=state,

@@ -10,7 +10,7 @@ from proxy.services.profile_resolver import resolve
 
 def test_profile_trace_exposes_output_contract():
     trace = resolve(mode="smeta", question="сделай смету").as_trace()
-    assert trace["profile_id"] == "estimate_harness"
+    assert trace["profile_id"] == "estimator"
     assert trace["output_contract"] == "estimate_preliminary_v1"
 
 

@@ -132,7 +132,6 @@ OUTPUT_FORMATS = {
     "text": ("Текст", "Свободный ответ"),
     "rag": ("РАГ", "Заземлённый ответ из документов (с цитатами)"),
     "agent": ("Агент", "Исследование в источниках, интернете и разрешённых папках"),
-    "smeta": ("Смета", "Расчёт сметы на объект по описанию"),
     "kp": ("КП", "Коммерческое предложение (задел на будущее)"),
     "review": ("Проверка проекта", "Нормоконтроль документов объекта"),
     "free": ("Свободный", "Вольный ответ модели без источников (возможны неточности)"),
@@ -148,17 +147,7 @@ OUTPUT_FORMATS = {
 
 
 CHAT_MODE_GUIDANCE = {
-    "text": {
-        "title": "Авто",
-        "description": "Опишите задачу обычным языком — ЛЕС сам выберет подходящий рабочий путь.",
-        "data_hint": "Если вопрос относится к проекту, выберите область поиска или прикрепите файл.",
-        "examples": (
-            "Расскажи, что есть в выбранном проекте",
-            "Найди нужный документ и объясни вывод",
-            "Что требует моего внимания?",
-        ),
-    },
-    "rag": {
+    "search": {
         "title": "Поиск по источникам",
         "description": "Ищет ответ в выбранных проектах, датасетах и документах и показывает источники.",
         "data_hint": "Лучше всего: вопрос + объект, раздел, шифр или название документа.",
@@ -178,18 +167,18 @@ CHAT_MODE_GUIDANCE = {
             "Сравни проектные документы с публичными источниками",
         ),
     },
-    "smeta": {
-        "title": "Смета в текущем диалоге",
-        "description": "Разовый сметный разбор в чате. Для ревизий, блокировок и продолжения используйте раздел «Сметный проект».",
-        "data_hint": "Помогут файл, объёмы и единицы; для длительной работы откройте отдельный сметный проект.",
+    "estimator": {
+        "title": "Сметчик",
+        "description": "Подбирает нормы и готовит сметное решение по выбранной базе и проектным данным.",
+        "data_hint": "Выберите сметную базу или проектный датасет; приложите ВОР, если она есть.",
         "examples": (
-            "Подбери нормы к работам из файла",
-            "Проверь объёмы и единицы",
-            "Собери первую ЛСР по приложенной ВОР",
+            "Подбери нормы для этих работ",
+            "Проверь, что входит в найденную норму",
+            "Подготовь черновой подбор по приложенной ВОР",
         ),
     },
-    "doc_review": {
-        "title": "Нормоконтроль",
+    "engineer": {
+        "title": "Инженер",
         "description": "Проверяет проектные документы и формирует замечания со ссылками на требования.",
         "data_hint": "Выберите комплект или приложите PDF; желательно указать стадию и вид проверки.",
         "examples": (
@@ -199,6 +188,15 @@ CHAT_MODE_GUIDANCE = {
         ),
     },
 }
+
+
+def visible_chat_modes() -> tuple[str, ...]:
+    """Modes exposed by the ordinary chat composer."""
+    return ("search", "agent", "estimator", "engineer")
+
+
+def default_chat_mode() -> str:
+    return "agent"
 
 
 def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = None) -> list[dict[str, str]]:
@@ -332,6 +330,18 @@ def _attachment_chat_payload(attachment: dict) -> dict:
     return payload
 
 
+def _preserved_attachment(result: dict | None, sent: dict | None) -> dict:
+    """Return the sent attachment only when backend kept it for a retry."""
+
+    retry = (result or {}).get("attachment_retry") or {}
+    sent_copy = dict(sent or {})
+    if not retry.get("preserved") or not sent_copy.get("id"):
+        return {}
+    if str(retry.get("id") or "") != str(sent_copy.get("id") or ""):
+        return {}
+    return sent_copy
+
+
 def _split_pasted_context_for_payload(
     question: str,
     *,
@@ -412,6 +422,186 @@ def _attachment_user_suffix(attachment: dict) -> str:
     return f"📎 Файл добавлен в базу: {name} · {dataset_name}"
 
 
+def _smeta_clarification_prompt(approval: dict, operator_context: str = "") -> str:
+    """Build an editable rerun request; it never selects or changes a norm in code."""
+    open_items = [item for item in (approval.get("open_items") or []) if isinstance(item, dict)]
+    lines = [
+        "Пересчитай ЛСР по тому же вложению и сначала разбери незакрытые позиции.",
+        (
+            "Если допустимо несколько типовых условий монтажа, либо выбери один разумный вариант "
+            "и явно запиши `ДОПУЩЕНИЕ: <условие>`, либо задай один короткий уточняющий вопрос."
+        ),
+        (
+            "Спрашивай обязательно, только если выбор существенно меняет применимость нормы/стоимость "
+            "или его нельзя ответственно принять. Не оставляй строку пустой только из-за отсутствия описания монтажа."
+        ),
+        "Условия оператора имеют приоритет над твоим допущением. Не фиксируй привязку норм автоматически.",
+    ]
+    if open_items:
+        lines.append("\nНезакрытые позиции:")
+        for item in open_items:
+            quantity = item.get("quantity")
+            volume = " ".join(
+                part
+                for part in (
+                    str(quantity) if quantity is not None else "",
+                    str(item.get("unit") or ""),
+                )
+                if part
+            ).strip()
+            suffix = f" — {volume}" if volume else ""
+            lines.append(f"- {item.get('work_id')}: {item.get('title')}{suffix}")
+    context = str(operator_context or "").strip()
+    lines.append("\nМонтажные условия и допустимые допущения оператора:")
+    lines.append(context if context else "[не указаны — выбери явное ДОПУЩЕНИЕ или задай один вопрос]")
+    return "\n".join(lines)[:4000]
+
+
+def _smeta_decision_label(value: object) -> str:
+    """Localize model/tool states at the UI boundary."""
+    raw = str(value or "").strip()
+    return {
+        "unbound": "Норма не привязана",
+        "missing": "Норма не привязана",
+        "оставлено без нормы": "Норма не привязана",
+        "norm_selection_required": "Норма не привязана",
+        "bind": "Норма привязана",
+        "covered_by": "Учтено другой строкой",
+    }.get(raw.casefold(), raw)
+
+
+def _smeta_conflict_ui(item: dict) -> tuple[str, str]:
+    """Keep machine conflict codes out of the operator-facing review dialog."""
+    code = str(item.get("code") or "").strip().casefold()
+    known = {
+        "unbound_search_intent_narrow": (
+            "Узкий поиск нормы",
+            "Норма оставлена без привязки после слишком узкого поиска. Расширьте варианты или примите решение явно.",
+        ),
+    }
+    if code in known:
+        return known[code]
+    claim = str(item.get("claim") or item.get("reason") or "").strip()
+    if claim and not re.search(r"[A-Za-z_]{3,}", claim):
+        return "Замечание профессиональной проверки", claim
+    return (
+        "Замечание профессиональной проверки",
+        "Проверьте условия выбора нормы перед фиксацией.",
+    )
+
+
+def _smeta_progress_phase_label(value: object) -> str:
+    """Translate internal workflow phase names for the operator log."""
+    raw = str(value or "").strip()
+    known = {
+        "document_workflow": "Сборка ЛСР",
+        "source_batch": "Исходные строки",
+        "model_wait": "Работа модели",
+        "mapping_retry": "Исправление решения",
+        "calculation": "Расчёт",
+        "xlsx": "Файл Excel",
+        "retrieval": "Поиск норм",
+        "rag_context": "Контекст источников",
+        "norm_lookup": "Поиск норм",
+        "norm_choice": "Выбор нормы",
+        "step": "Этап расчёта",
+    }
+    if raw.casefold() in known:
+        return known[raw.casefold()]
+    return raw if raw and not re.search(r"[A-Za-z_]", raw) else "Этап расчёта"
+
+
+def _smeta_progress_text(value: object) -> str:
+    """Hide machine validation codes from user-visible progress labels."""
+    text = str(value or "").strip()
+    replacements = (
+        (r"\binvalid unbound_evidence\b", "недостаточно обоснований для отсутствия нормы"),
+        (r"\bunbound_evidence\b", "обоснование отсутствия нормы"),
+        (r"\bmapping\b", "привязку норм"),
+        (r"\bunbound\b", "норма не привязана"),
+    )
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    return text
+
+
+def _runtime_guard_reason_label(value: object) -> str:
+    """Render resource-admission diagnostics without raw environment keys."""
+    raw = str(value or "").strip()
+    match = re.fullmatch(r"ram_free_gb=([0-9.]+)\s*<\s*([0-9.]+)", raw)
+    if match:
+        free, threshold = (part.replace(".", ",") for part in match.groups())
+        return f"свободная память {free} ГБ ниже порога {threshold} ГБ"
+    match = re.fullmatch(r"swap_pct=([0-9.]+)\s*>\s*([0-9.]+)(?:\s*\(swap_used_gb=([0-9.]+)\))?", raw)
+    if match:
+        used, threshold, used_gb = match.groups()
+        detail = f"использование файла подкачки {used.replace('.', ',')}% выше порога {threshold.replace('.', ',')}%"
+        if used_gb:
+            detail += f"; занято {used_gb.replace('.', ',')} ГБ"
+        return detail
+    match = re.fullmatch(r"active_jobs=(\d+)", raw)
+    if match:
+        return f"выполняются фоновые задачи: {match.group(1)}"
+    if raw == "llm_generation_slots=0":
+        return "все слоты модели заняты"
+    return raw if raw and not re.search(r"[A-Za-z_]", raw) else "недостаточно свободных ресурсов для нового запроса"
+
+
+def _smeta_artifact_rows(artifact: dict | None) -> list[dict]:
+    """Project the authoritative final LSR rows for a complete UI artifact."""
+    artifact = artifact if isinstance(artifact, dict) else {}
+    trace = artifact.get("rim_trace") if isinstance(artifact.get("rim_trace"), dict) else {}
+    positions = [item for item in (trace.get("positions") or []) if isinstance(item, dict)]
+    for section in trace.get("sections") or []:
+        if isinstance(section, dict):
+            positions.extend(item for item in (section.get("positions") or []) if isinstance(item, dict))
+
+    rows: list[dict] = []
+    seen: set[str] = set()
+    for item in positions:
+        work_id = str(item.get("work_id") or "").strip()
+        if not work_id or work_id in seen:
+            continue
+        seen.add(work_id)
+        code = str(item.get("code") or item.get("norm_code") or "").strip()
+        decision = code if code and code.casefold() != "missing" else "unbound"
+        covered_by = str(item.get("covered_by_work_id") or "").strip()
+        if covered_by:
+            decision = covered_by
+        rows.append({
+            "work_id": work_id,
+            "title": str(item.get("name") or item.get("title") or work_id).strip(),
+            "quantity": item.get("qty", item.get("quantity")),
+            "unit": str(item.get("unit") or "").strip(),
+            "norm_code": code if code.casefold() != "missing" else "",
+            "decision": decision,
+        })
+    return rows
+
+
+def _smeta_rows_markdown(rows: list[dict]) -> str:
+    """Build the shared live/history table without changing row decisions."""
+    def cell(value) -> str:
+        return str(value if value not in (None, "") else "—").replace("|", "\\|").replace("\n", " ")
+
+    lines = [
+        "| № | Работа | Объём | Решение |",
+        "|---:|:-------|------:|:--------|",
+    ]
+    for index, item in enumerate(rows, 1):
+        quantity = cell(item.get("quantity"))
+        unit = cell(item.get("unit"))
+        volume = f"{quantity} {unit}" if unit != "—" else quantity
+        decision = cell(_smeta_decision_label(
+            item.get("norm_code")
+            or item.get("decision_label")
+            or item.get("covered_by_work_id")
+            or item.get("decision")
+        ))
+        lines.append(f"| {index} | {cell(item.get('title'))} | {volume} | {decision} |")
+    return "\n".join(lines)
+
+
 def _verify_path(q: str) -> str | None:
     """Путь к скану: в кавычках или абсолютный от первого '/'.
 
@@ -468,7 +658,8 @@ def should_skip_chat_resource_gate(question: str, dataset_filter: str | None = N
 def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     """Строит автономный экран чата: история слева, чат по центру, артефакты справа."""
 
-    out_mode_val = {"v": "text"}
+    out_mode_val = {"v": default_chat_mode()}
+    apply_active_profile = {"v": False}
     selected_session_card = {"el": None}
     project_state = {"id": None}  # W17.1: активный объект (None = обычный RAG по всему)
     _pending_target_file = {"v": ""}
@@ -736,9 +927,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         data = scope_opts_cache["data"] or {}
                         sel_p = set(scope_state["project_ids"]); sel_d = set(scope_state["dataset_ids"])
                         with ui.dialog() as dlg, ui.card().style(
-                            "background:var(--bg-panel);border:1px solid var(--border);min-width:440px;max-width:520px;"
-                            "max-height:72vh;padding:16px;"):
-                            ui.label("Область поиска").style("font-weight:900;font-size:.85rem;margin-bottom:4px;")
+                            "background:var(--bg-panel);border:1px solid var(--border);min-width:620px;max-width:700px;"
+                            "max-height:82vh;padding:18px;"):
+                            with ui.row().classes("sov-scope-dialog-head"):
+                                ui.icon("o_travel_explore").classes("sov-scope-dialog-icon")
+                                with ui.column().classes("gap-0"):
+                                    ui.label("Область поиска").classes("sov-scope-dialog-title")
+                                    ui.label("Выберите источники, которые увидит модель").classes("sov-scope-dialog-subtitle")
                             if not data.get("projects") and not data.get("datasets"):
                                 ui.label("Список проектов и датасетов пока не загрузился.").style(
                                     "font-size:.66rem;color:var(--warn);")
@@ -749,49 +944,86 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 ui.button("Обновить список", icon="o_refresh", on_click=_reload_scope_dialog).props(
                                     "dense flat no-caps"
                                 ).style("font-size:.64rem;color:var(--accent);")
-                            search = ui.input(placeholder="Найти проект или датасет…").props(
-                                "dense outlined clearable").style("width:100%;font-size:.7rem;")
+                            search = ui.input(placeholder="Поиск по проектам и базам…").props(
+                                "dense outlined clearable prepend-icon=o_search").classes("sov-scope-search")
+                            selection_note = ui.label(
+                                f"Выбрано: {len(sel_p) + len(sel_d)}"
+                            ).classes("sov-scope-selection-note")
+
+                            def _update_selection_note() -> None:
+                                selection_note.set_text(f"Выбрано: {len(sel_p) + len(sel_d)}")
+
+                            def _dataset_title(item: dict) -> str:
+                                return str(item.get("display_name") or item.get("name") or item.get("id") or "Источник")
+
+                            def _dataset_meta(item: dict) -> str:
+                                files = int(item.get("file_count") or 0)
+                                chunks = int(item.get("chunk_count") or 0)
+                                parts = [f"{files} файлов"]
+                                if chunks:
+                                    parts.append(f"{chunks:,}".replace(",", " ") + " фрагментов")
+                                if str(item.get("dataset_scope") or "") == "system":
+                                    parts.append("база ЛЕС")
+                                return " · ".join(parts)
+
                             with ui.scroll_area().style("max-height:46vh;width:100%;"):
                                 def _row_match(name: str) -> bool:
                                     q = (search.value or "").strip().lower()
                                     return not q or q in name.lower()
 
-                                def _cb(label, key, store, sub=""):
-                                    cb = ui.checkbox(label, value=key in store).props("dense").style("font-size:.7rem;")
-                                    cb.on("update:model-value", lambda e, k=key, s=store: (s.add(k) if e.args else s.discard(k)))
-                                    if sub:
-                                        ui.label(sub).style("font-size:.55rem;color:var(--dim);margin:-6px 0 2px 28px;")
+                                def _cb(label, key, store, sub="", *, icon="o_dataset", disabled=False):
+                                    card_classes = "sov-scope-option-card"
+                                    if disabled:
+                                        card_classes += " sov-scope-option-disabled"
+                                    with ui.element("div").classes(card_classes):
+                                        ui.icon(icon).classes("sov-scope-option-icon")
+                                        with ui.column().classes("sov-scope-option-copy"):
+                                            ui.label(label).classes("sov-scope-option-title")
+                                            if sub:
+                                                ui.label(sub).classes("sov-scope-option-meta")
+                                        cb = ui.checkbox(value=key in store).props("dense color=primary")
+
+                                    def _toggle(e, k=key, s=store):
+                                        s.add(k) if e.args else s.discard(k)
+                                        _update_selection_note()
+
+                                    cb.on("update:model-value", _toggle)
+                                    if disabled:
+                                        cb.disable()
                                     return cb
 
-                                ui.label("ПРОЕКТЫ").style("font-size:.56rem;font-weight:800;color:var(--dim);margin-top:6px;")
+                                ui.label("ПРОЕКТЫ").classes("sov-scope-section-title")
                                 for p in data.get("projects", []):
                                     if _row_match(str(p["name"])):
-                                        warn = " ⚠ нет датасетов" if not p.get("dataset_count") else ""
-                                        _cb(f"🏗 {p['name']}", int(p["id"]), sel_p,
-                                            sub=f"{p.get('dataset_count',0)} датасетов{warn}")
+                                        count = int(p.get("dataset_count") or 0)
+                                        sub = f"{count} датасетов" if count else "Нет подключённых датасетов"
+                                        _cb(str(p["name"]), int(p["id"]), sel_p, sub=sub,
+                                            icon="o_workspaces", disabled=not count)
                                 _unassigned_ids = {str(d["id"]) for d in data.get("unassigned_datasets", [])}
                                 assigned = [d for d in data.get("datasets", []) if str(d["id"]) not in _unassigned_ids]
                                 if assigned:
-                                    ui.label("ДАТАСЕТЫ (в проектах)").style("font-size:.56rem;font-weight:800;color:var(--dim);margin-top:8px;")
+                                    ui.label("ДАТАСЕТЫ ПРОЕКТОВ").classes("sov-scope-section-title")
                                     for d in assigned:
                                         if _row_match(str(d["name"])):
-                                            _cb(str(d["name"])[:40], str(d["id"]), sel_d,
-                                                sub=f"{d.get('file_count',0)} файлов · {d.get('source_type','')}")
+                                            _cb(_dataset_title(d), str(d["id"]), sel_d,
+                                                sub=_dataset_meta(d), icon="o_folder_copy")
                                 if data.get("unassigned_datasets"):
-                                    ui.label("НЕПРИВЯЗАННЫЕ ДАТАСЕТЫ").style("font-size:.56rem;font-weight:800;color:var(--warn);margin-top:8px;")
+                                    ui.label("ОТДЕЛЬНЫЕ ИСТОЧНИКИ").classes("sov-scope-section-title")
                                     for d in data.get("unassigned_datasets", []):
                                         if _row_match(str(d["name"])):
-                                            _cb(str(d["name"])[:40], str(d["id"]), sel_d,
-                                                sub=f"{d.get('file_count',0)} файлов · {d.get('source_type','')}")
+                                            _cb(_dataset_title(d), str(d["id"]), sel_d,
+                                                sub=_dataset_meta(d), icon="o_description")
                                 if data.get("system_datasets"):
-                                    with ui.expansion(f"Системные ({len(data['system_datasets'])})").props("dense").style("font-size:.6rem;margin-top:8px;"):
-                                        for d in data.get("system_datasets", []):
-                                            _cb(str(d["name"])[:40], str(d["id"]), sel_d,
-                                                sub=str(d.get("hidden_reason", "служебный")))
-                            with ui.row().style("gap:8px;margin-top:10px;justify-content:flex-end;width:100%;"):
-                                ui.button("Все источники", on_click=lambda: (_apply_scope(set(), set()), dlg.close())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
-                                ui.button("Сбросить", on_click=lambda: (sel_p.clear(), sel_d.clear())).props("flat dense no-caps").style("color:var(--dim);font-size:.64rem;")
-                                ui.button("Применить", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("dense no-caps").style("color:var(--accent);font-size:.64rem;")
+                                    ui.label("БАЗЫ ЛЕС").classes("sov-scope-section-title")
+                                    for d in data.get("system_datasets", []):
+                                        available = bool(int(d.get("file_count") or 0)) or str(d.get("qdrant_status")) == "indexed"
+                                        meta = _dataset_meta(d) if available else "Пока нет загруженных данных"
+                                        _cb(_dataset_title(d), str(d["id"]), sel_d,
+                                            sub=meta, icon="o_auto_stories", disabled=not available)
+                            with ui.row().classes("sov-scope-dialog-actions"):
+                                ui.button("Все источники", on_click=lambda: (_apply_scope(set(), set()), dlg.close())).props("flat no-caps")
+                                ui.button("Очистить выбор", on_click=lambda: (sel_p.clear(), sel_d.clear(), _update_selection_note())).props("flat no-caps")
+                                ui.button("Применить выбор", icon="o_check", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("unelevated no-caps color=primary")
                         dlg.open()
 
                     async def _scope_click():
@@ -829,7 +1061,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     with ui.row().classes("sov-technical-status") as technical_status:
                         mode_chip = ui.label("RAG").classes("sov-chip")
                         validation_chip = ui.label("CRAG ON").classes("sov-chip")
-                        model_chip = ui.label("MODEL -").classes("sov-chip sov-model-chip")
+                        model_chip = ui.label("МОДЕЛЬ —").classes("sov-chip sov-model-chip")
                     technical_status.set_visibility(False)
                     action_button(
                         "Новый чат",
@@ -866,9 +1098,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         '<div class="sov-chat-empty-copy">Выберите режим, область поиска или прикрепите файл.</div>'
                         '</div>'
                     )}
-
-            indexing_banner = ui.label("").classes("sov-indexing-banner")
-            indexing_banner.set_visibility(False)
 
             # Скрепка чата: файл к следующему сообщению / быстрая сверка / индексация (W11.8)
             attach_state = {"id": None, "name": "", "mode": "", "text": ""}
@@ -967,6 +1196,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ui.notify("Вложение снято", type="info")
 
             with ui.element("div").classes("sov-composer") as composer_box:
+                indexing_banner = ui.label("").classes("sov-indexing-banner")
+                indexing_banner.set_visibility(False)
                 with ui.row().classes("sov-composer-prompt-head"):
                     ui.label("Ваш запрос").classes("sov-composer-prompt-label")
                     ui.label("Enter — отправить · Shift+Enter — новая строка").classes(
@@ -994,11 +1225,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 # Режим только направляет модель к подходящему workflow. Подсказки объясняют
                 # ожидаемые данные, но не превращаются в шаблон ответа или keyword-gate.
                 _MODE_CHIPS = (
-                    ("text", "o_auto_awesome", "Авто"),
-                    ("rag", "o_search", "Поиск"),
+                    ("search", "o_search", "Поиск"),
                     ("agent", "o_travel_explore", "Агент"),
-                    ("smeta", "o_calculate", "Смета в чате"),
-                    ("doc_review", "o_fact_check", "Нормоконтроль"),
+                    ("estimator", "o_calculate", "Сметчик"),
+                    ("engineer", "o_engineering", "Инженер"),
                 )
                 _mode_chip_refs: dict = {}
                 _mode_hint_refs: dict = {}
@@ -1009,7 +1239,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     return base
 
                 def _set_mode(m: str) -> None:
-                    new = "text" if out_mode_val["v"] == m else m  # повторный клик по активному → авто
+                    new = m
                     out_mode_val["v"] = new
                     for _k, _btn in _mode_chip_refs.items():
                         _btn.style(_chip_style(_k == new))
@@ -1027,6 +1257,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             _chip_style(_m == out_mode_val["v"])
                         )
                         _mode_chip_refs[_m] = _cb
+                    action_button(
+                        "Применить активную версию",
+                        icon="o_sync",
+                        on_click=lambda: (
+                            apply_active_profile.__setitem__("v", True),
+                            ui.notify("Активная версия применится к следующему сообщению", type="info"),
+                        ),
+                        variant="quiet",
+                        compact=True,
+                    )
 
                 with ui.element("div").classes("sov-mode-guides"):
                     for _mode_key, _guide in CHAT_MODE_GUIDANCE.items():
@@ -1398,8 +1638,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             from urllib.parse import quote as _q
             for dsid in ds_ids[:3]:
                 memory = await api_get(f"/api/notebooks/{_q(dsid, safe='')}/memory")
-                if isinstance(memory, dict):
-                    memories.append(memory)
+                memory = dict(memory) if isinstance(memory, dict) else {}
+                if not memory.get("file_cards"):
+                    registry = await api_get(
+                        f"/api/rag/documents?dataset_id={_q(dsid, safe='')}&limit=100"
+                    )
+                    if isinstance(registry, dict):
+                        memory["file_cards"] = list(registry.get("documents") or [])
+                memory.setdefault("dataset_id", dsid)
+                memories.append(memory)
             scope_files_panel.clear()
             with scope_files_panel:
                 with ui.row().classes("sov-scope-files-head"):
@@ -1830,10 +2077,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     def _source_label(source) -> str:
         # v0.16: «N · file · абз.85» вместо сырого пути; нет ref → «без ссылки» (не фейк-линк).
         from sovushka.answer_render import source_chip
-        if isinstance(source, dict) and not source.get("source_ref") and (source.get("file") or source.get("name")):
-            return str(source.get("file") or source.get("name"))
         c = source_chip(source)
         if not c["has_ref"]:
+            if isinstance(source, dict):
+                return str(source.get("doc_name") or source.get("file") or source.get("name") or "без ссылки")
             return str(source) or "без ссылки"
         parts = [c["file"]] + ([c["locator"]] if c["locator"] else [])
         return " · ".join(p for p in parts if p)
@@ -1873,8 +2120,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         citation_text = f"{title}\n{item.get('snippet') or source_ref_val}".strip()
                         _copy_button("Цитату", citation_text, icon="o_format_quote", classes="sov-answer-act")
                         
-                        async def _do_native_open(ref_path=source_ref_val) -> None:
-                            data = await api_post(f"/api/documents/open-native-by-ref?path={quote(ref_path, safe='')}")
+                        async def _do_native_open(native_url=str(item.get("native_open_url") or "")) -> None:
+                            data = await api_post(native_url) if native_url else None
                             if isinstance(data, dict) and data.get("status") == "opened":
                                 ui.notify("Файл открыт в системном приложении", type="positive")
                             else:
@@ -1900,38 +2147,74 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 if item.get("snippet"):
                     ui.markdown(f"> {item['snippet']}").classes("sov-artifact-markdown").style("margin-top:8px;")
 
+    def _show_sources_artifact(sources: list, answer: str = "") -> None:
+        """Render all prompt-visible citations as one auditable artifact."""
+        from sovushka.answer_render import answer_copy_text, citation_drawer_item
+
+        _open_artifacts()
+        artifact_panel.clear()
+        with artifact_panel:
+            with ui.card().classes("sov-artifact-card"):
+                ui.label("Источники ответа").classes("sov-panel-title")
+                ui.label(
+                    f"{len(sources)} документов и фрагментов, показанных модели"
+                ).classes("sov-ui-section-detail")
+                with ui.column().classes("sov-source-list"):
+                    for index, source in enumerate(sources, 1):
+                        item = citation_drawer_item(source, index)
+                        title = str(item.get("file") or f"Источник {index}")
+                        if item.get("locator"):
+                            title += f" · {item['locator']}"
+                        with ui.element("section").classes("sov-source-row sov-ui-evidence-card"):
+                            target = str(item.get("open_url") or "")
+                            if target:
+                                ui.link(title, target, new_tab=True).classes(
+                                    "sov-source-primary sov-ui-source-chip"
+                                ).tooltip("Открыть исходный документ в точном месте")
+                            else:
+                                ui.button(
+                                    title,
+                                    icon="o_description",
+                                    on_click=lambda s=source, n=index: _show_source_drawer(s, n),
+                                ).props("flat dense no-caps").classes(
+                                    "sov-source-primary sov-ui-source-chip"
+                                )
+                            if item.get("snippet"):
+                                ui.markdown(f"> {item['snippet']}").classes("sov-artifact-markdown")
+                _copy_button(
+                    "Скопировать с источниками",
+                    answer_copy_text(answer, sources, with_sources=True),
+                    icon="o_content_copy",
+                    classes="sov-answer-act",
+                )
+
     def _render_source_tags(
         srcs: list,
         crag: str = "",
         meta: dict | None = None,
         answer: str = "",
     ):
-        from sovushka.answer_render import citation_drawer_item, source_chip
+        from sovushka.answer_render import citation_drawer_item, citation_sources, source_chip
+        effective_sources = citation_sources(
+            srcs,
+            (meta or {}).get("source_map") if isinstance(meta, dict) else None,
+        )
         if not srcs and not crag and not meta:
             return
 
-        if srcs:
+        if effective_sources:
             with ui.expansion(
-                f"Источники · {len(srcs)}",
+                f"Источники · {len(effective_sources)}",
                 icon="o_library_books",
                 value=False,
             ).props("dense").classes("sov-source-expansion"):
                 with ui.column().classes("sov-source-list"):
-                    for i, source in enumerate(srcs, 1):
+                    for i, source in enumerate(effective_sources, 1):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
                         lbl = f"{i}. {_source_label(source)}"
                         with ui.row().classes("sov-source-row sov-ui-evidence-card"):
-                            if item.get("viewer_url"):
-                                primary = ui.button(
-                                    lbl,
-                                    icon="o_description",
-                                    on_click=lambda s=source, n=i: _show_source_drawer(s, n),
-                                ).props("flat dense no-caps").classes(
-                                    "sov-source-primary sov-ui-source-chip"
-                                )
-                                primary.tooltip("Открыть внутри Л.И.С.Т." + (f" · {c['locator']}" if c["locator"] else ""))
-                            elif item.get("open_url"):
+                            if item.get("open_url"):
                                 with ui.link(
                                     target=str(item["open_url"]),
                                     new_tab=True,
@@ -1953,6 +2236,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     "sov-source-primary sov-source-unavailable sov-ui-source-chip"
                                 )
                                 primary.tooltip("У источника нет точной ссылки")
+            action_button(
+                "Источники и цитаты",
+                icon="o_format_quote",
+                on_click=lambda ss=list(effective_sources), a=answer: _show_sources_artifact(ss, a),
+                variant="secondary",
+                compact=True,
+                classes="sov-sources-artifact-action",
+            )
 
         with ui.row().classes("msg-srcs sov-source-tools"):
             if crag:
@@ -2486,10 +2777,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     def _format_sources_as_quotes(text: str) -> str:
         """Keep prose readable: source service lines are replaced by links below the answer."""
-        from sovushka.answer_render import split_inline_source_notes
+        from sovushka.answer_render import normalize_inline_math, split_inline_source_notes
 
         body, _notes = split_inline_source_notes(text)
-        return body
+        return normalize_inline_math(body)
 
     # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──
     # Ответ режется на сегменты по месту блока (mermaid-fence, markdown-таблица),
@@ -2755,11 +3046,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     async def _perform_smeta_lock(approval: dict, accepted_conflict_ids: list[str]) -> None:
         revision_id = str(approval.get("mapping_revision_id") or "").strip()
         if revision_id in _smeta_locked_revisions:
-            ui.notify("Эта mapping-ревизия уже зафиксирована", type="info")
+            ui.notify("Эта ревизия привязки норм уже зафиксирована", type="info")
             return
         lock_url = str(approval.get("lock_url") or "").strip()
         if not lock_url:
-            ui.notify("Mapping-ревизия для фиксации не найдена", type="negative")
+            ui.notify("Ревизия привязки норм для фиксации не найдена", type="negative")
             return
         result = await api_post(lock_url, {
             "review_note": (
@@ -2769,16 +3060,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "accepted_conflict_ids": accepted_conflict_ids,
         })
         if not isinstance(result, dict) or result.get("status") != "mapping_locked":
-            ui.notify(last_api_error_text("Не удалось зафиксировать mapping"), type="negative")
+            ui.notify(last_api_error_text("Не удалось зафиксировать привязку норм"), type="negative")
             return
         _register_artifact_downloads({"artifact": result.get("artifact") or {}})
         if revision_id:
             _smeta_locked_revisions.add(revision_id)
-        ui.notify("Mapping зафиксирован. Проверенная ЛСР пересчитана отдельной ревизией.", type="positive")
+        ui.notify("Привязка норм зафиксирована. Проверенная ЛСР пересчитана отдельной ревизией.", type="positive")
 
     async def _lock_smeta_mapping(approval: dict) -> None:
         conflicts = list(approval.get("professional_conflicts") or [])
-        if not conflicts:
+        open_items = [item for item in (approval.get("open_items") or []) if isinstance(item, dict)]
+        if not conflicts and not open_items:
             await _perform_smeta_lock(approval, [])
             return
         accepted_ids = [
@@ -2786,19 +3078,72 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             for item in conflicts if str(item.get("conflict_id") or "")
         ]
         with ui.dialog() as dialog, ui.card().classes("sov-advanced-dialog"):
-            ui.label("Профессиональные конфликты").classes("sov-panel-title")
+            ui.label("Разбор замечаний перед фиксацией").classes("sov-panel-title")
             ui.label(
-                "Проверьте перечисленные противоречия и лист «Проверка». Фиксация не меняет "
-                "решение модели, а записывает ваше явное принятие в новой ревизии."
+                "Незакрытые позиции можно вернуть модели с монтажными условиями или явными "
+                "допущениями. Фиксация не исправляет решения, а только записывает ваше принятие "
+                "текущего черновика в новой ревизии."
             ).classes("sov-muted")
             with ui.scroll_area().style("max-height:45vh;width:100%;"):
-                for item in conflicts:
+                for item in open_items:
                     with ui.card().classes("sov-control-card"):
-                        ui.label(str(item.get("code") or "conflict")).classes("sov-smeta-approval-badge")
-                        ui.label(str(item.get("claim") or "Требуется профессиональная проверка"))
-            confirmation = ui.checkbox(
-                f"Я проверил и принимаю все конфликты ({len(conflicts)})"
+                        ui.label(str(item.get("work_id") or "MISSING")).classes("sov-smeta-approval-badge")
+                        ui.label(str(item.get("title") or "Незакрытая позиция"))
+                        quantity = item.get("quantity")
+                        volume = " ".join(
+                            part for part in (
+                                str(quantity) if quantity is not None else "",
+                                str(item.get("unit") or ""),
+                            ) if part
+                        ).strip()
+                        if volume:
+                            ui.label(volume).classes("sov-muted")
+                for item in conflicts:
+                    conflict_title, conflict_detail = _smeta_conflict_ui(item)
+                    with ui.card().classes("sov-control-card"):
+                        ui.label(conflict_title).classes("sov-smeta-approval-badge")
+                        ui.label(conflict_detail)
+            operator_context = ui.textarea(
+                label="Монтажные условия или допустимые допущения",
+                placeholder=(
+                    "Например: прокладка в металлическом лотке; длину считать по трассе; "
+                    "если данных недостаточно — сначала спросить"
+                ),
+            ).props("outlined autogrow stack-label").classes("sov-ui-input w-full")
+            confirmation_text = (
+                f"Я проверил и принимаю текущую привязку норм с конфликтами ({len(conflicts)})"
+                if conflicts
+                else "Я проверил и принимаю привязку норм с незакрытыми позициями"
             )
+            confirmation = ui.checkbox(confirmation_text)
+
+            def prepare_clarification() -> None:
+                attachment = approval.get("attachment") if isinstance(approval.get("attachment"), dict) else {}
+                attachment_id = str(attachment.get("id") or "").strip()
+                if attachment_id:
+                    pending = {
+                        "id": attachment_id,
+                        "name": str(attachment.get("name") or "сметный источник"),
+                        "mode": "read",
+                        "text": "",
+                        "chars": 0,
+                        "rows": 0,
+                        "truncated": False,
+                        "dataset_name": "",
+                    }
+                    attach_state.update(pending)
+                    title, detail, _chat_msg = _attachment_visible_text(pending)
+                    attach_title.set_text(title)
+                    attach_chip.set_text(detail)
+                    attach_strip.set_visibility(True)
+                    attach_status.set_text("Исходный файл возвращён к следующему сметному запросу")
+                chat_input.value = _smeta_clarification_prompt(approval, str(operator_context.value or ""))
+                chat_input.update()
+                dialog.close()
+                if attachment_id:
+                    ui.notify("Уточнение подготовлено в поле запроса — проверьте и отправьте", type="positive")
+                else:
+                    ui.notify("Уточнение подготовлено. Артефакт старого формата: прикрепите исходный файл повторно", type="warning")
 
             async def confirm_lock() -> None:
                 if not confirmation.value:
@@ -2807,13 +3152,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 dialog.close()
                 await _perform_smeta_lock(approval, accepted_ids)
 
-            with ui.row().classes("w-full justify-end gap-2"):
-                ui.button("Отмена", on_click=dialog.close).props("flat no-caps")
-                ui.button(
-                    "Принять и зафиксировать",
+            with ui.row().classes("w-full justify-end gap-2 sov-smeta-review-actions"):
+                action_button("Отмена", on_click=dialog.close, variant="quiet", compact=True)
+                action_button(
+                    "Подготовить уточнение",
+                    icon="o_question_answer",
+                    on_click=prepare_clarification,
+                    variant="primary",
+                    compact=True,
+                )
+                action_button(
+                    "Принять текущую привязку норм",
                     icon="o_task_alt",
-                    on_click=lambda: asyncio.create_task(confirm_lock()),
-                ).props("no-caps")
+                    on_click=confirm_lock,
+                    variant="danger",
+                    compact=True,
+                )
         dialog.open()
 
     def _register_artifact_downloads(meta: dict | None) -> None:
@@ -2840,13 +3194,20 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         f"Профессиональные конфликты: {len(conflicts)}" if conflicts
                         else "Межстрочная проверка завершена. Нужна фиксация пользователем."
                     ).classes("sov-muted")
-                    button = ui.button(
-                        "Разобрать и зафиксировать" if conflicts else "Проверил — зафиксировать",
+                    async def review_smeta_mapping(
+                        current_approval: dict = dict(approval),
+                    ) -> None:
+                        await _lock_smeta_mapping(current_approval)
+
+                    button = action_button(
+                        "Разобрать замечания" if (conflicts or approval.get("open_items")) else "Проверил — зафиксировать",
                         icon="o_task_alt",
-                        on_click=lambda a=dict(approval): asyncio.create_task(_lock_smeta_mapping(a)),
-                    ).props("no-caps")
-                    if conflicts:
-                        button.tooltip("Открыть список конфликтов и подтвердить каждый одной ревизией")
+                        on_click=review_smeta_mapping,
+                        variant="secondary",
+                        compact=True,
+                    )
+                    if conflicts or approval.get("open_items"):
+                        button.tooltip("Показать незакрытые строки, уточнить условия или отдельно принять текущую привязку норм")
         for ext, label in (("xlsx", "Excel"), ("csv", "CSV")):
             url = str(downloads.get(ext) or "").strip()
             if url:
@@ -2938,14 +3299,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         llm_provider = proxy.get("llm_provider") if isinstance(proxy.get("llm_provider"), dict) else {}
         label = _model_label(llm_provider.get("provider", ""), llm_provider.get("model", ""))
         if label:
-            model_chip.set_text(f"MODEL {label}")
+            model_chip.set_text(f"МОДЕЛЬ {label}")
         else:
-            model_chip.set_text("MODEL -")
+            model_chip.set_text("МОДЕЛЬ —")
 
     def _render_model_badge(meta: dict | None) -> None:
         label = _answer_model_label(meta)
         if label:
-            ui.label(f"MODEL {label}").classes("sov-model-badge").tooltip(
+            ui.label(f"МОДЕЛЬ {label}").classes("sov-model-badge").tooltip(
                 "Модель/провайдер этого ответа"
             )
 
@@ -2986,7 +3347,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _render_source_tags(srcs or [], crag, meta, str(text or ""))
             if meta:
                 _render_suggestions(meta)
-                _render_excerpts(meta)
+                if not isinstance(meta.get("source_map"), list) or not meta.get("source_map"):
+                    _render_excerpts(meta)
                 if _is_ai:
                     _artifact_button(str(text or ""), _mode, meta, srcs or [])
             if _is_ai and str(text or "").strip():
@@ -3031,7 +3393,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _render_source_tags(srcs or [], crag, meta, str(text or ""))
             if meta:
                 _render_suggestions(meta)
-                _render_excerpts(meta)
+                if not isinstance(meta.get("source_map"), list) or not meta.get("source_map"):
+                    _render_excerpts(meta)
                 if not error:
                     _artifact_button(str(text or ""), meta.get("out_mode", "text"), meta, srcs or [])
             if not error and str(text or "").strip():
@@ -3063,6 +3426,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if state.get("chat_pending"):
                 pending_q = state["chat_pending"].get("question", "")
                 _render_chat_bubble(f"Запрос выполняется: {pending_q[:80]}", "chat-msg-ai typing")
+        for msg in reversed(state.get("chat_history", [])):
+            meta = msg.get("meta") if isinstance(msg, dict) and isinstance(msg.get("meta"), dict) else {}
+            rows = _smeta_artifact_rows(meta.get("artifact"))
+            if rows:
+                _show_artifact(
+                    f"### Черновой подбор норм\n\n"
+                    f"Строк в итоговом черновике: {len(rows)}. Показаны все позиции, включая строки без привязанной нормы.\n\n"
+                    f"{_smeta_rows_markdown(rows)}",
+                    "markdown",
+                )
+                break
 
     def _apply_loaded_session() -> bool:
         """Подхват сессии, выбранной в ИСТОРИИ. Вызывается и при построении,
@@ -3247,12 +3621,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         pending = totals.get("pending_files", "—")
         errors = totals.get("error_files", "—")
         chunks = totals.get("chunks", "—")
-        reason = data.get("chat_generation_reason") or "Индексация активна."
+        reason = _runtime_guard_reason_label(
+            data.get("chat_generation_reason") or "Индексация активна."
+        )
         if not data.get("active"):
-            return f"Чат временно заблокирован защитой runtime. {reason}"
+            return f"Чат временно заблокирован защитой ресурсов. {reason}."
         return (
             f"Индексация активна: чат заблокирован. "
-            f"indexed={indexed} · pending={pending} · errors={errors} · chunks={chunks}. "
+            f"Проиндексировано: {indexed} · ожидают: {pending} · ошибок: {errors} · фрагментов: {chunks}. "
             f"{reason}"
         )
 
@@ -3396,18 +3772,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         # Авто-GOST: «собери/составь спецификацию …» → формат спеки (ГОСТ 21.110), чтобы
         # артефакт был чистой таблицей по форме, а не прозой. Не липко — селектор вернём.
         _orig_mode = out_mode_val["v"]
-        if _orig_mode == "text" and _is_spec_request(question):
+        if _orig_mode not in visible_chat_modes() and _is_spec_request(question):
             out_mode_val["v"] = "spec"
         out_mode = out_mode_val["v"]
         # МАРШРУТНЫЕ РЕЖИМЫ: backend форсит путь по полю mode (минуя угадайку роутера).
         #   smeta → model+RAG сметчик; review → таблица проверки; kp → текст-задел; rag → заземлённый RAG;
         #   free → вольный LLM без ретрива. Прочие out_mode (table/svg/…) — обычный формат-режим.
-        _ROUTING_MODES = {"smeta", "review", "kp", "rag", "agent", "free", "doc_review"}
+        _ROUTING_MODES = {
+            "search", "agent", "estimator", "engineer",
+            "smeta", "review", "kp", "rag", "free", "doc_review",
+        }
         _routing_mode = out_mode if out_mode in _ROUTING_MODES else None
-        is_smeta_mode = (out_mode == "smeta")
-        _ph_map = {"smeta": "Думаю как сметчик…", "review": "Проверяю проект…", "kp": "Готовлю КП…",
+        is_smeta_mode = (out_mode == "estimator")
+        _ph_map = {"estimator": "Думаю как сметчик…", "engineer": "Проверяю проект…", "kp": "Готовлю КП…",
                    "agent": "Исследую источники и файлы…",
-                   "free": "Думаю вольно…", "rag": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
+                   "free": "Думаю вольно…", "search": "Ищу в документах…", "doc_review": "Проверяю по ГОСТ…"}
         _initial_status = _ph_map.get(out_mode, "Генерирую…")
         # рендер ответа: смета теперь проза model+RAG; проверка → таблица; вольный/раг/кп → текст.
         _render_mode = "table" if out_mode == "review" else ("text" if _routing_mode else out_mode)
@@ -3442,6 +3821,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         "font-size:.62rem;line-height:1.45;color:var(--dim);margin-top:8px;padding-top:7px;"
                         "border-top:1px dashed var(--border);max-height:190px;overflow:auto;"
                     )
+
+            def _render_smeta_live_rows(*, final: bool = False) -> None:
+                if smeta_live_table is None or not smeta_live_rows:
+                    return
+                content = _smeta_rows_markdown(list(smeta_live_rows.values()))
+                smeta_live_table.set_content(content)
+                smeta_live_table.style(remove="display:none;")
+                smeta_live_table.update()
+                ready = len(smeta_live_rows)
+                note = (
+                    f"Строк в итоговом черновике: {ready}. Показаны все позиции, включая строки без привязанной нормы."
+                    if final
+                    else f"Готово строк: {ready}. Артефакт обновляется после каждой завершённой строки."
+                )
+                _show_artifact(f"### Черновой подбор норм\n\n{note}\n\n{content}", "markdown")
         _scroll_chat_to_tail(force=True)
         add_log(f'[AI] Запрос: "{payload_question[:60]}"')
 
@@ -3457,6 +3851,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "session_id": state.get("session_id"),
             "response_length": str(response_length_select.value or "standard"),
         }
+        if apply_active_profile["v"]:
+            payload["apply_profile_revision"] = True
+            apply_active_profile["v"] = False
         target_files = [str(x).strip() for x in (_pending_target_files.get("v") or []) if str(x).strip()]
         if target_files:
             payload["target_files"] = target_files
@@ -3483,9 +3880,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             payload["attachment_context"] = (
                 f"{existing_ctx}\n\n{pasted_context}" if existing_ctx else pasted_context
             )[:20000]
-        if sent_attachment:
-            _clear_attachment(notify=False)
-
         _t0 = time.monotonic()
         _stop_tick = {"v": False}
         _status_text = {"v": _initial_status}
@@ -3547,6 +3941,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         def _apply_chat_result(d: dict) -> None:
             """Применяет финальный payload (общий для стрима и нестриминга):
             форматированный ответ, источники, вердикт, артефакт."""
+            if sent_attachment and not _preserved_attachment(d, sent_attachment):
+                _clear_attachment(notify=False)
             ans = d.get("answer", d.get("response", "Нет ответа"))
             srcs = d.get("sources", [])
             crag = d.get("crag_status", "")
@@ -3584,6 +3980,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "project_inventory": d.get("project_inventory") or {},
                 "versions": d.get("versions") or {},
             }
+            if is_smeta_mode:
+                final_rows = _smeta_artifact_rows(meta.get("artifact"))
+                for row in final_rows:
+                    work_id = str(row.get("work_id") or "").strip()
+                    if work_id:
+                        smeta_live_rows[work_id] = {**smeta_live_rows.get(work_id, {}), **row}
+                if final_rows:
+                    _render_smeta_live_rows(final=True)
             state["chat_history"].append({"role": "ai", "text": ans, "srcs": srcs, "crag": crag, "meta": meta})
             _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, ans, srcs, crag, meta=meta)
             _register_artifact_downloads(meta)
@@ -3649,29 +4053,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         smeta_live_rows[work_id] = row
                     ready = len(smeta_live_rows)
                     _status_text["v"] = f"Смета: готово {ready} строк"
-                    if smeta_live_table is not None:
-                        def cell(value) -> str:
-                            return str(value if value not in (None, "") else "—").replace("|", "\\|").replace("\n", " ")
-
-                        lines = [
-                            "| № | Работа | Объём | Решение |",
-                            "|---:|:-------|------:|:--------|",
-                        ]
-                        for index, item in enumerate(smeta_live_rows.values(), 1):
-                            quantity = cell(item.get("quantity"))
-                            unit = cell(item.get("unit"))
-                            volume = f"{quantity} {unit}" if unit != "—" else quantity
-                            decision = cell(
-                                item.get("norm_code")
-                                or item.get("decision_label")
-                                or item.get("covered_by_work_id")
-                            )
-                            lines.append(
-                                f"| {index} | {cell(item.get('title'))} | {volume} | {decision} |"
-                            )
-                        smeta_live_table.set_content("\n".join(lines))
-                        smeta_live_table.style(remove="display:none;")
-                        smeta_live_table.update()
+                    _render_smeta_live_rows()
                     elapsed = int(time.monotonic() - _t0)
                     ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                     ai_placeholder_label.update()
@@ -3680,10 +4062,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             elif event == "smeta_step":
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict):
-                    label = str(payload.get("label") or "").strip() or "Смета: выполняю этап..."
+                    label = _smeta_progress_text(payload.get("label")) or "Смета: выполняю этап..."
                     _status_text["v"] = label
                     if smeta_operator_log is not None:
-                        phase = str(payload.get("phase") or "step")
+                        raw_phase = str(payload.get("phase") or "step")
+                        phase = _smeta_progress_phase_label(raw_phase)
                         elapsed_line = int(time.monotonic() - _t0)
                         detail_bits = []
                         if payload.get("turn") is not None:
@@ -3693,10 +4076,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         if payload.get("model_wait_ms"):
                             detail_bits.append(f"модель {float(payload.get('model_wait_ms')) / 1000:.1f}с")
                         if payload.get("tool_count"):
-                            detail_bits.append(f"tools {payload.get('tool_count')}")
+                            detail_bits.append(f"инструментов {payload.get('tool_count')}")
                         if payload.get("unique_queries_count"):
                             detail_bits.append(f"запросов {payload.get('unique_queries_count')}")
-                        if phase == "retrieval" and payload.get("status") == "done":
+                        if raw_phase == "retrieval" and payload.get("status") == "done":
                             rag_ms = sum(float(payload.get(key) or 0.0) for key in ("embedding_ms", "retrieval_ms", "rerank_ms"))
                             detail_bits.append(f"RRF {rag_ms / 1000:.2f}с")
                         suffix = f" · {' · '.join(detail_bits)}" if detail_bits else ""

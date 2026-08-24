@@ -229,7 +229,6 @@ async def classic_chat_page(request: Request):
     from sovushka.pages.documents import build_documents
     from sovushka.pages.history import build_history
     from sovushka.pages.mail import build_mail
-    from sovushka.pages.rim import build_rim
     from sovushka.pages.samovar import build_samovar
     from sovushka.uikit.components import lazy_tab_panels
 
@@ -250,7 +249,6 @@ async def classic_chat_page(request: Request):
             admin_tabs=False,
             include_datasets=is_admin,
             include_documents=True,
-            include_rim=True,
             admin_link=is_admin,
             active_primary=(
                 "studio"
@@ -264,7 +262,6 @@ async def classic_chat_page(request: Request):
         tab_documents = tr.get("documents")
         tab_studio = tr.get("studio")
         tab_cad_bim = tr.get("cad_bim")
-        tab_rim = tr.get("rim")
         tab_mail = tr.get("mail")
         tab_history = tr["history"]
 
@@ -287,8 +284,6 @@ async def classic_chat_page(request: Request):
             "Документы": tab_documents,
             "Студия": tab_studio,
             "CAD/BIM": tab_cad_bim,
-            "РИМ-смета": tab_rim,
-            "Сметный проект": tab_rim,
             "Почта": tab_mail,
             "ИСТОРИЯ": tab_history,
         }.get(_last_tab) or tab_chat
@@ -319,7 +314,6 @@ async def classic_chat_page(request: Request):
                 *(([(tab_documents, lambda: build_documents(surface="documents"))] if tab_documents else [])),
                 *(([(tab_studio, lambda: build_documents(surface="studio"))] if tab_studio else [])),
                 *(([(tab_cad_bim, lambda: build_documents(surface="cad_bim"))] if tab_cad_bim else [])),
-                *(([(tab_rim, build_rim)] if tab_rim else [])),
                 *(([(tab_mail, build_mail)] if tab_mail else [])),
                 (tab_history, lambda: build_history(tabs, tab_chat)),
             ],
@@ -335,6 +329,7 @@ async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.pages.diag import build_diag
     from sovushka.pages.instrumenty import build_instrumenty
+    from sovushka.pages.profiles import build_profiles
     from sovushka.pages.mail import build_mail_settings
     from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
@@ -370,6 +365,7 @@ async def classic_admin_page(request: Request):
         tab_samovar    = tr.get("samovar")
         tab_mail_settings = tr.get("mail_settings")
         tab_instrumenty = tr.get("instrumenty")
+        tab_profiles = tr.get("profiles")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_volk       = tr.get("volk")
 
@@ -389,6 +385,7 @@ async def classic_admin_page(request: Request):
             "Датасеты": tab_samovar,
             "Настройка почты": tab_mail_settings,
             "Инструменты": tab_instrumenty,
+            "Профили": tab_profiles,
             "Визуал": tab_qdrant_viz,
             "Доступ": tab_volk,
         }
@@ -402,6 +399,7 @@ async def classic_admin_page(request: Request):
                 (tab_samovar, lambda: build_samovar()),
                 (tab_mail_settings, lambda: build_mail_settings()),
                 (tab_instrumenty, lambda: build_instrumenty()),
+                (tab_profiles, lambda: build_profiles()),
                 (tab_qdrant_viz, lambda: _build_qdrant_visualizer_panel(visualizer_url)),
                 (tab_volk, lambda: build_volk()),
             ],

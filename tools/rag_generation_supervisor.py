@@ -15,11 +15,61 @@ import plistlib
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _acquire_lock(path: Path) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    for _attempt in range(2):
+        try:
+            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(descriptor, str(os.getpid()).encode("ascii"))
+            return descriptor
+        except FileExistsError:
+            try:
+                owner = int(path.read_text(encoding="ascii").strip() or "0")
+            except (OSError, ValueError):
+                owner = 0
+            if _pid_alive(owner):
+                raise RuntimeError(f"generation supervisor already running: pid={owner}")
+            path.unlink(missing_ok=True)
+    raise RuntimeError("generation supervisor lock could not be acquired")
+
+
+def _release_lock(path: Path, descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+def _alias_target_from_payload(payload: dict[str, Any], alias: str) -> str:
+    for item in ((payload.get("result") or {}).get("aliases") or []):
+        if str(item.get("alias_name") or "") == alias:
+            return str(item.get("collection_name") or "")
+    return ""
+
+
+def _resolve_alias_target(qdrant_url: str, alias: str) -> str:
+    url = f"{qdrant_url.rstrip('/')}/aliases"
+    with urllib.request.urlopen(url, timeout=10) as response:  # noqa: S310 - local configured Qdrant
+        payload = json.loads(response.read().decode("utf-8"))
+    return _alias_target_from_payload(payload, alias)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -60,6 +110,9 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--embedding-api-model", default="")
     parser.add_argument("--rag-chunk-unit", choices=("chars", "tokens"), default="")
     parser.add_argument("--archive-physical-alias-as", default="")
+    parser.add_argument("--with-colbert", action="store_true")
+    parser.add_argument("--colbert-dimension", type=int, default=1024)
+    parser.add_argument("--colbert-passage-tokens", type=int, default=128)
     parser.add_argument(
         "--create-destination",
         action="store_true",
@@ -97,6 +150,14 @@ def _worker_arguments(args: argparse.Namespace) -> list[str]:
             result.extend((option, value))
     if args.create_destination:
         result.append("--create-destination")
+    if getattr(args, "with_colbert", False):
+        result.extend(
+            (
+                "--with-colbert",
+                "--colbert-dimension", str(getattr(args, "colbert_dimension", 1024)),
+                "--colbert-passage-tokens", str(getattr(args, "colbert_passage_tokens", 128)),
+            )
+        )
     return result
 
 
@@ -132,7 +193,7 @@ def _run_stage(state: dict[str, Any], state_path: Path, stage: str, command: lis
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
-def run(args: argparse.Namespace) -> int:
+def _run_locked(args: argparse.Namespace) -> int:
     for name, value in (
         ("EMBED_BACKEND", args.embed_backend),
         ("EMBEDDING_MODEL", args.embedding_model),
@@ -142,6 +203,38 @@ def run(args: argparse.Namespace) -> int:
         if value:
             os.environ[name] = value
     state = _read_json(args.state_path)
+    try:
+        source_alias_target = _resolve_alias_target(args.qdrant_url, args.src)
+    except Exception as exc:  # fail closed before a collection can be mutated
+        state.update(
+            {
+                "schema": "les.rag.generation-job.v1",
+                "status": "blocked",
+                "stage": "preflight",
+                "error_code": "RAG_GENERATION_SOURCE_RESOLUTION_FAILED",
+                "error": f"{type(exc).__name__}: {exc}",
+                "updated_at": time.time(),
+            }
+        )
+        _write_json_atomic(args.state_path, state)
+        return 0
+    if state.get("status") == "activated" and source_alias_target == args.dst:
+        print(json.dumps({"status": "already_activated", "target": args.dst}))
+        return 0
+    if args.src == args.dst or source_alias_target == args.dst:
+        state.update(
+            {
+                "schema": "les.rag.generation-job.v1",
+                "status": "blocked",
+                "stage": "preflight",
+                "error_code": "RAG_GENERATION_SELF_MIGRATION",
+                "error": f"source {args.src} resolves to destination {args.dst}",
+                "updated_at": time.time(),
+            }
+        )
+        _write_json_atomic(args.state_path, state)
+        return 0
+    source_physical = source_alias_target or args.src
     failures = int(state.get("failures") or 0)
     state.update(
         {
@@ -151,6 +244,8 @@ def run(args: argparse.Namespace) -> int:
             "alias": args.alias,
             "pid": os.getpid(),
             "failures": failures,
+            "error_code": "",
+            "error": "",
         }
     )
     python = Path(sys.executable)
@@ -158,7 +253,8 @@ def run(args: argparse.Namespace) -> int:
         build = [
                 str(python),
                 str(ROOT / "tools/build_rag_contract_sibling.py"),
-                "--src", args.src,
+                "--src", source_physical,
+                "--source-identity", args.src,
                 "--dst", args.dst,
                 "--source-db", str(args.source_db),
                 "--scope-manifest", str(args.scope_manifest),
@@ -171,6 +267,14 @@ def run(args: argparse.Namespace) -> int:
             ]
         if args.create_destination:
             build.append("--create")
+        if getattr(args, "with_colbert", False):
+            build.extend(
+                (
+                    "--with-colbert",
+                    "--colbert-dimension", str(getattr(args, "colbert_dimension", 1024)),
+                    "--colbert-passage-tokens", str(getattr(args, "colbert_passage_tokens", 128)),
+                )
+            )
         _run_stage(
             state,
             args.state_path,
@@ -239,6 +343,7 @@ def run(args: argparse.Namespace) -> int:
             {
                 "status": "blocked" if failures >= args.max_failures else "retrying",
                 "failures": failures,
+                "error_code": "RAG_GENERATION_STAGE_FAILED",
                 "error": f"{type(exc).__name__}: {exc}",
                 "updated_at": time.time(),
             }
@@ -250,12 +355,26 @@ def run(args: argparse.Namespace) -> int:
             "status": "activated",
             "stage": "complete",
             "failures": 0,
+            "error_code": "",
             "error": "",
             "updated_at": time.time(),
         }
     )
     _write_json_atomic(args.state_path, state)
     return 0
+
+
+def run(args: argparse.Namespace) -> int:
+    lock_path = args.state_path.with_suffix(args.state_path.suffix + ".lock")
+    try:
+        descriptor = _acquire_lock(lock_path)
+    except RuntimeError as exc:
+        print(json.dumps({"status": "already_running", "detail": str(exc)}))
+        return 0
+    try:
+        return _run_locked(args)
+    finally:
+        _release_lock(lock_path, descriptor)
 
 
 def install(args: argparse.Namespace) -> int:

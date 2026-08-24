@@ -237,29 +237,203 @@ def work_lines_to_xlsx(lines: list[WorkLine], path: Path, *, title: str) -> int:
     return n
 
 
-def is_spec_to_bor_query(question: str) -> bool:
-    """Намерение «сделай ВОР из спецификации»: упоминание спецификации + ВОР/объёмов работ."""
+def _wants_vor(question: str) -> bool:
+    """True if the user asks for a VOR / bill of quantities (word-boundary safe)."""
     q = (question or "").lower().replace("ё", "е")
-    if "спецификац" not in q and "форм" not in q:
+    # «вор» — по границе слова: иначе «пОВОРоты», «творог», «забор» ложно триггерят.
+    return bool(
+        re.search(r"\bвор\b", q)
+        or ("ведомост" in q and "работ" in q)
+        or "объем работ" in q
+        or "объемов работ" in q
+    )
+
+
+def is_spec_to_bor_query(question: str, *, has_attachment: bool = False) -> bool:
+    """Намерение «сделай ВОР из спецификации» / ВОР по tabular-вложению.
+
+    Без вложения: нужна явная спецификация/форма + ВОР.
+    С tabular read-вложением: достаточно ВОР/ведомости работ (файл уже источник).
+    """
+    q = (question or "").lower().replace("ё", "е")
+    if not _wants_vor(q):
         return False
-    # «вор» — по границе слова: иначе «пОВОРоты», «творог», «забор» ложно триггерят
-    # канал ВОР (баг: «собери спецификацию ... повороты» уходил в spec_to_bor).
-    return (bool(re.search(r"\bвор\b", q)) or "ведомост" in q or "объем работ" in q
-            or "объемов работ" in q)
+    if has_attachment:
+        return True
+    return "спецификац" in q or "форм" in q
+
+
+_HEADER_ALIASES: dict[str, tuple[str, ...]] = {
+    "name": ("наименование", "название", "name", "материал", "наимен"),
+    "unit": ("ед. изм.", "ед изм", "ед.изм", "единица", "unit", "ед."),
+    "qty": (
+        "кол-во факт",
+        "количество факт",
+        "кол-во",
+        "количество",
+        "qty",
+        "колич",
+        "кол.",
+    ),
+    "section": ("раздел", "section", "объект", "зона"),
+    "code": ("артикул", "код", "code", "шифр"),
+    "mark": ("марка", "тип", "mark", "обозначение"),
+}
+
+
+def _normalize_header(value: object) -> str:
+    text = str(value or "").strip().lower().replace("ё", "е")
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+
+def _map_headers(cells: list[object]) -> dict[str, int]:
+    """Map logical field → 0-based column index from a header row."""
+    found: dict[str, int] = {}
+    normalized = [_normalize_header(c) for c in cells]
+    for idx, header in enumerate(normalized):
+        if not header:
+            continue
+        for field, aliases in _HEADER_ALIASES.items():
+            if field in found:
+                continue
+            if any(header == alias or header.startswith(alias) for alias in aliases):
+                found[field] = idx
+                break
+    return found
+
+
+def rows_from_spec_xlsx(path: Path | str, *, source_label: str = "") -> list[dict]:
+    """Read a materials/spec XLSX (e.g. Каменка) into spec_to_bor row dicts. 0 LLM."""
+    import openpyxl
+
+    file_path = Path(path)
+    if file_path.suffix.lower() not in {".xlsx", ".xlsm"}:
+        raise ValueError(f"unsupported attachment type for spec→ВОР: {file_path.suffix}")
+    wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+    try:
+        ws = wb.active
+        rows_iter = ws.iter_rows(values_only=True)
+        header_map: dict[str, int] | None = None
+        source = source_label or file_path.name
+        out: list[dict] = []
+        pos = 0
+        for raw in rows_iter:
+            cells = list(raw or ())
+            if not any(c is not None and str(c).strip() for c in cells):
+                continue
+            if header_map is None:
+                mapped = _map_headers(cells)
+                if "name" in mapped:
+                    header_map = mapped
+                continue
+            assert header_map is not None
+            name_idx = header_map["name"]
+            if name_idx >= len(cells):
+                continue
+            name = str(cells[name_idx] or "").strip()
+            if not name or _is_noise_name(name):
+                continue
+            pos += 1
+
+            def _cell(field: str) -> object:
+                idx = header_map.get(field)
+                if idx is None or idx >= len(cells):
+                    return None
+                return cells[idx]
+
+            qty_raw = _cell("qty")
+            qty: float | None
+            try:
+                qty = float(qty_raw) if qty_raw is not None and str(qty_raw).strip() != "" else None
+            except (TypeError, ValueError):
+                qty = None
+            code = str(_cell("code") or "").strip()
+            mark = str(_cell("mark") or "").strip()
+            out.append(
+                {
+                    "doc_type": "SPEC",
+                    "name": name,
+                    "unit": _cell("unit"),
+                    "qty": qty,
+                    "section": str(_cell("section") or "").strip(),
+                    "code": code,
+                    "mark": mark or code,
+                    "pos": str(pos),
+                    "source_file": source,
+                }
+            )
+        return out
+    finally:
+        wb.close()
+
+
+def generate_spec_bor_from_rows(
+    rows: list[dict],
+    *,
+    output_dir: Path | None = None,
+    title: str = "ВОР из спецификации",
+    decompose: bool = True,
+    source_id: str = "attachment",
+) -> dict:
+    """Spec rows → work VOR (+ optional xlsx). Numbers only from rows. 0 LLM."""
+    if decompose:
+        wlines = spec_rows_to_work_lines_v2(rows)
+        result: dict = {
+            "dataset_id": source_id,
+            "mode": "decompose",
+            "source_rows": len(rows),
+            "bor_lines": len(wlines),
+            "lines": [w.payload() for w in wlines],
+            "xlsx_path": None,
+        }
+        if output_dir is not None and wlines:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", source_id).strip("._") or "attachment"
+            xlsx_path = Path(output_dir) / f"specbor_{safe}_{stamp}.xlsx"
+            work_lines_to_xlsx(wlines, xlsx_path, title=title)
+            result["xlsx_path"] = str(xlsx_path)
+        return result
+
+    lines = spec_rows_to_work_lines(rows)
+    result = {
+        "dataset_id": source_id,
+        "mode": "simple",
+        "source_rows": len(rows),
+        "bor_lines": len(lines),
+        "lines": [line.payload() for line in lines],
+        "xlsx_path": None,
+    }
+    if output_dir is not None and lines:
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", source_id).strip("._") or "attachment"
+        xlsx_path = Path(output_dir) / f"specbor_{safe}_{stamp}.xlsx"
+        bor_to_xlsx(lines, xlsx_path, title=title)
+        result["xlsx_path"] = str(xlsx_path)
+    return result
 
 
 def format_spec_bor_answer(result: dict, dataset_label: str = "") -> str:
     lines = result.get("lines", [])
-    head = (f"ВОР из спецификации (форма 9): {result['bor_lines']} работ "
+    head = (f"ВОР из спецификации: {result['bor_lines']} работ "
             f"из {result['source_rows']} позиций"
             + (f" · {dataset_label}" if dataset_label else "") + ".")
+    # Group preview by section when present.
     sample = []
-    for l in lines[:12]:
+    seen_sections: list[str] = []
+    for l in lines[:20]:
+        section = str(l.get("section") or "").strip()
+        if section and section not in seen_sections:
+            seen_sections.append(section)
+            sample.append(f"[{section}]")
         qty = l.get("qty")
         qty_s = f"{round(qty, 2)} {l.get('unit', '')}".strip() if qty is not None else "— (нет кол-ва)"
         sample.append(f"  • {l['name']} — {qty_s}")
-    tail = ("\nПолная таблица: Инструменты → ВОР (режим «работы из спецификации») "
-            "или POST /api/bor/{id}/from-spec/generate. Числа — Parquet, 0 LLM.")
+    if result.get("xlsx_path"):
+        tail = "\nПолная таблица — в Excel-вложении. Количества только из исходника, без цен и без LLM."
+    else:
+        tail = ("\nПолная таблица: Инструменты → ВОР (режим «работы из спецификации») "
+                "или POST /api/bor/{id}/from-spec/generate. Числа — из исходника, 0 LLM.")
     return head + ("\n" + "\n".join(sample) if sample else "") + tail
 
 

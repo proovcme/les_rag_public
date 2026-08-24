@@ -4,19 +4,341 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-03)
+## Текущее состояние (2026-08-24)
 
 ```
-версия продукта (SemVer):  0.27.39 (responsive local-only Sovushka)
-номер сборки:              556
-версия Tauri/NSIS:         5.1.556
+версия продукта (SemVer):  0.28.0 (versioned chat profiles)
+номер сборки:              587
+версия Tauri/NSIS:         5.1.587
 ветка выпуска:             codex/les-0.27.37-ui-mail-agent
-dev implementation:       Memory Core v1 — RAG memory & safe smeta traces infrastructure
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.38 / build 555 / commit 2bcbd553c39e4cc05c691ba8134afbecc5867968
+dev implementation:       immutable per-chat prompt/skill/tool/model/RAG profiles; four explicit modes; smeta core unchanged by this feature
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.79 / build 586
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.27.39
-рантайм /api/version:      Mac 0.25.16 / build 489; Legion 0.27.38 / build 555
+следующий выпуск:          LES-Setup.exe 0.28.0 только после ручной проверки владельцем
+рантайм /api/version:      Legion live 0.27.79 / build 586; `SMETA_NORMS_Index` = 49818 chunks
 ```
+
+> **0.28.0 / build 587:** промпты, скиллы и разрешённые инструменты стали
+> пользовательскими versioned-профилями чата вместо разрозненных строк в коде.
+> В Совушке остались четыре явных режима: «Поиск», «Агент», «Сметчик» и
+> «Инженер»; `auto/free/rag/smeta/review` принимаются только как migration aliases.
+> Factory Base неизменяема. Пользователь может создать редакцию с нуля или
+> копированием, выбрать и удалить пользовательские prompt/skill revisions,
+> настроить температуру и RAG policy, сохранить immutable profile revision и
+> назначить её активной. Новый чат получает активный snapshot; открытый чат
+> сохраняет прежний snapshot до явного «Применить активную версию».
+> Все четыре режима, включая «Сметчик», проходят через один общий native-RRF
+> evidence flow; специализированный LSR/smeta workflow из chat-route удалён.
+> Snapshot с hashes, tools и policies сохраняется в MetaDB и trace/history;
+> tool shortlist не может выйти за allowlist профиля. Старые JSON overrides
+> импортируются один раз с migration marker. `proxy/smeta_core/**` этой
+> функциональностью не изменялся. Проверки: профильный набор `182 passed`,
+> канонический gate `667 passed`, `make verify` и `make public-check` зелёные.
+
+> **0.27.79 / build 586:** FreeToken cache rebuild не передаёт `num_swa_pages`, если модель
+> объявляет `swa_tokens.max=0`, поэтому Qwen больше не отклоняет KV-синхронизацию с HTTP 503.
+> Панель файлов выбранной области использует общий `/api/rag/documents` как fallback, когда у
+> системного датасета нет notebook-карточек; `SMETA_NORMS_Index` отображается как один виртуальный
+> документ с `49 818` чанками. Selector области переведён с плоских технических checkbox-строк на
+> общие карточки с человеческим registry-name, files/chunks, состоянием доступности и счётчиком выбора.
+> Живые сбои и новый UI-контракт закрыты regression-тестами.
+
+> **0.27.78 / build 585:** bootstrap системных датасетов принимает ранее опубликованную
+> `SMETA_NORMS_Index` по её стабильному UUID и восстанавливает каноническое имя/владельца вместо
+> повторной вставки с `UNIQUE constraint failed`; добавлен regression-тест живого startup-сценария.
+
+> **0.27.77 / build 584:** типизированная база из `49 818` сметных норм опубликована
+> как обычный явно выбираемый системный датасет `SMETA_NORMS_Index` в общей
+> `les_rag`: у каждой карточки есть standard named `dense` + `bm25_sparse`,
+> lexical row, код/измеритель/состав работ и provenance. SQLite остаётся
+> read-only source of truth; `proxy/smeta_core/**` и сохранённые RIM-данные не
+> менялись. Совушка больше не показывает отдельные «Сметный проект», «Смета в
+> чате» и настройки отдельного сметчика. FreeToken GUI context теперь
+> сопоставляется с физическим `/v1/cache/status`: loopback runtime перестраивает
+> KV до configured value или показывает degraded state; live Legion подтверждён
+> на `30000 KV / 600 MoE`. Pure RAG Big Qwen корректно разделил нормы прокладки
+> ВОК и отказался выдавать специализированную норму для 42U; проверка показала,
+> что старый expected `ГЭСНм10-04-087-05` относится к комплекту центральной
+> станции городской связи, а не к шкафу 42U. Public commit/release не выполнялись.
+
+> **0.27.76 / build 583:** FreeToken получает capacity-aware multi-document evidence и сохраняет продолжение диалога.
+>
+> Дата: 2026-08-24
+> Статус: задеплоено локально на Legion; public commit/release не выполнялись.
+> Сравнение одинакового вопроса доказало, что native retrieval у Mini Qwen и
+> FreeToken был одинаковым (`256 dense + 512 lexical → 256 merged`), но post-RRF
+> budget отдавал Mini `236` чанков/`37` source maps, а FreeToken только
+> `4` чанка/`3` source maps и `3676` evidence chars. Причина — отдельные
+> `FREETOKEN_CONTEXT_MAX_CHUNKS=4` и `FREETOKEN_EVIDENCE_MAX_CHARS=5000`, а не
+> модель и не запрос. Эти caps удалены; общий assembler сохраняет native-RRF
+> порядок, сначала покрывает разные документы и ограничивается derived prompt
+> capacity. Bounded session/working memory теперь пакуется перед evidence.
+> Default chars/token поднят с `1.25` до консервативных `2.0`: фактические
+> русские проектные фрагменты дали `2.36`. Изолированные live probes приняли
+> `6200+1024` и `28001+512` токенов; поэтому текущий Legion допускает GUI window
+> `30000` и derived prompt cap `57600`. Доменных terms/boosts/file rules нет.
+> `make ship` прошёл зелёным. Живой повтор исходного вопроса: FreeToken
+> `Qwen3.6-35B-A3B-NVFP4`, `232` context chunks, `34` source maps,
+> `52496` evidence chars при prompt `57600/57600`; ответ вернул ГРЩ,
+> категории надёжности, мощности и конкретные марки/сечения кабелей.
+> Follow-up в той же сессии сохранил `527` chars session memory и `317` chars
+> working memory, одновременно передав `51623` evidence chars из `31` source
+> maps. Необязательный model-tool loop показал отдельный pre-existing
+> `AttributeError: QueryIntent.intent`; wide native-RRF fallback и ответ остались
+> рабочими, но tool-loop дефект вынесен в TODO.
+
+> **0.27.75 / build 582:** потоковый чат FreeToken принимает фактический SSE-формат Big Qwen.
+>
+> Дата: 2026-08-24
+> Статус: локально задеплоен на Legion, не опубликован.
+> После выбора FreeToken GUI корректно применил effective provider/model
+> `freetoken / Qwen3.6-35B-A3B-NVFP4`, но живой `/api/chat/stream` завершался
+> `ValueError: Пустой ответ LLM (stream=True)`. Direct live probe доказал причину:
+> сервер отдаёт токены в `delta.reasoning_content`, тогда как LES читал только
+> `delta.content|reasoning`. Общий transport parser теперь поддерживает все три
+> поля и используется в RAG и free-mode stream; non-stream уже работал и не менялся.
+> Сметное ядро и выбор модели не затронуты.
+> Live acceptance после точечного merge защищённого divergent runtime-файла:
+> вопрос про шкаф и кабель в scope проекта «Инновационный центр» вернул HTTP 200,
+> 528 token events, `error=null`, 4 источника и final answer. Trace подтвердил
+> `effective_provider=freetoken`, `effective_model=Qwen3.6-35B-A3B-NVFP4`,
+> `qdrant_native_hybrid+parent_card`; prompt-fit ограничил пользовательский слой
+> до 3842 символов при общем лимите 8816. Offline: focused stream/provider
+> `34 passed`, полный current gate `663 passed`, ship `183 + 283 passed`.
+
+> **0.27.74 / build 581:** общий RAG больше не выбрасывает найденные источники без reranker.
+>
+> Дата: 2026-08-24
+> Статус: локально задеплоен на Legion, не опубликован. После восстановления
+> canonical native Qdrant generation `les_rag_v563` (101366 points) live trace выявил
+> единственный blocker: при `RERANKER_ENABLED=false` валидный native-RRF пул заменялся
+> пустым результатом `reranker_disabled`. Cross-encoder переведён в opt-in stage;
+> disabled/unavailable сохраняет исходный native-RRF порядок и явный trace `bypassed`.
+> Windows/runtime default теперь false; Ollama остаётся нужен для `bge-m3` query embeddings.
+> Сметный workflow и `proxy/smeta_core/**` этой правкой не менялись.
+> Release gate обновлён в той же версии: `ship-check`/`ship-full-check` больше не
+> требуют `smoke-smeta-rerank`; после установки candidate `make ship`/`make ship-full`
+> запускают corpus-agnostic `smoke-general-native-rrf` через
+> `/api/rag/retrieve-debug`. Gate не грузит Big Qwen и требует непустые источники,
+> dense+sparse, native RRF и reranker bypass.
+> Для накопленного Windows runtime `config/version.json` проходит через явный
+> `DEPLOY_FORCE_FILES`; глобальный force для остальных divergent-файлов не используется.
+> Live basic smoke также перенесён после candidate deploy: предыдущая установка с
+> исправляемым chat/diagnostics contract больше не может заблокировать саму выкладку.
+> Первый candidate probe попал в startup window; native-RRF post-smoke получил
+> bounded retry, после которого всё равно обязаны быть зелёными все RRF assertions.
+> Финальная приёмка: `make ship` завершён зелёным; offline gate собрал 663 теста,
+> focused release gate — 183 passed, RAG core — 283 passed. Три последовательных
+> live native-RRF smoke вернули по 5 источников. Один короткий ответ Big Qwen сохранён
+> в chat history (`history_id=30`): retrieval `qdrant_native_hybrid+parent_card`,
+> fusion `qdrant_rrf+lexical_safety_rrf`, reranker `bypassed/disabled`, исходный
+> native-RRF порядок сохранён. После проверки `qwen3.5:9b` выгружен из Ollama.
+
+> **0.27.73 / build 580:** восстановлен фактический hybrid-поиск чистой ФСНБ.
+>
+> Дата: 2026-08-24
+> Статус: локальный Legion candidate, не опубликован и не задеплоен. Активный паспорт
+> базы ошибочно объявлял `qwen3-embedding-0.6b`, тогда как passed Qdrant generation
+> построен на `bge-m3`; из-за fail-closed проверки Qdrant возвращал ноль кандидатов,
+> а поиск незаметно оставался на typed SQLite FTS. Паспорт приведён к реальному
+> `bge-m3`; Windows installer уже направляет embedding API в Ollama. Новый короткий
+> probe исключает LLM/reranker/catalog: hybrid status `ok`, 4/4 строгих известных
+> норм в top-10 за 3.58 с; неоднозначные перефразировки учитываются отдельно и не
+> выдаются за профессиональный golden. `proxy/smeta_core/**` не изменялся.
+
+> **0.27.72 / build 579:** FreeToken agent turns получили корректный общий KV-бюджет.
+>
+> Дата: 2026-08-24
+> Статус: локальный Legion candidate, не опубликован. Живой однострочный запуск подтвердил
+> `строки 1–1 из 70` и durable checkpoint `Готово строк: 1`, но на ходе 7 FreeToken отклонил
+> frame: `9399 tokens > 8253 maximum (prompt + generation)`. Причина — транспорт резервировал
+> 4096 output tokens для компактного tool-call и повторно отправлял audit history. Только для
+> FreeToken agent tool turns резерв ограничен 1024 токенами; inference получает system/source,
+> последний tool exchange и authoritative working memory, а полный журнал остаётся в checkpoint.
+> Изолированный live probe подтвердил физический KV `8253`: frame `6202 + reserve 1024` принят
+> (27 completion tokens, 48.1 с), forced tool-call `512 + 1024` вернул `report_probe` за 7.4 с.
+> Короткая послойная проверка отдельно подтвердила checkpoint/resume и single-row batch:
+> `3 passed in 1.82s`; полный focused FreeToken/smeta-adapter contract — `41 passed in 3.62s`.
+> Полный XLSX запрещён как диагностический запуск: следующий live-гейт — ровно одна строка только
+> с исходным opaque attachment id, новый upload не считается resume.
+> Профессиональное решение, smeta-core и RAG не менялись.
+> Live resume acceptance после deploy обязателен перед признанием сборки готовой.
+
+> **0.27.71 / build 578:** Big Qwen получил совместимый post-document mapping и настоящий
+> однострочный transport.
+>
+> Дата: 2026-08-23
+> Статус: локальный Legion candidate, не опубликован. FreeToken больше не получает запрещённый
+> `response_format=json_schema`: та же модель завершает решение forced function-call
+> `submit_estimate_mapping`. Document workflow использует `batch_size=1`, сохраняет terminal-строку
+> в существующий durable checkpoint до перехода к следующей и оставляет исходное вложение после
+> ошибки. Живой контроль подтвердил `строки 1–5 из 70`, отдельный checkpoint-артефакт после первой
+> строки и отсутствие потери XLSX; isolated FreeToken terminal probe вернул валидный tool-call за
+> 5 с. Полный пятистрочный live acceptance ещё не завершён из-за остатка RAM менее 0.1 ГБ.
+> Локальный runtime-фактор `RERANKER_ENABLED=false`; Ollama остаётся только для `bge-m3` query
+> embeddings. Публикации/merge нет.
+
+> **0.27.70 / build 577:** Big Qwen через FreeToken стал штатным локальным transport profile.
+>
+> Дата: 2026-08-22
+> Статус: локальный Legion candidate, не опубликован. ЛЕС подключается к GUI-owned FreeToken на
+> `127.0.0.1:1919/v1`, не запускает и не останавливает его engine, принудительно передаёт
+> `enable_thinking=false` и укладывает вопрос/evidence в контекст 8253 с резервом генерации.
+> FreeToken считается локальным для privacy/admission; agent-router использует тот же transport,
+> а совместимый `QueryIntent.intent` восстанавливает tool-loop. Windows startup оставляет
+> embeddings на Ollama `bge-m3` (1024) и локальный reranker. Base URL, модель и лимиты видны и
+> редактируются в runtime registry Совушки с признаком restart. `proxy/smeta_core/**` не изменялся.
+> Live Legion: FreeToken `0.1.1+g30aa89115`, `Qwen3.6-35B-A3B-NVFP4`; direct code probe
+> `450` completion tokens за `16.61 с` (`27.09 tok/s`), свободный LES-ответ `818` символов за
+> `9.78 с`, большой code-answer `4584` символа за `45.26 с`. Function calling вернул корректный
+> tool-call JSON за `3.41 с` и grounded final за `2.8 с`. Production RAG восстановлен без reindex:
+> Docker alias `les_rag → les_rag_v563`, SQLite/Qdrant `101366/101366`, contract compatible,
+> health ok. Cold full RAG занял `131.99 с`; evidence-first warm probe — `102.48 с` и честный
+> `MISSING` с тремя ссылками. При 35B + Docker + Ollama embedder + cross-encoder свободная RAM
+> кратковременно падает ниже `0.5 ГБ`; это рабочий benchmark, но не рекомендуемый постоянный профиль.
+
+> **0.27.69 / build 576:** финальный сметный артефакт показывает все исходные строки.
+>
+> Дата: 2026-08-11
+> Статус: локальный UI-only bugfix, не опубликован. Живой прогон пяти строк показал, что строка,
+> исчерпавшая модельные ходы до terminal-события, присутствует в итоговой ЛСР, но отсутствует в
+> потоковом Markdown-артефакте. Совушка теперь после завершения сверяет живую таблицу с авторитетным
+> `rim_trace` и добавляет все итоговые позиции, включая строки без привязанной нормы. Операторский
+> журнал переводит служебные фазы, `mapping` и `invalid unbound_evidence`; сообщение защиты памяти
+> показывает русское описание вместо ключей runtime. Полная таблица также восстанавливается из
+> истории чата после перезапуска интерфейса. Сметное ядро и решения модели не менялись.
+
+> **0.27.68 / build 575:** разбор незакрытых сметных строк отделён от фиксации привязки норм.
+>
+> Дата: 2026-08-11
+> Статус: локальный bugfix задеплоен на Legion, не опубликован. Артефакт показывает незакрытые позиции и сохраняет
+> исходное read-вложение для повторного расчёта. «Подготовить уточнение» возвращает файл и
+> редактируемый запрос в поле ввода; при нескольких вариантах монтажных условий модель либо выбирает
+> явный сценарий «ДОПУЩЕНИЕ», либо задаёт один вопрос, если развилка существенно меняет норму/стоимость.
+> Условия оператора приоритетны. Опасная фиксация текущей привязки норм осталась отдельным
+> подтверждаемым действием. Память получает только привязанные нормы без конфликтов после явной фиксации;
+> пустые, `MISSING` и конфликтные решения отсекаются. `proxy/smeta_core/**` не изменялся.
+> В операторском интерфейсе машинные состояния локализованы: `unbound` показывается как «Норма не
+> привязана», а служебные `mapping`, `lock`, `checkpoint`, `immutable`, `global review`, `ASSUMED`
+> заменены русскими подписями; исходные токены остаются только во внутренних контрактах и трассах.
+
+> **0.27.67 / build 574:** готовые строки сметного чата копятся в одном живом артефакте.
+>
+> Дата: 2026-08-11
+> Статус: локальный UI-only bugfix задеплоен на Legion; не опубликован. `smeta_row`
+> по-прежнему формируется штатным workflow;
+> `sovushka/pages/chat.py` зеркалирует накопленную inline-таблицу в существующую
+> панель «Артефакты» после каждой terminal-строки. Финальный XLSX и проверочные
+> статусы не изменены; `proxy/smeta_core/**` не затрагивался. Проверки: 80 UI-тестов,
+> 3497 тестов собрано, live 5/5 строк накопились в артефакте, кодовый расчёт и XLSX завершены.
+
+> **0.27.66 / build 573:** стабильные ссылки и единый артефакт источников.
+>
+> Дата: 2026-08-11
+> Статус: локальный Legion runtime patch, не опубликован. Основной deploy
+> 2026-08-11T08:42:37Z скопировал ограниченный список из 16 файлов сметного
+> backend/attachment-intake и source UI; follow-up 2026-08-11T08:47:20Z точечно обновил
+> renderer формул. Оба запуска перезапустили затронутые сервисы; финальный stamp `ok`
+> без hash mismatch. Normal-RAG
+> `source_map` сохраняет `doc_id`; чат предпочитает структурированную карту legacy-именам,
+> открывает оригинал и office-preview через guarded document identity endpoints и передаёт PDF page locator.
+> Под ответом остаются компактные кликабельные строки и одна кнопка артефакта
+> «Источники ответа»; отдельная длинная выдача `source_excerpts` скрыта при наличии карты.
+> Неподдерживаемые inline-LaTeX-разделители `$...$` нормализуются до читаемого текста.
+> Offline current gate: 626 passed, 10 skipped; focused source/UI gate: 141 passed;
+> smeta attachment/intake gate после полного переноса публичного патча: 251 passed.
+> Live: `/api/version=0.27.66/573`, health `ok`, UI `200`, `sks_4.xlsx` read-attachment
+> `10321` chars; L1 smoke `9 pass / 1 diagnostics warn / 0 fail`.
+
+> **0.27.65 / build 572:** синхронизация публичного сметного релиза 0.27.64 поверх локального advanced-RAG контура.
+>
+> Дата: 2026-08-11
+> Статус: локальный source candidate, не задеплоен и не опубликован. Из `public/release/0.27.35` перенесены сметные backend-пути релиза 0.27.64: XLSX intake распознаёт `Ко-во` после длинной договорной шапки, bounded evidence repair не зацикливается, честный terminal `unbound` сохраняется как candidate-draft, локальный Ollama/Qwen получает scoped catalog route и soft-continue при malformed tool XML. Локальная политика rerank не изменяется одним документным запуском. Профильный offline-гейт: 236 passed. Обязательная точная benchmark-команда доказала checkpoint/resume, но новый intake распознал 70 строк вместо прежнего короткого 5-row ожидания: после 22 минут сохранено 7 решений, полный прогон не завершён и остаётся release-blocker до отдельного многочасового запуска/разбора масштаба fixture.
+
+> **0.27.54 / build 571:** resumable RAPTOR/ColBERT and bounded indexing recovery.
+>
+> Дата: 2026-08-07
+> Статус: локальный source candidate, не задеплоен и не опубликован. RAPTOR публикуется по документам в отдельную generation-bound Qdrant collection с checkpoint/resume, local Ollama/extractive summarizer, exact descendant leaf ids и запретом цитирования summary nodes. ColBERT проходит preflight без загрузки модели и строится только как contract-clean sibling generation; активный индекс на месте не дополняется. Retrieval выполняет native RRF → hierarchy → optional RAPTOR evidence descent → optional ColBERT MaxSim → общий reranker → parent/context → exact evidence; optional-слои имеют timeout/circuit breaker и честный trace.
+>
+> Индексация получила формальные состояния `skipped / retryable / terminal`, стабильные коды и bounded startup repair только для исправленных `SPARSE_VECTOR_PREVALIDATION_MISSING`/`QDRANT_POINT_COUNT_MISMATCH`: максимум `RAG_BOUNDED_REPAIR_MAX_FILES`, только пользовательские датасеты, без успешных документов и без сметных/модульных наборов. Самовар показывает эти состояния и результат ремонта. Обычный smoke во время индексации возвращает `INDEXING_IN_PROGRESS` и не запускает misleading chat-пробы; release-smoke остаётся строгим FAIL. Все runtime/env-факторы видны в GUI-реестре, а RAPTOR/ColBERT policy и опасные build-действия доступны в Д.И.А.Г.Н.О.З. Периодический advanced-status poll останавливается у скрытой lazy-вкладки.
+
+> **0.27.53 / build 570:** source-proven hierarchy reconciliation.
+>
+> Дата: 2026-08-07
+> Статус: локальный Legion patch, GitHub не обновлён. Metadata-only repair теперь доказывает delta относительно сохранённой source generation: старый Qdrant file count обязан совпасть с SQLite, а прирост target обязан в точности равняться приросту navigation points; dense/sparse/lexical target остаются exact. Activation сохраняет `generation_source_collection` и выполняет reconcile до успешного завершения. Для старых контрактов источник определяется только по единственному exact `generation_source_points`; неоднозначность блокирует ремонт.
+>
+> **0.27.52 / build 569:** safe hierarchy metadata reconciliation.
+>
+> Дата: 2026-08-07
+> Статус: локальный Legion patch, GitHub не обновлён. Строгий health снова сравнивает полный Qdrant point count с полным SQLite `chunk_count`. Для legacy sibling-generation добавлен отдельный read/repair-контракт: счётчик документа обновляется только если `actual - expected` в точности равен числу явных navigation points и dense/sparse/lexical проекции полностью совпадают. Исправление атомарно, не удаляет points, не запускает reindex и автоматически повторяется на startup. Экспериментальные health-интерпретации 0.27.50–0.27.51 этим выпуском заменены.
+>
+> **0.27.51 / build 568:** legacy-compatible role-aware RAG health.
+>
+> Дата: 2026-08-07
+> Статус: локальный Legion patch, GitHub не обновлён. Navigation points считаются по явной роли, а evidence — как `total - navigation`, поэтому legacy points без `node_role` остаются совместимым evidence и не требуют полного реиндекса. Health публикует способ учёта `point_role_accounting=total_minus_navigation`; неизвестные скрытые вычитания отсутствуют.
+>
+> **0.27.50 / build 567:** role-aware RAG health accounting.
+>
+> Дата: 2026-08-07
+> Статус: локальный Legion patch, GitHub не обновлён. Health теперь сравнивает SQLite evidence chunks только с Qdrant points роли `evidence`, отдельно показывает `navigation_points` и не объявляет корректный hierarchy-индекс degraded из-за служебных navigation nodes. Несовпадение evidence остаётся строгой ошибкой.
+>
+> **0.27.49 / build 566:** Qdrant acknowledged-write verification.
+>
+> Дата: 2026-08-07
+> Статус: локальный Legion patch, GitHub не обновлён. Файловый upsert теперь выполняется с `wait=True` до exact point-count проверки. Это исключает ложный `QDRANT_POINT_COUNT_MISMATCH`, когда асинхронно подтверждённая запись ещё не стала видна немедленному count. Добавлен контрактный регрессионный тест; repair ограничивается только двумя ранее затронутыми документами.
+>
+> **0.27.48 / build 565:** hierarchy sparse prevalidation ordering.
+>
+> Дата: 2026-08-06
+> Статус: локальный Legion patch, GitHub не обновлён. Исправлена единая причина `SPARSE_VECTOR_PREVALIDATION_MISSING`: hierarchy раньше добавляла navigation nodes после sparse prevalidation. Теперь evidence и navigation сначала окончательно формируются, затем каждый узел получает BM25 sparse companion либо исключается до удаления прежних points. Добавлен регрессионный тест navigation-node; terminal документы могут быть безопасно requeue после установки patch.
+
+> **0.27.47 / build 564:** GUI-first runtime policy and advanced RAG control plane.
+>
+> Дата: 2026-08-06
+> Статус: локальная разработка, не задеплоено и не опубликовано. Добавлен единый реестр runtime/env-факторов с маскированием секретов, источником effective-value, признаком перезапуска, read-only bootstrap-полями и `Danger`-подтверждением с резервной копией. Политика RAPTOR/ColBERT хранится в атомарном versioned JSON, доступна через API и Совушку; скрытые env-переключатели optional RAG-стадий удалены из stage-status. Фактические RAPTOR/ColBERT индексы ещё должны пройти synthetic A/B и живую приёмку до статуса `Готов`.
+
+> **0.27.46 / build 563:** RAG catalog integrity and durable indexing resume.
+>
+> Дата: 2026-08-06
+> Статус: release candidate; live-каталог восстановлен из Qdrant после подтверждённых SQLite/Qdrant orphan records; clean generation `les_rag_v563` активирована через alias после readiness=ready, 74 689/74 689 source coverage и exact 76 918 destination points. Старый physical сохранён как `les_rag_legacy_556`; перед ремонтной мутацией сохранён snapshot `les_rag_v563-4194566271140142-2026-08-06-19-22-40.snapshot`.
+>
+> **Что вошло:** удаление датасета стало fail-closed и recoverable (SQLite backup, Qdrant snapshot, `wait=true`, exact pre/post count, файловый карантин); startup guard диагностирует и восстанавливает потерянный каталог и lexical FTS из сохранённых payload; индексация после restart переводит прерванные и due-retryable документы обратно в очередь и продолжает их supervisor-циклом с bounded attempts/backoff и стабильными `error_code`; health показывает catalog guard, фактическое покрытие point fingerprint и stage-status retrieval-контура; Совушка показывает индекс, native RRF, hierarchy, RAPTOR, ColBERT, cross-encoder, parent/context и exact evidence без ложного зелёного состояния optional-слоёв. Sibling supervisor получил single-run lock, pin physical source при стабильной logical identity, запрет self-migration и idempotent no-op после activation. Добавлены read/repair API и dry-run recovery CLI. Искусственный sparse token `{0: 0.0}` запрещён и удалён.
+>
+> **0.27.45 / build 562:** Dataset rename & group edit UI dialogs in Sovushka; garbled dataset names cleaned in SQLite; Ollama contract auto-detection fixed.
+>
+> Дата: 2026-08-04
+> Статус: Added dataset rename and group edit dialogs in Sovushka UI; updated dataset PATCH endpoints permissions; cleaned garbled dataset titles in MetaDB; verified with test suite.
+>
+
+> **0.27.43 / build 560:** dataset file status registry modal & index contract sync
+>
+> Дата: 2026-08-03
+> Статус: Added 'Реестр файлов' modal dialog for dataset status details in Sovushka UI; synced v3 index contract. Verified (76/76 UI tests passed).
+>
+
+> **0.27.42 / build 559:** cyrillic dataset payload unquoting & background ingestion fixes
+>
+> Дата: 2026-08-03
+> Статус: Cyrillic dataset unquoting and background non-blocking ingestion verified (39/39 tests passed).
+>
+> Изменения:
+> - **Proxy API (`proxy/routers/datasets.py`)**: Добавлена поддержка передачи JSON payload (`CreateDatasetRequest`) и декодирование Cyrillic URL/query-параметров `unquote(name)`.
+> - **Sovushka UI (`sovushka/pages/samovar.py`)**: Создание датасетов переведено на чистый JSON payload (`{"name": name}`), исключая проблемы с некорректным URL-кодированием кириллицы на Windows.
+> - **Очистка метаданных**: Удален поврежденный пустой датасет из SQLite `data/les_meta.db`.
+
+> **0.27.41 / build 558:** heuristic document passport metadata extraction
+>
+> Дата: 2026-08-03
+> Статус: RAG passport metadata gate passed (39/39 unit tests green).
+>
+> **Что вошло:** извлечение структурированных реквизитов документа (`doc_number`, `doc_date`, `contracting_parties`, `amount_summary`) в `doc_passport` метаданные модуля `backend/document_router.py` для расширения подсистемы Heuristic Probing.
+
+> 0.27.40 / build 557 — extended RAG document classification & taxonomy
+>
+> Дата: 2026-08-03
+> Статус: RAG taxonomy update gate passed (38/38 unit tests green).
+>
+> **Что вошло:** расширенная таксономия типов документов RAG (`CONTRACT`, `ACT_GENERAL`, `ADDENDUM`, `INVOICE_BILL`, `TZ_TOR`, `LETTER`, `PASSPORT_CERT`, `DRAWING`), их эвристическое распознавание в `backend/document_router.py`, поддержка в `backend/parquet_writer.py` (DOC_TYPES и DOC_TYPE_HINTS) и 38 unit-тестов.
 
 > 0.27.39 / build 556 — responsive local-only Sovushka
 >

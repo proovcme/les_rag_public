@@ -65,10 +65,17 @@ def audit_rrf_readiness(
 ) -> dict[str, Any]:
     dense_name = str(contract.get("dense_vector_name") or "dense")
     sparse_name = str(contract.get("sparse_vector_name") or "bm25_sparse")
+    colbert_name = str(contract.get("colbert_vector_name") or "colbert")
+    colbert_required = bool(contract.get("colbert_schema"))
     fingerprint = str(contract.get("point_embedding_fingerprint") or "")
     total = _count(client, collection, [])
     dense = _count(client, collection, [models.HasVectorCondition(has_vector=dense_name)])
     sparse = _count(client, collection, [models.HasVectorCondition(has_vector=sparse_name)])
+    colbert = (
+        _count(client, collection, [models.HasVectorCondition(has_vector=colbert_name)])
+        if colbert_required
+        else 0
+    )
     matching_fingerprint = _count(
         client,
         collection,
@@ -104,6 +111,15 @@ def audit_rrf_readiness(
             collection,
             [*scoped, models.HasVectorCondition(has_vector=sparse_name)],
         )
+        scoped_colbert = (
+            _count(
+                client,
+                collection,
+                [*scoped, models.HasVectorCondition(has_vector=colbert_name)],
+            )
+            if colbert_required
+            else 0
+        )
         scoped_fingerprint = _count(
             client,
             collection,
@@ -122,10 +138,12 @@ def audit_rrf_readiness(
                 "points": scoped_total,
                 "dense_points": scoped_dense,
                 "sparse_points": scoped_sparse,
+                "colbert_points": scoped_colbert,
                 "compatible_fingerprint_points": scoped_fingerprint,
                 "ready": bool(
                     scoped_total
                     and scoped_total == scoped_dense == scoped_sparse == scoped_fingerprint
+                    and (not colbert_required or scoped_colbert == scoped_total)
                 ),
             }
         )
@@ -201,6 +219,7 @@ def audit_rrf_readiness(
         schema_ok
         and total > 0
         and total == dense == sparse == matching_fingerprint
+        and (not colbert_required or colbert == total)
         and all_datasets_ready
         and covered_dataset_points == total
         and migration_complete
@@ -225,6 +244,8 @@ def audit_rrf_readiness(
         "points": total,
         "dense_points": dense,
         "sparse_points": sparse,
+        "colbert_required": colbert_required,
+        "colbert_points": colbert,
         "compatible_fingerprint_points": matching_fingerprint,
         "legacy_table_smeta_points": legacy_table_smeta_points,
         "lexical": {**(lexical_status or {}), "ready": lexical_ready},

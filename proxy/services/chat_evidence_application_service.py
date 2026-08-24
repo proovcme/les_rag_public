@@ -51,8 +51,57 @@ from proxy.services.saferag_service import (
 )
 from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
+from proxy.services.llm_transport_profile_service import (
+    assistant_delta_text,
+    fit_prompt_sections,
+    provider_is_local,
+    provider_prompt_max_chars,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def profile_temperature(profile_snapshot: dict[str, Any] | None, *, fallback: float) -> float:
+    """Return the bounded immutable profile temperature for generation."""
+
+    policy = (profile_snapshot or {}).get("model_policy") or {}
+    try:
+        value = float(policy.get("temperature", fallback))
+    except (TypeError, ValueError):
+        value = fallback
+    return max(0.0, min(2.0, value))
+
+
+def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configured: int) -> int:
+    """Respect the profile's iterative-search switch without changing the global ceiling."""
+
+    iterative = bool(((profile_snapshot or {}).get("rag_policy") or {}).get("iterative", True))
+    return max(1, configured) if iterative else 1
+
+
+def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
+    """Compile the exact per-chat prompt/skill snapshot for grounded generation."""
+
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    prompt = str(snapshot.get("prompt_text") or "").strip()
+    skill = str(snapshot.get("skill_text") or "").strip()
+    if not prompt:
+        prompt = build_mode_system_prompt("rag")
+    parts = [prompt]
+    if skill:
+        parts.append("Активный skill профиля (правила работы, не evidence):\n" + skill)
+    if strict:
+        parts.append(
+            "Повторная попытка: сохрани полезный ответ, но привяжи числа, требования и "
+            "проектные факты к [Источник N]. Не найденное обозначь как ограничение."
+        )
+    else:
+        parts.append(
+            "Для проверяемых утверждений используй только реальные материалы текущего запроса. "
+            "Ссылки оформляй номерами из заголовков [Источник N]; навигационные карты помогают "
+            "выбрать файл, но сами по себе не подтверждают факт."
+        )
+    return "\n\n".join(parts)
 
 @dataclass(frozen=True)
 class EvidenceRequestContext:
@@ -77,6 +126,7 @@ class EvidenceRequestContext:
     route: Any
     table_result: Any
     request_started_at: float
+    profile_snapshot: dict[str, Any] = field(default_factory=dict)
     scope_resolution: dict[str, Any] = field(default_factory=dict)
 
 
@@ -152,6 +202,7 @@ async def run_chat_evidence_application(
         use_semantic_cache=request.use_semantic_cache,
         use_validation=request.use_validation,
         validation_skip_reason=request.validation_skip_reason,
+        profile_snapshot=request.profile_snapshot,
         state=runtime.state,
         rag_backend=runtime.rag_backend,
         cache=runtime.cache,
@@ -288,6 +339,7 @@ async def _execute_chat_evidence_application(
     notebook_study_prompt_block,
     os,
     query_route_payload,
+    profile_snapshot,
     rag_backend,
     rank_chunks_for_question,
     render_retrieval_evidence_for_model,
@@ -592,6 +644,7 @@ async def _execute_chat_evidence_application(
     # Размер контекста зависит от того, КУДА пойдёт генерация. Облако ест большой контекст
     # быстро; локальная 4B (P0-данные форсят MLX по ADR-9) захлёбывается на префилле 32K
     # символов — генерация ~1 tok/s. Поэтому большой контекст — только для облака.
+    _cfg_provider = ""
     try:
         _cfg_provider = _llm_runtime().provider
         _route_preview = decide_provider(
@@ -605,7 +658,11 @@ async def _execute_chat_evidence_application(
     big_context = (is_structured or is_technical_or_legal) and will_be_cloud
     local_big = (is_structured or is_technical_or_legal) and not will_be_cloud
 
-    context_budget = _local_context_budget(local_big=local_big, big_context=big_context)
+    context_budget = _local_context_budget(
+        local_big=local_big,
+        big_context=big_context,
+        provider=_cfg_provider,
+    )
     focus_max_chunks = context_budget["focus_max_chunks"] or None
     context_max_chunks = context_budget["context_max_chunks"] or None
     context_chars_limit = context_budget["context_chars_limit"]
@@ -935,6 +992,22 @@ async def _execute_chat_evidence_application(
         llm_runtime = _mlx_runtime() if _mem_reason else configured_runtime
         if _mem_reason:
             logger.warning("[ROUTE] %s", _mem_reason)
+    if llm_runtime.provider == "freetoken":
+        from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
+
+        desired_kv = _env_int("FREETOKEN_CONTEXT_TOKENS", 8253)
+        cache_state = await asyncio.to_thread(
+            reconcile_freetoken_cache,
+            llm_runtime.base_url,
+            desired_kv,
+        )
+        retrieval_trace["freetoken_cache"] = cache_state
+        if cache_state.get("status") not in {"aligned", "synchronized"}:
+            raise HTTPException(
+                503,
+                "FreeToken KV не синхронизирован: "
+                + str(cache_state.get("reason") or cache_state.get("status")),
+            )
     retrieval_trace["routing"] = {
         "configured_provider": configured_runtime.provider,
         "configured_model": configured_runtime.model,
@@ -963,21 +1036,8 @@ async def _execute_chat_evidence_application(
     # used to add thousands of prompt characters and, worse, made the application
     # service a second hidden prompt registry.  Keep only the source-label contract
     # that is specific to the evidence packet rendered below.
-    sys_normal = build_mode_system_prompt(
-        "rag",
-        extra=(
-            "Для проверяемых утверждений используй только реальные материалы текущего запроса. "
-            "Ссылки оформляй номерами из заголовков [Источник N]; навигационные карты помогают "
-            "выбрать файл, но сами по себе не подтверждают факт."
-        ),
-    )
-    sys_strict = build_mode_system_prompt(
-        "rag",
-        extra=(
-            "Повторная попытка: сохрани полезный ответ, но привяжи числа, требования и проектные "
-            "факты к [Источник N]. Не найденное обозначь как ограничение, не как факт отсутствия."
-        ),
-    )
+    sys_normal = profile_system_prompt(profile_snapshot, strict=False)
+    sys_strict = profile_system_prompt(profile_snapshot, strict=True)
 
     # ADR-12 слой 2: форму ответа диктует интент вопроса (детерминированно, до генерации).
     answer_form = apply_response_length(classify_answer_form(req.question), req.response_length)
@@ -1076,7 +1136,7 @@ async def _execute_chat_evidence_application(
                                     continue
                                 choices = chunk.get("choices") or []
                                 _delta = choices[0].get("delta", {}) if choices else {}
-                                piece = _delta.get("content") or _delta.get("reasoning") or ""
+                                piece = assistant_delta_text(_delta)
                                 if piece:
                                     acc.append(piece)
                                     await token_sink({"event": "token", "data": piece})
@@ -1123,10 +1183,10 @@ async def _execute_chat_evidence_application(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
                 )
-                tool_loop_enabled = (
-                    str(req.mode or "").strip().casefold() == "agent"
-                    or _env_bool("LES_CHAT_TOOL_LOOP_ENABLED", True)
-                )
+                profile_tools = [
+                    str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
+                ]
+                tool_loop_enabled = bool(profile_tools)
                 if tool_loop_enabled:
                     try:
                         from proxy.services.tool_harness_service import harness
@@ -1136,6 +1196,7 @@ async def _execute_chat_evidence_application(
                             tool_harness.shortlist,
                             req.question,
                             mode=str(req.mode or route.intent or ""),
+                            allowed_tools=profile_tools,
                             limit=max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
                         )
                         allowed_tools = {
@@ -1146,7 +1207,10 @@ async def _execute_chat_evidence_application(
                         selector_headers = {}
                         if llm_runtime.api_key:
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
-                        max_rounds = max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12)))
+                        max_rounds = profile_research_rounds(
+                            profile_snapshot,
+                            configured=max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12))),
+                        )
                         max_calls = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48))
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
@@ -1352,21 +1416,50 @@ async def _execute_chat_evidence_application(
                                 " Оператор явно выбрал документы. Отвечай только по их содержимому, "
                                 "явно называй использованные файлы и не расширяй область на остальной датасет."
                             )
-                    user_prompt = (
-                        f"Материалы из найденных документов:\n{context}\n\n"
-                        + (f"{tool_context}\n\n" if tool_context else "")
-                        + (f"{dataset_memory_prompt}\n\n" if dataset_memory_prompt else "")
-                        + (f"{project_inventory_prompt}\n\n" if project_inventory_prompt else "")
-                        + (f"{notebook_study_prompt}\n\n" if notebook_study_prompt else "")
-                        + ("Выбранные документы: " + "; ".join(target_doc_filter) + ".\n\n" if target_doc_filter else "")
-                        + (f"{session_block}\n\n" if session_block else "")
-                        + (f"{memory_block}\n\n" if memory_block else "")
-                        + (f"{project_memory_advisory}\n\n" if project_memory_advisory else "")
-                        + f"Вопрос: {req.question}\n\n"
+                    question_tail = (
+                        f"Вопрос: {req.question}\n\n"
                         "/no_think\n"
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
+                    prompt_sections = [
+                        # Preserve conversational continuity before spending the
+                        # remaining provider budget on the evidence packet. Both
+                        # memory blocks are already bounded upstream; facts still
+                        # require citations from the evidence block below.
+                        ("session_memory", session_block),
+                        ("working_memory", memory_block),
+                        ("evidence", f"Материалы из найденных документов:\n{context}"),
+                        ("tools", tool_context),
+                        ("dataset_navigation", dataset_memory_prompt),
+                        ("inventory_navigation", project_inventory_prompt),
+                        ("notebook_navigation", notebook_study_prompt),
+                        (
+                            "selected_documents",
+                            "Выбранные документы: " + "; ".join(target_doc_filter) + "."
+                            if target_doc_filter else "",
+                        ),
+                        ("project_memory_advisory", project_memory_advisory),
+                    ]
+                    if provider_is_local(llm_runtime.provider):
+                        user_prompt, prompt_fit = fit_prompt_sections(
+                            prompt_sections,
+                            required_tail=question_tail,
+                            max_chars=max(
+                                2000,
+                                provider_prompt_max_chars(llm_runtime.provider) - len(sys_msg),
+                            ),
+                        )
+                        retrieval_trace["prompt_fit"] = {
+                            "schema": "les.prompt-fit.v1",
+                            "provider": llm_runtime.provider,
+                            "total_limit_chars": provider_prompt_max_chars(llm_runtime.provider),
+                            **prompt_fit,
+                        }
+                    else:
+                        user_prompt = "\n\n".join(
+                            [value for _, value in prompt_sections if value] + [question_tail]
+                        )
                     messages = [
                         {"role": "system", "content": sys_msg},
                         {"role": "user", "content": user_prompt},
@@ -1419,7 +1512,10 @@ async def _execute_chat_evidence_application(
                     chat_body = {
                         "messages": messages,
                         "stream": False,
-                        "temperature": _env_float("CHAT_TEMPERATURE", 0.2),
+                        "temperature": profile_temperature(
+                            profile_snapshot,
+                            fallback=_env_float("CHAT_TEMPERATURE", 0.2),
+                        ),
                         "max_tokens": generation_budget,
                     }
                     # При стриминге ретрай (строгий промпт) шлёт уже новый текст —

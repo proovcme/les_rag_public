@@ -49,6 +49,80 @@ MappingModelExchange = Callable[[list[dict], dict[str, Any]], dict[str, Any]]
 TokenSink = Callable[[dict[str, Any]], Awaitable[None]]
 
 
+def _approval_open_items(workflow: dict[str, Any]) -> list[dict[str, Any]]:
+    """Project unresolved source rows into the approval UI without choosing for the model."""
+    lsr = workflow.get("lsr") if isinstance(workflow.get("lsr"), dict) else {}
+    positions: list[dict[str, Any]] = []
+    for item in lsr.get("positions") or []:
+        if isinstance(item, dict):
+            positions.append(item)
+    for section in lsr.get("sections") or []:
+        if not isinstance(section, dict):
+            continue
+        for item in section.get("positions") or []:
+            if isinstance(item, dict):
+                positions.append(item)
+
+    open_items: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in positions:
+        work_id = str(item.get("work_id") or "").strip()
+        if not work_id or work_id in seen:
+            continue
+        summary = item.get("summary") if isinstance(item.get("summary"), dict) else {}
+        result_status = str(summary.get("result_status") or "").strip()
+        code = str(item.get("code") or item.get("norm_code") or "").strip()
+        if code and code != "MISSING" and result_status != "norm_selection_required":
+            continue
+        seen.add(work_id)
+        flags = summary.get("flags") if isinstance(summary.get("flags"), list) else []
+        open_items.append({
+            "work_id": work_id,
+            "title": str(item.get("name") or item.get("title") or work_id).strip(),
+            "quantity": item.get("qty", item.get("quantity")),
+            "unit": str(item.get("unit") or "").strip(),
+            "reason": str(flags[0] if flags else "").strip(),
+        })
+    return open_items[:20]
+
+
+def _is_local_ollama_qwen_document(
+    *,
+    cloud_provider: bool,
+    model_provider: str,
+    model_name: str,
+    agent_engine: str = "",
+) -> bool:
+    """True for the Legion local Qwen document path that needs the fast profile."""
+    if cloud_provider:
+        return False
+    engine = str(agent_engine or "").strip().casefold()
+    if engine == "qwen_agent":
+        return True
+    return (
+        str(model_provider or "").casefold() == "ollama"
+        and "qwen" in str(model_name or "").casefold()
+    )
+
+
+def _is_local_freetoken_document(*, cloud_provider: bool, model_provider: str) -> bool:
+    """FreeToken on Legion must process one immutable source row per batch."""
+    return (
+        not cloud_provider
+        and str(model_provider or "").strip().casefold() == "freetoken"
+    )
+
+
+def _ensure_local_ollama_fast_document_env() -> None:
+    """Apply fast local defaults only when the operator did not set the env vars."""
+    os.environ.setdefault("LES_SMETA_SEARCH_BUDGET", "3")
+    os.environ.setdefault("LES_SMETA_READ_BUDGET", "3")
+    os.environ.setdefault("LES_SMETA_MAPPING_EVIDENCE_REPAIR_TURNS", "1")
+    os.environ.setdefault("LES_SMETA_DOCUMENT_MAX_TOOL_TURNS", "8")
+    # Rerank policy is an operator-owned runtime factor shared by all requests.
+    # A single document run must not disable it process-wide.
+
+
 def _source_fingerprint(path: Path) -> dict[str, Any]:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -137,7 +211,9 @@ class SmetaDirectDependencies:
 
 
 def default_smeta_direct_dependencies(
-    *, active_state: Callable[[str, str], dict[str, Any]] | None = None
+    *,
+    active_state: Callable[[str, str], dict[str, Any]] | None = None,
+    profile_snapshot: dict[str, Any] | None = None,
 ) -> SmetaDirectDependencies:
     """Ready smeta adapters; the HTTP router does not own prompts or transport."""
 
@@ -147,7 +223,7 @@ def default_smeta_direct_dependencies(
         rag_context=adapters._smeta_direct_rag_context,
         norm_lookup=adapters._smeta_direct_norm_lookup_context,
         norm_choice=adapters._smeta_direct_structured_norm_choice,
-        model_answer=adapters._smeta_direct_model_answer,
+        model_answer=adapters.smeta_direct_model_answer_for_profile(profile_snapshot),
         active_state=active_state or (lambda _question, _answer: {}),
         model_runtime=lambda: adapters._smeta_model_runtime("LES_SMETA_DIRECT_MODEL_PROVIDER"),
     )
@@ -677,22 +753,43 @@ async def run_smeta_document_application(
             cancel_check=cancel_requested.is_set,
         )
         configured_batch_size = os.getenv("LES_SMETA_DOCUMENT_BATCH_SIZE")
+        local_ollama_qwen = _is_local_ollama_qwen_document(
+            cloud_provider=bool(cloud_provider),
+            model_provider=str(model_provider or ""),
+            model_name=str(model_name or ""),
+            agent_engine=str(agent_engine or ""),
+        )
+        local_freetoken = _is_local_freetoken_document(
+            cloud_provider=bool(cloud_provider),
+            model_provider=str(model_provider or ""),
+        )
+        local_single_row_transport = local_ollama_qwen or local_freetoken
         if configured_batch_size is not None:
             document_batch_size = int(configured_batch_size)
         elif agent_engine == "qwen_agent":
             document_batch_size = 1
-        elif (
-            not cloud_provider
-            and str(model_provider or "").casefold() == "ollama"
-            and "qwen" in str(model_name or "").casefold()
-        ):
+        elif local_single_row_transport:
             document_batch_size = 1
         else:
             document_batch_size = 0 if cloud_provider else 5
+        if local_single_row_transport:
+            _ensure_local_ollama_fast_document_env()
         document_max_turns = int(os.getenv(
             "LES_SMETA_DOCUMENT_MAX_TOOL_TURNS",
-            "64" if cloud_provider else "10",
+            (
+                "64" if cloud_provider else
+                # Scoped catalog needs family→collection→section→table→search→read→submit.
+                # Keep local Qwen under demo latency; 12+ turns × 19 rows stalls 10–20 min.
+                "8" if local_single_row_transport else
+                "10"
+            ),
         ))
+        # Conflict-group review doubles wall time on local Qwen and often only
+        # re-serializes already terminal rows. Operator can force it via env.
+        local_global_review = os.getenv(
+            "LES_SMETA_LOCAL_GLOBAL_REVIEW",
+            "0" if local_single_row_transport else "1",
+        ).strip().casefold() not in {"0", "false", "no", "off"}
         workflow_task = asyncio.create_task(asyncio.to_thread(
             run_vor_document_workflow, source_path,
             exchange=exchange,
@@ -705,7 +802,11 @@ async def run_smeta_document_application(
             max_agent_turns=document_max_turns,
             agent_batch_runner=agent_runner.run_batch if agent_runner is not None else None,
             accumulate_task_state=(agent_engine == "qwen_agent" and document_batch_size == 1),
-            require_global_review=True,
+            require_global_review=local_global_review,
+            # Same typed RIM catalog contract as rim_agent / local_run: phase tools with
+            # selected_node_id. Legacy browse(decision=continue) without a node left
+            # chat LSR at family root → candidate unbound → 0 priced rows.
+            require_scoped_search=True,
             resume_agent_result=resume_agent_result,
             batch_checkpoint=checkpoint,
             work_context_enricher=work_context_enricher,
@@ -770,10 +871,27 @@ async def run_smeta_document_application(
             operation="smeta_document_failed",
             channel="smeta_mode",
             crag="ERROR",
-            extra={"retrieval_trace": {"mode": "smeta_document", "error": str(error)}},
+            extra={
+                "retrieval_trace": {
+                    "mode": "smeta_document",
+                    "error": str(error),
+                },
+                "attachment_retry": {
+                    "preserved": True,
+                    "id": attachment_id,
+                    "name": str(
+                        attachment_meta.get("original_name") or source_path.name
+                    ),
+                    "mode": "read",
+                },
+            },
         )
 
-    await asyncio.to_thread(consume_read_attachment, attachment_id)
+    approval_open_items = _approval_open_items(workflow)
+    approval_conflicts = list(workflow.get("professional_conflicts") or [])
+    keep_source_for_review = bool(approval_open_items or approval_conflicts)
+    if not keep_source_for_review:
+        await asyncio.to_thread(consume_read_attachment, attachment_id)
     await asyncio.to_thread(checkpoint_path.unlink, missing_ok=True)
     summary = (workflow.get("lsr") or {}).get("summary") or {}
     status = str(summary.get("result_status") or "unknown")
@@ -828,7 +946,16 @@ async def run_smeta_document_application(
             "mapping_revision_id": (workflow.get("mapping_run") or {}).get(
                 "current_mapping_revision_id"
             ),
-            "professional_conflicts": list(workflow.get("professional_conflicts") or []),
+            "professional_conflicts": approval_conflicts,
+            "open_items": approval_open_items,
+            "attachment": (
+                {
+                    "id": attachment_id,
+                    "name": source_name,
+                    "mode": "read",
+                }
+                if keep_source_for_review else {}
+            ),
             "lock_url": (
                 f"/api/smeta-mappings/{(workflow.get('mapping_run') or {}).get('current_mapping_revision_id')}/lock"
                 if (workflow.get("mapping_run") or {}).get("current_mapping_revision_id")

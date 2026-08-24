@@ -116,25 +116,83 @@ def source_chip(source: Any, index: int | None = None) -> dict:
     (chip помечается «без ссылки», не делаем фейк-линк)."""
     ref = ""
     kind = ""
+    doc_id = ""
+    display_name = ""
     if isinstance(source, dict):
         ref = str(source.get("source_ref") or source.get("ref") or source.get("path") or "")
         kind = str(source.get("source_kind") or source.get("kind") or "")
+        doc_id = str(source.get("doc_id") or "")
+        display_name = str(source.get("doc_name") or source.get("file") or source.get("name") or "")
     else:
         ref = str(source or "")
     # ref вида "ds/file.docx#para85" или "file.xlsx#Лист!R12"
     file_part, _, loc = ref.partition("#")
-    file_name = file_part.rsplit("/", 1)[-1] if file_part else ""
+    if not loc and isinstance(source, dict):
+        locator = source.get("locator")
+        if isinstance(locator, dict):
+            page_value = locator.get("page") or locator.get("page_number") or locator.get("source_page")
+            loc = f"p{page_value}" if page_value else str(locator.get("label") or "")
+        elif locator:
+            loc = str(locator)
+        if not loc:
+            page_value = source.get("source_page") or source.get("page") or source.get("page_number")
+            loc = f"p{page_value}" if page_value else ""
+    file_name = file_part.rsplit("/", 1)[-1] if file_part else display_name
     # локатор человекочитаемо: para85→абз.85, p3→стр.3, row5→стр.5, Лист!R12→Лист R12, chunk2→чанк2
     loc_h = loc
     for pat, rep in ((r"^para(\d+)", r"абз.\1"), (r"^p(\d+)$", r"стр.\1"), (r"^row(\d+)", r"стр.\1"),
                      (r"^L(\d+)", r"стр.\1"), (r"^chunk(\d+)?", r"чанк\1")):
         loc_h = re.sub(pat, rep, loc_h)
     return {"n": index, "file": file_name or (ref[:40] if ref else ""), "locator": loc_h,
-            "kind": _KIND_HUMAN.get(kind, kind), "has_ref": bool(ref), "weak": kind in ("vector_chunk",)}
+            "kind": _KIND_HUMAN.get(kind, kind), "has_ref": bool(ref or doc_id),
+            "weak": kind in ("vector_chunk",)}
 
 
 def source_chips(sources: list, max_n: int = 12) -> list[dict]:
     return [source_chip(s, i + 1) for i, s in enumerate((sources or [])[:max_n])]
+
+
+def citation_sources(sources: list, source_map: Any = None) -> list:
+    """Prefer the exact prompt-visible source map over legacy filename chips.
+
+    The map carries stable ``doc_id`` and precise locators.  Legacy ``sources``
+    remain the fallback for old history records and non-RAG tool responses.
+    """
+    mapped = source_map if isinstance(source_map, list) else []
+    if not mapped:
+        return list(sources or [])
+    normalized: list[dict[str, Any]] = []
+    for item in mapped:
+        if not isinstance(item, dict):
+            continue
+        source = dict(item)
+        source.setdefault("file", source.get("doc_name") or "")
+        source.setdefault("excerpt", source.get("snippet") or "")
+        normalized.append(source)
+    return normalized or list(sources or [])
+
+
+_INLINE_MATH_RE = re.compile(r"(?<!\\)(?<!\$)\$([^$\n]+)\$(?!\$)")
+
+
+def normalize_inline_math(text: str) -> str:
+    """Remove unsupported inline-LaTeX delimiters without touching currency.
+
+    NiceGUI's Markdown renderer does not enable a TeX plugin, so model output
+    such as ``$P_{уст} = 841,4$`` otherwise exposes literal dollar signs.
+    Escaped currency (``\\$100``), unmatched dollars and display ``$$`` blocks
+    are preserved.
+    """
+    def _plain(match: re.Match[str]) -> str:
+        expression = match.group(1).strip()
+        expression = re.sub(r"_\{([^{}]+)\}", r"_\1", expression)
+        expression = re.sub(r"\^\{([^{}]+)\}", r"^\1", expression)
+        expression = re.sub(r"\\(?:mathrm|text)\{([^{}]+)\}", r"\1", expression)
+        expression = expression.replace(r"\,", " ")
+        expression = re.sub(r"(?<!\\)_", r"\\_", expression)
+        return expression
+
+    return _INLINE_MATH_RE.sub(_plain, str(text or ""))
 
 
 def source_usage(source: Any, index: int, answer: str = "") -> dict[str, str]:
@@ -196,6 +254,8 @@ def citation_artifact(sources: list) -> dict:
         usage = source_usage(s, i)
         items.append({"n": i, "file": c["file"], "locator": c["locator"], "kind": c["kind"],
                       "source_ref": (s.get("source_ref") if isinstance(s, dict) else str(s)) if c["has_ref"] else "",
+                      "doc_id": str(s.get("doc_id") or "") if isinstance(s, dict) else "",
+                      "dataset_id": str(s.get("dataset_id") or "") if isinstance(s, dict) else "",
                       "snippet": snippet, "has_ref": c["has_ref"], "weak": c["weak"],
                       "usage": usage["code"], "usage_label": usage["label"]})
     return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
@@ -238,8 +298,18 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     item = citation_artifact([source])["items"][0]
     item["n"] = index or item["n"]
     source_ref = str(item.get("source_ref") or "")
+    doc_id = str(item.get("doc_id") or "")
     file_part, _, location = source_ref.partition("#")
-    suffix_match = re.search(r"(\.[a-z0-9]+)$", file_part, re.I)
+    if not location and isinstance(source, dict):
+        locator = source.get("locator")
+        if isinstance(locator, dict):
+            if locator.get("page") not in (None, ""):
+                location = f"p{locator['page']}"
+            elif locator.get("paragraph") not in (None, ""):
+                location = f"para{locator['paragraph']}"
+        elif source.get("page") not in (None, ""):
+            location = f"p{source['page']}"
+    suffix_match = re.search(r"(\.[a-z0-9]+)$", file_part or str(item.get("file") or ""), re.I)
     suffix = suffix_match.group(1).lower() if suffix_match else ""
     open_url = ""
     viewer_url = ""
@@ -248,6 +318,21 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
         unavailable_reason = "У источника нет source_ref: открыть нельзя, можно только проверить текст ответа."
     elif item.get("weak"):
         unavailable_reason = "Источник слабый/vector: точное место не гарантировано, доступно копирование source_ref."
+    elif doc_id:
+        open_url = f"/api/documents/by-id/{quote(doc_id, safe='')}/raw"
+        page_match = re.search(r"(?:^|[#;&])(?:p|page=?)\s*(\d+)(?:$|[#;&])", location, re.I)
+        if suffix == ".pdf" and page_match:
+            open_url += f"#page={int(page_match.group(1))}"
+        if suffix == ".pdf" or suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+            viewer_url = open_url
+        elif suffix in _EMBEDDED_VIEW_EXTENSIONS:
+            params: dict[str, object] = {}
+            if location:
+                params["locator"] = location
+            if isinstance(source, dict) and source.get("sheet"):
+                params["sheet"] = source["sheet"]
+            query = f"?{urlencode(params)}" if params else ""
+            viewer_url = f"/api/documents/by-id/{quote(doc_id, safe='')}/viewer{query}"
     elif "/" in file_part or suffix in _EMBEDDED_VIEW_EXTENSIONS or suffix in {".doc", ".xls"}:
         open_url = f"/lite-api/rag/file/raw?path={quote(file_part)}"
         page_match = re.search(r"(?:^|[#;&])(?:p|page=?)\s*(\d+)(?:$|[#;&])", location, re.I)
@@ -271,7 +356,12 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
                     except (TypeError, ValueError):
                         pass
             viewer_url = f"/lite-api/rag/file/viewer?{urlencode(params)}"
-    native_open_url = f"/api/documents/open-native-by-ref?path={quote(file_part)}" if item.get("has_ref") and file_part else ""
+    native_open_url = (
+        f"/api/documents/by-id/{quote(doc_id, safe='')}/open-native"
+        if doc_id else
+        f"/api/documents/open-native-by-ref?path={quote(file_part)}"
+        if item.get("has_ref") and file_part else ""
+    )
     # Нормативные/расчётные refs вида "ГЭСН-2022#06-..." или "ГОСТ...#clause=..."
     # не являются локальными файлами. Не пугаем оператора техническим предупреждением: ref остаётся
     # в copy_text, а drawer просто показывает название источника и цитату/сниппет.

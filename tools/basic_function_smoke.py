@@ -113,6 +113,52 @@ def check_scope(c, base):
         return _r("scope_options", "P0", "fail", t0, f"{type(e).__name__}: {e}")
 
 
+def check_indexing_state(c, base, *, release: bool) -> tuple[dict, bool]:
+    """Make an active index build observable without weakening release gates."""
+    t0 = time.monotonic()
+    try:
+        payload = c.get(f"{base}/api/health").json()
+        rag = payload.get("rag") if isinstance(payload.get("rag"), dict) else {}
+        totals = rag.get("totals") if isinstance(rag.get("totals"), dict) else {}
+        pending = int(totals.get("pending_files") or 0)
+        active = pending > 0 or any(
+            str(item.get("status") or "").upper() in {"PARSING", "QUEUED", "RUNNING"}
+            for item in (rag.get("datasets") or []) if isinstance(item, dict)
+        )
+        evidence = {
+            "error_code": "INDEXING_IN_PROGRESS" if active else "",
+            "pending_files": pending,
+            "rag_status": rag.get("status", ""),
+        }
+        if not active:
+            return _r("indexing_state", "P0", "pass", t0, "", evidence), False
+        if release:
+            return _r(
+                "indexing_state", "P0", "fail", t0,
+                "INDEXING_IN_PROGRESS: release smoke требует завершённый индекс", evidence,
+            ), True
+        return _r(
+            "indexing_state", "P0", "warn", t0,
+            "INDEXING_IN_PROGRESS: chat-пробы отложены до завершения индексации", evidence,
+        ), True
+    except Exception as error:
+        return _r(
+            "indexing_state", "P0", "fail", t0,
+            f"{type(error).__name__}: {error}", {"error_code": "INDEXING_STATE_UNAVAILABLE"},
+        ), False
+
+
+def indexing_chat_warning(name: str) -> dict:
+    return _r(
+        name,
+        "P0" if name == "chat_glossary" else "P1",
+        "warn",
+        time.monotonic(),
+        "INDEXING_IN_PROGRESS: проба не выполнялась",
+        {"error_code": "INDEXING_IN_PROGRESS"},
+    )
+
+
 def _chat(c, base, question, *, timeout: float):
     resp = c.post(f"{base}/api/chat", json={"question": question}, timeout=timeout)
     return resp
@@ -226,8 +272,14 @@ def main() -> int:
         results.append(check_simple(c, base, "/api/metrics", "metrics_endpoint", "P1"))
         results.append(check_diagnostics(c, base))
         results.append(check_scope(c, base))
-        results.append(check_chat_glossary(c, base, timeout=args.chat_timeout))
-        results.append(check_chat_project_noscope(c, base, timeout=args.chat_timeout))
+        indexing_result, indexing_active = check_indexing_state(c, base, release=args.release)
+        results.append(indexing_result)
+        if indexing_active and not args.release:
+            results.append(indexing_chat_warning("chat_glossary"))
+            results.append(indexing_chat_warning("chat_project_noscope"))
+        else:
+            results.append(check_chat_glossary(c, base, timeout=args.chat_timeout))
+            results.append(check_chat_project_noscope(c, base, timeout=args.chat_timeout))
         # UI достижим
         t0 = time.monotonic()
         try:
@@ -253,9 +305,13 @@ def main() -> int:
     except Exception as e:
         print(f"[smoke] WARN: не записал artifact {args.json}: {e}", file=sys.stderr)
 
-    icon = {"pass": "✓", "warn": "⚠", "fail": "✗"}
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    icon = {"pass": "OK", "warn": "WARN", "fail": "FAIL"}
     for x in results:
-        print(f"  {icon.get(x['status'],'?')} [{x['severity']}] {x['name']:<24} {x['elapsed_ms']:>7.0f}ms  {x['reason']}")
+        print(f"  [{icon.get(x['status'],'?')}] [{x['severity']}] {x['name']:<24} {x['elapsed_ms']:>7.0f}ms  {x['reason']}")
     print(f"[smoke] pass={summary['pass']} warn={summary['warn']} fail={summary['fail']} → {args.json}")
 
     if p0_fail:

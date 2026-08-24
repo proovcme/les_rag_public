@@ -73,6 +73,15 @@ def test_windows_bootstrap_reports_the_installed_runtime_root():
     assert "$env:LES_REPO_ROOT = $Root" in bootstrap
 
 
+def test_windows_light_start_always_exports_runtime_identity():
+    text = (
+        build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert "$env:LES_RUNTIME_HOME = $Root.Path" in text
+    assert "$env:LES_REPO_ROOT = $Root.Path" in text
+
+
 def test_windows_release_smoke_reports_cleanup_failures_before_success():
     smoke = (
         build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
@@ -93,6 +102,16 @@ def test_windows_stop_helper_prefers_waitable_python():
     ).read_text(encoding="utf-8-sig")
 
     assert 'foreach ($name in @("python.exe", "pythonw.exe"))' in stop
+
+
+def test_windows_stop_checks_native_exit_code_without_powershell_false_error():
+    stop = (
+        build_windows_installer.ROOT / "installers" / "windows" / "stop-light.ps1"
+    ).read_text(encoding="utf-8")
+
+    assert '$ErrorActionPreference = "Continue"' in stop
+    assert "$stopExitCode = $LASTEXITCODE" in stop
+    assert "$ErrorActionPreference = $previousErrorActionPreference" in stop
 
 
 def test_windows_desktop_installer_stops_les_and_offers_data_wipe():
@@ -210,6 +229,20 @@ def test_start_light_uses_direct_console_free_python_processes():
     assert "Wait-LesHttp" in text
     assert 'Start-Process -FilePath "cmd.exe"' not in text
     assert "function Start-LesUvProcess" not in text
+
+
+def test_start_light_configures_external_freetoken_with_ollama_embeddings():
+    ps1 = build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
+    text = ps1.read_text(encoding="utf-8")
+
+    assert '"freetoken"' in text
+    assert '"freetoken" { "FREETOKEN_MODEL" }' in text
+    assert '$env:FREETOKEN_BASE_URL' in text
+    assert '"http://127.0.0.1:1919/v1"' in text
+    assert '$env:FREETOKEN_CONTEXT_TOKENS' in text
+    assert '$env:EMBED_BACKEND = "ollama"' in text
+    assert '$env:RAG_VECTOR_SIZE = "1024"' in text
+    assert 'if ($Provider -eq "freetoken")' not in text
 
 
 def test_windows_bootstrap_reports_ready_only_after_api_health():
@@ -331,7 +364,7 @@ def test_start_light_keeps_provider_model_and_ollama_embedding_contract_aligned(
     assert '"bge-m3:latest"' in text
     assert '$env:EMBED_BACKEND = "ollama"' in text
     assert '$env:RAG_VECTOR_SIZE = "1024"' in text
-    assert '$env:RERANKER_ENABLED = "true"' in text
+    assert '$env:RERANKER_ENABLED = "false"' in text
     assert '$env:RERANKER_BACKEND = "sentence_transformers"' in text
     assert '$env:RERANK_MODEL' in text
 

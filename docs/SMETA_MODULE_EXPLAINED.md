@@ -195,7 +195,7 @@ Terminal без полного `technology_check` не принимается: �
 - Строка появляется в UI как «Оставлено без нормы» и сохраняет причину.
 - Остальные строки продолжают обрабатываться и считаться.
 - Итог получает `priced_partial`/blockers, а неизвестная сумма остаётся `null`, не `0`.
-- Бесконечного поиска нет: действует `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS` (local default 6 на строку).
+- Бесконечного поиска нет: действует `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS` (local Ollama/Qwen default 12 на строку).
 - Две same-model recovery-попытки ограничены; затем возникает явная ошибка без скрытого fallback.
 - При падении всего workflow вложение не потребляется: пользователь может повторить задачу.
 
@@ -502,7 +502,7 @@ blockers и источники.
 | `GOOGLE_API_KEY` | ключ Google ADK | отсутствует, fail-closed |
 | `LES_CLOUD_CONSENT` | явное согласие на cloud source | false |
 | `LES_SMETA_DOCUMENT_BATCH_SIZE` | строк на transport task | Qwen 1, native local 10, cloud 0 |
-| `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS` | модельных ходов на task | local 10, cloud 64 |
+| `LES_SMETA_DOCUMENT_MAX_TOOL_TURNS` | модельных ходов на task | local Ollama/Qwen 12, прочий local 10, cloud 64 |
 | `LES_SMETA_SEARCH_BUDGET` / `LES_SMETA_READ_BUDGET` | отдельные evidence tool-вызовы | 4 / 4 |
 | `LES_SMETA_OPENED_CARD_BUDGET` | максимум открытых карточек на task | 12 |
 | `LES_SMETA_TASK_TIME_BUDGET_SEC` | wall-time evidence task | 180 |

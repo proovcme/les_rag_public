@@ -77,7 +77,9 @@ def chat_memory_guard_enabled() -> bool:
 # Память этой машины едят только ЛОКАЛЬНЫЕ провайдеры — для них guard обязателен
 # (кейс Gemma 12B: ollama выел RAM до swap 86%). Облачные (openrouter/openai)
 # RAM не требуют — admission по памяти снимается (решение оператора 2026-06-13).
-LOCAL_LLM_PROVIDERS = {"mlx", "local-mlx", "local_mlx", "ollama", "lemonade"}
+LOCAL_LLM_PROVIDERS = {
+    "mlx", "local-mlx", "local_mlx", "ollama", "lemonade", "freetoken",
+}
 
 # Облако не конкурирует за Metal — параллелизм отдельным семафором (медленная
 # облачная генерация не должна блокировать чат «slots=0», кейс 2026-06-14).
@@ -137,15 +139,15 @@ def chat_memory_guard_for_provider() -> bool:
 
 
 def memory_green_min_free_gb() -> float:
-    return _env_float("LES_MEMORY_GREEN_MIN_FREE_GB", 12.0)
+    return _env_float("LES_MEMORY_GREEN_MIN_FREE_GB", 4.0)
 
 
 def memory_red_min_free_gb() -> float:
-    return _env_float("LES_MEMORY_RED_MIN_FREE_GB", 8.0)
+    return _env_float("LES_MEMORY_RED_MIN_FREE_GB", 3.0)
 
 
 def memory_critical_min_free_gb() -> float:
-    return _env_float("LES_MEMORY_CRITICAL_MIN_FREE_GB", 6.0)
+    return _env_float("LES_MEMORY_CRITICAL_MIN_FREE_GB", 2.0)
 
 
 def memory_green_max_swap_pct() -> float:

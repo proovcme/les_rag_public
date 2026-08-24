@@ -1,0 +1,12 @@
+{
+  "version": "v1",
+  "description": "One-query release smoke for the corpus-agnostic general native-RRF path.",
+  "cases": [
+    {
+      "id": "general_native_rrf",
+      "question": "project documentation construction requirements",
+      "top_k": 5,
+      "min_chunks": 1
+    }
+  ]
+}

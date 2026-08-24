@@ -44,6 +44,7 @@ def test_source_map_matches_context_numbering_and_limit():
         N(
             content="первый фрагмент",
             doc_name="СП 1.docx",
+            doc_id="doc-1",
             score=0.81,
             meta={"dataset_id": "ds1", "page": 7, "source_ref": "СП 1.docx#p7"},
         ),
@@ -54,6 +55,7 @@ def test_source_map_matches_context_numbering_and_limit():
 
     assert [item["label"] for item in full] == ["Источник 1", "Источник 2"]
     assert full[0]["doc_name"] == "СП 1.docx"
+    assert full[0]["doc_id"] == "doc-1"
     assert full[0]["page"] == 7
     assert full[0]["dataset_id"] == "ds1"
     assert full[0]["source_ref"] == "СП 1.docx#p7"
@@ -73,6 +75,29 @@ def test_context_budget_does_not_drop_sources_for_local_model(monkeypatch):
     assert local["context_max_chunks"] == 0
     assert local["focus_max_chunks"] == 0
     assert local["context_window_chars"] == 4000
+
+
+def test_context_budget_bounds_freetoken_evidence_and_windows(monkeypatch):
+    monkeypatch.setenv("FREETOKEN_CONTEXT_TOKENS", "8253")
+    monkeypatch.delenv("FREETOKEN_PROMPT_MAX_CHARS", raising=False)
+    monkeypatch.delenv("FREETOKEN_PROMPT_CHARS_PER_TOKEN", raising=False)
+    monkeypatch.delenv("FREETOKEN_FOCUS_MAX_CHUNKS", raising=False)
+    monkeypatch.delenv("FREETOKEN_CONTEXT_MAX_CHUNKS", raising=False)
+    monkeypatch.delenv("FREETOKEN_EVIDENCE_MAX_CHARS", raising=False)
+    monkeypatch.delenv("FREETOKEN_CONTEXT_WINDOW_CHARS", raising=False)
+
+    budget = _local_context_budget(
+        local_big=True,
+        big_context=False,
+        provider="freetoken",
+    )
+
+    assert budget == {
+        "focus_max_chunks": 0,
+        "context_max_chunks": 0,
+        "context_chars_limit": 14106,
+        "context_window_chars": 1800,
+    }
 
 
 def test_local_generation_budget_does_not_cap_broad_forms(monkeypatch):

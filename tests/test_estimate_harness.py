@@ -73,6 +73,36 @@ def test_search_norm_no_match_is_honest(monkeypatch):
     assert h.search_norm("жжжыыы щщщъъъ ёёёххх")["status"] == "not_found"
 
 
+def test_search_norm_can_defer_reranker_for_big_model_tool_loop(monkeypatch):
+    from proxy.smeta_core import norm_browser
+
+    seen = {}
+
+    def browse_many(queries, *, limit, rerank):
+        seen.update({"queries": queries, "limit": limit, "rerank": rerank})
+        return {
+            queries[0]: {
+                "cards": [{
+                    "norm_code": "ГЭСНм10-04-087-05",
+                    "title": "Монтаж телекоммуникационного оборудования",
+                    "measure_unit": "шт",
+                    "work_steps": ["Установка оборудования"],
+                    "source_ref": "fsnb://10-04-087-05",
+                }],
+                "backend": "typed_sqlite_fts+rerank_deferred",
+                "source_integrity": {"status": "trusted"},
+            },
+        }
+
+    monkeypatch.setattr(norm_browser, "browse_norms_many", browse_many)
+
+    result = h.search_norm("монтаж шкафа", top_k=4, rerank=False)
+
+    assert result["candidates"][0]["norm_code"] == "ГЭСНм10-04-087-05"
+    assert result["norm_store"]["backend"] == "typed_sqlite_fts+rerank_deferred"
+    assert seen == {"queries": ["монтаж шкафа"], "limit": 4, "rerank": False}
+
+
 def test_collection_identity_preserves_explicit_family():
     assert h._collection_of("ГЭСН:10-02-024-02") == "10"
     assert h._collection_of("12-01-023-01") == "12"

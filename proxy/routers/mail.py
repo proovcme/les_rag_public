@@ -1021,6 +1021,17 @@ async def list_mail_messages(
     }
 
 
+@router.post("/rebuild-threads")
+async def rebuild_mail_threads(
+    account_id: str = Query(default="", max_length=80),
+    _user=Depends(require_user),
+):
+    """Собрать/перегруппировать цепочки писем по нормированной теме и Message-ID."""
+    acc_id = account_id.strip() if isinstance(account_id, str) else None
+    count = await asyncio.to_thread(get_mail_registry().rebuild_threads, acc_id or None)
+    return {"status": "ok", "updated_messages": count}
+
+
 @router.get("/threads")
 async def list_mail_threads(
     account_id: str = Query(default="", max_length=80),

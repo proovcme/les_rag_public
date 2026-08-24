@@ -80,12 +80,13 @@ def build_mail() -> None:
         state["messages"] = (payload or {}).get("messages") or [] if isinstance(payload, dict) else []
         render_messages()
 
-    async def show_message(message: dict) -> None:
+    async def show_message_thread(message: dict, thread_items: list[dict] | None = None) -> None:
         payload = await api_get(f"/api/mail/messages/{message['id']}")
         if not isinstance(payload, dict):
             notify_error("Не удалось открыть локальный снимок письма")
             return
         state["detail"] = payload
+        state["thread_items"] = thread_items or [message]
         render_detail()
 
     async def open_outlook(message_id: str) -> None:
@@ -132,16 +133,28 @@ def build_mail() -> None:
         ui.notify("Сбор новых писем запущен", type="positive")
         await load_accounts()
 
+    async def rebuild_threads_action() -> None:
+        account = state.get("account") or {}
+        acc_id = str(account.get("id") or "")
+        path = f"/api/mail/rebuild-threads?account_id={quote(acc_id)}" if acc_id else "/api/mail/rebuild-threads"
+        res = await api_post(path, {})
+        if isinstance(res, dict) and res.get("status") == "ok":
+            cnt = res.get("updated_messages", 0)
+            ui.notify(f"Цепочки писем собраны ({cnt} писем)", type="positive")
+            await load_messages()
+        else:
+            notify_error("Не удалось пересобрать цепочки писем")
+
     def render_status() -> None:
-        panel = refs.get("status")
-        if panel is None:
+        status_panel = refs.get("status")
+        if status_panel is None:
             return
-        panel.clear()
+        status_panel.clear()
         status = state.get("status") if isinstance(state.get("status"), dict) else {}
         summary = status.get("summary") if isinstance(status.get("summary"), dict) else {}
         account = state.get("account") or {}
         last_sync = str(account.get("last_sync") or "ещё не запускался")
-        with panel:
+        with status_panel:
             with ui.element("section").classes("sov-mail-status-strip").props(
                 'aria-label="Состояние почтового индекса"'
             ):
@@ -173,13 +186,21 @@ def build_mail() -> None:
                 elif account.get("kind") == "outlook_classic" and not sys.platform.startswith("win"):
                     collect.props("disable")
                     collect.tooltip("Сборщик classic Outlook запускается на Windows")
+                action_button(
+                    "Собрать цепочки",
+                    icon="o_account_tree",
+                    on_click=lambda: asyncio.create_task(rebuild_threads_action()),
+                    variant="secondary",
+                    compact=True,
+                    classes="sov-mail-rebuild-button",
+                )
 
     def render_accounts() -> None:
-        panel = refs.get("accounts")
-        if panel is None:
+        accounts_panel = refs.get("accounts")
+        if accounts_panel is None:
             return
-        panel.clear()
-        with panel:
+        accounts_panel.clear()
+        with accounts_panel:
             section_heading("Ящики", "Каждый ящик ограничен своим датасетом.")
             if not state["accounts"]:
                 render_feedback_state(
@@ -218,32 +239,50 @@ def build_mail() -> None:
                         for folder in folders:
                             ui.label(folder).classes("sov-mail-meta")
 
+    def _norm_subj(subj: str) -> str:
+        import re
+        s = str(subj or "").strip().lower()
+        prefix_re = re.compile(r"^(?:re|fwd|fw|отв|прем|re\[\d+\])[:\s]+", re.IGNORECASE)
+        while True:
+            m = prefix_re.match(s)
+            if not m:
+                break
+            s = s[m.end():].strip()
+        return re.sub(r"\s+", " ", s)
+
     def render_messages() -> None:
-        panel = refs.get("messages")
-        if panel is None:
+        messages_panel = refs.get("messages")
+        if messages_panel is None:
             return
-        panel.clear()
-        with panel:
+        messages_panel.clear()
+        with messages_panel:
             account = state.get("account") or {}
             section_heading(account.get("label") or "Переписка", "Цепочки писем по теме.")
             if not state["messages"]:
                 render_feedback_state("empty", detail="Писем пока нет. Запустите ручной сбор.")
             threads: dict[str, list[dict]] = {}
             for message in state["messages"]:
-                threads.setdefault(message.get("thread_key") or message["id"], []).append(message)
+                tk = message.get("thread_key") or ""
+                if not tk or tk.startswith("msg_"):
+                    norm = _norm_subj(message.get("subject") or "")
+                    key = f"subject_{norm}" if norm else message["id"]
+                else:
+                    key = tk
+                threads.setdefault(key, []).append(message)
             for messages in threads.values():
                 latest = messages[0]
+                thread_count = len(messages)
                 with ui.element("button").classes(
                     "sov-mail-message"
                 ).props(
                     'type="button"'
-                ).on("click", lambda _event, item=latest: asyncio.create_task(show_message(item))):
+                ).on("click", lambda _event, item=latest, msgs=messages: asyncio.create_task(show_message_thread(item, msgs))):
                     with ui.row().classes("sov-mail-message__head"):
                         ui.label(latest.get("subject") or "(без темы)").classes(
                             "sov-mail-message__subject"
                         )
-                        if len(messages) > 1:
-                            status_badge(str(len(messages)), "muted")
+                        if thread_count > 1:
+                            status_badge(f"💬 {thread_count} писем", "ok")
                     ui.label(latest.get("sender") or "Отправитель не указан").classes(
                         "sov-mail-message__sender"
                     )
@@ -252,11 +291,11 @@ def build_mail() -> None:
                     )
 
     def render_detail() -> None:
-        panel = refs.get("detail")
-        if panel is None:
+        detail_panel = refs.get("detail")
+        if detail_panel is None:
             return
-        panel.clear()
-        with panel:
+        detail_panel.clear()
+        with detail_panel:
             detail = state.get("detail") or {}
             if not detail:
                 render_feedback_state(
@@ -267,6 +306,11 @@ def build_mail() -> None:
             message = detail.get("message") or {}
             profile = detail.get("profile") or {}
             account = detail.get("account") or {}
+            thread_items = state.get("thread_items") or [message]
+
+            if len(thread_items) > 1:
+                section_heading("Цепочка переписки по теме", f"Сообщений в ветке: {len(thread_items)}")
+
             with ui.column().classes("sov-mail-detail__head"):
                 ui.label(profile.get("mail_subject") or message.get("subject") or "(без темы)").classes(
                     "sov-mail-detail__title"
@@ -309,6 +353,15 @@ def build_mail() -> None:
                             ui.label(
                                 f"{attachment.get('extraction')} · {attachment.get('size_bytes', 0)} Б"
                             ).classes("sov-mail-meta")
+
+            if len(thread_items) > 1:
+                with ui.expansion("Все сообщения в этой цепочке", icon="o_mark_email_read").classes("w-full sov-mail-disclosure mt-4").props("dense value=true"):
+                    for item in thread_items:
+                        with ui.card().classes("w-full p-2 mb-2 bg-gray-50 border rounded"):
+                            ui.label(item.get("sender") or "Отправитель не указан").classes("font-bold text-xs")
+                            ui.label(item.get("received_at") or item.get("sent_at") or "").classes("text-xs text-gray-500")
+                            ui.label(item.get("subject") or "").classes("text-xs font-semibold mt-1")
+
             with ui.expansion("Источник и диагностика", icon="o_fact_check").classes(
                 "w-full sov-mail-disclosure"
             ).props("dense"):

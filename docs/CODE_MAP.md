@@ -1,5 +1,48 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **Ordinary smeta RAG 0.27.77:**
+> `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
+> режиме read-only и пакетно публикует одну карточку на норму в canonical
+> `les_rag` с `dataset_id=SMETA_NORMS_Index`, named dense+bm25_sparse и lexical
+> row. `system_dataset_service.py` закрепляет стабильную system identity.
+> `sovushka_ng.py`, `components/header.py` и `pages/chat.py` больше не регистрируют
+> RIM-вкладку или специальный smeta mode; legacy backend/data не удаляются.
+> `freetoken_cache_profile_service.py` сверяет configured token window с
+> physical loopback cache; settings показывает effective state, а ordinary RAG
+> делает fail-closed preflight перед генерацией.
+
+> **FreeToken capacity profile 0.27.76:**
+> `llm_transport_profile_service.freetoken_prompt_chars_for_context` derives the
+> prompt ceiling from `FREETOKEN_CONTEXT_TOKENS`, reserve, and a configurable
+> chars/token safety ratio. `routers/chat._local_context_budget` no longer
+> truncates FreeToken to four chunks; the existing `saferag_service` assembler
+> covers distinct documents first inside the available character budget.
+> `chat_evidence_application_service` preserves bounded dialogue memory before
+> evidence and leaves domain selection to native RRF and the model.
+
+> **FreeToken SSE 0.27.75:**
+> `proxy/services/llm_transport_profile_service.py:assistant_delta_text`
+> normalizes `content`, `reasoning`, and FreeToken's `reasoning_content` delta.
+> Both `chat_evidence_application_service.py` and the free-mode stream in
+> `routers/chat.py` use the same parser, preventing false `Пустой ответ LLM
+> (stream=True)` failures while preserving the provider's emitted text.
+
+> **General RAG 0.27.74:** `proxy/services/retrieval_service.py` treats named
+> dense+sparse Qdrant native RRF as the production ranking contract. A disabled
+> or unavailable cross-encoder records `rerank.status=bypassed` and preserves
+> the RRF evidence order; it no longer blocks ordinary chat retrieval. Windows
+> defaults to `RERANKER_ENABLED=false` and uses Ollama only for `bge-m3` query
+> embeddings unless the operator explicitly enables the optional stage.
+> Release wiring is in `Makefile:smoke-general-native-rrf`; it runs
+> `tools/rag_golden_set.py` with `golden/general_native_rrf_release_smoke.json`
+> against the same `/api/rag/retrieve-debug` path as ordinary chat retrieval.
+> `Makefile:deploy-runtime` accepts `DEPLOY_FORCE_FILES` for an operator-reviewed
+> divergent file without globally forcing the rest of the runtime tree.
+> `ship-check`/`ship-full-check` are offline plus active-artifact preflight;
+> native-RRF and basic HTTP release smokes both execute after candidate restart.
+> `post-deploy-rag-smoke` retries only the unchanged fail-closed RRF assertion
+> while Ollama/Qdrant/proxy warm up; it never converts a failed result to warning.
+
 > **Accepted PR #8 surface (0.27.35):** corrected filled KS flow lives in
 > `ks_forms_service.py` / `ks_forms_chat_service.py` /
 > `ks2_xlsx_render.py`, enters through `routers/chat.py`, `routers/forms.py`,
@@ -23,6 +66,13 @@
   `desktop/tauri/src-tauri/src/lib.rs` — проверка компонентов, winget-действия, сохранение выбранного
   Ollama-тега и повторный запуск; `installers/windows/app/bootstrap.ps1` — bundled Python/uv и
   неблокирующий `setup_required` без скрытого скачивания Ollama-моделей.
+- **FreeToken local transport (0.27.70, 0.27.75–0.27.77):** `proxy/services/llm_transport_profile_service.py`
+  добавляет `enable_thinking=false`, capacity-derived prompt-fit и единый parser
+  `content|reasoning|reasoning_content` для внешнего loopback runtime;
+  `routers/chat.py` и `agent_router_service.py` используют `FREETOKEN_BASE_URL/MODEL`, а
+  `installers/windows/start-light.ps1` не запускает второй LLM engine и оставляет query embeddings
+  на Ollama `bge-m3`; `freetoken_cache_profile_service.py` согласует physical KV
+  с GUI-owned context. Локальный cross-encoder по умолчанию выключен. Все факторы видны через runtime registry Совушки.
 - **Sovushka UI system:** `sovushka/uikit/{tokens,components,states}.py` —
   токены, семь общих NiceGUI-примитивов, состояния и единая icon-column;
   `docs/modules/sovushka-uikit.md` — component registry и миграционный
@@ -140,11 +190,27 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 
 ## Поток запроса (чат) и индексации
 
+**Chat profiles (0.28.0):** `chat_profile_service.py` хранит Factory Base и
+пользовательские prompt/skill/profile revisions, active revision и точный
+per-session snapshot в MetaDB. `routers/profiles.py` даёт CRUD/activate/bind API,
+а `pages/profiles.py` — единый Markdown-редактор. До маршрутизации
+`routers/chat.py` канонизирует режим и разрешает snapshot; для всех четырёх
+режимов одна evidence application компилирует выбранные prompt+skill,
+ограничивает shortlist выбранными tools и применяет model/RAG policy. Профиль
+`estimator` — обычный native-RRF RAG с ролью сметчика и большой моделью; он не
+запускает legacy `smeta_core`/LSR workflow. `auto`, `free`, `rag`,
+`smeta` и `review` остаются только aliases для старых клиентов.
+
 **Evidence boundary (0.24.0.342):** после обычного retrieval и context-window expansion
 `evidence_packet_service` собирает `les.evidence_packet.v1`. Рендерер передаёт модели тот же
 `Источник N` source context, который выходит в `source_map`; navigation, deterministic inventory
 и tool results остаются отдельными слоями. Ответ несёт `evidence_packet`, а durable
 `retrieval_trace.evidence_packet` содержит компактную provenance-сводку.
+
+`source_map` также несёт стабильный `doc_id`. Совушка предпочитает эту карту legacy-списку
+имён, строит кликабельные `GET /api/documents/by-id/{doc_id}/raw` (для PDF — с точной
+страницей), office-preview через `/viewer` и единый артефакт «Источники ответа»; прежние записи истории без карты сохраняют
+guarded path fallback.
 
 **Integrity core:** `rag_config` хранит `les.rag.index-contract.v2`; missing/mismatch
 запрещает dense, а health показывает `dense_available=false`. Любой parser output перед embedding
@@ -244,8 +310,9 @@ projection под тем же alias; при rollback старый FTS восст
 - **storage/** (file_storage), **workers/** (фоновая индексация), **clients/**, **repositories/**, [proxy/config.py](../proxy/config.py), [proxy/security.py](../proxy/security.py).
 
 ### `backend/` — RAG-движок и конвертация (~21 модуль)
-- **Ядро RAG:** [backend/qdrant_adapter.py](../backend/qdrant_adapter.py) (`QdrantLlamaIndexAdapter`, `EmbedClient`→MLX, `MetaDB` SQLite, `StructureAwareSplitter`; при parse-переиндексации файла удаляет/перезаписывает `lexical_chunks` вместе с Qdrant points), [backend/rag_config.py](../backend/rag_config.py) (профили эмбеддингов), [backend/interface.py](../backend/interface.py) (`RAGBackend`, `Chunk`), [backend/reranker.py](../backend/reranker.py) (кросс-энкодер через MLX), [backend/mlx_adapter.py](../backend/mlx_adapter.py) (`MLXMemoryManager`: TTL-выгрузка, metal-семафор, bounded reuse стабильного message-prefix между chat-turn).
-- **Конвертация:** `converter.py` (PDF baseline: PyMuPDF page-text first для index path; перед chunking/embedding `normalize_pdf_text()` чинит Windows UTF-8/Latin-1 mojibake; MarkItDown/Docling/pymupdf4llm/layout/table/OCR — enrichment/fallback; **+legacy `.doc`→textutil, `.xlsm`, картинки jpg/png/tiff→vision-OCR, `.p7m`→openssl→PDF, открепл. подпись скипается**), `qdrant_adapter.py` (index path вызывает `convert_to_markdown_for_indexing()` и для PDF/P7M пишет bounded page-level nodes), `document_router.py` (группы TABLE/PDF/IMAGE/EMAIL/CAD_BIM), `ocr_parser.py` (vision OCR), `parquet_writer.py` (таблицы→Parquet). Intake-гейт типов — `smart_index.SUPPORTED_SUFFIXES`. Архивы (.7z/.zip) — препроцесс `tools/unpack_archives.py`. PDF/P7M/XLS/XLSX/XLSM в index path идут через killable subprocess (`convert_to_markdown_for_indexing`, `RAG_CONVERT_SUBPROCESS_ENABLED`), чтобы зависший `pymupdf4llm`/OCR/MarkItDown/pandas-openpyxl не оставался потоком внутри proxy; с 0.24.0.233 реальные PDF сначала получают быстрый searchable page-text слой (`RAG_PDF_INDEX_FAST_TEXT_FIRST`), а timeout тяжёлого isolated converter падает в page-text fallback (`RAG_PDF_FAST_TEXT_FALLBACK_ENABLED`) вместо `ERROR`, если текстовый слой доступен; с 0.24.0.234 этот слой индексируется как `pdf_page_text` page nodes (`RAG_PDF_PAGE_NODES_ENABLED`, `RAG_PDF_PAGE_NODE_MAX_CHARS`) вместо markdown chunk flood, а обычные проектные PDF не классифицируются как `TABLE_SMETA` по weak smeta-словам. Большие Excel/CSV в markdown path индексируются как `spreadsheet_navigation_projection` (колонки/профили/образец); parquet path всегда сохраняет полный Parquet для table-reader/tool, но при `RAG_TABLE_ROW_INDEX_MAX_CHUNKS`+ строках кладёт в Qdrant один `table_navigation_projection`, а не каждую строку. **Raw CAD/BIM (`.dwg/.dxf/.rvt/.rfa/.ifc/.ifczip/.nwc`) не индексируется как пустой текст:** `_sync_parse` ставит явный `ERROR` и просит сначала canonical CAD/BIM JSON/JSONL projection; текстовые/JSON/Markdown CAD_BIM-проекции остаются штатным входом. Инструментальный DWG/DXF путь: `tools/cad_bim_extract_dxf.py` принимает `.dxf` напрямую и `.dwg` через LibreDWG `dwg2dxf`, чинит частый DXF-дефект с оборванными group-code строками после конвертации, восстанавливает нарисованные таблицы из `LINE/LWPOLYLINE`+`TEXT/MTEXT` в `tables[]`, пишет `cad_bim_graph.json`, затем опционально вызывает `/api/cad-bim/import`; `cad_bim_graph.render_projection()` выводит `First data rows / первые позиции`, data row-lines, compact row-lines и `CAD drawn tables` до элементов, а `sync-smart` регистрирует созданные projections в `CAD_BIM_Index`.
+- **Ядро RAG:** [backend/qdrant_adapter.py](../backend/qdrant_adapter.py) (`QdrantLlamaIndexAdapter`, `EmbedClient`→MLX, `MetaDB` SQLite, `StructureAwareSplitter`; native RRF → hierarchy → optional RAPTOR evidence descent → optional Qdrant MaxSim ColBERT → cross-encoder → parent/context → exact evidence; durable parse state различает `skipped/retryable/terminal`, автоматически возобновляет прерванное и bounded-repair только allowlisted systemic failures), [backend/colbert_late_interaction.py](../backend/colbert_late_interaction.py) (lazy BGE-M3 token vectors, MaxSim, circuit breaker), [backend/raptor_tree.py](../backend/raptor_tree.py), [backend/raptor_publication_worker.py](../backend/raptor_publication_worker.py), [backend/raptor_qdrant_store.py](../backend/raptor_qdrant_store.py), [backend/raptor_summarizer.py](../backend/raptor_summarizer.py) (checkpointed separate navigation-only publication and exact descendant leaf ids), [proxy/services/raptor_publication_service.py](../proxy/services/raptor_publication_service.py), [proxy/services/colbert_generation_service.py](../proxy/services/colbert_generation_service.py) (resumable sibling generations), [proxy/services/rag_advanced_policy_service.py](../proxy/services/rag_advanced_policy_service.py), [proxy/services/rag_advanced_preflight_service.py](../proxy/services/rag_advanced_preflight_service.py), [proxy/services/rag_pipeline_status_service.py](../proxy/services/rag_pipeline_status_service.py) (GUI-owned policy, preflight, progress/readiness), [backend/rag_config.py](../backend/rag_config.py), [backend/reranker.py](../backend/reranker.py), [backend/mlx_adapter.py](../backend/mlx_adapter.py).
+- **Целостность каталога:** `proxy/services/dataset_deletion_service.py` выполняет recoverable fail-closed delete через SQLite backup, Qdrant snapshot/exact count и storage quarantine; `rag_catalog_guard_service.py` на startup диагностирует orphan payload и восстанавливает MetaDB/lexical через `rag_catalog_recovery_service.py`; `/api/rag/catalog-consistency` даёт операторский read/repair, а `/api/rag/catalog-consistency/navigation-counts[/repair]` показывает и атомарно исправляет только доказанный legacy hierarchy delta (`source_actual == expected`, `target_delta == target_navigation - source_navigation`, dense=sparse=lexical=target), без удаления или реиндекса. `tools/recover_orphan_rag_catalog.py` — dry-run CLI для явного восстановления. `proxy/app.py` содержит постоянный parse-resume supervisor и startup metadata reconcile, а health показывает guard, fingerprint coverage и `retrieval_pipeline`. `tools/rag_generation_supervisor.py` использует single-run lock, пинит физическую коллекцию исходного alias и запрещает self-migration; `activate_qdrant_generation.py` сохраняет source generation и выполняет reconcile до успешного завершения activation; `sovushka/pages/diag.py` показывает stage-status индекса, native RRF, hierarchy, RAPTOR, ColBERT, reranker, parent/context и exact evidence без подмены request trace.
+- **Конвертация:** `converter.py` (PDF baseline: PyMuPDF page-text first для index path; перед chunking/embedding `normalize_pdf_text()` чинит Windows UTF-8/Latin-1 mojibake; MarkItDown/Docling/pymupdf4llm/layout/table/OCR — enrichment/fallback; **+legacy `.doc`→textutil, `.xlsm`, картинки jpg/png/tiff→vision-OCR, `.p7m`→openssl→PDF, открепл. подпись скипается**), `qdrant_adapter.py` (index path вызывает `convert_to_markdown_for_indexing()` и для PDF/P7M пишет bounded page-level nodes), `document_router.py` (группы TABLE/PDF/IMAGE/EMAIL/CAD_BIM), `ocr_parser.py` (vision OCR), `parquet_writer.py` (таблицы→Parquet). Intake-гейт типов — `smart_index.SUPPORTED_SUFFIXES`. Архивы (.7z/.zip) — препроцесс `tools/unpack_archives.py`. PDF/P7M/XLS/XLSX/XLSM в index path идут через killable subprocess; реальные PDF сначала получают быстрый searchable page-text layer, а timeout тяжёлого converter использует page-text fallback. Большие Excel/CSV сохраняют полный Parquet для exact table-reader, а Qdrant получает bounded navigation projection. **Raw CAD/BIM (`.dwg/.dxf/.rvt/.rfa/.ifc/.ifczip/.nwc`) не индексируется как пустой текст:** `_sync_parse` ставит `SKIPPED / UNSUPPORTED_INDEXING_SOURCE` (не retryable error) и просит canonical CAD/BIM JSON/JSONL projection; текстовые/JSON/Markdown CAD_BIM-проекции остаются штатным входом. Инструментальный DWG/DXF путь: `tools/cad_bim_extract_dxf.py` принимает `.dxf` напрямую и `.dwg` через LibreDWG `dwg2dxf`, строит `cad_bim_graph.json`, затем опционально вызывает `/api/cad-bim/import`.
 - **Почта (Е.Ж.И.К.):** `mail_registry_service.py` (accounts/folders/messages/locations/attachment provenance; OS secret vault), `mail_sync_service.py` (read-only IMAP, special-use, UIDVALIDITY), `mail_ingest.py` (legacy IMAP/Apple Mail), `mail_threads.py`, `mail_profile.py` (message/attachment nodes, inline-image guard, SHA-256), `mail_emlx.py`, `pst_reader.py`; каждый новый ящик индексируется только в собственный dataset, `MAIL_Index` — legacy. Outlook-sidecar перед первым письмом регистрирует каждый видимый store через loopback `POST /api/mail/collector/register-store`, поэтому пустой ящик также появляется в Л.Е.С.
 - **Прочее:** `smart_index.py` (план индексации), `metrics_collector.py`, `diagnostics.py`, `rules_extractor.py`, `auth.py`/`auth_login_route.py` (В.О.Л.К.).
 - **`backend/inference/` (W3.1/W2.4/W3.3):** `providers.py` (протоколы ChatProvider/EmbedProvider/ValidatorProvider/RerankProvider/OCRProvider), `validator.py` (общий rules-валидатор, каскад rules→LLM), `bm25_sparse.py` (BM25/IDF sparse для гибрида, W2.4), `sparse_embed.py` (BGE-M3 learned-sparse — задел, не в активном пути), `routing.py` (W3.3: политика локал/облако по чувствительности P0/P1/P2 — `decide_provider`/`memory_aware_provider`/`estimate_cost_usd`, pure-функции; гейт в `chat.py` — P0 не уходит в облако).

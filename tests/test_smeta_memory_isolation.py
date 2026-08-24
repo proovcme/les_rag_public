@@ -77,6 +77,45 @@ def test_observer_does_not_capture_calculated_candidate_draft():
         configure_memory_port(None)
 
 
+def test_observer_captures_only_bound_non_conflicted_precedents():
+    store = MemoryStore(":memory:")
+    configure_memory_port(ActiveMemoryPort(store, MemoryConfig(mode=MemoryMode.SHADOW)))
+    workflow = {
+        "xlsx_path": "LSR.xlsx",
+        "report_path": "LSR.json",
+        "lsr": {"summary": {"result_status": "priced_draft"}},
+        "mapping_run": {"current_mapping_revision_id": "rev-good-only"},
+        "intake": {
+            "work_items": [
+                {"work_id": "good", "title": "Монтаж организатора", "unit": "шт."},
+                {"work_id": "missing", "title": "Кабель без условий", "unit": "м"},
+                {"work_id": "conflicted", "title": "Спорная прокладка", "unit": "м"},
+            ]
+        },
+        "selections": {
+            "good": {"norm_code": "ГЭСНм37-01-014-08"},
+            "missing": {"norm_code": ""},
+            "conflicted": {"norm_code": "ГЭСНм11-04-022-07"},
+        },
+        "professional_conflicts": [
+            {"conflict_id": "c1", "work_ids": ["conflicted"]},
+        ],
+    }
+    try:
+        assert observe_published_smeta(
+            project_id=5,
+            attachment_id="a1",
+            source_sha256="sha",
+            user_request="estimate",
+            workflow=workflow,
+        ) == 1
+        traces = store.get_smeta_traces(5)
+        assert len(traces) == 1
+        assert traces[0].selected_norm_refs == ("ГЭСНм37-01-014-08",)
+    finally:
+        configure_memory_port(None)
+
+
 def test_smeta_session_operates_without_memory():
     session = SmetaNormToolSession(
         work_rows=[{"work_id": "vor-0001", "title": "Кабель", "unit": "м"}], candidate_limit=2,

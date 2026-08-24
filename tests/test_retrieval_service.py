@@ -116,7 +116,7 @@ class FailingNativeBackend(FakeBackend):
 @pytest.mark.parametrize(
     ("runtime_value", "requested", "expected"),
     [
-        (None, False, True),
+        (None, False, False),
         ("true", False, True),
         ("false", True, False),
     ],
@@ -137,7 +137,7 @@ def test_required_reranker_policy_ignores_legacy_client_override(
     assert enabled is expected
     assert trace == {
         "enabled": expected,
-        "reason": "mandatory_runtime_contract",
+        "reason": "optional_runtime_stage",
         "explicit_override": True,
         "legacy_request_ignored": True,
         "legacy_request_value": requested,
@@ -396,7 +396,7 @@ async def test_retrieve_chat_chunks_returns_empty_without_backend_call():
 
 
 @pytest.mark.asyncio
-async def test_retrieve_chat_chunks_blocks_when_required_reranker_is_disabled():
+async def test_retrieve_chat_chunks_preserves_native_rrf_when_reranker_is_disabled():
     backend = FakeBackend()
 
     result = await retrieve_chat_chunks(
@@ -411,9 +411,14 @@ async def test_retrieve_chat_chunks_blocks_when_required_reranker_is_disabled():
         return_trace=True,
     )
 
-    assert result.chunks == []
-    assert result.trace.status == "blocked"
-    assert result.trace.error_code == "reranker_disabled"
+    assert [chunk.doc_name for chunk in result.chunks[:3]] == ["doc-0", "doc-1", "doc-2"]
+    assert result.trace.status != "blocked"
+    assert result.trace.error_code == ""
+    assert result.trace.rerank == {
+        "status": "bypassed",
+        "reason": "disabled",
+        "preserved_order": "native_rrf",
+    }
     assert backend.calls[0] == {"question": "q", "dataset_ids": ["ds-1"], "top_k": 256}
 
 
@@ -524,6 +529,108 @@ async def test_retrieve_chat_chunks_reranks_pool_when_available():
     assert [c.content for c in chunks[:2]] == ["text-2", "text-0"]
     assert len(chunks) == 64  # полный видимый пул CHAT_TOP_K, без старого среза до 8
     assert backend.calls[0]["top_k"] == 64
+
+
+@pytest.mark.asyncio
+async def test_colbert_runs_between_native_rrf_and_cross_encoder(monkeypatch):
+    from proxy.services import retrieval_service
+
+    class ColbertBackend(FakeBackend):
+        async def rerank_colbert(self, query, chunks, *, top_k, max_query_tokens):
+            self.colbert_call = (len(chunks), top_k, max_query_tokens)
+            return list(reversed(chunks))
+
+    class IdentityReranker:
+        def __init__(self, mlx_url, mode):
+            pass
+
+        async def rerank(self, question, chunks, top_k=5):
+            return [SimpleNamespace(text=item["text"], metadata=item["metadata"], score=1.0) for item in chunks]
+
+    policy = retrieval_service.load_policy()
+    policy["colbert"]["mode"] = "always"
+    policy["colbert"]["candidate_k"] = 12
+    policy["colbert"]["output_k"] = 8
+    monkeypatch.setattr(retrieval_service, "load_policy", lambda: policy)
+    monkeypatch.setattr(retrieval_service, "_save_advanced_status_safely", lambda payload: None)
+    backend = ColbertBackend()
+    result = await retrieve_chat_chunks(
+        question="состав проекта",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=IdentityReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+    assert backend.colbert_call == (12, 8, policy["colbert"]["max_query_tokens"])
+    assert result.trace.colbert["status"] == "applied"
+    assert result.trace.rerank["status"] == "applied"
+
+
+@pytest.mark.asyncio
+async def test_raptor_routes_to_evidence_before_colbert_and_reranker(monkeypatch):
+    from proxy.services import retrieval_service
+
+    class RaptorBackend(FakeBackend):
+        async def retrieve_raptor_evidence(self, query, **kwargs):
+            self.raptor_call = (query, kwargs)
+            return [
+                Chunk(
+                    "routed exact evidence",
+                    "routed.pdf",
+                    0.8,
+                    {"node_role": "evidence", "node_id": "routed-leaf"},
+                )
+            ]
+
+    class IdentityReranker:
+        def __init__(self, mlx_url, mode):
+            pass
+
+        async def rerank(self, question, chunks, top_k=5):
+            return [
+                SimpleNamespace(text=item["text"], metadata=item["metadata"], score=1.0)
+                for item in chunks
+            ]
+
+    policy = retrieval_service.load_policy()
+    policy["raptor"]["mode"] = "always"
+    policy["colbert"]["mode"] = "off"
+    monkeypatch.setattr(retrieval_service, "load_policy", lambda: policy)
+    monkeypatch.setattr(
+        retrieval_service,
+        "load_status",
+        lambda: {
+            "raptor": {
+                "readiness": "ready",
+                "target_collection": "les_rag_v1__raptor_v1",
+            },
+            "colbert": {"readiness": "not_built"},
+        },
+    )
+    monkeypatch.setattr(retrieval_service, "_save_advanced_status_safely", lambda payload: None)
+    retrieval_service._RAPTOR_BREAKER.success()
+    backend = RaptorBackend()
+
+    result = await retrieve_chat_chunks(
+        question="project technical requirements",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=True,
+        reranker_available=True,
+        reranker_cls=IdentityReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert backend.raptor_call[1]["target_collection"] == "les_rag_v1__raptor_v1"
+    assert result.trace.raptor["status"] == "applied"
+    assert "+raptor" in result.trace.mode
+    assert any(chunk.content == "routed exact evidence" for chunk in result.chunks)
 
 
 @pytest.mark.asyncio

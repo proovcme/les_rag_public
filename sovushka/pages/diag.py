@@ -19,8 +19,33 @@ from sovushka.uikit.components import (
     section_heading,
     select_field,
     status_badge,
+    text_field,
     render_feedback_state,
 )
+
+
+_RAG_PIPELINE_STAGE_LABELS = {
+    "index": "Индекс",
+    "native_rrf": "Native RRF",
+    "hierarchy": "Иерархия",
+    "raptor": "RAPTOR",
+    "colbert": "ColBERT",
+    "reranker": "Cross-encoder",
+    "parent_context": "Parent / context",
+    "exact_evidence": "Exact evidence",
+}
+
+
+def _pipeline_badge(status: str) -> tuple[str, str]:
+    return {
+        "ready": ("Готов", "ok"),
+        "indexing": ("Индексируется", "warn"),
+        "configured": ("Настроен", "warn"),
+        "disabled": ("Выключен", "muted"),
+        "degraded": ("Деградация", "error"),
+        "blocked": ("Блокирован", "blocked"),
+        "unknown": ("Нет данных", "muted"),
+    }.get(str(status or "unknown").lower(), ("Нет данных", "muted"))
 
 
 def _is_windows() -> bool:
@@ -240,6 +265,7 @@ def _normalize_diag_payload(payload: dict) -> dict:
 
 def build_diag():
     """Строит содержимое вкладки Д.И.А.Г.Н.О.З. Вызывать внутри with ui.tab_panel(tab_diag)."""
+    advanced_ui = {"colbert_preflight_ready": False, "colbert_active": False}
     with ui.column().classes("sov-config-page"):
 
         # ── Паспорт конфигурации ─────────────────
@@ -291,6 +317,135 @@ def build_diag():
                 "Статус сервисов после последней проверки. Серый статус означает, что проверка ещё не запускалась.",
             )
             diag_map = _html(_build_diag_map_html([])).classes("w-full")
+
+        with panel(variant="plain", classes="sov-config-section"):
+            with ui.row().classes("w-full items-start justify-between gap-3"):
+                section_heading(
+                    "Контур RAG",
+                    "Готовность каждой стадии активного поиска. Фактический путь запроса остаётся в trace ответа.",
+                )
+                rag_pipeline_overall = status_badge("Загрузка…", "muted")
+            rag_pipeline_rows = ui.column().classes("w-full gap-2 q-mt-sm")
+
+        with ui.expansion(
+            "RAG · политика поиска",
+            icon="o_account_tree",
+        ).classes("sov-config-disclosure w-full"):
+            section_heading(
+                "RAPTOR и ColBERT",
+                "Все факторы маршрута видны здесь. Adaptive пропускает дорогую стадию, если точного или дешёвого ответа уже достаточно.",
+            )
+            with ui.row().classes("w-full gap-3"):
+                raptor_mode_select = select_field(
+                    {"off": "Выключен", "adaptive": "Adaptive", "always": "Всегда"},
+                    value="adaptive", label="RAPTOR", classes="grow",
+                )
+                colbert_mode_select = select_field(
+                    {"off": "Выключен", "adaptive": "Adaptive", "always": "Всегда"},
+                    value="adaptive", label="ColBERT", classes="grow",
+                )
+            with ui.row().classes("w-full gap-3"):
+                colbert_candidates_input = ui.number(
+                    "Кандидатов ColBERT", value=64, min=1, max=100000,
+                ).classes("grow")
+                colbert_output_input = ui.number(
+                    "После ColBERT", value=32, min=1, max=100000,
+                ).classes("grow")
+                total_budget_input = ui.number(
+                    "Общий бюджет, мс", value=2200, min=1, max=100000,
+                ).classes("grow")
+            with ui.row().classes("w-full gap-3"):
+                raptor_fanout_input = ui.number(
+                    "RAPTOR fanout", value=8, min=2, max=100,
+                ).classes("grow")
+                raptor_depth_input = ui.number(
+                    "Глубина RAPTOR", value=3, min=1, max=10,
+                ).classes("grow")
+                raptor_route_k_input = ui.number(
+                    "RAPTOR routes", value=8, min=1, max=1000,
+                ).classes("grow")
+                raptor_latency_input = ui.number(
+                    "RAPTOR бюджет, мс", value=900, min=1, max=100000,
+                ).classes("grow")
+            with ui.row().classes("w-full gap-3"):
+                raptor_summary_backend_select = select_field(
+                    {"ollama": "Ollama · абстрактивно", "extractive": "Extractive · быстро"},
+                    value="ollama", label="Резюме RAPTOR", classes="grow",
+                )
+                raptor_summary_model_input = text_field(
+                    label="Модель резюме RAPTOR", value="qwen3.5:9b", classes="grow",
+                )
+                raptor_summary_url_input = text_field(
+                    label="Локальный API резюме", value="http://127.0.0.1:11434", classes="grow",
+                )
+            with ui.row().classes("w-full gap-3"):
+                raptor_summary_input_chars = ui.number(
+                    "Вход резюме, символов", value=12000, min=256, max=100000,
+                ).classes("grow")
+                raptor_summary_max_chars = ui.number(
+                    "Выход резюме, символов", value=1800, min=128, max=10000,
+                ).classes("grow")
+                colbert_passage_tokens_input = ui.number(
+                    "Токенов ColBERT", value=128, min=8, max=1024,
+                ).classes("grow")
+                colbert_latency_input = ui.number(
+                    "ColBERT бюджет, мс", value=700, min=1, max=100000,
+                ).classes("grow")
+            with ui.row().classes("w-full gap-3"):
+                raptor_circuit_failures_input = ui.number(
+                    "Ошибок до stop RAPTOR", value=3, min=1, max=100,
+                ).classes("grow")
+                raptor_circuit_cooldown_input = ui.number(
+                    "Пауза RAPTOR, сек", value=180, min=1, max=86400,
+                ).classes("grow")
+                colbert_circuit_failures_input = ui.number(
+                    "Ошибок до stop ColBERT", value=3, min=1, max=100,
+                ).classes("grow")
+                colbert_circuit_cooldown_input = ui.number(
+                    "Пауза ColBERT, сек", value=300, min=1, max=86400,
+                ).classes("grow")
+            rag_advanced_status = ui.label("Загрузка…").classes("sov-ui-section-detail")
+            rag_advanced_feedback = ui.column().classes("w-full")
+            rag_advanced_runtime_rows = ui.column().classes("w-full gap-2")
+            rag_advanced_preflight = ui.column().classes("w-full")
+            with ui.row().classes("w-full gap-2"):
+                rag_advanced_save_btn = action_button(
+                    "Сохранить политику",
+                    icon="o_save",
+                    on_click=lambda: asyncio.create_task(save_rag_advanced()),
+                    variant="secondary",
+                )
+                action_button(
+                    "Проверить модели и место",
+                    icon="o_fact_check",
+                    on_click=lambda: asyncio.create_task(load_rag_preflight()),
+                    variant="secondary",
+                )
+                raptor_build_btn = action_button(
+                    "Построить / продолжить RAPTOR",
+                    icon="o_account_tree",
+                    on_click=lambda: asyncio.create_task(confirm_raptor_build()),
+                    variant="danger",
+                )
+                colbert_build_btn = action_button(
+                    "Построить ColBERT generation",
+                    icon="o_storage",
+                    on_click=lambda: asyncio.create_task(confirm_colbert_build()),
+                    variant="danger",
+                )
+                colbert_build_btn.props("disabled")
+
+        with ui.expansion(
+            "Все параметры среды",
+            icon="o_tune",
+        ).classes("sov-config-disclosure w-full"):
+            section_heading(
+                "GUI-first реестр",
+                "Показывает значение, источник и необходимость перезапуска. Секреты никогда не раскрываются. Опасные параметры отмечены Danger.",
+            )
+            runtime_registry_summary = ui.label("Загрузка…").classes("sov-ui-section-detail")
+            runtime_registry_feedback = ui.column().classes("w-full")
+            runtime_registry_rows = ui.column().classes("w-full gap-2")
 
         # Memory is an explicitly controlled adjacent module. Configuration is
         # persisted for the next controlled proxy start; this page never restarts it.
@@ -390,14 +545,372 @@ def build_diag():
                 "sov-config-log w-full"
             )
 
-        # Таймер для начальной загрузки бэкапов
-        ui.timer(0.1, lambda: asyncio.create_task(load_backups()), once=True)
-        ui.timer(0.1, lambda: asyncio.create_task(load_memory_config()), once=True)
-
     # ── Вспомогательные функции диагностики ──────────
 
     STATUS_ICON  = {"ok": "✓", "warn": "⚠", "err": "✗"}
     STATUS_COLOR = {"ok": "var(--ok)", "warn": "var(--warn)", "err": "var(--err)"}
+
+    async def load_rag_pipeline():
+        health = await api_get("/api/health")
+        pipeline = ((health or {}).get("rag") or {}).get("retrieval_pipeline")
+        rag_pipeline_rows.clear()
+        if not isinstance(pipeline, dict):
+            rag_pipeline_overall.set_text("Нет данных")
+            with rag_pipeline_rows:
+                render_feedback_state(
+                    "error",
+                    error_code="RAG_PIPELINE_STATUS_UNAVAILABLE",
+                    detail="Прокси не вернул состояние стадий RAG.",
+                )
+            return
+
+        overall = str(pipeline.get("status") or "unknown").lower()
+        overall_text, _overall_tone = _pipeline_badge(overall)
+        rag_pipeline_overall.set_text(overall_text)
+        rag_pipeline_overall.classes(
+            remove="sov-ui-status--ok sov-ui-status--warn sov-ui-status--error "
+                   "sov-ui-status--blocked sov-ui-status--muted",
+            add=f"sov-ui-status--{_overall_tone}",
+        )
+        stages = pipeline.get("stages") or {}
+        with rag_pipeline_rows:
+            for key, title in _RAG_PIPELINE_STAGE_LABELS.items():
+                stage = stages.get(key) or {}
+                status = str(stage.get("status") or "unknown").lower()
+                badge_text, badge_tone = _pipeline_badge(status)
+                with panel(variant="inset", classes="w-full"):
+                    with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                        with ui.column().classes("grow gap-0"):
+                            ui.label(title).classes("sov-ui-section-title")
+                            ui.label(str(stage.get("detail") or "Нет данных")).classes(
+                                "sov-ui-section-detail"
+                            )
+                        status_badge(badge_text, badge_tone)
+
+    async def load_rag_advanced():
+        payload = await api_get("/api/rag/advanced")
+        rag_advanced_feedback.clear()
+        rag_advanced_runtime_rows.clear()
+        if not isinstance(payload, dict):
+            rag_advanced_status.set_text("Политика недоступна")
+            return
+        policy = payload.get("policy") or {}
+        status = payload.get("status") or {}
+        raptor = policy.get("raptor") or {}
+        colbert = policy.get("colbert") or {}
+        execution = policy.get("execution") or {}
+        raptor_mode_select.value = str(raptor.get("mode") or "adaptive")
+        raptor_fanout_input.value = int(raptor.get("fanout") or 8)
+        raptor_depth_input.value = int(raptor.get("max_depth") or 3)
+        raptor_route_k_input.value = int(raptor.get("route_k") or 8)
+        raptor_latency_input.value = int(raptor.get("latency_budget_ms") or 900)
+        raptor_summary_backend_select.value = str(raptor.get("summary_backend") or "ollama")
+        raptor_summary_model_input.value = str(raptor.get("summary_model") or "qwen3.5:9b")
+        raptor_summary_url_input.value = str(
+            raptor.get("summary_api_url") or "http://127.0.0.1:11434"
+        )
+        raptor_summary_input_chars.value = int(raptor.get("summary_input_chars") or 12000)
+        raptor_summary_max_chars.value = int(raptor.get("summary_max_chars") or 1800)
+        raptor_circuit_failures_input.value = int(raptor.get("circuit_breaker_failures") or 3)
+        raptor_circuit_cooldown_input.value = int(
+            raptor.get("circuit_breaker_cooldown_sec") or 180
+        )
+        colbert_mode_select.value = str(colbert.get("mode") or "adaptive")
+        colbert_candidates_input.value = int(colbert.get("candidate_k") or 64)
+        colbert_output_input.value = int(colbert.get("output_k") or 32)
+        colbert_passage_tokens_input.value = int(colbert.get("max_passage_tokens") or 128)
+        colbert_latency_input.value = int(colbert.get("latency_budget_ms") or 700)
+        colbert_circuit_failures_input.value = int(colbert.get("circuit_breaker_failures") or 3)
+        colbert_circuit_cooldown_input.value = int(
+            colbert.get("circuit_breaker_cooldown_sec") or 300
+        )
+        total_budget_input.value = int(execution.get("total_latency_budget_ms") or 2200)
+        raptor_runtime = status.get("raptor") or {}
+        colbert_runtime = status.get("colbert") or {}
+        rag_advanced_status.set_text(
+            f"RAPTOR: {raptor_runtime.get('readiness', 'нет данных')} · "
+            f"ColBERT: {colbert_runtime.get('readiness', 'нет данных')} · "
+            f"ревизия {int(policy.get('revision') or 0)}"
+        )
+        raptor_active = str(raptor_runtime.get("readiness") or "") in {
+            "queued", "building", "verifying"
+        }
+        if raptor_active:
+            raptor_build_btn.props("disabled")
+        else:
+            raptor_build_btn.props(remove="disabled")
+        colbert_active = str(colbert_runtime.get("readiness") or "") in {
+            "queued", "building", "retrying", "verifying"
+        }
+        advanced_ui["colbert_active"] = colbert_active
+        if colbert_active or not advanced_ui["colbert_preflight_ready"]:
+            colbert_build_btn.props("disabled")
+        else:
+            colbert_build_btn.props(remove="disabled")
+        with rag_advanced_runtime_rows:
+            for title, runtime in (("RAPTOR", raptor_runtime), ("ColBERT", colbert_runtime)):
+                readiness = str(runtime.get("readiness") or "not_built")
+                badge_text, badge_tone = _pipeline_badge(
+                    "indexing" if readiness in {"queued", "building", "verifying"}
+                    else "ready" if readiness == "ready"
+                    else "blocked" if readiness in {"blocked", "degraded"}
+                    else "configured"
+                )
+                progress = round(float(runtime.get("progress") or 0) * 100)
+                detail_parts = [f"прогресс {progress}%"]
+                if runtime.get("documents_total"):
+                    detail_parts.append(
+                        f"документы {int(runtime.get('documents_completed') or 0)}/"
+                        f"{int(runtime.get('documents_total') or 0)}"
+                    )
+                if runtime.get("published_nodes"):
+                    detail_parts.append(f"узлы {int(runtime.get('published_nodes') or 0)}")
+                detail_parts.append(f"circuit {runtime.get('circuit_state') or 'closed'}")
+                if runtime.get("last_error_code"):
+                    detail_parts.append(f"ошибка {runtime.get('last_error_code')}")
+                with panel(variant="inset", classes="w-full"):
+                    with ui.row().classes("w-full items-center gap-3 no-wrap"):
+                        with ui.column().classes("grow gap-0"):
+                            ui.label(title).classes("sov-ui-section-title")
+                            ui.label(" · ".join(detail_parts)).classes("sov-ui-section-detail")
+                        status_badge(badge_text, badge_tone)
+
+    async def load_rag_preflight():
+        payload = await api_get("/api/rag/advanced/preflight")
+        rag_advanced_preflight.clear()
+        with rag_advanced_preflight:
+            if not isinstance(payload, dict):
+                render_feedback_state(
+                    "error",
+                    error_code="RAG_ADVANCED_PREFLIGHT_UNAVAILABLE",
+                    detail="Не удалось проверить модели и требуемое место.",
+                )
+                return
+            colbert = payload.get("colbert") or {}
+            raptor = payload.get("raptor") or {}
+            storage = colbert.get("qdrant_multivector") or {}
+            estimated_gb = float(storage.get("estimated_bytes") or 0) / (1024 ** 3)
+            remaining_gb = float(
+                ((colbert.get("model") or {}).get("download_remaining_bytes") or 0)
+            ) / (1024 ** 3)
+            with panel(variant="inset", classes="w-full"):
+                section_heading(
+                    "Preflight без загрузки модели",
+                    "Проверка только читает метаданные cache и индекса; model_loaded=false.",
+                )
+                ui.label(
+                    f"ColBERT: {colbert.get('status', 'unknown')} · "
+                    f"индекс ≈ {estimated_gb:.2f} ГБ · догрузить модель ≈ {remaining_gb:.2f} ГБ"
+                ).classes("sov-ui-section-detail")
+                ui.label(
+                    "Свободное место Docker: неизвестно — Qdrant API его не сообщает. "
+                    "Это блокирующая ручная проверка перед тяжёлой сборкой."
+                ).classes("sov-ui-section-detail")
+                ui.label(
+                    f"RAPTOR: ≈ {int(raptor.get('estimated_navigation_nodes') or 0)} узлов · "
+                    f"модель {raptor.get('summary_model') or 'не задана'} · "
+                    f"checkpoint {raptor.get('checkpoint_path') or 'не задан'}"
+                ).classes("sov-ui-section-detail")
+            blockers = colbert.get("blockers") or []
+            advanced_ui["colbert_preflight_ready"] = not blockers
+            if blockers or advanced_ui["colbert_active"]:
+                colbert_build_btn.props("disabled")
+            else:
+                colbert_build_btn.props(remove="disabled")
+                if blockers:
+                    ui.label("Блокеры: " + ", ".join(str(item) for item in blockers)).classes(
+                        "sov-ui-section-detail"
+                    )
+
+    async def confirm_raptor_build():
+        with ui.dialog() as dialog, panel(variant="raised", classes="w-full"):
+            section_heading(
+                "Danger · построить RAPTOR",
+                "Операция загрузит локальную модель резюме и создаст отдельный индекс. "
+                "Evidence-коллекция не изменяется; прерванная работа продолжится с checkpoint.",
+            )
+            with ui.row().classes("w-full gap-2 justify-end"):
+                action_button("Отмена", on_click=dialog.close, variant="quiet")
+                action_button(
+                    "Запустить",
+                    icon="o_play_arrow",
+                    on_click=lambda: asyncio.create_task(start_raptor_build(dialog)),
+                    variant="danger",
+                )
+        dialog.open()
+
+    async def start_raptor_build(dialog):
+        dialog.close()
+        result = await api_post("/api/rag/advanced/raptor/build", {})
+        if result and result.get("status") == "queued":
+            ui.notify("RAPTOR поставлен в очередь; прогресс сохраняется", type="warning")
+            await load_rag_advanced()
+        else:
+            ui.notify("RAPTOR не запущен — проверьте статус и preflight", type="negative")
+
+    async def confirm_colbert_build():
+        with ui.dialog() as dialog, panel(variant="raised", classes="w-full"):
+            section_heading(
+                "Danger · построить ColBERT generation",
+                "Будет создана полная sibling-коллекция dense+sparse+ColBERT. "
+                "Активный индекс не меняется до прохождения readiness; затем alias переключится атомарно.",
+            )
+            ui.label(
+                "Оценку диска и cache проверьте выше. Сбой продолжится с dataset-checkpoint; "
+                "неполную коллекцию активировать нельзя."
+            ).classes("sov-ui-section-detail")
+            with ui.row().classes("w-full gap-2 justify-end"):
+                action_button("Отмена", on_click=dialog.close, variant="quiet")
+                action_button(
+                    "Запустить генерацию",
+                    icon="o_play_arrow",
+                    on_click=lambda: asyncio.create_task(start_colbert_build(dialog)),
+                    variant="danger",
+                )
+        dialog.open()
+
+    async def start_colbert_build(dialog):
+        dialog.close()
+        result = await api_post("/api/rag/advanced/colbert/build", {})
+        if result and result.get("status") == "queued":
+            ui.notify("ColBERT generation поставлена в очередь", type="warning")
+            await load_rag_advanced()
+        else:
+            ui.notify("ColBERT не запущен — устраните блокеры preflight", type="negative")
+
+    async def save_rag_advanced():
+        current = await api_get("/api/rag/advanced")
+        if not isinstance(current, dict):
+            ui.notify("Не удалось прочитать текущую политику RAG", type="negative")
+            return
+        policy = dict(current.get("policy") or {})
+        policy["execution"] = dict(policy.get("execution") or {})
+        policy["raptor"] = dict(policy.get("raptor") or {})
+        policy["colbert"] = dict(policy.get("colbert") or {})
+        policy["execution"]["total_latency_budget_ms"] = int(total_budget_input.value or 2200)
+        policy["raptor"]["mode"] = str(raptor_mode_select.value or "adaptive")
+        policy["raptor"]["fanout"] = int(raptor_fanout_input.value or 8)
+        policy["raptor"]["max_depth"] = int(raptor_depth_input.value or 3)
+        policy["raptor"]["route_k"] = int(raptor_route_k_input.value or 8)
+        policy["raptor"]["latency_budget_ms"] = int(raptor_latency_input.value or 900)
+        policy["raptor"]["summary_backend"] = str(
+            raptor_summary_backend_select.value or "ollama"
+        )
+        policy["raptor"]["summary_model"] = str(raptor_summary_model_input.value or "")
+        policy["raptor"]["summary_api_url"] = str(raptor_summary_url_input.value or "")
+        policy["raptor"]["summary_input_chars"] = int(
+            raptor_summary_input_chars.value or 12000
+        )
+        policy["raptor"]["summary_max_chars"] = int(
+            raptor_summary_max_chars.value or 1800
+        )
+        policy["raptor"]["circuit_breaker_failures"] = int(
+            raptor_circuit_failures_input.value or 3
+        )
+        policy["raptor"]["circuit_breaker_cooldown_sec"] = int(
+            raptor_circuit_cooldown_input.value or 180
+        )
+        policy["colbert"]["mode"] = str(colbert_mode_select.value or "adaptive")
+        policy["colbert"]["candidate_k"] = int(colbert_candidates_input.value or 64)
+        policy["colbert"]["output_k"] = int(colbert_output_input.value or 32)
+        policy["colbert"]["max_passage_tokens"] = int(
+            colbert_passage_tokens_input.value or 128
+        )
+        policy["colbert"]["latency_budget_ms"] = int(colbert_latency_input.value or 700)
+        policy["colbert"]["circuit_breaker_failures"] = int(
+            colbert_circuit_failures_input.value or 3
+        )
+        policy["colbert"]["circuit_breaker_cooldown_sec"] = int(
+            colbert_circuit_cooldown_input.value or 300
+        )
+        rag_advanced_save_btn.props("disabled")
+        try:
+            result = await api_put("/api/rag/advanced", policy)
+            if result:
+                ui.notify("Политика RAG сохранена", type="positive")
+                await load_rag_advanced()
+                await load_rag_pipeline()
+            else:
+                ui.notify("Политика RAG не сохранена", type="negative")
+        finally:
+            rag_advanced_save_btn.props(remove="disabled")
+
+    async def load_runtime_registry():
+        payload = await api_get("/api/settings/runtime-registry")
+        runtime_registry_rows.clear()
+        runtime_registry_feedback.clear()
+        if not isinstance(payload, dict):
+            runtime_registry_summary.set_text("Реестр недоступен")
+            with runtime_registry_feedback:
+                render_feedback_state(
+                    "error", error_code="RUNTIME_CONFIG_REGISTRY_UNAVAILABLE",
+                    detail="Не удалось получить полный список факторов.",
+                )
+            return
+        counts = payload.get("counts") or {}
+        runtime_registry_summary.set_text(
+            f"Всего: {int(counts.get('total') or 0)} · Danger: {int(counts.get('danger') or 0)} · "
+            f"секретов: {int(counts.get('secrets') or 0)} · скрытых: {int(counts.get('unregistered') or 0)}"
+        )
+        with runtime_registry_rows:
+            for factor in payload.get("factors") or []:
+                key = str(factor.get("key") or "")
+                with panel(variant="inset", classes="w-full"):
+                    with ui.row().classes("w-full items-center gap-2"):
+                        with ui.column().classes("grow gap-0"):
+                            ui.label(key).classes("sov-ui-section-title")
+                            detail = f"Источник: {factor.get('source', 'default')}"
+                            if factor.get("restart_required"):
+                                detail += " · нужен перезапуск"
+                            ui.label(detail).classes("sov-ui-section-detail")
+                        if factor.get("danger"):
+                            status_badge("Danger", "error")
+                        elif factor.get("secret"):
+                            status_badge("Секрет", "muted")
+                    field = ui.input(
+                        value="" if factor.get("secret") else str(factor.get("display_value") or ""),
+                        placeholder="Задать новое значение" if factor.get("secret") else "",
+                        password=bool(factor.get("secret")),
+                    ).classes("w-full")
+                    if not factor.get("mutable"):
+                        field.props("readonly")
+                    else:
+                        action_button(
+                            "Сохранить",
+                            icon="o_save",
+                            on_click=lambda _, item=factor, control=field: asyncio.create_task(
+                                save_runtime_factor(item, control)
+                            ),
+                            variant="danger" if factor.get("danger") else "quiet",
+                            compact=True,
+                        )
+
+    async def save_runtime_factor(factor: dict, control):
+        key = str(factor.get("key") or "")
+        value = str(control.value or "")
+        confirmations: list[str] = []
+        if factor.get("danger"):
+            with ui.dialog() as dialog, panel(variant="raised", classes="q-pa-md"):
+                section_heading(
+                    f"Danger · {key}",
+                    "Изменение может нарушить безопасность или стабильность. Перед записью будет создана резервная копия.",
+                )
+                with ui.row().classes("justify-end gap-2"):
+                    action_button("Отмена", on_click=lambda: dialog.submit(False), variant="quiet")
+                    action_button("Понимаю риск", on_click=lambda: dialog.submit(True), variant="danger")
+            dialog.open()
+            if not await dialog:
+                return
+            confirmations.append(key)
+        result = await api_put(
+            "/api/settings/runtime-registry",
+            {"updates": {key: value}, "danger_confirmations": confirmations},
+        )
+        if result:
+            ui.notify("Параметр сохранён", type="positive")
+            await load_runtime_registry()
+        else:
+            ui.notify("Параметр не сохранён", type="negative")
 
     async def load_memory_config():
         payload = await api_get("/api/memory/status")
@@ -656,6 +1169,7 @@ def build_diag():
             _render_diag_cards()
 
             diag_map.set_content(_build_diag_map_html(state["diag_results"]))
+            await load_rag_pipeline()
 
             for r in state["diag_results"]:
                 icon = STATUS_ICON.get(r["status"], "?")
@@ -847,3 +1361,14 @@ def build_diag():
         for line in state.get("logs", [])[-80:]:
             diag_log_el.push(line)
         diag_log_expansion.set_value(True)
+
+    # Регистрируем initial-load callbacks только после определения всех nested
+    # coroutine-функций. Это исключает гонку таймера с построением страницы.
+    ui.timer(0.1, lambda: asyncio.create_task(load_backups()), once=True)
+    ui.timer(0.1, lambda: asyncio.create_task(load_memory_config()), once=True)
+    ui.timer(0.1, lambda: asyncio.create_task(load_rag_pipeline()), once=True)
+    ui.timer(0.1, lambda: asyncio.create_task(load_rag_advanced()), once=True)
+    ui.timer(0.2, lambda: asyncio.create_task(load_rag_preflight()), once=True)
+    advanced_status_timer = ui.timer(3.0, lambda: asyncio.create_task(load_rag_advanced()))
+    ui.timer(0.1, lambda: asyncio.create_task(load_runtime_registry()), once=True)
+    return {"timers": [advanced_status_timer]}

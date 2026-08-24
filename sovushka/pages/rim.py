@@ -35,14 +35,32 @@ _STATUS_LABELS = {
     "awaiting_vor_approval": "Проверка ВОР",
     "norm_mapping": "Подбор норм",
     "awaiting_mapping_decisions": "Решения по нормам",
-    "mapping_globally_reviewed": "Global review",
-    "mapping_locked": "Mapping заблокирован",
+    "mapping_globally_reviewed": "Общая проверка",
+    "mapping_locked": "Привязка норм зафиксирована",
     "combinations_ready": "Сценарии готовы",
     "priced_partial": "Стоимость частичная",
     "priced_draft": "Черновик ЛСР",
     "awaiting_final_lock": "Финальная проверка",
     "priced_final": "Финальная ЛСР",
 }
+
+_SELECTION_STATUS_LABELS = {
+    "candidate": "Кандидат",
+    "selected": "Выбрано",
+    "accepted": "Принято",
+    "rejected": "Отклонено",
+    "conflict": "Спорно",
+    "unbound": "Норма не привязана",
+    "covered_by": "Учтено другой строкой",
+}
+
+
+def _selection_status_display(row: dict[str, Any]) -> str:
+    kind = str(row.get("selection_kind") or "").strip().casefold()
+    status = str(row.get("selection_status") or "").strip().casefold()
+    if kind in {"unbound", "covered_by"}:
+        return _SELECTION_STATUS_LABELS[kind]
+    return _SELECTION_STATUS_LABELS.get(status, status or "Нет решения")
 
 
 def _human_source_ref(value: object) -> str:
@@ -373,7 +391,7 @@ def build_rim() -> dict[str, Any]:
                             {"name": "norm_code", "label": "Шифр", "field": "norm_code"},
                             {"name": "norm_title", "label": "Норма", "field": "norm_title"},
                             {"name": "norm_unit", "label": "Измеритель", "field": "norm_unit"},
-                            {"name": "selection_status", "label": "Решение", "field": "selection_status"},
+                            {"name": "selection_status_display", "label": "Решение", "field": "selection_status_display"},
                             {"name": "reason", "label": "Причина", "field": "reason"},
                             {
                                 "name": "norm_source_display",
@@ -439,34 +457,34 @@ def build_rim() -> dict[str, Any]:
                             },
                         )
                         if not isinstance(response, dict):
-                            ui.notify(last_api_error_text("Mapping XLSX не импортирован"), type="negative")
+                            ui.notify(last_api_error_text("Таблица привязки норм не импортирована"), type="negative")
                             return
-                        mapping_upload_status.set_text("XLSX принят новой immutable-ревизией.")
+                        mapping_upload_status.set_text("XLSX принят новой неизменяемой ревизией.")
                         await refresh()
 
                     ui.upload(
                         auto_upload=True,
                         on_upload=upload_mapping,
-                        label="Импортировать исправленный mapping XLSX",
+                        label="Импортировать исправленную привязку норм (XLSX)",
                     ).props("flat accept=.xlsx").classes("w-full sov-rim-upload")
 
                 with ui.tab_panel(tab_review):
                     review_summary = ui.label(
-                        "Global review флагирует конфликты, но не исправляет решения."
+                        "Общая проверка отмечает конфликты, но не исправляет решения."
                     ).classes("sov-rim-panel-summary")
                     review_issues = ui.column().classes("sov-rim-issue-list")
                     with ui.row().classes("sov-rim-actions"):
                         review_button = action_button(
-                            "Запустить global review",
+                            "Запустить общую проверку",
                             icon="o_fact_check",
                             variant="secondary",
                         )
                         lock_note = text_field(
-                            label="Комментарий сметчика к mapping lock",
+                            label="Комментарий сметчика к фиксации привязки норм",
                             classes="sov-rim-lock-note",
                         )
                         lock_button = action_button(
-                            "Заблокировать mapping",
+                            "Зафиксировать привязку норм",
                             icon="o_lock",
                             variant="primary",
                         )
@@ -493,7 +511,7 @@ def build_rim() -> dict[str, Any]:
 
                 with ui.tab_panel(tab_lsr):
                     lsr_summary = ui.label(
-                        "Сценарий и расчёт доступны после mapping lock."
+                        "Сценарий и расчёт доступны после фиксации привязки норм."
                     ).classes("sov-rim-panel-summary")
                     scenario_reason = text_field(
                         label="Почему выбранные нормы совместимы в одном сценарии",
@@ -518,7 +536,7 @@ def build_rim() -> dict[str, Any]:
 
                 with ui.tab_panel(tab_final):
                     final_summary = ui.label(
-                        "Финальный lock доступен только без открытых блокирующих requirements."
+                        "Финальная фиксация доступна только без открытых блокирующих требований."
                     ).classes("sov-rim-panel-summary")
                     final_note = text_field(
                         label="Комментарий к финальной проверке",
@@ -606,7 +624,7 @@ def build_rim() -> dict[str, Any]:
             rows = list(current.get("mapping") or [])
             selected = list(mapping_table.selected or [])
             if not isinstance(session, dict) or len(selected) != 1:
-                ui.notify("Выберите одну строку mapping", type="warning")
+                ui.notify("Выберите одну строку привязки норм", type="warning")
                 return
             row_id = str(selected[0].get("mapping_row_id") or "")
             for row in rows:
@@ -625,7 +643,7 @@ def build_rim() -> dict[str, Any]:
             if not isinstance(response, dict):
                 ui.notify(last_api_error_text("Правка не сохранена"), type="negative")
                 return
-            ui.notify("Создана новая mapping-ревизия", type="positive")
+            ui.notify("Создана новая ревизия привязки норм", type="positive")
             await refresh()
 
         async def run_review() -> None:
@@ -641,7 +659,7 @@ def build_rim() -> dict[str, Any]:
                 },
             )
             if not isinstance(response, dict):
-                ui.notify(last_api_error_text("Global review не выполнен"), type="negative")
+                ui.notify(last_api_error_text("Общая проверка не выполнена"), type="negative")
                 return
             await refresh()
             tabs.set_value(tab_review)
@@ -666,7 +684,7 @@ def build_rim() -> dict[str, Any]:
                 },
             )
             if not isinstance(response, dict):
-                ui.notify(last_api_error_text("Mapping lock не создан"), type="negative")
+                ui.notify(last_api_error_text("Фиксация привязки норм не создана"), type="negative")
                 return
             await refresh()
 
@@ -824,11 +842,11 @@ def build_rim() -> dict[str, Any]:
                         "маршрутов принято/отклонено: "
                         f"{int(progress_summary.get('accepted_route_transitions') or 0)}/"
                         f"{int(progress_summary.get('rejected_route_transitions') or 0)} · "
-                        f"checkpoint {str(progress.get('checkpoint_updated_at') or '')}"
+                        f"сохранено {str(progress.get('checkpoint_updated_at') or '')}"
                     )
                 else:
                     mapping_progress_summary.set_text(
-                        "Активного checkpoint нет: показан финальный immutable mapping ниже."
+                        "Активного промежуточного сохранения нет: ниже показана финальная неизменяемая привязка норм."
                     )
             finally:
                 current["mapping_progress_refreshing"] = False
@@ -879,7 +897,7 @@ def build_rim() -> dict[str, Any]:
                 status = str(session.get("display_state") or "new")
                 status_badge(_STATUS_LABELS.get(status, status), _status_tone(status))
                 if session.get("mapping_status") == "mapping_locked":
-                    status_badge("Mapping lock", "ok")
+                    status_badge("Привязка норм зафиксирована", "ok")
                 if int(session.get("open_requirement_count") or 0):
                     status_badge(
                         f"Пробелов: {session['open_requirement_count']}", "blocked"
@@ -980,6 +998,7 @@ def build_rim() -> dict[str, Any]:
                 {
                     **row,
                     "norm_source_display": _human_norm_source(row),
+                    "selection_status_display": _selection_status_display(row),
                 }
                 for row in (mapping.get("mapping_rows") or [])
             ]
@@ -1026,7 +1045,7 @@ def build_rim() -> dict[str, Any]:
             final_summary.set_text(
                 "Финал доступен."
                 if session.get("pricing_status") == "priced_draft"
-                else "Сначала закройте mapping, расчёт и блокирующие requirements."
+                else "Сначала закройте привязку норм, расчёт и блокирующие требования."
             )
 
         async def switch_session(event) -> None:

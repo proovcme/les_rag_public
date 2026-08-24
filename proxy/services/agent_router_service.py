@@ -24,6 +24,7 @@ import re
 from typing import Any, Callable, Optional
 
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
+from proxy.services.llm_transport_profile_service import apply_transport_options
 
 logger = logging.getLogger(__name__)
 
@@ -293,27 +294,45 @@ def _router_runtime_config() -> dict[str, Any]:
     openai_base = (os.getenv("OPENAI_BASE_URL") or "").strip()
     openai_model = (os.getenv("OPENAI_MODEL") or "").strip()
     openai_key = (os.getenv("OPENAI_API_KEY") or "").strip()
+    active_provider = (os.getenv("LES_LLM_PROVIDER") or "").strip().lower()
+    freetoken_base = (os.getenv("FREETOKEN_BASE_URL") or "").strip()
+    freetoken_model = (os.getenv("FREETOKEN_MODEL") or "").strip()
+    freetoken_key = (os.getenv("FREETOKEN_API_KEY") or "").strip()
 
     if explicit_base:
         base = explicit_base
         model = explicit_model or openai_model or os.getenv("MLX_MODEL", DEFAULT_LOCAL_MLX_MODEL)
         key = explicit_key or openai_key or "local"
+        provider = active_provider if active_provider == "freetoken" else "openai-compatible"
+    elif active_provider == "freetoken":
+        base = freetoken_base or "http://127.0.0.1:1919/v1"
+        model = freetoken_model or os.getenv("LLM_MODEL", "")
+        key = freetoken_key or "local"
+        provider = "freetoken"
     elif openai_base and openai_key:
         base = openai_base
         model = explicit_model or openai_model or "gpt-5.4"
         key = explicit_key or openai_key
+        provider = "openai"
     else:
         mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080").rstrip("/")
         base = mlx_url if mlx_url.endswith("/v1") else f"{mlx_url}/v1"
         model = explicit_model or os.getenv("MLX_MODEL", os.getenv("LLM_MODEL", DEFAULT_LOCAL_MLX_MODEL))
         key = explicit_key or "local"
+        provider = "mlx"
 
     try:
         timeout = float(os.getenv("LES_ROUTER_TIMEOUT", "2.0"))
     except ValueError:
         timeout = 2.0
 
-    return {"base": base.rstrip("/"), "model": model, "key": key, "timeout": timeout}
+    return {
+        "provider": provider,
+        "base": base.rstrip("/"),
+        "model": model,
+        "key": key,
+        "timeout": timeout,
+    }
 
 
 def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
@@ -337,10 +356,16 @@ def _route_llm_text(prompt: str, *, max_tokens: int = 40) -> str:
                if (ml.startswith("gpt-5") or (len(ml) >= 2 and ml[0] == "o" and ml[1].isdigit()))
                else "max_tokens")
     try:
-        resp = httpx.post(url, headers={"Authorization": f"Bearer {key}"}, timeout=timeout, json={
+        body = apply_transport_options({
             "model": model, "temperature": 0.0, tok_key: max_tokens,
             "messages": [{"role": "user", "content": prompt}],
-        })
+        }, cfg.get("provider"))
+        resp = httpx.post(
+            url,
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=timeout,
+            json=body,
+        )
         resp.raise_for_status()
         return str(resp.json().get("choices", [{}])[0].get("message", {}).get("content", "") or "")
     except Exception as err:  # noqa: BLE001 — транспорт/таймаут/5xx = роутер НЕДОСТУПЕН, не «none»

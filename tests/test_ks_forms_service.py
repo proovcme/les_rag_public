@@ -298,13 +298,13 @@ def test_mcp_filled_ks_preserves_draft_status():
 
 
 def test_ks_forms_hook_runs_before_smeta_profile():
-    """Regression: smeta mode must not swallow «Собери КС-2» into RAG/LLM."""
+    """Explicit filled-form command stays deterministic before general profile RAG."""
     import inspect
 
     from proxy.routers import chat as chat_router
 
     source = inspect.getsource(chat_router._run_chat)
     ks_at = source.find("is_ks_forms_query(req.question)")
-    smeta_at = source.find('if _PROFILE == "estimate_harness"')
-    assert ks_at >= 0 and smeta_at >= 0
-    assert ks_at < smeta_at
+    evidence_at = source.find("run_chat_evidence_application(")
+    assert ks_at >= 0 and evidence_at >= 0
+    assert ks_at < evidence_at
