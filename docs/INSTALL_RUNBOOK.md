@@ -211,9 +211,8 @@ first launch it can run offline (local provider).
 
 ### Windows
 
-This is the canonical production install path for **Legion**. Mac builds remain
-development/reference artifacts; release readiness is decided by the live
-Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
+This is the canonical public Windows install path. Release readiness is decided by the exact
+Tauri/NSIS artifact installed and smoked on a clean isolated Windows state.
 
 1. Run `LES-Setup.exe` (per-user, **no admin**). It drops the code export under
    the ASCII-only `%LOCALAPPDATA%\Programs\LES` + Start-Menu/Desktop shortcuts. The visible
@@ -233,41 +232,22 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
    - on the first updated launch, moves legacy runtime state into a timestamped
      backup, merges only missing files, and records `migration/last_state_init.json`;
      repeated launch is idempotent,
-   - проверяет встроенные portable CPython `3.13.12` и `uv`: оба SHA-256-проверяются, Python
-     распаковывается в persistent state без MSI/реестра и `uv` не имеет права скачивать интерпретатор. Winget или
-     официальный скрипт для `uv` — только recovery-fallback,
-   - открывает нативный setup wizard. Он проверяет Ollama, Docker Desktop/WSL, Qdrant и модели;
-     внешние программы ставятся через winget только по явной кнопке. Если winget недоступен,
-     мастер оставляет официальный адрес ручной установки и путь к журналу,
-   - отсутствие компонента, незапущенный Docker engine, необходимость перезагрузки и отсутствие
-     модели дают машинное состояние `setup_required`, но не закрывают Tauri и не показывают
-     аварийный экран «ЛЕС не запустился»,
-   - `uv sync` (no MLX and no pywebview on Windows),
+   - проверяет встроенные portable CPython, `uv.exe`, exact `uv.lock` и
+     `windows-uv-cache.zip`: archive и lock SHA-256 обязаны совпасть с cache contract,
+   - распаковывает Python и dependency cache в persistent state без MSI/реестра и выполняет
+     `uv sync --locked --offline --python <bundled> --no-python-downloads --extra windows-reranker`;
+     system Python/uv, winget и network package fallback запрещены,
+   - открывает нативный setup catalogue. Он показывает роли, availability и официальные ссылки
+     Ollama, FreeToken, Lemonade, OpenAI-compatible API, embeddings и Qdrant, но не устанавливает,
+     не выбирает и не настраивает их за пользователя,
+   - отсутствие answer engine, embedding engine или Qdrant записывается как предупреждение
+     `answer_engine_unavailable`, `embedding_engine_unavailable` или `qdrant_unavailable`;
+     запуск LES core продолжается,
    - `lesctl init --profile windows-lite`,
-   - `onboard_provider.py --provider ollama --ensure-platform windows` → local
-     **ollama** default (no cloud key needed to boot); Windows сохраняет уже настроенные
-     Ollama/Lemonade/cloud-провайдеры, но автоматически заменяет унаследованный Mac-only `mlx`
-     на Ollama до загрузки моделей,
-   - `start-light.ps1` keeps the selected Ollama tag in both `OLLAMA_MODEL` and
-     the provider-neutral `LLM_MODEL`; all model-owned attachment/smeta steps
-     therefore use the same local runtime instead of falling back to a Mac MLX
-     name,
-   - embeddings use Ollama `bge-m3` (`1024` dimensions) for the shared
-     dense+sparse/RRF index contract,
-   - пользователь сам загружает и выбирает любую установленную Ollama answer-модель;
-     `qwen3.5:9b` — рекомендация для смет и tool use, а не зашитое требование. Bootstrap не вызывает
-     `ollama pull`. Отдельная `bge-m3:latest` остаётся обязательной для embedding-контракта `1024`;
-     мастер показывает обе команды и каталог моделей,
-   - bootstrap installs/prefetches the native multilingual
-     cross-encoder `BAAI/bge-reranker-v2-m3`; its weights are checksum-verified,
-     corrupt cache entries are quarantined, an interrupted `.incomplete` download
-     resumes, and a semantic load-probe runs before the cache is marked ready,
-     with bounded `HF_MIRROR_ENDPOINT` fallback when the official Hub is unavailable,
-   - `onboard_models.py --skip-if-cloud`,
-   - запускает обязательный Qdrant в Docker с постоянным именованным томом
-     `les-qdrant-data` и ждёт ответа `/collections`,
-   - brings the stack up via `start-light.ps1`; proxy/UI/Lemonade стартуют прямыми
-     `pythonw.exe`/`python.exe` из persistent venv, без `cmd.exe /c uv run` wrappers.
+   - не вызывает `ollama pull`, provider/model onboarding, reranker download или Docker Desktop;
+     уже работающий Docker/Qdrant может быть обнаружен и использован, но не является core gate,
+   - brings the stack up via `start-light.ps1`; proxy/UI и только явно настроенные adapters
+     стартуют прямыми `pythonw.exe`/`python.exe` из persistent venv, без `cmd.exe /c uv run` wrappers.
      Tauri открывает live UI, а `windows-light-state.json` хранит реальные PID и
      `process_contract=direct_python_no_console_v1`;
    Ход запуска и незакрытые шаги видны в wizard. Реальные ошибки внутренней подготовки остаются
@@ -284,13 +264,10 @@ Windows RAG/chat smoke and the Windows Tauri/NSIS artifact.
 Подготовленный updater сохраняет уже прошедшие health-проверку API/UI при запуске нового
 desktop shell, поэтому не повторяет полный bootstrap и не устраивает второй цикл подготовки.
 
-На чистой Windows Docker Desktop может запросить повышение прав и завершение настройки WSL 2.
-Это штатное системное требование Docker. После установки или перезагрузки достаточно снова открыть
-ЛЕС: bootstrap идемпотентен и продолжит с незавершённого предусловия.
-
 После запуска мастер остаётся доступным через tray → **«Настройка и справка»**. Он показывает
-текущие Ollama/Docker/Qdrant, выбранный тег, рекомендуемые команды и базовые советы. Открытие справки
-не останавливает службы и не меняет документы, индексы или чаты.
+текущий LES core и совместимые внешние компоненты. Открытие справки не устанавливает программы,
+не останавливает службы и не меняет документы, индексы, модели или чаты. Полный справочник ошибок:
+[public/windows-troubleshooting.md](public/windows-troubleshooting.md).
 
 After first launch, **Инструменты → Источники данных → СКАЧАТЬ ФГИС ЦС** starts
 the bounded public update: catalogue, latest Split Form for every official price

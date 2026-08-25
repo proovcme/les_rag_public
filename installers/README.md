@@ -2,7 +2,7 @@
 
 This folder contains boxed-install entrypoints for platform profiles.
 
-The installers are intentionally thin adapters around the repository runtime:
+The installers are platform adapters around the same LES runtime:
 
 - `desktop/tauri/` + `tools/build_tauri_app.py` build the canonical native Mac/Windows shell.
 - `linux/install.sh` prepares Linux Docker/systemd/server-remote-model profiles.
@@ -70,8 +70,10 @@ Same UX goal as macOS, but Windows has no Apple MLX — the engine is
 cloud / ollama / lemonade, picked in the Sovushka GUI (no weights bundled).
 
 The same Tauri source builds an NSIS per-user installer (`LES-Setup.exe`, no
-admin) on a Windows host. Its Rust shell invokes the existing PowerShell
-bootstrap, waits for the dynamic Windows-light UI port and owns the native
+admin) on a Windows host. The package includes SHA-256-verified portable Python,
+`uv.exe`, the exact `uv.lock`, and a Windows dependency cache built from that lock.
+First launch is offline and does not inspect system Python or `uv`. Its Rust shell
+invokes PowerShell bootstrap, waits for the dynamic UI port and owns the native
 window/tray. Python remains the backend sidecar; pywebview is not installed.
 
 ```bash
@@ -88,6 +90,11 @@ If any target smeta file already exists, the complete existing set must validate
 user base is reported and never overwritten. The canonical patch-release uploads the generated baseline
 to Legion before building and proves it again in the isolated clean-install smoke.
 This proves norm/resource and FSEM readiness, not the presence of a region-specific price book.
+
+Ollama, FreeToken, Lemonade, OpenAI-compatible services, Docker Desktop and Qdrant are external,
+user-managed components. The setup screen is a role catalogue with official links and live
+availability; it does not install them, choose a model or block the LES core. Generation,
+embeddings and vector storage are configured independently.
 
 ## Windows (advanced: docker / lite profiles)
 

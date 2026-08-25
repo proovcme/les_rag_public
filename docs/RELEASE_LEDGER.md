@@ -4,19 +4,28 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-24)
+## Текущее состояние (2026-08-25)
 
 ```
-версия продукта (SemVer):  0.28.0 (versioned chat profiles)
-номер сборки:              587
-версия Tauri/NSIS:         5.1.587
+версия продукта (SemVer):  0.28.1 (public provider-neutral Windows release)
+номер сборки:              588
+версия Tauri/NSIS:         5.1.588
 ветка выпуска:             codex/les-0.27.37-ui-mail-agent
-dev implementation:       immutable per-chat prompt/skill/tool/model/RAG profiles; four explicit modes; smeta core unchanged by this feature
+dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.79 / build 586
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.28.0 только после ручной проверки владельцем
+следующий выпуск:          LES-Setup.exe 0.28.1 после exact installed-artifact smoke
 рантайм /api/version:      Legion live 0.27.79 / build 586; `SMETA_NORMS_Index` = 49818 chunks
 ```
+
+> **0.28.1 / build 588:** Windows package содержит SHA-256-проверенные portable Python/uv,
+> exact `uv.lock` и offline dependency cache; bootstrap не зависит от system Python/uv,
+> winget или package network. Setup стал каталогом ролей Ollama/FreeToken/Lemonade/
+> OpenAI-compatible, embeddings и Qdrant: внешние компоненты пользовательские, ничего не
+> устанавливается и не выбирается автоматически, их отсутствие не блокирует LES core.
+> Добавлены публичные user/developer guides, полный troubleshooting и актуализированы SKILL,
+> MODULE_INDEX, CODE_MAP, platform/install docs и roadmap. Статус публикации меняется на
+> `released` только после зелёного exact-EXE smoke и GitHub Release того же commit.
 
 > **0.28.0 / build 587:** промпты, скиллы и разрешённые инструменты стали
 > пользовательскими versioned-профилями чата вместо разрозненных строк в коде.

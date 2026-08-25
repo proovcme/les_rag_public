@@ -62,10 +62,10 @@
 
 Навигатор по коду для агентов и людей: где что лежит и как связано. Прокси-слой — [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), RAG-модернизация — [RAG_MODERNIZATION_PLAN.md](../RAG_MODERNIZATION_PLAN.md), MLX — [MLX_GUIDE.md](../MLX_GUIDE.md), термины — [DICTIONARY_LES_v2.0.md](../DICTIONARY_LES_v2.0.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). (Историческое `INFRASTRUCTURE_v2.0`/`LES_MASTER_DOC_v2_1` → `docs/archive/`.) Здесь — структура и связи кода.
 
-- **Windows setup/help:** `desktop/tauri/web/{index.html,wizard.js}` — нативный wizard и справка;
-  `desktop/tauri/src-tauri/src/lib.rs` — проверка компонентов, winget-действия, сохранение выбранного
-  Ollama-тега и повторный запуск; `installers/windows/app/bootstrap.ps1` — bundled Python/uv и
-  неблокирующий `setup_required` без скрытого скачивания Ollama-моделей.
+- **Windows setup/help:** `desktop/tauri/web/{index.html,wizard.js}` — provider-neutral catalogue;
+  `desktop/tauri/src-tauri/src/lib.rs` — bounded availability probes и запуск LES core без записи
+  provider/model; `installers/windows/app/bootstrap.ps1` — verified bundled Python/uv, exact lock,
+  offline dependency cache и capability warnings без скрытых установок/скачиваний.
 - **FreeToken local transport (0.27.70, 0.27.75–0.27.77):** `proxy/services/llm_transport_profile_service.py`
   добавляет `enable_thinking=false`, capacity-derived prompt-fit и единый parser
   `content|reasoning|reasoning_content` для внешнего loopback runtime;
@@ -339,10 +339,12 @@ projection под тем же alias; при rollback старый FTS восст
   оставляют вечный `PENDING` при сбое admission/контракта/парсинга. Windows/Ollama startup
   выравнивает query/parse embedding URL на один `OLLAMA_BASE_URL`; `env.example` sidecar `:8081`
   не протекает в production.
-- **Windows startup/update identity:** `desktop/tauri/web/wizard.js` блокирует запуск при
-  `bootstrap.state=running`; `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;
-  `tools/build_tauri_app.py` встраивает exact deploy stamp, а `windows_prepare_update.ps1` вместе с
-  `windows-installer-hooks.nsh` сохраняют отдельные install/state roots изолированного release smoke.
+- **Windows startup/update identity:** `desktop/tauri/web/wizard.js` блокирует повторный запуск только
+  пока `bootstrap.state=running`; отсутствие внешнего answer/embedding engine или Qdrant отображается
+  как capability warning. `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;
+  `tools/build_tauri_app.py` встраивает exact deploy stamp, проверенные portable Python/uv и offline
+  cache точного `uv.lock`, а `windows_prepare_update.ps1` вместе с `windows-installer-hooks.nsh`
+  сохраняют отдельные install/state roots изолированного release smoke.
 - **Qdrant startup:** `QdrantLlamaIndexAdapter._ensure_collection()` публикует готовность коллекции
   до best-effort background `_ensure_payload_indexes()`; зависший `create_payload_index(wait=false)`
   больше не удерживает FastAPI lifespan.
@@ -358,12 +360,12 @@ projection под тем же alias; при rollback старый FTS восст
 
 - **Гейт:** `make verify` → `compileall` + `pytest --collect-only` канонической LES-сюиты (**2680 тестов** на 2026-07-17), офлайн. Полный продуктовый прогон: `make test`; архивный Unified запускается только `make test-legacy`.
 - **Тесты:** [tests/](../tests/) — 315 файлов / 3057 физических тестов; default [pytest.ini](../pytest.ini) и Make-гейты собирают 2680 текущих LES-тестов, исключая 11 legacy-файлов и `test_artel*`. Архивный opt-in — `make test-legacy`, границы профилей — [Makefile](../Makefile).
-- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `desktop/tauri/`, `tools/build_tauri_app.py`, `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`. Канонический Mac/Windows desktop shell — Tauri 2: он запускает platform bootstrap, ждёт UI health, открывает NiceGUI и управляет lifecycle из tray; предметной логики в Rust нет. Windows release использует GUI subsystem, named single-instance mutex и один in-flight lifecycle guard; все Rust child-команды получают `CREATE_NO_WINDOW`, а wizard проверяет Ollama/Docker не чаще раза в 10 секунд и вызывает `ollama list` один раз. `tools/build_tauri_app.stage_runtime` формирует платформенный ресурсный набор: Windows EXE не содержит корневой macOS `bootstrap.sh` и каталога `installers/macos`, Mac не получает Windows bootstrap. NSIS hook сохраняет видимое имя «ЛЕС», но направляет свежую установку в латинский `%LOCALAPPDATA%\Programs\LES`; найденная старая Tauri-установка обновляется в прежнем каталоге. Bootstrap задаёт `LES_RUNTIME_HOME` и `LES_REPO_ROOT` равными фактическому installed root, чтобы `/api/version` и безопасная остановка процессов не наследовали dev/macOS defaults. **Production target — Legion/Windows**; Mac остаётся dev/reference. `tools/les_shell.py` остаётся legacy fallback. Windows light (`installers/windows/start-light.ps1`) после `uv sync` запускает proxy/UI/Lemonade напрямую из persistent venv через `pythonw.exe` (fallback `python.exe` с hidden window), без `cmd.exe`/`uv`-обёртки, и пишет реальные PID с contract `direct_python_no_console_v1`; общий `installers/windows/runtime-process.ps1` запускает installer/start exact PID без консоли и с timeout, а port lookup выполняет через быстрый `netstat` вместо WMI/CIM. `installers/windows/state.ps1` переносит mutable `.env`/venv/MetaDB/storage/sources/artifacts/logs в `%LOCALAPPDATA%\LES` и создаёт junctions нативным PowerShell. Qdrant создаётся с named volume `les-qdrant-data`. При занятых дефолтных `8050/8051` runtime берёт свободные порты, пишет их в persistent `logs/windows-light-state.json`, а Tauri/stop читают тот же файл. Подготовленный updater не останавливает уже проверенные API/UI перед desktop handoff: новый Tauri видит healthy runtime и не повторяет bootstrap; Windows smoke и production apply требуют один desktop, прямые Python PID и ноль LES-owned `cmd.exe`. Выбранная модель записывается и в provider-specific переменную, и в общий `LLM_MODEL`; Ollama использует тот же локальный runtime для model-owned attachment/smeta и `bge-m3`/1024 для embeddings; rerank выполняет checksum/load-probe проверенный `BAAI/bge-reranker-v2-m3` через `sentence-transformers`, не answer-LLM. При `-Provider lemonade` дополнительно поднимается `lemonade_host.py` как MLX-compatible adapter на `LEMONADE_HOST_PORT`/`MLX_URL` (по умолчанию `18080`).
+- **Сборка/деплой:** hatchling (wheel: backend/proxy/sovushka/tools), [docker-compose.yml](../docker-compose.yml) (Qdrant+Proxy), [Dockerfile.proxy](../Dockerfile.proxy), `desktop/tauri/`, `tools/build_tauri_app.py`, `installers/{macos,linux,windows}/`, `deploy/pauk/`, `standalone/cad_bim_viewer/`. Канонический Mac/Windows desktop shell — Tauri 2: он запускает platform bootstrap, ждёт UI health, открывает NiceGUI и управляет lifecycle из tray; предметной логики в Rust нет. Windows release использует GUI subsystem, named single-instance mutex и один in-flight lifecycle guard; все Rust child-команды получают `CREATE_NO_WINDOW`. Wizard показывает availability Ollama/FreeToken/Lemonade/OpenAI-compatible, embeddings и Qdrant, но не устанавливает и не выбирает их; старт зависит только от LES core. `tools/build_tauri_app.stage_runtime` формирует платформенный ресурсный набор и Windows offline payload: SHA-256-проверенные Python/uv, exact `uv.lock` и dependency cache. Windows EXE не содержит macOS bootstrap, Mac не получает Windows bootstrap. NSIS сохраняет видимое имя «ЛЕС», но ставит приложение в `%LOCALAPPDATA%\Programs\LES`; mutable `.env`/venv/MetaDB/storage/sources/artifacts/logs живут в `%LOCALAPPDATA%\LES`. Bootstrap не использует system Python/uv, winget или network package fallback. Windows light запускает proxy/UI и только явно настроенные adapters прямыми Python PID без `cmd.exe`/`uv` wrappers; process contract — `direct_python_no_console_v1`. Qdrant может быть локальным или удалённым и не является условием запуска core. Updater повторно использует проверенный runtime при desktop handoff; acceptance требует один desktop, прямые Python PID и ноль LES-owned `cmd.exe`. Mac остаётся dev/reference, Linux — отдельный server profile.
 - **CI:** нет (намеренно — локальная система).
 
-> Windows payload update 0.24.21: `tools/build_tauri_app.stage_runtime` additionally embeds
-> SHA-256-verified portable CPython `3.13.12` ZIP and `uv.exe`. The bootstrap expands CPython into
-> persistent state and runs `uv sync --python <bundled> --no-python-downloads`.
+> Windows payload update 0.28.1: `tools/build_tauri_app.stage_runtime` embeds SHA-256-verified
+> portable CPython and `uv.exe`, the exact `uv.lock`, and an offline Windows dependency cache.
+> Bootstrap verifies all identities and runs locked/offline with no system or network fallback.
 
 ## Сквозные механизмы
 

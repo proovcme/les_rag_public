@@ -8,7 +8,7 @@ LES should ship as a product family, not as one Mac workstation script.
 |---|---|---|---|---|---|
 | macOS Apple Silicon native | Current reference | launchd | MLX/Core ML | local Qdrant binary | Best local private workstation profile |
 | Linux server | Packaging target | systemd or Docker Compose | OpenAI-compatible local host, Ollama, llama.cpp, vLLM, remote provider | Qdrant Docker/native | Secondary server profile |
-| Windows workstation | **Primary production target (Legion)** | PowerShell + Tauri bootstrap / Docker Desktop for Qdrant | Ollama is required local runtime; OpenAI-compatible provider is explicit opt-in | Qdrant in named Docker volume | Canonical production profile; CPython and `uv` are bundled, Ollama and Docker remain first-launch requirements |
+| Windows workstation | **Primary public release target** | PowerShell + Tauri bootstrap | Ollama, FreeToken, Lemonade or OpenAI-compatible API | Local or remote Qdrant | CPython, `uv` and the locked dependency cache are bundled; external engines are user-managed |
 | Lite mode | Packaging target | any | remote/OpenRouter/OpenAI-compatible | local or remote Qdrant | No local heavy model requirement |
 
 ## Runtime Abstractions
@@ -49,14 +49,11 @@ Use these names consistently in docs, install scripts and future config files:
 - On `windows-lite` with Ollama, keep `OLLAMA_MODEL` and the provider-neutral
   `LLM_MODEL` identical. Model-owned document/smeta turns follow that configured
   local runtime; embeddings use `bge-m3` at 1024 dimensions.
-- The canonical Windows/Tauri bootstrap carries SHA-256-verified CPython and `uv`; it still requires
-  Ollama and Docker Desktop,
-  installs missing components through winget where possible, and must fail with
-  an explicit installation URL instead of opening a UI with unavailable RAG.
-- Legion production additionally requires the native multilingual cross-encoder
-  `BAAI/bge-reranker-v2-m3`: the answer model must not rerank its own
-  evidence pool. The production RAG path remains named dense + BM25 sparse,
-  native RRF, common rerank and parent/context expansion.
+- The canonical Windows/Tauri bootstrap carries SHA-256-verified CPython, `uv`, the exact
+  `uv.lock` and an offline Windows dependency cache. A missing or mismatched bundled payload is
+  fatal; absent answer/embedding engines or Qdrant are visible warnings, never installer failures.
+- The production RAG path is named dense + BM25 sparse → native RRF → parent/context expansion.
+  Cross-encoder reranking is an optional experiment and preserves RRF evidence when unavailable.
 
 ## Minimum Smoke
 
@@ -72,7 +69,8 @@ curl -fsS http://127.0.0.1:8050/api/search \
   -d '{"query":"smoke","top_k":1}'
 ```
 
-For profiles without local generation, `/api/chat` may be disabled or routed to a configured provider, but `/api/search` must remain available.
+For profiles without generation or Qdrant, the LES control surface still starts; the affected
+capability reports a precise unavailable state until the user connects its external component.
 
 ## Installer Entrypoints
 

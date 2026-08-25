@@ -1,9 +1,21 @@
-from tools.publication_check import forbidden_tracked, secret_hits
+from tools.publication_check import forbidden_tracked, missing_required, secret_hits
 
 
 def test_forbidden_tracked_runtime_paths():
     bad = forbidden_tracked(["README.md", "data/les_meta.db", "storage/datasets/x", ".env"])
     assert bad == ["data/les_meta.db", "storage/datasets/x", ".env"]
+
+
+def test_public_release_requires_user_and_developer_windows_guides(tmp_path):
+    for relative in ("README.md", "LICENSE", "SECURITY.md", "docs/PUBLICATION_CHECKLIST.md"):
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("public\n", encoding="utf-8")
+
+    assert missing_required(tmp_path) == [
+        "docs/public/windows-troubleshooting.md",
+        "docs/public/developer-guide.md",
+    ]
 
 
 def test_secret_scan_ignores_placeholders_and_flags_real_values(tmp_path):

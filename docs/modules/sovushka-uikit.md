@@ -68,9 +68,11 @@ desktop и mobile smoke, keyboard/focus проверки и записи в `MOD
 
 ## Текущие поверхности
 
-Windows setup wizard использует существующее lifecycle-состояние bootstrap: во время `running`
-основное действие disabled, подписано «Подготовка…» и показывает фактическую фазу. Отдельного
-декоративного progress-контракта не добавлено.
+Windows setup surface использует существующее lifecycle-состояние bootstrap: во время `running`
+основное действие disabled и показывает фактическую фазу. До NiceGUI это автономный static
+catalogue: LES core, answer providers, embeddings и Qdrant разделены по ролям; Ollama, FreeToken,
+Lemonade и OpenAI-compatible получают status и official link, но не install/select action.
+Отсутствие внешнего компонента не блокирует основное действие.
 
 Мигрированные поверхности: AppShell/Header, чат, evidence/source cards,
 `build_documents(surface=...)`, рабочая и конфигурационная почта, история
@@ -224,8 +226,8 @@ UI-проекция существующего stream/checkpoint-контрак�
 сверху находится единый паспорт готовности с одним зелёным primary action,
 ниже — четыре читаемых контура «Доступ и интерфейс», «Поиск и данные»,
 «Модели», «Ресурсы Mac/Windows». Диагностика является платформенной:
-macOS показывает MLX/Metal и LaunchAgents, Windows — Ollama, Docker Desktop
-и локальные процессы; Mac-названия на Windows запрещены. Статусы представлены строками сервисов, поэтому
+macOS показывает MLX/Metal и LaunchAgents, Windows — configured answer/embedding provider,
+Qdrant и локальные процессы; Mac-названия на Windows запрещены. Статусы представлены строками сервисов, поэтому
 название, назначение и результат проверки читаются одним взглядом. Синие
 локальные кнопки, отдельные KPI-карточки и тёмная горизонтальная схема не
 используются. Детали проверок, резервные копии, словарь и технический журнал

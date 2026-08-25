@@ -25,6 +25,13 @@ Read only the target page and its targeted tests after that. Treat
 `sovushka/styles.py` as a legacy compatibility layer, not the destination for
 new design rules.
 
+For the Windows setup surface also read `desktop/tauri/web/index.html`,
+`desktop/tauri/web/wizard.js`, the commands in `desktop/tauri/src-tauri/src/lib.rs`, and
+`tests/test_tauri_desktop.py`. This is a standalone static surface before NiceGUI: use local
+tokens and no frontend dependency. It is a role catalogue for user-managed external components;
+it must not install a provider, choose a model, or block the LES core because an answer engine,
+embedding engine, Docker or Qdrant is absent.
+
 ## Workflow
 
 1. State the primary user task and current UX defect.

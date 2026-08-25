@@ -48,20 +48,17 @@ uv run python tools/runtime_smoke.py \
 - Show service-source requirements for smeta/normcontrol.
 - Link to public-facing docs first: `docs/index.md`, `docs/public/overview.md`,
   `docs/public/demo-workflows.md`, `docs/public/privacy-and-data-boundaries.md`,
+  `docs/public/windows-troubleshooting.md`, `docs/public/developer-guide.md`,
   and `docs/public/smeta-expert-review.md`.
 - Keep internal runbooks available for developers, but do not make private hostnames,
   keys, private paths, or private dataset names part of required public setup.
 - If GitHub Pages is enabled, use `docs/index.md` as the curated entry point.
 
-## Current 0.24 Public-Ready Status
+## Current 0.28.1 public-release gate
 
-`0.24.0.95` is a public-showcase candidate:
-
-- SPDS doc-review baseline is in code and deployed locally.
-- JSON/HTML/XLSX reports are available.
-- `normalized_remarks` is exposed for future checklist/DOCX/PDF renderers.
-- Engineer decisions for doc-review remarks are persisted and exported.
-- Service sources are visible through `/api/service-sources`, the Admin GUI, and the chat panel.
-- README and `docs/public/*` provide a curated public surface.
-- `docs/public/smeta-expert-review.md` states what the smeta module still needs to calculate confidently without templates.
-- Full publication still requires owner approval and a final secret/data scrub.
+- Public README, Windows troubleshooting and developer guide are required files.
+- `LES-Setup.exe` must prove a clean offline first launch using only its bundled runtime.
+- Missing Ollama/FreeToken/Lemonade/Qdrant must remain visible warnings, not installer failures.
+- The exact source commit must pass `make verify`, `make test`, `make public-check`, Tauri checks,
+  and installed Windows smoke before `main` and the GitHub Release tag are updated.
+- Release assets are the verified installer, its SHA-256 and `latest.json`; no runtime/user data.

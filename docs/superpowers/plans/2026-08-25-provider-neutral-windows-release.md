@@ -83,8 +83,14 @@
 
 **Files:**
 - Modify: `README.md`
+- Modify: `AGENTS.md`
+- Modify: `SKILL.md`
+- Modify: `skills/sovushka-ui/SKILL.md`
+- Modify: `ROADMAP_TO_V1.md`
 - Modify: `docs/WINDOWS_DESKTOP.md`
 - Modify: `docs/INSTALL_RUNBOOK.md`
+- Modify: `docs/PLATFORMS.md`
+- Modify: `installers/README.md`
 - Modify: `docs/modules/sovushka-uikit.md`
 - Modify: `docs/MODULE_INDEX.md`
 - Modify: `docs/CODE_MAP.md`
@@ -93,6 +99,7 @@
 - Modify: `docs/PUBLICATION_CHECKLIST.md`
 - Modify: `docs/TEST_INVENTORY.md`
 - Create: `docs/public/windows-troubleshooting.md`
+- Create: `docs/public/developer-guide.md`
 - Modify: `config/version.json`
 - Test: `tests/test_software_versions.py`
 - Test: `tests/test_publication_check.py`
@@ -100,11 +107,13 @@
 **Interfaces:**
 - `README.md` becomes the public end-user entry point and links the latest GitHub Release before developer instructions.
 - `docs/public/windows-troubleshooting.md` maps each emitted Windows bootstrap error code to symptom, read-only check, safe recovery, expected result, and log path.
+- `docs/public/developer-guide.md` describes architecture, offline Windows payload construction, verification, and release without private infrastructure assumptions.
 - Version endpoints and desktop packaging consume `0.28.1 / 588` from `config/version.json`.
 
 - [ ] Add/update failing documentation/version assertions for `0.28.1`, build `588`, installer-first quick start, provider-role language, and complete bootstrap-error-code coverage in the public troubleshooting guide.
 - [ ] Run the two focused tests and verify they fail against the old public contract.
-- [ ] Replace the README, add the public Windows troubleshooting guide, and update canonical module/code/install/release documentation so it describes the implemented provider-neutral/offline installer exactly. Cover installer integrity, WebView2, venv repair, occupied ports, provider reachability, embeddings, Docker/Qdrant, updates, logs, and data-preserving reset.
+- [ ] Replace the README; add public Windows troubleshooting and developer guides; update `AGENTS.md`, both relevant skills, roadmap, platform matrix, module/code/install/release documentation, and installer notes so they describe the implemented provider-neutral/offline installer exactly. Cover installer integrity, WebView2, venv repair, occupied ports, provider reachability, embeddings, Docker/Qdrant, updates, logs, and data-preserving reset.
+- [ ] In `ROADMAP_TO_V1.md`, distinguish shipped work from future universal tools, managed memory/context, stability, macOS/Linux support, and Lemonade work.
 - [ ] Update `config/version.json` and synchronized desktop/release metadata.
 - [ ] Run focused documentation/version tests and require zero failures.
 

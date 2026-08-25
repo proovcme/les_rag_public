@@ -95,6 +95,18 @@ one matching public troubleshooting entry. Destructive reset instructions are
 separated, explicitly warn what is preserved or removed, and prefer the checked
 in repair/uninstall workflow over manual deletion.
 
+Developer documentation is updated in the same public commit. `AGENTS.md`, the
+repository `SKILL.md`, the Sovushka UI skill, module/code maps, platform matrix,
+installer/release runbooks, test inventory, and software-version passport must
+agree on the same runtime and release contract. The public developer guide
+explains how the offline Windows payload is produced and verified without
+requiring access to private hosts or data.
+
+`ROADMAP_TO_V1.md` separates shipped behavior from future product directions.
+The active directions include universal model tools, bounded and user-managed
+memory/context, continued system stability work, first-class macOS and Linux
+support, and completion of the Lemonade provider path.
+
 ## Non-goals
 
 - No changes under `proxy/smeta_core/**`.

@@ -5,7 +5,9 @@
 ## Что это
 Локальный **строительный evidence-harness** (RAG — один из слоёв, не продукт): проект/датасет → вопрос → правильный workflow → источники → расчёт КОДОМ → blockers/MISSING → проверяемое evidence → ответ. FastAPI (proxy :8050 + MLX-host :8080) + NiceGUI UI «Совушка» (:8051) + Qdrant (:6333), Python 3.12 на **uv**. Сервисы — launchd. Принцип: **модель связывает, код считает**; число без происхождения — не результат.
 
-Целевой production-хост — **Legion / Windows**: Tauri + FastAPI/NiceGUI, Ollama для генерации/эмбеддингов/выделенного reranker и Qdrant в Docker. Mac остаётся dev/reference-контуром и не определяет production defaults.
+Основная публичная платформа выпуска — **Windows**: Tauri + FastAPI/NiceGUI. Установщик несёт
+собственный офлайн Python/uv runtime; Ollama, FreeToken, Lemonade, OpenAI-compatible API и Qdrant —
+внешние пользовательские компоненты. Mac остаётся dev/reference-контуром и не определяет Windows defaults.
 
 Инвариант RAG: любой текущий и будущий dataset индексируется в единую contract-versioned named
 collection как `dense + bm25_sparse`; production retrieval всегда выполняет native RRF, затем общий
@@ -71,7 +73,9 @@ domain-prose в query и dataset/case-specific boosts запрещены.
   `uv run python tools/smeta_model_quality_benchmark.py tests/fixtures/sks_4.xlsx --profile qwen=qwen3.5:9b --allow-single-profile --max-turns 10 --candidate-limit 6 --num-ctx 8192 --interrupt-after-rows 5 --out-dir storage/ab_verify`.
   Ожидается 5/5 строк с решениями (covered_by / unbound / bind) и корректная гибридная авто-привязка норм. Детали защищённых участков — в docstring модуля.
 - **Текущий контур стабилизации RAG/UI не включает сметный модуль:** не изменять `proxy/smeta_core/**`, сметные алгоритмы, mapping, нормы, расчёты, формы и их product defaults. Сметные тесты разрешено запускать только как регрессионный предохранитель. Изменение сметного поведения требует нового прямого указания владельца и отдельного benchmark-гейта выше.
-- **Public merge отложен до финальной приёмки владельцем на Legion:** не commit/push/PR/release. В финале работ подготовить отдельный план merge в public с точным составом коммитов, исключением runtime/data/secrets, локальными и live-гейтами, ручной GUI-приёмкой, rollback и последовательностью публикации.
+- **Public release:** публиковать только после явного указания владельца, `public-check`, локальных
+  гейтов и живой приёмки точного установщика на Windows. Исключить runtime/data/secrets, сохранить
+  rollback и обеспечить совпадение verified commit, публичного `main` и release tag.
 - Правка движка CAD/BIM (`frontend/cad_bim_viewer/`) — отдельная Vite-сборка, не править собранный `dist/`.
 
 ## Что НЕ читать (токены/секреты)
