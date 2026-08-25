@@ -778,7 +778,9 @@ vector-copy/sparse-sidecar/rollback-конфигурации. Эти пути у
 
 Канонический Windows lifecycle: [ALGO-windows-lifecycle.md](ALGO-windows-lifecycle.md). Любой install,
 launch, soft update и hard recovery обязан реализовывать его состояния и terminal errors без UAC.
-Installer содержит exact deploy stamp; изолированный release smoke имеет собственные install/state roots.
+Installer содержит exact deploy stamp; offline cache распаковывается bundled Python и автоматически
+переиспользуется builder-ом по content address. Каждый изолированный release smoke получает новые
+GUID-qualified install/state roots, поэтому частичный предыдущий запуск и его ACL не наследуются.
 Во время bootstrap desktop блокирует повторный запуск, показывает текущую фазу и не ждёт сеть ради tokenizer.
 Qdrant payload-индексы создаются best-effort после готовности коллекции и не удерживают API startup.
 

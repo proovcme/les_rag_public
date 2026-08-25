@@ -414,6 +414,17 @@ def test_windows_bootstrap_bundles_core_and_defers_external_components_to_wizard
     assert "python-contract.json" in text
     assert "tools\\uv.exe" in text
     assert "Get-FileHash -LiteralPath $bundled -Algorithm SHA256" in text
+
+
+def test_windows_uv_cache_is_extracted_by_bundled_python_not_expand_archive():
+    bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    text = bootstrap.read_text(encoding="utf-8-sig")
+    cache_block = text.split("function Resolve-UvCache", 1)[1].split(
+        "function Resolve-Executable", 1
+    )[0]
+
+    assert "& $BundledPython -m zipfile -e $archive $temporaryRoot" in cache_block
+    assert "Expand-Archive" not in cache_block
     assert "uv-cache-contract.json" in text
     assert '"--offline"' in text
     assert "function Install-Uv" not in text

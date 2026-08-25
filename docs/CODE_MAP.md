@@ -347,8 +347,10 @@ projection под тем же alias; при rollback старый FTS восст
   пока `bootstrap.state=running`; отсутствие внешнего answer/embedding engine или Qdrant отображается
   как capability warning. `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;
   `tools/build_tauri_app.py` встраивает exact deploy stamp, проверенные portable Python/uv и offline
-  cache точного `uv.lock`, а `windows_prepare_update.ps1` вместе с `windows-installer-hooks.nsh`
-  сохраняют отдельные install/state roots изолированного release smoke.
+  cache точного `uv.lock`; release-builder автоматически переиспользует content-addressed cache,
+  а bootstrap распаковывает его bundled Python. `windows_{prepare_update,patch_release}.ps1` вместе
+  с `windows-installer-hooks.nsh` создают уникальные install/state roots каждого smoke, поэтому
+  ACL или частичный state прошлого запуска не влияют на следующий.
 - **Qdrant startup:** `QdrantLlamaIndexAdapter._ensure_collection()` публикует готовность коллекции
   до best-effort background `_ensure_payload_indexes()`; зависший `create_payload_index(wait=false)`
   больше не удерживает FastAPI lifespan.

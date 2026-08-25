@@ -112,7 +112,8 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    `git diff --check`.
 
 3. `tools/windows_patch_release.ps1` на Windows строго обновляет `main` до запрошенного commit,
-   собирает Tauri/NSIS, устанавливает EXE в изолированный `%LOCALAPPDATA%\LES-release-smoke` и
+   собирает Tauri/NSIS, устанавливает EXE в новый одноразовый каталог под
+   `%LOCALAPPDATA%\LES-release-smoke` и
    запускает `windows_release_smoke.ps1`. Только после его успеха installer передаётся как
    payload в `windows_update_engine.py`: движок переименовывает всё старое дерево приложения
    в recovery, ставит новое, повторно привязывает persistent `%LOCALAPPDATA%\LES` и проверяет
@@ -179,11 +180,10 @@ make version-sync
 
 ## 4. First launch on the CLEAN target
 
-The target needs **network** on first launch for Python packages and any external programs/models
-the user chooses. CPython and `uv` are already in the Windows installer. Windows
-package sync uses the system certificate store for corporate TLS roots, retries
-transient downloads and writes the exact sanitized `uv` failure to
-`%LOCALAPPDATA%\LES\logs\bootstrap.log`. An incomplete `.venv` is removed before
+The Windows core needs **no network** on first launch: CPython, `uv` and the exact
+lock-bound dependency cache are inside the installer. Network is needed only if the user chooses
+to obtain an external provider or its models. A failed offline sync writes the exact sanitized
+`uv` failure to `%LOCALAPPDATA%\LES\logs\bootstrap.log`; an incomplete `.venv` is removed before
 retry. The bootstrap also grants the installing interactive user `Modify` on
 the persistent state and repaired smeta baseline, so an administrator-assisted
 install cannot leave ordinary Tauri/uvicorn without access. Repeated launches
@@ -234,7 +234,9 @@ Tauri/NSIS artifact installed and smoked on a clean isolated Windows state.
      repeated launch is idempotent,
    - проверяет встроенные portable CPython, `uv.exe`, exact `uv.lock` и
      `windows-uv-cache.zip`: archive и lock SHA-256 обязаны совпасть с cache contract,
-   - распаковывает Python и dependency cache в persistent state без MSI/реестра и выполняет
+   - распаковывает Python и dependency cache в persistent state без MSI/реестра; большой cache
+     распаковывается самим bundled Python, а не медленным PowerShell `Expand-Archive` (контрольный
+     Legion-замер: 39 563 файла за 25,1 с вместо примерно 470 с), затем выполняет
      `uv sync --locked --offline --python <bundled> --no-python-downloads --extra windows-reranker`;
      system Python/uv, winget и network package fallback запрещены,
    - открывает нативный setup catalogue. Он показывает роли, availability и официальные ссылки

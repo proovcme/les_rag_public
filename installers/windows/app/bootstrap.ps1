@@ -229,7 +229,10 @@ function Resolve-UvCache {
     $temporaryRoot = "$cacheRoot.installing"
     Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
-    Expand-Archive -LiteralPath $archive -DestinationPath $temporaryRoot -Force
+    & $BundledPython -m zipfile -e $archive $temporaryRoot
+    if ($LASTEXITCODE -ne 0) {
+      throw "bundled Python could not extract the uv cache (exit $LASTEXITCODE)"
+    }
     [System.IO.File]::WriteAllText(
       (Join-Path $temporaryRoot ".les-cache-ready"),
       $archiveHash,

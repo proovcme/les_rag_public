@@ -95,7 +95,8 @@ try {
   # Keep the clean-install contour inside the checkout-owned temporary root.
   # A previous elevated/installer-owned LOCALAPPDATA contour can carry ACLs
   # that the next prepare cannot remove, even though it is not production.
-  $SmokeRoot = Join-Path $RepoRoot ".codex_tmp\windows-release-smoke\$BuildCommit"
+  $SmokeRun = "$BuildCommit-$([guid]::NewGuid().ToString("N"))"
+  $SmokeRoot = Join-Path $RepoRoot ".codex_tmp\windows-release-smoke\$SmokeRun"
   $InstallRoot = Join-Path $SmokeRoot "app"
   $StateRoot = Join-Path $SmokeRoot "state"
   foreach ($path in @($InstallRoot, $StateRoot)) {

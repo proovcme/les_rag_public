@@ -494,3 +494,19 @@ programs, Docker/WSL readiness and user-managed models had no normal first-run s
 an explicit user action, the answer model is selected only from installed tags, and bootstrap never
 calls `ollama pull`. `qwen3.5:9b` is a recommendation; `bge-m3` remains the explicit embedding
 contract. Internal preparation failures stay visible in the same wizard with code and log path.
+
+## Operational incident 2026-08-25: boxed Windows bootstrap took eight minutes
+
+**Symptom:** clean release smoke appeared frozen while unpacking the bundled offline dependency
+cache; a 480-second smoke timeout expired just as `uv sync` began. Repeated release attempts also
+collided with stale ACLs in the fixed smoke state directory, and the builder rebuilt the same
+lock-bound dependency cache unless an operator supplied an environment variable.
+
+**Cause:** Windows PowerShell `Expand-Archive` spent about 470 seconds creating 39,563 small cache
+files. Smoke install/state paths were stable across attempts. The build cache had validation but no
+content-addressed persistent lookup.
+
+**Fix/guard:** bundled CPython now extracts the verified archive (`25.1 s` in the same Legion
+measurement); the builder automatically caches by `uv.lock` plus Python/uv contracts; both prepare
+and release smoke use GUID-qualified roots. Focused tests assert all three boundaries. A release is
+not publishable until one new-state installer smoke passes in a single run.

@@ -15,11 +15,12 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = [Console]::OutputEncoding
+$SmokeRun = "$BuildCommit-$([guid]::NewGuid().ToString("N"))"
 if (-not $InstallRoot) {
-  $InstallRoot = Join-Path $env:LOCALAPPDATA "LES-release-smoke\app"
+  $InstallRoot = Join-Path $env:LOCALAPPDATA "LES-release-smoke\$SmokeRun\app"
 }
 if (-not $StateRoot) {
-  $StateRoot = Join-Path $env:LOCALAPPDATA "LES-release-smoke\state"
+  $StateRoot = Join-Path $env:LOCALAPPDATA "LES-release-smoke\$SmokeRun\state"
 }
 $AllowedRoot = [System.IO.Path]::GetFullPath((Join-Path $env:LOCALAPPDATA "LES-release-smoke"))
 $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)

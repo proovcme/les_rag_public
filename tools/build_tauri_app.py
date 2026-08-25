@@ -231,6 +231,7 @@ def stage_windows_uv_cache(
     *,
     archive_path: str | Path | None = None,
     lock_path: str | Path | None = None,
+    cache_dir: str | Path | None = None,
 ) -> int:
     """Bundle a lock-bound cache so first launch never downloads Python packages."""
     lock = Path(lock_path) if lock_path else runtime / "uv.lock"
@@ -244,9 +245,28 @@ def stage_windows_uv_cache(
             if not archive.is_file():
                 raise RuntimeError(f"Windows uv cache archive is missing: {archive}")
         else:
-            temporary = tempfile.TemporaryDirectory(prefix="les-windows-uv-cache-archive-")
-            archive = Path(temporary.name) / "windows-uv-cache.zip"
-            _build_windows_uv_cache(runtime, archive)
+            digest = hashlib.sha256()
+            digest.update(lock.read_bytes())
+            digest.update(b"\0windows-reranker\0")
+            tools_dir = runtime / "installers" / "windows" / "tools"
+            for contract_name in ("python-contract.json", "uv-contract.json"):
+                contract_path = tools_dir / contract_name
+                if contract_path.is_file():
+                    digest.update(contract_path.read_bytes())
+            persistent_dir = Path(
+                cache_dir
+                or os.getenv("LES_WINDOWS_RELEASE_CACHE_DIR", "")
+                or ROOT / "dist" / "release-cache"
+            )
+            persistent_dir.mkdir(parents=True, exist_ok=True)
+            archive = persistent_dir / f"windows-uv-cache-{digest.hexdigest()}.zip"
+            if not archive.is_file():
+                temporary = tempfile.TemporaryDirectory(prefix="les-windows-uv-cache-archive-")
+                candidate = Path(temporary.name) / "windows-uv-cache.zip"
+                _build_windows_uv_cache(runtime, candidate)
+                temporary_target = archive.with_suffix(".zip.tmp")
+                shutil.copyfile(candidate, temporary_target)
+                os.replace(temporary_target, archive)
         try:
             with zipfile.ZipFile(archive) as zf:
                 members = [name for name in zf.namelist() if name and not name.endswith("/")]

@@ -143,6 +143,9 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
 
     assert "LES-release-smoke" in source
     assert "@($InstallRoot, $StateRoot)" in source
+    assert "[guid]::NewGuid().ToString(\"N\")" in source
+    assert '"LES-release-smoke\\app"' not in source
+    assert '"LES-release-smoke\\state"' not in source
     assert "does not match requested build commit" in source
     assert "windows_release_smoke.ps1" in source
     assert "Get-FileHash" in source
@@ -157,7 +160,8 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
 def test_prepared_update_smoke_uses_checkout_owned_temporary_root():
     source = (ROOT / "tools/windows_prepare_update.ps1").read_text(encoding="utf-8")
 
-    assert '.codex_tmp\\windows-release-smoke\\$BuildCommit' in source
+    assert '.codex_tmp\\windows-release-smoke' in source
+    assert '[guid]::NewGuid().ToString("N")' in source
     assert 'Join-Path $env:LOCALAPPDATA "LES-release-smoke"' not in source
 
 

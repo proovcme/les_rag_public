@@ -307,6 +307,29 @@ def test_windows_tauri_stage_bundles_offline_uv_cache_with_lock_identity(tmp_pat
     assert (tools / "windows-uv-cache.zip").read_bytes() == archive.read_bytes()
 
 
+def test_windows_uv_cache_build_is_reused_for_same_lock(tmp_path, monkeypatch):
+    lock = tmp_path / "uv.lock"
+    lock.write_text("version = 1\n", encoding="utf-8")
+    cache_dir = tmp_path / "release-cache"
+    builds = []
+
+    def fake_build(_runtime, archive):
+        builds.append(archive)
+        with zipfile.ZipFile(archive, "w") as zf:
+            zf.writestr("archive-v0/test-wheel.whl", b"wheel-bytes")
+
+    monkeypatch.setattr(build_tauri_app, "_build_windows_uv_cache", fake_build)
+    for name in ("first", "second"):
+        assert build_tauri_app.stage_windows_uv_cache(
+            tmp_path / name,
+            lock_path=lock,
+            cache_dir=cache_dir,
+        ) == 1
+
+    assert len(builds) == 1
+    assert len(list(cache_dir.glob("windows-uv-cache-*.zip"))) == 1
+
+
 def test_release_stage_excludes_agent_and_runtime_temporary_files():
     assert build_release_artifacts.should_exclude(ROOT / ".codex_tmp" / "private-probe.json")
     assert build_release_artifacts.should_exclude(ROOT / "tmp" / "runtime-diagnostic.txt")
