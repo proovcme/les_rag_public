@@ -259,22 +259,6 @@ fn read_dotenv_value(path: &std::path::Path, key: &str) -> String {
         .unwrap_or_default()
 }
 
-#[cfg(target_os = "windows")]
-fn write_dotenv_values(path: &std::path::Path, changes: &[(&str, &str)]) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    }
-    let existing = std::fs::read_to_string(path).unwrap_or_default();
-    let mut lines: Vec<String> = existing.lines().map(str::to_string).collect();
-    for (key, value) in changes {
-        let prefix = format!("{key}=");
-        lines.retain(|line| !line.starts_with(&prefix));
-        lines.push(format!("{key}={value}"));
-    }
-    let body = format!("{}\n", lines.join("\n"));
-    std::fs::write(path, body).map_err(|error| error.to_string())
-}
-
 #[tauri::command]
 fn setup_snapshot(app: AppHandle) -> Value {
     #[cfg(target_os = "windows")]
@@ -315,27 +299,47 @@ fn setup_snapshot(app: AppHandle) -> Value {
                     .ok()
             })
             .is_some_and(|status| status.success());
-        let selected_model = windows_state_root()
-            .map(|root| root.join(".env"))
-            .map(|path| read_dotenv_value(&path, "OLLAMA_MODEL"))
-            .unwrap_or_default();
-        let selected_present = !selected_model.is_empty() && models.iter().any(|item| item == &selected_model);
-        let embedding_present = models.iter().any(|item| item == "bge-m3" || item == "bge-m3:latest");
+        let env_path = windows_state_root().map(|root| root.join(".env"));
+        let configured_provider = env_path
+            .as_ref()
+            .map(|path| read_dotenv_value(path, "LES_LLM_PROVIDER"))
+            .unwrap_or_default()
+            .to_lowercase();
+        let embedding_backend = env_path
+            .as_ref()
+            .map(|path| read_dotenv_value(path, "EMBED_BACKEND"))
+            .unwrap_or_default()
+            .to_lowercase();
+        let ollama_embedding = models.iter().any(|item| item == "bge-m3" || item == "bge-m3:latest");
+        let freetoken_running = endpoint_responds("http://127.0.0.1:1919/v1/models");
+        let lemonade_running = endpoint_responds("http://127.0.0.1:13305/api/v1/models");
+        let openai_configured = matches!(
+            configured_provider.as_str(),
+            "openai" | "openrouter" | "openai-compatible"
+        );
         let status = read_bootstrap_status();
+        let bootstrap_state = status.get("state").and_then(Value::as_str).unwrap_or("running");
+        let ui_is_ready = ui_ready(&app);
+        let core_ready = ui_is_ready || bootstrap_state == "ready";
         return json!({
             "platform": "windows",
             "bootstrap": status,
-            "ollama": {"installed": ollama.is_some(), "running": ollama_running},
+            "configured_provider": configured_provider,
+            "providers": [
+                {"id": "ollama", "label": "Ollama", "configured": configured_provider == "ollama", "installed": ollama.is_some(), "available": ollama_running},
+                {"id": "freetoken", "label": "FreeToken", "configured": configured_provider == "freetoken", "installed": freetoken_running, "available": freetoken_running},
+                {"id": "lemonade", "label": "Lemonade", "configured": configured_provider == "lemonade", "installed": lemonade_running, "available": lemonade_running},
+                {"id": "openai-compatible", "label": "OpenAI-compatible", "configured": openai_configured, "installed": openai_configured, "available": openai_configured}
+            ],
+            "embeddings": [
+                {"id": "ollama-bge-m3", "label": "Ollama · bge-m3", "configured": embedding_backend == "ollama" || configured_provider == "ollama" || configured_provider == "freetoken", "available": ollama_running && ollama_embedding},
+                {"id": "lemonade", "label": "Lemonade embeddings", "configured": configured_provider == "lemonade", "available": lemonade_running}
+            ],
             "docker": {"installed": docker.is_some(), "running": docker_running},
             "qdrant": {"running": endpoint_responds("http://127.0.0.1:6333/collections")},
             "models": models,
-            "selected_model": selected_model,
-            "selected_model_present": selected_present,
-            "embedding_present": embedding_present,
-            "recommended_model": "qwen3.5:9b",
-            "recommended_embedding": "bge-m3:latest",
-            "can_start": ollama_running && docker_running && selected_present && embedding_present,
-            "ui_ready": ui_ready(&app),
+            "core_ready": core_ready,
+            "ui_ready": ui_is_ready,
         });
     }
     #[cfg(not(target_os = "windows"))]
@@ -343,46 +347,12 @@ fn setup_snapshot(app: AppHandle) -> Value {
 }
 
 #[tauri::command]
-fn install_setup_component(component: String) -> Result<(), String> {
-    #[cfg(target_os = "windows")]
-    {
-        let (package, title) = match component.as_str() {
-            "ollama" => ("Ollama.Ollama", "Ollama"),
-            "docker" => ("Docker.DockerDesktop", "Docker Desktop"),
-            _ => return Err("неизвестный компонент".to_string()),
-        };
-        let status = windows_command("winget.exe")
-            .args([
-                "install",
-                "--id",
-                package,
-                "-e",
-                "--source",
-                "winget",
-                "--accept-source-agreements",
-                "--accept-package-agreements",
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map_err(|_| format!("winget недоступен. Установите {title} по ссылке в мастере"))?;
-        return status
-            .success()
-            .then_some(())
-            .ok_or_else(|| format!("winget не смог установить {title}"));
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = component;
-        Err("мастер компонентов доступен только в Windows".to_string())
-    }
-}
-
-#[tauri::command]
 fn open_setup_link(kind: String) -> Result<(), String> {
     let url = match kind.as_str() {
         "ollama" => "https://ollama.com/download/windows",
-        "models" => "https://ollama.com/library",
+        "freetoken" => "https://github.com/FlashML-org/FreeToken",
+        "lemonade" => "https://lemonade-server.ai/",
+        "openai-compatible" => "https://platform.openai.com/docs/api-reference/introduction",
         "docker" => "https://www.docker.com/products/docker-desktop/",
         _ => return Err("неизвестная ссылка".to_string()),
     };
@@ -542,32 +512,7 @@ fn show_setup(app: &AppHandle) {
 }
 
 #[tauri::command]
-fn save_setup_model(model: String) -> Result<(), String> {
-    let model = model.trim();
-    if model.is_empty() || model.contains(['\r', '\n', '=']) {
-        return Err("выберите корректный тег установленной модели".to_string());
-    }
-    #[cfg(target_os = "windows")]
-    {
-        let path = windows_state_root()
-            .ok_or_else(|| "не найден каталог состояния ЛЕС".to_string())?
-            .join(".env");
-        return write_dotenv_values(
-            &path,
-            &[
-                ("LES_LLM_PROVIDER", "ollama"),
-                ("OLLAMA_MODEL", model),
-                ("LLM_MODEL", model),
-            ],
-        );
-    }
-    #[cfg(not(target_os = "windows"))]
-    Err("выбор модели в мастере доступен только в Windows".to_string())
-}
-
-#[tauri::command]
-fn start_from_setup(app: AppHandle, model: String) -> Result<(), String> {
-    save_setup_model(model)?;
+fn start_from_setup(app: AppHandle) -> Result<(), String> {
     schedule_boot_and_navigate(app)
         .then_some(())
         .ok_or_else(|| "Подготовка ЛЕС уже выполняется".to_string())
@@ -711,9 +656,7 @@ pub fn run() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             setup_snapshot,
-            install_setup_component,
             open_setup_link,
-            save_setup_model,
             start_from_setup,
             retry_setup,
         ])

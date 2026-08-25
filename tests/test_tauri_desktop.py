@@ -67,7 +67,7 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     assert '"stop" => run_action' in source
     assert '"setup" => show_setup' in source
     assert "setup_snapshot" in source
-    assert "install_setup_component" in source
+    assert "install_setup_component" not in source
     assert "start_from_setup" in source
     assert "retry_setup" in source
     assert "search_norm" not in source
@@ -76,14 +76,28 @@ def test_tauri_rust_shell_owns_only_lifecycle_and_navigation():
     wizard = (TAURI / "web" / "index.html").read_text(encoding="utf-8")
     script = (TAURI / "web" / "wizard.js").read_text(encoding="utf-8")
     assert "Настройка Л.Е.С." in wizard
-    assert "Рекомендации после запуска" in wizard
-    assert "ollama pull qwen3.5:9b" in wizard
-    assert "ollama pull bge-m3" in wizard
-    assert 'invoke("install_setup_component"' in script
-    assert 'invoke("start_from_setup"' in script
+    assert "Совместимые компоненты" in wizard
+    assert "Движок ответа" in wizard
+    assert "Ollama" in wizard
+    assert "FreeToken" in wizard
+    assert "Lemonade" in wizard
+    assert "OpenAI-compatible" in wizard
+    assert "Поиск по документам" in wizard
+    assert "Локальный индекс" in wizard
+    assert "qwen3.5:9b" not in wizard
+    assert "Установить Ollama" not in wizard
+    assert 'invoke("install_setup_component"' not in script
+    assert 'invoke("start_from_setup")' in script
+    assert "model-select" not in script
     assert "&& !preparing" in script
     assert 'preparing ? "Подготовка…"' in script
     assert "window.setInterval(refresh, 10000)" in script
+    assert '"configured_provider"' in source
+    assert '"freetoken"' in source
+    assert '"lemonade"' in source
+    assert '"openai-compatible"' in source
+    assert '"recommended_model"' not in source
+    assert "save_setup_model" not in source
 
 
 def test_tauri_bootstrap_does_not_install_or_launch_pywebview():

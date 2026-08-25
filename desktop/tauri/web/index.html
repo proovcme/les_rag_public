@@ -11,62 +11,65 @@
       --bg: #0b100e;
       --surface: #121a16;
       --surface-raised: #17221d;
+      --surface-soft: #0e1512;
       --ink: #edf4ef;
-      --muted: #9caf9f;
+      --muted: #a8b8ad;
       --accent: #65c58e;
       --warning: #e8c56d;
       --danger: #ee8d84;
-      --shadow: 0 0 0 1px rgba(255,255,255,.08), 0 16px 50px rgba(0,0,0,.22);
+      --border: rgba(255,255,255,.10);
+      --shadow: 0 0 0 1px var(--border), 0 16px 50px rgba(0,0,0,.22);
     }
     * { box-sizing: border-box; }
-    html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+    html { -webkit-font-smoothing: antialiased; }
     body { margin: 0; min-height: 100vh; background: radial-gradient(circle at 50% -10%, #1b3025 0, var(--bg) 42%); color: var(--ink); }
-    button, select { font: inherit; }
-    button { min-height: 42px; border: 0; border-radius: 12px; cursor: pointer; transition-property: scale, background-color, box-shadow, opacity; transition-duration: 150ms; transition-timing-function: ease-out; }
-    button:active:not(:disabled) { scale: .96; }
-    button:disabled { cursor: default; opacity: .42; }
-    .shell { width: min(980px, calc(100vw - 40px)); margin: 0 auto; padding: 52px 0 42px; }
-    .hero { display: grid; grid-template-columns: 72px 1fr auto; gap: 20px; align-items: center; margin-bottom: 28px; }
-    .mark { width: 72px; height: 72px; display: grid; place-items: center; border-radius: 22px; background: var(--surface-raised); box-shadow: var(--shadow); font-size: 34px; }
-    h1, h2 { text-wrap: balance; }
-    h1 { margin: 0; font-size: clamp(28px, 4vw, 40px); letter-spacing: -.035em; }
-    .lead { margin: 7px 0 0; color: var(--muted); line-height: 1.55; text-wrap: pretty; }
+    button { min-height: 40px; border: 0; border-radius: 10px; font: inherit; cursor: pointer; }
+    button:focus-visible { outline: 3px solid rgba(101,197,142,.42); outline-offset: 2px; }
+    button:disabled { cursor: default; opacity: .45; }
+    .shell { width: min(1040px, calc(100vw - 40px)); margin: 0 auto; padding: 44px 0 36px; }
+    .hero { display: grid; grid-template-columns: 64px 1fr auto; gap: 18px; align-items: center; margin-bottom: 22px; }
+    .mark { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 18px; background: var(--surface-raised); box-shadow: var(--shadow); font-size: 30px; }
+    h1, h2, h3 { text-wrap: balance; }
+    h1 { margin: 0; font-size: clamp(28px, 4vw, 38px); letter-spacing: -.035em; }
+    .lead { max-width: 720px; margin: 7px 0 0; color: var(--muted); line-height: 1.55; }
     .state { min-width: 142px; padding: 10px 14px; border-radius: 999px; background: rgba(101,197,142,.1); color: var(--accent); text-align: center; font-size: 13px; font-weight: 700; }
     .state[data-tone="warning"] { background: rgba(232,197,109,.1); color: var(--warning); }
     .state[data-tone="danger"] { background: rgba(238,141,132,.1); color: var(--danger); }
-    .notice { display: none; margin: 0 0 18px; padding: 16px 18px; border-radius: 16px; background: rgba(238,141,132,.08); box-shadow: 0 0 0 1px rgba(238,141,132,.2); color: #f3bbb5; line-height: 1.5; text-wrap: pretty; }
+    .notice { display: none; margin-bottom: 16px; padding: 14px 16px; border-radius: 12px; background: rgba(238,141,132,.08); box-shadow: 0 0 0 1px rgba(238,141,132,.22); color: #f3bbb5; line-height: 1.5; }
     .notice.visible { display: block; }
+    .section-title { margin: 24px 0 10px; }
+    .section-title h2 { margin: 0; font-size: 19px; }
+    .section-title p { margin: 4px 0 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .grid { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 14px; }
-    .card { min-height: 210px; padding: 22px; border-radius: 22px; background: var(--surface); box-shadow: var(--shadow); transition-property: box-shadow, transform; transition-duration: 180ms; transition-timing-function: ease-out; }
-    .card:hover { box-shadow: 0 0 0 1px rgba(255,255,255,.12), 0 18px 54px rgba(0,0,0,.26); transform: translateY(-1px); }
-    .card-head { display: flex; gap: 12px; align-items: flex-start; }
-    .step { flex: 0 0 auto; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; background: #213229; color: var(--accent); font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
-    .card h2 { margin: 2px 0 4px; font-size: 17px; }
-    .card p, .help li { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; text-wrap: pretty; }
-    .status-line { display: flex; align-items: center; gap: 8px; margin: 18px 0 14px; color: var(--muted); font-size: 13px; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: #56645d; box-shadow: 0 0 0 4px rgba(255,255,255,.03); }
+    .card { padding: 20px; border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+    .card.wide { grid-column: 1 / -1; }
+    .card-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+    .card h3 { margin: 0 0 5px; font-size: 17px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .status-line { display: flex; align-items: center; gap: 9px; margin-top: 16px; color: var(--muted); font-size: 13px; }
+    .dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; background: #59665e; box-shadow: 0 0 0 4px rgba(255,255,255,.03); }
     .dot.ok { background: var(--accent); }
     .dot.warn { background: var(--warning); }
-    .actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 14px; }
-    .primary { padding: 0 18px; background: var(--accent); color: #07120b; font-weight: 800; box-shadow: 0 8px 20px rgba(101,197,142,.16); }
-    .secondary { padding: 0 16px; background: #223029; color: var(--ink); box-shadow: 0 0 0 1px rgba(255,255,255,.08); }
-    .link { padding: 0 4px; min-height: 40px; background: transparent; color: var(--accent); }
-    select { width: 100%; min-height: 44px; padding: 0 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; outline: none; background: #0e1512; color: var(--ink); }
-    select:focus { border-color: rgba(101,197,142,.7); box-shadow: 0 0 0 3px rgba(101,197,142,.12); }
-    code { display: block; margin-top: 11px; padding: 10px 12px; overflow: auto; border-radius: 10px; background: #0a0f0d; color: #b9c8bf; font-family: "Cascadia Code", Consolas, monospace; font-size: 12px; white-space: nowrap; }
-    .help { margin-top: 14px; padding: 22px; border-radius: 22px; background: rgba(18,26,22,.82); box-shadow: var(--shadow); }
-    .help h2 { margin: 0 0 12px; font-size: 17px; }
-    .help ul { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px 28px; margin: 0; padding-left: 19px; }
-    .footer { position: sticky; bottom: 0; display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-top: 18px; padding: 15px; border-radius: 20px; background: rgba(18,26,22,.92); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
-    .footer-copy { color: var(--muted); font-size: 13px; line-height: 1.4; }
+    .provider-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 10px; margin-top: 16px; }
+    .provider { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; align-items: center; padding: 14px; border-radius: 12px; background: var(--surface-soft); box-shadow: inset 0 0 0 1px var(--border); }
+    .provider strong { font-size: 14px; }
+    .provider small { color: var(--muted); line-height: 1.4; }
+    .provider-status { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+    .link { grid-column: 2; min-height: 32px; padding: 0; background: transparent; color: var(--accent); font-size: 13px; }
+    .hint { margin-top: 14px !important; padding: 12px 14px; border-radius: 10px; background: rgba(232,197,109,.07); color: #d7c995 !important; }
+    .footer { position: sticky; bottom: 0; display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-top: 18px; padding: 14px; border-radius: 16px; background: rgba(18,26,22,.94); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+    .footer-copy { color: var(--muted); font-size: 13px; line-height: 1.45; }
     .footer-actions { display: flex; gap: 10px; }
-    .busy { font-variant-numeric: tabular-nums; }
+    .primary { padding: 0 18px; background: var(--accent); color: #07120b; font-weight: 800; }
+    .secondary { padding: 0 16px; background: #223029; color: var(--ink); box-shadow: inset 0 0 0 1px var(--border); }
+    @media (prefers-reduced-motion: no-preference) { button { transition: background-color 150ms ease, opacity 150ms ease; } }
     @media (max-width: 760px) {
-      .shell { width: min(100% - 24px, 560px); padding-top: 28px; }
-      .hero { grid-template-columns: 58px 1fr; }
-      .mark { width: 58px; height: 58px; border-radius: 18px; }
+      .shell { width: min(100% - 24px, 560px); padding-top: 26px; }
+      .hero { grid-template-columns: 56px 1fr; }
+      .mark { width: 56px; height: 56px; border-radius: 16px; }
       .state { grid-column: 1 / -1; justify-self: start; }
-      .grid, .help ul { grid-template-columns: 1fr; }
+      .grid, .provider-list { grid-template-columns: 1fr; }
+      .card.wide { grid-column: auto; }
       .footer { align-items: stretch; flex-direction: column; }
       .footer-actions button { flex: 1; }
     }
@@ -78,64 +81,45 @@
       <div class="mark" aria-hidden="true">🌲</div>
       <div>
         <h1>Настройка Л.Е.С.</h1>
-        <p class="lead">Проверим чистую Windows, установим недостающие программы и подключим выбранную вами локальную модель.</p>
+        <p class="lead">ЛЕС устанавливает и проверяет собственную среду. Движок модели и инфраструктуру поиска вы выбираете самостоятельно.</p>
       </div>
-      <div class="state busy" id="overall-state">Проверяю…</div>
+      <div class="state" id="overall-state" role="status" aria-atomic="true">Проверяю…</div>
     </section>
-
-    <div class="notice" id="notice" role="status"></div>
-
-    <section class="grid" aria-label="Шаги настройки">
-      <article class="card">
-        <div class="card-head"><div class="step">01</div><div><h2>Встроенная среда</h2><p>Python и uv входят в установку. ЛЕС проверяет их контрольные суммы и готовит окружение автоматически.</p></div></div>
-        <div class="status-line"><span class="dot" id="runtime-dot"></span><span id="runtime-status">Подготавливаю…</span></div>
-      </article>
-
-      <article class="card">
-        <div class="card-head"><div class="step">02</div><div><h2>Ollama</h2><p>Локальный движок моделей. Если его нет, мастер запустит обычную установку через winget.</p></div></div>
-        <div class="status-line"><span class="dot" id="ollama-dot"></span><span id="ollama-status">Проверяю…</span></div>
-        <div class="actions"><button class="secondary" id="install-ollama">Установить Ollama</button><button class="link" data-link="ollama">Скачать вручную</button></div>
-      </article>
-
-      <article class="card">
-        <div class="card-head"><div class="step">03</div><div><h2>Модель для ответов</h2><p>Скачайте любую модель самостоятельно. Для смет и инструментов рекомендуем <strong>qwen3.5:9b</strong>.</p></div></div>
-        <div class="status-line"><span class="dot" id="model-dot"></span><span id="model-status">Ищу модели…</span></div>
-        <select id="model-select" aria-label="Установленная модель"><option value="">Нет установленных моделей</option></select>
-        <code>ollama pull qwen3.5:9b</code>
-        <div class="actions"><button class="secondary copy" data-copy="ollama pull qwen3.5:9b">Копировать команду</button><button class="link" data-link="models">Каталог моделей</button></div>
-      </article>
-
-      <article class="card">
-        <div class="card-head"><div class="step">04</div><div><h2>Поиск по документам</h2><p>Для совместимого векторного поиска ЛЕС отдельно использует embedding-модель <strong>bge-m3</strong>.</p></div></div>
-        <div class="status-line"><span class="dot" id="embedding-dot"></span><span id="embedding-status">Проверяю…</span></div>
-        <code>ollama pull bge-m3</code>
-        <div class="actions"><button class="secondary copy" data-copy="ollama pull bge-m3">Копировать команду</button></div>
-      </article>
-
-      <article class="card">
-        <div class="card-head"><div class="step">05</div><div><h2>Docker и Qdrant</h2><p>Docker хранит локальный индекс документов. После установки Docker Desktop может попросить включить WSL 2 или перезагрузиться.</p></div></div>
-        <div class="status-line"><span class="dot" id="docker-dot"></span><span id="docker-status">Проверяю…</span></div>
-        <div class="actions"><button class="secondary" id="install-docker">Установить Docker Desktop</button><button class="link" data-link="docker">Скачать вручную</button></div>
-      </article>
-
-      <article class="card">
-        <div class="card-head"><div class="step">06</div><div><h2>Готовность</h2><p>Запуск станет доступен, когда Ollama и Docker работают, а обе модели установлены.</p></div></div>
-        <div class="status-line"><span class="dot" id="ready-dot"></span><span id="ready-status">Собираю состояние…</span></div>
+    <div class="notice" id="notice" role="alert"></div>
+    <section class="grid" aria-label="Состояние ЛЕС">
+      <article class="card wide">
+        <div class="card-head"><div><h3>ЛЕС</h3><p>Python, uv и зависимости входят в установщик и проверяются по контрольным суммам.</p></div></div>
+        <div class="status-line"><span class="dot" id="runtime-dot"></span><span id="runtime-status">Подготавливаю встроенную среду…</span></div>
       </article>
     </section>
-
-    <section class="help">
-      <h2>Рекомендации после запуска</h2>
-      <ul>
-        <li>Оставьте Ollama и Docker Desktop включёнными во время работы с ЛЕС.</li>
-        <li>Для 16 ГБ видеопамяти начните с qwen3.5:9b; более крупную модель выбирайте только после проверки скорости.</li>
-        <li>Вернуться сюда можно из трея: «Настройка и справка». Документы и чаты при этом не удаляются.</li>
-      </ul>
+    <div class="section-title">
+      <h2>Совместимые компоненты</h2>
+      <p>Это отдельные продукты. ЛЕС показывает их состояние, но не устанавливает и не переключает их без вас.</p>
+    </div>
+    <section class="grid" aria-label="Совместимые компоненты">
+      <article class="card wide">
+        <div class="card-head"><div><h3>Движок ответа</h3><p>Выберите локальный или совместимый удалённый API в настройках ЛЕС.</p></div></div>
+        <div class="provider-list">
+          <div class="provider"><strong>Ollama</strong><span class="provider-status"><span class="dot" id="provider-ollama-dot"></span><span id="provider-ollama-status">Проверяю…</span></span><small>Локальный сервер моделей и, при желании, embeddings.</small><button class="link" data-link="ollama">Сайт</button></div>
+          <div class="provider"><strong>FreeToken</strong><span class="provider-status"><span class="dot" id="provider-freetoken-dot"></span><span id="provider-freetoken-status">Проверяю…</span></span><small>Локальный OpenAI-compatible движок ответа.</small><button class="link" data-link="freetoken">Сайт</button></div>
+          <div class="provider"><strong>Lemonade</strong><span class="provider-status"><span class="dot" id="provider-lemonade-dot"></span><span id="provider-lemonade-status">Проверяю…</span></span><small>Локальный сервер для GPU и NPU с адаптером ЛЕС.</small><button class="link" data-link="lemonade">Сайт</button></div>
+          <div class="provider"><strong>OpenAI-compatible</strong><span class="provider-status"><span class="dot" id="provider-openai-compatible-dot"></span><span id="provider-openai-compatible-status">Проверяю…</span></span><small>Совместимый локальный или облачный API по вашему адресу.</small><button class="link" data-link="openai-compatible">Формат API</button></div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="card-head"><div><h3>Поиск по документам</h3><p>Embedding-движок может отличаться от модели, которая пишет ответ.</p></div></div>
+        <div class="status-line"><span class="dot" id="embedding-dot"></span><span id="embedding-status">Проверяю embeddings…</span></div>
+        <p class="hint">FreeToken используется для ответов; в текущем Windows-профиле ему нужен отдельный embedding-провайдер.</p>
+      </article>
+      <article class="card">
+        <div class="card-head"><div><h3>Локальный индекс</h3><p>Документы индексируются в Qdrant. Сейчас поддержан локальный запуск через Docker Desktop.</p></div></div>
+        <div class="status-line"><span class="dot" id="qdrant-dot"></span><span id="qdrant-status">Проверяю Qdrant…</span></div>
+        <button class="link" data-link="docker">Docker Desktop</button>
+      </article>
     </section>
-
     <footer class="footer">
-      <div class="footer-copy" id="footer-copy">Отсутствие компонента не закрывает приложение — мастер покажет, что именно требуется.</div>
-      <div class="footer-actions"><button class="secondary" id="refresh">Проверить снова</button><button class="primary" id="start" disabled>Запустить ЛЕС</button></div>
+      <div class="footer-copy" id="footer-copy">Внешние компоненты можно установить сейчас или настроить позже внутри ЛЕС.</div>
+      <div class="footer-actions"><button class="secondary" id="refresh">Проверить снова</button><button class="primary" id="start" disabled>Открыть ЛЕС</button></div>
     </footer>
   </main>
   <script src="wizard.js"></script>
