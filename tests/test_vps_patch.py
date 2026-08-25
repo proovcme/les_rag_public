@@ -14,6 +14,26 @@ from tools import vps_patch
 from tools import vps_patch_apply
 
 
+def _github_feed(patch: dict, *, archive_bytes: int = 5) -> dict:
+    version = patch["product_version"]
+    return {
+        "schema": update_service.GITHUB_UPDATE_FEED_SCHEMA,
+        "repository": "proovcme/les_rag_public",
+        "release_class": "patch",
+        "product_version": version,
+        "build_number": patch["build_number"],
+        "tag": f"v{version}",
+        "target_commit": patch["target_commit"],
+        "compatible_bases": [patch["base_commit"]],
+        "asset": {
+            "url": f"https://github.com/proovcme/les_rag_public/releases/download/v{version}/les-patch.zip",
+            "bytes": archive_bytes,
+            "sha256": "a" * 64,
+        },
+        "patch": patch,
+    }
+
+
 def test_patch_allowlist_rejects_runtime_boundaries():
     assert vps_patch.normalize_path("proxy/services/example.py") == "proxy/services/example.py"
     assert (
@@ -392,7 +412,7 @@ def test_patch_feed_requires_matching_base_hashes(tmp_path, monkeypatch):
     after = hashlib.sha256(b"after").hexdigest()
     payload = {
         "schema": update_service.VPS_PATCH_FEED_SCHEMA,
-        "archive_url": "https://les.ovc.me/updates/p.zip",
+        "archive_url": "https://github.com/proovcme/les_rag_public/releases/download/v0.25.18/les-patch.zip",
         "archive_sha256": "a" * 64,
         "patch": {
             "schema": update_service.VPS_PATCH_SCHEMA,
@@ -413,6 +433,60 @@ def test_patch_feed_requires_matching_base_hashes(tmp_path, monkeypatch):
     payload["patch"]["patch_id"] = "p1"
     target.write_bytes(b"foreign")
     assert update_service._validate_patch_feed(payload)["compatible"] is False
+
+
+def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    target = runtime / "proxy" / "x.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"before")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    patch = {
+        "schema": update_service.VPS_PATCH_SCHEMA,
+        "patch_id": "github-p1",
+        "base_commit": "b" * 40,
+        "target_commit": "c" * 40,
+        "product_version": "0.28.2",
+        "build_number": 589,
+        "files": [
+            {
+                "path": "proxy/x.py",
+                "base_sha256": hashlib.sha256(b"before").hexdigest(),
+                "sha256": hashlib.sha256(b"after").hexdigest(),
+                "bytes": 5,
+            }
+        ],
+    }
+    payload = {
+        "schema": update_service.GITHUB_UPDATE_FEED_SCHEMA,
+        "repository": "proovcme/les_rag_public",
+        "release_class": "patch",
+        "product_version": "0.28.2",
+        "build_number": 589,
+        "tag": "v0.28.2",
+        "target_commit": "c" * 40,
+        "compatible_bases": ["b" * 40],
+        "asset": {
+            "url": "https://github.com/proovcme/les_rag_public/releases/download/v0.28.2/les-patch.zip",
+            "bytes": 123,
+            "sha256": "a" * 64,
+        },
+        "patch": patch,
+    }
+
+    result = update_service.validate_github_update_feed(payload)
+
+    assert result["patch_id"] == "github-p1"
+    assert result["archive_url"].endswith("/v0.28.2/les-patch.zip")
+    for field, foreign in (
+        ("repository", "other/repo"),
+        ("tag", "v0.28.3"),
+        ("target_commit", "d" * 40),
+    ):
+        bad = json.loads(json.dumps(payload))
+        bad[field] = foreign
+        with pytest.raises(update_service.UpdateError):
+            update_service.validate_github_update_feed(bad)
 
 
 def test_cumulative_patch_accepts_mixed_base_and_already_updated_files(tmp_path, monkeypatch):
@@ -439,7 +513,7 @@ def test_cumulative_patch_accepts_mixed_base_and_already_updated_files(tmp_path,
     ]
     payload = {
         "schema": update_service.VPS_PATCH_FEED_SCHEMA,
-        "archive_url": "https://les.ovc.me/updates/cumulative.zip",
+        "archive_url": "https://github.com/proovcme/les_rag_public/releases/download/v0.25.18/les-patch.zip",
         "archive_sha256": "a" * 64,
         "patch": {
             "schema": update_service.VPS_PATCH_SCHEMA,
@@ -479,7 +553,7 @@ def test_cumulative_patch_accepts_an_exact_intermediate_release_state(tmp_path, 
     }
     payload = {
         "schema": update_service.VPS_PATCH_FEED_SCHEMA,
-        "archive_url": "https://les.ovc.me/updates/cumulative.zip",
+        "archive_url": "https://github.com/proovcme/les_rag_public/releases/download/v0.25.18/les-patch.zip",
         "archive_sha256": "a" * 64,
         "patch": {
             "schema": update_service.VPS_PATCH_SCHEMA,
@@ -514,7 +588,7 @@ def test_patch_feed_accepts_exact_desktop_shell_and_rejects_foreign_binary(
     }
     payload = {
         "schema": update_service.VPS_PATCH_FEED_SCHEMA,
-        "archive_url": "https://les.ovc.me/updates/app.zip",
+        "archive_url": "https://github.com/proovcme/les_rag_public/releases/download/v0.25.18/les-patch.zip",
         "archive_sha256": "a" * 64,
         "patch": {
             "schema": update_service.VPS_PATCH_SCHEMA,
@@ -561,26 +635,22 @@ def test_patch_helper_uses_pythonw_when_packaged_runtime_has_it(tmp_path, monkey
 
 
 @pytest.mark.asyncio
-async def test_patch_check_uses_only_les_https_origin(tmp_path, monkeypatch):
+async def test_patch_check_uses_only_github_release_feed(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     file = runtime / "proxy" / "x.py"
     file.parent.mkdir(parents=True)
     file.write_bytes(b"before")
     monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
-    payload = {
-        "schema": update_service.VPS_PATCH_FEED_SCHEMA,
-        "archive_url": "https://les.ovc.me/updates/p.zip",
-        "archive_sha256": "a" * 64,
-        "patch": {
-            "schema": update_service.VPS_PATCH_SCHEMA,
-            "patch_id": "p1",
-            "base_commit": "b" * 40,
-            "target_commit": "c" * 40,
-            "product_version": "0.25.18",
-            "build_number": 491,
-            "files": [{"path": "proxy/x.py", "base_sha256": hashlib.sha256(b"before").hexdigest(), "sha256": hashlib.sha256(b"after").hexdigest(), "bytes": 5}],
-        },
+    patch = {
+        "schema": update_service.VPS_PATCH_SCHEMA,
+        "patch_id": "p1",
+        "base_commit": "b" * 40,
+        "target_commit": "c" * 40,
+        "product_version": "0.28.2",
+        "build_number": 589,
+        "files": [{"path": "proxy/x.py", "base_sha256": hashlib.sha256(b"before").hexdigest(), "sha256": hashlib.sha256(b"after").hexdigest(), "bytes": 5}],
     }
+    payload = _github_feed(patch)
     transport = httpx.MockTransport(lambda request: httpx.Response(200, json=payload, request=request))
     async with httpx.AsyncClient(transport=transport) as client:
         result = await update_service.check_vps_patch(client=client)
@@ -589,13 +659,26 @@ async def test_patch_check_uses_only_les_https_origin(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_patch_archive_download_accepts_only_vps_origin(tmp_path):
+async def test_github_channel_failure_is_a_non_destructive_status():
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(503, text="unavailable", request=request)
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        result = await update_service.check_vps_patch(client=client)
+
+    assert result["state"] == "update_channel_unavailable"
+    assert result["available"] is False
+    assert result["compatible"] is False
+
+
+@pytest.mark.asyncio
+async def test_patch_archive_download_accepts_only_tagged_github_asset(tmp_path):
     target = tmp_path / "patch.zip"
     transport = httpx.MockTransport(lambda request: httpx.Response(200, content=b"patch", request=request))
     async with httpx.AsyncClient(transport=transport) as client:
         await update_service._download(
             client,
-            "https://les.ovc.me/updates/p.zip",
+            "https://github.com/proovcme/les_rag_public/releases/download/v0.28.2/les-patch.zip",
             target,
             max_bytes=64,
             trusted_url=update_service._trusted_patch_url,

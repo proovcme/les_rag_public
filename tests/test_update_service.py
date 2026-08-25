@@ -64,6 +64,37 @@ def test_untrusted_download_url_is_rejected():
     assert update_service._trusted_release_url("https://example.invalid/file") is False
 
 
+def test_default_patch_feed_is_exact_public_github_release():
+    assert update_service.GITHUB_PATCH_MANIFEST_URL == (
+        "https://github.com/proovcme/les_rag_public/"
+        "releases/latest/download/les-update.json"
+    )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.invalid/releases/latest/download/les-update.json",
+        "http://github.com/proovcme/les_rag_public/releases/latest/download/les-update.json",
+        "https://github.com/other/les_rag_public/releases/latest/download/les-update.json",
+        "https://github.com/proovcme/les_rag_public/releases/download/v0.28.2/les-update.json",
+    ],
+)
+def test_foreign_insecure_or_non_latest_update_feed_is_rejected(url):
+    assert update_service._trusted_github_update_url(url) is False
+
+
+def test_only_tag_specific_patch_asset_is_trusted():
+    assert update_service._trusted_github_update_url(
+        "https://github.com/proovcme/les_rag_public/releases/download/v0.28.2/les-patch.zip",
+        asset=True,
+    )
+    assert not update_service._trusted_github_update_url(
+        "https://github.com/proovcme/les_rag_public/releases/latest/download/les-patch.zip",
+        asset=True,
+    )
+
+
 @pytest.mark.asyncio
 async def test_check_update_reads_only_latest_release_metadata():
     def handler(request: httpx.Request) -> httpx.Response:
