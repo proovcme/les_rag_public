@@ -75,6 +75,31 @@ def test_windows_bootstrap_reports_the_installed_runtime_root():
     assert ". $VenvContractScript" in bootstrap
 
 
+def test_windows_bootstrap_skips_exact_healthy_environment_and_never_implicitly_syncs():
+    bootstrap = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    contract_check = bootstrap.index("Test-LesVenvContract")
+    sync_call = bootstrap.index("& $Uv @UvSyncArgs")
+    assert contract_check < sync_call
+    assert '$script:EnvironmentAction = "skipped"' in bootstrap
+    assert '"python_environment_invalid"' in bootstrap
+    assert "run --no-sync python tools\\smeta_release_baseline.py" in bootstrap
+    assert "run --no-sync lesctl init" in bootstrap
+
+
+def test_windows_bootstrap_marks_docker_and_qdrant_as_optional_capabilities():
+    bootstrap = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert '"docker_engine_unavailable"' in bootstrap
+    assert '"qdrant_unavailable"' in bootstrap
+    ready = bootstrap[bootstrap.rindex('Write-Status -Phase "ready"') :]
+    assert 'State "ready"' in ready
+
+
 def test_windows_light_start_always_exports_runtime_identity():
     text = (
         build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
@@ -435,23 +460,25 @@ def test_windows_uv_cache_is_extracted_by_bundled_python_not_expand_archive():
     assert "function Require-Setup" not in text
     assert '"ollama_missing"' not in text
     assert '"docker_missing"' not in text
-    assert '"docker_engine_unavailable"' not in text
+    assert '"docker_engine_unavailable"' in text
     assert '"qdrant_health_failed"' not in text
     assert '"qdrant_unavailable"' in text
     assert 'Write-Status -Phase "setup" -State "setup_required"' not in text
 
 
-def test_windows_bootstrap_repairs_and_reports_uv_sync():
+def test_windows_bootstrap_repairs_only_on_contract_or_health_failure():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
     assert '$env:UV_CACHE_DIR' in text
-    assert '$VenvWasUsable' in text
+    assert '$VenvContractMatches' in text
+    assert '$VenvHealthy' in text
     assert 'removing incomplete or broken Python environment' in text
-    assert '@("sync", "--locked", "--offline", "--python", $BundledPython, "--no-python-downloads")' in text
+    assert '"sync", "--locked", "--offline", "--python", $BundledPython' in text
+    assert 'if ($VenvHealthy -and $VenvContractMatches)' in text
     assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in text
     assert 'Log "uv: $safeLine"' in text
-    assert '"bundled_runtime_unavailable"' in text
+    assert '"python_environment_invalid"' in text
 
 
 def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
