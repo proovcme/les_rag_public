@@ -293,7 +293,10 @@ async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optio
         base = PROXY_URL
     got_final = False
     try:
-        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=300.0) as client:
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(base),
+            timeout=httpx.Timeout(connect=30.0, read=3600.0, write=60.0, pool=30.0),
+        ) as client:
             async with client.stream(
                 "POST", f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers()
             ) as r:

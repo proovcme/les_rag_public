@@ -174,6 +174,8 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
             "read_excel_source",
             "search_project_tables",
             "read_project_table",
+            "build_lsr_workbook",
+            "build_vor_workbook",
         )
         if name in registered
     ]
@@ -236,7 +238,12 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
                 "пока не проверены шифр, измеритель и состав работ.\n"
                 "4. Для каждой позиции покажи норму, обоснование, ограничения и пробелы.\n"
                 "5. Не подменяй неподтверждённую норму похожим кодом и не рассчитывай цену "
-                "без ценовых evidence."
+                "без ценовых evidence.\n"
+                "6. Если оператор просит готовый файл ЛСР (xlsx сметы) по вложению PDF/XLSX — "
+                "вызови `build_lsr_workbook` с `attachment_id`. Не составляй расценённую таблицу "
+                "вручную и не выдумывай цены: файл пишет код существующего document workflow.\n"
+                "7. Если оператор просит ВОР / ведомость объёмов работ как xlsx без расценки — "
+                "вызови `build_vor_workbook`. Не путай с ЛСР: ВОР — объёмы, ЛСР — расценка кодом."
             ),
             "tools": estimator_tools,
             "model_policy": {"temperature": 0.0},
@@ -541,6 +548,104 @@ def _profile_snapshot(conn: sqlite3.Connection, revision_id: str) -> dict[str, A
     return snapshot
 
 
+def ensure_estimator_workbook_profile(
+    *,
+    db_path: str | Path | None = None,
+) -> dict[str, Any]:
+    """Add LSR/VOR file tools to an already-seeded estimator profile once.
+
+    Factory Base is immutable. Existing MetaDB therefore gets a user revision;
+    fresh installs already have the tools in factory seed and only record the
+    migration as already present.
+    """
+
+    from proxy.services.smeta_workbook_tools import (
+        ESTIMATOR_SKILL_WORKBOOK_APPENDIX,
+        LSR_TOOL,
+        VOR_TOOL,
+    )
+
+    migration_key = "estimator_workbook_tools_v1"
+    needed_tools = (LSR_TOOL, VOR_TOOL)
+    with _connect(db_path) as conn:
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS les_profile_migrations (
+                   migration_key TEXT PRIMARY KEY,
+                   result_json TEXT NOT NULL,
+                   created_at TEXT NOT NULL
+               )"""
+        )
+        previous = conn.execute(
+            "SELECT result_json FROM les_profile_migrations WHERE migration_key=?",
+            (migration_key,),
+        ).fetchone()
+        if previous is not None:
+            result = _loads(previous["result_json"], {})
+            return {**result, "status": "already_applied"}
+        active = conn.execute(
+            "SELECT profile_revision_id FROM les_active_profiles WHERE mode=?",
+            ("estimator",),
+        ).fetchone()
+        if active is None:
+            return {"status": "no_estimator"}
+        snapshot = _profile_snapshot(conn, active["profile_revision_id"])
+        tools = list(snapshot.get("tools") or [])
+        skill_text = str(snapshot.get("skill_text") or "")
+        missing_tools = [name for name in needed_tools if name not in tools]
+        need_skill = LSR_TOOL not in skill_text
+        if not missing_tools and not need_skill:
+            result = {
+                "status": "already_present",
+                "revision_id": snapshot.get("revision_id"),
+            }
+            conn.execute(
+                "INSERT INTO les_profile_migrations(migration_key,result_json,created_at) VALUES(?,?,?)",
+                (migration_key, _json(result), _now()),
+            )
+            conn.commit()
+            return result
+        prompt_revision_id = str(snapshot.get("prompt_revision_id") or "")
+        skill_revision_id = str(snapshot.get("skill_revision_id") or "")
+        source_revision_id = str(snapshot.get("revision_id") or "")
+        model_policy = dict(snapshot.get("model_policy") or {})
+        rag_policy = dict(snapshot.get("rag_policy") or {})
+
+    if need_skill:
+        skill = publish_text_revision(
+            "skill",
+            name="Сметчик · файлы ЛСР/ВОР",
+            text=skill_text.rstrip() + ESTIMATOR_SKILL_WORKBOOK_APPENDIX,
+            source_revision_id=skill_revision_id,
+            db_path=db_path,
+        )
+        skill_revision_id = skill["revision_id"]
+    profile = publish_profile_revision(
+        mode="estimator",
+        name="Сметчик · файлы ЛСР и ВОР",
+        prompt_revision_id=prompt_revision_id,
+        skill_revision_id=skill_revision_id,
+        tools=tools + missing_tools,
+        model_policy=model_policy,
+        rag_policy=rag_policy,
+        source_revision_id=source_revision_id,
+        db_path=db_path,
+    )
+    activate_profile_revision("estimator", profile["revision_id"], db_path=db_path)
+    result = {
+        "status": "applied",
+        "revision_id": profile["revision_id"],
+        "added_tools": missing_tools,
+        "skill_updated": need_skill,
+    }
+    with _connect(db_path) as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO les_profile_migrations(migration_key,result_json,created_at) VALUES(?,?,?)",
+            (migration_key, _json(result), _now()),
+        )
+        conn.commit()
+    return result
+
+
 def resolve_chat_profile(
     *,
     session_id: str | None,
@@ -550,6 +655,7 @@ def resolve_chat_profile(
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
     import_legacy_prompt_overrides(db_path=db_path)
+    ensure_estimator_workbook_profile(db_path=db_path)
     canonical = canonical_profile_mode(requested_mode)
     sid = str(session_id or "").strip()
     with _connect(db_path) as conn:
@@ -642,6 +748,7 @@ def _text_items(conn: sqlite3.Connection, kind: str) -> list[dict[str, Any]]:
 
 
 def registry_snapshot(*, db_path: str | Path | None = None) -> dict[str, Any]:
+    ensure_estimator_workbook_profile(db_path=db_path)
     with _connect(db_path) as conn:
         active_by_mode = {
             row["mode"]: row["profile_revision_id"]

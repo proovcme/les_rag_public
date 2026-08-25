@@ -28,6 +28,7 @@ from sovushka.pages.chat import (
     _smeta_rows_markdown,
     _runtime_guard_reason_label,
     should_skip_chat_resource_gate,
+    should_retry_unstreamed_chat,
     _preserved_attachment,
 )
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
@@ -37,6 +38,14 @@ def test_chat_has_no_special_smeta_mode():
     modes = getattr(chat_page, "visible_chat_modes", lambda: ("smeta",))()
 
     assert "smeta" not in modes
+
+
+def test_broken_stream_with_smeta_progress_does_not_retry_chat():
+    assert should_retry_unstreamed_chat(got_token=False, got_progress=False, stream_error=None) is True
+    assert should_retry_unstreamed_chat(got_token=False, got_progress=True, stream_error=None) is False
+    assert should_retry_unstreamed_chat(
+        got_token=False, got_progress=False, stream_error={"status": 503}
+    ) is False
 
 
 def test_chat_session_id_survives_ui_reopen(monkeypatch):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -8,6 +9,7 @@ from proxy.services.chat_profile_service import (
     activate_profile_revision,
     canonical_profile_mode,
     delete_revision,
+    ensure_estimator_workbook_profile,
     import_legacy_prompt_overrides,
     publish_profile_revision,
     publish_text_revision,
@@ -36,13 +38,17 @@ def test_factory_seed_is_idempotent_and_activates_four_base_profiles(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM les_skill_revisions").fetchone()[0] == 4
 
 
-def test_factory_estimator_is_pure_rag_skill_not_legacy_lsr_workflow(tmp_path):
+def test_factory_estimator_keeps_rag_skill_and_adds_file_tools(tmp_path):
     registry = registry_snapshot(db_path=tmp_path / "meta.db")
     estimator = next(item for item in registry["profiles"] if item["mode"] == "estimator")
     base = estimator["active"]
 
     assert "native RRF" in base["skill_text"]
     assert "search_sources" in base["tools"]
+    assert "build_lsr_workbook" in base["tools"]
+    assert "build_vor_workbook" in base["tools"]
+    assert "build_lsr_workbook" in base["skill_text"]
+    assert "build_vor_workbook" in base["skill_text"]
     assert "submit_lsr_mapping" not in base["skill_text"]
     assert "smeta_agent_v2" not in base["prompt_text"]
 
@@ -206,3 +212,36 @@ def test_legacy_prompt_overrides_import_once_as_user_profile_revisions(tmp_path)
         assert conn.execute(
             "SELECT COUNT(*) FROM les_profile_revisions WHERE mode='search'"
         ).fetchone()[0] == 2
+
+
+def test_ensure_estimator_workbook_profile_upgrades_old_active_snapshot(tmp_path):
+    db = tmp_path / "meta.db"
+    registry_snapshot(db_path=db)
+    with sqlite3.connect(db) as conn:
+        conn.execute("DELETE FROM les_profile_migrations")
+        row = conn.execute(
+            "SELECT revision_id, snapshot_json FROM les_profile_revisions "
+            "WHERE mode='estimator' AND is_factory=1"
+        ).fetchone()
+        snapshot = json.loads(row[1])
+        snapshot["tools"] = [
+            name for name in snapshot["tools"]
+            if name not in {"build_lsr_workbook", "build_vor_workbook"}
+        ]
+        snapshot["skill_text"] = snapshot["skill_text"].split("\n6.")[0].rstrip()
+        conn.execute(
+            "UPDATE les_profile_revisions SET snapshot_json=? WHERE revision_id=?",
+            (json.dumps(snapshot, ensure_ascii=False), row[0]),
+        )
+        conn.commit()
+
+    result = ensure_estimator_workbook_profile(db_path=db)
+    estimator = next(
+        item for item in registry_snapshot(db_path=db)["profiles"] if item["mode"] == "estimator"
+    )
+
+    assert result["status"] == "applied"
+    assert "build_lsr_workbook" in estimator["active"]["tools"]
+    assert "build_vor_workbook" in estimator["active"]["tools"]
+    assert "build_lsr_workbook" in estimator["active"]["skill_text"]
+    assert estimator["active"]["is_factory"] is False

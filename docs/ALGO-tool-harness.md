@@ -174,6 +174,8 @@ uv run python tools/les_tool_harness.py fs-search "pdf-extract" --root docs --co
 | `read_source` | Нужно прочитать конкретный документ по chunks | `doc_id` или `dataset_id+doc_name`, `q`, `limit`, `max_chars` | ordered chunks / in-document hits |
 | `read_pdf_source` | То же, но явно PDF-контекст | как `read_source` | indexed chunks + warning, если raw PDF parser недоступен в этом tool pass |
 | `read_excel_source` | То же, но Excel/CSV-контекст | как `read_source` | indexed chunks + warning по sheet/range limits |
+| `build_lsr_workbook` | Оператор просит готовый ЛСР xlsx по вложению | `attachment_id`, `question`, `project_id` | download URL; файл пишет существующий document workflow |
+| `build_vor_workbook` | Оператор просит ВОР xlsx без расценки | `attachment_id`, `question` | quantities-only xlsx из intake/spec |
 | `web_search` | Нужны актуальные публичные источники в явном Agent mode | `q`, `limit` | bounded title/snippet/direct URL + web sources |
 | `filesystem_roots` | Нужно увидеть whitelisted корни | нет | keys, paths, forbidden parts |
 | `filesystem_list` | Нужно открыть дерево разрешённого корня | `root`, `path`, `depth` | bounded tree |

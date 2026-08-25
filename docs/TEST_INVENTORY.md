@@ -1,5 +1,11 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.28.3 estimator file tools:** `tests/test_smeta_workbook_tools.py` защищает
+> wrap существующего document workflow, async `token_sink`, VOR quantities-only,
+> `dataset_ids is None` и отсутствие chat-route intercept. Смежные
+> `tests/test_sovushka_chat.py` / `tests/test_chat_profile_service.py` —
+> анти-retry после прогресса и миграция allowlist сметчика.
+
 > **0.27.77 ordinary smeta RAG and physical KV:**
 > `tests/test_publish_smeta_norm_dataset.py` фиксирует read-only card rendering
 > и unified point payload; `tests/test_system_dataset_service.py` — стабильный
@@ -161,7 +167,8 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_scope_model_v21.py` | 34 | Scope-резолвер (all/project/projects/dataset/datasets/mixed/legacy/filter-warning/scope>legacy); scope_options (админ-датасет/unassigned/system-reason/counts, human display name и chunk count системной базы); scope в trace; document-prep labels |
 | `tests/test_scope_clarification_v22.py` | 19 | §1 needs_project_scope and scope UI helpers remain, but chat no longer returns final `scope_clarification` for project questions at scope=all; `scope_all_for_project_query` is trace warning only, generic empty retrieval continues to model instead of code `NO_DATA` final |
 | `tests/test_prompt_registry_service.py` | focused | prompt registry: common/tone/mode prompts, smeta role-pack, editable prompt overrides, plus live native-smеta loading of the GESN/typed-storage reference |
-| `tests/test_chat_profile_service.py`, `tests/test_profiles_router.py`, `tests/test_chat_profile_runtime.py`, `tests/test_profiles_ui.py` | focused | immutable Factory Base/user revisions, active and per-chat snapshot binding, legacy override migration, auth/API lifecycle, four explicit modes with Agent default, prompt+skill compilation, tool allowlist, model/RAG policies, Markdown editor and explicit create/copy/select/delete/activate/apply actions |
+| `tests/test_chat_profile_service.py`, `tests/test_profiles_router.py`, `tests/test_chat_profile_runtime.py`, `tests/test_profiles_ui.py` | focused | immutable Factory Base/user revisions, active and per-chat snapshot binding, legacy override migration, estimator LSR/VOR file-tool migration, auth/API lifecycle, four explicit modes with Agent default, prompt+skill compilation, tool allowlist, model/RAG policies, Markdown editor and explicit create/copy/select/delete/activate/apply actions |
+| `tests/test_smeta_workbook_tools.py` | focused | estimator file tools: LSR wraps existing document application without model-supplied rows; async chat path forwards token_sink for live smeta_row; VOR writes quantities-only xlsx; unrestricted RAG `dataset_ids is None` still injects `build_lsr_workbook`; chat-route still does not intercept LSR |
 | `tests/test_module_router.py`, `tests/test_active_state.py`, `tests/test_scoped_rag.py`, `tests/test_skill_snippet_registry.py`, `tests/test_tool_trace_policy.py` | 23 | лёгкий LES core: module routing, active state as working memory, typed scoped evidence packet, short skill snippets instead of full skill injection, and transparent tool trace policy |
 | `tests/test_tool_harness_service.py`, `tests/test_web_search_service.py` | focused | controlled tool-harness: typed read-only registry, indexed source search/read, PDF/Excel reader warnings, filesystem whitelist read/list/search/hash, bounded public web titles/snippets/direct URLs, Agent shortlist and `/api/tools/call` dry-run |
 | `tests/test_service_source_registry.py` | 4 | service-source registry and Play contract: required files/folders, canonical smeta/normcontrol sources, `SMETA_SERVICE` required-documents manifest, non-mutating operator messages, and normative base quarantine when semantic integrity report is absent |

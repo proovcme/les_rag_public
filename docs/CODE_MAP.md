@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.28.3 estimator file tools:** `smeta_workbook_tools.py` даёт `build_lsr_workbook`
+> / `build_vor_workbook`. Модель выбирает tool; код пишет xlsx через существующий
+> document workflow / intake. Chat-route intercept не возвращается. Живой SSE
+> (`token_sink`) обязателен, иначе Совушка зависает на «Формирую ответ».
+> Публичный `0.28.2` зарезервирован под hotfix установщика.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical
@@ -197,8 +203,9 @@ per-session snapshot в MetaDB. `routers/profiles.py` даёт CRUD/activate/bin
 `routers/chat.py` канонизирует режим и разрешает snapshot; для всех четырёх
 режимов одна evidence application компилирует выбранные prompt+skill,
 ограничивает shortlist выбранными tools и применяет model/RAG policy. Профиль
-`estimator` — обычный native-RRF RAG с ролью сметчика и большой моделью; он не
-запускает legacy `smeta_core`/LSR workflow. `auto`, `free`, `rag`,
+`estimator` — ordinary native-RRF RAG с ролью сметчика. Chat-route по-прежнему не
+перехватывает ЛСР. С 0.28.3 профиль может вызвать `build_lsr_workbook` /
+`build_vor_workbook`: код пишет xlsx, модель выбирает инструмент. `auto`, `free`, `rag`,
 `smeta` и `review` остаются только aliases для старых клиентов.
 
 **Evidence boundary (0.24.0.342):** после обычного retrieval и context-window expansion

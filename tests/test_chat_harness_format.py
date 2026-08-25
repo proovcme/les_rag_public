@@ -345,6 +345,19 @@ def test_model_tool_args_are_scoped_to_selected_dataset_and_target_file():
     assert call["args"]["doc_name"] == "ВОР.pdf"
 
 
+def test_model_tool_args_fill_workbook_attachment_id():
+    call = _augment_model_tool_args(
+        {"tool": "build_vor_workbook", "args": {}},
+        question="сделай ВОР",
+        dataset_ids=[],
+        target_file_ref=None,
+        attachment_id="read_123456abcdef",
+    )
+
+    assert call["args"]["attachment_id"] == "read_123456abcdef"
+    assert call["args"]["question"] == "сделай ВОР"
+
+
 def test_tool_results_prompt_block_is_material_not_final_answer():
     text = _format_tool_results_for_model([
         {

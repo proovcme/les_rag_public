@@ -7,16 +7,28 @@
 ## Текущее состояние (2026-08-25)
 
 ```
-версия продукта (SemVer):  0.28.1 (public provider-neutral Windows release)
-номер сборки:              588
-версия Tauri/NSIS:         5.1.588
+версия продукта (SemVer):  0.28.3 (estimator file tools candidate on 0.28.1)
+номер сборки:              590
+версия Tauri/NSIS:         5.1.590
 ветка выпуска:             public/main; tag v0.28.1 → 45b2ea434f55876898fc2b3b0a4e49e54396542d
-dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
+dev implementation:       estimator file tools wrap existing LSR/VOR code; live SSE; no /api/chat retry after progress
+задеплоено на рантайм:     GitHub EXE 0.28.1 / 588; локальные Python-копии Legion не являются тегом
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          не назначен
-рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
+следующий выпуск:          0.28.2 зарезервирован под hotfix установщика; этот candidate — 0.28.3
+рантайм /api/version:      публичный EXE 0.28.1 / 588
 ```
+
+> **0.28.3 / build 590:** candidate поверх 0.28.1. Профиль «Сметчик» получает
+> `build_lsr_workbook` и `build_vor_workbook`: код пишет xlsx, модель выбирает
+> инструмент, chat-route не перехватывает смету, `document_workflow` не изменён.
+> Tool-loop не падает на `dataset_ids is None` (scope «весь RAG»). LSR-tool идёт
+> в том же SSE-контуре, что и document workflow (`smeta_row`/`smeta_step`).
+> Клиент не ретраит `/api/chat` после живого прогресса (это давало
+> `503 ram_free_gb < 2.0`); read-timeout потока 3600 с. Локальные копии
+> `0.28.2–0.28.4` / `589–591` на Legion не публиковать как GitHub-теги.
+> Публичный `0.28.2` / `589` зарезервирован под hotfix установщика
+> (lock-bound venv, restart без `uv sync`, Python `<3.14`, лимиты профиля 8k/16k).
+> Нарезка: [docs/superpowers/plans/2026-08-25-release-cut-after-0.28.1.md](superpowers/plans/2026-08-25-release-cut-after-0.28.1.md).
 
 > **0.28.1 / build 588:** Windows package содержит SHA-256-проверенные portable Python/uv,
 > exact `uv.lock` и offline dependency cache; bootstrap не зависит от system Python/uv,

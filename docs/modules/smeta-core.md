@@ -1,5 +1,17 @@
 # Smeta Core — единое сметное ядро
 
+## Chat file tools (v0.28.3)
+
+Профиль «Сметчик» не возвращает скрытый chat-route intercept. Готовый xlsx
+собирают отдельные harness-tools: `build_lsr_workbook` оборачивает существующий
+`run_smeta_document_application` (модель не передаёт цены/строки),
+`build_vor_workbook` пишет ведомость объёмов из `source_intake` /
+spec→ВОР без расценки. `document_workflow` остаётся стабильным ядром и не
+переписывается этим слоем. При scope «весь RAG» `dataset_ids is None`;
+tool-loop обязан считать это пустым списком, иначе принудительный
+`build_lsr_workbook` падает до записи xlsx. Сам LSR-tool в чате исполняется
+асинхронно с `token_sink`, чтобы Совушка снова получала `smeta_row`/`smeta_step`.
+
 ## Retrieval-only acceptance (v0.27.73)
 
 Активный паспорт чистой ФСНБ использует тот же embedding space, что и его
@@ -336,6 +348,8 @@ Conflict-only global review возвращает полный terminal mapping �
   system prompt и полного tool contract, digests моделей и активные Qdrant aliases/point counts.
   Запуск: `uv run python tools/smeta_model_quality_benchmark.py <ВОР.xlsx>`; продолжение сохранённого
   прогона: та же команда и параметры плюс `--resume-run <run_root>`.
+- `proxy.services.smeta_workbook_tools` — chat-facing LSR/VOR xlsx tools for the
+  estimator profile; they wrap existing application/intake code and do not choose norms.
 - `proxy.services.smeta_chat_application_service` — application flows ordinary smeta и PDF→ЛСР:
   безопасно открывает одноразовое вложение, координирует RAG/model/progress, сохраняет artifact/trace
   и возвращает response envelope. Профессиональных решений не принимает.

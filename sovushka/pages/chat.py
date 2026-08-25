@@ -637,6 +637,25 @@ def _is_verify_request(q: str) -> bool:
     return bool(has_kw and _verify_path(q))
 
 
+def should_retry_unstreamed_chat(
+    *,
+    got_token: bool,
+    got_progress: bool,
+    stream_error: dict | None,
+) -> bool:
+    """Retry `/api/chat` only when the stream died before any work was visible.
+
+    A long LSR can emit smeta_row/smeta_step for many minutes without tokens.
+    Retrying a second request while the first still holds RAM yields 503.
+    """
+
+    if got_token or stream_error:
+        return False
+    if got_progress:
+        return False
+    return True
+
+
 def should_skip_chat_resource_gate(question: str, dataset_filter: str | None = None) -> bool:
     selected_filter = dataset_filter if dataset_filter and dataset_filter != "(все датасеты)" else None
     try:
@@ -4180,7 +4199,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         await _refresh_resource_gate()
                     _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                     _render_artifact_error(message)
-                else:
+                elif should_retry_unstreamed_chat(
+                    got_token=bool(stream_state["got_token"]),
+                    got_progress=bool(stream_state["got_progress"]),
+                    stream_error=stream_state["error"] if isinstance(stream_state["error"], dict) else None,
+                ):
                     # Ни одного токена и нет SSE error (стрим-эндпоинт недоступен/обрыв до событий) —
                     # безопасный откат на нестриминговый /api/chat.
                     d = await api_post("/api/chat", payload)
@@ -4194,6 +4217,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             await _refresh_resource_gate()
                         _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                         _render_artifact_error(message)
+                else:
+                    completed = True
+                    message = (
+                        "Поток ответа оборвался после начала сборки. Повторный запрос не запускаю: "
+                        "память может быть занята текущей ЛСР. Подождите 1–2 минуты или "
+                        "нажмите «Остановить диалог», затем повторите с тем же вложением."
+                    )
+                    _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
+                    _render_artifact_error(message)
         except asyncio.CancelledError:
             completed = True
             _finish_ai_placeholder(

@@ -660,6 +660,8 @@ def _augment_model_tool_args(
     question: str,
     dataset_ids: list[str],
     target_file_ref: dict[str, Any] | None,
+    attachment_id: str | None = None,
+    project_id: int | None = None,
 ) -> dict[str, Any]:
     tool = str(call.get("tool") or "")
     args = dict(call.get("args") or {})
@@ -678,6 +680,13 @@ def _augment_model_tool_args(
                 args["doc_name"] = target_file_ref.get("file_name") or ""
             if not args.get("doc_id") and target_file_ref.get("dataset_id"):
                 args["dataset_id"] = target_file_ref.get("dataset_id")
+    if tool in {"build_lsr_workbook", "build_vor_workbook"}:
+        if attachment_id and not args.get("attachment_id"):
+            args["attachment_id"] = attachment_id
+        if question and not args.get("question"):
+            args["question"] = question
+        if tool == "build_lsr_workbook" and project_id and not args.get("project_id"):
+            args["project_id"] = project_id
     return {"tool": tool, "args": args}
 
 

@@ -79,6 +79,12 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
     return max(1, configured) if iterative else 1
 
 
+def tool_dataset_ids(dataset_ids: Any) -> list[str]:
+    """``None`` means unrestricted RAG scope, not an empty iterator."""
+
+    return [str(item) for item in (dataset_ids or []) if str(item).strip()]
+
+
 def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
     """Compile the exact per-chat prompt/skill snapshot for grounded generation."""
 
@@ -1179,12 +1185,16 @@ async def _execute_chat_evidence_application(
 
                 tool_results_for_model: list[dict[str, Any]] = []
                 tool_context = ""
+                file_artifact = None
+                attachment_retry = None
                 visual_tool_requested = any(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
                 )
                 profile_tools = [
-                    str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
+                    str(name)
+                    for name in ((profile_snapshot or {}).get("tools") or [])
+                    if str(name).strip()
                 ]
                 tool_loop_enabled = bool(profile_tools)
                 if tool_loop_enabled:
@@ -1201,9 +1211,24 @@ async def _execute_chat_evidence_application(
                         )
                         allowed_tools = {
                             str(tool.get("name") or "")
-                            for tool in shortlist.get("tools", [])
+                            for tool in (shortlist.get("tools") or [])
                             if isinstance(tool, dict) and tool.get("name")
                         }
+                        from proxy.services.smeta_workbook_tools import SELECTOR_WORKBOOK_RULE
+
+                        selector_system = (
+                            "Ты управляешь коротким исследовательским чтением LES. "
+                            "Выбирай только read-only инструменты, чтобы закрыть конкретный пробел evidence. "
+                            "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
+                            "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
+                            "текстовый read_pdf_source не заменяет просмотр пикселей. "
+                            "Инструменты не отвечают за тебя и не заменяют источники. "
+                            "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
+                            "Если evidence достаточно или новый вызов повторит прошлый, верни {\"calls\":[]}. "
+                            "Не выбирай инструмент вне списка и не выходи за выбранные dataset/file scope."
+                        )
+                        if allowed_tools & {"build_lsr_workbook", "build_vor_workbook"}:
+                            selector_system += " " + SELECTOR_WORKBOOK_RULE
                         selector_headers = {}
                         if llm_runtime.api_key:
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
@@ -1226,17 +1251,7 @@ async def _execute_chat_evidence_application(
                                 "messages": [
                                     {
                                         "role": "system",
-                                        "content": (
-                                            "Ты управляешь коротким исследовательским чтением LES. "
-                                            "Выбирай только read-only инструменты, чтобы закрыть конкретный пробел evidence. "
-                                            "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
-                                            "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
-                                            "текстовый read_pdf_source не заменяет просмотр пикселей. "
-                                            "Инструменты не отвечают за тебя и не заменяют источники. "
-                                            "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
-                                            "Если evidence достаточно или новый вызов повторит прошлый, верни {\"calls\":[]}. "
-                                            "Не выбирай инструмент вне списка и не выходи за выбранные dataset/file scope."
-                                        ),
+                                        "content": selector_system,
                                     },
                                     {
                                         "role": "user",
@@ -1245,6 +1260,7 @@ async def _execute_chat_evidence_application(
                                                 "question": req.question,
                                                 "mode": req.mode or route.intent or "",
                                                 "dataset_ids": _dataset_ids,
+                                                "attachment_id": str(getattr(req, "attachment_id", None) or ""),
                                                 "target_file": target_file_ref if target_file_ref else {},
                                                 "available_tools": shortlist.get("tools") or [],
                                                 "round": research_round,
@@ -1273,8 +1289,10 @@ async def _execute_chat_evidence_application(
                                 _augment_model_tool_args(
                                     call,
                                     question=req.question,
-                                    dataset_ids=[str(d) for d in _dataset_ids],
+                                    dataset_ids=tool_dataset_ids(_dataset_ids),
                                     target_file_ref=target_file_ref,
+                                    attachment_id=str(getattr(req, "attachment_id", None) or "") or None,
+                                    project_id=int(getattr(req, "project_id", 0) or 0) or None,
                                 )
                                 for call in _parse_model_tool_calls(
                                     selector_text,
@@ -1291,6 +1309,36 @@ async def _execute_chat_evidence_application(
                                 calls.append(call)
                                 if len(selected_calls) + len(calls) >= max_calls:
                                     break
+                            from proxy.services.smeta_workbook_tools import maybe_forced_workbook_call
+
+                            forced = maybe_forced_workbook_call(
+                                question=str(req.question or ""),
+                                attachment_id=str(getattr(req, "attachment_id", None) or ""),
+                                profile_tools=profile_tools,
+                                already_called=[
+                                    str(item.get("tool") or "")
+                                    for item in (*selected_calls, *calls)
+                                ],
+                            )
+                            if (
+                                forced
+                                and research_round == 1
+                                and len(selected_calls) + len(calls) < max_calls
+                            ):
+                                forced = _augment_model_tool_args(
+                                    forced,
+                                    question=req.question,
+                                    dataset_ids=tool_dataset_ids(_dataset_ids),
+                                    target_file_ref=target_file_ref,
+                                    attachment_id=str(getattr(req, "attachment_id", None) or "") or None,
+                                    project_id=int(getattr(req, "project_id", 0) or 0) or None,
+                                )
+                                signature = json.dumps(
+                                    forced, ensure_ascii=False, sort_keys=True, default=str
+                                )
+                                if signature not in seen_call_signatures:
+                                    seen_call_signatures.add(signature)
+                                    calls.append(forced)
                             research_rounds.append(
                                 {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
                             )
@@ -1298,9 +1346,33 @@ async def _execute_chat_evidence_application(
                                 stop_reason = "model_stop" if not proposed_calls else "repeated_call"
                                 break
                             for call in calls:
-                                payload = await asyncio.to_thread(
-                                    tool_harness.call, call["tool"], call.get("args") or {}
-                                )
+                                if str(call.get("tool") or "") == "build_lsr_workbook":
+                                    from proxy.services.smeta_workbook_tools import (
+                                        build_lsr_workbook_async,
+                                    )
+
+                                    if token_sink is not None:
+                                        await token_sink(
+                                            {
+                                                "event": "smeta_step",
+                                                "data": {
+                                                    "phase": "document_workflow",
+                                                    "status": "started",
+                                                    "label": (
+                                                        "Смета: собираю ЛСР по вложению. "
+                                                        "Строки появятся по мере решений модели"
+                                                    ),
+                                                },
+                                            }
+                                        )
+                                    payload = await build_lsr_workbook_async(
+                                        call.get("args") or {},
+                                        token_sink=token_sink,
+                                    )
+                                else:
+                                    payload = await asyncio.to_thread(
+                                        tool_harness.call, call["tool"], call.get("args") or {}
+                                    )
                                 selected_calls.append(call)
                                 tool_results_for_model.append(payload)
                             if len(selected_calls) >= max_calls:
@@ -1322,6 +1394,13 @@ async def _execute_chat_evidence_application(
                             "max_rounds": max_rounds,
                             "max_calls": max_calls,
                         }
+                        from proxy.services.smeta_workbook_tools import (
+                            attachment_retry_from_tool_results,
+                            workbook_artifact_from_tool_results,
+                        )
+
+                        file_artifact = workbook_artifact_from_tool_results(tool_results_for_model)
+                        attachment_retry = attachment_retry_from_tool_results(tool_results_for_model)
                     except Exception as tool_err:  # noqa: BLE001 - tool loop must degrade into trace, not block chat
                         logger.warning("[TOOLS] model tool loop skipped: %s", tool_err)
                         retrieval_trace["tool_loop"] = {
@@ -1813,6 +1892,10 @@ async def _execute_chat_evidence_application(
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,
                 }
+                if file_artifact:
+                    response["artifact"] = file_artifact
+                if attachment_retry:
+                    response["attachment_retry"] = attachment_retry
                 if notebook_study_pack is not None:
                     response["notebook_context"] = notebook_study_pack.payload()
                     if notebook_study_artifact:
@@ -1836,12 +1919,15 @@ async def _execute_chat_evidence_application(
                             "content": notebook_study_artifact,
                         }
                 if project_inventory_prompt:
-                    response["artifact"] = {
-                        "title": "Реестр файлов",
-                        "mode": "markdown",
-                        "content": "```text\n" + (project_inventory_artifact_text or project_inventory_prompt).replace("```", "'''") + "\n```",
-                        "project_inventory": project_inventory_payload or {},
-                    }
+                    if not file_artifact:
+                        response["artifact"] = {
+                            "title": "Реестр файлов",
+                            "mode": "markdown",
+                            "content": "```text\n" + (project_inventory_artifact_text or project_inventory_prompt).replace("```", "'''") + "\n```",
+                            "project_inventory": project_inventory_payload or {},
+                        }
+                if file_artifact:
+                    response["artifact"] = file_artifact
 
                 # W6.7: source_id CAD/BIM-элементов из текста чанков → ответ + снимок
                 # подсветки. Вьювер АТЛАС поллит /api/cad-bim/highlight и перекрашивает.

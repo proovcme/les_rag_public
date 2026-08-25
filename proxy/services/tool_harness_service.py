@@ -115,10 +115,24 @@ class ToolHarness:
                 score += 2
             if spec.category == "web" and any(t in terms for t in ("agent", "агент", "интернет", "web", "сайт", "актуальн")):
                 score += 3
+            if spec.category == "workbook" and any(
+                t in terms for t in ("лср", "вор", "смета", "xlsx", "ведомост", "excel")
+            ):
+                score += 6
             if score:
                 scored.append((score, spec))
         scored.sort(key=lambda item: (-item[0], item[1].name))
         selected = [spec.to_dict() | {"score": score} for score, spec in scored[: max(1, limit)]]
+        seen = {str(item.get("name") or "") for item in selected}
+        for name in ("build_lsr_workbook", "build_vor_workbook"):
+            if name not in self._tools:
+                continue
+            if allowed is not None and name not in allowed:
+                continue
+            if name in seen:
+                continue
+            selected.append(self._tools[name][0].to_dict() | {"score": 8})
+            seen.add(name)
         if not selected:
             selected = [
                 self._tools[name][0].to_dict() | {"score": 0}
@@ -263,6 +277,40 @@ class ToolHarness:
         )
         self._register(
             ToolSpec(
+                name="build_lsr_workbook",
+                title="Собрать ЛСР в Excel",
+                category="workbook",
+                summary=(
+                    "По прикреплённому PDF/XLSX собрать расценённую ЛСР xlsx кодом "
+                    "существующего document workflow. Модель не передаёт цены и строки."
+                ),
+                args_schema={"attachment_id": "str", "question": "str", "project_id": "int"},
+                returns="downloadable LSR xlsx built by code, not by the model",
+                side_effects="creates_downloadable_workbook",
+                approval_required=False,
+                tags=("лср", "смета", "xlsx", "excel", "файл", "расценка", "вложение"),
+            ),
+            _tool_build_lsr_workbook,
+        )
+        self._register(
+            ToolSpec(
+                name="build_vor_workbook",
+                title="Собрать ВОР в Excel",
+                category="workbook",
+                summary=(
+                    "По прикреплённой спецификации или ведомости собрать ВОР xlsx "
+                    "с количествами из исходника, без цен и без выбора норм."
+                ),
+                args_schema={"attachment_id": "str", "question": "str"},
+                returns="downloadable quantities-only VOR xlsx",
+                side_effects="creates_downloadable_workbook",
+                approval_required=False,
+                tags=("вор", "ведомость", "объем", "xlsx", "excel", "файл", "спецификация", "вложение"),
+            ),
+            _tool_build_vor_workbook,
+        )
+        self._register(
+            ToolSpec(
                 name="web_search",
                 title="Public web search",
                 category="web",
@@ -345,6 +393,18 @@ class ToolHarness:
             ),
             _tool_filesystem_hash,
         )
+
+
+def _tool_build_lsr_workbook(args: dict[str, Any]) -> dict[str, Any]:
+    from proxy.services.smeta_workbook_tools import build_lsr_workbook
+
+    return build_lsr_workbook(args)
+
+
+def _tool_build_vor_workbook(args: dict[str, Any]) -> dict[str, Any]:
+    from proxy.services.smeta_workbook_tools import build_vor_workbook
+
+    return build_vor_workbook(args)
 
 
 def _tool_dataset_map(args: dict[str, Any]) -> dict[str, Any]:

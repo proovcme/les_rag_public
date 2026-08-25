@@ -6,6 +6,12 @@
 provider-neutral стартовый экран и общий model-first RAG через native RRF. Внешние движки
 не входят в продукт и подключаются пользователем.
 
+Согласованная нарезка (установщик → сметные file-tools → Agent Foundation → действия):
+[docs/superpowers/plans/2026-08-25-release-cut-after-0.28.1.md](docs/superpowers/plans/2026-08-25-release-cut-after-0.28.1.md).
+`0.28.2` зарезервирован под hotfix установщика. `0.28.3` — файловые ЛСР/ВОР tools
+без скрытого chat-intercept и без переписи `document_workflow`. 0.29 не разблокирует
+пользователя, пока restart/venv и выдача xlsx с живыми строками не зелёные на Legion.
+
 Следующие продуктовые направления:
 
 1. **Универсальные инструменты.** Редактируемые tool contracts для профилей чата; создание

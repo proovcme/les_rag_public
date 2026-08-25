@@ -166,6 +166,7 @@ SCENARIOS: dict[str, dict[str, Any]] = {
 
 
 MODE_SCENARIOS = {
+    "estimator": "estimate_harness",
     "smeta": "estimate_harness",
     "smeta_harness": "estimate_harness",
     "review": "normcontrol",

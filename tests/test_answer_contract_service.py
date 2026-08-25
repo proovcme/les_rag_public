@@ -21,6 +21,16 @@ def test_scenario_for_request_prefers_explicit_mode():
     assert scenario["progress"]
 
 
+def test_estimator_mode_uses_smeta_progress_not_attachment_formiruyu():
+    scenario = scenario_for_request(
+        mode="estimator",
+        question="Собери ЛСР по приложенной ВОР",
+        has_attachment=True,
+    )
+    assert scenario["id"] == "estimate_harness"
+    assert "Формирую ответ" not in scenario["progress"]
+
+
 def test_decorate_payload_adds_scenario_and_contract_from_route():
     payload = {
         "answer": "ok",
