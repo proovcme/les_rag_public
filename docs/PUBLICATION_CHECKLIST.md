@@ -62,3 +62,15 @@ uv run python tools/runtime_smoke.py \
 - The exact source commit must pass `make verify`, `make test`, `make public-check`, Tauri checks,
   and installed Windows smoke before `main` and the GitHub Release tag are updated.
 - Release assets are the verified installer, its SHA-256 and `latest.json`; no runtime/user data.
+
+## GitHub lightweight update publication
+
+- Run the deterministic classifier before any build. `full` means stop and use the full
+  Windows release pipeline; do not weaken the trigger list to obtain a small package.
+- Build into an empty directory with `make github-patch-release`. The only assets are
+  `les-update.json`, legacy full-installer `latest.json`, `les-patch.zip`, its SHA-256,
+  and `release-notes.md`; `LES-Setup.exe` is forbidden in a patch-class release.
+- Publication requires a clean pushed commit, a new SemVer tag, GitHub immutable releases,
+  and the green isolated apply/skipped-version/rollback evidence embedded in the feed.
+- The script creates a draft, uploads unique assets without `--clobber`, downloads and
+  verifies them, and only then publishes. A correction always receives a higher version.

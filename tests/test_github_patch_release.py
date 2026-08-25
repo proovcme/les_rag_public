@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from tools import github_patch_release, vps_patch
 
@@ -83,3 +86,78 @@ def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypat
     assert published["evidence"]["new_file_removed_on_rollback"] is True
     assert published["evidence"]["skipped_version_ok"] is True
     assert set(published["evidence"]["durations_ms"]) == {"apply", "rollback", "skipped_version"}
+
+
+def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkeypatch):
+    assets = []
+    for name in github_patch_release.ASSET_NAMES:
+        path = tmp_path / name
+        path.write_bytes(b"verified")
+        assets.append(path)
+    notes = tmp_path / "notes.md"
+    notes.write_text("release notes", encoding="utf-8")
+    commands: list[list[str]] = []
+
+    monkeypatch.setattr(
+        github_patch_release,
+        "_git",
+        lambda *args: {
+            ("status", "--porcelain"): "",
+            ("rev-parse", "HEAD"): "c" * 40,
+            ("rev-parse", "@{u}"): "c" * 40,
+            ("tag", "--list", "v0.28.2"): "",
+        }[args],
+    )
+
+    def run(command, **_kwargs):
+        commands.append(list(command))
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        if command[:2] == ["gh", "api"]:
+            return SimpleNamespace(returncode=0, stdout='{"enabled":true}', stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(github_patch_release, "_run", run)
+    monkeypatch.setattr(
+        github_patch_release, "verify_downloaded_release_assets", lambda *_args: None
+    )
+
+    github_patch_release.publish_github_patch_release(
+        "v0.28.2", assets, notes
+    )
+
+    create = next(command for command in commands if command[:3] == ["gh", "release", "create"])
+    upload = next(command for command in commands if command[:3] == ["gh", "release", "upload"])
+    publish = next(command for command in commands if command[:3] == ["gh", "release", "edit"])
+    assert "--draft" in create
+    assert "--notes-file" in create
+    assert "--clobber" not in upload
+    assert {Path(value).name for value in upload if Path(value).name in github_patch_release.ASSET_NAMES} == set(github_patch_release.ASSET_NAMES)
+    assert "--draft=false" in publish
+    assert commands.index(create) < commands.index(upload) < commands.index(publish)
+
+
+def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch):
+    assets = []
+    for name in github_patch_release.ASSET_NAMES:
+        path = tmp_path / name
+        path.write_bytes(b"verified")
+        assets.append(path)
+    notes = tmp_path / "notes.md"
+    notes.write_text("notes", encoding="utf-8")
+    monkeypatch.setattr(
+        github_patch_release,
+        "_git",
+        lambda *args: "" if args != ("rev-parse", "HEAD") and args != ("rev-parse", "@{u}") else "c" * 40,
+    )
+    calls = []
+
+    def run(command, **_kwargs):
+        calls.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="existing", stderr="")
+
+    monkeypatch.setattr(github_patch_release, "_run", run)
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
+    assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
