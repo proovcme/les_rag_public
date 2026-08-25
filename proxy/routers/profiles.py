@@ -10,6 +10,8 @@ from pydantic import BaseModel, Field
 
 from proxy.security import require_admin, require_user
 from proxy.services.chat_profile_service import (
+    PROFILE_PROMPT_MAX_CHARS,
+    PROFILE_SKILL_MAX_CHARS,
     activate_profile_revision,
     delete_revision,
     import_legacy_prompt_overrides,
@@ -32,7 +34,19 @@ def _profiles_db_path() -> Path | None:
 class TextRevisionRequest(BaseModel):
     kind: Literal["prompt", "skill"]
     name: str = Field(min_length=1, max_length=160)
-    text: str = Field(min_length=1, max_length=120_000)
+    text: str = Field(
+        min_length=1,
+        description=(
+            f"Prompt: не более {PROFILE_PROMPT_MAX_CHARS} символов; "
+            f"skill: не более {PROFILE_SKILL_MAX_CHARS}."
+        ),
+        json_schema_extra={
+            "x-les-max-length-by-kind": {
+                "prompt": PROFILE_PROMPT_MAX_CHARS,
+                "skill": PROFILE_SKILL_MAX_CHARS,
+            }
+        },
+    )
     source_revision_id: str | None = None
 
 
@@ -53,6 +67,11 @@ class ChatBindingRequest(BaseModel):
 
 
 def _conflict(error: ValueError) -> HTTPException:
+    if str(error).startswith("profile_text_too_long:"):
+        return HTTPException(
+            status_code=409,
+            detail={"code": "profile_text_too_long", "message": str(error)},
+        )
     return HTTPException(status_code=409, detail=str(error))
 
 

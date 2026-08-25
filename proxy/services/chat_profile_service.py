@@ -19,6 +19,8 @@ from backend.rag_config import rag_meta_db_path
 
 
 SCHEMA = "les.chat_profiles.v1"
+PROFILE_PROMPT_MAX_CHARS = 16_000
+PROFILE_SKILL_MAX_CHARS = 8_000
 PROFILE_MODES = ("search", "agent", "estimator", "engineer")
 MODE_LABELS = {
     "search": "Поиск",
@@ -55,6 +57,24 @@ def _now() -> str:
 
 def _sha(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def validate_profile_text(kind: str, text: str) -> str:
+    value = str(text or "").strip()
+    limits = {
+        "prompt": PROFILE_PROMPT_MAX_CHARS,
+        "skill": PROFILE_SKILL_MAX_CHARS,
+    }
+    if kind not in limits:
+        raise ValueError(f"Неизвестный тип редакции: {kind}")
+    if not value:
+        raise ValueError("Текст редакции не может быть пустым")
+    limit = limits[kind]
+    if len(value) > limit:
+        raise ValueError(
+            f"profile_text_too_long: {kind} содержит {len(value)} символов при лимите {limit}"
+        )
+    return value
 
 
 def _json(value: Any) -> str:
@@ -393,12 +413,10 @@ def publish_text_revision(
     source_revision_id: str | None = None,
     db_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    value = str(text or "").strip()
+    value = validate_profile_text(kind, text)
     title = str(name or "").strip()
     if not title:
         raise ValueError("Название редакции не задано")
-    if not value:
-        raise ValueError("Текст редакции не может быть пустым")
     table = _text_table(kind)
     with _connect(db_path) as conn:
         if source_revision_id:
@@ -671,6 +689,10 @@ def registry_snapshot(*, db_path: str | Path | None = None) -> dict[str, Any]:
         return {
             "schema": SCHEMA,
             "default_mode": "agent",
+            "text_limits": {
+                "prompt": PROFILE_PROMPT_MAX_CHARS,
+                "skill": PROFILE_SKILL_MAX_CHARS,
+            },
             "profiles": profiles,
             "prompt_revisions": _text_items(conn, "prompt"),
             "skill_revisions": _text_items(conn, "skill"),

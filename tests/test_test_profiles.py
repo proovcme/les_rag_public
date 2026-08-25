@@ -148,3 +148,15 @@ def test_windows_portable_current_gate_matches_core_make_profile() -> None:
     assert "tests/test_evidence_contract.py" in current
     assert "tests/test_test_profiles.py" in current
     assert not any("unified_" in test for test in current)
+
+
+def test_github_patch_release_target_never_calls_full_installer_builder() -> None:
+    command = _dry_make_with_variable(
+        "github-patch-release",
+        "GITHUB_PATCH_RELEASE_ARGS",
+        "--base base --target target --output out --full-feed latest.json",
+    )
+
+    assert "tools/github_patch_release.py" in command
+    assert "tools/patch_release.py" not in command
+    assert "LES-Setup.exe" not in command

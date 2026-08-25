@@ -37,6 +37,41 @@ $smokeCollection = "les_release_smoke_$([guid]::NewGuid().ToString('N'))"
 $env:RAG_COLLECTION_NAME = $smokeCollection
 $env:LES_RELEASE_SMOKE = "1"
 
+function Invoke-BootstrapPass([string]$PassName) {
+  Remove-Item $StatusPath, $RuntimeStatePath -Force -ErrorAction SilentlyContinue
+  $process = Start-Process -FilePath "powershell.exe" `
+    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Bootstrap) `
+    -PassThru -WindowStyle Hidden `
+    -RedirectStandardOutput (Join-Path $LogDir "release-smoke-bootstrap-$PassName.out.log") `
+    -RedirectStandardError (Join-Path $LogDir "release-smoke-bootstrap-$PassName.err.log")
+
+  $deadline = (Get-Date).AddSeconds($BootstrapTimeoutSeconds)
+  $status = $null
+  do {
+    Start-Sleep -Milliseconds 500
+    if (Test-Path -LiteralPath $StatusPath) {
+      try { $status = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json } catch { }
+    }
+    if ($status -and $status.state -in @("ready", "failed")) { break }
+  } while ((Get-Date) -lt $deadline)
+
+  if (-not $status) { throw "$PassName bootstrap status was not created" }
+  if ($status.state -ne "ready") {
+    throw "$PassName bootstrap failed: $($status.code) $($status.message)"
+  }
+  if (-not (Test-Path -LiteralPath $RuntimeStatePath)) {
+    throw "$PassName bootstrap did not create windows-light-state.json"
+  }
+  $state = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
+  if ($state.process_contract -ne "direct_python_no_console_v1") {
+    throw "$PassName runtime process contract is not console-clean"
+  }
+  if ($process -and -not $process.HasExited -and -not $process.WaitForExit(10000)) {
+    throw "$PassName bootstrap PowerShell stayed alive after terminal ready"
+  }
+  return [pscustomobject]@{ process = $process; status = $status; runtime_state = $state }
+}
+
 $result = [ordered]@{
   schema = "les_windows_release_smoke_v1"
   ok = $false
@@ -57,44 +92,44 @@ try {
     throw "bootstrap not found: $Bootstrap"
   }
 
-  $bootstrapProcess = Start-Process -FilePath "powershell.exe" `
-    -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $Bootstrap) `
-    -PassThru -WindowStyle Hidden `
-    -RedirectStandardOutput (Join-Path $LogDir "release-smoke-bootstrap.out.log") `
-    -RedirectStandardError (Join-Path $LogDir "release-smoke-bootstrap.err.log")
+  $env:LES_RELEASE_SMOKE_DISABLE_DOCKER = "1"
+  $firstBootstrap = Invoke-BootstrapPass -PassName "first"
+  $bootstrapProcess = $firstBootstrap.process
+  $bootstrapStatus = $firstBootstrap.status
+  $runtimeState = $firstBootstrap.runtime_state
+  $result.bootstrap_first = [ordered]@{
+    state = $bootstrapStatus.state
+    environment_action = $bootstrapStatus.environment_action
+    warnings = @($bootstrapStatus.warnings)
+  }
+  if (@($bootstrapStatus.warnings) -notcontains "docker_engine_unavailable" -or
+      @($bootstrapStatus.warnings) -notcontains "qdrant_unavailable") {
+    throw "Docker-disabled bootstrap did not report optional capability warnings"
+  }
+  $firstProxyPort = [int]$runtimeState.proxy_port
+  $firstUiPort = [int]$runtimeState.ui_port
+  $firstCoreHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$firstProxyPort/api/health" -TimeoutSec 30
+  $firstCoreUi = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$firstUiPort/healthz" -TimeoutSec 30
+  $result.bootstrap_first.core_api_ready = [bool]$firstCoreHealth
+  $result.bootstrap_first.core_ui_status = [int]$firstCoreUi.StatusCode
+  & $StopScript -ProxyPort $firstProxyPort -UiPort $firstUiPort | Out-Null
 
-  $deadline = (Get-Date).AddSeconds($BootstrapTimeoutSeconds)
-  $bootstrapStatus = $null
-  do {
-    Start-Sleep -Milliseconds 500
-    if (Test-Path -LiteralPath $StatusPath) {
-      try {
-        $bootstrapStatus = Get-Content -LiteralPath $StatusPath -Raw | ConvertFrom-Json
-      } catch { }
-    }
-    if ($bootstrapStatus -and $bootstrapStatus.state -in @("ready", "failed")) { break }
-  } while ((Get-Date) -lt $deadline)
-
-  if (-not $bootstrapStatus) { throw "bootstrap status was not created" }
+  Remove-Item Env:LES_RELEASE_SMOKE_DISABLE_DOCKER -ErrorAction SilentlyContinue
+  $secondBootstrap = Invoke-BootstrapPass -PassName "second"
+  if ($secondBootstrap.status.environment_action -ne "skipped") {
+    throw "second offline bootstrap unexpectedly rebuilt the Python environment"
+  }
+  $bootstrapProcess = $secondBootstrap.process
+  $bootstrapStatus = $secondBootstrap.status
+  $runtimeState = $secondBootstrap.runtime_state
+  $result.bootstrap_second = [ordered]@{
+    state = $secondBootstrap.status.state
+    environment_action = $secondBootstrap.status.environment_action
+    warnings = @($secondBootstrap.status.warnings)
+  }
   $result.bootstrap_state = $bootstrapStatus.state
   $result.bootstrap_phase = $bootstrapStatus.phase
   $result.bootstrap_code = $bootstrapStatus.code
-  if ($bootstrapStatus.state -ne "ready") {
-    throw "bootstrap failed: $($bootstrapStatus.code) $($bootstrapStatus.message)"
-  }
-  if (-not (Test-Path -LiteralPath $RuntimeStatePath)) {
-    throw "windows-light-state.json was not created"
-  }
-
-  $runtimeState = Get-Content -LiteralPath $RuntimeStatePath -Raw | ConvertFrom-Json
-  if ($runtimeState.process_contract -ne "direct_python_no_console_v1") {
-    throw "runtime process contract is not console-clean"
-  }
-  if ($bootstrapProcess -and -not $bootstrapProcess.HasExited) {
-    if (-not $bootstrapProcess.WaitForExit(10000)) {
-      throw "bootstrap PowerShell stayed alive after terminal ready"
-    }
-  }
   $runtimePids = @(
     $runtimeState.proxy_pid,
     $runtimeState.ui_pid,
@@ -270,6 +305,11 @@ try {
   $result.rrf_mode = $rrf.retrieval_trace.mode
   $result.ok = (
     $bootstrapStatus.state -eq "ready" -and
+    $secondBootstrap.status.state -eq "ready" -and
+    $result.bootstrap_first.environment_action -in @("created", "rebuilt", "skipped") -and
+    $result.bootstrap_second.environment_action -eq "skipped" -and
+    $result.bootstrap_first.core_api_ready -and
+    [int]$result.bootstrap_first.core_ui_status -eq 200 -and
     $version.les_version -eq $ExpectedVersion -and
     $smetaBaseline.ok -and
     [int]$smetaBaseline.norm_count -ge 40000 -and

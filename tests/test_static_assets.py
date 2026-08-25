@@ -135,7 +135,7 @@ def test_chat_exposes_documents_navigation():
     assert "tab_documents=None" in chat
     assert 'aria_label="Документы"' in chat
     assert "Открыть документы датасетов" in chat
-    assert 'f"Источники · {len(srcs)}"' in chat
+    assert 'f"Источники · {len(effective_sources)}"' in chat
     assert 'value=False' in chat
     assert 'target=str(item["open_url"])' in chat
     assert 'if item.get("viewer_url")' in chat

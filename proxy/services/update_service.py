@@ -17,21 +17,26 @@ from urllib.parse import urlparse
 
 import httpx
 
-from proxy.services.version_service import LES_VERSION
+from proxy.services.version_service import BUILD_NUMBER, LES_VERSION
 
 
 REPOSITORY = os.getenv("LES_UPDATE_REPOSITORY", "proovcme/les_rag_public").strip()
+GITHUB_PATCH_REPOSITORY = "proovcme/les_rag_public"
 UPDATE_MANIFEST_URL = os.getenv(
     "LES_UPDATE_MANIFEST_URL",
     f"https://github.com/{REPOSITORY}/releases/latest/download/latest.json",
 ).strip()
 INSTALLER_ASSET = "LES-Setup.exe"
 CHECKSUM_ASSET = f"{INSTALLER_ASSET}.sha256"
-VPS_PATCH_MANIFEST_URL = os.getenv(
-    "LES_VPS_PATCH_MANIFEST_URL", "https://les.ovc.me/updates/latest.json"
+GITHUB_PATCH_MANIFEST_URL = os.getenv(
+    "LES_GITHUB_PATCH_MANIFEST_URL",
+    f"https://github.com/{REPOSITORY}/releases/latest/download/les-update.json",
 ).strip()
-VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
+GITHUB_UPDATE_FEED_SCHEMA = "les.github-update-feed.v1"
 VPS_PATCH_SCHEMA = "les.vps-patch.v2"
+# Backward-compatible symbols for callers; discovery no longer uses the VPS.
+VPS_PATCH_MANIFEST_URL = GITHUB_PATCH_MANIFEST_URL
+VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
 VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
 MAC_UPDATE_FEED_SCHEMA = "les.mac-update-feed.v1"
 MAC_UPDATE_SCHEMA = "les.mac-update.v1"
@@ -180,9 +185,21 @@ def _trusted_release_url(url: str) -> bool:
     return parsed.scheme == "https" and parsed.hostname in {"github.com", "objects.githubusercontent.com"}
 
 
-def _trusted_patch_url(url: str) -> bool:
+def _trusted_github_update_url(url: str, *, asset: bool = False) -> bool:
     parsed = urlparse(url)
-    return parsed.scheme == "https" and parsed.hostname == "les.ovc.me" and parsed.path.startswith("/updates/")
+    if parsed.scheme != "https" or parsed.hostname != "github.com" or parsed.query or parsed.fragment:
+        return False
+    repository_root = f"/{GITHUB_PATCH_REPOSITORY}/releases/"
+    if asset:
+        return re.fullmatch(
+            re.escape(repository_root) + r"download/v\d+\.\d+\.\d+/les-patch\.zip",
+            parsed.path,
+        ) is not None
+    return parsed.path == f"{repository_root}latest/download/les-update.json"
+
+
+def _trusted_patch_url(url: str) -> bool:
+    return _trusted_github_update_url(url, asset=True)
 
 
 def parse_checksum(text: str) -> str:
@@ -542,28 +559,109 @@ def _validate_patch_feed(payload: dict) -> dict:
     }
 
 
+def validate_github_update_feed(payload: dict) -> dict:
+    if payload.get("schema") != GITHUB_UPDATE_FEED_SCHEMA:
+        raise UpdateError("Неподдерживаемая схема обновления GitHub")
+    if payload.get("repository") != GITHUB_PATCH_REPOSITORY:
+        raise UpdateError("Обновление относится другому репозиторию")
+    if payload.get("release_class") != "patch":
+        raise UpdateError("Последний выпуск не является быстрым обновлением")
+
+    product_version = str(payload.get("product_version") or "")
+    build_number = int(payload.get("build_number") or 0)
+    target_commit = str(payload.get("target_commit") or "")
+    if (
+        re.fullmatch(r"\d+\.\d+\.\d+", product_version) is None
+        or payload.get("tag") != f"v{product_version}"
+        or build_number < BUILD_NUMBER
+        or re.fullmatch(r"[0-9a-f]{40}", target_commit) is None
+    ):
+        raise UpdateError("Версия, тег, сборка или commit обновления не совпадают")
+
+    compatible_bases = payload.get("compatible_bases")
+    if (
+        not isinstance(compatible_bases, list)
+        or not compatible_bases
+        or any(re.fullmatch(r"[0-9a-f]{40}", str(value)) is None for value in compatible_bases)
+    ):
+        raise UpdateError("В обновлении отсутствуют совместимые базовые commit")
+
+    patch = payload.get("patch")
+    if not isinstance(patch, dict):
+        raise UpdateError("Манифест быстрого обновления повреждён")
+    if (
+        patch.get("product_version") != product_version
+        or int(patch.get("build_number") or 0) != build_number
+        or patch.get("target_commit") != target_commit
+        or patch.get("base_commit") not in compatible_bases
+    ):
+        raise UpdateError("Внешний и внутренний манифесты обновления не совпадают")
+
+    asset = payload.get("asset")
+    if not isinstance(asset, dict):
+        raise UpdateError("В обновлении отсутствует описание архива")
+    archive_url = str(asset.get("url") or "")
+    archive_sha256 = str(asset.get("sha256") or "").lower()
+    archive_bytes = asset.get("bytes")
+    expected_url = (
+        f"https://github.com/{GITHUB_PATCH_REPOSITORY}/releases/download/"
+        f"v{product_version}/les-patch.zip"
+    )
+    if (
+        archive_url != expected_url
+        or not _trusted_github_update_url(archive_url, asset=True)
+        or re.fullmatch(r"[0-9a-f]{64}", archive_sha256) is None
+        or not isinstance(archive_bytes, int)
+        or isinstance(archive_bytes, bool)
+        or archive_bytes <= 0
+        or archive_bytes > 64 * 1024 * 1024
+    ):
+        raise UpdateError("Архив обновления имеет недоверенный адрес, размер или SHA-256")
+
+    legacy_shape = {
+        "schema": VPS_PATCH_FEED_SCHEMA,
+        "archive_url": archive_url,
+        "archive_sha256": archive_sha256,
+        "archive_bytes": archive_bytes,
+        "patch": patch,
+    }
+    result = _validate_patch_feed(legacy_shape)
+    result["repository"] = GITHUB_PATCH_REPOSITORY
+    result["tag"] = f"v{product_version}"
+    result["release_class"] = "patch"
+    result["compatible_bases"] = tuple(str(value) for value in compatible_bases)
+    return result
+
+
+def _update_channel_unavailable(message: str) -> dict:
+    return {
+        "state": "update_channel_unavailable",
+        "patch_id": "",
+        "available": False,
+        "compatible": False,
+        "files": 0,
+        "message": message,
+    }
+
+
 async def check_vps_patch(*, client: httpx.AsyncClient | None = None) -> dict:
-    if not _trusted_patch_url(VPS_PATCH_MANIFEST_URL):
-        raise UpdateError("Задан недоверенный адрес быстрых обновлений")
+    if not _trusted_github_update_url(GITHUB_PATCH_MANIFEST_URL):
+        return _update_channel_unavailable("Канал обновлений GitHub настроен небезопасно")
     owns_client = client is None
     if client is None:
         client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
     try:
-        response = await client.get(VPS_PATCH_MANIFEST_URL, headers={"User-Agent": "LES-vps-updater"})
+        response = await client.get(
+            GITHUB_PATCH_MANIFEST_URL, headers={"User-Agent": "LES-github-updater"}
+        )
         if response.status_code == 404:
-            return {
-                "patch_id": "",
-                "available": False,
-                "compatible": True,
-                "files": 0,
-                "message": "Быстрых обновлений пока нет",
-            }
+            return _update_channel_unavailable("В последнем выпуске отсутствует les-update.json")
         response.raise_for_status()
-        return _validate_patch_feed(response.json())
-    except UpdateError:
-        raise
+        return validate_github_update_feed(response.json())
+    except UpdateError as exc:
+        return _update_channel_unavailable(str(exc))
     except (httpx.HTTPError, ValueError, TypeError) as exc:
-        raise UpdateError(f"Не удалось проверить быстрое обновление: {exc}") from exc
+        return _update_channel_unavailable(f"Не удалось проверить канал обновлений GitHub: {exc}")
     finally:
         if owns_client:
             await client.aclose()
@@ -625,6 +723,8 @@ async def download_and_launch_vps_patch() -> dict:
     if not sys.platform.startswith("win"):
         raise UpdateError("Быстрое обновление поддерживается только в Windows-сборке")
     info = await check_vps_patch()
+    if info.get("state") == "update_channel_unavailable":
+        raise UpdateError(info["message"])
     if not info["available"]:
         raise UpdateError("Быстрое обновление уже установлено")
     if not info["compatible"]:

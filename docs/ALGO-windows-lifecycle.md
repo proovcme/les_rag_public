@@ -39,19 +39,21 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 ## 2. Единственный dependency-контур
 
-До запуска proxy/UI supervisor обязан привести к ready весь контур в таком порядке:
+До запуска proxy/UI supervisor обязан подготовить **core**, а внешние capabilities проверить
+независимо:
 
-1. Docker engine готов.
-2. Существующий контейнер `les-light-qdrant` запущен; volume `les-qdrant-data` подключён;
-   `GET :6333/collections` отвечает. Обычный запуск не пересоздаёт container/volume.
-3. Ollama отвечает; установлены выбранная generation model и `bge-m3:latest`.
-4. Persistent Python `%LOCALAPPDATA%\LES\.venv` существует и проходит import probe.
-5. Immutable ФСНБ baseline читается, manifest/count/provenance gates проходят.
-6. Smeta Qdrant alias указывает на complete dense+sparse generation с native RRF.
-7. Только после этого запускаются direct `pythonw.exe` proxy и UI.
+1. Persistent Python `%LOCALAPPDATA%\LES\.venv` сверяется с contract marker: SHA `uv.lock`,
+   bundled Python/uv/cache, selected extra и platform. Exact marker + import probe означает
+   `environment_action=skipped`; mismatch выполняет один locked/offline sync, нездоровая среда —
+   один controlled rebuild. Все последующие `uv run` используют `--no-sync`.
+2. Immutable ФСНБ baseline проверяется; его недоступность отражается degraded status, но не
+   превращает отсутствие внешнего компонента в повреждение Python.
+3. Docker/Qdrant и answer/embedding providers определяются как optional capabilities.
+   `docker_engine_unavailable` и `qdrant_unavailable` остаются warnings; core proxy/UI запускается.
+4. Direct `pythonw.exe` proxy/UI стартуют и API health подтверждает готовность core.
 
-Состояние `proxy/UI ready`, когда Qdrant или сметная база не готовы, является ошибкой запуска,
-а не успешным degraded-режимом.
+Полный RAG/smeta acceptance по-прежнему требует доступных Qdrant, корпуса и providers, но это
+отдельный capability gate, а не условие запуска базового LES.
 
 ## 3. Clean install
 
@@ -142,7 +144,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 | Код | Причина | Автоматическое действие |
 |---|---|---|
-| `docker_engine_unavailable` | Docker ещё не готов | запустить Docker Desktop без elevation, bounded wait; затем fail |
+| `docker_engine_unavailable` | Docker не установлен или engine не готов | warning; core продолжает запуск, оператор может включить Docker позже |
+| `qdrant_unavailable` | Qdrant недоступен вследствие отсутствия Docker/engine/health | warning; RAG capability unavailable, core API/UI остаются доступны |
+| `python_environment_invalid` | offline sync/rebuild не дал здоровую lock-bound среду | terminal fail с точной диагностикой; не маскировать как Docker/Qdrant |
 | `qdrant_container_missing` | нет canonical container | clean install создаёт; soft update требует hard recovery |
 | `qdrant_not_ready` | container есть, HTTP не готов | bounded wait с логом; не запускать acceptance раньше |
 | `model_missing` | нет generation/embedding model | bootstrap скачивает по manifest; partial download resumable |
@@ -160,7 +164,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 До применения обязательны hermetic tests всех переходов, затем два живых Legion-сценария:
 
-1. clean install на пустом app/state;
+1. clean install на пустом app/state: первый bootstrap намеренно проходит без Docker и доказывает
+   core API/UI + warning codes; после stop второй bootstrap того же state обязан вернуть
+   `environment_action=skipped`, не выполнять package network/sync и затем пройти полный RRF smoke;
 2. мелкий soft update этой установки с изменением одного безопасного runtime-файла.
 
 Для обоих сохраняются job, status timeline, process snapshot и acceptance JSON. Только после двух

@@ -65,6 +65,27 @@ def test_profiles_page_uses_bundled_markdown_editor_and_explicit_actions():
         assert label in source
 
 
+def test_profiles_page_uses_api_owned_text_budgets_for_counters_and_save_state():
+    registry = {"text_limits": {"prompt": 16_000, "skill": 8_000}}
+
+    assert profiles_page.profile_text_budget(registry, "prompt", "x" * 16_000) == {
+        "current": 16_000,
+        "limit": 16_000,
+        "tone": "warn",
+        "over_limit": False,
+    }
+    assert profiles_page.profile_text_budget(registry, "skill", "x" * 8_001) == {
+        "current": 8_001,
+        "limit": 8_000,
+        "tone": "error",
+        "over_limit": True,
+    }
+    source = inspect.getsource(profiles_page.build_profiles)
+    assert 'registry.get("text_limits")' in source
+    assert "save_button.disable()" in source
+    assert "Превышен лимит" in source
+
+
 def test_chat_can_apply_the_current_active_profile_on_the_next_message():
     source = inspect.getsource(chat_page.build_chat)
 

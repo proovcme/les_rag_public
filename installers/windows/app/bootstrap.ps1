@@ -29,9 +29,11 @@ $Log      = Join-Path $LogDir "bootstrap.log"
 $Status   = Join-Path $LogDir "bootstrap-status.json"
 $script:BootstrapWarnings = @()
 $script:BootstrapWarningCodes = @()
+$script:EnvironmentAction = "pending"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $StateScript = Join-Path $Root "installers\windows\state.ps1"
+$VenvContractScript = Join-Path $AppDir "venv-contract.ps1"
 
 function Log([string]$m) { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $m" | Out-File -FilePath $Log -Append -Encoding utf8 }
 
@@ -56,6 +58,7 @@ function Write-Status(
     code = $Code
     install_url = $InstallUrl
     warnings = @($script:BootstrapWarningCodes)
+    environment_action = $script:EnvironmentAction
     log_path = $Log
     updated_at = [DateTime]::Now.ToString("o")
   }
@@ -117,6 +120,10 @@ if (-not (Test-Path -LiteralPath $StateScript)) {
 }
 try {
   . $StateScript
+  if (-not (Test-Path -LiteralPath $VenvContractScript)) {
+    throw "venv contract module is missing: $VenvContractScript"
+  }
+  . $VenvContractScript
   $StateRoot = Get-LesWindowsStateRoot
 } catch {
   Fail "не удалось загрузить модуль состояния Windows: $($_.Exception.Message)" "windows_state_helper_failed"
@@ -290,6 +297,12 @@ if ($Ollama) {
 $Docker = Resolve-Executable "docker" @(
   (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe")
 )
+if ($env:LES_RELEASE_SMOKE -eq "1" -and $env:LES_RELEASE_SMOKE_DISABLE_DOCKER -eq "1") {
+  # Installed-release gate: prove that the core reaches API/UI readiness when
+  # Docker is unavailable, without changing ordinary bootstrap behaviour.
+  $Docker = $null
+  Log "release smoke: Docker capability intentionally disabled"
+}
 if ($Docker) {
   Add-ExecutableDirectory $Docker
   Log "docker: $Docker"
@@ -302,51 +315,74 @@ if ($Docker) {
 Toast "Готовлю окружение…"
 Write-Status -Phase "python" -State "running" -Message "Синхронизирую Python-окружение через uv"
 $VenvPath = $env:UV_PROJECT_ENVIRONMENT
-$VenvWasUsable = $false
 $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
-if (Test-Path -LiteralPath $VenvPython) {
-  $venvProbe = @(& $VenvPython -c "import sys; print(sys.executable)" 2>&1)
-  $VenvWasUsable = $LASTEXITCODE -eq 0
-}
-if ((Test-Path -LiteralPath $VenvPath) -and -not $VenvWasUsable) {
-  Log "removing incomplete or broken Python environment: $VenvPath"
-  Remove-Item -LiteralPath $VenvPath -Recurse -Force
-}
-
-$UvSyncArgs = @("sync", "--locked", "--offline", "--python", $BundledPython, "--no-python-downloads")
-if ($env:LES_TAURI_SHELL -eq "1") {
+$SelectedExtra = if ($env:LES_TAURI_SHELL -eq "1") { "windows-reranker" } else { "desktop" }
+$UvSyncArgs = @(
+  "sync", "--locked", "--offline", "--python", $BundledPython,
+  "--no-python-downloads", "--extra", $SelectedExtra
+)
+if ($SelectedExtra -eq "windows-reranker") {
   Log "uv sync with bundled Python (Tauri owns desktop shell)" # command fragment: --extra windows-reranker
-  $UvSyncArgs += @("--extra", "windows-reranker")
 } else {
   Log "uv sync with bundled Python --extra desktop (legacy fallback)"
-  $UvSyncArgs += @("--extra", "desktop")
 }
-# uv writes normal progress (including the selected interpreter) to stderr.
-# Windows PowerShell 5.1 turns native stderr into a terminating error while the
-# bootstrap-wide ErrorActionPreference is Stop, so capture it under Continue
-# and decide solely from the native exit code below.
-$previousErrorActionPreference = $ErrorActionPreference
+
+$VenvMarker = Join-Path $State.state_root "artifacts\venv-contract.json"
 try {
-  $ErrorActionPreference = "Continue"
-  $uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)
-  $uvSyncExitCode = $LASTEXITCODE
-} finally {
-  $ErrorActionPreference = $previousErrorActionPreference
-}
-foreach ($line in $uvSyncOutput) {
-  $safeLine = [regex]::Replace([string]$line, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
-  if ($safeLine) { Log "uv: $safeLine" }
-}
-if ($uvSyncExitCode -ne 0) {
-  if (-not $VenvWasUsable -and (Test-Path -LiteralPath $VenvPath)) {
-    Remove-Item -LiteralPath $VenvPath -Recurse -Force -ErrorAction SilentlyContinue
-  }
-  $uvDetail = (($uvSyncOutput | Where-Object { $_ } | Select-Object -Last 6) -join " | ").Trim()
-  $uvDetail = [regex]::Replace($uvDetail, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
-  if ($uvDetail.Length -gt 900) { $uvDetail = $uvDetail.Substring(0, 900) }
-  if (-not $uvDetail) { $uvDetail = "uv не вернул диагностический текст" }
-  Fail "встроенное окружение ЛЕС не развернулось (код $uvSyncExitCode): $uvDetail. Переустановите ЛЕС" `
+  $ExpectedVenvContract = Get-LesVenvContract `
+    -Root $Root -State $State -BundledPython $BundledPython -Uv $Uv `
+    -Extra $SelectedExtra -CacheRoot $env:UV_CACHE_DIR
+} catch {
+  Fail "не удалось вычислить контракт Python-окружения: $($_.Exception.Message)" `
     "bundled_runtime_unavailable"
+}
+$VenvHealthy = Test-LesVenvHealth -Python $VenvPython
+$VenvContractMatches = Test-LesVenvContract `
+  -Expected $ExpectedVenvContract -MarkerPath $VenvMarker
+
+if ($VenvHealthy -and $VenvContractMatches) {
+  $script:EnvironmentAction = "skipped"
+  Log "Python environment matches uv.lock/runtime/cache contract; uv sync skipped"
+  Write-Status -Phase "python" -State "running" -Message "Python-окружение уже проверено"
+} else {
+  $EnvironmentWasUnhealthy = -not $VenvHealthy
+  if ($EnvironmentWasUnhealthy -and (Test-Path -LiteralPath $VenvPath)) {
+    Log "removing incomplete or broken Python environment: $VenvPath"
+    Remove-Item -LiteralPath $VenvPath -Recurse -Force
+  }
+  # PowerShell 5.1 promotes native stderr to terminating records under Stop.
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    $ErrorActionPreference = "Continue"
+    $uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)
+    $uvSyncExitCode = $LASTEXITCODE
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+  }
+  foreach ($line in $uvSyncOutput) {
+    $safeLine = [regex]::Replace([string]$line, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
+    if ($safeLine) { Log "uv: $safeLine" }
+  }
+  if ($uvSyncExitCode -ne 0) {
+    if ($EnvironmentWasUnhealthy -and (Test-Path -LiteralPath $VenvPath)) {
+      Remove-Item -LiteralPath $VenvPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $uvDetail = (($uvSyncOutput | Where-Object { $_ } | Select-Object -Last 6) -join " | ").Trim()
+    $uvDetail = [regex]::Replace($uvDetail, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
+    if ($uvDetail.Length -gt 900) { $uvDetail = $uvDetail.Substring(0, 900) }
+    if (-not $uvDetail) { $uvDetail = "uv не вернул диагностический текст" }
+    Fail "Python-окружение ЛЕС не восстановлено (код $uvSyncExitCode): $uvDetail" `
+      "python_environment_invalid"
+  }
+  if (-not (Test-LesVenvHealth -Python $VenvPython)) {
+    Remove-Item -LiteralPath $VenvMarker -Force -ErrorAction SilentlyContinue
+    Fail "Python-окружение собрано, но не проходит импорт core ЛЕС" `
+      "python_environment_invalid"
+  }
+  Write-LesVenvContractAtomically `
+    -Contract $ExpectedVenvContract -MarkerPath $VenvMarker
+  $script:EnvironmentAction = if ($EnvironmentWasUnhealthy) { "repaired" } else { "synced" }
+  Log "Python environment action: $script:EnvironmentAction"
 }
 
 # A clean install must be able to resolve norms and calculate normative resource
@@ -362,7 +398,7 @@ if (-not (Test-Path -LiteralPath $SmetaBaseline)) {
   # Updates must recover a partial/corrupt local baseline as well as provision a
   # clean machine. `repair` verifies healthy state without touching it and moves
   # only a broken set into storage/recovery before restoring the signed archive.
-  $baselineResult = & $Uv run python tools\smeta_release_baseline.py repair `
+  $baselineResult = & $Uv run --no-sync python tools\smeta_release_baseline.py repair `
     --archive $SmetaBaseline --state-root $StateRoot
   if ($LASTEXITCODE -ne 0) {
     Warn "сметная база недоступна: $($baselineResult -join ' '); остальные модули запускаются"
@@ -390,7 +426,7 @@ if ($env:LES_TAURI_SHELL -eq "1") {
 }
 
 # --- 3. .env + directories --------------------------------------------------
-& $Uv run lesctl init --profile windows-lite 2>$null | Out-Null
+& $Uv run --no-sync lesctl init --profile windows-lite 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { Fail "не удалось инициализировать Windows-профиль ЛЕС" "les_init_failed" }
 
 # --- 3a. Classic Outlook read-only collector -------------------------------
@@ -444,7 +480,10 @@ function Test-DockerEngine {
   return ($LASTEXITCODE -eq 0)
 }
 
-if (-not (Test-DockerEngine)) {
+$dockerEngineReady = Test-DockerEngine
+if (-not $dockerEngineReady) {
+  Warn "Docker Desktop не установлен или engine не запущен; core ЛЕС продолжает запуск" `
+    "docker_engine_unavailable"
   Warn "локальный индекс Qdrant недоступен: Docker Desktop не установлен или не запущен" `
     "qdrant_unavailable"
 }
@@ -452,7 +491,7 @@ if (-not (Test-DockerEngine)) {
 Write-Status -Phase "qdrant" -State "running" -Message "Проверяю Qdrant"
 $qdrantUp = $false
 try { $null = Invoke-RestMethod "http://127.0.0.1:6333/collections" -TimeoutSec 2; $qdrantUp = $true } catch { }
-if ((-not $qdrantUp) -and (Test-DockerEngine)) {
+if ((-not $qdrantUp) -and $dockerEngineReady) {
   Log "starting qdrant via docker"
   & $Docker volume create les-qdrant-data | Out-Null
   if ($LASTEXITCODE -eq 0) {
@@ -529,7 +568,7 @@ if ($env:LES_TAURI_SHELL -eq "1") {
   }
 } else {
   Log "les_shell (legacy fallback)"
-  & $Uv run python -m tools.les_shell | Out-File -FilePath $Log -Append -Encoding utf8
+  & $Uv run --no-sync python -m tools.les_shell | Out-File -FilePath $Log -Append -Encoding utf8
   if ($LASTEXITCODE -ne 0) { Fail "не удалось запустить шелл" }
 }
 

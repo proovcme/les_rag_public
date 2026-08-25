@@ -69,6 +69,8 @@ WINDOWS_BEHAVIOR_TESTS = (
     "tests/test_parse_admission_windows.py",
 )
 UPDATER_BEHAVIOR_TESTS = (
+    "tests/test_release_classification.py",
+    "tests/test_github_patch_release.py",
     "tests/test_patch_release.py",
     "tests/test_vps_patch.py",
     "tests/test_windows_application_update.py",
@@ -88,6 +90,8 @@ UPDATER_COMPILE_TARGETS = (
     "proxy/services/update_service.py",
     "proxy/routers/updates.py",
     "sovushka/components/header.py",
+    "tools/release_classification.py",
+    "tools/github_patch_release.py",
 )
 CURRENT_LES_TESTS = tuple(
     sorted(

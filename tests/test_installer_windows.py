@@ -15,6 +15,7 @@ def test_stage_runtime_copies_clean_export_with_app_files(tmp_path):
 
     # The Windows bootstrap shipped inside the runtime export.
     assert (dest / "installers" / "windows" / "app" / "bootstrap.ps1").is_file()
+    assert (dest / "installers" / "windows" / "app" / "venv-contract.ps1").is_file()
     assert (dest / "installers" / "windows" / "state.ps1").is_file()
     assert (dest / "installers" / "windows" / "app" / "launcher.vbs").is_file()
     assert (dest / "installers" / "windows" / "app" / "LES.nsi").is_file()
@@ -71,6 +72,34 @@ def test_windows_bootstrap_reports_the_installed_runtime_root():
 
     assert "$env:LES_RUNTIME_HOME = $Root" in bootstrap
     assert "$env:LES_REPO_ROOT = $Root" in bootstrap
+    assert ". $VenvContractScript" in bootstrap
+
+
+def test_windows_bootstrap_skips_exact_healthy_environment_and_never_implicitly_syncs():
+    bootstrap = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    contract_check = bootstrap.index("Test-LesVenvContract")
+    sync_call = bootstrap.index("& $Uv @UvSyncArgs")
+    assert contract_check < sync_call
+    assert '$script:EnvironmentAction = "skipped"' in bootstrap
+    assert '"python_environment_invalid"' in bootstrap
+    assert "run --no-sync python tools\\smeta_release_baseline.py" in bootstrap
+    assert "run --no-sync lesctl init" in bootstrap
+
+
+def test_windows_bootstrap_marks_docker_and_qdrant_as_optional_capabilities():
+    bootstrap = (
+        build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert '"docker_engine_unavailable"' in bootstrap
+    assert '"qdrant_unavailable"' in bootstrap
+    assert '$env:LES_RELEASE_SMOKE_DISABLE_DOCKER -eq "1"' in bootstrap
+    assert '$env:LES_RELEASE_SMOKE -eq "1"' in bootstrap
+    ready = bootstrap[bootstrap.rindex('Write-Status -Phase "ready"') :]
+    assert 'State "ready"' in ready
 
 
 def test_windows_light_start_always_exports_runtime_identity():
@@ -172,7 +201,7 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert raw[:3] == b"\xef\xbb\xbf"
     assert "[int]$BootstrapTimeoutSeconds = 900" in text
     assert 'Start-Process -FilePath "powershell.exe"' in text
-    assert 'bootstrapStatus.state -in @("ready", "failed")' in text
+    assert 'status.state -in @("ready", "failed")' in text
     assert 'windows-light-state.json' in text
     assert '/api/version' in text
     assert '$env:RAG_COLLECTION_NAME = $smokeCollection' in text
@@ -200,6 +229,21 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert 'runtimeProcess.Name -notin @("python.exe", "pythonw.exe")' in text
     assert "cmd.exe wrapper process(es)" in text
     assert "bootstrap PowerShell stayed alive after terminal ready" in text
+
+
+def test_windows_release_smoke_requires_two_consecutive_offline_bootstraps():
+    smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
+    text = smoke.read_text(encoding="utf-8-sig")
+
+    assert "function Invoke-BootstrapPass" in text
+    assert 'Invoke-BootstrapPass -PassName "first"' in text
+    assert 'Invoke-BootstrapPass -PassName "second"' in text
+    assert '$result.bootstrap_first.environment_action' in text
+    assert '$result.bootstrap_second.environment_action' in text
+    assert '$secondBootstrap.status.environment_action -ne "skipped"' in text
+    assert "second offline bootstrap unexpectedly rebuilt the Python environment" in text
+    assert 'docker_engine_unavailable' in text
+    assert '$secondBootstrap.status.state -eq "ready"' in text
 
 
 def test_start_light_uses_direct_console_free_python_processes():
@@ -433,23 +477,25 @@ def test_windows_uv_cache_is_extracted_by_bundled_python_not_expand_archive():
     assert "function Require-Setup" not in text
     assert '"ollama_missing"' not in text
     assert '"docker_missing"' not in text
-    assert '"docker_engine_unavailable"' not in text
+    assert '"docker_engine_unavailable"' in text
     assert '"qdrant_health_failed"' not in text
     assert '"qdrant_unavailable"' in text
     assert 'Write-Status -Phase "setup" -State "setup_required"' not in text
 
 
-def test_windows_bootstrap_repairs_and_reports_uv_sync():
+def test_windows_bootstrap_repairs_only_on_contract_or_health_failure():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
     assert '$env:UV_CACHE_DIR' in text
-    assert '$VenvWasUsable' in text
+    assert '$VenvContractMatches' in text
+    assert '$VenvHealthy' in text
     assert 'removing incomplete or broken Python environment' in text
-    assert '@("sync", "--locked", "--offline", "--python", $BundledPython, "--no-python-downloads")' in text
+    assert '"sync", "--locked", "--offline", "--python", $BundledPython' in text
+    assert 'if ($VenvHealthy -and $VenvContractMatches)' in text
     assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in text
     assert 'Log "uv: $safeLine"' in text
-    assert '"bundled_runtime_unavailable"' in text
+    assert '"python_environment_invalid"' in text
 
 
 def test_windows_bootstrap_writes_machine_readable_status_for_tauri():

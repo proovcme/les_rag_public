@@ -23,6 +23,22 @@ from sovushka.uikit.components import (
 MODE_ORDER = ("search", "agent", "estimator", "engineer")
 
 
+def profile_text_budget(
+    registry: dict[str, Any], kind: str, text: str
+) -> dict[str, Any]:
+    limits = registry.get("text_limits") or {}
+    limit = int(limits.get(kind) or 0)
+    current = len(str(text or "").strip())
+    over_limit = limit <= 0 or current > limit
+    tone = "error" if over_limit else "warn" if current == limit else "muted"
+    return {
+        "current": current,
+        "limit": limit,
+        "tone": tone,
+        "over_limit": over_limit,
+    }
+
+
 def _profile(registry: dict[str, Any], mode: str) -> dict[str, Any]:
     return next(
         (item for item in registry.get("profiles") or [] if item.get("mode") == mode),
@@ -164,6 +180,14 @@ def build_profiles():
 
     async def _save() -> None:
         draft = state["draft"]
+        registry = state["registry"]
+        exceeded = [
+            profile_text_budget(registry, kind, draft.get(f"{kind}_text") or "")
+            for kind in ("prompt", "skill")
+        ]
+        if any(item["over_limit"] for item in exceeded):
+            ui.notify("Превышен лимит текста; сократите промпт или скилл", type="warning")
+            return
         prompt = await api_post(
             "/api/profiles/text-revisions",
             {
@@ -259,6 +283,29 @@ def build_profiles():
         profile = _profile(registry, mode)
         revision = _revision(registry, mode, state["revision_id"])
         draft = state["draft"]
+        text_limits = registry.get("text_limits") or {}
+        controls: dict[str, Any] = {"save": None}
+
+        def _update_budget(kind: str, badge: Any) -> None:
+            budget = profile_text_budget(registry, kind, draft.get(f"{kind}_text") or "")
+            suffix = " · Превышен лимит" if budget["over_limit"] else ""
+            badge.set_text(f"{budget['current']} / {budget['limit']}{suffix}")
+            badge.classes(
+                remove="sov-ui-status--muted sov-ui-status--warn sov-ui-status--error",
+                add=f"sov-ui-status--{budget['tone']}",
+            )
+            save_button = controls.get("save")
+            if save_button is not None:
+                prompt_over = profile_text_budget(
+                    registry, "prompt", draft.get("prompt_text") or ""
+                )["over_limit"]
+                skill_over = profile_text_budget(
+                    registry, "skill", draft.get("skill_text") or ""
+                )["over_limit"]
+                if prompt_over or skill_over or not text_limits:
+                    save_button.disable()
+                else:
+                    save_button.enable()
         with workspace:
             with panel(variant="plain", classes="w-full"):
                 section_heading("Режим", "Каждая кнопка — отдельный заводской профиль.")
@@ -331,6 +378,7 @@ def build_profiles():
                 with panel(variant="inset", classes="w-full"):
                     with ui.row().classes("w-full items-center justify-between gap-2 flex-wrap"):
                         section_heading("Промпт", "Системная роль и правила ответа.")
+                        prompt_counter = status_badge("", "muted")
                         prompt_dialog = _choose_dialog("prompt")
                         action_button(
                             "Выбрать промпт",
@@ -339,19 +387,24 @@ def build_profiles():
                             variant="secondary",
                         )
                     prompt_preview = ui.markdown(draft.get("prompt_text") or "").classes("w-full")
+
+                    def _prompt_changed(event: Any) -> None:
+                        value = str(event.value or "")
+                        draft["prompt_text"] = value
+                        prompt_preview.set_content(value)
+                        _update_budget("prompt", prompt_counter)
+
                     prompt_editor = ui.codemirror(
                         value=draft.get("prompt_text") or "",
                         language="Markdown",
                         line_wrapping=True,
-                        on_change=lambda event: (
-                            draft.__setitem__("prompt_text", str(event.value or "")),
-                            prompt_preview.set_content(str(event.value or "")),
-                        ),
+                        on_change=_prompt_changed,
                     ).classes("w-full")
 
                 with panel(variant="inset", classes="w-full"):
                     with ui.row().classes("w-full items-center justify-between gap-2 flex-wrap"):
                         section_heading("Скилл", "Рабочая методика модели в Markdown.")
+                        skill_counter = status_badge("", "muted")
                         skill_dialog = _choose_dialog("skill")
                         action_button(
                             "Выбрать скилл",
@@ -360,14 +413,18 @@ def build_profiles():
                             variant="secondary",
                         )
                     skill_preview = ui.markdown(draft.get("skill_text") or "").classes("w-full")
+
+                    def _skill_changed(event: Any) -> None:
+                        value = str(event.value or "")
+                        draft["skill_text"] = value
+                        skill_preview.set_content(value)
+                        _update_budget("skill", skill_counter)
+
                     skill_editor = ui.codemirror(
                         value=draft.get("skill_text") or "",
                         language="Markdown",
                         line_wrapping=True,
-                        on_change=lambda event: (
-                            draft.__setitem__("skill_text", str(event.value or "")),
-                            skill_preview.set_content(str(event.value or "")),
-                        ),
+                        on_change=_skill_changed,
                     ).classes("w-full")
 
             with panel(variant="plain", classes="w-full"):
@@ -433,11 +490,14 @@ def build_profiles():
                 )
 
             with ui.row().classes("w-full justify-end"):
-                action_button(
+                save_button = action_button(
                     "Сохранить версию",
                     icon="o_save",
                     on_click=_save,
                     variant="primary",
                 )
+                controls["save"] = save_button
+                _update_budget("prompt", prompt_counter)
+                _update_budget("skill", skill_counter)
 
     asyncio.create_task(_load(keep_mode=False))

@@ -7,6 +7,15 @@
 > Upload и global auto-resume сериализованы одним parse semaphore, поэтому first-run supervisor
 > не индексирует только что загруженный smoke/user document параллельно второй раз.
 
+> **0.28.2 implemented, 0.28.3 → 0.29.1 planned:** идемпотентный offline bootstrap,
+> profile text limits и GitHub update channel реализованы; далее узкий estimator-only LSR/VOR tool slice, после него
+> общий Tool Registry/Executor + ContextGovernor +
+> memory projection с отдельными Qwen 9B/35B presets, затем approval-gated
+> actions. Это 📋 design, не описание текущего кода: [bootstrap design](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+> [GitHub update channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md)
+> [LSR/VOR tools design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
+> и [agent foundation design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная
@@ -104,6 +113,7 @@
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
+| smeta/estimator-tools | Planned `0.28.3`: estimator-only inspect/status/VOR-draft/LSR-draft поверх существующего application-adapter; model-owned selection, compact 9B result, SSE heartbeat и checkpoint/resume; без hidden routing, auto-activation и правок `smeta_core` | planned `proxy/services/estimator_tool_service.py`; existing `tool_harness_service.py`, `smeta_chat_application_service.py`, chat/profile routes | [design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md) | 📋 |
 | smeta/model-quality | Воспроизводимый live Qwen↔Gemma A/B на одном canonical XLSX/PDF→ЛСР workflow: одинаковые prompt, corpus, tools, seed, limits и начальное состояние; per-row calculated/partial/missing, tool calls/repeats, **stage_latency** (catalog/search/read/bind/llm p50/p95), unit/volume/provenance integrity, hierarchical-route trace и реальный checkpoint/resume. `--resume-run` продолжает существующий run только после совпадения source SHA, model profiles и fixed contract. Главный сравнительный gate вместо golden/ranx. Профессиональная правильность — только по явному `les.smeta.qrels.v1` | `tools/smeta_model_quality_benchmark.py`; `tests/test_smeta_model_quality_benchmark.py` | [modules/smeta-core.md](modules/smeta-core.md) · [BACKLOG_RAG_EXCEL_PDF.md](BACKLOG_RAG_EXCEL_PDF.md) | ✅ |
 | core/modules | лёгкий реестр профессиональных модулей LES: smeta, normcontrol, BIM/QTO, docs_review, procurement, contracts, project RAG; router выбирает модуль, но не решает предметную область | `les_module_service`, `active_state_service`, `scoped_rag_builder`, `skill_snippet_registry`, `tool_trace_policy` | [ALGO-routing.md](ALGO-routing.md) | ✅ |
 | core/chat-evidence | application-граница общего model-first RAG после scope/route и typed tools: `bge-m3` query embedding → named dense+sparse native RRF → capacity-aware evidence packet → model answer → validation → sources/trace/history. Cross-encoder reranker — только opt-in эксперимент: его отсутствие сохраняет исходный RRF-порядок и не удаляет evidence. Кодовый professional visible-final запрещён; glossary/registry возвращают только evidence. Router передаёт три явных typed-контракта `EvidenceRequestContext`, `EvidenceRuntimeDeps`, `ResponseBoundary`; namespace capture запрещён. FreeToken — отдельный local transport profile: no-thinking, GUI-owned token window, generation reserve, dialogue-first prompt fit и общий multi-document evidence assembler без provider-specific chunk cap; embeddings остаются на Ollama | `proxy/services/chat_evidence_application_service.py`, `proxy/services/llm_transport_profile_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service`, `saferag_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [FreeToken design](superpowers/specs/2026-08-22-freetoken-local-provider-design.md) | ✅ |
@@ -111,7 +121,8 @@
 | core/public-provider-session | обязательный выбор локальной или BYOK-облачной модели после публичного ключа; API-ключ хранится только в process-memory vault с TTL, runtime изолирован `ContextVar`, общий `.env` не меняется | `sovushka/{auth,provider_setup,provider_session,state}.py`, `proxy/services/chat_provider_session_service.py`, `proxy/routers/chat.py`, `/provider-setup`, `/api/chat[/stream]` | [modules/public-provider-session.md](modules/public-provider-session.md) | ✅ |
 | core/test-infrastructure | комплексная автоматизированная тестовая инфраструктура: unit, offline smoke, test runner, coverage и CI отчёты | `tools/test_runner.py`, `tests/test_smoke_offline.py`, `tests/test_unit_core_business.py`, `Makefile` | [TESTING_GUIDE.md](TESTING_GUIDE.md) · [TEST_INVENTORY.md](TEST_INVENTORY.md) | ✅ |
 | core/runtime-config | GUI-first реестр всех обнаруженных runtime/env-факторов: effective source, masked secrets, read-only bootstrap, restart marker, `Danger` confirmation и recoverable atomic write. Advanced RAG policy хранится отдельно от env и не допускает скрытого override | `proxy/services/runtime_config_registry_service.py`, `proxy/services/rag_advanced_policy_service.py`, `proxy/routers/settings.py`, `proxy/routers/rag_advanced.py`, `sovushka/pages/diag.py` | [modules/sovushka-uikit.md](modules/sovushka-uikit.md) | ✅ |
-| core/chat-profiles | Immutable Factory Base и пользовательские версии prompt/skill/profile; четыре явных режима, tool allowlist, model/RAG policy, active revision и per-chat snapshot binding в MetaDB. Новый GUI — один экран «Конфигурация → Профили»; текущий чат меняет snapshot только явно | `proxy/services/chat_profile_service.py`, `proxy/routers/profiles.py`, `proxy/services/profile_resolver.py`, `proxy/routers/chat.py`, `sovushka/pages/profiles.py` | [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [design](superpowers/specs/2026-08-24-chat-profile-studio-design.md) | ✅ |
+| core/chat-profiles | Immutable Factory Base и пользовательские версии prompt/skill/profile; четыре явных режима, tool allowlist, model/RAG policy, active revision и per-chat snapshot binding в MetaDB. Prompt ограничен 16 000, skill — 8 000 символов; сервер публикует authoritative budgets, GUI показывает счётчики и блокирует превышение, а legacy oversized revision остаётся читаемой. Текущий чат меняет snapshot только явно | `proxy/services/chat_profile_service.py`, `proxy/routers/profiles.py`, `proxy/services/profile_resolver.py`, `proxy/routers/chat.py`, `sovushka/pages/profiles.py` | [modules/chat-profiles.md](modules/chat-profiles.md) · [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [design](superpowers/specs/2026-08-24-chat-profile-studio-design.md) | ✅ |
+| core/agent-foundation | Planned общий registry/broker/executor для внутренних tools и MCP, централизованный context budget, общая memory projection и Qwen 9B/35B presets; read-only migration в 0.29.0, controlled actions в 0.29.1 | planned | [design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md) | 📋 |
 
 ## 1. Смета (ценообразование, 0 LLM в расчёте — ADR-11)
 
@@ -786,6 +797,7 @@ Qdrant payload-индексы создаются best-effort после гото
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
+| ops/github-update-channel | Planned `0.28.2`: GitHub Releases становится default для full и lightweight patch releases; immutable latest feed + tag-specific hashed asset, deterministic patch/full classifier, isolated apply/rollback; VPS не fallback | planned `tools/{release_classification,github_patch_release}.py`; existing `vps_patch.py`, `vps_patch_apply.py`, `update_service.py` | [design](superpowers/specs/2026-08-25-github-release-update-channel-design.md) | 📋 |
 > `ops/vps-patch` (0.27.13): `tools/vps_patch.py update-local` сам читает exact deployed commit,
 > формирует допустимый runtime diff и выполняет локальное обновление через Limited Scheduled Task
 > без SSH, UAC и ручного списка файлов.
