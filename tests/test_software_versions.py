@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 
 from proxy.services import version_service
@@ -64,3 +65,13 @@ def test_software_version_passport_records_required_runtime():
 
 def test_version_surfaces_have_no_drift():
     assert sync_version_contract.drifted_surfaces() == []
+
+
+def test_offline_python_support_matches_bundled_runtime():
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    bundled = json.loads((ROOT / "config/windows_python.json").read_text(encoding="utf-8"))
+
+    assert project["project"]["requires-python"].replace(" ", "") == ">=3.12,<3.14"
+    assert lock["requires-python"].replace(" ", "") == ">=3.12,<3.14"
+    assert bundled["version"] == "3.13.12"
