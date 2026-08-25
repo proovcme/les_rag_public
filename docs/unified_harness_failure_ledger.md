@@ -12,6 +12,15 @@
 - **Scope:** scheduling/consistency only. Retrieval ranking, prompts, providers and `smeta_core`
   were not changed.
 
+## 2026-08-25 — Offline cold bootstrap exceeded the legacy smoke timeout
+
+- **Symptom:** the second isolated install stayed healthy but the 480-second release-smoke deadline
+  expired as status moved from cache extraction to locked `uv sync`.
+- **Evidence:** the 421 MB archive expanded to 39,577 files / 1.305 GB in about 470 seconds on the
+  Windows release host; stderr remained empty and the next phase was reached.
+- **Fix:** measured cold-bootstrap allowance is 900 seconds and troubleshooting documents the
+  expected 8–15 minute first run. The terminal `ready|failed` requirement remains fail-closed.
+
 Реестр поведения на operational-смоуке. `no_data`/`MISSING` с честным evidence — НЕ баг, а
 корректный отказ. Баг — только системная ошибка, фейковый источник или маршрут не туда.
 

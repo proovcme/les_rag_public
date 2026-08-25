@@ -170,6 +170,7 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
 
     # Windows PowerShell 5 needs the BOM for the Russian smoke question.
     assert raw[:3] == b"\xef\xbb\xbf"
+    assert "[int]$BootstrapTimeoutSeconds = 900" in text
     assert 'Start-Process -FilePath "powershell.exe"' in text
     assert 'bootstrapStatus.state -in @("ready", "failed")' in text
     assert 'windows-light-state.json' in text
