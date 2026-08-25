@@ -14,9 +14,33 @@
 dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          не назначен
+следующий выпуск:          0.28.2 (planned; design only, implementation pending)
 рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
 ```
+
+> **Planned 0.28.2 — installer/profile integrity:** исправить два подтверждённых
+> дефекта Windows bootstrap: Docker/Qdrant не могут быть fatal для LES core, а
+> проверенное окружение не должно выполнять `uv sync` на каждом запуске. План:
+> lock-bound marker, sync только при изменении lock/runtime или нездоровом venv,
+> `requires-python >=3.12,<3.14`, двойной последовательный offline-install smoke,
+> раздельные диагностики Docker/Qdrant/Python и лимиты пользовательских skill/prompt
+> 8 000/16 000 символов со счётчиками и server-side reject. Статус: проект
+> дизайна оформлен и ожидает owner review; код не изменён, release candidate не собран.
+
+> **Planned 0.29.0 — Agent Foundation:** единый provider-neutral Tool Registry для
+> внутренних tools и MCP, Capability Broker, Trusted Executor, `ContextGovernor`,
+> общая typed-проекция существующей памяти и отдельные presets для Qwen 3.5 9B и
+> Qwen 35B. Read-only tools мигрируют первыми. Каждый основной workflow обязан
+> проходить на локальной 9B. Статус: проект дизайна ожидает owner review,
+> implementation pending.
+
+> **Planned 0.29.1 — controlled actions:** typed compute, автоматические draft и
+> append-only revision tools; commit/finalization, внешние и destructive действия
+> только после явного подтверждения; idempotency keys и action receipts одинаковы
+> для MCP и внутренних вызовов. Статус: planned, не поставлено.
+
+> Дизайн planned-линии: [Windows bootstrap 0.28.2](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+> и [Agent Tool + Context + Memory 0.29.x](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
 
 > **0.28.1 / build 588:** Windows package содержит SHA-256-проверенные portable Python/uv,
 > exact `uv.lock` и offline dependency cache; bootstrap не зависит от system Python/uv,

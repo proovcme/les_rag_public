@@ -7,6 +7,12 @@
 > Upload и global auto-resume сериализованы одним parse semaphore, поэтому first-run supervisor
 > не индексирует только что загруженный smoke/user document параллельно второй раз.
 
+> **Planned 0.28.2 → 0.29.1:** сначала идемпотентный offline bootstrap и
+> profile text limits, затем общий Tool Registry/Executor + ContextGovernor +
+> memory projection с отдельными Qwen 9B/35B presets, затем approval-gated
+> actions. Это 📋 design, не описание текущего кода: [bootstrap design](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+> и [agent foundation design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная
@@ -112,6 +118,7 @@
 | core/test-infrastructure | комплексная автоматизированная тестовая инфраструктура: unit, offline smoke, test runner, coverage и CI отчёты | `tools/test_runner.py`, `tests/test_smoke_offline.py`, `tests/test_unit_core_business.py`, `Makefile` | [TESTING_GUIDE.md](TESTING_GUIDE.md) · [TEST_INVENTORY.md](TEST_INVENTORY.md) | ✅ |
 | core/runtime-config | GUI-first реестр всех обнаруженных runtime/env-факторов: effective source, masked secrets, read-only bootstrap, restart marker, `Danger` confirmation и recoverable atomic write. Advanced RAG policy хранится отдельно от env и не допускает скрытого override | `proxy/services/runtime_config_registry_service.py`, `proxy/services/rag_advanced_policy_service.py`, `proxy/routers/settings.py`, `proxy/routers/rag_advanced.py`, `sovushka/pages/diag.py` | [modules/sovushka-uikit.md](modules/sovushka-uikit.md) | ✅ |
 | core/chat-profiles | Immutable Factory Base и пользовательские версии prompt/skill/profile; четыре явных режима, tool allowlist, model/RAG policy, active revision и per-chat snapshot binding в MetaDB. Новый GUI — один экран «Конфигурация → Профили»; текущий чат меняет snapshot только явно | `proxy/services/chat_profile_service.py`, `proxy/routers/profiles.py`, `proxy/services/profile_resolver.py`, `proxy/routers/chat.py`, `sovushka/pages/profiles.py` | [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [design](superpowers/specs/2026-08-24-chat-profile-studio-design.md) | ✅ |
+| core/agent-foundation | Planned общий registry/broker/executor для внутренних tools и MCP, централизованный context budget, общая memory projection и Qwen 9B/35B presets; read-only migration в 0.29.0, controlled actions в 0.29.1 | planned | [design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md) | 📋 |
 
 ## 1. Смета (ценообразование, 0 LLM в расчёте — ADR-11)
 
