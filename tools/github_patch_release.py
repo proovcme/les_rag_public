@@ -90,6 +90,19 @@ def publish_github_patch_release(
     upstream = _git("rev-parse", "@{u}")
     if head != upstream:
         raise RuntimeError("release commit is not the pushed upstream commit")
+    feed_path = next(path for path in assets if path.name == "les-update.json")
+    try:
+        feed = json.loads(feed_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError("GitHub patch feed is unreadable") from exc
+    if feed.get("schema") != GITHUB_UPDATE_FEED_SCHEMA:
+        raise RuntimeError("GitHub patch feed schema is invalid")
+    if feed.get("repository") != REPOSITORY:
+        raise RuntimeError("GitHub patch feed repository is invalid")
+    if feed.get("tag") != tag:
+        raise RuntimeError("GitHub patch feed tag does not match release tag")
+    if feed.get("target_commit") != head:
+        raise RuntimeError("feed target commit does not match HEAD")
     if _git("tag", "--list", tag):
         raise RuntimeError(f"tag already exists: {tag}")
 

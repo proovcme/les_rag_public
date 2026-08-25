@@ -94,6 +94,15 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
         path = tmp_path / name
         path.write_bytes(b"verified")
         assets.append(path)
+    (tmp_path / "les-update.json").write_text(
+        json.dumps({
+            "schema": github_patch_release.GITHUB_UPDATE_FEED_SCHEMA,
+            "repository": github_patch_release.REPOSITORY,
+            "tag": "v0.28.2",
+            "target_commit": "c" * 40,
+        }),
+        encoding="utf-8",
+    )
     notes = tmp_path / "notes.md"
     notes.write_text("release notes", encoding="utf-8")
     commands: list[list[str]] = []
@@ -143,6 +152,15 @@ def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch)
         path = tmp_path / name
         path.write_bytes(b"verified")
         assets.append(path)
+    (tmp_path / "les-update.json").write_text(
+        json.dumps({
+            "schema": github_patch_release.GITHUB_UPDATE_FEED_SCHEMA,
+            "repository": github_patch_release.REPOSITORY,
+            "tag": "v0.28.2",
+            "target_commit": "c" * 40,
+        }),
+        encoding="utf-8",
+    )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
     monkeypatch.setattr(
@@ -161,3 +179,37 @@ def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError, match="already exists"):
         github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
     assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
+
+
+def test_publisher_refuses_feed_for_a_different_commit_before_github_calls(tmp_path, monkeypatch):
+    assets = []
+    for name in github_patch_release.ASSET_NAMES:
+        path = tmp_path / name
+        path.write_bytes(b"verified")
+        assets.append(path)
+    (tmp_path / "les-update.json").write_text(
+        json.dumps({
+            "schema": github_patch_release.GITHUB_UPDATE_FEED_SCHEMA,
+            "repository": github_patch_release.REPOSITORY,
+            "tag": "v0.28.2",
+            "target_commit": "d" * 40,
+        }),
+        encoding="utf-8",
+    )
+    notes = tmp_path / "notes.md"
+    notes.write_text("notes", encoding="utf-8")
+    monkeypatch.setattr(
+        github_patch_release,
+        "_git",
+        lambda *args: {
+            ("status", "--porcelain"): "",
+            ("rev-parse", "HEAD"): "c" * 40,
+            ("rev-parse", "@{u}"): "c" * 40,
+        }[args],
+    )
+    calls = []
+    monkeypatch.setattr(github_patch_release, "_run", lambda command, **_kwargs: calls.append(command))
+
+    with pytest.raises(RuntimeError, match="feed target commit does not match HEAD"):
+        github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
+    assert calls == []
