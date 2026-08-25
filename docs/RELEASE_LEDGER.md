@@ -10,12 +10,12 @@
 версия продукта (SemVer):  0.28.1 (public provider-neutral Windows release)
 номер сборки:              588
 версия Tauri/NSIS:         5.1.588
-ветка выпуска:             codex/les-0.27.37-ui-mail-agent
+ветка выпуска:             public/main; tag v0.28.1 → 45b2ea434f55876898fc2b3b0a4e49e54396542d
 dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.27.79 / build 586
-Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.25.0
-следующий выпуск:          LES-Setup.exe 0.28.1 после exact installed-artifact smoke
-рантайм /api/version:      Legion live 0.27.79 / build 586; `SMETA_NORMS_Index` = 49818 chunks
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
+Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
+следующий выпуск:          не назначен
+рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
 ```
 
 > **0.28.1 / build 588:** Windows package содержит SHA-256-проверенные portable Python/uv,
@@ -24,8 +24,11 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > OpenAI-compatible, embeddings и Qdrant: внешние компоненты пользовательские, ничего не
 > устанавливается и не выбирается автоматически, их отсутствие не блокирует LES core.
 > Добавлены публичные user/developer guides, полный troubleshooting и актуализированы SKILL,
-> MODULE_INDEX, CODE_MAP, platform/install docs и roadmap. Статус публикации меняется на
-> `released` только после зелёного exact-EXE smoke и GitHub Release того же commit.
+> MODULE_INDEX, CODE_MAP, platform/install docs и roadmap. Exact EXE
+> `706082f65674995f6a8c899a5e39f4a70e52b2452ef3ed1e0a7898a2257248c0` прошёл новый-state
+> smoke за 195,3 с: UI 200, 49 818 норм, 504 891 ресурсов и
+> `dense + qdrant_sparse + lexical → native RRF`. Production deploy завершён `ready`, user state
+> не изменён. Public tag и GitHub Release опубликованы на build commit `45b2ea43`.
 
 > **0.28.0 / build 587:** промпты, скиллы и разрешённые инструменты стали
 > пользовательскими versioned-профилями чата вместо разрозненных строк в коде.
