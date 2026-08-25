@@ -510,3 +510,17 @@ content-addressed persistent lookup.
 measurement); the builder automatically caches by `uv.lock` plus Python/uv contracts; both prepare
 and release smoke use GUID-qualified roots. Focused tests assert all three boundaries. A release is
 not publishable until one new-state installer smoke passes in a single run.
+
+## Operational incident 2026-08-25: production update rolled back a healthy cold start
+
+**Symptom:** the exact installer passed new-state release smoke, but production update returned
+`start-runtime failed (1)` and restored the previous application tree. User state remained intact.
+
+**Cause:** the real `les_rag` corpus needed about 82 seconds to import and expose `/api/version`.
+`windows_runtime.py` allowed only 60 seconds, so it terminated a healthy cold process. The outer
+transaction timeout was too close to that inner boundary to preserve useful diagnostics.
+
+**Fix/guard:** proxy readiness is bounded at 120 seconds and the outer updater command at 180
+seconds. The final health/index/RRF checks are unchanged and remain fail-closed; a regression test
+locks both limits. The failed deployment's automatic rollback is retained as positive evidence for
+the whole-tree recovery boundary.

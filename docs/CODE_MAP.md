@@ -351,6 +351,8 @@ projection под тем же alias; при rollback старый FTS восст
   а bootstrap распаковывает его bundled Python. `windows_{prepare_update,patch_release}.ps1` вместе
   с `windows-installer-hooks.nsh` создают уникальные install/state roots каждого smoke, поэтому
   ACL или частичный state прошлого запуска не влияют на следующий.
+  Холодный production-start допускает 120 с на импорт runtime до `/api/version`; внешний updater
+  ждёт его 180 с. Это наблюдаемый конечный лимит, а не бесконечное ожидание.
 - **Qdrant startup:** `QdrantLlamaIndexAdapter._ensure_collection()` публикует готовность коллекции
   до best-effort background `_ensure_payload_indexes()`; зависший `create_payload_index(wait=false)`
   больше не удерживает FastAPI lifespan.

@@ -716,6 +716,20 @@ def test_windows_update_orchestration_is_python_owned_and_file_backed():
     assert "tools/les_runtime_control.py" in vps_patch_apply.ALLOWED_FILES
 
 
+def test_cold_production_start_allows_real_windows_import_time():
+    engine_source = (ROOT / "tools" / "windows_update_engine.py").read_text(encoding="utf-8")
+    runtime_source = (ROOT / "tools" / "windows_runtime.py").read_text(encoding="utf-8")
+    start_runtime_block = engine_source.split("def start_runtime", 1)[1].split(
+        "def _ps_literal", 1
+    )[0]
+    proxy_wait_block = runtime_source.split("# /api/health performs", 1)[1].split(
+        "_wait_process_url(", 2
+    )[1]
+
+    assert "timeout=180" in start_runtime_block
+    assert "120," in proxy_wait_block
+
+
 def test_windows_runtime_environment_keeps_ollama_embedding_contract(tmp_path):
     runtime = tmp_path / "runtime"
     state = tmp_path / "LES"

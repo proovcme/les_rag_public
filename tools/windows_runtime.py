@@ -513,7 +513,7 @@ def start(
         _wait_process_url(
             proxy,
             f"http://127.0.0.1:{proxy_port}/api/version",
-            60,
+            120,
             label="proxy",
             stderr_path=proxy_stderr,
         )

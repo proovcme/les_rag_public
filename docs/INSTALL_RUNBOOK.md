@@ -120,6 +120,8 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    exact identity, API/UI, index contract и process contract. Пользовательские данные не входят
    в удаляемую область; провал smoke целиком возвращает предыдущее дерево. Outlook probe и
    доменная проверка остаются отдельными release-гейтами, а не частью install-транзакции.
+   Холодный импорт большого Windows runtime получает до 120 секунд до `/api/version`; управляющий
+   updater ограничен 180 секундами и затем делает обычный rollback.
 
 4. Публикация начинается только после проверки версии, номера сборки, commit, изолированного
    clean-install PDF+RRF smoke, production runtime/mail/desktop smoke и SHA-256.

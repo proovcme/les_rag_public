@@ -341,7 +341,7 @@ def start_runtime(runtime: Path, state: Path, log_root: Path) -> None:
         cwd=runtime,
         log_root=log_root,
         name="start-runtime",
-        timeout=120,
+        timeout=180,
         environment=environment,
         max_working_set_mb=512,
     )
