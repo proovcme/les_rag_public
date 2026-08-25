@@ -36,6 +36,7 @@ def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypat
     runtime.write_text("VALUE = 1\n", encoding="utf-8")
     base = _commit(repo, "base")
     runtime.write_text("VALUE = 2\n", encoding="utf-8")
+    (repo / "proxy" / "target_only.py").write_text("ADDED = True\n", encoding="utf-8")
     version = repo / "config" / "version.json"
     contract = json.loads(version.read_text(encoding="utf-8"))
     contract.update(product_version="0.28.2", build_number=589, desktop_version="5.1.589")
@@ -77,3 +78,8 @@ def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypat
     published = json.loads((output / "les-update.json").read_text(encoding="utf-8"))
     assert published["asset"]["url"].endswith("/v0.28.2/les-patch.zip")
     assert published["asset"]["bytes"] == (output / "les-patch.zip").stat().st_size
+    assert published["evidence"]["apply_ok"] is True
+    assert published["evidence"]["rollback_ok"] is True
+    assert published["evidence"]["new_file_removed_on_rollback"] is True
+    assert published["evidence"]["skipped_version_ok"] is True
+    assert set(published["evidence"]["durations_ms"]) == {"apply", "rollback", "skipped_version"}

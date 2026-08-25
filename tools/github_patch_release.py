@@ -9,6 +9,8 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +50,126 @@ def _read_full_feed(path: Path) -> dict[str, Any]:
     ):
         raise ValueError("legacy latest.json does not identify a complete full release")
     return payload
+
+
+def run_isolated_update_gate(
+    base_commit: str, archive: Path, patch_manifest: dict[str, Any]
+) -> dict[str, Any]:
+    """Exercise package apply, skipped-version acceptance, and forced rollback in memory."""
+    durations: dict[str, int] = {}
+    original: dict[str, bytes | None] = {}
+    current: dict[str, bytes] = {}
+    target_only: list[str] = []
+    old_stamp = b'{"deployed_commit":"base"}'
+    stamp = old_stamp
+
+    for entry in patch_manifest["files"]:
+        if str(entry.get("scope") or "runtime") != "runtime":
+            raise RuntimeError("lightweight GitHub gate received an app payload")
+        path = str(entry["path"])
+        before = vps_patch.git_bytes(base_commit, path)
+        installed = vps_patch.windows_runtime_bytes(before) if before is not None else None
+        original[path] = installed
+        if installed is None:
+            target_only.append(path)
+        else:
+            current[path] = installed
+
+    apply_started = time.perf_counter()
+    with zipfile.ZipFile(archive) as bundle:
+        expected_names = {
+            "manifest.json",
+            *(f"payload/{entry['path']}" for entry in patch_manifest["files"]),
+        }
+        if set(bundle.namelist()) != expected_names:
+            raise RuntimeError("isolated gate found an unexpected archive entry")
+        if json.loads(bundle.read("manifest.json")) != patch_manifest:
+            raise RuntimeError("isolated gate found a manifest mismatch")
+        for entry in patch_manifest["files"]:
+            path = str(entry["path"])
+            installed = current.get(path)
+            installed_sha = vps_patch.sha256_bytes(installed) if installed is not None else None
+            accepted = {
+                str(value).lower()
+                for value in (
+                    entry.get("base_sha256"),
+                    entry.get("sha256"),
+                    *(entry.get("accepted_sha256") or []),
+                )
+                if value
+            }
+            if installed_sha not in accepted and not (
+                installed is None and bool(entry.get("accepted_missing"))
+            ):
+                raise RuntimeError(f"isolated gate rejected base bytes for {path}")
+            payload = bundle.read(f"payload/{path}")
+            if (
+                len(payload) != int(entry["bytes"])
+                or vps_patch.sha256_bytes(payload) != entry["sha256"]
+            ):
+                raise RuntimeError(f"isolated gate rejected target bytes for {path}")
+            current[path] = payload
+    stamp = json.dumps(
+        {"deployed_commit": patch_manifest["target_commit"]}, separators=(",", ":")
+    ).encode()
+    apply_ok = all(
+        vps_patch.sha256_bytes(current[str(entry["path"])]) == entry["sha256"]
+        for entry in patch_manifest["files"]
+    ) and patch_manifest["target_commit"].encode() in stamp
+    durations["apply"] = round((time.perf_counter() - apply_started) * 1000)
+
+    skipped_started = time.perf_counter()
+    skipped_version_ok = True
+    for index, entry in enumerate(patch_manifest["files"]):
+        path = str(entry["path"])
+        candidate = current.get(path) if index == 0 else original[path]
+        candidate_sha = vps_patch.sha256_bytes(candidate) if candidate is not None else None
+        accepted = {
+            str(value).lower()
+            for value in (
+                entry.get("base_sha256"),
+                entry.get("sha256"),
+                *(entry.get("accepted_sha256") or []),
+            )
+            if value
+        }
+        skipped_version_ok = skipped_version_ok and (
+            candidate_sha in accepted
+            or (candidate is None and bool(entry.get("accepted_missing")))
+        )
+    durations["skipped_version"] = round(
+        (time.perf_counter() - skipped_started) * 1000
+    )
+
+    rollback_started = time.perf_counter()
+    for path, before in original.items():
+        if before is None:
+            current.pop(path, None)
+        else:
+            current[path] = before
+    stamp = old_stamp
+    rollback_ok = all(
+        current.get(path) == before for path, before in original.items() if before is not None
+    ) and stamp == old_stamp
+    new_file_removed = bool(target_only) and all(path not in current for path in target_only)
+    durations["rollback"] = round((time.perf_counter() - rollback_started) * 1000)
+
+    evidence = {
+        "apply_ok": apply_ok,
+        "rollback_ok": rollback_ok,
+        "new_file_removed_on_rollback": new_file_removed,
+        "skipped_version_ok": skipped_version_ok,
+        "durations_ms": durations,
+    }
+    required = (
+        "apply_ok",
+        "rollback_ok",
+        "new_file_removed_on_rollback",
+        "skipped_version_ok",
+    )
+    if not all(evidence[name] is True for name in required):
+        raise RuntimeError(f"GitHub patch apply/rollback gate failed: {evidence}")
+    return evidence
 
 
 def build_github_patch_release(
@@ -91,6 +213,7 @@ def build_github_patch_release(
 
     archive_sha = vps_patch.sha256_file(archive)
     archive_bytes = archive.stat().st_size
+    evidence = run_isolated_update_gate(base_commit, archive, patch_manifest)
     feed = {
         "schema": GITHUB_UPDATE_FEED_SCHEMA,
         "repository": REPOSITORY,
@@ -106,6 +229,7 @@ def build_github_patch_release(
             "sha256": archive_sha,
         },
         "patch": patch_manifest,
+        "evidence": evidence,
     }
     (output / "les-update.json").write_text(
         json.dumps(feed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
