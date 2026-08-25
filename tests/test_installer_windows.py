@@ -379,21 +379,24 @@ def test_windows_production_defaults_to_ollama_and_reads_persisted_choice():
     assert 'if (-not $Model -and $Provider -eq "ollama") { $Model = "qwen3.5:9b" }' in text
 
 
-def test_windows_bootstrap_requires_user_selected_models_without_pulling_them():
+def test_windows_bootstrap_does_not_choose_or_require_an_external_engine():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
-    assert "--provider ollama --ensure-platform windows" in text
-    assert "Рекомендуем qwen3.5:9b" in text
-    assert '$Ollama show "bge-m3:latest"' in text
+    assert "tools\\onboard_provider.py" not in text
+    assert "--provider ollama --ensure-platform windows" not in text
+    assert "Рекомендуем qwen3.5:9b" not in text
+    assert '$Ollama show "bge-m3:latest"' not in text
     assert "--extra windows-reranker" in text
-    assert "tools\\onboard_reranker.py" in text
+    assert "tools\\onboard_reranker.py" not in text
     assert '"BAAI/bge-reranker-v2-m3"' in (
         build_windows_installer.ROOT / "installers" / "windows" / "start-light.ps1"
     ).read_text(encoding="utf-8")
-    assert "$Ollama show $configuredModel" in text
+    assert "$Ollama show $configuredModel" not in text
     assert "$Ollama pull" not in text
-    assert 'Require-Setup "Модель $configuredModel не установлена.' in text
+    assert "function Require-Setup" not in text
+    assert '"answer_engine_unavailable"' in text
+    assert '"embedding_engine_unavailable"' in text
 
 
 def test_windows_bootstrap_bundles_core_and_defers_external_components_to_wizard():
@@ -415,14 +418,13 @@ def test_windows_bootstrap_bundles_core_and_defers_external_components_to_wizard
     assert "function Install-Uv" not in text
     assert "winget install --id=astral-sh.uv" not in text
     assert "irm https://astral.sh/uv/install.ps1" not in text
-    assert "function Require-Setup" in text
-    assert '"ollama_missing"' in text
-    assert '"docker_missing"' in text
-    assert "https://ollama.com/download/windows" in text
-    assert "https://www.docker.com/products/docker-desktop/" in text
-    assert '"docker_engine_unavailable"' in text
-    assert '"qdrant_health_failed"' in text
-    assert 'Write-Status -Phase "setup" -State "setup_required"' in text
+    assert "function Require-Setup" not in text
+    assert '"ollama_missing"' not in text
+    assert '"docker_missing"' not in text
+    assert '"docker_engine_unavailable"' not in text
+    assert '"qdrant_health_failed"' not in text
+    assert '"qdrant_unavailable"' in text
+    assert 'Write-Status -Phase "setup" -State "setup_required"' not in text
 
 
 def test_windows_bootstrap_repairs_and_reports_uv_sync():

@@ -28,15 +28,17 @@ $LogDir   = Join-Path $StateRoot "logs"
 $Log      = Join-Path $LogDir "bootstrap.log"
 $Status   = Join-Path $LogDir "bootstrap-status.json"
 $script:BootstrapWarnings = @()
+$script:BootstrapWarningCodes = @()
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $StateScript = Join-Path $Root "installers\windows\state.ps1"
 
 function Log([string]$m) { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $m" | Out-File -FilePath $Log -Append -Encoding utf8 }
 
-function Warn([string]$m) {
+function Warn([string]$m, [string]$Code = "bootstrap_degraded") {
   $script:BootstrapWarnings += $m
-  Log "WARN: $m"
+  $script:BootstrapWarningCodes += $Code
+  Log "WARN [$Code]: $m"
 }
 
 function Write-Status(
@@ -53,6 +55,7 @@ function Write-Status(
     message = $Message
     code = $Code
     install_url = $InstallUrl
+    warnings = @($script:BootstrapWarningCodes)
     log_path = $Log
     updated_at = [DateTime]::Now.ToString("o")
   }
@@ -101,12 +104,6 @@ function Fail([string]$m, [string]$Code = "bootstrap_failed", [string]$InstallUr
     } catch { }
   }
   exit 1
-}
-
-function Require-Setup([string]$m, [string]$Code = "setup_required", [string]$InstallUrl = "") {
-  Log "SETUP: $m"
-  Write-Status -Phase "setup" -State "setup_required" -Message $m -Code $Code -InstallUrl $InstallUrl
-  exit 0
 }
 
 trap {
@@ -418,118 +415,70 @@ try {
   Warn "сборщик Outlook не установлен: $($_.Exception.Message)"
 }
 
-# --- 3b. Provider onboarding (first run only) -------------------------------
-# No MLX on Windows. Non-interactive default = local ollama so the first chat
-# works without a cloud key; the operator switches provider/key/model in the
-# Sovushka GUI «Настройки» afterwards. Existing Windows-compatible cloud,
-# Ollama or Lemonade settings are preserved; a stale Mac-only MLX setting is
-# replaced before model onboarding so Windows never downloads MLX weights.
-& $Uv run python tools\onboard_provider.py --provider ollama --ensure-platform windows 2>$null | Out-Null
-if ($LASTEXITCODE -ne 0) { Fail "не удалось настроить локальный провайдер Ollama" "provider_init_failed" }
-
+# --- 3b. External capabilities ----------------------------------------------
+# LES never chooses or installs an answer engine for the user. The persisted
+# provider remains authoritative and is edited in Sovushka after the core UI is
+# available. Missing engines degrade their feature only; they do not block LES.
 $providerLine = Get-Content $env:LES_ENV_PATH -ErrorAction SilentlyContinue |
   Where-Object { $_ -match '^LES_LLM_PROVIDER=' } | Select-Object -Last 1
 $configuredProvider = if ($providerLine) { ($providerLine -split '=', 2)[1].Trim() } else { "" }
 
-if (($configuredProvider -eq "ollama") -and (-not $Ollama)) {
-  Require-Setup "Установите Ollama. Модель вы выберете и загрузите самостоятельно" `
-    "ollama_missing" "https://ollama.com/download/windows"
+if (-not $configuredProvider) {
+  Warn "движок ответа не выбран; выберите Ollama, FreeToken, Lemonade или совместимый API в настройках" `
+    "answer_engine_unavailable"
+} elseif (($configuredProvider -eq "ollama") -and (-not $Ollama)) {
+  Warn "настроена Ollama, но локальный сервер не обнаружен" "answer_engine_unavailable"
 }
-if (-not $Docker) {
-  Require-Setup "Установите Docker Desktop для локального хранилища документов" `
-    "docker_missing" "https://www.docker.com/products/docker-desktop/"
-}
-
-# --- 4. Model weights (only if a local HF model is configured) --------------
-# Cloud/ollama setups skip this; for a local provider it pre-pulls weights.
-Toast "Проверяю модели…"
-Write-Status -Phase "models" -State "running" -Message "Проверяю локальные модели"
-& $Uv run python tools\onboard_models.py --skip-if-cloud
-if ($LASTEXITCODE -ne 0) { Fail "загрузка моделей не удалась" }
-
-# Ollama manages its own model store. The user may choose any installed answer
-# model; LES recommends qwen3.5:9b but never pulls it behind the user's back.
-# bge-m3 is the separate, fixed embedding contract for document search.
-if ($configuredProvider -eq "ollama") {
-  $modelLine = Get-Content $env:LES_ENV_PATH -ErrorAction SilentlyContinue |
-    Where-Object { $_ -match '^OLLAMA_MODEL=' } | Select-Object -Last 1
-  $configuredModel = if ($modelLine) { ($modelLine -split '=', 2)[1].Trim() } else { "" }
-  if (-not $configuredModel) {
-    Require-Setup "Выберите установленную модель Ollama. Рекомендуем qwen3.5:9b" `
-      "answer_model_not_selected" "https://ollama.com/library"
-  }
-  & $Ollama show $configuredModel *> $null
-  if ($LASTEXITCODE -ne 0) {
-    Require-Setup "Модель $configuredModel не установлена. Загрузите любую подходящую модель и выберите её в мастере" `
-      "answer_model_missing" "https://ollama.com/library"
-  }
-  & $Ollama show "bge-m3:latest" *> $null
-  if ($LASTEXITCODE -ne 0) {
-    Require-Setup "Для поиска по документам нужна embedding-модель bge-m3:latest. Загрузите её через Ollama" `
-      "embedding_model_missing" "https://ollama.com/library/bge-m3"
-  }
+if ((-not $Ollama) -and ($configuredProvider -ne "lemonade")) {
+  Warn "движок embeddings не обнаружен; поиск по документам будет недоступен до настройки" `
+    "embedding_engine_unavailable"
 }
 
-# The cross-encoder is a Hugging Face model, not an Ollama generation model.
-Toast "Проверяю модель ранжирования…"
-& $Uv run python tools\onboard_reranker.py
-if ($LASTEXITCODE -ne 0) { Warn "модель ранжирования пока недоступна; ЛЕС запустится без rerank до повторной настройки" }
-
-# --- 5. Docker + Qdrant (required) -----------------------------------------
+# --- 4. Docker + Qdrant (optional external capability) ----------------------
 function Test-DockerEngine {
+  if (-not $Docker) { return $false }
   & $Docker info *> $null
   return ($LASTEXITCODE -eq 0)
 }
 
 if (-not (Test-DockerEngine)) {
-  $DockerDesktop = Join-Path $env:ProgramFiles "Docker\Docker\Docker Desktop.exe"
-  if (Test-Path -LiteralPath $DockerDesktop) {
-    Toast "Запускаю Docker Desktop…"
-    Write-Status -Phase "docker" -State "running" -Message "Запускаю Docker Desktop"
-    Start-Process -FilePath $DockerDesktop | Out-Null
-    $deadline = [DateTime]::UtcNow.AddMinutes(3)
-    do {
-      Start-Sleep -Seconds 3
-      if (Test-DockerEngine) { break }
-    } while ([DateTime]::UtcNow -lt $deadline)
-  }
-}
-if (-not (Test-DockerEngine)) {
-  Require-Setup "Запустите Docker Desktop и завершите первоначальную настройку WSL 2" `
-    "docker_engine_unavailable" "https://docs.docker.com/desktop/setup/install/windows-install/"
+  Warn "локальный индекс Qdrant недоступен: Docker Desktop не установлен или не запущен" `
+    "qdrant_unavailable"
 }
 
 Write-Status -Phase "qdrant" -State "running" -Message "Проверяю Qdrant"
 $qdrantUp = $false
 try { $null = Invoke-RestMethod "http://127.0.0.1:6333/collections" -TimeoutSec 2; $qdrantUp = $true } catch { }
-if (-not $qdrantUp) {
+if ((-not $qdrantUp) -and (Test-DockerEngine)) {
   Log "starting qdrant via docker"
   & $Docker volume create les-qdrant-data | Out-Null
-  if ($LASTEXITCODE -ne 0) { Fail "не удалось создать хранилище Qdrant" "qdrant_volume_failed" }
-  $existingQdrant = & $Docker ps -a --filter "name=^/les-light-qdrant$" --quiet
-  if ($existingQdrant) {
-    & $Docker start les-light-qdrant | Out-Null
-  } else {
-    $qdrantImage = if ($env:LES_QDRANT_IMAGE) { $env:LES_QDRANT_IMAGE } else { "qdrant/qdrant:v1.17.1" }
-    & $Docker run -d --name les-light-qdrant -p "6333:6333" -v "les-qdrant-data:/qdrant/storage" $qdrantImage | Out-Null
+  if ($LASTEXITCODE -eq 0) {
+    $existingQdrant = & $Docker ps -a --filter "name=^/les-light-qdrant$" --quiet
+    if ($existingQdrant) {
+      & $Docker start les-light-qdrant | Out-Null
+    } else {
+      $qdrantImage = if ($env:LES_QDRANT_IMAGE) { $env:LES_QDRANT_IMAGE } else { "qdrant/qdrant:v1.17.1" }
+      & $Docker run -d --name les-light-qdrant -p "6333:6333" -v "les-qdrant-data:/qdrant/storage" $qdrantImage | Out-Null
+    }
+    if ($LASTEXITCODE -eq 0) {
+      $qdrantDeadline = [DateTime]::UtcNow.AddMinutes(2)
+      do {
+        Start-Sleep -Seconds 2
+        try {
+          $null = Invoke-RestMethod "http://127.0.0.1:6333/collections" -TimeoutSec 2
+          $qdrantUp = $true
+          break
+        } catch { }
+      } while ([DateTime]::UtcNow -lt $qdrantDeadline)
+    }
   }
-  if ($LASTEXITCODE -ne 0) { Fail "не удалось запустить контейнер Qdrant" "qdrant_start_failed" }
-  $qdrantDeadline = [DateTime]::UtcNow.AddMinutes(2)
-  do {
-    Start-Sleep -Seconds 2
-    try {
-      $null = Invoke-RestMethod "http://127.0.0.1:6333/collections" -TimeoutSec 2
-      $qdrantUp = $true
-      break
-    } catch { }
-  } while ([DateTime]::UtcNow -lt $qdrantDeadline)
 }
 if (-not $qdrantUp) {
-  Require-Setup "Qdrant не запустился. Проверьте Docker Desktop и повторите проверку" "qdrant_health_failed" `
-    "https://docs.docker.com/desktop/setup/install/windows-install/"
+  Warn "Qdrant не отвечает; поиск и индексация документов временно недоступны" `
+    "qdrant_unavailable"
 }
 
-# --- 6. Launch the desktop shell --------------------------------------------
+# --- 5. Launch the desktop shell --------------------------------------------
 # The shell (tools/les_shell.py) owns lifecycle: on Windows it starts the stack
 # via start-light.ps1, shows the native window + tray, and degrades to a browser
 # tab if the GUI deps are missing.
