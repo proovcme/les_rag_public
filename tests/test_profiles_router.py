@@ -5,6 +5,10 @@ from fastapi.testclient import TestClient
 
 from proxy.routers import profiles as profiles_router
 from proxy.security import RequestUser, require_admin, require_user
+from proxy.services.chat_profile_service import (
+    PROFILE_PROMPT_MAX_CHARS,
+    PROFILE_SKILL_MAX_CHARS,
+)
 
 
 def _admin():
@@ -93,3 +97,28 @@ def test_profile_mutations_require_admin(tmp_path, monkeypatch):
         "/api/profiles/text-revisions",
         json={"kind": "prompt", "name": "x", "text": "y"},
     ).status_code in {401, 403}
+
+
+def test_profiles_api_enforces_authoritative_prompt_and_skill_limits(tmp_path, monkeypatch):
+    client = _client(tmp_path, monkeypatch)
+    for kind, limit in (
+        ("prompt", PROFILE_PROMPT_MAX_CHARS),
+        ("skill", PROFILE_SKILL_MAX_CHARS),
+    ):
+        accepted = client.post(
+            "/api/profiles/text-revisions",
+            json={"kind": kind, "name": "Граница", "text": "x" * limit},
+        )
+        rejected = client.post(
+            "/api/profiles/text-revisions",
+            json={"kind": kind, "name": "Выше границы", "text": "x" * (limit + 1)},
+        )
+        assert accepted.status_code == 200
+        assert rejected.status_code == 409
+        assert rejected.json()["detail"]["code"] == "profile_text_too_long"
+
+    registry = client.get("/api/profiles").json()
+    assert registry["text_limits"] == {
+        "prompt": PROFILE_PROMPT_MAX_CHARS,
+        "skill": PROFILE_SKILL_MAX_CHARS,
+    }

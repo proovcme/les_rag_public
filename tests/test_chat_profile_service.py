@@ -5,6 +5,8 @@ import sqlite3
 import pytest
 
 from proxy.services.chat_profile_service import (
+    PROFILE_PROMPT_MAX_CHARS,
+    PROFILE_SKILL_MAX_CHARS,
     activate_profile_revision,
     canonical_profile_mode,
     delete_revision,
@@ -34,6 +36,46 @@ def test_factory_seed_is_idempotent_and_activates_four_base_profiles(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM les_profile_revisions").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM les_prompt_revisions").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM les_skill_revisions").fetchone()[0] == 4
+
+
+@pytest.mark.parametrize(
+    ("kind", "limit"),
+    [("prompt", PROFILE_PROMPT_MAX_CHARS), ("skill", PROFILE_SKILL_MAX_CHARS)],
+)
+def test_text_revision_accepts_limit_rejects_limit_plus_one_and_normalizes_whitespace(
+    tmp_path, kind, limit
+):
+    db = tmp_path / "meta.db"
+    accepted = publish_text_revision(
+        kind, name="Граница", text="  " + ("x" * limit) + "  ", db_path=db
+    )
+    assert len(accepted["text"]) == limit
+
+    with pytest.raises(ValueError, match="profile_text_too_long"):
+        publish_text_revision(
+            kind, name="Слишком длинный", text="x" * (limit + 1), db_path=db
+        )
+
+
+def test_registry_keeps_old_oversized_revision_readable_and_reports_limits(tmp_path):
+    db = tmp_path / "meta.db"
+    registry_snapshot(db_path=db)
+    oversized = "legacy" * 3000
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """INSERT INTO les_prompt_revisions
+               (revision_id,name,revision_no,text_value,sha256,is_factory,created_at)
+               VALUES('legacy:oversized','Старая редакция',999,?,'legacy',0,'2026-01-01')""",
+            (oversized,),
+        )
+    snapshot = registry_snapshot(db_path=db)
+
+    item = next(row for row in snapshot["prompt_revisions"] if row["revision_id"] == "legacy:oversized")
+    assert item["text"] == oversized
+    assert snapshot["text_limits"] == {
+        "prompt": PROFILE_PROMPT_MAX_CHARS,
+        "skill": PROFILE_SKILL_MAX_CHARS,
+    }
 
 
 def test_factory_estimator_is_pure_rag_skill_not_legacy_lsr_workflow(tmp_path):
