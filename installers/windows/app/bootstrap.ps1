@@ -32,6 +32,7 @@ $script:BootstrapWarningCodes = @()
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $StateScript = Join-Path $Root "installers\windows\state.ps1"
+$VenvContractScript = Join-Path $AppDir "venv-contract.ps1"
 
 function Log([string]$m) { "$([DateTime]::Now.ToString('yyyy-MM-dd HH:mm:ss'))  $m" | Out-File -FilePath $Log -Append -Encoding utf8 }
 
@@ -117,6 +118,10 @@ if (-not (Test-Path -LiteralPath $StateScript)) {
 }
 try {
   . $StateScript
+  if (-not (Test-Path -LiteralPath $VenvContractScript)) {
+    throw "venv contract module is missing: $VenvContractScript"
+  }
+  . $VenvContractScript
   $StateRoot = Get-LesWindowsStateRoot
 } catch {
   Fail "не удалось загрузить модуль состояния Windows: $($_.Exception.Message)" "windows_state_helper_failed"

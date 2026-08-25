@@ -15,6 +15,7 @@ def test_stage_runtime_copies_clean_export_with_app_files(tmp_path):
 
     # The Windows bootstrap shipped inside the runtime export.
     assert (dest / "installers" / "windows" / "app" / "bootstrap.ps1").is_file()
+    assert (dest / "installers" / "windows" / "app" / "venv-contract.ps1").is_file()
     assert (dest / "installers" / "windows" / "state.ps1").is_file()
     assert (dest / "installers" / "windows" / "app" / "launcher.vbs").is_file()
     assert (dest / "installers" / "windows" / "app" / "LES.nsi").is_file()
@@ -71,6 +72,7 @@ def test_windows_bootstrap_reports_the_installed_runtime_root():
 
     assert "$env:LES_RUNTIME_HOME = $Root" in bootstrap
     assert "$env:LES_REPO_ROOT = $Root" in bootstrap
+    assert ". $VenvContractScript" in bootstrap
 
 
 def test_windows_light_start_always_exports_runtime_identity():
