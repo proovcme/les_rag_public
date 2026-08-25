@@ -7,33 +7,33 @@
 ## Текущее состояние (2026-08-25)
 
 ```
-версия продукта (SemVer):  0.28.1 (public provider-neutral Windows release)
-номер сборки:              588
-версия Tauri/NSIS:         5.1.588
-ветка выпуска:             public/main; tag v0.28.1 → 45b2ea434f55876898fc2b3b0a4e49e54396542d
-dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
+версия продукта (SemVer):  0.28.2 (release candidate; не опубликован)
+номер сборки:              589
+версия Tauri/NSIS:         5.1.589
+ветка разработки:          codex/github-update-0282 от public v0.28.1
+dev implementation:       idempotent offline bootstrap; profile budgets; immutable GitHub update channel
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
-Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          0.28.2 full GitHub installer, затем 0.28.3 lightweight GitHub patch
+последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
+следующий выпуск:          0.28.2 full GitHub installer; installed Legion smoke и публикация pending
 рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
 ```
 
-> **Planned 0.28.2 — installer/profile integrity:** исправить два подтверждённых
-> дефекта Windows bootstrap: Docker/Qdrant не могут быть fatal для LES core, а
-> проверенное окружение не должно выполнять `uv sync` на каждом запуске. План:
-> lock-bound marker, sync только при изменении lock/runtime или нездоровом venv,
-> `requires-python >=3.12,<3.14`, двойной последовательный offline-install smoke,
-> раздельные диагностики Docker/Qdrant/Python и лимиты пользовательских skill/prompt
-> 8 000/16 000 символов со счётчиками и server-side reject. Статус: проект
-> дизайна и implementation plan утверждены; код не изменён, release candidate не собран.
+> **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
+> persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
+> exact healthy venv пропускает sync, mismatch синхронизируется один раз offline, broken venv
+> один раз пересобирается. Python contract ограничен `>=3.12,<3.14`; installed smoke запускает
+> один state дважды и требует `skipped` на втором проходе. Prompt ограничен 16 000, skill —
+> 8 000 символов; API публикует budgets, сервер отклоняет превышение, UI показывает счётчики.
+> Статус: код и offline tests реализованы; full installer/installed Legion acceptance pending.
 
-> **Planned update channel:** `0.28.2` — один полный GitHub Release, который
+> **Implemented update channel:** `0.28.2` — один полный GitHub Release, который
 > устанавливает GitHub patch-client. Далее обычные SemVer выпускаются как
 > immutable GitHub Releases с `les-update.json` и `les-patch.zip`, без NSIS,
 > offline-cache rebuild и dependency sync. Полный installer выбирается только
 > fail-closed классификатором hard-boundary изменений. `les.ovc.me` не является
-> default/fallback. Статус: owner утвердил архитектуру; spec и implementation
-> plan оформлены, код не изменён.
+> default/fallback. Builder создаёт exact five assets, выполняет isolated apply/skip/rollback,
+> а publisher требует clean pushed HEAD, новый tag, GitHub immutability, feed↔HEAD binding и
+> повторную проверку скачанного draft. Статус: код готов; release не публиковался.
 
 > **Planned 0.28.3 — lightweight GitHub estimator patch:** после full `0.28.2` добавить четыре
 > estimator-only tool contract: безопасные inspect/status, append-only ВОР и

@@ -69,6 +69,8 @@ WINDOWS_BEHAVIOR_TESTS = (
     "tests/test_parse_admission_windows.py",
 )
 UPDATER_BEHAVIOR_TESTS = (
+    "tests/test_release_classification.py",
+    "tests/test_github_patch_release.py",
     "tests/test_patch_release.py",
     "tests/test_vps_patch.py",
     "tests/test_windows_application_update.py",
@@ -78,6 +80,8 @@ UPDATER_BEHAVIOR_TESTS = (
     "tests/test_mac_update.py",
 )
 UPDATER_COMPILE_TARGETS = (
+    "tools/release_classification.py",
+    "tools/github_patch_release.py",
     "tools/windows_runtime.py",
     "tools/windows_update_engine.py",
     "tools/vps_patch.py",

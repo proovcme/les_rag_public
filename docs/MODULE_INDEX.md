@@ -7,8 +7,8 @@
 > Upload и global auto-resume сериализованы одним parse semaphore, поэтому first-run supervisor
 > не индексирует только что загруженный smoke/user document параллельно второй раз.
 
-> **Planned 0.28.2 → 0.29.1:** сначала идемпотентный offline bootstrap и
-> profile text limits, затем узкий estimator-only LSR/VOR tool slice, после него
+> **0.28.2 implemented, 0.28.3 → 0.29.1 planned:** идемпотентный offline bootstrap,
+> profile text limits и GitHub update channel реализованы; далее узкий estimator-only LSR/VOR tool slice, после него
 > общий Tool Registry/Executor + ContextGovernor +
 > memory projection с отдельными Qwen 9B/35B presets, затем approval-gated
 > actions. Это 📋 design, не описание текущего кода: [bootstrap design](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)

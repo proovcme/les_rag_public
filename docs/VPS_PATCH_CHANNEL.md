@@ -1,8 +1,7 @@
 # Windows installation and application updater ЛЕС
 
-> **Planned replacement in 0.28.2:** default publication/discovery moves from
-> `les.ovc.me` to immutable GitHub Release assets. This document describes the
-> currently implemented channel until that release ships; approved design:
+> **0.28.2 channel:** default publication/discovery uses immutable GitHub Release
+> assets. `les.ovc.me` is neither default nor fallback. Approved design:
 > [GitHub Release Update Channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md).
 
 ## Назначение
@@ -68,10 +67,13 @@ attestation, а не toolchain или installer.
 
 ## Контракт безопасности
 
-`latest.json` содержит точные `product_version`, `build_number`, `base_commit`, `target_commit`,
+`les-update.json` содержит exact repository/tag, `product_version`, `build_number`,
+`base_commit`, `target_commit`,
 scope и список файлов, допустимые и новый SHA-256 каждого
-файла, SHA-256 и размер архива. Для app-shell оператор обязан передать точный SHA предыдущего
-установленного `les-desktop.exe`. Клиент принимает только HTTPS `les.ovc.me/updates/*`, проверяет
+файла, SHA-256 и размер архива. Asset URL обязан находиться под exact
+`https://github.com/proovcme/les_rag_public/releases/download/<tag>/`; discovery читает
+`releases/latest/download/les-update.json`. Для app-shell оператор обязан передать точный SHA предыдущего
+установленного `les-desktop.exe`. Клиент проверяет
 собственные base-хэши до загрузки и повторно перед заменой, сверяет архив с внешним и внутренним
 manifest и отвергает лишние файлы/path traversal.
 
@@ -112,21 +114,21 @@ probe до остановки. Изменение зависимостей тр�
 release-build с offline dependency payload; текущий update не маскирует
 отсутствующую зависимость сетевой установкой.
 
-## Публикация
+## Публикация GitHub Release
 
 ```bash
-make build-windows-update-shell \
-  WINDOWS_SHELL_ARGS='--base-exe "<installed-app>/les-desktop.exe"'
-
-make prepare-windows-update \
-  WINDOWS_UPDATE_ARGS='--base <compatible-base-commit> --target HEAD \
-    --file proxy/services/example.py \
-    --file installers/windows/start-light.ps1 \
-    --desktop-manifest dist/windows-update-shell/les-desktop.update.json \
-    --output dist/vps-patch'
-
-uv run python tools/vps_patch.py publish --output dist/vps-patch
+make github-patch-release \
+  GITHUB_PATCH_ARGS='--base <full-release-commit> --target HEAD \
+    --full-feed <downloaded-v0.28.2-latest.json> \
+    --output dist/github-patch'
 ```
+
+Builder сам классифицирует `base..target`. Lock/dependencies, bundled runtime/cache/baseline,
+installer/bootstrap и неизвестные runtime-пути требуют полного выпуска. Lightweight-кандидат
+создаёт ровно пять assets: `les-update.json`, compatibility `latest.json`, `les-patch.zip`,
+`les-patch.zip.sha256`, `release-notes.md`. Публикация разрешена только из clean pushed HEAD,
+с новым tag и включённой GitHub release immutability; draft скачивается и побайтово проверяется
+до publish. Feed обязан указывать на тот же HEAD и tag.
 
 Для локального Legion публикация и SSH не нужны. Проверенный пакет применяется штатным detached
 updater из persistent LES Python:
@@ -161,15 +163,13 @@ Clean-install smoke также использует content-addressed
 общий `%LOCALAPPDATA%\LES-release-smoke`, где файлы прежнего installer могут
 иметь несовместимый ACL и блокировать следующий автоматический prepare.
 Нативная сборка shell выполняется отдельно и только если менялся Tauri; apply её не
-повторяет. Builder принимает только явно перечисленные файлы. Публикация сначала загружает `.part`, затем
-атомарно переименовывает архив и в последнюю очередь `latest.json`, поэтому клиент не увидит
-manifest раньше полного архива.
+повторяет. Builder принимает только классифицированные allowlisted файлы. GitHub draft не виден
+клиентам и публикуется только после повторной SHA-256-проверки всех assets.
 
 ## Web-контур
 
-`les.ovc.me` больше не проксирует живой API/Совушку. `/` — статический лендинг проекта,
-`/updates/*` — origin обновлений; старые `/api`, `/lite-api`, `/les`, `/classic` отвечают `404`.
-Рабочие машины доступны только локально/через ZeroTier.
+`les.ovc.me` не участвует в update discovery или fallback. Рабочие машины доступны только
+локально/через ZeroTier.
 
 ## Короткие проверки
 
