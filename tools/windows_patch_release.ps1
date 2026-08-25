@@ -15,6 +15,8 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $OutputEncoding = [Console]::OutputEncoding
+$PreviousReleaseSmoke = [Environment]::GetEnvironmentVariable("LES_RELEASE_SMOKE", "Process")
+$PreviousWindowsStateRoot = [Environment]::GetEnvironmentVariable("LES_WINDOWS_STATE_ROOT", "Process")
 $SmokeRun = "$BuildCommit-$([guid]::NewGuid().ToString("N"))"
 if (-not $InstallRoot) {
   $InstallRoot = Join-Path $env:LOCALAPPDATA "LES-release-smoke\$SmokeRun\app"
@@ -51,6 +53,19 @@ function Invoke-Checked([string]$Program, [string[]]$Arguments) {
 function Restore-BuildTree {
   try { & git -C $RepoRoot restore -- $GeneratedPaths | Out-Null } catch { }
   Remove-Item -LiteralPath $WindowsSchema -Force -ErrorAction SilentlyContinue
+}
+
+function Restore-SmokeEnvironment {
+  if ($null -eq $PreviousReleaseSmoke) {
+    Remove-Item Env:LES_RELEASE_SMOKE -ErrorAction SilentlyContinue
+  } else {
+    $env:LES_RELEASE_SMOKE = $PreviousReleaseSmoke
+  }
+  if ($null -eq $PreviousWindowsStateRoot) {
+    Remove-Item Env:LES_WINDOWS_STATE_ROOT -ErrorAction SilentlyContinue
+  } else {
+    $env:LES_WINDOWS_STATE_ROOT = $PreviousWindowsStateRoot
+  }
 }
 
 try {
@@ -94,7 +109,13 @@ try {
     }
   }
   New-Item -ItemType Directory -Force -Path $InstallRoot, $StateRoot | Out-Null
-  $install = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallRoot") -Wait -PassThru
+  $env:LES_RELEASE_SMOKE = "1"
+  $env:LES_WINDOWS_STATE_ROOT = $StateRoot
+  try {
+    $install = Start-Process -FilePath $Installer -ArgumentList @("/S", "/D=$InstallRoot") -Wait -PassThru
+  } finally {
+    Restore-SmokeEnvironment
+  }
   if ($install.ExitCode -ne 0) { throw "NSIS install failed with exit code $($install.ExitCode)" }
 
   $RuntimeRoot = @(
@@ -181,6 +202,7 @@ try {
   $summary | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $SummaryPath -Encoding UTF8
   $summary | ConvertTo-Json -Depth 12
 } finally {
+  Restore-SmokeEnvironment
   Restore-BuildTree
   $remaining = (& git -C $RepoRoot status --porcelain) -join "`n"
   if ($remaining) {
