@@ -181,7 +181,8 @@ try {
   $BundledPython = Resolve-BundledPython
   Log "bundled Python: $BundledPython"
 } catch {
-  Fail "не удалось подготовить встроенный Python: $($_.Exception.Message)" "bundled_python_unavailable"
+  Fail "встроенный runtime ЛЕС повреждён: $($_.Exception.Message). Переустановите ЛЕС" `
+    "bundled_runtime_unavailable"
 }
 
 function Resolve-Uv {
@@ -194,23 +195,55 @@ function Resolve-Uv {
       if ($contract.binary_sha256 -and $actual -eq $contract.binary_sha256.ToLowerInvariant()) {
         return $bundled
       }
-      Log "WARN: bundled uv.exe SHA-256 mismatch; refusing embedded binary"
+      throw "bundled uv.exe SHA-256 mismatch"
     } catch {
-      Log "WARN: bundled uv.exe contract unreadable: $($_.Exception.Message)"
+      throw "bundled uv.exe contract unavailable: $($_.Exception.Message)"
     }
   }
-  $cmd = Get-Command uv -ErrorAction SilentlyContinue
-  if ($cmd) { return $cmd.Source }
-  foreach ($p in @("$env:USERPROFILE\.local\bin\uv.exe", "$env:USERPROFILE\.cargo\bin\uv.exe")) {
-    if (Test-Path $p) { return $p }
-  }
-  return $null
+  throw "bundled uv.exe or its contract is missing"
 }
 
-function Refresh-ProcessPath {
-  $machine = [Environment]::GetEnvironmentVariable("Path", "Machine")
-  $user = [Environment]::GetEnvironmentVariable("Path", "User")
-  $env:Path = "$machine;$user"
+function Resolve-UvCache {
+  $tools = Join-Path $Root "installers\windows\tools"
+  $contractPath = Join-Path $tools "uv-cache-contract.json"
+  if (-not (Test-Path -LiteralPath $contractPath)) {
+    throw "bundled uv cache contract is missing"
+  }
+  $contract = Get-Content -LiteralPath $contractPath -Raw | ConvertFrom-Json
+  if ($contract.schema -ne "les.windows-uv-cache.v1") {
+    throw "bundled uv cache contract has an unsupported schema"
+  }
+  $archive = Join-Path $tools ([string]$contract.archive_name)
+  if (-not (Test-Path -LiteralPath $archive)) {
+    throw "bundled uv cache archive is missing"
+  }
+  $archiveHash = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($archiveHash -ne ([string]$contract.archive_sha256).ToLowerInvariant()) {
+    throw "bundled uv cache archive SHA-256 mismatch"
+  }
+  $lockPath = Join-Path $Root "uv.lock"
+  $lockHash = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($lockHash -ne ([string]$contract.lock_sha256).ToLowerInvariant()) {
+    throw "bundled uv cache does not match uv.lock"
+  }
+  $cacheRoot = Join-Path $State.state_root ("uv-cache\" + $lockHash)
+  $marker = Join-Path $cacheRoot ".les-cache-ready"
+  if (-not (Test-Path -LiteralPath $marker)) {
+    $temporaryRoot = "$cacheRoot.installing"
+    Remove-Item -LiteralPath $temporaryRoot -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force -Path $temporaryRoot | Out-Null
+    Expand-Archive -LiteralPath $archive -DestinationPath $temporaryRoot -Force
+    [System.IO.File]::WriteAllText(
+      (Join-Path $temporaryRoot ".les-cache-ready"),
+      $archiveHash,
+      (New-Object System.Text.UTF8Encoding($false))
+    )
+    if (Test-Path -LiteralPath $cacheRoot) {
+      Remove-Item -LiteralPath $cacheRoot -Recurse -Force
+    }
+    Move-Item -LiteralPath $temporaryRoot -Destination $cacheRoot
+  }
+  return $cacheRoot
 }
 
 function Resolve-Executable([string]$Name, [string[]]$Candidates = @()) {
@@ -230,48 +263,13 @@ function Add-ExecutableDirectory([string]$Executable) {
   }
 }
 
-function Install-Uv {
-  $winget = Get-Command winget -ErrorAction SilentlyContinue
-  if ($winget) {
-    Log "installing uv via winget"
-    try {
-      & winget install --id=astral-sh.uv -e --accept-source-agreements --accept-package-agreements | Out-Null
-      if ($LASTEXITCODE -eq 0) {
-        Refresh-ProcessPath
-      } else {
-        Log "WARN: winget uv install failed with exit code $LASTEXITCODE; trying official installer"
-      }
-    } catch {
-      Log "WARN: winget uv install exception: $($_.Exception.Message); trying official installer"
-    }
-    $installed = Resolve-Uv
-    if ($installed) { return $installed }
-  } else {
-    Log "winget unavailable; trying official uv installer"
-  }
-
-  Log "installing uv via official installer fallback"
-  try {
-    & powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      Log "WARN: official uv installer failed with exit code $LASTEXITCODE"
-    }
-  } catch {
-    Log "WARN: official uv installer exception: $($_.Exception.Message)"
-  }
-  Refresh-ProcessPath
-  return Resolve-Uv
-}
-
-$Uv = Resolve-Uv
-if (-not $Uv) {
-  Toast "Устанавливаю uv (первый запуск)…"
-  Log "installing uv"
-  $Uv = Install-Uv
-  if (-not $Uv) {
-    Fail "не удалось установить uv через winget и официальный fallback; проверьте bootstrap.log" `
-      "uv_install_failed_after_fallback" "https://docs.astral.sh/uv/getting-started/installation/"
-  }
+try {
+  $Uv = Resolve-Uv
+  $env:UV_CACHE_DIR = Resolve-UvCache
+  Log "bundled uv: $Uv; offline cache: $env:UV_CACHE_DIR"
+} catch {
+  Fail "встроенный runtime ЛЕС повреждён: $($_.Exception.Message). Переустановите ЛЕС" `
+    "bundled_runtime_unavailable"
 }
 Log "uv: $Uv"
 
@@ -303,11 +301,6 @@ if ($Docker) {
 # --extra desktop pulls the native shell (pywebview + tray). No mac-mlx on Windows.
 Toast "Готовлю окружение…"
 Write-Status -Phase "python" -State "running" -Message "Синхронизирую Python-окружение через uv"
-$env:UV_SYSTEM_CERTS = if ($env:UV_SYSTEM_CERTS) { $env:UV_SYSTEM_CERTS } else { "true" }
-$env:UV_HTTP_CONNECT_TIMEOUT = if ($env:UV_HTTP_CONNECT_TIMEOUT) { $env:UV_HTTP_CONNECT_TIMEOUT } else { "30" }
-$env:UV_HTTP_TIMEOUT = if ($env:UV_HTTP_TIMEOUT) { $env:UV_HTTP_TIMEOUT } else { "120" }
-$env:UV_HTTP_RETRIES = if ($env:UV_HTTP_RETRIES) { $env:UV_HTTP_RETRIES } else { "5" }
-
 $VenvPath = $env:UV_PROJECT_ENVIRONMENT
 $VenvWasUsable = $false
 $VenvPython = Join-Path $VenvPath "Scripts\python.exe"
@@ -320,7 +313,7 @@ if ((Test-Path -LiteralPath $VenvPath) -and -not $VenvWasUsable) {
   Remove-Item -LiteralPath $VenvPath -Recurse -Force
 }
 
-$UvSyncArgs = @("sync", "--locked", "--python", $BundledPython, "--no-python-downloads")
+$UvSyncArgs = @("sync", "--locked", "--offline", "--python", $BundledPython, "--no-python-downloads")
 if ($env:LES_TAURI_SHELL -eq "1") {
   Log "uv sync with bundled Python (Tauri owns desktop shell)" # command fragment: --extra windows-reranker
   $UvSyncArgs += @("--extra", "windows-reranker")
@@ -352,8 +345,8 @@ if ($uvSyncExitCode -ne 0) {
   $uvDetail = [regex]::Replace($uvDetail, '(?i)(https?://)[^/\s:@]+:[^@\s/]+@', '$1***@')
   if ($uvDetail.Length -gt 900) { $uvDetail = $uvDetail.Substring(0, 900) }
   if (-not $uvDetail) { $uvDetail = "uv не вернул диагностический текст" }
-  Fail "uv sync не удался (код $uvSyncExitCode): $uvDetail" "uv_sync_failed" `
-    "https://docs.astral.sh/uv/concepts/authentication/certificates/"
+  Fail "встроенное окружение ЛЕС не развернулось (код $uvSyncExitCode): $uvDetail. Переустановите ЛЕС" `
+    "bundled_runtime_unavailable"
 }
 
 # A clean install must be able to resolve norms and calculate normative resource

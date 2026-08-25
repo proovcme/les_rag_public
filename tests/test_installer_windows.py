@@ -400,21 +400,21 @@ def test_windows_bootstrap_bundles_core_and_defers_external_components_to_wizard
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
-    assert "astral-sh.uv" in text
-    assert "function Install-Uv" in text
     assert "function Resolve-BundledPython" in text
     assert "Expand-Archive -LiteralPath $archive -DestinationPath $temporaryRoot -Force" in text
     assert "bundled Python archive SHA-256 mismatch" in text
     assert "installer_name" not in text
     assert "Start-Process -FilePath $installer" not in text
-    assert "bundled_python_unavailable" in text
+    assert "bundled_runtime_unavailable" in text
     assert "--no-python-downloads" in text
     assert "python-contract.json" in text
-    assert "trying official installer" in text
-    assert "uv_install_failed_after_fallback" in text
     assert "tools\\uv.exe" in text
     assert "Get-FileHash -LiteralPath $bundled -Algorithm SHA256" in text
-    assert "https://docs.astral.sh/uv/getting-started/installation/" in text
+    assert "uv-cache-contract.json" in text
+    assert '"--offline"' in text
+    assert "function Install-Uv" not in text
+    assert "winget install --id=astral-sh.uv" not in text
+    assert "irm https://astral.sh/uv/install.ps1" not in text
     assert "function Require-Setup" in text
     assert '"ollama_missing"' in text
     assert '"docker_missing"' in text
@@ -429,15 +429,13 @@ def test_windows_bootstrap_repairs_and_reports_uv_sync():
     bootstrap = build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     text = bootstrap.read_text(encoding="utf-8-sig")
 
-    assert '$env:UV_SYSTEM_CERTS' in text
-    assert '$env:UV_HTTP_RETRIES' in text
+    assert '$env:UV_CACHE_DIR' in text
     assert '$VenvWasUsable' in text
     assert 'removing incomplete or broken Python environment' in text
-    assert '@("sync", "--locked", "--python", $BundledPython, "--no-python-downloads")' in text
+    assert '@("sync", "--locked", "--offline", "--python", $BundledPython, "--no-python-downloads")' in text
     assert '$uvSyncOutput = @(& $Uv @UvSyncArgs 2>&1)' in text
     assert 'Log "uv: $safeLine"' in text
-    assert '"uv_sync_failed"' in text
-    assert 'concepts/authentication/certificates' in text
+    assert '"bundled_runtime_unavailable"' in text
 
 
 def test_windows_bootstrap_writes_machine_readable_status_for_tauri():

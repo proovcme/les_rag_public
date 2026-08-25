@@ -126,6 +126,7 @@ def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv_cache", lambda _runtime, **_kwargs: 0)
 
     monkeypatch.setattr(build_tauri_app, "stage_windows_deploy_stamp", lambda _runtime: 1)
 
@@ -181,6 +182,7 @@ def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypat
     monkeypatch.setattr(smeta_release_baseline, "verify_archive", lambda path: {"ok": True})
     monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv_cache", lambda _runtime, **_kwargs: 0)
 
     assert build_tauri_app.stage_runtime("win32", smeta_baseline_archive=archive) == 3
     assert (
@@ -207,6 +209,7 @@ def test_windows_tauri_stage_bundles_verified_uv(tmp_path, monkeypatch):
     monkeypatch.setattr(build_tauri_app, "WINDOWS_UV_CONTRACT_PATH", contract)
     monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv_cache", lambda _runtime, **_kwargs: 0)
 
     assert build_tauri_app.stage_runtime("win32", windows_uv_archive=archive) == 3
     assert (resources / "runtime/installers/windows/tools/uv.exe").read_bytes() == b"verified-uv"
@@ -265,6 +268,29 @@ def test_windows_tauri_stage_rejects_tampered_python_archive(tmp_path, monkeypat
 
     with pytest.raises(RuntimeError, match="Python archive SHA-256 mismatch"):
         build_tauri_app.stage_windows_python(tmp_path / "runtime", archive_path=archive)
+
+
+def test_windows_tauri_stage_bundles_offline_uv_cache_with_lock_identity(tmp_path):
+    archive = tmp_path / "windows-uv-cache.zip"
+    with zipfile.ZipFile(archive, "w") as zf:
+        zf.writestr("archive-v0/test-wheel.whl", b"wheel-bytes")
+    lock = tmp_path / "uv.lock"
+    lock.write_text("version = 1\n", encoding="utf-8")
+
+    assert build_tauri_app.stage_windows_uv_cache(
+        tmp_path / "runtime", archive_path=archive, lock_path=lock,
+    ) == 1
+
+    tools = tmp_path / "runtime/installers/windows/tools"
+    contract = json.loads((tools / "uv-cache-contract.json").read_text(encoding="utf-8"))
+    assert contract == {
+        "schema": "les.windows-uv-cache.v1",
+        "archive_name": "windows-uv-cache.zip",
+        "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
+        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+        "extra": "windows-reranker",
+    }
+    assert (tools / "windows-uv-cache.zip").read_bytes() == archive.read_bytes()
 
 
 def test_release_stage_excludes_agent_and_runtime_temporary_files():

@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
@@ -187,6 +188,97 @@ def stage_windows_python(runtime: Path, *, archive_path: str | Path | None = Non
     return 1
 
 
+def _build_windows_uv_cache(runtime: Path, archive: Path) -> None:
+    """Resolve the locked Windows environment into a portable offline uv cache."""
+    tools_dir = runtime / "installers" / "windows" / "tools"
+    uv = tools_dir / "uv.exe"
+    python_contract = json.loads((tools_dir / "python-contract.json").read_text(encoding="utf-8"))
+    python_archive = tools_dir / str(python_contract["archive_name"])
+    if not uv.is_file() or not python_archive.is_file():
+        raise RuntimeError("Windows offline cache requires staged Python and uv")
+    with tempfile.TemporaryDirectory(prefix="les-windows-uv-cache-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        python_root = tmp / "python"
+        python_root.mkdir()
+        with zipfile.ZipFile(python_archive) as zf:
+            zf.extractall(python_root)
+        python = python_root / str(python_contract["python_relative_path"])
+        cache = tmp / "cache"
+        environment = tmp / "environment"
+        env = dict(os.environ)
+        env["UV_CACHE_DIR"] = str(cache)
+        env["UV_PROJECT_ENVIRONMENT"] = str(environment)
+        env["UV_SYSTEM_PYTHON"] = "0"
+        subprocess.run(
+            [
+                str(uv), "sync", "--locked", "--python", str(python),
+                "--no-python-downloads", "--extra", "windows-reranker",
+            ],
+            cwd=runtime,
+            env=env,
+            check=True,
+        )
+        files = [path for path in cache.rglob("*") if path.is_file()]
+        if not files:
+            raise RuntimeError("Windows uv sync produced an empty offline cache")
+        with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+            for path in files:
+                zf.write(path, path.relative_to(cache).as_posix())
+
+
+def stage_windows_uv_cache(
+    runtime: Path,
+    *,
+    archive_path: str | Path | None = None,
+    lock_path: str | Path | None = None,
+) -> int:
+    """Bundle a lock-bound cache so first launch never downloads Python packages."""
+    lock = Path(lock_path) if lock_path else runtime / "uv.lock"
+    if not lock.is_file():
+        raise RuntimeError(f"Windows offline cache requires uv.lock: {lock}")
+    configured = str(archive_path or os.getenv("LES_WINDOWS_UV_CACHE_ARCHIVE", "")).strip()
+    temporary: tempfile.TemporaryDirectory[str] | None = None
+    try:
+        if configured:
+            archive = Path(configured)
+            if not archive.is_file():
+                raise RuntimeError(f"Windows uv cache archive is missing: {archive}")
+        else:
+            temporary = tempfile.TemporaryDirectory(prefix="les-windows-uv-cache-archive-")
+            archive = Path(temporary.name) / "windows-uv-cache.zip"
+            _build_windows_uv_cache(runtime, archive)
+        try:
+            with zipfile.ZipFile(archive) as zf:
+                members = [name for name in zf.namelist() if name and not name.endswith("/")]
+                if not members:
+                    raise RuntimeError("Windows uv cache archive is empty")
+                for name in members:
+                    normalized = Path(name.replace("\\", "/"))
+                    if normalized.is_absolute() or ".." in normalized.parts:
+                        raise RuntimeError(f"unsafe path in Windows uv cache archive: {name}")
+        except zipfile.BadZipFile as error:
+            raise RuntimeError("Windows uv cache archive is not a ZIP") from error
+        blob = archive.read_bytes()
+        target_dir = runtime / "installers" / "windows" / "tools"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "windows-uv-cache.zip"
+        target.write_bytes(blob)
+        contract = {
+            "schema": "les.windows-uv-cache.v1",
+            "archive_name": target.name,
+            "archive_sha256": hashlib.sha256(blob).hexdigest(),
+            "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+            "extra": "windows-reranker",
+        }
+        (target_dir / "uv-cache-contract.json").write_text(
+            json.dumps(contract, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        return 1
+    finally:
+        if temporary is not None:
+            temporary.cleanup()
+
+
 def stage_windows_deploy_stamp(runtime: Path) -> int:
     """Embed the exact release identity required by subsequent soft updates."""
     from proxy.services.version_service import write_deploy_stamp
@@ -215,6 +307,7 @@ def stage_runtime(
     *,
     smeta_baseline_archive: str | Path | None = None,
     windows_uv_archive: str | Path | None = None,
+    windows_uv_cache_archive: str | Path | None = None,
 ) -> int:
     target_platform = platform or os.sys.platform
     runtime = RESOURCES / "runtime"
@@ -248,6 +341,7 @@ def stage_runtime(
     if target_platform.startswith("win"):
         count += stage_windows_uv(runtime, archive_path=windows_uv_archive)
         count += stage_windows_python(runtime)
+        count += stage_windows_uv_cache(runtime, archive_path=windows_uv_cache_archive)
         count += stage_windows_deploy_stamp(runtime)
     bootstrap = RESOURCES / "bootstrap.sh"
     if target_platform == "darwin":
