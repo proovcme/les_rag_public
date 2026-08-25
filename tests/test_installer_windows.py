@@ -244,6 +244,7 @@ def test_windows_release_smoke_requires_two_consecutive_offline_bootstraps():
     assert "second offline bootstrap unexpectedly rebuilt the Python environment" in text
     assert 'docker_engine_unavailable' in text
     assert '$secondBootstrap.status.state -eq "ready"' in text
+    assert '@("created", "rebuilt", "repaired", "skipped")' in text
 
 
 def test_start_light_uses_direct_console_free_python_processes():

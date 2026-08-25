@@ -10,12 +10,12 @@
 версия продукта (SemVer):  0.28.2 (release candidate; не опубликован)
 номер сборки:              589
 версия Tauri/NSIS:         5.1.589
-ветка разработки:          codex/github-update-0282 от public v0.28.1
+ветка разработки:          codex/release-smoke-env-0282 от public main
 dev implementation:       idempotent offline bootstrap; profile budgets; immutable GitHub update channel
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          0.28.2 full GitHub installer; installed Legion smoke и публикация pending
-рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
+следующий выпуск:          0.28.2 full GitHub installer; publication pending
+рантайм /api/version:      isolated installed smoke 0.28.2 / build 589; services stopped after acceptance
 ```
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
@@ -24,7 +24,10 @@ dev implementation:       idempotent offline bootstrap; profile budgets; immutab
 > один раз пересобирается. Python contract ограничен `>=3.12,<3.14`; installed smoke запускает
 > один state дважды и требует `skipped` на втором проходе. Prompt ограничен 16 000, skill —
 > 8 000 символов; API публикует budgets, сервер отклоняет превышение, UI показывает счётчики.
-> Статус: код и offline tests реализованы; full installer/installed Legion acceptance pending.
+> Статус: full installer собран; isolated installed acceptance зелёный. Первый release-run обнаружил и
+> закрыл fail-open дефект smoke-изоляции: `windows_patch_release.ps1` теперь сам выставляет и обязательно
+> восстанавливает `LES_RELEASE_SMOKE` / `LES_WINDOWS_STATE_ROOT`; первый bootstrap принимает доказанное
+> `environment_action=repaired`, второй по-прежнему обязан быть `skipped`. GitHub publication pending.
 
 > **Implemented update channel:** `0.28.2` — один полный GitHub Release, который
 > устанавливает GitHub patch-client. Далее обычные SemVer выпускаются как

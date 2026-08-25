@@ -1,5 +1,27 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-08-25 — Release smoke omitted its isolation environment
+
+- **Symptom:** NSIS returned exit code 0, but the requested isolated `app` directory stayed empty;
+  the installer hook selected the canonical `%LOCALAPPDATA%\Programs\LES` path instead.
+- **Cause:** `windows_patch_release.ps1` passed `/D`, but unlike the prepared-update contour did not
+  set `LES_RELEASE_SMOKE=1` and `LES_WINDOWS_STATE_ROOT` before starting NSIS.
+- **Fix:** the release script now scopes both variables to the installer process and restores their
+  previous values in `finally`; regression tests require that contract. The same built installer was
+  proven to install `0.28.2 / 589` into a unique smoke root before publication.
+- **Impact:** program files reached `0.28.2`; user state was not deleted. Publication and the
+  transactional production phase remained blocked until isolated acceptance became green.
+
+## 2026-08-25 — Installed smoke rejected a valid repaired environment
+
+- **Symptom:** both bootstraps were `ready`, the second was `skipped`, API/UI/base/RRF checks passed,
+  but the aggregate report stayed `ok=false`.
+- **Cause:** the first-pass allowlist predated the lock-bound venv contract and omitted its valid
+  `environment_action=repaired` state.
+- **Fix:** `repaired` is accepted only for the first pass; the second remains strictly `skipped`.
+  A repeated isolated installed smoke passed with Docker/Qdrant unavailable as optional capability
+  warnings.
+
 ## 2026-08-25 — Windows clean-install RRF seed parsed twice
 
 - **Symptom:** installed `0.28.1` reached bootstrap `ready`, API/UI and process hygiene, but the

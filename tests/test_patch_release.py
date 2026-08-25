@@ -155,6 +155,9 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
     assert '"products\\artel"' in source
     assert "LES_SMETA_BASELINE_ARCHIVE" in source
     assert "Verified smeta baseline archive was not provided" in source
+    assert '$env:LES_RELEASE_SMOKE = "1"' in source
+    assert '$env:LES_WINDOWS_STATE_ROOT = $StateRoot' in source
+    assert "Restore-SmokeEnvironment" in source
 
 
 def test_prepared_update_smoke_uses_checkout_owned_temporary_root():

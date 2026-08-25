@@ -306,7 +306,7 @@ try {
   $result.ok = (
     $bootstrapStatus.state -eq "ready" -and
     $secondBootstrap.status.state -eq "ready" -and
-    $result.bootstrap_first.environment_action -in @("created", "rebuilt", "skipped") -and
+    $result.bootstrap_first.environment_action -in @("created", "rebuilt", "repaired", "skipped") -and
     $result.bootstrap_second.environment_action -eq "skipped" -and
     $result.bootstrap_first.core_api_ready -and
     [int]$result.bootstrap_first.core_ui_status -eq 200 -and
