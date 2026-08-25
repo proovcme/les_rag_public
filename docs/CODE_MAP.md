@@ -339,6 +339,10 @@ projection под тем же alias; при rollback старый FTS восст
   оставляют вечный `PENDING` при сбое admission/контракта/парсинга. Windows/Ollama startup
   выравнивает query/parse embedding URL на один `OLLAMA_BASE_URL`; `env.example` sidecar `:8081`
   не протекает в production.
+- **Единый parse owner:** upload, manual batch, dataset drain и global/auto-resume scheduler
+  используют один `DatasetRouterState.parse_semaphore`. Supervisor не может повторно взять
+  документ, который уже индексирует upload task; иначе один MetaDB chunk мог дать две Qdrant
+  точки и `QDRANT_POINT_COUNT_MISMATCH` в clean-install smoke.
 - **Windows startup/update identity:** `desktop/tauri/web/wizard.js` блокирует повторный запуск только
   пока `bootstrap.state=running`; отсутствие внешнего answer/embedding engine или Qdrant отображается
   как capability warning. `installers/windows/start-light.ps1` запрещает сетевой tokenizer lookup;

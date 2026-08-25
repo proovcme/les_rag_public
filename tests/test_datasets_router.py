@@ -1131,6 +1131,44 @@ async def test_parse_scheduler_runs_pending_batches(monkeypatch, dataset_state):
 
 
 @pytest.mark.asyncio
+async def test_global_parse_scheduler_waits_for_shared_parse_semaphore(monkeypatch, dataset_state):
+    """Auto-resume must not parse the document already owned by upload parsing."""
+    dataset_state.pending_files["ds-1"] = 1
+    state = datasets.get_dataset_state()
+    state.parse_semaphore = asyncio.Semaphore(0)
+
+    async def _admit(state, **kwargs):
+        return None
+
+    async def _memory():
+        return {"ram_free_gb": 16.0, "swap_pct": 0.0, "raw": {}}
+
+    monkeypatch.setattr(datasets, "assert_parse_admission", _admit)
+    monkeypatch.setattr(datasets, "parse_memory_state", _memory)
+
+    task = asyncio.create_task(
+        datasets.run_parse_scheduler(
+            state,
+            datasets.ParseSchedulerRequest(
+                batch_limit=1,
+                max_batches=1,
+                cooldown_sec=0,
+                unload_between_batches=False,
+                unload_before_start=False,
+                unload_after_finish=False,
+            ),
+        )
+    )
+    await asyncio.sleep(0.02)
+    assert dataset_state.parses == []
+
+    state.parse_semaphore.release()
+    result = await asyncio.wait_for(task, timeout=1)
+    assert result["status"] == "completed"
+    assert dataset_state.parses == [("ds-1", 1)]
+
+
+@pytest.mark.asyncio
 async def test_parse_batch_background_reports_partial_large_queue(monkeypatch, dataset_state):
     dataset_state.pending_files["ds-1"] = 251
 

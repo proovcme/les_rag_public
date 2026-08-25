@@ -1,5 +1,17 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-08-25 — Windows clean-install RRF seed parsed twice
+
+- **Symptom:** installed `0.28.1` reached bootstrap `ready`, API/UI and process hygiene, but the
+  isolated RRF seed failed with `QDRANT_POINT_COUNT_MISMATCH: got 2, expected 1`.
+- **Cause:** upload background parsing held `parse_semaphore`, while the six-second durable
+  auto-resume supervisor called the global scheduler without that semaphore. Both selected the same
+  `PENDING` row and upserted different point identities concurrently.
+- **Fix:** `run_parse_scheduler` now acquires the shared parse semaphore around every batch;
+  regression test holds the semaphore and proves no backend parse begins until release.
+- **Scope:** scheduling/consistency only. Retrieval ranking, prompts, providers and `smeta_core`
+  were not changed.
+
 Реестр поведения на operational-смоуке. `no_data`/`MISSING` с честным evidence — НЕ баг, а
 корректный отказ. Баг — только системная ошибка, фейковый источник или маршрут не туда.
 

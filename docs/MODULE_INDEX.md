@@ -4,6 +4,8 @@
 > exact `uv.lock` и offline dependency cache. Стартовый Tauri-экран показывает совместимые
 > Ollama/FreeToken/Lemonade/OpenAI-compatible, embeddings и Qdrant по ролям, но ничего не
 > устанавливает и не выбирает. Отсутствие внешних движков — capability warning; LES core запускается.
+> Upload и global auto-resume сериализованы одним parse semaphore, поэтому first-run supervisor
+> не индексирует только что загруженный smoke/user document параллельно второй раз.
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy

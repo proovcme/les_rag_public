@@ -830,7 +830,12 @@ async def run_parse_scheduler(
             state.job_service.update(job_id, processed=parsed_batches, total=req.max_batches, message=message)
 
         await assert_parse_admission(state, min_free_gb=min_free_gb, max_swap_pct=max_swap_pct)
-        result = await state.backend.parse_dataset(target["dataset_id"], limit=req.batch_limit)
+        # The durable auto-resume scheduler shares the same parse owner as upload,
+        # dataset-drain and manual batch jobs. Without this guard, a document uploaded
+        # during the supervisor's six-second startup window can be parsed twice and
+        # leave two Qdrant points for one MetaDB chunk.
+        async with state.parse_semaphore:
+            result = await state.backend.parse_dataset(target["dataset_id"], limit=req.batch_limit)
         parsed_batches += 1
         batch_errors = int(result.get("errors") or 0) if isinstance(result, dict) else 1
         if not isinstance(result, dict) or result.get("status") not in {"completed"}:
