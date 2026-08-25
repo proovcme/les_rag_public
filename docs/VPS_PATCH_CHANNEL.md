@@ -1,5 +1,10 @@
 # Windows installation and application updater ЛЕС
 
+> **Planned replacement in 0.28.2:** default publication/discovery moves from
+> `les.ovc.me` to immutable GitHub Release assets. This document describes the
+> currently implemented channel until that release ships; approved design:
+> [GitHub Release Update Channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md).
+
 ## Назначение
 
 Есть два независимых пользовательских действия поверх одного lifecycle:

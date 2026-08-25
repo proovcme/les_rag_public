@@ -1,7 +1,7 @@
 # Windows Bootstrap Idempotency Design
 
-**Status:** proposed design, owner review pending
-**Target:** planned `0.28.2` patch release
+**Status:** approved design, implementation pending
+**Target:** planned `0.28.2` full GitHub installer release
 
 ## Goal
 
@@ -18,6 +18,11 @@ This design addresses two independently observed failures:
    branch which the bundled Python 3.13.12 cache did not contain.
 
 No user data was damaged in either case.
+
+This is the one required full installer in the current release train. It also
+delivers the GitHub patch-update client defined in
+`docs/superpowers/specs/2026-08-25-github-release-update-channel-design.md`.
+Later compatible releases do not rebuild the installer.
 
 ## Product contract
 

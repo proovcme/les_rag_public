@@ -14,7 +14,7 @@
 dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          0.28.2, затем 0.28.3 (planned; implementation pending)
+следующий выпуск:          0.28.2 full GitHub installer, затем 0.28.3 lightweight GitHub patch
 рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
 ```
 
@@ -25,9 +25,17 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > `requires-python >=3.12,<3.14`, двойной последовательный offline-install smoke,
 > раздельные диагностики Docker/Qdrant/Python и лимиты пользовательских skill/prompt
 > 8 000/16 000 символов со счётчиками и server-side reject. Статус: проект
-> дизайна оформлен и ожидает owner review; код не изменён, release candidate не собран.
+> дизайна и implementation plan утверждены; код не изменён, release candidate не собран.
 
-> **Planned 0.28.3 — estimator LSR/VOR tool slice:** после hotfix добавить четыре
+> **Planned update channel:** `0.28.2` — один полный GitHub Release, который
+> устанавливает GitHub patch-client. Далее обычные SemVer выпускаются как
+> immutable GitHub Releases с `les-update.json` и `les-patch.zip`, без NSIS,
+> offline-cache rebuild и dependency sync. Полный installer выбирается только
+> fail-closed классификатором hard-boundary изменений. `les.ovc.me` не является
+> default/fallback. Статус: owner утвердил архитектуру; spec и implementation
+> plan оформлены, код не изменён.
+
+> **Planned 0.28.3 — lightweight GitHub estimator patch:** после full `0.28.2` добавить четыре
 > estimator-only tool contract: безопасные inspect/status, append-only ВОР и
 > resumable `priced_draft` ЛСР поверх существующего application-adapter. Вызов
 > принадлежит модели; regex forcing, безусловная выдача tools обычному Agent и
@@ -49,6 +57,7 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > для MCP и внутренних вызовов. Статус: planned, не поставлено.
 
 > Дизайн planned-линии: [Windows bootstrap 0.28.2](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md),
+> [GitHub update channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md),
 > [LSR/VOR tools 0.28.3](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
 > и [Agent Tool + Context + Memory 0.29.x](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
 

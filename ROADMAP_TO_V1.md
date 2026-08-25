@@ -8,11 +8,12 @@ provider-neutral стартовый экран и общий model-first RAG ч�
 
 Зафиксированный release train (это план, не уже поставленные возможности):
 
-1. **0.28.2 — installer/profile integrity.** Идемпотентный offline bootstrap с
+1. **0.28.2 — один полный GitHub installer release.** Идемпотентный offline bootstrap с
    lock-bound marker, Python `>=3.12,<3.14`, повторный запуск без лишнего `uv sync`,
    Docker/Qdrant только как capability warnings, двойной offline-install gate и
-   серверные лимиты пользовательских skill/prompt 8 000/16 000 символов.
-2. **0.28.3 — базовые LSR/VOR tools.** Четыре estimator-only контракта поверх
+   серверные лимиты пользовательских skill/prompt 8 000/16 000 символов. Этот же
+   выпуск доставляет GitHub patch-updater; `les.ovc.me` больше не default-канал.
+2. **0.28.3 — лёгкий GitHub patch с LSR/VOR tools.** Четыре estimator-only контракта поверх
    существующего application-adapter: inspect/status, append-only ВОР и resumable
    `priced_draft` ЛСР. Только явный model tool call, без regex forcing и без
    автоматической активации профиля; streaming/checkpoint acceptance на Qwen 9B.
@@ -24,8 +25,14 @@ provider-neutral стартовый экран и общий model-first RAG ч�
    idempotency и action receipts.
 
 Дизайн: [Windows bootstrap 0.28.2](docs/superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md),
+[GitHub update channel](docs/superpowers/specs/2026-08-25-github-release-update-channel-design.md),
 [LSR/VOR tool slice 0.28.3](docs/superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
 и [Agent Tool + Context + Memory 0.29.x](docs/superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
+
+Обычный SemVer после `0.28.2` публикуется как immutable GitHub Release с
+`les-update.json` и небольшим patch ZIP. Трёхчасовой `LES-Setup.exe` строится
+только при изменении dependencies/`uv.lock`, offline Python/cache, bootstrap,
+native Tauri/Rust, migration/baseline hard-boundary или неизвестного runtime path.
 
 Дальнейшие продуктовые направления:
 

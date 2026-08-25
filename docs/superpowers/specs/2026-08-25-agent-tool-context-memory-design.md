@@ -33,6 +33,11 @@ memory manager.
 - migration of current read-only tool-harness/MCP capabilities without changing
   their evidence semantics.
 
+If these changes remain inside the accepted Python/UI/config patch boundary and
+add no dependency, bootstrap, native shell or migration, `0.29.0` is published
+as a lightweight immutable GitHub Release. The release classifier, not a manual
+preference, decides whether a full installer is required.
+
 `0.29.1` enables compute and action classes:
 
 - typed calculation tools;

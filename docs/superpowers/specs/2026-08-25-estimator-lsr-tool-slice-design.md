@@ -1,7 +1,7 @@
 # Estimator LSR/VOR Tool Slice Design
 
 **Status:** approved direction, implementation pending
-**Target:** planned `0.28.3`, after installer/profile hotfix `0.28.2`
+**Target:** planned lightweight GitHub patch release `0.28.3`, after full installer/profile/channel release `0.28.2`
 
 ## Goal
 
@@ -13,6 +13,8 @@ reads, validates, calculates, checkpoints and writes a clearly marked draft.
 This release does not restore the removed specialized smeta chat route and does
 not modify `proxy/smeta_core/**`. It adds a thin adapter around
 `run_smeta_document_application` and its existing checkpoint/stream contract.
+It adds no dependency, bootstrap or native-shell change and therefore must be
+published as `les-update.json` + `les-patch.zip`, without `LES-Setup.exe`.
 
 ## What is retained from public PR #13
 
@@ -126,4 +128,3 @@ The release is accepted only when deterministic tests prove all of the following
 - compact result stays bounded for 9B;
 - the protected quality benchmark still returns 5/5 on Qwen 3.5 9B;
 - no file under `proxy/smeta_core/**` changed.
-

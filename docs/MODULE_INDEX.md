@@ -12,6 +12,7 @@
 > общий Tool Registry/Executor + ContextGovernor +
 > memory projection с отдельными Qwen 9B/35B presets, затем approval-gated
 > actions. Это 📋 design, не описание текущего кода: [bootstrap design](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+> [GitHub update channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md)
 > [LSR/VOR tools design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
 > и [agent foundation design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
 
@@ -796,6 +797,7 @@ Qdrant payload-индексы создаются best-effort после гото
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
+| ops/github-update-channel | Planned `0.28.2`: GitHub Releases становится default для full и lightweight patch releases; immutable latest feed + tag-specific hashed asset, deterministic patch/full classifier, isolated apply/rollback; VPS не fallback | planned `tools/{release_classification,github_patch_release}.py`; existing `vps_patch.py`, `vps_patch_apply.py`, `update_service.py` | [design](superpowers/specs/2026-08-25-github-release-update-channel-design.md) | 📋 |
 > `ops/vps-patch` (0.27.13): `tools/vps_patch.py update-local` сам читает exact deployed commit,
 > формирует допустимый runtime diff и выполняет локальное обновление через Limited Scheduled Task
 > без SSH, UAC и ручного списка файлов.
