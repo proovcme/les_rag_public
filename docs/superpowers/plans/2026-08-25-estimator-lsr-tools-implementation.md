@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan.
 
-**Goal:** Ship `0.28.3` with an explicit, resumable LSR/VOR tool slice that passes on local Qwen 3.5 9B.
+**Goal:** Ship lightweight GitHub patch release `0.28.3` with an explicit, resumable LSR/VOR tool slice that passes on local Qwen 3.5 9B and does not rebuild the installer.
 
 **Architecture:** Extend the existing tool harness with four stable estimator-only contracts and an async adapter around `run_smeta_document_application`. The model alone selects calls; code executes/checkpoints/calculates and returns compact draft references. Existing profile snapshots and UI components provide explicit opt-in on upgrades.
 
@@ -13,6 +13,8 @@
 ## Global Constraints
 
 - Start only after `0.28.2` is green and merged.
+- Publish through the GitHub patch channel; `LES-Setup.exe`, Tauri/NSIS build,
+  offline-cache rebuild and dependency sync are forbidden for this release.
 - Do not cherry-pick PR #13; port only reviewed behavior in small tested diffs.
 - Do not modify `proxy/smeta_core/**`, add dependencies, reindex, start services or
   access user data.
@@ -204,7 +206,7 @@ async def call_async(
    report; do not weaken cases or modify protected core.
 5. Commit: `test(estimator): gate LSR tools on local Qwen 9B`
 
-### Task 9: Documentation, version and release gates
+### Task 9: Documentation, version and lightweight GitHub release
 
 **Files:**
 - Create: `docs/modules/estimator-lsr-tools.md`
@@ -225,9 +227,17 @@ async def call_async(
    checkpoint/resume and the deliberate non-use of hidden routing.
 2. Set product `0.28.3`, build `590`, desktop `5.1.590`, then run
    `make version-sync`.
-3. Run all focused tests, `make verify`, `make test`, `git diff --check`, and
+3. Run the release classifier and require `release_class=patch`; version-only
+   source surfaces may be omitted only after structural validation. Any full
+   trigger blocks this release and requires owner review instead of starting an
+   installer build.
+4. Run all focused tests, `make verify`, `make test`, `make test-updater`,
+   `git diff --check`, and
    verify `git diff --name-only 0.28.2..HEAD -- proxy/smeta_core` is empty.
-4. Run the live Legion chat flow with local Qwen 9B: inspect → explicit LSR call →
+5. Run the live Legion chat flow with local Qwen 9B: inspect → explicit LSR call →
    progress → interrupt → resume → downloadable `priced_draft`. Repeat an
    unrelated Agent query and prove no estimator tool is exposed.
-5. Commit: `release: prepare LES 0.28.3 estimator tool slice`
+6. Build `les-update.json`, compatibility `latest.json`, `les-patch.zip`, checksum and notes; run isolated
+   apply/rollback, publish the immutable GitHub Release and verify the installed
+   `0.28.2` updates without installer, uv sync or VPS access.
+7. Commit: `release: prepare LES 0.28.3 estimator patch`

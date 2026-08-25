@@ -2,17 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan.
 
-**Goal:** Ship `0.28.2` as an idempotent offline Windows bootstrap plus authoritative prompt/skill limits.
+**Goal:** Ship the one required full `0.28.2` GitHub installer as an idempotent offline Windows bootstrap plus authoritative prompt/skill limits and the GitHub patch-channel base.
 
-**Architecture:** A small PowerShell environment-contract module computes and atomically records the exact lock/runtime/cache identity. `bootstrap.ps1` syncs only on contract mismatch or failed health, while Docker/Qdrant remain optional capability warnings. Profile text limits are enforced in the service, mirrored by the API, and shown with existing UI-kit components.
+**Architecture:** A small PowerShell environment-contract module computes and atomically records the exact lock/runtime/cache identity. `bootstrap.ps1` syncs only on contract mismatch or failed health, while Docker/Qdrant remain optional capability warnings. Profile text limits are enforced in the service, mirrored by the API, and shown with existing UI-kit components. The companion GitHub-channel plan is completed before final packaging so later releases can use lightweight immutable patch assets.
 
 **Tech Stack:** PowerShell 5.1, Python 3.12, uv, FastAPI/Pydantic, SQLite, NiceGUI, pytest.
 
 **Spec:** `docs/superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md`
 
+**Companion plan:** `docs/superpowers/plans/2026-08-25-github-release-update-channel-implementation.md`
+
 ## Global Constraints
 
 - Do not add dependencies, read secrets, start services or touch user state.
+- This release is `full`; later compatible Python/UI releases use GitHub patch assets and do not rebuild `LES-Setup.exe`.
 - Do not copy `pyproject.toml` and `uv.lock` independently in release assembly.
 - Preserve existing oversized revisions as readable; reject only new publication
   until content is reduced below the limit.
@@ -162,7 +165,7 @@ def validate_profile_text(kind: str, text: str) -> str: ...
    statuses in the release evidence directory.
 5. Commit: `test(release): gate consecutive offline Windows bootstrap`
 
-### Task 7: Documentation, version and release gates
+### Task 7: Documentation, version and one full GitHub release
 
 **Files:**
 - Modify: `docs/ALGO-windows-lifecycle.md`
@@ -182,7 +185,13 @@ def validate_profile_text(kind: str, text: str) -> str: ...
    exact recovery behavior. Remove any claim that Docker is required for core.
 2. Set product `0.28.2`, build `589`, desktop `5.1.589`, then run
    `make version-sync`.
-3. Run focused tests from Tasks 1–6, then `make verify` and `make test`.
-4. Run `git diff --check` and `git status --short`; inspect that no protected
+3. Complete Tasks 1–5 of the companion GitHub update-channel plan so this
+   installer contains the GitHub discovery/apply client.
+4. Run focused tests from Tasks 1–6, then `make verify`, `make test` and
+   `make test-updater`.
+5. Run `git diff --check` and `git status --short`; inspect that no protected
    smeta core or user-state path changed.
-5. Commit: `release: prepare LES 0.28.2 installer integrity hotfix`
+6. Build/publish the full immutable GitHub Release with `LES-Setup.exe`; verify
+   two consecutive offline starts and that GitHub discovery reports the exact
+   current release without contacting `les.ovc.me`.
+7. Commit: `release: prepare LES 0.28.2 installer and GitHub update base`
