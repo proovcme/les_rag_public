@@ -18,6 +18,8 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
+from tools.release_classification import classify_release
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "les.vps-patch.v2"
@@ -452,28 +454,16 @@ def _installed_commit(runtime: Path) -> str:
 
 
 def _automatic_patch_files(base: str, target: str) -> list[str]:
-    changed = subprocess.check_output(
-        ["git", "diff", "--name-only", f"{base}..{target}"], cwd=ROOT, text=True
-    ).splitlines()
-    selected: list[str] = []
-    blocked: list[str] = []
-    for value in changed:
-        parts = PurePosixPath(value.replace("\\", "/")).parts
-        # Docs/tests/build-only paths are excluded by policy; anything else that
-        # is not on the soft-update allowlist blocks the package (ALGO §5.3).
-        if parts[:1] in {("docs",), ("tests",)}:
-            continue
-        if parts[:1] == (".github",) or parts[:2] == ("desktop", "tauri"):
-            continue
-        try:
-            selected.append(normalize_path(value))
-        except ValueError as exc:
-            blocked.append(f"{value} ({exc})")
-    if blocked:
-        raise ValueError(
-            "unknown runtime paths block the soft-update package: "
-            + "; ".join(blocked[:20])
+    classification = classify_release(base, target, root=ROOT)
+    if classification.kind == "full":
+        details = "; ".join(
+            f"{trigger.path} ({trigger.reason})"
+            for trigger in classification.triggers[:20]
         )
+        raise ValueError(
+            f"full release required; unknown runtime paths block the soft-update package: {details}"
+        )
+    selected = list(classification.runtime_files)
     if not selected:
         raise ValueError("installed LES and target have no bounded runtime changes")
     return sorted(set(selected))

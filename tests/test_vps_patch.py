@@ -120,6 +120,56 @@ def test_automatic_patch_files_blocks_unknown_runtime_paths(tmp_path):
         vps_patch.ROOT = original
 
 
+def test_automatic_patch_files_ignores_version_only_project_metadata(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    project = repo / "pyproject.toml"
+    project.write_text('[project]\nname = "les-v2"\nversion = "0.28.1"\n', encoding="utf-8")
+    runtime_file = repo / "proxy" / "x.py"
+    runtime_file.parent.mkdir()
+    runtime_file.write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    project.write_text(project.read_text(encoding="utf-8").replace("0.28.1", "0.28.2"), encoding="utf-8")
+    runtime_file.write_text("after\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    original = vps_patch.ROOT
+    vps_patch.ROOT = repo
+    try:
+        assert vps_patch._automatic_patch_files(base, target) == ["proxy/x.py"]
+    finally:
+        vps_patch.ROOT = original
+
+
+def test_automatic_patch_files_reports_full_release_trigger(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    native = repo / "desktop" / "tauri" / "src-tauri" / "src" / "main.rs"
+    native.parent.mkdir(parents=True)
+    native.write_text("fn main() {}\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    native.write_text('fn main() { println!("changed"); }\n', encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    original = vps_patch.ROOT
+    vps_patch.ROOT = repo
+    try:
+        with pytest.raises(ValueError, match="full release required.*main.rs.*desktop runtime changed"):
+            vps_patch._automatic_patch_files(base, target)
+    finally:
+        vps_patch.ROOT = original
+
+
 def test_update_local_bootstraps_offline_runtime_with_persistent_python(
     tmp_path, monkeypatch
 ):
