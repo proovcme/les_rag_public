@@ -297,6 +297,12 @@ if ($Ollama) {
 $Docker = Resolve-Executable "docker" @(
   (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe")
 )
+if ($env:LES_RELEASE_SMOKE -eq "1" -and $env:LES_RELEASE_SMOKE_DISABLE_DOCKER -eq "1") {
+  # Installed-release gate: prove that the core reaches API/UI readiness when
+  # Docker is unavailable, without changing ordinary bootstrap behaviour.
+  $Docker = $null
+  Log "release smoke: Docker capability intentionally disabled"
+}
 if ($Docker) {
   Add-ExecutableDirectory $Docker
   Log "docker: $Docker"

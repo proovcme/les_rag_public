@@ -96,6 +96,8 @@ def test_windows_bootstrap_marks_docker_and_qdrant_as_optional_capabilities():
 
     assert '"docker_engine_unavailable"' in bootstrap
     assert '"qdrant_unavailable"' in bootstrap
+    assert '$env:LES_RELEASE_SMOKE_DISABLE_DOCKER -eq "1"' in bootstrap
+    assert '$env:LES_RELEASE_SMOKE -eq "1"' in bootstrap
     ready = bootstrap[bootstrap.rindex('Write-Status -Phase "ready"') :]
     assert 'State "ready"' in ready
 
@@ -199,7 +201,7 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert raw[:3] == b"\xef\xbb\xbf"
     assert "[int]$BootstrapTimeoutSeconds = 900" in text
     assert 'Start-Process -FilePath "powershell.exe"' in text
-    assert 'bootstrapStatus.state -in @("ready", "failed")' in text
+    assert 'status.state -in @("ready", "failed")' in text
     assert 'windows-light-state.json' in text
     assert '/api/version' in text
     assert '$env:RAG_COLLECTION_NAME = $smokeCollection' in text
@@ -227,6 +229,21 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert 'runtimeProcess.Name -notin @("python.exe", "pythonw.exe")' in text
     assert "cmd.exe wrapper process(es)" in text
     assert "bootstrap PowerShell stayed alive after terminal ready" in text
+
+
+def test_windows_release_smoke_requires_two_consecutive_offline_bootstraps():
+    smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
+    text = smoke.read_text(encoding="utf-8-sig")
+
+    assert "function Invoke-BootstrapPass" in text
+    assert 'Invoke-BootstrapPass -PassName "first"' in text
+    assert 'Invoke-BootstrapPass -PassName "second"' in text
+    assert '$result.bootstrap_first.environment_action' in text
+    assert '$result.bootstrap_second.environment_action' in text
+    assert '$secondBootstrap.status.environment_action -ne "skipped"' in text
+    assert "second offline bootstrap unexpectedly rebuilt the Python environment" in text
+    assert 'docker_engine_unavailable' in text
+    assert '$secondBootstrap.status.state -eq "ready"' in text
 
 
 def test_start_light_uses_direct_console_free_python_processes():
