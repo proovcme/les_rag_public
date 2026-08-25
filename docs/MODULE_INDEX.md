@@ -8,9 +8,11 @@
 > не индексирует только что загруженный smoke/user document параллельно второй раз.
 
 > **Planned 0.28.2 → 0.29.1:** сначала идемпотентный offline bootstrap и
-> profile text limits, затем общий Tool Registry/Executor + ContextGovernor +
+> profile text limits, затем узкий estimator-only LSR/VOR tool slice, после него
+> общий Tool Registry/Executor + ContextGovernor +
 > memory projection с отдельными Qwen 9B/35B presets, затем approval-gated
 > actions. Это 📋 design, не описание текущего кода: [bootstrap design](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+> [LSR/VOR tools design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
 > и [agent foundation design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
@@ -110,6 +112,7 @@
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
+| smeta/estimator-tools | Planned `0.28.3`: estimator-only inspect/status/VOR-draft/LSR-draft поверх существующего application-adapter; model-owned selection, compact 9B result, SSE heartbeat и checkpoint/resume; без hidden routing, auto-activation и правок `smeta_core` | planned `proxy/services/estimator_tool_service.py`; existing `tool_harness_service.py`, `smeta_chat_application_service.py`, chat/profile routes | [design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md) | 📋 |
 | smeta/model-quality | Воспроизводимый live Qwen↔Gemma A/B на одном canonical XLSX/PDF→ЛСР workflow: одинаковые prompt, corpus, tools, seed, limits и начальное состояние; per-row calculated/partial/missing, tool calls/repeats, **stage_latency** (catalog/search/read/bind/llm p50/p95), unit/volume/provenance integrity, hierarchical-route trace и реальный checkpoint/resume. `--resume-run` продолжает существующий run только после совпадения source SHA, model profiles и fixed contract. Главный сравнительный gate вместо golden/ranx. Профессиональная правильность — только по явному `les.smeta.qrels.v1` | `tools/smeta_model_quality_benchmark.py`; `tests/test_smeta_model_quality_benchmark.py` | [modules/smeta-core.md](modules/smeta-core.md) · [BACKLOG_RAG_EXCEL_PDF.md](BACKLOG_RAG_EXCEL_PDF.md) | ✅ |
 | core/modules | лёгкий реестр профессиональных модулей LES: smeta, normcontrol, BIM/QTO, docs_review, procurement, contracts, project RAG; router выбирает модуль, но не решает предметную область | `les_module_service`, `active_state_service`, `scoped_rag_builder`, `skill_snippet_registry`, `tool_trace_policy` | [ALGO-routing.md](ALGO-routing.md) | ✅ |
 | core/chat-evidence | application-граница общего model-first RAG после scope/route и typed tools: `bge-m3` query embedding → named dense+sparse native RRF → capacity-aware evidence packet → model answer → validation → sources/trace/history. Cross-encoder reranker — только opt-in эксперимент: его отсутствие сохраняет исходный RRF-порядок и не удаляет evidence. Кодовый professional visible-final запрещён; glossary/registry возвращают только evidence. Router передаёт три явных typed-контракта `EvidenceRequestContext`, `EvidenceRuntimeDeps`, `ResponseBoundary`; namespace capture запрещён. FreeToken — отдельный local transport profile: no-thinking, GUI-owned token window, generation reserve, dialogue-first prompt fit и общий multi-document evidence assembler без provider-specific chunk cap; embeddings остаются на Ollama | `proxy/services/chat_evidence_application_service.py`, `proxy/services/llm_transport_profile_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service`, `saferag_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [FreeToken design](superpowers/specs/2026-08-22-freetoken-local-provider-design.md) | ✅ |

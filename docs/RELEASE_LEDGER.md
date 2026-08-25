@@ -14,7 +14,7 @@
 dev implementation:       offline bundled Windows runtime; provider-neutral setup catalogue; public user/developer docs
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.1 / build 588
 Windows-выпуск:            https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          0.28.2 (planned; design only, implementation pending)
+следующий выпуск:          0.28.2, затем 0.28.3 (planned; implementation pending)
 рантайм /api/version:      Legion live 0.28.1 / build 588 / desktop 5.1.588
 ```
 
@@ -26,6 +26,15 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > раздельные диагностики Docker/Qdrant/Python и лимиты пользовательских skill/prompt
 > 8 000/16 000 символов со счётчиками и server-side reject. Статус: проект
 > дизайна оформлен и ожидает owner review; код не изменён, release candidate не собран.
+
+> **Planned 0.28.3 — estimator LSR/VOR tool slice:** после hotfix добавить четыре
+> estimator-only tool contract: безопасные inspect/status, append-only ВОР и
+> resumable `priced_draft` ЛСР поверх существующего application-adapter. Вызов
+> принадлежит модели; regex forcing, безусловная выдача tools обычному Agent и
+> автоматическая активация новой редакции профиля запрещены. Progress/heartbeat
+> подавляет повтор `/api/chat`, checkpoint переживает interrupt, а acceptance
+> обязателен на локальной Qwen 3.5 9B. Статус: дизайн и исполнимый план оформлены;
+> код не изменён, PR #13 используется только как источник отдельных идей.
 
 > **Planned 0.29.0 — Agent Foundation:** единый provider-neutral Tool Registry для
 > внутренних tools и MCP, Capability Broker, Trusted Executor, `ContextGovernor`,
@@ -39,7 +48,8 @@ Windows-выпуск:            https://github.com/proovcme/les_rag_public/rele
 > только после явного подтверждения; idempotency keys и action receipts одинаковы
 > для MCP и внутренних вызовов. Статус: planned, не поставлено.
 
-> Дизайн planned-линии: [Windows bootstrap 0.28.2](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+> Дизайн planned-линии: [Windows bootstrap 0.28.2](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md),
+> [LSR/VOR tools 0.28.3](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
 > и [Agent Tool + Context + Memory 0.29.x](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
 
 > **0.28.1 / build 588:** Windows package содержит SHA-256-проверенные portable Python/uv,

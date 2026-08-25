@@ -12,14 +12,19 @@ provider-neutral стартовый экран и общий model-first RAG ч�
    lock-bound marker, Python `>=3.12,<3.14`, повторный запуск без лишнего `uv sync`,
    Docker/Qdrant только как capability warnings, двойной offline-install gate и
    серверные лимиты пользовательских skill/prompt 8 000/16 000 символов.
-2. **0.29.0 — Agent Foundation.** Единый Tool Registry для внутренних tools и MCP,
+2. **0.28.3 — базовые LSR/VOR tools.** Четыре estimator-only контракта поверх
+   существующего application-adapter: inspect/status, append-only ВОР и resumable
+   `priced_draft` ЛСР. Только явный model tool call, без regex forcing и без
+   автоматической активации профиля; streaming/checkpoint acceptance на Qwen 9B.
+3. **0.29.0 — Agent Foundation.** Единый Tool Registry для внутренних tools и MCP,
    Capability Broker, Trusted Executor, `ContextGovernor`, общая проекция памяти,
    разные пресеты Qwen 3.5 9B и Qwen 35B; миграция сначала только read-only tools.
-3. **0.29.1 — controlled actions.** Typed compute, автоматические draft/append-only
+4. **0.29.1 — controlled actions.** Typed compute, автоматические draft/append-only
    revision tools, явное подтверждение commit/external/destructive операций,
    idempotency и action receipts.
 
-Дизайн: [Windows bootstrap 0.28.2](docs/superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
+Дизайн: [Windows bootstrap 0.28.2](docs/superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md),
+[LSR/VOR tool slice 0.28.3](docs/superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
 и [Agent Tool + Context + Memory 0.29.x](docs/superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
 
 Дальнейшие продуктовые направления:
@@ -35,9 +40,10 @@ provider-neutral стартовый экран и общий model-first RAG ч�
 5. **Lemonade.** Полноценный поддерживаемый answer/embedding provider после проверки API-контракта,
    переключения моделей, выгрузки и resource governance.
 
-Это roadmap, а не обещание уже поставленных возможностей. Сметный workflow первым не
-трогаем: специализированный chat-route уже снят в 0.28.0, а защищённый
-`proxy/smeta_core/**` остаётся compatibility/library-контуром. Любой основной workflow
+Это roadmap, а не обещание уже поставленных возможностей. Полный сметный workflow и
+защищённый `proxy/smeta_core/**` не переписываем: в `0.28.3` наружу выходит только
+тонкий tool-adapter к уже проверенному application-контуру. Специализированный chat-route,
+снятый в 0.28.0, не возвращается. Любой основной workflow
 ЛЕС обязан проходить на локальной Qwen 3.5 9B; Qwen 35B получает более ёмкий preset,
 но не отдельную архитектуру.
 

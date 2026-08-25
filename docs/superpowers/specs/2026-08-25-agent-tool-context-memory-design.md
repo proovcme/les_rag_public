@@ -17,6 +17,12 @@ provenance.
 
 ## Release boundary
 
+`0.28.3` first exposes four narrowly scoped estimator LSR/VOR contracts through
+the current harness. They are a compatibility bridge: `0.29.0` migrates the same
+stable names and semantics into the canonical registry rather than creating a
+second tool family. The bridge does not implement a competing general context or
+memory manager.
+
 `0.29.0` delivers the foundation and migrates read-only tools:
 
 - canonical Tool Registry and provider projections;
