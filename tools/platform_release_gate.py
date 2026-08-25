@@ -80,8 +80,6 @@ UPDATER_BEHAVIOR_TESTS = (
     "tests/test_mac_update.py",
 )
 UPDATER_COMPILE_TARGETS = (
-    "tools/release_classification.py",
-    "tools/github_patch_release.py",
     "tools/windows_runtime.py",
     "tools/windows_update_engine.py",
     "tools/vps_patch.py",
@@ -92,6 +90,8 @@ UPDATER_COMPILE_TARGETS = (
     "proxy/services/update_service.py",
     "proxy/routers/updates.py",
     "sovushka/components/header.py",
+    "tools/release_classification.py",
+    "tools/github_patch_release.py",
 )
 CURRENT_LES_TESTS = tuple(
     sorted(
