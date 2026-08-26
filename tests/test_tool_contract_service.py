@@ -59,6 +59,11 @@ def test_tool_contract_deep_freezes_input_schema() -> None:
         contract.input_schema["properties"]["doc_id"]["type"] = "integer"
 
 
+def test_tool_contract_rejects_legacy_shorthand_as_json_schema() -> None:
+    with pytest.raises(ValueError, match="JSON Schema object"):
+        _contract(input_schema={"doc_id": "str"})
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [

@@ -94,6 +94,8 @@ class ToolContract:
             raise ValueError("tool title, category and summary are required")
         if not isinstance(self.input_schema, Mapping):
             raise ValueError("input schema must be an object")
+        if self.input_schema.get("type") != "object":
+            raise ValueError("input schema must be a JSON Schema object")
         object.__setattr__(self, "input_schema", _freeze_json(self.input_schema))
         if not self.result_schema.strip():
             raise ValueError("result schema is required")

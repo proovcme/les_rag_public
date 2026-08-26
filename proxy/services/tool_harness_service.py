@@ -8,9 +8,12 @@ these results later, but this layer only executes bounded operations.
 from __future__ import annotations
 
 import base64
+import asyncio
+from collections.abc import Mapping
 import hashlib
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -28,6 +31,11 @@ from proxy.services.tool_contract_service import (
 )
 from proxy.services.tool_registry_service import ToolRegistration, ToolRegistry
 from proxy.services.tool_trace_policy import make_tool_trace, validate_tool_result
+from proxy.services.trusted_executor_service import (
+    ExecutionEnvelope,
+    ExecutionRequest,
+    TrustedExecutor,
+)
 
 
 TOOL_RESULT_SCHEMA = "les_tool_result_v1"
@@ -78,12 +86,92 @@ class ToolSpec:
         }
 
 
+def _canonical_input_schema(name: str, shorthand: dict[str, Any]) -> dict[str, Any]:
+    """Translate the legacy display map into the real provider-neutral schema."""
+    properties: dict[str, Any] = {}
+    for field_name, descriptor in shorthand.items():
+        label = str(descriptor)
+        if label == "list[str]":
+            field_schema: dict[str, Any] = {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1},
+            }
+        elif label.startswith("int"):
+            field_schema = {"type": "integer"}
+        elif label == "bool":
+            field_schema = {"type": "boolean"}
+        elif label.startswith("["):
+            field_schema = {
+                "type": "array",
+                "items": {"type": "number", "minimum": 0, "maximum": 1},
+                "minItems": 4,
+                "maxItems": 4,
+            }
+        elif "|" in label:
+            field_schema = {"type": "string", "enum": label.split("|")}
+        else:
+            field_schema = {"type": "string"}
+        if field_name in {"limit", "max_rows", "max_chars", "page"}:
+            field_schema["minimum"] = 1
+        if field_name == "depth" and field_schema.get("type") == "integer":
+            field_schema["minimum"] = 0
+        properties[field_name] = field_schema
+
+    if name in {
+        "dataset_map",
+        "search_project_tables",
+        "read_project_table",
+        "assemble_project_volume",
+    }:
+        properties["storage_root"] = {"type": "string"}
+    if name in {"search_sources", "read_source", "read_pdf_source", "read_excel_source"}:
+        properties["max_chars"] = {"type": "integer", "minimum": 1}
+    if name == "search_sources":
+        properties["dataset_id"] = {"type": "string"}
+
+    required_by_tool = {
+        "dataset_map": ["dataset_id"],
+        "search_sources": ["q"],
+        "read_project_table": ["dataset_id", "table_id"],
+        "assemble_project_volume": ["dataset_id", "index"],
+        "web_search": ["q"],
+        "filesystem_search": ["q"],
+    }
+    schema: dict[str, Any] = {
+        "type": "object",
+        "properties": properties,
+        "additionalProperties": False,
+    }
+    required = required_by_tool.get(name)
+    if required:
+        schema["required"] = required
+    if name in {"read_source", "read_pdf_source", "read_excel_source", "look_at_pdf_page"}:
+        schema["anyOf"] = [
+            {"required": ["doc_id"]},
+            {"required": ["dataset_id", "doc_name"]},
+        ]
+    if name == "look_at_pdf_page":
+        schema["required"] = ["page"]
+    if name == "search_project_tables":
+        schema["required"] = ["dataset_id"]
+        schema["anyOf"] = [
+            {"required": ["q"]},
+            {"required": ["semantic_type"]},
+            {"required": ["file"]},
+        ]
+    return schema
+
+
 class ToolHarness:
     """Registry + executor for bounded LES tools."""
 
     def __init__(self) -> None:
         self._registry = ToolRegistry()
         self._register_defaults()
+        self._executor = TrustedExecutor(
+            self._registry,
+            scope_resolver=resolve_authoritative_dataset_scope,
+        )
 
     def registry(self, *, category: str = "") -> dict[str, Any]:
         tools = [item.contract.public_payload() for item in self._registry.registrations()]
@@ -168,27 +256,66 @@ class ToolHarness:
         }
 
     def call(self, tool: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
+        return asyncio.run(self.call_async(tool, args))
+
+    async def call_async(
+        self,
+        tool: str,
+        args: dict[str, Any] | None = None,
+        *,
+        actor_id: str = "compatibility",
+        actor_role: str = "admin",
+        allowed_dataset_ids: tuple[str, ...] = ("*",),
+        approval_receipt_id: str | None = None,
+        idempotency_key: str | None = None,
+        deadline_monotonic: float | None = None,
+        shadow: bool = False,
+    ) -> dict[str, Any]:
         args = dict(args or {})
-        registration = self._registry.get(tool)
-        if registration is None:
+        envelope = await self.execute(
+            ExecutionRequest(
+                call_id=f"compat:{tool}:{time.monotonic_ns()}",
+                tool_name=tool,
+                arguments=args,
+                allowed_dataset_ids=allowed_dataset_ids,
+                actor_id=actor_id,
+                actor_role=actor_role,
+                approval_receipt_id=approval_receipt_id,
+                idempotency_key=idempotency_key,
+                deadline_monotonic=(
+                    deadline_monotonic
+                    if deadline_monotonic is not None
+                    else time.monotonic() + 120
+                ),
+                shadow=shadow,
+            )
+        )
+        raw = envelope.to_dict()["result"]
+        if envelope.status == "ok" and raw.get("schema") == TOOL_RESULT_SCHEMA:
+            payload = dict(raw)
+            registration = self._registry.get(tool)
+            if registration is not None:
+                payload.setdefault("spec", registration.contract.public_payload())
+            payload["execution"] = envelope.metadata()
+            payload.setdefault("contract_check", validate_tool_result(payload))
+            return payload
+        if envelope.code == "TOOL_NOT_REGISTERED":
             return _result(tool=tool, operation="call", inputs=[args], status="missing",
                            result={}, missing=[f"unknown tool: {tool}"], trace="tool not registered")
-        contract = registration.contract
-        try:
-            payload = registration.handler(args)
-        except Exception as exc:  # noqa: BLE001 - tool errors must become traceable payloads
-            payload = _result(
-                tool=contract.name,
-                operation="call",
-                inputs=[_redact_args(args)],
-                status="error",
-                result={},
-                warnings=[str(exc)[:240]],
-                trace=f"{contract.name} failed: {type(exc).__name__}",
-            )
-        payload.setdefault("spec", contract.public_payload())
-        payload["contract_check"] = validate_tool_result(payload)
+        payload = _result(
+            tool=tool,
+            operation="call",
+            inputs=[_redact_args(args)],
+            status="error" if envelope.status != "shadow" else "missing",
+            result=raw,
+            warnings=[envelope.code],
+            trace=f"trusted executor: {envelope.code}",
+        )
+        payload["execution"] = envelope.metadata()
         return payload
+
+    async def execute(self, request: ExecutionRequest) -> ExecutionEnvelope:
+        return await self._executor.execute(request)
 
     def _register(self, spec: ToolSpec, handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
         scopes = {
@@ -203,7 +330,7 @@ class ToolHarness:
             title=spec.title,
             category=spec.category,
             summary=spec.summary,
-            input_schema=dict(spec.args_schema),
+            input_schema=_canonical_input_schema(spec.name, spec.args_schema),
             result_schema=TOOL_RESULT_SCHEMA,
             effect=EffectClass.READ,
             scopes=scopes,
@@ -274,7 +401,7 @@ class ToolHarness:
                 title="Посмотреть страницу PDF",
                 category="source",
                 summary="Render one selected PDF page or bounded region and let the local vision model inspect the actual drawing pixels.",
-                args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "page": "int (1-based)", "question": "str", "bbox": "[x0,y0,x1,y1] normalized"},
+                args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "page": "int (1-based)", "question": "str", "q": "str", "bbox": "[x0,y0,x1,y1] normalized", "max_tokens": "int"},
                 returns="visual observations tied to the original file and page",
                 tags=("vision", "drawing", "чертёж", "схема", "графика", "изображение", "лист", "pdf", "page", "посмотри", "глазами"),
             ),
@@ -445,6 +572,23 @@ def _tool_dataset_map(args: dict[str, Any]) -> dict[str, Any]:
         evidence=[{"kind": "navigation", "dataset_id": dataset_id, "is_evidence": False}],
         trace="built dataset navigation map from notebook/typed memory",
     )
+
+
+def resolve_authoritative_dataset_scope(
+    contract: ToolContract,
+    arguments: Mapping[str, Any],
+) -> tuple[str, ...]:
+    """Resolve indirect selectors before the handler can prefer them."""
+    if "dataset" not in contract.scopes:
+        return ()
+    doc_id = str(arguments.get("doc_id") or "").strip()
+    if not doc_id:
+        return ()
+    document = explorer().get_document(doc_id)
+    if not isinstance(document, dict):
+        return (f"unresolved-doc:{doc_id}",)
+    dataset_id = str(document.get("dataset_id") or "").strip()
+    return (dataset_id,) if dataset_id else (f"unresolved-doc:{doc_id}",)
 
 
 def _tool_search_sources(args: dict[str, Any]) -> dict[str, Any]:

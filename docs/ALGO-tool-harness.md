@@ -34,6 +34,31 @@ preset_limit`, а порядок разрешённых tools сохраняет
 получает не более пяти contracts; 35B может получить большую coherent page, но
 не другой набор профессиональных возможностей.
 
+`TrustedExecutor` — единственная доверенная граница вызова зарегистрированного
+handler. До исполнения он проверяет полный JSON Schema входа, dataset scope,
+роль actor, deadline и idempotency policy. `commit`, `external` и `destructive`
+разрешены только администратору с durable approval receipt, совпадающим по
+`proposal_revision`, имени tool, SHA-256 точных аргументов и actor. В `shadow`
+`draft` и любые более сильные эффекты не исполняются. Результат сначала
+проверяется как `les_tool_result_v1`, затем оборачивается в
+`les_tool_execution_v1`; превышение бюджета сохраняет целый объект за cursor и
+никогда не режет JSON-текст. Старые `ToolHarness.call()` и `/api/tools/call`
+проходят через ту же границу.
+
+Approval не является JSON-заявлением клиента: request передаёт только
+`approval_receipt_id`, а Executor читает immutable запись из доверенного SQLite
+store и повторно проверяет status/expiry/actor/revision/tool/hash. Для
+привилегированного эффекта тот же store атомарно резервирует idempotency key;
+конкурентный вызов не запускает второй handler, а таймаут или невалидный ответ
+оставляет `ambiguous`, запрещая слепой retry. Cursor привязан к actor, имеет TTL
+и при durable execution хранит целый результат в том же store.
+
+Один approval receipt атомарно связывается с первым actor/tool/argument hash/
+idempotency key и не может разрешить второе действие под другим ключом. Для
+любого privileged effect durable key обязателен независимо от декларации
+handler. Косвенный `doc_id` до исполнения разрешается в authoritative dataset;
+подстановка разрешённого `dataset_id` рядом с чужим `doc_id` scope не обходит.
+
 Каждый вызов возвращает `les_tool_result_v1`:
 
 - `tool`, `operation`, `inputs`, `status`;
@@ -178,6 +203,14 @@ curl -fsS -X POST http://127.0.0.1:8050/api/tools/call \
   "contract_check": {"ok": true}
 }
 ```
+
+Успешный compatibility-ответ сохраняет верхний `les_tool_result_v1`, прежний
+`spec` и добавляет поле `execution` с metadata envelope. Typed rejection/
+timeout/overflow возвращаются как `les_tool_execution_v1`. Публичный admin API
+принимает только `approval_receipt_id`, `idempotency_key` и относительный
+`timeout_seconds`; authorization scope и monotonic deadline создаёт сервер.
+Identity API-key строится как server-side SHA-256 principal id, а не из
+неуникального отображаемого имени владельца.
 
 ### CLI
 

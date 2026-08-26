@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              595
-версия Tauri/NSIS:         5.1.595
+номер сборки:              596
+версия Tauri/NSIS:         5.1.596
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       architecture gate + Registry + CapabilityBroker implemented; Executor pending
+dev implementation:       architecture gate + Registry + Broker + TrustedExecutor implemented; chat shadow pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -79,6 +79,24 @@ dev implementation:       architecture gate + Registry + CapabilityBroker implem
 > page capacity. `ToolHarness.shortlist()` делегирует broker и сохраняет
 > `les_tool_shortlist_v1`. Broker tests: 6 passed; broker/harness/profile
 > compatibility: 41 passed; architecture gate green. Executor ещё не реализован.
+
+> **0.29.0 Trusted Executor checkpoint (build 596):** все legacy и API tool
+> calls проходят через единую typed execution boundary. До handler проверяются
+> полный JSON Schema, dataset scope, actor role, deadline и idempotency; commit/
+> external/destructive дополнительно требуют durable approval, точно связанный
+> с proposal revision, tool, SHA-256 аргументов и actor. Shadow не исполняет
+> draft или более сильные эффекты. Результат валидируется как
+> `les_tool_result_v1` и оборачивается в `les_tool_execution_v1`; overflow
+> сохраняет целый объект за actor-bound cursor без обрезания JSON. После review
+> scope удалён из публичного request, approval стал lookup по immutable SQLite
+> receipt, а privileged idempotency использует atomic durable claim и
+> `ambiguous` после таймаута/невалидного результата. Шестнадцать production tools
+> получили настоящие JSON Schema вместо legacy shorthand; compatibility `spec`
+> сохранён. Review follow-up добавил authoritative `doc_id→dataset` scope,
+> single-operation receipt binding, обязательный durable key для любого
+> privileged effect, stable hashed API principal и strict canonical result
+> shape/finite JSON. Foundation/executor/profile: 73 passed; architecture gate green.
+> Ordinary-chat shadow route ещё не включён.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

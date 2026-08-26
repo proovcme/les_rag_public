@@ -90,6 +90,11 @@ def test_tool_registry_is_typed_and_read_only_first():
     assert all(tool["side_effects"] == "none" for tool in registry["tools"])
     assert all(tool["effect"] == "read" for tool in registry["tools"])
     assert all(tool["result_schema"] == "les_tool_result_v1" for tool in registry["tools"])
+    assert all(tool["input_schema"]["type"] == "object" for tool in registry["tools"])
+    search_schema = next(tool for tool in registry["tools"] if tool["name"] == "search_sources")["input_schema"]
+    assert search_schema["properties"]["dataset_ids"]["type"] == "array"
+    assert search_schema["properties"]["limit"]["type"] == "integer"
+    assert search_schema["additionalProperties"] is False
     assert registry["policy"]["tools_return_evidence_not_final_domain_answers"] is True
 
 
@@ -117,6 +122,8 @@ def test_tool_search_sources_returns_evidence_packet(monkeypatch, explorer):
     assert payload["contract_check"]["ok"] is True
     assert payload["sources"][0]["doc_name"] == "IOS/ИОС 5.2 пожарная сигнализация.pdf"
     assert payload["decision_required_from_model"] is True
+    assert payload["spec"]["name"] == "search_sources"
+    assert payload["execution"]["schema"] == "les_tool_execution_v1"
 
 
 def test_tool_read_pdf_and_excel_are_indexed_readers_with_limits(monkeypatch, explorer):
@@ -193,6 +200,7 @@ def test_filesystem_tool_is_whitelisted_read_only(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_tools_router_calls_harness(monkeypatch, explorer):
     monkeypatch.setattr(tool_harness_service, "explorer", lambda: explorer)
+    monkeypatch.setattr(tools_router, "_executor", lambda: ToolHarness()._executor)
 
     result = await tools_router.tool_call(
         tools_router.ToolCallRequest(tool="search_sources", args={"q": "автоматика", "dataset_ids": ["bai"]}),

@@ -23,10 +23,19 @@
 - `CapabilityBroker` формирует bounded shortlist только из profile/scope/phase/
   runtime/preset/budget policy. Он не получает текст вопроса и не выполняет
   профессиональный intent routing.
+- `TrustedExecutor` является общей границей для legacy/API вызовов: валидирует
+  JSON Schema, dataset scope, actor role, deadline, idempotency и result schema/
+  budget; commit/external/destructive требуют exact revision-bound approval.
+- Клиент не задаёт authorization scope и не подписывает approval сам: Executor
+  читает receipt и атомарный idempotency state из trusted SQLite store;
+  concurrent/ambiguous privileged execution fail-closed.
+- Authoritative resolution косвенного `doc_id` входит в scope check; один
+  approval receipt можно связать только с одной operation identity.
+- `shadow` не исполняет draft/commit/external/destructive handlers, а overflow
+  сохраняет целый результат за cursor без обрезания JSON.
 
 ## Запланировано, но ещё не реализовано
 
-- Trusted Executor и approval boundary;
 - `legacy | shadow | active` ordinary-chat route;
 - ContextGovernor, typed memory projection и presets Qwen 9B/35B;
 - versioned workbook artifacts и paired live 9B acceptance.
