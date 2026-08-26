@@ -38,6 +38,11 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 **Историческое (контекст, НЕ текущая правда):** датированные саммари/хендоффы/репорты и заменённые планы сведены в **[`docs/archive/`](docs/archive/)** (`SESSION_SUMMARY_*`, `ROADMAP_LES_v2.0`, `DOCS_*AUDIT*`, хендоффы — см. `docs/archive/README.md`). На месте, но тоже историческое: `README_v2.0.md`, `LES_MASTER_DOC_v2_1.md`, `INFRASTRUCTURE_v2.0.md`, `RAG_MODERNIZATION_PLAN.md`, `ARTICLE_*.md`. Полезны для «почему так», но версии/решения могут устареть — сверяй с каноном и кодом (`/api/version`).
 
 ## Гейт проверки
+- **`make architecture-gate`** — структурный fail-closed guard канонической
+  0.29-архитектуры: запрещает параллельные `estimate_*` workbook tools,
+  regex-forcing, неявную активацию профиля, новые прямые model HTTP callsites
+  вне ContextGovernor и фиктивную live acceptance. Это структурное
+  доказательство, а не проверка качества модели.
 - **`make verify`** — офлайн: `compileall` + `pytest --collect-only` короткого канонического contract/behavior gate, без живых сервисов. Гонять перед готовностью.
 - **`make test-architecture`** — совместимый псевдоним короткого канонического gate. Исторический Unified/Construction Harness запускается через `make test-legacy`; прежняя 3204-test suite — только через `make test-legacy-full`.
 - **`make test-mail`** — отдельный offline-профиль Е.Ж.И.К.: IMAP/registry/dedup/RAG/API/UI и статический Windows-sidecar contract. **`make test-mail-release`** добавляет Tauri compile-check; установленный classic Outlook подтверждается только живым Legion-гейтом.

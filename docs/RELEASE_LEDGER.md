@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              592
-версия Tauri/NSIS:         5.1.592
+номер сборки:              593
+версия Tauri/NSIS:         5.1.593
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       owner-approved canonical architecture plus five executable plans; runtime implementation pending
+dev implementation:       canonical architecture gate implemented; Registry/Broker/Executor runtime pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -46,6 +46,18 @@ dev implementation:       owner-approved canonical architecture plus five execut
 > явное действие оператора. Stale/missing receipt понижает effective mode до
 > `shadow`; публикация и установка не меняют stored mode. Уточнены canonical
 > spec и планы Foundation, ContextGovernor и Release; runtime-код не изменён.
+
+> **0.29.0 architecture-guard checkpoint (build 593):** добавлен AST-based
+> `make architecture-gate`, который fail-closed запрещает параллельные
+> `estimate_*` workbook names, language/regex forcing workbook-вызова, неявную
+> profile activation, новые literal direct model HTTP callsites вне точного
+> baseline/ContextGovernor и synthetic/fixture claims как успешную live
+> acceptance. Восемь hermetic unit-тестов проверяют нарушения, точность
+> inference baseline, запрет чтения private archive и разрешённую
+> profile boundary; текущий tracked baseline проходит без findings. Документ
+> `CURRENT_ARCHITECTURE` отделяет уже реализованный guard от запланированных
+> Registry/Broker/Executor/Governor компонентов. Runtime-сервисы и пользовательские
+> данные не затрагивались.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
