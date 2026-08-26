@@ -235,3 +235,19 @@ native runtime or destructive migration change. PR6 cannot enter that package.
 Rollback disables the new registry/governor route and restores the `v0.28.2`
 profile/runtime path while preserving append-only artifact revisions,
 checkpoints and traces. No user document, index or setting is removed.
+
+## Executable implementation plans
+
+Execute these plans in order; each produces an independently reviewable and
+testable checkpoint:
+
+1. [Canonical Agent Foundation](../plans/2026-08-26-canonical-agent-foundation-implementation.md)
+   — architecture gate, Registry, Broker, Executor and ordinary-chat tool loop.
+2. [Context Governor, Memory and Model Presets](../plans/2026-08-26-context-governor-memory-presets-implementation.md)
+   — observed capacity, 9B/35B presets, typed memory and one inference packer.
+3. [Canonical Workbook Tools and Versioned Artifacts](../plans/2026-08-26-canonical-workbook-artifacts-implementation.md)
+   — PR13 contracts, checkpoints, immutable XLSX revisions and live acceptance.
+4. [Private Trust Fixes Adaptation](../plans/2026-08-26-private-trust-fixes-adaptation-implementation.md)
+   — focused PR5/7/9/10/12/14–18 behavior without bulk merging private branches.
+5. [Canonical Update, Rollback and Release](../plans/2026-08-26-canonical-update-rollback-release-implementation.md)
+   — route rollback, exact manifest, apply/skip/rollback and release evidence.

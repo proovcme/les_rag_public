@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              590
-версия Tauri/NSIS:         5.1.590
+номер сборки:              591
+версия Tauri/NSIS:         5.1.591
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       owner-approved canonical architecture spec; runtime implementation pending
+dev implementation:       owner-approved canonical architecture plus five executable plans; runtime implementation pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -27,6 +27,15 @@ dev implementation:       owner-approved canonical architecture spec; runtime im
 > PR6 требует отдельного полного installer, PR8/11 — отдельная extension-линия,
 > private PR13 не меняет защищённый smeta-core в этом релизе. Канон:
 > [active design](superpowers/specs/2026-08-26-canonical-tool-context-memory-update-design.md).
+
+> **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
+> разложена на пять последовательных исполнимых планов: Agent Foundation;
+> ContextGovernor + typed memory + 9B/35B presets; workbook tools + immutable
+> artifacts; адаптация private trust-fixes; update/rollback/release. Каждый task
+> содержит точные файлы, интерфейсы, красный тест, проверку, doc/version ledger и
+> границу коммита. Планы запрещают bulk merge private PR, изменения
+> `proxy/smeta_core/**`, regex forcing, auto-activation профилей и фиктивную live
+> acceptance. Runtime-код на этом checkpoint не изменён.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

@@ -15,7 +15,8 @@
 > на Qwen 3.5 9B и 35B с разными execution-presets. Текущий контракт:
 > [Canonical Tool, Context, Memory and Artifact Update](superpowers/specs/2026-08-26-canonical-tool-context-memory-update-design.md).
 > Старые estimator bridge design/plan помечены superseded и не являются
-> инструкциями.
+> инструкциями. Исполнимый маршрут разбит на пять независимых планов, связанных
+> из раздела `Executable implementation plans` канонической спецификации.
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
