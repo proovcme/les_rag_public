@@ -16,10 +16,13 @@
   live acceptance.
 - Публичные канонические имена workbook tools остаются
   `build_lsr_workbook` и `build_vor_workbook`.
+- `tool_contract_service.py` и `tool_registry_service.py` реализуют immutable
+  provider-neutral contracts/registrations и один canonical registry.
+- Все существующие read-only handlers подключены к registry ровно один раз;
+  `ToolHarness` сохранён как совместимый facade без копирования обработчиков.
 
 ## Запланировано, но ещё не реализовано
 
-- provider-neutral Tool Registry;
 - Capability Broker;
 - Trusted Executor и approval boundary;
 - `legacy | shadow | active` ordinary-chat route;

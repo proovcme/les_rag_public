@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              593
-версия Tauri/NSIS:         5.1.593
+номер сборки:              594
+версия Tauri/NSIS:         5.1.594
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       canonical architecture gate implemented; Registry/Broker/Executor runtime pending
+dev implementation:       architecture gate + canonical Tool Registry implemented; Broker/Executor pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -58,6 +58,16 @@ dev implementation:       canonical architecture gate implemented; Registry/Brok
 > `CURRENT_ARCHITECTURE` отделяет уже реализованный guard от запланированных
 > Registry/Broker/Executor/Governor компонентов. Runtime-сервисы и пользовательские
 > данные не затрагивались.
+
+> **0.29.0 canonical Tool Registry checkpoint (build 594):** добавлены immutable
+> `ToolContract` (version/effect/scopes/timeout/retry/idempotency/result budget/
+> provenance) с deep-frozen input schema и `ToolRegistration` (contract +
+> existing handler + availability),
+> а `ToolRegistry` fail-closed запрещает две активные версии одного имени.
+> Шестнадцать существующих read-only handlers подключены ровно один раз без
+> копирования бизнес-логики; `ToolHarness` теперь compatibility facade и
+> сохраняет прежние registry/result поля. Focused contract/registry: 12 passed;
+> tool/profile compatibility: 41 passed. Broker и Executor ещё не реализованы.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

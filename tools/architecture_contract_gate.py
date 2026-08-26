@@ -27,6 +27,10 @@ _ACTIVATION_BOUNDARIES = {
     "tests/test_chat_profile_service.py",
     "tests/test_profiles_router.py",
 }
+_GATE_SELF_PATHS = {
+    "tests/test_architecture_contract_gate.py",
+    "tools/architecture_contract_gate.py",
+}
 
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
@@ -82,6 +86,8 @@ def _tracked_sources(root: Path) -> list[Path]:
 
 
 def _source_path_is_allowed(relative: Path) -> bool:
+    if relative.as_posix() in _GATE_SELF_PATHS:
+        return False
     excluded = {
         ".git",
         ".venv",

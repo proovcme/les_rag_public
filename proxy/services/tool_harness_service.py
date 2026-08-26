@@ -18,6 +18,14 @@ from typing import Any, Callable
 from backend.converter import normalize_pdf_text
 from proxy.services.document_explorer_service import explorer
 from proxy.services.notebook_service import build_dataset_notebook
+from proxy.services.tool_contract_service import (
+    EffectClass,
+    IdempotencyPolicy,
+    ResultBudget,
+    RetryPolicy,
+    ToolContract,
+)
+from proxy.services.tool_registry_service import ToolRegistration, ToolRegistry
 from proxy.services.tool_trace_policy import make_tool_trace, validate_tool_result
 
 
@@ -73,11 +81,11 @@ class ToolHarness:
     """Registry + executor for bounded LES tools."""
 
     def __init__(self) -> None:
-        self._tools: dict[str, tuple[ToolSpec, Callable[[dict[str, Any]], dict[str, Any]]]] = {}
+        self._registry = ToolRegistry()
         self._register_defaults()
 
     def registry(self, *, category: str = "") -> dict[str, Any]:
-        tools = [spec.to_dict() for spec, _handler in self._tools.values()]
+        tools = [item.contract.public_payload() for item in self._registry.registrations()]
         if category:
             tools = [tool for tool in tools if tool.get("category") == category]
         return {
@@ -103,54 +111,82 @@ class ToolHarness:
         allowed = None if allowed_tools is None else {
             str(name).strip() for name in allowed_tools if str(name).strip()
         }
-        scored: list[tuple[int, ToolSpec]] = []
-        for spec, _handler in self._tools.values():
-            if allowed is not None and spec.name not in allowed:
+        scored: list[tuple[int, ToolContract]] = []
+        for registration in self._registry.registrations():
+            contract = registration.contract
+            if allowed is not None and contract.name not in allowed:
                 continue
-            haystack = " ".join([spec.name, spec.title, spec.summary, *spec.tags]).casefold()
+            haystack = " ".join([contract.name, contract.title, contract.summary, *contract.tags]).casefold()
             score = sum(1 for term in terms if term in haystack)
-            if spec.category in {"dataset", "source"} and any(t in terms for t in ("датасет", "документ", "источник", "pdf", "excel")):
+            if contract.category in {"dataset", "source"} and any(t in terms for t in ("датасет", "документ", "источник", "pdf", "excel")):
                 score += 2
-            if spec.category == "filesystem" and any(t in terms for t in ("файл", "папк", "filesystem", "диск", "компьютер", "компьютере")):
+            if contract.category == "filesystem" and any(t in terms for t in ("файл", "папк", "filesystem", "диск", "компьютер", "компьютере")):
                 score += 2
-            if spec.category == "web" and any(t in terms for t in ("agent", "агент", "интернет", "web", "сайт", "актуальн")):
+            if contract.category == "web" and any(t in terms for t in ("agent", "агент", "интернет", "web", "сайт", "актуальн")):
                 score += 3
             if score:
-                scored.append((score, spec))
+                scored.append((score, contract))
         scored.sort(key=lambda item: (-item[0], item[1].name))
-        selected = [spec.to_dict() | {"score": score} for score, spec in scored[: max(1, limit)]]
+        selected = [contract.public_payload() | {"score": score} for score, contract in scored[: max(1, limit)]]
         if not selected:
             selected = [
-                self._tools[name][0].to_dict() | {"score": 0}
+                self._registry.require(name).contract.public_payload() | {"score": 0}
                 for name in ("dataset_map", "search_sources", "read_source")
-                if name in self._tools and (allowed is None or name in allowed)
+                if self._registry.get(name) is not None and (allowed is None or name in allowed)
             ][: max(1, limit)]
         return {"schema": "les_tool_shortlist_v1", "question": question, "mode": mode, "tools": selected}
 
     def call(self, tool: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         args = dict(args or {})
-        if tool not in self._tools:
+        registration = self._registry.get(tool)
+        if registration is None:
             return _result(tool=tool, operation="call", inputs=[args], status="missing",
                            result={}, missing=[f"unknown tool: {tool}"], trace="tool not registered")
-        spec, handler = self._tools[tool]
+        contract = registration.contract
         try:
-            payload = handler(args)
+            payload = registration.handler(args)
         except Exception as exc:  # noqa: BLE001 - tool errors must become traceable payloads
             payload = _result(
-                tool=spec.name,
+                tool=contract.name,
                 operation="call",
                 inputs=[_redact_args(args)],
                 status="error",
                 result={},
                 warnings=[str(exc)[:240]],
-                trace=f"{spec.name} failed: {type(exc).__name__}",
+                trace=f"{contract.name} failed: {type(exc).__name__}",
             )
-        payload.setdefault("spec", spec.to_dict())
+        payload.setdefault("spec", contract.public_payload())
         payload["contract_check"] = validate_tool_result(payload)
         return payload
 
     def _register(self, spec: ToolSpec, handler: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
-        self._tools[spec.name] = (spec, handler)
+        scopes = {
+            "dataset": ("dataset",),
+            "source": ("dataset",),
+            "filesystem": ("filesystem",),
+            "web": ("public_web",),
+        }.get(spec.category, (spec.category,))
+        contract = ToolContract(
+            name=spec.name,
+            version="1.0.0",
+            title=spec.title,
+            category=spec.category,
+            summary=spec.summary,
+            input_schema=dict(spec.args_schema),
+            result_schema=TOOL_RESULT_SCHEMA,
+            effect=EffectClass.READ,
+            scopes=scopes,
+            timeout_seconds=120 if spec.name == "look_at_pdf_page" else 30,
+            retry=RetryPolicy.SAFE,
+            idempotency=IdempotencyPolicy.DERIVED,
+            result_budget=ResultBudget(max_chars=7000, max_items=20),
+            model_owned_fields=(),
+            provenance="source_refs_required",
+            tags=spec.tags,
+            legacy_returns=spec.returns,
+            approval_required=spec.approval_required,
+        )
+        self._registry.register(ToolRegistration(contract=contract, handler=handler))
 
     def _register_defaults(self) -> None:
         self._register(
@@ -1089,3 +1125,8 @@ def _redact_args(args: dict[str, Any]) -> dict[str, Any]:
 
 def harness() -> ToolHarness:
     return ToolHarness()
+
+
+def _build_canonical_tool_registry() -> ToolRegistry:
+    """Return fresh registrations backed by the existing handler functions."""
+    return ToolHarness()._registry

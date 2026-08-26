@@ -9,6 +9,21 @@
 
 ## Контракт
 
+Канонический provider-neutral слой разделён на два типа:
+
+- `ToolContract` — immutable имя/версия, JSON-вход, result schema, effect,
+  scopes, timeout, retry/idempotency, result budget, model-owned fields и
+  provenance policy;
+- `ToolRegistration` — один contract, существующий sync/async handler и
+  runtime availability predicate.
+
+`ToolRegistry` допускает только одну активную регистрацию имени и fail-closed
+отклоняет дубликаты. `canonical_tool_registry()` собирает реестр из существующих
+handlers `tool_harness_service`: бизнес-логика не копируется. Старые
+`ToolHarness.registry()/shortlist()/call()` являются compatibility facades над
+этим реестром; поля `args_schema`, `returns`, `side_effects` сохранены вместе с
+новой execution policy.
+
 Каждый вызов возвращает `les_tool_result_v1`:
 
 - `tool`, `operation`, `inputs`, `status`;

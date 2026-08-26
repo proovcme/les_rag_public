@@ -111,3 +111,18 @@ def test_never_reads_private_archive(tmp_path: Path) -> None:
     )
 
     assert scan_architecture(tmp_path) == []
+
+
+def test_gate_self_test_fixtures_are_not_product_findings(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "tests/test_architecture_contract_gate.py",
+        'MUTATION = "estimate_build_lsr_workbook"\n',
+    )
+    _write(
+        tmp_path,
+        "tools/architecture_contract_gate.py",
+        'PATTERN = r"estimate_.*workbook"\n',
+    )
+
+    assert scan_architecture(tmp_path) == []

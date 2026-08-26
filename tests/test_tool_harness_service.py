@@ -88,6 +88,8 @@ def test_tool_registry_is_typed_and_read_only_first():
         "search_project_tables", "read_project_table", "assemble_project_volume", "look_at_pdf_page",
     } <= names
     assert all(tool["side_effects"] == "none" for tool in registry["tools"])
+    assert all(tool["effect"] == "read" for tool in registry["tools"])
+    assert all(tool["result_schema"] == "les_tool_result_v1" for tool in registry["tools"])
     assert registry["policy"]["tools_return_evidence_not_final_domain_answers"] is True
 
 
