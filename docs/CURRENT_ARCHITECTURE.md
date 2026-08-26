@@ -20,10 +20,12 @@
   provider-neutral contracts/registrations и один canonical registry.
 - Все существующие read-only handlers подключены к registry ровно один раз;
   `ToolHarness` сохранён как совместимый facade без копирования обработчиков.
+- `CapabilityBroker` формирует bounded shortlist только из profile/scope/phase/
+  runtime/preset/budget policy. Он не получает текст вопроса и не выполняет
+  профессиональный intent routing.
 
 ## Запланировано, но ещё не реализовано
 
-- Capability Broker;
 - Trusted Executor и approval boundary;
 - `legacy | shadow | active` ordinary-chat route;
 - ContextGovernor, typed memory projection и presets Qwen 9B/35B;

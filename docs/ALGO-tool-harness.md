@@ -24,6 +24,16 @@ handlers `tool_harness_service`: бизнес-логика не копирует
 этим реестром; поля `args_schema`, `returns`, `side_effects` сохранены вместе с
 новой execution policy.
 
+`CapabilityBroker` строит model-visible shortlist как детерминированное
+пересечение immutable profile tools, dataset scope, workflow phase, runtime
+availability, resolved model preset и оставшихся call/result budgets. В
+`BrokerRequest` нет текста вопроса: broker не может выбрать workbook, норму или
+другое профессиональное действие по словам пользователя. Не вошедшие tools
+возвращаются по причинам `unknown/runtime/phase/scope/calls_budget/result_budget/
+preset_limit`, а порядок разрешённых tools сохраняет порядок профиля. Qwen 9B
+получает не более пяти contracts; 35B может получить большую coherent page, но
+не другой набор профессиональных возможностей.
+
 Каждый вызов возвращает `les_tool_result_v1`:
 
 - `tool`, `operation`, `inputs`, `status`;

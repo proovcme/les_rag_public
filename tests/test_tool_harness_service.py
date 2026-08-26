@@ -93,6 +93,20 @@ def test_tool_registry_is_typed_and_read_only_first():
     assert registry["policy"]["tools_return_evidence_not_final_domain_answers"] is True
 
 
+def test_tool_shortlist_delegates_policy_without_domain_word_routing():
+    harness = ToolHarness()
+    allowed = ["dataset_map", "web_search", "filesystem_search"]
+
+    first = harness.shortlist("котельная", allowed_tools=allowed, limit=5)
+    second = harness.shortlist("пожарная сигнализация", allowed_tools=allowed, limit=5)
+
+    assert [item["name"] for item in first["tools"]] == allowed
+    assert [item["name"] for item in second["tools"]] == allowed
+    assert first["omitted_by_reason"] == second["omitted_by_reason"]
+    assert first["preset"] == "qwen-9b"
+    assert first["budget"]["calls"] == 5
+
+
 def test_tool_search_sources_returns_evidence_packet(monkeypatch, explorer):
     monkeypatch.setattr(tool_harness_service, "explorer", lambda: explorer)
 

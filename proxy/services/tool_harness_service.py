@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from backend.converter import normalize_pdf_text
+from proxy.services.capability_broker_service import BrokerRequest, CapabilityBroker
 from proxy.services.document_explorer_service import explorer
 from proxy.services.notebook_service import build_dataset_notebook
 from proxy.services.tool_contract_service import (
@@ -106,35 +107,65 @@ class ToolHarness:
         mode: str = "",
         allowed_tools: list[str] | tuple[str, ...] | set[str] | None = None,
         limit: int = 5,
+        dataset_ids: tuple[str, ...] = ("*",),
+        workflow_phase: str = "research",
+        model_preset: str = "qwen-9b",
+        runtime_available: frozenset[str] | None = None,
+        calls_remaining: int | None = None,
+        result_chars_remaining: int = 35_000,
     ) -> dict[str, Any]:
-        terms = _tokens(" ".join([question, mode]))
-        allowed = None if allowed_tools is None else {
-            str(name).strip() for name in allowed_tools if str(name).strip()
+        if allowed_tools is None:
+            registrations = list(self._registry.registrations())
+            if str(mode).strip().casefold() == "agent":
+                priority = {"web": 0, "filesystem": 1, "dataset": 2, "source": 3}
+                agent_order = {
+                    "web_search": 0,
+                    "filesystem_search": 1,
+                    "filesystem_read_text": 2,
+                    "filesystem_list": 3,
+                    "filesystem_stat": 4,
+                    "filesystem_hash": 5,
+                    "filesystem_roots": 6,
+                }
+                registrations.sort(
+                    key=lambda item: (
+                        priority.get(item.contract.category, 4),
+                        agent_order.get(item.contract.name, 100),
+                        item.contract.name,
+                    )
+                )
+            profile_tools = tuple(item.contract.name for item in registrations)
+        else:
+            raw_tools = sorted(allowed_tools) if isinstance(allowed_tools, set) else allowed_tools
+            profile_tools = tuple(dict.fromkeys(str(name).strip() for name in raw_tools if str(name).strip()))
+        available = runtime_available
+        if available is None:
+            available = frozenset(item.contract.name for item in self._registry.registrations())
+        requested_limit = max(1, int(limit))
+        result = CapabilityBroker(self._registry).shortlist(
+            BrokerRequest(
+                profile_tools=profile_tools,
+                dataset_ids=tuple(dataset_ids),
+                workflow_phase=workflow_phase,
+                model_preset=model_preset,
+                runtime_available=available,
+                calls_remaining=requested_limit if calls_remaining is None else calls_remaining,
+                result_chars_remaining=result_chars_remaining,
+            )
+        )
+        selected = [contract.public_payload() | {"score": 0} for contract in result.contracts]
+        return {
+            "schema": "les_tool_shortlist_v1",
+            "question": question,
+            "mode": mode,
+            "tools": selected[:requested_limit],
+            "omitted_by_reason": dict(result.omitted_by_reason),
+            "preset": model_preset,
+            "budget": {
+                "calls": result.call_limit,
+                "result_chars": result.result_chars_limit,
+            },
         }
-        scored: list[tuple[int, ToolContract]] = []
-        for registration in self._registry.registrations():
-            contract = registration.contract
-            if allowed is not None and contract.name not in allowed:
-                continue
-            haystack = " ".join([contract.name, contract.title, contract.summary, *contract.tags]).casefold()
-            score = sum(1 for term in terms if term in haystack)
-            if contract.category in {"dataset", "source"} and any(t in terms for t in ("датасет", "документ", "источник", "pdf", "excel")):
-                score += 2
-            if contract.category == "filesystem" and any(t in terms for t in ("файл", "папк", "filesystem", "диск", "компьютер", "компьютере")):
-                score += 2
-            if contract.category == "web" and any(t in terms for t in ("agent", "агент", "интернет", "web", "сайт", "актуальн")):
-                score += 3
-            if score:
-                scored.append((score, contract))
-        scored.sort(key=lambda item: (-item[0], item[1].name))
-        selected = [contract.public_payload() | {"score": score} for score, contract in scored[: max(1, limit)]]
-        if not selected:
-            selected = [
-                self._registry.require(name).contract.public_payload() | {"score": 0}
-                for name in ("dataset_map", "search_sources", "read_source")
-                if self._registry.get(name) is not None and (allowed is None or name in allowed)
-            ][: max(1, limit)]
-        return {"schema": "les_tool_shortlist_v1", "question": question, "mode": mode, "tools": selected}
 
     def call(self, tool: str, args: dict[str, Any] | None = None) -> dict[str, Any]:
         args = dict(args or {})
@@ -1107,10 +1138,6 @@ def _int_arg(value: Any, default: int, *, min_value: int, max_value: int) -> int
     except (TypeError, ValueError):
         parsed = default
     return max(min_value, min(max_value, parsed))
-
-
-def _tokens(text: str) -> set[str]:
-    return {token.casefold() for token in re.findall(r"[0-9A-Za-zА-Яа-яЁё_.-]{3,}", text)}
 
 
 def _redact_args(args: dict[str, Any]) -> dict[str, Any]:

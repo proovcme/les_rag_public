@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              594
-версия Tauri/NSIS:         5.1.594
+номер сборки:              595
+версия Tauri/NSIS:         5.1.595
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       architecture gate + canonical Tool Registry implemented; Broker/Executor pending
+dev implementation:       architecture gate + Registry + CapabilityBroker implemented; Executor pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -68,6 +68,17 @@ dev implementation:       architecture gate + canonical Tool Registry implemente
 > копирования бизнес-логики; `ToolHarness` теперь compatibility facade и
 > сохраняет прежние registry/result поля. Focused contract/registry: 12 passed;
 > tool/profile compatibility: 41 passed. Broker и Executor ещё не реализованы.
+
+> **0.29.0 Capability Broker checkpoint (build 595):** добавлен deterministic
+> `CapabilityBroker`, который пересекает immutable profile order, dataset scope,
+> workflow phase, runtime availability, exact resolved preset и оставшиеся
+> call/result budgets. `BrokerRequest` намеренно не содержит question/domain
+> text; code-owned professional selection невозможен на уровне интерфейса.
+> Каждое исключение получает typed reason, неизвестный preset использует
+> restrictive 9B page, 9B hard max — пять contracts; 35B меняет только coherent
+> page capacity. `ToolHarness.shortlist()` делегирует broker и сохраняет
+> `les_tool_shortlist_v1`. Broker tests: 6 passed; broker/harness/profile
+> compatibility: 41 passed; architecture gate green. Executor ещё не реализован.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
