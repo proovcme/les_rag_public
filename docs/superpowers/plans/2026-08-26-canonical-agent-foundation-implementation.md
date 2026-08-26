@@ -4,7 +4,7 @@
 
 **Goal:** Replace the mixed `ToolHarness` registry/execution loop with one provider-neutral Tool Registry, Capability Broker and Trusted Executor, guarded against the rejected estimator bridge.
 
-**Architecture:** Existing read-only handlers remain the implementation source, but registration, eligibility and execution become separate typed services. Ordinary chat obtains a bounded broker shortlist, the model chooses one call, and the executor validates scope, effect policy, idempotency and the result envelope before the model continues.
+**Architecture:** Existing read-only handlers remain the implementation source, but registration, eligibility and execution become separate typed services. Ordinary chat first integrates the broker/executor pipeline as a side-effect-free `shadow` candidate behind a three-state route decision; the preserved route remains authoritative until exact 9B acceptance and explicit promotion. The model chooses one call, and the executor validates scope, effect policy, idempotency and the result envelope before the candidate continues.
 
 **Tech Stack:** Python 3.12, dataclasses, Enum, FastAPI, SQLite, pytest, uv, Make.
 
@@ -18,6 +18,9 @@
 - The model owns tool choice. No regex, substring intent rule or fallback may force a workbook call.
 - Profile revisions and existing chat bindings remain immutable until an explicit operator/user action applies another revision.
 - Qwen 9B and 35B receive the same professional workflows and tool contracts; presets may only alter budgets and concurrency.
+- The canonical route factor is `legacy | shadow | active`; an absent setting resolves to `shadow` and never to `active`.
+- Shadow execution cannot change the user-visible response or persist tool, artifact, checkpoint, profile or binding state.
+- Active execution requires a passing promotion receipt bound to the exact commit, build, 9B preset and observed model identity.
 - Do not add dependencies.
 - Every task updates its module documentation and `docs/MODULE_INDEX.md`, increments `build_number` once in `config/version.json`, runs `make version-sync`, and records the task in `docs/RELEASE_LEDGER.md` in the same commit.
 
@@ -425,6 +428,8 @@ Commit: `feat(tools): execute canonical contracts through trust boundary`.
 ### Task 5: Integrate one-call model decisions into ordinary chat
 
 **Files:**
+- Create: `proxy/services/canonical_route_service.py`
+- Create: `tests/test_canonical_route_service.py`
 - Modify: `proxy/services/chat_evidence_application_service.py`
 - Modify: `proxy/routers/chat.py`
 - Modify: `tests/test_chat_evidence_application_service.py`
@@ -438,7 +443,7 @@ Commit: `feat(tools): execute canonical contracts through trust boundary`.
 
 **Interfaces:**
 - Consumes: `CapabilityBroker.shortlist()` and `TrustedExecutor.execute()`.
-- Produces: one validated model decision per turn, one execution envelope and a continued model-composed answer.
+- Produces: `CanonicalRouteMode`, `PromotionReceipt`, `CanonicalRouteDecision`, one validated canonical model decision per turn and a redacted shadow comparison trace; legacy remains the user-visible answer until promoted.
 
 - [ ] **Step 1: Write failing ordinary-chat integration tests**
 
@@ -453,6 +458,22 @@ async def test_chat_executes_only_one_model_decision_before_repacking(runtime):
     assert result.trace["tool_loop"]["pending_calls"] == 1
 
 
+def test_missing_route_setting_defaults_to_shadow_without_promotion(monkeypatch):
+    monkeypatch.delenv("LES_CANONICAL_AGENT_ROUTE_MODE", raising=False)
+    decision = resolve_canonical_route(receipt=None)
+    assert decision.requested is CanonicalRouteMode.SHADOW
+    assert decision.effective is CanonicalRouteMode.SHADOW
+
+
+@pytest.mark.asyncio
+async def test_shadow_keeps_legacy_answer_and_cannot_persist(runtime, state):
+    before = state.hash_persistent_rows()
+    result = await run_chat_with_route(runtime, mode="shadow")
+    assert result.answer == runtime.legacy_answer
+    assert result.trace["canonical_shadow"]["user_visible"] is False
+    assert state.hash_persistent_rows() == before
+
+
 def test_profile_publication_does_not_activate_or_rebind(tmp_path):
     bound = bind_factory_estimator(tmp_path)
     published = publish_estimator_revision(tmp_path)
@@ -462,11 +483,42 @@ def test_profile_publication_does_not_activate_or_rebind(tmp_path):
 
 - [ ] **Step 2: Run the focused chat/profile tests and confirm the one-call assertion fails**
 
-Run: `uv run python -m pytest -q --basetemp=.test-tmp/chat-tools tests/test_chat_evidence_application_service.py tests/test_chat_profile_service.py`
+Run: `uv run python -m pytest -q --basetemp=.test-tmp/chat-tools tests/test_canonical_route_service.py tests/test_chat_evidence_application_service.py tests/test_chat_profile_service.py`
 
-- [ ] **Step 3: Replace direct harness selection/execution**
+- [ ] **Step 3: Add the fail-closed route contract**
 
-The chat path performs:
+```python
+class CanonicalRouteMode(str, Enum):
+    LEGACY = "legacy"
+    SHADOW = "shadow"
+    ACTIVE = "active"
+
+
+@dataclass(frozen=True)
+class PromotionReceipt:
+    source_commit: str
+    build_number: int
+    preset_id: str
+    observed_model_identity: str
+    acceptance_sha256: str
+    passed: bool
+
+
+@dataclass(frozen=True)
+class CanonicalRouteDecision:
+    requested: CanonicalRouteMode
+    effective: CanonicalRouteMode
+    source: str
+    reason: str
+    restart_required: bool
+```
+
+An absent factor resolves to `shadow`. A requested `active` without an exact
+passing receipt resolves effectively to `shadow`; it never fails open.
+
+- [ ] **Step 4: Replace direct harness selection/execution in the canonical candidate**
+
+The canonical candidate performs:
 
 ```python
 shortlist = broker.shortlist(broker_request)
@@ -477,23 +529,31 @@ tool_exchange.append(execution.public_payload())
 
 Remove multi-call execution from one selector output. Read calls may be parallel only in the 35B preset after one validated decision explicitly contains an independent read batch; draft tools always execute singly.
 
-- [ ] **Step 4: Preserve immutable profile behavior**
+In `shadow`, run the preserved path for the response and run the canonical
+candidate with executor policy `shadow=True`: read-only calls may execute, but
+draft/commit calls return a non-persistent `would_execute` envelope. Discard the
+candidate answer and expose only redacted structural comparison fields. Do not
+write artifacts, checkpoints, prompt/answer text, profile revisions or chat
+bindings. `legacy` skips the candidate. `active` remains fail-closed to
+`shadow` until the later release plan supplies a valid promotion receipt.
+
+- [ ] **Step 5: Preserve immutable profile behavior**
 
 Publishing or seeding a profile revision must never call `activate_profile_revision()` and must never update `les_chat_profile_bindings`. Only the explicit activation route and `apply_revision=True` binding operation may change those records.
 
-- [ ] **Step 5: Run the focused suite and architecture gate**
+- [ ] **Step 6: Run the focused suite and architecture gate**
 
 Run:
 
 ```text
-uv run python -m pytest -q --basetemp=.test-tmp/chat-tools tests/test_chat_evidence_application_service.py tests/test_chat_profile_service.py tests/test_chat_profile_runtime.py tests/test_chat_harness_format.py tests/test_tool_harness_service.py
+uv run python -m pytest -q --basetemp=.test-tmp/chat-tools tests/test_canonical_route_service.py tests/test_chat_evidence_application_service.py tests/test_chat_profile_service.py tests/test_chat_profile_runtime.py tests/test_chat_harness_format.py tests/test_tool_harness_service.py
 make architecture-gate
 make verify
 ```
 
-- [ ] **Step 6: Update version/docs and commit**
+- [ ] **Step 7: Update version/docs and commit**
 
-Commit: `refactor(chat): use broker and trusted executor`.
+Commit: `refactor(chat): shadow broker and trusted executor`.
 
 ### Task 6: Close the foundation gate
 

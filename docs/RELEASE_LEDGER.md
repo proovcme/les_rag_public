@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              591
-версия Tauri/NSIS:         5.1.591
+номер сборки:              592
+версия Tauri/NSIS:         5.1.592
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
 dev implementation:       owner-approved canonical architecture plus five executable plans; runtime implementation pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
@@ -36,6 +36,16 @@ dev implementation:       owner-approved canonical architecture plus five execut
 > границу коммита. Планы запрещают bulk merge private PR, изменения
 > `proxy/smeta_core/**`, regex forcing, auto-activation профилей и фиктивную live
 > acceptance. Runtime-код на этом checkpoint не изменён.
+
+> **0.29.0 rollout-contract checkpoint (build 592):** устранён пробел между
+> последними договорённостями и исполнимыми планами. Маршрут теперь строго
+> трёхрежимный: `legacy | shadow | active`; отсутствие настройки и обновление
+> дают side-effect-free `shadow`, где пользовательский ответ остаётся legacy.
+> `active` fail-closed требует paired live non-regression на реальном 9B,
+> receipt, привязанный к exact commit/build/preset/observed model, и отдельное
+> явное действие оператора. Stale/missing receipt понижает effective mode до
+> `shadow`; публикация и установка не меняют stored mode. Уточнены canonical
+> spec и планы Foundation, ContextGovernor и Release; runtime-код не изменён.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

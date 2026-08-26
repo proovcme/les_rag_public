@@ -206,6 +206,12 @@ explicit superseded banner; they are not implementation instructions.
 - a profile update auto-activates or rebinds existing chats;
 - 9B and 35B expose different professional workflows;
 - a synthetic fixture is presented as live model quality evidence.
+- a clean install or update can silently promote the canonical route from
+  `legacy`/`shadow` to `active`;
+- `shadow` can change the user-visible answer or persist tool, artifact,
+  checkpoint, profile or chat-binding state;
+- `active` can become effective without a passing acceptance receipt bound to
+  the exact commit, build, 9B preset and observed model identity.
 
 ## Acceptance
 
@@ -221,6 +227,17 @@ Live acceptance uses the real ordinary-chat path:
 5. verify both revisions, provenance, missing/blockers and elapsed time;
 6. repeat the same workflow on configured 35B without changing its semantics.
 
+Rollout acceptance compares the preserved and canonical routes on the same
+representative workflow. The implementation starts in `shadow`: the preserved
+route remains authoritative while the canonical route emits a redacted,
+side-effect-free comparison trace. Candidate acceptance then runs the canonical
+route against an isolated state root. Any 9B contract, completion, artifact,
+provenance or stability regression blocks promotion. A passing report still
+does not activate the route: an operator must explicitly accept the exact
+report and request `active`. The resulting receipt is invalid after a commit,
+build, preset or observed-model change. 35B acceptance is additional evidence,
+not a substitute for the mandatory 9B gate.
+
 A run that spends minutes repeatedly failing to close one row is a failed
 acceptance, regardless of unit-test count. The release also requires
 `make verify`, `make test`, architecture gate, patch apply/skip/rollback and an
@@ -232,9 +249,18 @@ exact GitHub manifest bound to the verified commit.
 patch channel when classification proves there is no dependency, installer,
 native runtime or destructive migration change. PR6 cannot enter that package.
 
-Rollback disables the new registry/governor route and restores the `v0.28.2`
-profile/runtime path while preserving append-only artifact revisions,
-checkpoints and traces. No user document, index or setting is removed.
+The GUI-visible route factor is the enum `legacy | shadow | active`, not a
+boolean. `legacy` uses the preserved `v0.28.2` profile/runtime path. `shadow`
+is the default for a new 0.29 implementation and for an upgraded installation
+without an explicit stored choice; it keeps the legacy answer authoritative
+and records only redacted, side-effect-free canonical comparison evidence.
+`active` is effective only after an explicit operator action and a passing,
+exactly bound 9B acceptance receipt. Installing an update never manufactures a
+receipt, changes a stored route choice or promotes an existing installation.
+
+Rollback selects `legacy` and restores the `v0.28.2` profile/runtime path while
+preserving append-only artifact revisions, checkpoints and traces. No user
+document, index, acceptance report, receipt or setting is removed.
 
 ## Executable implementation plans
 

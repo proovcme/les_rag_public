@@ -17,6 +17,10 @@
 > Старые estimator bridge design/plan помечены superseded и не являются
 > инструкциями. Исполнимый маршрут разбит на пять независимых планов, связанных
 > из раздела `Executable implementation plans` канонической спецификации.
+> Rollout управляется отдельным GUI-фактором `legacy | shadow | active`:
+> отсутствующее значение означает side-effect-free `shadow`, а `active`
+> fail-closed требует точного 9B acceptance receipt и явного действия оператора;
+> установка обновления ничего не активирует автоматически.
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy

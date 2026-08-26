@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Route every ordinary-chat model request through one token-aware `ContextGovernor` with typed memory projection and capacity-bounded Qwen 9B/35B presets.
+**Goal:** Build every canonical ordinary-chat candidate through one token-aware `ContextGovernor` with typed memory projection and capacity-bounded Qwen 9B/35B presets, without making that candidate authoritative before promotion.
 
-**Architecture:** Model identity and observed backend capacity resolve to an immutable execution preset. Producers return typed context candidates; the governor allocates generation/safety reserves first, packs whole objects in canonical priority order and emits references plus omitted counts instead of slicing JSON.
+**Architecture:** Model identity and observed backend capacity resolve to an immutable execution preset. Producers return typed context candidates; the governor allocates generation/safety reserves first, packs whole objects in canonical priority order and emits references plus omitted counts instead of slicing JSON. The governed candidate initially runs under the Foundation plan's `shadow` decision: legacy output remains authoritative and canonical observability is redacted and non-persistent until exact 9B acceptance and explicit promotion.
 
 **Tech Stack:** Python 3.12, dataclasses, SQLite, FastAPI, NiceGUI, pytest, uv.
 
@@ -17,6 +17,8 @@
 - Unknown model identity or capacity resolves to the restrictive 9B-compatible preset.
 - 9B and 35B share tools, workflow state, approvals and artifact contracts.
 - Reasoning is a separate explicit opt-in and is disabled by default for both presets.
+- Preset installation and resolution never promote `legacy`/`shadow` to `active`; route choice is an independent GUI-visible factor.
+- Shadow uses the same request and bound profile snapshot as legacy, cannot persist effects and cannot replace the user-visible answer.
 - Memory is advisory state, never evidence and never a professional decision engine.
 - JSON objects are included whole or omitted with stable IDs/cursors; never truncate serialized JSON mid-object.
 - Do not add dependencies.
@@ -284,7 +286,7 @@ make architecture-gate
 
 Commit: `feat(memory): project typed advisory working state`.
 
-### Task 4: Route all ordinary-chat inference packets through the governor
+### Task 4: Govern the canonical ordinary-chat candidate in every route mode
 
 **Files:**
 - Modify: `proxy/services/chat_evidence_application_service.py`
@@ -298,8 +300,8 @@ Commit: `feat(memory): project typed advisory working state`.
 - Modify: `docs/RELEASE_LEDGER.md`
 
 **Interfaces:**
-- Consumes: profile snapshot, broker shortlist, request/checkpoint, typed memory, retrieval evidence/source map and latest tool exchange.
-- Produces: one `ContextPacket` for selector and answer calls plus a redacted `context_governor` trace.
+- Consumes: `CanonicalRouteDecision`, profile snapshot, broker shortlist, request/checkpoint, typed memory, retrieval evidence/source map and latest tool exchange.
+- Produces: one `ContextPacket` for canonical selector and answer calls plus a redacted `context_governor`/route-comparison trace; only effective `active` may replace legacy output.
 
 - [ ] **Step 1: Write failing chat integration tests**
 
@@ -315,7 +317,16 @@ async def test_chat_calls_governor_for_selector_and_final_model(fake_runtime):
 async def test_required_overflow_prevents_provider_call(fake_runtime):
     result = await run_chat_with_tiny_capacity(fake_runtime)
     assert result["error"]["code"] == "CONTEXT_REQUIRED_SECTION_OVERFLOW"
-    assert fake_runtime.provider_calls == []
+    assert fake_runtime.canonical_provider_calls == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_governs_same_snapshot_but_keeps_legacy_output(fake_runtime):
+    result = await run_grounded_chat(fake_runtime, route_mode="shadow")
+    assert result.answer == fake_runtime.legacy_answer
+    shadow = result["retrieval_trace"]["canonical_shadow"]
+    assert shadow["profile_revision"] == fake_runtime.legacy_profile_revision
+    assert shadow["persisted_effects"] == 0
 ```
 
 - [ ] **Step 2: Run and confirm current direct prompt assembly fails the assertion**
@@ -337,9 +348,17 @@ messages = packet.as_messages()
 
 Delete per-service final truncation in this path. Retrieval may still bound candidate generation, but only the governor owns the inference packet budget.
 
+Resolve the route once before either branch. `legacy` skips canonical provider
+calls. `shadow` gives the canonical candidate the exact same request and bound
+profile snapshot, keeps the legacy answer authoritative and uses the
+non-persistent executor policy defined by the Foundation plan. Effective
+`active` uses the governed canonical answer; the route service must already
+have validated the exact promotion receipt. Preset resolution alone can never
+change the effective route.
+
 - [ ] **Step 4: Persist redacted observability**
 
-Trace contains preset ID, requested/effective capacities, source chain, per-kind included tokens/items, omission counts/cursors and reserves. It contains neither prompt text nor secrets.
+Trace contains route requested/effective/reason, preset ID, requested/effective capacities, source chain, per-kind included tokens/items, omission counts/cursors, reserves and structural legacy/canonical comparison fields. It contains neither prompt/answer text nor secrets and is not model-quality evidence.
 
 - [ ] **Step 5: Run chat/context tests and gates**
 
