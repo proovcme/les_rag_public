@@ -4,19 +4,29 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-25)
+## Текущее состояние (2026-08-26)
 
 ```
-версия продукта (SemVer):  0.28.2 (release candidate; не опубликован)
-номер сборки:              589
-версия Tauri/NSIS:         5.1.589
-ветка разработки:          codex/release-smoke-env-0282 от public main
-dev implementation:       idempotent offline bootstrap; profile budgets; immutable GitHub update channel
+версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
+номер сборки:              590
+версия Tauri/NSIS:         5.1.590
+ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
+dev implementation:       owner-approved canonical architecture spec; runtime implementation pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
-последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.1
-следующий выпуск:          0.28.2 full GitHub installer; publication pending
+последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
+следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
 рантайм /api/version:      isolated installed smoke 0.28.2 / build 589; services stopped after acceptance
 ```
+
+> **0.29.0 architecture checkpoint:** чистая ветка создана от опубликованного
+> `v0.28.2` (`e8ccad2b`); неправильный 101-file candidate не является источником
+> релиза. Канонические PR13 tools сохраняют имена `build_lsr_workbook` /
+> `build_vor_workbook` и проходят Registry → Broker → Executor. ContextGovernor,
+> typed memory projection и runtime-presets 9B/35B обязательны в том же
+> workflow. Полезные private PR5/7/9/10/12/14–18 адаптируются узкими trust-срезами;
+> PR6 требует отдельного полного installer, PR8/11 — отдельная extension-линия,
+> private PR13 не меняет защищённый smeta-core в этом релизе. Канон:
+> [active design](superpowers/specs/2026-08-26-canonical-tool-context-memory-update-design.md).
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
@@ -38,31 +48,32 @@ dev implementation:       idempotent offline bootstrap; profile budgets; immutab
 > а publisher требует clean pushed HEAD, новый tag, GitHub immutability, feed↔HEAD binding и
 > повторную проверку скачанного draft. Статус: код готов; release не публиковался.
 
-> **Planned 0.28.3 — lightweight GitHub estimator patch:** после full `0.28.2` добавить четыре
+> **Superseded 0.28.3 estimator bridge — НЕ ИСПОЛНЯТЬ:** прежний план добавить четыре
 > estimator-only tool contract: безопасные inspect/status, append-only ВОР и
 > resumable `priced_draft` ЛСР поверх существующего application-adapter. Вызов
 > принадлежит модели; regex forcing, безусловная выдача tools обычному Agent и
 > автоматическая активация новой редакции профиля запрещены. Progress/heartbeat
 > подавляет повтор `/api/chat`, checkpoint переживает interrupt, а acceptance
 > обязателен на локальной Qwen 3.5 9B. Статус: дизайн и исполнимый план оформлены;
-> код не изменён, PR #13 используется только как источник отдельных идей.
+> код не изменён. Параллельные `estimate_*`-контракты отклонены; правильные
+> PR13 workbook contracts входят прямо в каноническую архитектуру 0.29.0.
 
-> **Planned 0.29.0 — Agent Foundation:** единый provider-neutral Tool Registry для
+> **Active 0.29.0 — Agent Foundation:** единый provider-neutral Tool Registry для
 > внутренних tools и MCP, Capability Broker, Trusted Executor, `ContextGovernor`,
 > общая typed-проекция существующей памяти и отдельные presets для Qwen 3.5 9B и
 > Qwen 35B. Read-only tools мигрируют первыми. Каждый основной workflow обязан
-> проходить на локальной 9B. Статус: проект дизайна ожидает owner review,
-> implementation pending.
+> проходить на локальной 9B. Статус: архитектура утверждена владельцем 2026-08-26;
+> implementation идёт в чистой ветке от публичного v0.28.2.
 
 > **Planned 0.29.1 — controlled actions:** typed compute, автоматические draft и
 > append-only revision tools; commit/finalization, внешние и destructive действия
 > только после явного подтверждения; idempotency keys и action receipts одинаковы
 > для MCP и внутренних вызовов. Статус: planned, не поставлено.
 
-> Дизайн planned-линии: [Windows bootstrap 0.28.2](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md),
+> Дизайн release-линии: [Windows bootstrap 0.28.2](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md),
 > [GitHub update channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md),
-> [LSR/VOR tools 0.28.3](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
-> и [Agent Tool + Context + Memory 0.29.x](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
+> [superseded LSR/VOR bridge](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
+> и [active canonical 0.29.0 design](superpowers/specs/2026-08-26-canonical-tool-context-memory-update-design.md).
 
 > **0.28.1 / build 588:** Windows package содержит SHA-256-проверенные portable Python/uv,
 > exact `uv.lock` и offline dependency cache; bootstrap не зависит от system Python/uv,

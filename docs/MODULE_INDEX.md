@@ -7,14 +7,15 @@
 > Upload и global auto-resume сериализованы одним parse semaphore, поэтому first-run supervisor
 > не индексирует только что загруженный smoke/user document параллельно второй раз.
 
-> **0.28.2 implemented, 0.28.3 → 0.29.1 planned:** идемпотентный offline bootstrap,
-> profile text limits и GitHub update channel реализованы; далее узкий estimator-only LSR/VOR tool slice, после него
-> общий Tool Registry/Executor + ContextGovernor +
-> memory projection с отдельными Qwen 9B/35B presets, затем approval-gated
-> actions. Это 📋 design, не описание текущего кода: [bootstrap design](superpowers/specs/2026-08-25-windows-bootstrap-idempotency-design.md)
-> [GitHub update channel](superpowers/specs/2026-08-25-github-release-update-channel-design.md)
-> [LSR/VOR tools design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md)
-> и [agent foundation design](superpowers/specs/2026-08-25-agent-tool-context-memory-design.md).
+> **0.29.0 active architecture:** все новые inference/tool изменения сразу идут
+> через общий Tool Registry, Capability Broker, Trusted Executor,
+> ContextGovernor и typed memory projection. Канонические workbook-tools —
+> `build_lsr_workbook` / `build_vor_workbook`; параллельные `estimate_*`, regex
+> forcing и автоматическая активация профиля запрещены. Один workflow работает
+> на Qwen 3.5 9B и 35B с разными execution-presets. Текущий контракт:
+> [Canonical Tool, Context, Memory and Artifact Update](superpowers/specs/2026-08-26-canonical-tool-context-memory-update-design.md).
+> Старые estimator bridge design/plan помечены superseded и не являются
+> инструкциями.
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy

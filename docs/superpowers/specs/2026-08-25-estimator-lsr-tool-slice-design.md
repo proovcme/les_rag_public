@@ -1,5 +1,10 @@
 # Estimator LSR/VOR Tool Slice Design
 
+> **SUPERSEDED:** This temporary `estimate_*` bridge is not part of the active
+> architecture. Use the canonical `build_lsr_workbook` / `build_vor_workbook`
+> contracts defined in
+> [2026-08-26-canonical-tool-context-memory-update-design.md](2026-08-26-canonical-tool-context-memory-update-design.md).
+
 **Status:** approved direction, implementation pending
 **Target:** planned lightweight GitHub patch release `0.28.3`, after full installer/profile/channel release `0.28.2`
 

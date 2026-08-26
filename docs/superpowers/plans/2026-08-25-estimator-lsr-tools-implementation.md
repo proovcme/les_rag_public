@@ -1,5 +1,11 @@
 # Estimator LSR/VOR Tools Implementation Plan
 
+> **SUPERSEDED — DO NOT EXECUTE:** This plan creates the rejected parallel
+> `estimate_*` tool family. The active architecture uses PR13's stable
+> `build_lsr_workbook` / `build_vor_workbook` contracts through the canonical
+> registry and executor. See
+> [../specs/2026-08-26-canonical-tool-context-memory-update-design.md](../specs/2026-08-26-canonical-tool-context-memory-update-design.md).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan.
 
 **Goal:** Ship lightweight GitHub patch release `0.28.3` with an explicit, resumable LSR/VOR tool slice that passes on local Qwen 3.5 9B and does not rebuild the installer.

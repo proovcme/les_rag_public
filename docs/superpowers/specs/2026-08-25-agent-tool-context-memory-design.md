@@ -1,7 +1,11 @@
 # Agent Tool, Context and Memory Foundation Design
 
-**Status:** proposed design, owner review pending
-**Targets:** planned `0.29.0` foundation and `0.29.1` actions
+> **SUPERSEDED:** This proposal is historical. The active owner-approved
+> architecture is
+> [2026-08-26-canonical-tool-context-memory-update-design.md](2026-08-26-canonical-tool-context-memory-update-design.md).
+
+**Status:** superseded proposal; not an implementation instruction
+**Targets:** historical planning context only
 
 ## Goal and baseline
 
