@@ -12,6 +12,81 @@ import pytest
 from proxy.routers import chat
 from proxy.services import chat_evidence_application_service as service
 from proxy.services.canonical_route_service import CanonicalRouteMode
+from proxy.services.context_governor_service import (
+    ContextKind,
+    ContextObject,
+    ContextRequiredSectionOverflow,
+)
+from proxy.services.model_execution_preset_service import ModelExecutionPreset
+
+
+def _governor_preset(
+    *, input_tokens: int = 6000, preset_id: str = "fixture-restrictive"
+) -> ModelExecutionPreset:
+    return ModelExecutionPreset(
+        preset_id=preset_id,
+        model_family="fixture",
+        input_token_limit=input_tokens,
+        generation_reserve_tokens=20,
+        safety_reserve_tokens=20,
+        normal_tool_count=3,
+        max_tools=5,
+        max_batch_items=5,
+        parallel_read_limit=1,
+        reasoning_enabled=False,
+        source_chain=("test",),
+    )
+
+
+def test_governed_inference_uses_typed_order_and_redacted_trace() -> None:
+    messages, packet = service.govern_inference_messages(
+        preset=_governor_preset(),
+        profile_prefix="bound profile",
+        request_payload={"question": "current request"},
+        shortlist=[{"name": "read_source"}],
+        checkpoint=[ContextObject("checkpoint:1", {"status": "continue"})],
+        working_memory=[
+            ContextObject("memory:1", {"context_role": "advisory_state", "secret": "hidden"})
+        ],
+        evidence=[{"source": "evidence payload"}],
+        source_map=[{"label": "Источник 1"}],
+        tool_exchange=[{"status": "ok"}],
+        dialogue=["prior turn"],
+    )
+
+    assert [section.kind for section in packet.sections] == list(ContextKind)
+    assert [message["role"] for message in messages] == ["system", "user"]
+    trace = service.context_packet_trace(packet, purpose="answer")
+    assert trace["purpose"] == "answer"
+    assert [section["kind"] for section in trace["sections"]] == [kind.value for kind in ContextKind]
+    assert "hidden" not in json.dumps(trace)
+    assert "evidence payload" not in json.dumps(trace)
+
+
+def test_governed_inference_rejects_required_overflow_before_provider_call() -> None:
+    provider_calls = []
+
+    with pytest.raises(ContextRequiredSectionOverflow):
+        messages, _packet = service.govern_inference_messages(
+            preset=_governor_preset(input_tokens=50),
+            profile_prefix="profile is too large for this deliberately tiny fixture",
+            request_payload={"question": "also required"},
+        )
+        provider_calls.append(messages)
+
+    assert provider_calls == []
+
+
+def test_cloud_fallback_re_resolves_and_repacks_before_local_provider() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    resolve_at = source.index("fallback_preset = resolve_transport_execution_profile(")
+    repack_at = source.index("fallback_messages, fallback_packet = govern_inference_messages(")
+    send_at = source.index("fallback_body = {")
+    assert resolve_at < repack_at < send_at
+    assert '"messages": fallback_messages' in source
+    assert "fallback_preset.generation_reserve_tokens" in source
+    assert 'purpose="answer_fallback"' in source
 
 
 def test_general_evidence_execution_is_outside_http_router():
@@ -176,10 +251,14 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("scenario", ["normal", "selector_overflow", "cloud_retry"])
 async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_model_count(
     monkeypatch,
     tmp_path,
+    scenario,
 ) -> None:
+    selector_overflow = scenario == "selector_overflow"
+    cloud_retry = scenario == "cloud_retry"
     model_calls = []
     shortlist_policies = []
     shadow_calls = []
@@ -233,6 +312,14 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                     '{"tool":"read_source","args":{"doc_id":"d1"}},'
                     '{"tool":"read_source","args":{"doc_id":"d2"}}]}'
                 )
+            if cloud_retry and "cloud.fixture" in _url:
+                model_calls.append("cloud_final")
+                raise service.httpx.ConnectError("fixture cloud failure")
+            if cloud_retry:
+                model_calls.append("local_final")
+                if model_calls.count("local_final") == 1:
+                    return FakeResponse("")
+                return FakeResponse("legacy visible answer")
             model_calls.append("final")
             return FakeResponse("legacy visible answer")
 
@@ -362,10 +449,21 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             return {"schema": "context_windows_v1", "count": 0}
 
     runtime_config = SimpleNamespace(
+        provider="openai" if cloud_retry else "mlx",
+        model="cloud-fixture-model" if cloud_retry else "fixture-model",
+        base_url="http://cloud.fixture" if cloud_retry else "http://fixture.invalid",
+        chat_url=(
+            "http://cloud.fixture/v1/chat/completions"
+            if cloud_retry else "http://fixture.invalid/v1/chat/completions"
+        ),
+        api_key="",
+        supports_validation=not cloud_retry,
+    )
+    mlx_runtime_config = SimpleNamespace(
         provider="mlx",
-        model="fixture-model",
-        base_url="http://fixture.invalid",
-        chat_url="http://fixture.invalid/v1/chat/completions",
+        model="local-fixture-model",
+        base_url="http://local.fixture",
+        chat_url="http://local.fixture/v1/chat/completions",
         api_key="",
         supports_validation=True,
     )
@@ -389,6 +487,37 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     monkeypatch.setattr(service.httpx, "AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(service, "maybe_answer_table_query", lambda *_a, **_k: None)
     monkeypatch.setattr(service, "dataset_memory_prompt_excerpt", lambda *_a, **_k: "")
+    if cloud_retry:
+        monkeypatch.setattr(
+            service,
+            "decide_provider",
+            lambda *_a, **_k: SimpleNamespace(
+                downgraded=False,
+                sensitivity="P0",
+                reason="fixture cloud route",
+            ),
+        )
+        monkeypatch.setattr(
+            service,
+            "resolve_transport_execution_profile",
+            lambda *, provider, **_kwargs: _governor_preset(
+                input_tokens=12_000 if provider == "openai" else 6_000,
+                preset_id="cloud-large" if provider == "openai" else "local-restrictive",
+            ),
+        )
+    if selector_overflow:
+        original_govern = service.govern_inference_messages
+
+        def overflow_selector(**kwargs):
+            if kwargs.get("shortlist"):
+                raise ContextRequiredSectionOverflow(
+                    object_ids=("profile:bound", "request:current"),
+                    budget=10,
+                    required_tokens=11,
+                )
+            return original_govern(**kwargs)
+
+        monkeypatch.setattr(service, "govern_inference_messages", overflow_selector)
 
     def save_history(**row):
         history_rows.append(row)
@@ -426,6 +555,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         table_result=None,
         request_started_at=1.0,
         profile_snapshot={
+            "revision_id": "fixture-profile:1",
             "tools": ["read_source"],
             "rag_policy": {"iterative": False},
             "prompt_text": "Answer only from evidence.",
@@ -458,7 +588,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "context_chars_limit": 4000,
             "context_window_chars": 1000,
         },
-        mlx_runtime=lambda: runtime_config,
+        mlx_runtime=lambda: mlx_runtime_config if cloud_retry else runtime_config,
         names_for_dataset_ids=lambda *_args: [],
         notebook_study_validation_status=lambda status, **_kwargs: status,
         ollama_native_complete=lambda *_args, **_kwargs: None,
@@ -471,7 +601,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         retrieve_chat_chunks=lambda **_kwargs: _async_value(FakeRetrieval()),
         source_excerpts=lambda *_args, **_kwargs: [],
         table_query_response=lambda **_kwargs: None,
-        cloud_fallback_models=lambda *_args: [],
+        cloud_fallback_models=lambda runtime: [runtime.model] if cloud_retry else [],
         cloud_model_timeout=lambda: 1.0,
     )
     boundary = service.ResponseBoundary(
@@ -480,21 +610,54 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         version_stamp=lambda: {},
     )
 
+    if selector_overflow:
+        with pytest.raises(service.HTTPException) as error:
+            await service.run_chat_evidence_application(request, runtime, boundary)
+        assert error.value.status_code == 422
+        assert error.value.detail["code"] == "CONTEXT_REQUIRED_SECTION_OVERFLOW"
+        assert model_calls == []
+        assert history_rows == []
+        assert protected_hash() == before_protected
+        return
+
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
     after_protected = protected_hash()
     assert result["answer"] == "legacy visible answer"
+    if cloud_retry:
+        assert model_calls == [
+            "selector",
+            "cloud_final",
+            "local_final",
+            "local_final",
+        ]
+        calls = history_rows[0]["retrieval_trace"]["context_governor"]["calls"]
+        assert [call["purpose"] for call in calls] == [
+            "tool_decision",
+            "answer",
+            "answer_fallback",
+            "answer",
+        ]
+        assert [call["preset_id"] for call in calls] == [
+            "cloud-large",
+            "cloud-large",
+            "local-restrictive",
+            "local-restrictive",
+        ]
+        assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["persisted_effects"] == 0
+        assert after_protected == before_protected
+        return
     assert model_calls == ["selector", "final"]
     assert shortlist_policies == [
         {
             "mode": "rag",
             "allowed_tools": ["read_source"],
-            "limit": 64,
+            "limit": 5,
             "dataset_ids": ("selected",),
             "workflow_phase": "research",
-            "model_preset": "qwen-9b",
+            "model_preset": "qwen-9b-restrictive",
             "runtime_available": frozenset({"read_source"}),
-            "calls_remaining": 48,
+            "calls_remaining": 5,
             "result_chars_remaining": 35_000,
         }
     ]
@@ -506,6 +669,26 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["status"] == "error"
     assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["attempted_calls"] == 1
     assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["pending_calls"] == 1
+    assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["persisted_effects"] == 0
+    assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["profile_revision"] == "fixture-profile:1"
+    assert history_rows[0]["retrieval_trace"]["route_comparison"] == {
+        "schema": "les.canonical-route-comparison.v1",
+        "requested": "shadow",
+        "effective": "shadow",
+        "legacy_output_authoritative": True,
+        "same_request": True,
+        "profile_revision": "fixture-profile:1",
+        "canonical_provider_calls_added": 0,
+        "persisted_effects": 0,
+    }
+    governor_trace = history_rows[0]["retrieval_trace"]["context_governor"]
+    assert governor_trace["preset_id"] == "qwen-9b-restrictive"
+    assert [call["purpose"] for call in governor_trace["calls"]] == [
+        "tool_decision",
+        "answer",
+    ]
+    assert "Проверь документы" not in json.dumps(governor_trace, ensure_ascii=False)
+    assert "legacy fixture" not in json.dumps(governor_trace, ensure_ascii=False)
     assert "secret shadow failure" not in str(history_rows[0])
     assert after_protected == before_protected
 

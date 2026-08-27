@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              601
-версия Tauri/NSIS:         5.1.601
+номер сборки:              602
+версия Tauri/NSIS:         5.1.602
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       presets + ContextGovernor + typed advisory memory projection
+dev implementation:       governed ordinary-chat packets + presets + typed advisory memory
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -154,6 +154,19 @@ dev implementation:       presets + ContextGovernor + typed advisory memory proj
 > text остаётся adapter над bounded records. Focused relevant suites: 60 passed;
 > один старый notebook test требует отсутствующую user-owned локальную базу и
 > остаётся N/A для этой задачи. Live model quality не заявляется.
+
+> **0.29.0 governed ordinary chat (build 602):** фактические tool-decision и
+> answer обращения общего RAG теперь собираются через один ContextGovernor и
+> один resolved capacity preset. Shortlist/batch также ограничены preset;
+> memory/notebook остаются advisory/navigation, evidence и source-map —
+> отдельными typed objects. Required overflow происходит до provider call,
+> произвольные финальные character caps удалены, trace хранит только структуру
+> budget/omissions/route. Default shadow не добавляет model call, сохраняет
+> legacy answer/history, рассматривает максимум один canonical tool call и
+> подтверждён тестом без persistence. Cloud→MLX fallback re-resolve/repack
+> сохраняется и на следующем retry. Focused chat/context/UI-adjacent suites:
+> 102 passed; current behavior gate: 681 passed;
+> live model quality и active promotion не заявляются.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

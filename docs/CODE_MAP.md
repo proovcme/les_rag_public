@@ -13,6 +13,18 @@
 > обычного пути не перестраивается shadow-кандидатом. Runtime-фактор виден в
 > общем GUI registry как Danger/restart-required.
 
+> **Governed ordinary-chat inference 0.29.0:**
+> `chat_evidence_application_service.py` разрешает один capacity-bounded preset
+> после окончательного provider route и пропускает через `ContextGovernor` оба
+> фактических inference packet: tool decision и итоговый ответ. Profile/request
+> обязательны; typed memory, notebook/dataset navigation, evidence/source-map и
+> tool exchange остаются целыми адресуемыми объектами либо получают omission
+> cursor. Required overflow происходит до provider call. Trace хранит только
+> route/preset/budget/count/cursor; в `shadow` видимый legacy answer и история не
+> меняются, canonical executor рассматривает максимум один вызов и не пишет данные.
+> Cloud→MLX fallback заново разрешает preset и перепаковывает packet; retry уже
+> не может повторно использовать прежний cloud budget.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical

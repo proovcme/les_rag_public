@@ -41,6 +41,28 @@ SQLite-источники открываются `mode=ro`: projection не со
 лимит projection возвращает omitted count/cursor. Старые `session_memory()` и
 `build_context_memory_block()` сериализуют bounded typed views для сохранения
 пользовательской непрерывности на время миграции.
+
+## Обычный чат
+
+После окончательного выбора provider чат один раз разрешает execution preset.
+Тот же preset ограничивает shortlist/batch и оба фактических обращения модели:
+`tool_decision`, затем `answer`. Для каждого обращения строится отдельный
+`ContextPacket`, но порядок и правила объектов едины. Profile prefix и текущий
+request обязательны; checkpoint/working memory, evidence, source map, tool
+exchange и dialogue входят только целиком. Поэтому прежняя финальная сборка по
+независимому числу символов и отдельное обрезание dataset navigation удалены.
+
+Notebook и паспорта памяти не заменены и не пересобираются: typed projection
+читает их как advisory/navigation и передаёт governor адресуемые элементы.
+Фактами ответа остаются только evidence/source rows. В `shadow` selector-выдача
+повторно используется для проверки максимум одного canonical call; нового
+model call и записи эффектов нет, пользователь получает прежний legacy answer.
+Trace содержит route, preset, reserves, token/item counts и omission cursors,
+но не prompt, вопрос, evidence, tool result или ответ.
+Если облачный provider падает и маршрут деградирует на локальный MLX, preset
+разрешается заново, packet перепаковывается до локального вызова, а все
+последующие retry сохраняют уже локальный budget. Selector и fallback required
+overflow не проглатываются: чат возвращает typed 422 до следующего model call.
 С 0.24.0.177 обычный prompt получает не полный служебный dump карты, а компактный
 `dataset_brief_for_model_v1`: brief объясняет модели, что за корпус выбран, какие файлы открыть первыми,
 как file cards связаны с реальными чанками, и какой маршрут чтения подходит под текущий вопрос. Модель и

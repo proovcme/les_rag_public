@@ -6,6 +6,7 @@ import pytest
 
 from proxy.routers import chat as chat_router
 from proxy.services import chat_evidence_application_service
+from proxy.services.context_governor_service import ContextKind
 from proxy.routers import datasets as datasets_router
 from sovushka.pages import chat as chat_page
 from sovushka.pages import instrumenty as instrumenty_page
@@ -701,7 +702,7 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert "format_project_inventory_prompt" in source
     assert "format_project_inventory_context" in source
     assert 'retrieval_trace["project_inventory"]' in source
-    assert '("inventory_navigation", project_inventory_prompt)' in source
+    assert '("inventory", project_inventory_prompt)' in source
     assert "project_inventory_artifact_text" in source
     assert 'response["project_inventory"] = project_inventory_payload or {}' in source
     assert "generation_budget = max(generation_budget, 2048)" not in source
@@ -722,18 +723,27 @@ def test_chat_adds_metadb_inventory_context_without_project_summary_hijack():
     assert '"inventory_navigation"' in source
 
 
-def test_freetoken_prompt_preserves_dialogue_then_evidence_before_tool_navigation():
+def test_chat_prompt_uses_canonical_typed_context_order():
     source = inspect.getsource(
         chat_evidence_application_service._execute_chat_evidence_application
     )
 
-    assert source.index('(\"session_memory\", session_block)') < source.index(
-        '(\"evidence\", f\"Материалы'
-    )
-    assert source.index('(\"working_memory\", memory_block)') < source.index(
-        '(\"evidence\", f\"Материалы'
-    )
-    assert source.index('(\"evidence\", f\"Материалы') < source.index('(\"tools\", tool_context)')
+    assert [kind.value for kind in ContextKind] == [
+        "profile_prefix",
+        "tool_shortlist",
+        "request",
+        "checkpoint",
+        "working_memory",
+        "evidence",
+        "source_map",
+        "tool_exchange",
+        "dialogue",
+    ]
+    assert "working_memory=answer_working_memory" in source
+    assert "evidence=[" in source
+    assert "source_map=answer_source_map" in source
+    assert "tool_exchange=answer_tool_exchange" in source
+    assert "dialogue=[session_block] if session_block else []" in source
 
 
 def test_chat_ui_renders_clickable_project_inventory_artifact():

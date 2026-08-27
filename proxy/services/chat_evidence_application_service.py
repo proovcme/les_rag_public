@@ -12,7 +12,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 import httpx
 from fastapi import HTTPException
@@ -26,6 +26,14 @@ from proxy.services.canonical_route_service import (
     CanonicalRouteMode,
     one_model_decision_from_calls,
     resolve_canonical_route,
+)
+from proxy.services.context_governor_service import (
+    ContextCandidate,
+    ContextGovernor,
+    ContextKind,
+    ContextObject,
+    ContextPacket,
+    ContextRequiredSectionOverflow,
 )
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.evidence_packet_service import (
@@ -58,12 +66,100 @@ from proxy.services.table_query_service import maybe_answer_table_query
 from proxy.services.memory_port import get_memory_port
 from proxy.services.llm_transport_profile_service import (
     assistant_delta_text,
-    fit_prompt_sections,
-    provider_is_local,
-    provider_prompt_max_chars,
+    resolve_transport_execution_profile,
 )
+from proxy.services.model_execution_preset_service import ModelExecutionPreset
+from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
+
+
+def _context_objects(
+    prefix: str,
+    values: Sequence[Any],
+) -> tuple[ContextObject, ...]:
+    """Create stable, whole context objects; never slice an object to make it fit."""
+    objects: list[ContextObject] = []
+    for index, value in enumerate(values):
+        if value in (None, "", [], {}, ()):
+            continue
+        objects.append(ContextObject(f"{prefix}:{index}", value))
+    return tuple(objects)
+
+
+def _text_context_objects(prefix: str, text: str) -> tuple[ContextObject, ...]:
+    """Split only at producer-owned paragraph boundaries, preserving every paragraph."""
+    return _context_objects(
+        prefix,
+        [part.strip() for part in str(text or "").split("\n\n") if part.strip()],
+    )
+
+
+def govern_inference_messages(
+    *,
+    preset: ModelExecutionPreset,
+    profile_prefix: str,
+    request_payload: Any,
+    shortlist: Sequence[Any] = (),
+    checkpoint: Sequence[ContextObject] = (),
+    working_memory: Sequence[ContextObject] = (),
+    evidence: Sequence[Any] = (),
+    source_map: Sequence[Any] = (),
+    tool_exchange: Sequence[Any] = (),
+    dialogue: Sequence[Any] = (),
+) -> tuple[list[dict[str, str]], ContextPacket]:
+    """Build the sole bounded packet used for one provider inference request."""
+    candidates = [
+        ContextCandidate(
+            ContextKind.PROFILE_PREFIX,
+            (ContextObject("profile:bound", profile_prefix),),
+            required=True,
+        ),
+        ContextCandidate(ContextKind.TOOL_SHORTLIST, _context_objects("tool", shortlist)),
+        ContextCandidate(
+            ContextKind.REQUEST,
+            (ContextObject("request:current", request_payload),),
+            required=True,
+        ),
+        ContextCandidate(ContextKind.CHECKPOINT, tuple(checkpoint)),
+        ContextCandidate(ContextKind.WORKING_MEMORY, tuple(working_memory)),
+        ContextCandidate(ContextKind.EVIDENCE, _context_objects("evidence", evidence)),
+        ContextCandidate(ContextKind.SOURCE_MAP, _context_objects("source", source_map)),
+        ContextCandidate(ContextKind.TOOL_EXCHANGE, _context_objects("exchange", tool_exchange)),
+        ContextCandidate(ContextKind.DIALOGUE, _context_objects("dialogue", dialogue)),
+    ]
+    packet = ContextGovernor(preset).pack(candidates)
+    return packet.as_messages(), packet
+
+
+def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, Any]:
+    """Expose capacity and omission structure without prompt or evidence payloads."""
+    return {
+        "purpose": purpose,
+        "preset_id": packet.preset_id,
+        "input_budget_tokens": packet.input_budget_tokens,
+        "generation_reserve_tokens": packet.generation_reserve_tokens,
+        "safety_reserve_tokens": packet.safety_reserve_tokens,
+        "included_tokens": packet.included_tokens,
+        "sections": [
+            {
+                "kind": section.kind.value,
+                "items": len(section.objects),
+                "tokens": section.token_count,
+            }
+            for section in packet.sections
+        ],
+        "omissions": [
+            {
+                "kind": omission.kind.value,
+                "total": omission.total,
+                "omitted": omission.omitted,
+                "cursor": omission.cursor,
+                "reason": omission.reason,
+            }
+            for omission in packet.omissions
+        ],
+    }
 
 
 async def execute_canonical_shadow_decision(
@@ -628,12 +724,6 @@ async def _execute_chat_evidence_application(
                 [str(d) for d in _dataset_ids],
                 question=req.question,
             )
-            navigation_limit = max(800, _env_int("RAG_DATASET_NAVIGATION_PROMPT_CHARS", 2400))
-            if len(dataset_memory_prompt) > navigation_limit:
-                dataset_memory_prompt = (
-                    dataset_memory_prompt[:navigation_limit].rsplit("\n", 1)[0].rstrip()
-                    + "\n... карта сокращена; полный паспорт доступен через notebook/dataset memory."
-                )
             if dataset_memory_prompt:
                 retrieval_trace["dataset_memory"] = {
                     "schema": "dataset_brief_for_model_v1",
@@ -641,7 +731,6 @@ async def _execute_chat_evidence_application(
                     "is_evidence": False,
                     "dataset_count": len(_dataset_ids),
                     "prompt_chars": len(dataset_memory_prompt),
-                    "prompt_limit": navigation_limit,
                 }
         except Exception as memory_err:  # noqa: BLE001
             logger.warning("[DATASET_MEMORY] skipped: %s", memory_err)
@@ -1056,6 +1145,7 @@ async def _execute_chat_evidence_application(
         llm_runtime = _mlx_runtime() if _mem_reason else configured_runtime
         if _mem_reason:
             logger.warning("[ROUTE] %s", _mem_reason)
+    cache_state: dict[str, Any] = {}
     if llm_runtime.provider == "freetoken":
         from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
 
@@ -1072,6 +1162,62 @@ async def _execute_chat_evidence_application(
                 "FreeToken KV не синхронизирован: "
                 + str(cache_state.get("reason") or cache_state.get("status")),
             )
+    observed_context_tokens = None
+    observed_context = False
+    observed_source = "unavailable"
+    if cache_state.get("status") in {"aligned", "synchronized"}:
+        try:
+            observed_context_tokens = int(cache_state.get("effective_kv_tokens") or 0) or None
+        except (TypeError, ValueError):
+            observed_context_tokens = None
+        observed_context = observed_context_tokens is not None
+        observed_source = "freetoken_cache_probe" if observed_context else "unavailable"
+    model_policy = (profile_snapshot or {}).get("model_policy") or {}
+    execution_preset = resolve_transport_execution_profile(
+        provider=llm_runtime.provider,
+        model_id=llm_runtime.model,
+        observed_context_tokens=observed_context_tokens,
+        observed=observed_context,
+        observed_source=observed_source,
+        operator=model_policy,
+    )
+    preset_diagnostics = execution_preset.diagnostics(
+        requested_input_tokens=cache_state.get("desired_kv_tokens")
+    )
+    preset_diagnostics["model_preset"]["requested"] = llm_runtime.model
+    retrieval_trace["model_execution_profile"] = preset_diagnostics
+    retrieval_trace["context_governor"] = {
+        "schema": "les.context-governor.v1",
+        "preset_id": execution_preset.preset_id,
+        "calls": [],
+    }
+    try:
+        typed_memory = await asyncio.to_thread(
+            project_memory,
+            session_id=str(req.session_id or ""),
+            project_id=memory_project_id or None,
+            dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
+            limits=MemoryLimits(),
+        )
+        memory_candidates = typed_memory.as_context_candidates()
+        retrieval_trace["typed_memory"] = {
+            "schema": "les.typed-memory-projection.v1",
+            "context_role": typed_memory.context_role,
+            "is_evidence": False,
+            "items": len(typed_memory.items),
+            "omitted": typed_memory.omitted,
+            "cursor": typed_memory.cursor,
+        }
+    except Exception as memory_error:  # noqa: BLE001 - memory is advisory, never an answer blocker
+        logger.warning("[TYPED_MEMORY] projection skipped: %s", type(memory_error).__name__)
+        memory_candidates = ()
+        retrieval_trace["typed_memory"] = {
+            "schema": "les.typed-memory-projection.v1",
+            "status": "skipped",
+            "error_type": type(memory_error).__name__,
+            "context_role": "advisory_state",
+            "is_evidence": False,
+        }
     retrieval_trace["routing"] = {
         "configured_provider": configured_runtime.provider,
         "configured_model": configured_runtime.model,
@@ -1252,6 +1398,20 @@ async def _execute_chat_evidence_application(
                 ]
                 canonical_route = resolve_canonical_route(receipt=None)
                 retrieval_trace["canonical_route"] = canonical_route.public_payload()
+                retrieval_trace["route_comparison"] = {
+                    "schema": "les.canonical-route-comparison.v1",
+                    "requested": canonical_route.requested.value,
+                    "effective": canonical_route.effective.value,
+                    "legacy_output_authoritative": (
+                        canonical_route.effective is not CanonicalRouteMode.ACTIVE
+                    ),
+                    "same_request": True,
+                    "profile_revision": str(
+                        (profile_snapshot or {}).get("revision_id") or ""
+                    ),
+                    "canonical_provider_calls_added": 0,
+                    "persisted_effects": 0,
+                }
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
                 if tool_loop_enabled:
@@ -1259,14 +1419,14 @@ async def _execute_chat_evidence_application(
                         from proxy.services.tool_harness_service import harness
 
                         tool_harness = harness()
-                        shortlist_limit = max(
-                            1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)
+                        shortlist_limit = min(
+                            execution_preset.max_tools,
+                            max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
                         )
-                        max_calls = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48))
-                        model_policy = (profile_snapshot or {}).get("model_policy") or {}
-                        canonical_preset = str(
-                            model_policy.get("preset_id") or "qwen-9b"
-                        ).strip() or "qwen-9b"
+                        max_calls = min(
+                            execution_preset.max_batch_items,
+                            max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                        )
                         shortlist = await asyncio.to_thread(
                             tool_harness.shortlist,
                             req.question,
@@ -1275,7 +1435,7 @@ async def _execute_chat_evidence_application(
                             limit=shortlist_limit,
                             dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
                             workflow_phase="research",
-                            model_preset=canonical_preset,
+                            model_preset=execution_preset.preset_id,
                             runtime_available=frozenset(profile_tools),
                             calls_remaining=max_calls,
                             result_chars_remaining=35_000,
@@ -1290,7 +1450,10 @@ async def _execute_chat_evidence_application(
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
                         max_rounds = profile_research_rounds(
                             profile_snapshot,
-                            configured=max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12))),
+                            configured=min(
+                                execution_preset.max_batch_items,
+                                max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12))),
+                            ),
                         )
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
@@ -1302,39 +1465,50 @@ async def _execute_chat_evidence_application(
                                 _compact_tool_result_for_prompt(item, max_chars=2400)
                                 for item in tool_results_for_model[-max_calls:]
                             ]
+                            selector_profile = (
+                                profile_system_prompt(profile_snapshot, strict=False)
+                                + "\n\nТы управляешь коротким исследовательским чтением LES. "
+                                "Выбирай только read-only инструменты, чтобы закрыть конкретный пробел evidence. "
+                                "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
+                                "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
+                                "текстовый read_pdf_source не заменяет просмотр пикселей. "
+                                "Инструменты не отвечают за тебя и не заменяют источники. "
+                                "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
+                                "Если evidence достаточно или новый вызов повторит прошлый, верни {\"calls\":[]}. "
+                                "Не выбирай инструмент вне списка и не выходи за выбранные dataset/file scope."
+                            )
+                            selector_checkpoint = tuple(
+                                item
+                                for candidate in memory_candidates
+                                if candidate.kind == ContextKind.CHECKPOINT
+                                for item in candidate.objects
+                            )
+                            selector_working_memory = tuple(
+                                item
+                                for candidate in memory_candidates
+                                if candidate.kind == ContextKind.WORKING_MEMORY
+                                for item in candidate.objects
+                            )
+                            selector_messages, selector_packet = govern_inference_messages(
+                                preset=execution_preset,
+                                profile_prefix=selector_profile,
+                                request_payload={
+                                    "question": req.question,
+                                    "mode": req.mode or route.intent or "",
+                                    "dataset_ids": _dataset_ids,
+                                    "target_file": target_file_ref if target_file_ref else {},
+                                    "round": research_round,
+                                },
+                                shortlist=shortlist.get("tools") or [],
+                                checkpoint=selector_checkpoint,
+                                working_memory=selector_working_memory,
+                                tool_exchange=prior_results,
+                            )
+                            retrieval_trace["context_governor"]["calls"].append(
+                                context_packet_trace(selector_packet, purpose="tool_decision")
+                            )
                             selector_body = {
-                                "messages": [
-                                    {
-                                        "role": "system",
-                                        "content": (
-                                            "Ты управляешь коротким исследовательским чтением LES. "
-                                            "Выбирай только read-only инструменты, чтобы закрыть конкретный пробел evidence. "
-                                            "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
-                                            "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
-                                            "текстовый read_pdf_source не заменяет просмотр пикселей. "
-                                            "Инструменты не отвечают за тебя и не заменяют источники. "
-                                            "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
-                                            "Если evidence достаточно или новый вызов повторит прошлый, верни {\"calls\":[]}. "
-                                            "Не выбирай инструмент вне списка и не выходи за выбранные dataset/file scope."
-                                        ),
-                                    },
-                                    {
-                                        "role": "user",
-                                        "content": json.dumps(
-                                            {
-                                                "question": req.question,
-                                                "mode": req.mode or route.intent or "",
-                                                "dataset_ids": _dataset_ids,
-                                                "target_file": target_file_ref if target_file_ref else {},
-                                                "available_tools": shortlist.get("tools") or [],
-                                                "round": research_round,
-                                                "prior_results": prior_results,
-                                            },
-                                            ensure_ascii=False,
-                                            default=str,
-                                        ),
-                                    },
-                                ],
+                                "messages": selector_messages,
                                 "stream": False,
                                 "temperature": 0,
                                 "max_tokens": max(128, _env_int("LES_CHAT_TOOL_SELECTOR_MAX_TOKENS", 700)),
@@ -1366,14 +1540,19 @@ async def _execute_chat_evidence_application(
                                 not canonical_shadow_recorded
                                 and canonical_route.effective is CanonicalRouteMode.SHADOW
                             ):
-                                retrieval_trace["canonical_shadow"] = (
-                                    await safe_execute_canonical_shadow_decision(
+                                shadow_trace = await safe_execute_canonical_shadow_decision(
                                         proposed_calls=proposed_calls,
                                         allowed_tools=allowed_tools,
                                         dataset_ids=[str(item) for item in _dataset_ids],
                                         tool_harness=tool_harness,
                                     )
+                                shadow_trace.update(
+                                    profile_revision=str(
+                                        (profile_snapshot or {}).get("revision_id") or ""
+                                    ),
+                                    persisted_effects=0,
                                 )
+                                retrieval_trace["canonical_shadow"] = shadow_trace
                                 canonical_shadow_recorded = True
                             calls: list[dict[str, Any]] = []
                             for call in proposed_calls:
@@ -1415,6 +1594,21 @@ async def _execute_chat_evidence_application(
                             "max_rounds": max_rounds,
                             "max_calls": max_calls,
                         }
+                    except ContextRequiredSectionOverflow as context_error:
+                        retrieval_trace["context_governor"]["error"] = {
+                            "code": context_error.code,
+                            "purpose": "tool_decision",
+                            "budget": context_error.budget,
+                            "required_tokens": context_error.required_tokens,
+                            "required_objects": len(context_error.object_ids),
+                        }
+                        raise HTTPException(
+                            422,
+                            detail={
+                                "code": context_error.code,
+                                "message": "Обязательная часть выбора инструмента не помещается в безопасный контекст модели.",
+                            },
+                        ) from context_error
                     except Exception as tool_err:  # noqa: BLE001 - tool loop must degrade into trace, not block chat
                         logger.warning("[TOOLS] model tool loop skipped: %s", tool_err)
                         retrieval_trace["tool_loop"] = {
@@ -1441,6 +1635,10 @@ async def _execute_chat_evidence_application(
                         "status": "no_model_decision",
                         "executed_calls": 0,
                         "pending_calls": 0,
+                        "profile_revision": str(
+                            (profile_snapshot or {}).get("revision_id") or ""
+                        ),
+                        "persisted_effects": 0,
                     }
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):
@@ -1527,48 +1725,79 @@ async def _execute_chat_evidence_application(
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
-                    prompt_sections = [
-                        # Preserve conversational continuity before spending the
-                        # remaining provider budget on the evidence packet. Both
-                        # memory blocks are already bounded upstream; facts still
-                        # require citations from the evidence block below.
-                        ("session_memory", session_block),
-                        ("working_memory", memory_block),
-                        ("evidence", f"Материалы из найденных документов:\n{context}"),
-                        ("tools", tool_context),
-                        ("dataset_navigation", dataset_memory_prompt),
-                        ("inventory_navigation", project_inventory_prompt),
-                        ("notebook_navigation", notebook_study_prompt),
+                    answer_checkpoint = tuple(
+                        item
+                        for candidate in memory_candidates
+                        if candidate.kind == ContextKind.CHECKPOINT
+                        for item in candidate.objects
+                    )
+                    answer_working_memory = tuple(
+                        item
+                        for candidate in memory_candidates
+                        if candidate.kind == ContextKind.WORKING_MEMORY
+                        for item in candidate.objects
+                    ) + _text_context_objects("working:legacy", memory_block) + _text_context_objects(
+                        "working:project-advisory", project_memory_advisory
+                    )
+                    answer_working_memory += _context_objects(
+                        "navigation:status", evidence_navigation
+                    )
+                    for navigation_name, navigation_text in (
+                        ("dataset", dataset_memory_prompt),
+                        ("inventory", project_inventory_prompt),
+                        ("notebook", notebook_study_prompt),
                         (
-                            "selected_documents",
+                            "selected-documents",
                             "Выбранные документы: " + "; ".join(target_doc_filter) + "."
                             if target_doc_filter else "",
                         ),
-                        ("project_memory_advisory", project_memory_advisory),
-                    ]
-                    if provider_is_local(llm_runtime.provider):
-                        user_prompt, prompt_fit = fit_prompt_sections(
-                            prompt_sections,
-                            required_tail=question_tail,
-                            max_chars=max(
-                                2000,
-                                provider_prompt_max_chars(llm_runtime.provider) - len(sys_msg),
-                            ),
+                    ):
+                        answer_working_memory += _text_context_objects(
+                            f"navigation:{navigation_name}", navigation_text
                         )
-                        retrieval_trace["prompt_fit"] = {
-                            "schema": "les.prompt-fit.v1",
-                            "provider": llm_runtime.provider,
-                            "total_limit_chars": provider_prompt_max_chars(llm_runtime.provider),
-                            **prompt_fit,
+                    answer_tool_exchange = [
+                        _compact_tool_result_for_prompt(item, max_chars=2400)
+                        for item in tool_results_for_model
+                    ]
+                    try:
+                        messages, answer_packet = govern_inference_messages(
+                            preset=execution_preset,
+                            profile_prefix=sys_msg,
+                            request_payload=question_tail,
+                            checkpoint=answer_checkpoint,
+                            working_memory=answer_working_memory,
+                            evidence=[
+                                "Материалы из найденных документов:",
+                                *[
+                                    item.payload
+                                    for item in _text_context_objects("answer-evidence", context)
+                                ],
+                            ],
+                            source_map=answer_source_map,
+                            tool_exchange=answer_tool_exchange,
+                            dialogue=[session_block] if session_block else [],
+                        )
+                    except ContextRequiredSectionOverflow as context_error:
+                        retrieval_trace["context_governor"]["error"] = {
+                            "code": context_error.code,
+                            "budget": context_error.budget,
+                            "required_tokens": context_error.required_tokens,
+                            "required_objects": len(context_error.object_ids),
                         }
-                    else:
-                        user_prompt = "\n\n".join(
-                            [value for _, value in prompt_sections if value] + [question_tail]
-                        )
-                    messages = [
-                        {"role": "system", "content": sys_msg},
-                        {"role": "user", "content": user_prompt},
-                    ]
+                        raise HTTPException(
+                            422,
+                            detail={
+                                "code": context_error.code,
+                                "message": "Обязательная часть запроса не помещается в безопасный контекст модели.",
+                            },
+                        ) from context_error
+                    retrieval_trace["context_governor"]["calls"].append(
+                        context_packet_trace(answer_packet, purpose="answer")
+                    )
+                    user_prompt = next(
+                        (message["content"] for message in messages if message["role"] == "user"),
+                        "",
+                    )
 
                     prompt_layers = {
                         "system": len(sys_msg),
@@ -1613,6 +1842,10 @@ async def _execute_chat_evidence_application(
                             generation_budget,
                             _env_int("LES_PROJECT_INVENTORY_MAX_TOKENS", 3072),
                         )
+                    generation_budget = min(
+                        generation_budget,
+                        execution_preset.generation_reserve_tokens,
+                    )
 
                     chat_body = {
                         "messages": messages,
@@ -1647,6 +1880,56 @@ async def _execute_chat_evidence_application(
                         llm_model = llm_runtime.model
                         val_url = llm_runtime.base_url.rstrip("/")
                         validate_via_llm = bool(use_validation and not llm_runtime.supports_validation)
+                        fallback_preset = resolve_transport_execution_profile(
+                            provider=llm_runtime.provider,
+                            model_id=llm_runtime.model,
+                            observed_context_tokens=None,
+                            observed=False,
+                            observed_source="cloud_fallback_unprobed",
+                            operator=model_policy,
+                        )
+                        try:
+                            fallback_messages, fallback_packet = govern_inference_messages(
+                                preset=fallback_preset,
+                                profile_prefix=sys_msg,
+                                request_payload=question_tail,
+                                checkpoint=answer_checkpoint,
+                                working_memory=answer_working_memory,
+                                evidence=[
+                                    "Материалы из найденных документов:",
+                                    *[
+                                        item.payload
+                                        for item in _text_context_objects(
+                                            "answer-evidence-fallback", context
+                                        )
+                                    ],
+                                ],
+                                source_map=answer_source_map,
+                                tool_exchange=answer_tool_exchange,
+                                dialogue=[session_block] if session_block else [],
+                            )
+                        except ContextRequiredSectionOverflow as context_error:
+                            retrieval_trace["context_governor"]["error"] = {
+                                "code": context_error.code,
+                                "purpose": "answer_fallback",
+                                "budget": context_error.budget,
+                                "required_tokens": context_error.required_tokens,
+                                "required_objects": len(context_error.object_ids),
+                            }
+                            raise HTTPException(
+                                422,
+                                detail={
+                                    "code": context_error.code,
+                                    "message": "Обязательная часть ответа не помещается в локальный fallback-контекст.",
+                                },
+                            ) from context_error
+                        retrieval_trace["context_governor"]["calls"].append(
+                            context_packet_trace(fallback_packet, purpose="answer_fallback")
+                        )
+                        retrieval_trace["context_governor"]["fallback_preset_id"] = (
+                            fallback_preset.preset_id
+                        )
+                        execution_preset = fallback_preset
                         headers = {}
                         retrieval_trace.setdefault("routing", {}).update(
                             {"cloud_fallback": type(net_err).__name__, "effective_provider": "mlx", "is_cloud": False}
@@ -1654,7 +1937,20 @@ async def _execute_chat_evidence_application(
                         # Возможный частичный вывод облака до обрыва — отбросить.
                         if token_sink is not None:
                             await token_sink({"event": "reset", "data": ""})
-                        answer, usage = await _post_llm(llm_runtime, llm_model, headers, chat_body)
+                        fallback_body = {
+                            **chat_body,
+                            "messages": fallback_messages,
+                            "max_tokens": min(
+                                int(chat_body.get("max_tokens") or 0),
+                                fallback_preset.generation_reserve_tokens,
+                            ),
+                        }
+                        answer, usage = await _post_llm(
+                            llm_runtime,
+                            llm_model,
+                            headers,
+                            fallback_body,
+                        )
                     t_llm += time.time() - t_llm_call
                     if not answer:
                         if attempt < max_attempts:
@@ -2001,6 +2297,8 @@ async def _execute_chat_evidence_application(
 
                 return response
 
+        except HTTPException:
+            raise
         except httpx.TimeoutException as e:
             logger.error("[CHAT] LLM TIMEOUT: %s", e)
             raise HTTPException(504, "LLM timeout (>120s) — модель перегружена или не отвечает. Попробуй позже.")
