@@ -1,5 +1,18 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.29.0 Agent Foundation (build 598):**
+> `tests/test_architecture_contract_gate.py`, `test_tool_contract_service.py`,
+> `test_tool_registry_service.py`, `test_capability_broker_service.py`,
+> `test_trusted_executor_service.py`, `test_tool_harness_service.py`,
+> `test_tool_trace_policy.py`, `test_canonical_route_service.py`,
+> `test_chat_evidence_application_service.py`, profile/runtime/harness tests и
+> runtime-config registry образуют focused foundation gate: **181 passed**.
+> Сквозной chat-test использует настоящий TrustedExecutor и SQLite persistence
+> probe, проверяя one-call shadow, exact Broker context, legacy answer/history и
+> продолжение после redacted candidate exception. Полный current behavior gate:
+> **681 passed** с workspace-local `--basetemp`; системный Windows `%TEMP%`
+> недоступен и не считается провалом кода.
+
 > **0.27.77 ordinary smeta RAG and physical KV:**
 > `tests/test_publish_smeta_norm_dataset.py` фиксирует read-only card rendering
 > и unified point payload; `tests/test_system_dataset_service.py` — стабильный

@@ -42,6 +42,16 @@
 - `shadow` не исполняет draft/commit/external/destructive handlers, а overflow
   сохраняет целый результат за cursor без обрезания JSON.
 
+## Проверено на foundation checkpoint
+
+- Focused Agent Foundation suite: `181 passed`.
+- Канонический current behavior gate: `681 passed` с workspace-local
+  `--basetemp` на Windows.
+- `make architecture-gate` и `make verify`: зелёные; verify собрал 681 тест.
+- Task 5 прошёл независимое повторное review без Critical/Important.
+- Это offline structural/behavior evidence; живое качество 9B и release
+  promotion им не подменяются.
+
 ## Запланировано, но ещё не реализовано
 
 - ContextGovernor, typed memory projection и presets Qwen 9B/35B;

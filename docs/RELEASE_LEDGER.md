@@ -4,14 +4,14 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-26)
+## Текущее состояние (2026-08-27)
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              597
-версия Tauri/NSIS:         5.1.597
+номер сборки:              598
+версия Tauri/NSIS:         5.1.598
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       Agent Foundation implemented through ordinary-chat shadow; closing gate pending
+dev implementation:       Agent Foundation verified and committed; ContextGovernor plan next
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -116,6 +116,18 @@ dev implementation:       Agent Foundation implemented through ordinary-chat sha
 > GUI runtime registry показывает фактор как
 > Danger/restart-required. Focused route/chat/profile/harness/executor/runtime:
 > 149 passed; architecture gate green. Live model quality этим не доказана.
+
+> **0.29.0 Agent Foundation closing checkpoint (build 598):** весь foundation
+> слой Registry → Broker → TrustedExecutor → ordinary-chat shadow закрыт отдельными
+> review checkpoints. Focused suite с route/profile/runtime/trace и сквозным
+> SQLite persistence probe: **181 passed**. `make architecture-gate` и
+> `make verify` зелёные, verify собрал 681 тест. Первый Windows `make test`
+> подтвердил общую setup-проблему системного `%TEMP%` (`PermissionError`, 217
+> setup errors, не test failures); тот же неизменный current набор с
+> workspace-local `--basetemp` прошёл **681 passed**. Независимое повторное review
+> Task 5: Critical 0, Important 0, Ready. Runtime не развёртывался, live model
+> quality и promotion receipt не заявляются; следующий этап — ContextGovernor,
+> typed memory projection и реальные 9B/35B presets.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
