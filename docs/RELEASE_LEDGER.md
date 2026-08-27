@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              599
-версия Tauri/NSIS:         5.1.599
+номер сборки:              600
+версия Tauri/NSIS:         5.1.600
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       capacity-bounded 9B/35B preset resolution; ContextGovernor next
+dev implementation:       model presets + whole-object ContextGovernor; typed memory next
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -135,7 +135,16 @@ dev implementation:       capacity-bounded 9B/35B preset resolution; ContextGove
 > могут только сузить лимиты; reasoning остаётся выключен по умолчанию, а
 > разрешение пресета не меняет route mode и не переписывает provider config.
 > `/api/version` показывает redacted `requested/effective/source/restart_required`.
-> Focused contract: 8 passed до closing gates; live model quality не заявляется.
+> Focused contract: 9 passed до closing gates; live model quality не заявляется.
+
+> **0.29.0 ContextGovernor (build 600):** добавлен единый packer с каноническим
+> порядком typed context, предварительным резервом generation/safety и
+> приоритетом обязательных объектов. JSON/строки больше не режутся посередине:
+> непоместившиеся объекты получают stable omission IDs/cursor, а required
+> overflow блокирует обращение к модели. `fit_prompt_sections()` сохранён как
+> compatibility adapter над governor. Focused governor/transport/provider
+> contract: 26 passed до closing gates; chat-wide integration выполняется в
+> отдельной Task 4, live model quality не заявляется.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

@@ -10,6 +10,12 @@ from proxy.services.model_execution_preset_service import (
     ModelExecutionPreset,
     resolve_execution_preset,
 )
+from proxy.services.context_governor_service import (
+    ContextCandidate,
+    ContextGovernor,
+    ContextKind,
+    ContextObject,
+)
 
 
 LOCAL_OPENAI_PROVIDER_NAMES = frozenset({"freetoken"})
@@ -167,42 +173,105 @@ def fit_prompt_sections(
     max_chars: int,
 ) -> tuple[str, dict[str, Any]]:
     limit = max(1, int(max_chars))
-    tail = str(required_tail or "")
-    if len(tail) >= limit:
-        fitted = tail[-limit:]
-        return fitted, {
-            "truncated": True,
-            "output_chars": len(fitted),
-            "sections": {},
-        }
-
-    head_budget = max(0, limit - len(tail) - 2)
-    fitted_sections: list[str] = []
-    section_chars: dict[str, int] = {}
-    truncated = False
-    for name, raw_value in sections:
+    tail = str(required_tail or "").strip()
+    kind_by_name = {
+        "profile_prefix": ContextKind.PROFILE_PREFIX,
+        "tools": ContextKind.TOOL_EXCHANGE,
+        "tool_shortlist": ContextKind.TOOL_SHORTLIST,
+        "checkpoint": ContextKind.CHECKPOINT,
+        "session_memory": ContextKind.WORKING_MEMORY,
+        "working_memory": ContextKind.WORKING_MEMORY,
+        "evidence": ContextKind.EVIDENCE,
+        "navigation": ContextKind.SOURCE_MAP,
+        "dataset_navigation": ContextKind.SOURCE_MAP,
+        "inventory_navigation": ContextKind.SOURCE_MAP,
+        "notebook_navigation": ContextKind.SOURCE_MAP,
+        "selected_documents": ContextKind.SOURCE_MAP,
+        "project_memory_advisory": ContextKind.WORKING_MEMORY,
+        "tool_exchange": ContextKind.TOOL_EXCHANGE,
+        "dialogue": ContextKind.DIALOGUE,
+    }
+    candidates: list[ContextCandidate] = []
+    values_by_id: dict[str, tuple[int, str, str]] = {}
+    for section_index, (name, raw_value) in enumerate(sections):
         value = str(raw_value or "").strip()
         if not value:
             continue
-        separator_chars = 2 if fitted_sections else 0
-        available = head_budget - sum(len(item) for item in fitted_sections) - (
-            2 * max(0, len(fitted_sections) - 1)
-        ) - separator_chars
-        if available <= 0:
-            truncated = True
-            section_chars[str(name)] = 0
-            continue
-        used = value[:available].rstrip()
-        if len(used) < len(value):
-            truncated = True
-        if used:
-            fitted_sections.append(used)
-            section_chars[str(name)] = len(used)
-
-    head = "\n\n".join(fitted_sections)
-    fitted = f"{head}\n\n{tail}" if head else tail
+        # Existing producers commonly delimit addressable evidence/pages with a
+        # blank line. Those units may be omitted, but are never sliced.
+        parts = tuple(part.strip() for part in value.split("\n\n") if part.strip())
+        objects: list[ContextObject] = []
+        for part_index, part in enumerate(parts):
+            object_id = f"compat:{section_index}:{part_index}"
+            objects.append(ContextObject(object_id=object_id, payload=part))
+            values_by_id[object_id] = (section_index, str(name), part)
+        candidates.append(
+            ContextCandidate(
+                kind=kind_by_name.get(str(name), ContextKind.DIALOGUE),
+                objects=tuple(objects),
+            )
+        )
+    request_id = "compat:required-request"
+    candidates.append(
+        ContextCandidate(
+            kind=ContextKind.REQUEST,
+            objects=(ContextObject(object_id=request_id, payload=tail),),
+            required=True,
+        )
+    )
+    compatibility_preset = ModelExecutionPreset(
+        preset_id="legacy-prompt-compatibility",
+        model_family="provider-compatible",
+        input_token_limit=limit + 1,
+        generation_reserve_tokens=0,
+        safety_reserve_tokens=0,
+        normal_tool_count=1,
+        max_tools=1,
+        max_batch_items=1,
+        parallel_read_limit=1,
+        reasoning_enabled=False,
+        source_chain=("workflow_invariants", "compatibility_wrapper"),
+    )
+    packet = ContextGovernor(
+        compatibility_preset,
+        estimate_tokens=lambda text: len(text) + 1,
+    ).pack(candidates)
+    selected_ids = {
+        item.object_id
+        for section in packet.sections
+        for item in section.objects
+        if item.object_id != request_id
+    }
+    fitted_sections: list[str] = []
+    section_chars: dict[str, int] = {}
+    for section_index, (name, _) in enumerate(sections):
+        parts = [
+            value
+            for object_id, (object_section_index, _object_name, value) in values_by_id.items()
+            if object_section_index == section_index and object_id in selected_ids
+        ]
+        if parts:
+            fitted_value = "\n".join(parts)
+            fitted_sections.append(fitted_value)
+            section_chars[str(name)] = section_chars.get(str(name), 0) + len(fitted_value)
+        elif section_index in {
+            object_section_index
+            for object_section_index, _object_name, _value in values_by_id.values()
+        }:
+            section_chars.setdefault(str(name), 0)
+    fitted = "\n".join([*fitted_sections, tail]) if fitted_sections else tail
     return fitted, {
-        "truncated": truncated,
+        "truncated": bool(packet.omissions),
         "output_chars": len(fitted),
         "sections": section_chars,
+        "omissions": [
+            {
+                "kind": omission.kind.value,
+                "omitted": omission.omitted,
+                "object_ids": list(omission.object_ids),
+                "cursor": omission.cursor,
+                "reason": omission.reason,
+            }
+            for omission in packet.omissions
+        ],
     }

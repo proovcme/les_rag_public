@@ -200,7 +200,7 @@ def test_freetoken_default_prompt_fit_keeps_multi_document_evidence(monkeypatch)
     assert trace["sections"]["evidence"] > 3906
 
 
-def test_prompt_fitter_keeps_question_and_first_source_under_limit():
+def test_prompt_fitter_omits_oversized_whole_source_and_keeps_question():
     evidence = "[Источник 1] Паспорт клапана\n" + ("EI60 подтверждено. " * 8000)
     question = "Вопрос: Какой предел огнестойкости применять?"
 
@@ -214,10 +214,11 @@ def test_prompt_fitter_keeps_question_and_first_source_under_limit():
     )
 
     assert len(fitted) <= 5000
-    assert "[Источник 1]" in fitted
+    assert "[Источник 1]" not in fitted
     assert fitted.endswith(question)
     assert trace["truncated"] is True
     assert trace["output_chars"] == len(fitted)
+    assert trace["omissions"][0]["cursor"].startswith("ctx:evidence:")
 
 
 @pytest.mark.asyncio

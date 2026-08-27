@@ -9,6 +9,21 @@
 `metadata` или `deep`: глубокий слой читает только уже готовый lexical index, без reindex/OCR/LLM. С 0.24.0.17
 паспорт получает `quality`-оценку полезности и замер прогрева: cold rebuild против тёплого чтения кэша.
 Паспорта и блокноты ускоряют маршрутизацию и понимание задачи, но не являются источником фактов, норм или чисел.
+
+## Единый ContextGovernor
+
+Канонический кандидат больше не обрезает prompt независимыми строковыми лимитами.
+Все производители отдают типизированные объекты девяти видов: profile prefix,
+tool shortlist, request, checkpoint, working memory, evidence, source map,
+tool exchange и dialogue. `ContextGovernor` сначала резервирует generation и
+safety budget, затем сохраняет обязательные объекты и упаковывает остальные в
+этом фиксированном порядке.
+
+Объект либо входит целиком, либо получает omission с устойчивым ID/cursor.
+Переполнение обязательного request/profile/checkpoint возвращает
+`CONTEXT_REQUIRED_SECTION_OVERFLOW` до вызова модели. Старый
+`fit_prompt_sections()` оставлен как переходный адаптер над тем же governor и
+больше не режет произвольную строку или JSON посередине.
 С 0.24.0.177 обычный prompt получает не полный служебный dump карты, а компактный
 `dataset_brief_for_model_v1`: brief объясняет модели, что за корпус выбран, какие файлы открыть первыми,
 как file cards связаны с реальными чанками, и какой маршрут чтения подходит под текущий вопрос. Модель и
@@ -39,6 +54,8 @@ Focus учитывает lexical `_rank_score` и поднимает лучши�
 
 ## Точки входа
 
+- `proxy/services/context_governor_service.py` — типы кандидатов, единый packer,
+  omission cursor и typed required-overflow.
 - `proxy/services/context_memory_service.py` — сборка/хранение профилей.
 - `PATCH /api/rag/datasets/{dataset_id}/profile/guidance` — сохранить операторское пояснение для модели;
   no-reindex, пишет только профиль/sidecar и синхронизирует typed memory.
