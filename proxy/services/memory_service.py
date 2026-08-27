@@ -13,6 +13,7 @@ import os
 import re
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
 from backend.rag_config import rag_meta_db_path
@@ -69,6 +70,13 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def _connect_read_only() -> sqlite3.Connection:
+    path = Path(rag_meta_db_path()).resolve()
+    conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
 def create_note(text: str, dataset_filter: str = "", project_id: int = 0, auto: bool = False) -> dict[str, Any]:
     now = time.time()
     with _connect() as conn:
@@ -97,6 +105,31 @@ def list_notes(limit: int = 50, project_id: int | None = None) -> list[dict[str,
             ).fetchall()
         else:
             rows = conn.execute("SELECT * FROM les_notes ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+    return [dict(row) for row in rows]
+
+
+def project_note_items(*, limit: int = 5, project_id: int | None = None) -> list[dict[str, Any]]:
+    """Read notes for typed projection without schema creation or other writes."""
+    try:
+        with _connect_read_only() as conn:
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='les_notes'"
+            ).fetchone()
+            if not table:
+                return []
+            columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(les_notes)")}
+            if project_id is not None and "project_id" in columns:
+                rows = conn.execute(
+                    "SELECT * FROM les_notes WHERE project_id IN (0, ?) ORDER BY id DESC LIMIT ?",
+                    (int(project_id), max(0, int(limit))),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM les_notes ORDER BY id DESC LIMIT ?",
+                    (max(0, int(limit)),),
+                ).fetchall()
+    except sqlite3.OperationalError:
+        return []
     return [dict(row) for row in rows]
 
 
@@ -184,30 +217,40 @@ def recall_context(
             + "\n".join(parts))
 
 
-def session_memory(session_id: str, *, max_turns: int = 6, max_chars: int = 2000) -> str:
-    """Память диалога: последние реплики ТЕКУЩЕЙ сессии для контекста («помни всё»).
-
-    Чат потурно безсостоятельный — без этого ЛЕС не помнит, о чём шла речь выше.
-    Детерминированно: просто последние Q/A сессии из chat_history. Без LLM.
-    """
+def session_memory_items(session_id: str, *, max_turns: int = 6) -> list[dict[str, str]]:
+    """Return bounded, addressable dialogue turns from the current session."""
     if not (session_id or "").strip():
-        return ""
+        return []
     try:
-        with _connect() as conn:
+        with _connect_read_only() as conn:
             rows = conn.execute(
-                "SELECT question, answer FROM chat_history WHERE session_id=? "
+                "SELECT id, question, answer FROM chat_history WHERE session_id=? "
                 "ORDER BY id DESC LIMIT ?",
                 (session_id.strip(), max_turns),
             ).fetchall()
     except sqlite3.OperationalError:
-        return ""
+        return []
     rows = list(reversed(rows))
-    if not rows:
+    return [
+        {
+            "turn_id": f"chat:{row['id']}",
+            "question": " ".join(str(row["question"] or "").split())[:300],
+            "answer": " ".join(str(row["answer"] or "").split())[:400],
+        }
+        for row in rows
+        if str(row["question"] or "").strip() or str(row["answer"] or "").strip()
+    ]
+
+
+def session_memory(session_id: str, *, max_turns: int = 6, max_chars: int = 2000) -> str:
+    """Serialize the typed dialogue view for legacy prompt callers."""
+    turns = session_memory_items(session_id, max_turns=max_turns)
+    if not turns:
         return ""
     parts: list[str] = []
-    for row in rows:
-        q = " ".join(str(row["question"] or "").split())[:300]
-        a = " ".join(str(row["answer"] or "").split())[:400]
+    for row in turns:
+        q = row["question"]
+        a = row["answer"]
         if q:
             parts.append(f"Пользователь: {q}")
         if a:
@@ -221,7 +264,7 @@ def session_user_questions(session_id: str, *, max_turns: int = 6) -> list[str]:
     if not (session_id or "").strip():
         return []
     try:
-        with _connect() as conn:
+        with _connect_read_only() as conn:
             rows = conn.execute(
                 "SELECT question FROM chat_history WHERE session_id=? "
                 "ORDER BY id DESC LIMIT ?",
@@ -247,7 +290,7 @@ def session_recent_retrieval_traces(session_id: str, *, max_turns: int = 6) -> l
     if not (session_id or "").strip():
         return []
     try:
-        with _connect() as conn:
+        with _connect_read_only() as conn:
             rows = conn.execute(
                 "SELECT retrieval_trace_json FROM chat_history WHERE session_id=? "
                 "ORDER BY id DESC LIMIT ?",

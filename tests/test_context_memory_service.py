@@ -9,6 +9,7 @@ from proxy.services.context_memory_service import (
     benchmark_dataset_profile_warmup,
     build_context_memory_block,
     build_dataset_profile,
+    chat_memory_projection_record,
     get_chat_profile,
     set_dataset_kind,
     set_dataset_operator_guidance,
@@ -114,7 +115,7 @@ def test_dataset_profile_writes_sidecar(tmp_path, monkeypatch):
     assert profile["top_documents"][0]["source"] == "metadb.documents"
     sidecar = storage_root / "ds-1" / DATASET_PROFILE_FILE
     assert sidecar.exists()
-    saved = json.loads(sidecar.read_text())
+    saved = json.loads(sidecar.read_text(encoding="utf-8"))
     assert saved["name"] == "Проект ПД"
     assert saved["sample_files"][0]["file_name"]
 
@@ -417,6 +418,10 @@ def test_chat_profile_updates_from_history_and_prompt_block(tmp_path, monkeypatc
     assert profile["turn_count"] == 1
     assert profile["assumptions"]
     assert profile["blockers"]
+    projection_record = chat_memory_projection_record("s-1")
+    assert projection_record["last_status"] == "UNVALIDATED"
+    assert projection_record["blockers"]
+    assert "last_answer_preview" not in projection_record
 
     block = build_context_memory_block(
         session_id="s-1",

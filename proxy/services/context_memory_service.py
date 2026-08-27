@@ -1047,6 +1047,41 @@ def get_chat_profile(session_id: str) -> dict[str, Any] | None:
     return _loads(row["profile_json"], {}) if row else None
 
 
+def chat_memory_projection_record(session_id: str) -> dict[str, Any]:
+    """Read a bounded advisory view of the existing chat passport."""
+    sid = str(session_id or "").strip()
+    if not sid:
+        return {}
+    path = Path(rag_meta_db_path()).resolve()
+    try:
+        with sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True) as conn:
+            conn.row_factory = sqlite3.Row
+            table = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='les_chat_profiles'"
+            ).fetchone()
+            if not table:
+                return {}
+            row = conn.execute(
+                "SELECT profile_json FROM les_chat_profiles WHERE session_id=?", (sid,)
+            ).fetchone()
+    except sqlite3.OperationalError:
+        return {}
+    profile = _loads(row["profile_json"], {}) if row else {}
+    if not isinstance(profile, dict):
+        return {}
+    return {
+        "session_id": str(profile.get("session_id") or session_id),
+        "project_id": int(profile.get("project_id") or 0),
+        "turn_count": int(profile.get("turn_count") or 0),
+        "last_status": str(profile.get("last_status") or ""),
+        "mode": str(profile.get("mode") or ""),
+        "last_question": " ".join(str(profile.get("last_question") or "").split())[:500],
+        "effective_dataset_filter": str(profile.get("effective_dataset_filter") or "")[:300],
+        "blockers": [str(item)[:220] for item in list(profile.get("blockers") or [])[-5:]],
+        "assumptions": [str(item)[:220] for item in list(profile.get("assumptions") or [])[-5:]],
+    }
+
+
 def _dataset_profile_block(profile: dict[str, Any]) -> str:
     samples = ", ".join(item["file_name"] for item in profile.get("sample_files", [])[:6] if item.get("file_name"))
     doc_types = ", ".join(f"{x['value']}:{x['count']}" for x in profile.get("document_types", [])[:5])
@@ -1094,7 +1129,7 @@ def build_context_memory_block(
 ) -> str:
     """Return a compact prompt block with chat and dataset profiles."""
     parts: list[str] = []
-    chat_profile = get_chat_profile(session_id or "") if session_id else None
+    chat_profile = chat_memory_projection_record(session_id or "") if session_id else None
     if chat_profile:
         chat_lines = [
             f"Паспорт чата: ходов {chat_profile.get('turn_count', 0)}, "

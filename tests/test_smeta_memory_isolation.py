@@ -14,6 +14,7 @@ from proxy.smeta_core.document_workflow import SmetaNormToolSession
 def test_null_memory_port_isolation():
     configure_memory_port(None)
     assert isinstance(get_memory_port(), NullMemoryPort)
+    assert get_memory_port().project_advisory_items(7) == []
 
 
 def test_observer_requires_positive_project_and_published_finality():

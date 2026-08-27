@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              600
-версия Tauri/NSIS:         5.1.600
+номер сборки:              601
+версия Tauri/NSIS:         5.1.601
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       model presets + whole-object ContextGovernor; typed memory next
+dev implementation:       presets + ContextGovernor + typed advisory memory projection
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -145,6 +145,15 @@ dev implementation:       model presets + whole-object ContextGovernor; typed me
 > compatibility adapter над governor. Focused governor/transport/provider
 > contract: 26 passed до closing gates; chat-wide integration выполняется в
 > отдельной Task 4, live model quality не заявляется.
+
+> **0.29.0 typed memory projection (build 601):** существующие chat passport,
+> session history, operator notes, dataset/notebook locators и MemoryPort
+> адаптированы в bounded addressable items. Все элементы имеют
+> `context_role=advisory_state`, `is_evidence=false`; model decision сохраняет
+> исходный `revision_ref`, а не превращается в переписанный факт. Legacy memory
+> text остаётся adapter над bounded records. Focused relevant suites: 60 passed;
+> один старый notebook test требует отсутствующую user-owned локальную базу и
+> остаётся N/A для этой задачи. Live model quality не заявляется.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

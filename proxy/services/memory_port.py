@@ -35,6 +35,10 @@ class MemoryPort(ABC):
     @abstractmethod
     def recall_route_cache(self, project_id: int, work_features: dict[str, Any]) -> list[RouteEvidenceCacheDTO]: ...
 
+    def project_advisory_items(self, project_id: int, *, limit: int = 5) -> list[dict[str, Any]]:
+        """Return typed advisory facts; default ports expose no project state."""
+        return []
+
 
 class NullMemoryPort(MemoryPort):
     def get_mode(self) -> MemoryMode:
@@ -74,3 +78,7 @@ def configure_memory_port(port: MemoryPort | None) -> None:
 
 def get_memory_port() -> MemoryPort:
     return _port
+
+
+def project_advisory_items(project_id: int, *, limit: int = 5) -> list[dict[str, Any]]:
+    return list(_port.project_advisory_items(project_id, limit=limit))

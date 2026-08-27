@@ -21,8 +21,16 @@ Memory Core сохраняет подтверждённые grounded-turns в du
 
 ## Точки входа
 
+С build 601 общий typed projection адаптирует эту память вместе с паспортом
+чата, историей, заметками и dataset locators в адресуемые bounded items.
+Projection всегда `advisory_state/is_evidence=false`; решения сохраняются только
+со ссылкой на исходную ревизию. Notebook и полные записи не копируются и не
+перезаписываются.
+
 - `proxy/memory_core/` — contracts, SQLite store, validation, conflicts и configuration;
 - `proxy/services/memory_port.py` — `MemoryPort` и безопасный `NullMemoryPort`;
+- `proxy/services/typed_memory_projection_service.py` — общая проекция в
+  `checkpoint/working_memory` candidates для ContextGovernor;
 - `proxy/services/chat_evidence_application_service.py` — один post-success enqueue hook обычного RAG и advisory recall;
 - `proxy/services/memory_worker_service.py` — локальный low-priority extractor;
 - `proxy/services/smeta_chat_application_service.py` → `memory_smeta_observer.py` — read-only capture после публикации сметы;

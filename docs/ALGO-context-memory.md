@@ -24,6 +24,23 @@ safety budget, затем сохраняет обязательные объек
 `CONTEXT_REQUIRED_SECTION_OVERFLOW` до вызова модели. Старый
 `fit_prompt_sections()` оставлен как переходный адаптер над тем же governor и
 больше не режет произвольную строку или JSON посередине.
+
+## Typed advisory projection
+
+`typed_memory_projection_service.py` читает существующие паспорта чата,
+адресуемые ходы сессии, заметки оператора, MemoryPort и сохранённые trace refs.
+SQLite-источники открываются `mode=ro`: projection не создаёт схемы, не пишет
+профили и не пересобирает notebook. Он также не копирует prompt dump. Результат состоит из
+`checkpoint`, `blocker`, `decision`, `evidence_locator`, `continuity` и
+`advisory_fact`; каждый item имеет стабильный ID, project scope,
+`context_role=advisory_state` и неизменное `is_evidence=false`.
+
+Решение модели хранится как payload со ссылкой `revision_ref`, а не
+переписывается в новый «факт». Dataset/notebook остаётся живой навигацией и
+проецируется как locator. Полные объекты остаются в исходных хранилищах;
+лимит projection возвращает omitted count/cursor. Старые `session_memory()` и
+`build_context_memory_block()` сериализуют bounded typed views для сохранения
+пользовательской непрерывности на время миграции.
 С 0.24.0.177 обычный prompt получает не полный служебный dump карты, а компактный
 `dataset_brief_for_model_v1`: brief объясняет модели, что за корпус выбран, какие файлы открыть первыми,
 как file cards связаны с реальными чанками, и какой маршрут чтения подходит под текущий вопрос. Модель и

@@ -69,6 +69,9 @@ def test_session_memory_returns_dialogue():
     assert "БЦ Банкрот" in block and "Иван" in block
     assert "Левый" not in block  # чужая сессия не подмешивается
     assert block.index("Банкрот") < block.index("Иван")  # хронологический порядок
+    items = ms.session_memory_items("s1")
+    assert [item["turn_id"] for item in items] == ["chat:1", "chat:2"]
+    assert items[0]["question"] == "Как зовут объект?"
 
 
 def test_session_memory_empty_without_session():

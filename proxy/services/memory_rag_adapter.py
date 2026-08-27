@@ -86,6 +86,29 @@ class ActiveMemoryPort(MemoryPort):
             lines.append(f"- [{status}] {entry.subject} — {entry.predicate}: {entry.value}")
         return "\n".join(lines)
 
+    def project_advisory_items(self, project_id: int, *, limit: int = 5) -> list[dict[str, Any]]:
+        if self.config.mode != MemoryMode.ON or project_id <= 0:
+            return []
+        entries = self.store.get_entries_by_project(
+            project_id,
+            statuses=(ValidationStatus.CONFIRMED, ValidationStatus.CANDIDATE),
+            limit=max(0, int(limit)),
+        )
+        return [
+            {
+                "item_id": f"memory-core:{entry.entry_id}",
+                "payload": {
+                    "subject": str(entry.subject)[:200],
+                    "predicate": str(entry.predicate)[:120],
+                    "value": str(entry.value)[:300],
+                    "validation_status": entry.validation_status.value,
+                },
+                "project_id": project_id,
+                "is_evidence": False,
+            }
+            for entry in entries
+        ]
+
     def record_smeta_trace(self, trace: SmetaSuccessTrace) -> bool:
         if self.config.mode == MemoryMode.OFF or not self.config.smeta_capture:
             return False
