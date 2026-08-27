@@ -188,6 +188,18 @@ dev implementation:       governed chat + visible effective model/context factor
 > evidence, а не живое качество модели, paired 9B acceptance или готовность
 > публикации.
 
+> **0.29.0 universal model connections design (build 603, spec-only):**
+> согласована единая глобальная registry подключений для FreeToken, Ollama,
+> Lemonade, MLX, LM Studio, llama.cpp и произвольного OpenAI-compatible API.
+> Обычный chat должен использовать общий transport и реальные capability
+> snapshots вместо веток по имени provider; answer, embeddings и единственный
+> допустимый fallback связываются отдельно. Секреты остаются за `secret_ref`,
+> remote требует HTTPS/SSRF-защиты, engine-management изолирован от inference.
+> `shadow` не делает второго model call. Notebook memory, ContextGovernor и
+> canonical tool loop сохраняются; `proxy/smeta_core/**` не участвует и не
+> изменяется. Канон: [design](superpowers/specs/2026-08-27-universal-model-connections-design.md).
+> Runtime-код, версия сборки, deploy и публикация не изменены.
+
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
 > exact healthy venv пропускает sync, mismatch синхронизируется один раз offline, broken venv
