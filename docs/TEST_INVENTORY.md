@@ -1,5 +1,17 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.29.0 governed context and preset parity (build 603):**
+> `tests/test_model_execution_preset_service.py`,
+> `test_context_governor_service.py`, `test_typed_memory_projection_service.py`,
+> `test_model_preset_workflow_parity.py` и chat integration проверяют один
+> governed inference path. Parity test сравнивает реальные model-visible tool
+> payloads (schema/effect/approval включительно), порядок context objects и
+> одну typed advisory-memory projection в пакетах 9B/35B; различаться обязаны только
+> числовые capacity limits. Эти новые suites включены в постоянный `make test`,
+> а не оставлены отдельной ручной командой. Полный current behavior gate:
+> **717 passed**; `make verify` собрал **717 тестов**. Это offline contract
+> evidence, не проверка качества живой модели и не release promotion.
+
 > **0.29.0 Agent Foundation (build 598):**
 > `tests/test_architecture_contract_gate.py`, `test_tool_contract_service.py`,
 > `test_tool_registry_service.py`, `test_capability_broker_service.py`,

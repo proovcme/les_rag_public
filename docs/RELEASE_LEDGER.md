@@ -178,6 +178,16 @@ dev implementation:       governed chat + visible effective model/context factor
 > behavior gate: 682 passed; live
 > desktop/mobile визуальная приёмка остаётся release-гейтом.
 
+> **0.29.0 governed preset parity (build 603):** отдельный parity contract
+> подтверждает на реальных Registry/Broker/ContextGovernor/memory surfaces,
+> что 9B и 35B получают одинаковые tool schemas/effects/approvals, порядок
+> typed context и одну typed advisory-memory projection. Отличаются только числовые
+> capacity envelopes. Focused context acceptance: 35 passed. Новые suites
+> добавлены в постоянный current gate: `make test` — 717 passed,
+> `make verify` — 717 collected, architecture gate green. Это offline contract
+> evidence, а не живое качество модели, paired 9B acceptance или готовность
+> публикации.
+
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
 > exact healthy venv пропускает sync, mismatch синхронизируется один раз offline, broken venv

@@ -41,20 +41,36 @@
   публикация профиля не активирует и не перепривязывает существующий session.
 - `shadow` не исполняет draft/commit/external/destructive handlers, а overflow
   сохраняет целый результат за cursor без обрезания JSON.
+- `qwen-9b-restrictive` и `qwen-35b-extended` разрешаются из наблюдаемой
+  ёмкости backend. Профиль и оператор могут только сужать factory limits;
+  LES не меняет физический KV и не перезапускает provider.
+- Фактические tool-decision и answer packets общего чата собирает один
+  `ContextGovernor`: обязательные объекты проверяются до model call, остальные
+  включаются целиком в каноническом порядке и получают cursor при omission.
+- Существующая notebook/session/project memory продолжает жить в прежних
+  хранилищах. Typed projection только даёт ей bounded представление
+  `advisory_state`; память не становится evidence и не выбирает решение.
+- 9B и 35B используют одинаковые реальные tool contracts, effect/approval
+  policy, порядок typed context и одну typed advisory-memory projection. 35B
+  получает только более широкие числовые лимиты shortlist/batch/context/
+  parallel reads.
+- Совушка показывает effective preset, input limit, generation/safety reserves,
+  reasoning, источник значения и необходимость restart. Эти строки read-only;
+  допустимые изменения делаются через копию профиля.
 
-## Проверено на foundation checkpoint
+## Проверено на context checkpoint
 
 - Focused Agent Foundation suite: `181 passed`.
-- Канонический current behavior gate: `681 passed` с workspace-local
+- Канонический current behavior gate: `717 passed` с workspace-local
   `--basetemp` на Windows.
-- `make architecture-gate` и `make verify`: зелёные; verify собрал 681 тест.
-- Task 5 прошёл независимое повторное review без Critical/Important.
+- `make architecture-gate` и `make verify`: зелёные; verify собрал 717 тестов.
+- Governed-chat и UI checkpoints прошли независимое повторное review без
+  Critical/Important.
 - Это offline structural/behavior evidence; живое качество 9B и release
   promotion им не подменяются.
 
 ## Запланировано, но ещё не реализовано
 
-- ContextGovernor, typed memory projection и presets Qwen 9B/35B;
 - versioned workbook artifacts и paired live 9B acceptance.
 
 `make architecture-gate` является только структурным доказательством. Он не
