@@ -200,6 +200,17 @@ dev implementation:       governed chat + visible effective model/context factor
 > изменяется. Канон: [design](superpowers/specs/2026-08-27-universal-model-connections-design.md).
 > Runtime-код, версия сборки, deploy и публикация не изменены.
 
+> **0.29.0 universal model connections executable plan (build 603, plan-only):**
+> согласованная connection registry архитектура разложена на одиннадцать TDD/review
+> срезов: immutable revisions/bindings; endpoint и secret boundary; capability
+> evidence; legacy migration/resolver; общий transport; ordinary-chat rollout;
+> embeddings role; admin API; GUI-first registry; isolated engine extensions;
+> permanent/live gates. План резервирует builds 604–614, требует отдельный чистый worktree и
+> оставляет paused workbook RED-тесты нетронутыми. `proxy/smeta_core/**`,
+> notebook memory, tool contracts и профили не изменяются. Runtime-код, версия
+> сборки, deploy и публикация на этом checkpoint не изменены. Канон:
+> [plan](superpowers/plans/2026-08-27-universal-model-connections-implementation.md).
+
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
 > exact healthy venv пропускает sync, mismatch синхронизируется один раз offline, broken venv
