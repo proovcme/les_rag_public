@@ -402,22 +402,25 @@ class TrustedExecutor:
         schema_error = self._schema_error(contract, request.arguments)
         if schema_error:
             return self._envelope(request, "rejected", schema_error)
-        if self._scope_escapes(contract, request.arguments, request.allowed_dataset_ids):
-            return self._envelope(request, "rejected", "TOOL_SCOPE_VIOLATION")
         if request.deadline_monotonic <= time.monotonic():
             return self._envelope(request, "timeout", "TOOL_DEADLINE_EXCEEDED")
-
-        try:
-            fingerprint = f"{request.tool_name}:{argument_sha256(request.arguments)}"
-        except (TypeError, ValueError):
-            return self._envelope(request, "rejected", "TOOL_ARGUMENTS_NOT_JSON")
-        if request.shadow and contract.effect in _SHADOW_BLOCKED_EFFECTS:
+        if self._scope_escapes(contract, request.arguments, request.allowed_dataset_ids):
+            return self._envelope(request, "rejected", "TOOL_SCOPE_VIOLATION")
+        if request.shadow and (
+            contract.effect in _SHADOW_BLOCKED_EFFECTS
+            or "shadow_validate_only" in contract.tags
+        ):
             return self._envelope(
                 request,
                 "shadow",
                 "TOOL_WOULD_EXECUTE",
                 {"effect": contract.effect.value, "persisted": False},
             )
+
+        try:
+            fingerprint = f"{request.tool_name}:{argument_sha256(request.arguments)}"
+        except (TypeError, ValueError):
+            return self._envelope(request, "rejected", "TOOL_ARGUMENTS_NOT_JSON")
         if contract.effect in _APPROVAL_EFFECTS and request.actor_role != "admin":
             return self._envelope(
                 request,
@@ -570,6 +573,8 @@ class TrustedExecutor:
         arguments: Mapping[str, Any],
         allowed_dataset_ids: tuple[str, ...],
     ) -> bool:
+        if "dataset" not in contract.scopes:
+            return False
         allowed = {str(item) for item in allowed_dataset_ids if str(item)}
         if "*" in allowed:
             return False

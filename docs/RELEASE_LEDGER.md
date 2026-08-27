@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              596
-версия Tauri/NSIS:         5.1.596
+номер сборки:              597
+версия Tauri/NSIS:         5.1.597
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       architecture gate + Registry + Broker + TrustedExecutor implemented; chat shadow pending
+dev implementation:       Agent Foundation implemented through ordinary-chat shadow; closing gate pending
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -97,6 +97,25 @@ dev implementation:       architecture gate + Registry + Broker + TrustedExecuto
 > privileged effect, stable hashed API principal и strict canonical result
 > shape/finite JSON. Foundation/executor/profile: 73 passed; architecture gate green.
 > Ordinary-chat shadow route ещё не включён.
+
+> **0.29.0 ordinary-chat shadow checkpoint (build 597):** добавлен fail-closed
+> route contract `legacy | shadow | active`. Отсутствующая/невалидная настройка
+> даёт `shadow`; `active` без exact passing receipt для commit/build/preset/
+> observed model/acceptance hash также остаётся shadow. Legacy answer остаётся
+> единственным видимым. Первая model-owned selector выдача дополнительно
+> валидируется как один canonical call; остальные calls только pending. Executor
+> с `shadow=True` проверяет schema/deadline/scope, разрешая косвенный `doc_id`
+> через SQLite `mode=ro`. Dataset/source/web и model-backed handlers остаются
+> validate-only; чистые filesystem reads могут исполняться. Legacy notebook path
+> сохранён, shadow его не перестраивает. Trace хранит лишь redacted structure.
+> Publish profile не активирует revision и не меняет session binding. Сквозной
+> тест реального chat application доказывает один canonical call, неизменный
+> legacy answer/history/model-call count и отсутствие SQLite persistence после
+> shadow exception; Broker получает фактические dataset ids, research phase,
+> profile preset, runtime allowlist и remaining budgets вместо wildcard defaults.
+> GUI runtime registry показывает фактор как
+> Danger/restart-required. Focused route/chat/profile/harness/executor/runtime:
+> 149 passed; architecture gate green. Live model quality этим не доказана.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

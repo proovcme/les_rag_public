@@ -45,6 +45,7 @@ def _registration(
     max_chars=7000,
     timeout=30,
     input_schema=None,
+    tags=(),
 ):
     return ToolRegistration(
         contract=ToolContract(
@@ -63,6 +64,7 @@ def _registration(
             result_budget=ResultBudget(max_chars=max_chars, max_items=20),
             model_owned_fields=(),
             provenance="source_refs_required",
+            tags=tags,
         ),
         handler=handler,
     )
@@ -347,6 +349,88 @@ async def test_shadow_never_executes_draft_or_commit_effects() -> None:
 
     assert result.status == "shadow"
     assert result.code == "TOOL_WOULD_EXECUTE"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_validates_but_does_not_run_model_backed_read() -> None:
+    calls = []
+    registry = ToolRegistry(
+        [
+            _registration(
+                "look_at_pdf_page",
+                EffectClass.READ,
+                lambda args: calls.append(args),
+                tags=("model_backed", "shadow_validate_only"),
+            )
+        ]
+    )
+
+    result = await TrustedExecutor(registry).execute(
+        _request("look_at_pdf_page", shadow=True)
+    )
+
+    assert result.status == "shadow"
+    assert result.code == "TOOL_WOULD_EXECUTE"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_validate_only_rejects_authoritative_scope_escape() -> None:
+    calls = []
+    registry = ToolRegistry(
+        [
+            _registration(
+                "read_source",
+                EffectClass.READ,
+                lambda args: calls.append(args),
+                tags=("shadow_validate_only",),
+            )
+        ]
+    )
+    executor = TrustedExecutor(
+        registry,
+        scope_resolver=lambda _contract, _args: ("foreign",),
+    )
+
+    result = await executor.execute(
+        _request(
+            arguments={"dataset_id": "selected", "doc_id": "foreign-doc"},
+            shadow=True,
+        )
+    )
+
+    assert result.status == "rejected"
+    assert result.code == "TOOL_SCOPE_VIOLATION"
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_shadow_validate_only_rejects_expired_deadline_before_scope_resolution() -> None:
+    resolved = []
+    calls = []
+    registry = ToolRegistry(
+        [
+            _registration(
+                "read_source",
+                EffectClass.READ,
+                lambda args: calls.append(args),
+                tags=("shadow_validate_only",),
+            )
+        ]
+    )
+    executor = TrustedExecutor(
+        registry,
+        scope_resolver=lambda _contract, _args: resolved.append(True) or ("selected",),
+    )
+
+    result = await executor.execute(
+        _request(shadow=True, deadline_monotonic=time.monotonic() - 1)
+    )
+
+    assert result.status == "timeout"
+    assert result.code == "TOOL_DEADLINE_EXCEEDED"
+    assert resolved == []
     assert calls == []
 
 

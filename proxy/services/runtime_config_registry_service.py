@@ -22,6 +22,7 @@ _SECRET_MARKERS = (
     "JWT", "COOKIE", "SESSION", "_KEY",
 )
 _DANGER_KEYS = {
+    "LES_CANONICAL_AGENT_ROUTE_MODE",
     "LES_ALLOW_RUNTIME_SIDECAR_WRITE",
     "LES_EXTERNAL_ALLOW_ANY",
     "DOCKER_CONTROL_ENABLED",
@@ -40,6 +41,7 @@ _RESTART_PREFIXES = (
     "RAG_", "EMBED_", "QDRANT_", "LES_RUNTIME_", "LES_REPO_", "LES_ENV_",
     "SOVUSHKA_", "PROXY_", "MLX_", "OLLAMA_", "LEMONADE_", "FREETOKEN_",
 )
+_RESTART_KEYS = {"LES_CANONICAL_AGENT_ROUTE_MODE"}
 _SKIP_PARTS = {
     ".git", ".venv", ".test-tmp", "data", "logs", "storage", "dist",
     "docs", "local_private_archive", "node_modules", "target", "build",
@@ -156,7 +158,7 @@ def _factor(key: str, dotenv: dict[str, str]) -> dict[str, Any]:
         "danger": danger,
         "danger_label": "Danger" if danger else "",
         "mutable": not read_only,
-        "restart_required": key.startswith(_RESTART_PREFIXES),
+        "restart_required": key in _RESTART_KEYS or key.startswith(_RESTART_PREFIXES),
         "registry_state": "explicit" if key in _DANGER_KEYS or key in _READ_ONLY_KEYS else "auto",
     }
 

@@ -22,6 +22,11 @@ from backend.inference.validator import rules_pre_verdict
 from proxy.services.answer_form_service import classify_answer_form
 from proxy.services.answer_form_service import apply_response_length
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
+from proxy.services.canonical_route_service import (
+    CanonicalRouteMode,
+    one_model_decision_from_calls,
+    resolve_canonical_route,
+)
 from proxy.services.context_expander_service import expand_context_windows
 from proxy.services.evidence_packet_service import (
     build_retrieval_evidence_packet,
@@ -59,6 +64,65 @@ from proxy.services.llm_transport_profile_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+async def execute_canonical_shadow_decision(
+    *,
+    proposed_calls: list[dict[str, Any]],
+    allowed_tools: set[str],
+    dataset_ids: list[str],
+    tool_harness: Any,
+) -> dict[str, Any]:
+    """Execute at most one candidate call and return structural, redacted trace."""
+    decision = one_model_decision_from_calls(proposed_calls, allowed=allowed_tools)
+    trace: dict[str, Any] = {
+        "schema": "les_canonical_shadow_v1",
+        "user_visible": False,
+        "persisted": False,
+        "proposed_calls": decision.proposed_calls,
+        "executed_calls": decision.executed_calls,
+        "pending_calls": decision.pending_calls,
+        "tool_name": str((decision.call or {}).get("tool") or ""),
+    }
+    if decision.call is None:
+        trace.update(status="no_valid_call", execution_code="")
+        return trace
+    payload = await tool_harness.call_async(
+        str(decision.call["tool"]),
+        dict(decision.call["args"]),
+        actor_id="canonical-shadow",
+        actor_role="user",
+        allowed_dataset_ids=tuple(str(item) for item in dataset_ids if str(item)),
+        shadow=True,
+    )
+    execution = payload.get("execution") if isinstance(payload, dict) else {}
+    trace.update(
+        status=str((execution or {}).get("status") or payload.get("status") or "unknown"),
+        execution_code=str((execution or {}).get("code") or ""),
+        result_schema=str(payload.get("schema") or ""),
+    )
+    return trace
+
+
+async def safe_execute_canonical_shadow_decision(**kwargs: Any) -> dict[str, Any]:
+    """Keep every candidate failure outside the authoritative legacy path."""
+    proposed = kwargs.get("proposed_calls") or []
+    allowed = kwargs.get("allowed_tools") or set()
+    structural = one_model_decision_from_calls(proposed, allowed=set(allowed))
+    try:
+        return await execute_canonical_shadow_decision(**kwargs)
+    except Exception as error:  # noqa: BLE001 - shadow must never affect legacy
+        logger.warning("[CANONICAL_SHADOW] candidate skipped: %s", type(error).__name__)
+        return {
+            "schema": "les_canonical_shadow_v1",
+            "user_visible": False,
+            "persisted": False,
+            "status": "error",
+            "error_type": type(error).__name__,
+            "executed_calls": 0,
+            "attempted_calls": structural.executed_calls,
+            "pending_calls": structural.pending_calls,
+        }
 
 
 def profile_temperature(profile_snapshot: dict[str, Any] | None, *, fallback: float) -> float:
@@ -1186,18 +1250,35 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
+                canonical_route = resolve_canonical_route(receipt=None)
+                retrieval_trace["canonical_route"] = canonical_route.public_payload()
+                canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
                 if tool_loop_enabled:
                     try:
                         from proxy.services.tool_harness_service import harness
 
                         tool_harness = harness()
+                        shortlist_limit = max(
+                            1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)
+                        )
+                        max_calls = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48))
+                        model_policy = (profile_snapshot or {}).get("model_policy") or {}
+                        canonical_preset = str(
+                            model_policy.get("preset_id") or "qwen-9b"
+                        ).strip() or "qwen-9b"
                         shortlist = await asyncio.to_thread(
                             tool_harness.shortlist,
                             req.question,
                             mode=str(req.mode or route.intent or ""),
                             allowed_tools=profile_tools,
-                            limit=max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
+                            limit=shortlist_limit,
+                            dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
+                            workflow_phase="research",
+                            model_preset=canonical_preset,
+                            runtime_available=frozenset(profile_tools),
+                            calls_remaining=max_calls,
+                            result_chars_remaining=35_000,
                         )
                         allowed_tools = {
                             str(tool.get("name") or "")
@@ -1211,7 +1292,6 @@ async def _execute_chat_evidence_application(
                             profile_snapshot,
                             configured=max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12))),
                         )
-                        max_calls = max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48))
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
@@ -1282,6 +1362,19 @@ async def _execute_chat_evidence_application(
                                     max_calls=max_calls,
                                 )
                             ]
+                            if (
+                                not canonical_shadow_recorded
+                                and canonical_route.effective is CanonicalRouteMode.SHADOW
+                            ):
+                                retrieval_trace["canonical_shadow"] = (
+                                    await safe_execute_canonical_shadow_decision(
+                                        proposed_calls=proposed_calls,
+                                        allowed_tools=allowed_tools,
+                                        dataset_ids=[str(item) for item in _dataset_ids],
+                                        tool_harness=tool_harness,
+                                    )
+                                )
+                                canonical_shadow_recorded = True
                             calls: list[dict[str, Any]] = []
                             for call in proposed_calls:
                                 signature = json.dumps(call, ensure_ascii=False, sort_keys=True, default=str)
@@ -1336,6 +1429,18 @@ async def _execute_chat_evidence_application(
                         "enabled": False,
                         "reason": "disabled_by_operator",
                         "model_owns_final_answer": True,
+                    }
+                if (
+                    canonical_route.effective is CanonicalRouteMode.SHADOW
+                    and not canonical_shadow_recorded
+                ):
+                    retrieval_trace["canonical_shadow"] = {
+                        "schema": "les_canonical_shadow_v1",
+                        "user_visible": False,
+                        "persisted": False,
+                        "status": "no_model_decision",
+                        "executed_calls": 0,
+                        "pending_calls": 0,
                     }
                 max_attempts = 2
                 for attempt in range(1, max_attempts + 1):

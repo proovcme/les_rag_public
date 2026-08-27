@@ -252,8 +252,8 @@ tool/источник, либо честно сказать, чего не хв�
 
 ## Model-selected loop в чате
 
-Общий чат выполняет bounded multi-round tool loop; явный режим `agent` включает его
-независимо от общего optional-флага:
+Существующий visible path пока выполняет bounded multi-round legacy loop; явный
+режим `agent` включает его независимо от общего optional-флага:
 
 ```text
 question -> tool shortlist -> model tool_call -> validated executor
@@ -266,3 +266,26 @@ question -> tool shortlist -> model tool_call -> validated executor
 Финальный visible answer снова пишет модель. Loop read-only, ограничен числом раундов
 и вызовов; filesystem остаётся whitelist-first, web-search возвращает только публичные
 результаты поиска с direct URLs.
+
+Параллельно `canonical_route_service` разрешает `legacy | shadow | active`.
+Отсутствующее значение — `shadow`; неизвестное значение — тоже `shadow`.
+Запрошенный `active` без exact passing receipt для commit/build/preset/observed
+model/acceptance hash эффективно остаётся `shadow`. Публикация/установка ничего
+не активирует.
+
+В `shadow` та же первая model-owned selector выдача проходит canonical one-call
+validation: рассматривается максимум один разрешённый call, остальные учитываются
+как pending. Broker получает фактические dataset ids чата, research phase,
+профильный preset, runtime allowlist и оставшийся call/result budget; wildcard
+scope по умолчанию в этот путь не подставляется. До shadow-решения Executor
+проверяет JSON Schema, monotonic deadline
+и dataset scope; косвенный `doc_id` разрешается прямым SQLite `mode=ro` без
+миграций. Dataset/source/web и model-backed reads работают validate-only и
+возвращают `TOOL_WOULD_EXECUTE`, не открывая provider/handler; исполняться могут
+только чистые bounded filesystem reads. Draft/commit/external/destructive также
+не исполняются. Пользователь видит только legacy answer; canonical result text
+отбрасывается, а trace содержит лишь schema/status/code/counts/tool name с
+`user_visible=false` и `persisted=false`. Обычный legacy `dataset_map` по-прежнему
+строит notebook штатным путём; shadow не перестраивает память. `legacy` кандидат
+полностью пропускает. Настройка видна в GUI runtime registry как `Danger` и
+требует явного подтверждения и restart.

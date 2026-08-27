@@ -126,6 +126,74 @@ def test_tool_search_sources_returns_evidence_packet(monkeypatch, explorer):
     assert payload["execution"]["schema"] == "les_tool_execution_v1"
 
 
+@pytest.mark.asyncio
+async def test_shadow_dataset_map_never_builds_or_persists_notebook(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        tool_harness_service,
+        "build_dataset_notebook",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    payload = await ToolHarness().call_async(
+        "dataset_map",
+        {"dataset_id": "ds"},
+        allowed_dataset_ids=("ds",),
+        shadow=True,
+    )
+
+    assert payload["execution"]["status"] == "shadow"
+    assert payload["execution"]["code"] == "TOOL_WOULD_EXECUTE"
+    assert calls == []
+
+
+def test_authoritative_doc_scope_resolution_is_sqlite_read_only(monkeypatch, tmp_path):
+    db = tmp_path / "scope.db"
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            """
+            CREATE TABLE documents (
+                id TEXT PRIMARY KEY,
+                dataset_id TEXT,
+                file_name TEXT,
+                status TEXT,
+                file_size INTEGER,
+                chunk_count INTEGER DEFAULT 0,
+                doc_type TEXT DEFAULT '',
+                content_type TEXT DEFAULT '',
+                domain TEXT DEFAULT '',
+                source_path TEXT DEFAULT '',
+                last_error TEXT DEFAULT ''
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO documents (id, dataset_id, file_name) VALUES (?, ?, ?)",
+            ("doc-foreign", "foreign", "Foreign.pdf"),
+        )
+
+    def schema_snapshot():
+        with sqlite3.connect(db) as conn:
+            return conn.execute(
+                "SELECT type, name, sql FROM sqlite_master ORDER BY type, name"
+            ).fetchall()
+
+    before = schema_snapshot()
+    monkeypatch.setattr(
+        tool_harness_service,
+        "explorer",
+        lambda: DocumentExplorer(db_path=str(db), collection="les_test"),
+    )
+
+    resolved = tool_harness_service.resolve_authoritative_dataset_scope(
+        SimpleNamespace(scopes=("dataset",)),
+        {"doc_id": "doc-foreign"},
+    )
+
+    assert resolved == ("foreign",)
+    assert schema_snapshot() == before
+
+
 def test_tool_read_pdf_and_excel_are_indexed_readers_with_limits(monkeypatch, explorer):
     monkeypatch.setattr(tool_harness_service, "explorer", lambda: explorer)
     h = ToolHarness()

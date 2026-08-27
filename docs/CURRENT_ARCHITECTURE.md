@@ -31,12 +31,19 @@
   concurrent/ambiguous privileged execution fail-closed.
 - Authoritative resolution косвенного `doc_id` входит в scope check; один
   approval receipt можно связать только с одной operation identity.
+- Ordinary chat default `shadow` сохраняет legacy visible answer и выполняет
+  максимум один canonical candidate call; trace redacted, persistence запрещён.
+- До `TOOL_WOULD_EXECUTE` проверяются deadline и dataset scope; косвенный
+  `doc_id` разрешается read-only SQLite-запросом без schema migration.
+- Dataset/source/web и model-backed handlers в shadow validate-only; обычный
+  notebook остаётся активен в legacy path, но shadow его не перестраивает.
+- `active` без exact passing promotion receipt эффективно остаётся `shadow`;
+  публикация профиля не активирует и не перепривязывает существующий session.
 - `shadow` не исполняет draft/commit/external/destructive handlers, а overflow
   сохраняет целый результат за cursor без обрезания JSON.
 
 ## Запланировано, но ещё не реализовано
 
-- `legacy | shadow | active` ordinary-chat route;
 - ContextGovernor, typed memory projection и presets Qwen 9B/35B;
 - versioned workbook artifacts и paired live 9B acceptance.
 

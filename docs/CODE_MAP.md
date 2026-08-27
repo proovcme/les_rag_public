@@ -1,5 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **Canonical agent shadow 0.29.0:** `canonical_route_service.py` fail-closed
+> разрешает `legacy | shadow | active`; default/stale active — `shadow`.
+> `chat_evidence_application_service.py` сохраняет legacy answer, но первую
+> model-owned selector выдачу дополнительно пропускает через one-call validation
+> и Trusted Executor с `shadow=True`; Broker получает exact chat dataset scope,
+> research phase, profile preset, runtime allowlist и remaining budgets. В trace
+> остаётся только redacted structure;
+> deadline и dataset scope проверяются до shadow-ответа, а `doc_id` разрешается
+> через SQLite `mode=ro`. Dataset/source/web и model-backed handlers работают
+> validate-only; чистые filesystem reads могут исполняться. Notebook-память
+> обычного пути не перестраивается shadow-кандидатом. Runtime-фактор виден в
+> общем GUI registry как Danger/restart-required.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical

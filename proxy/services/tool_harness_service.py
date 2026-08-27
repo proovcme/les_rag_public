@@ -13,6 +13,7 @@ from collections.abc import Mapping
 import hashlib
 import os
 import re
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -340,7 +341,16 @@ class ToolHarness:
             result_budget=ResultBudget(max_chars=7000, max_items=20),
             model_owned_fields=(),
             provenance="source_refs_required",
-            tags=spec.tags,
+            tags=tuple(
+                dict.fromkeys(
+                    spec.tags
+                    + (
+                        ("shadow_validate_only",)
+                        if spec.category in {"dataset", "source", "web"}
+                        else ()
+                    )
+                )
+            ),
             legacy_returns=spec.returns,
             approval_required=spec.approval_required,
         )
@@ -403,7 +413,7 @@ class ToolHarness:
                 summary="Render one selected PDF page or bounded region and let the local vision model inspect the actual drawing pixels.",
                 args_schema={"doc_id": "str", "dataset_id": "str", "doc_name": "str", "page": "int (1-based)", "question": "str", "q": "str", "bbox": "[x0,y0,x1,y1] normalized", "max_tokens": "int"},
                 returns="visual observations tied to the original file and page",
-                tags=("vision", "drawing", "чертёж", "схема", "графика", "изображение", "лист", "pdf", "page", "посмотри", "глазами"),
+                tags=("vision", "drawing", "чертёж", "схема", "графика", "изображение", "лист", "pdf", "page", "посмотри", "глазами", "model_backed", "shadow_validate_only"),
             ),
             _tool_look_at_pdf_page,
         )
@@ -584,10 +594,18 @@ def resolve_authoritative_dataset_scope(
     doc_id = str(arguments.get("doc_id") or "").strip()
     if not doc_id:
         return ()
-    document = explorer().get_document(doc_id)
-    if not isinstance(document, dict):
+    try:
+        db_path = Path(explorer().path).resolve()
+        with sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True) as conn:
+            row = conn.execute(
+                "SELECT dataset_id FROM documents WHERE id = ?",
+                (doc_id,),
+            ).fetchone()
+    except (OSError, ValueError, sqlite3.Error):
+        row = None
+    if row is None:
         return (f"unresolved-doc:{doc_id}",)
-    dataset_id = str(document.get("dataset_id") or "").strip()
+    dataset_id = str(row[0] or "").strip()
     return (dataset_id,) if dataset_id else (f"unresolved-doc:{doc_id}",)
 
 

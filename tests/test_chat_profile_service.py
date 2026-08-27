@@ -176,6 +176,32 @@ def test_publish_activate_and_bind_immutable_profile_snapshot(tmp_path):
     )["revision_id"] == newer["revision_id"]
 
 
+def test_profile_publication_does_not_activate_or_rebind(tmp_path):
+    db = tmp_path / "meta.db"
+    seeded = registry_snapshot(db_path=db)
+    agent = next(item for item in seeded["profiles"] if item["mode"] == "agent")
+    bound = resolve_chat_profile(session_id="chat-1", requested_mode="agent", db_path=db)
+
+    published = publish_profile_revision(
+        mode="agent",
+        name="Новая неактивная редакция",
+        prompt_revision_id=agent["active"]["prompt_revision_id"],
+        skill_revision_id=agent["active"]["skill_revision_id"],
+        tools=agent["active"].get("tools") or [],
+        model_policy=agent["active"].get("model_policy") or {},
+        rag_policy=agent["active"].get("rag_policy") or {},
+        source_revision_id=agent["active_revision_id"],
+        db_path=db,
+    )
+    refreshed = registry_snapshot(db_path=db)
+    current = next(item for item in refreshed["profiles"] if item["mode"] == "agent")
+
+    assert published["revision_id"] != current["active_revision_id"]
+    assert resolve_chat_profile(
+        session_id="chat-1", requested_mode="agent", db_path=db
+    )["revision_id"] == bound["revision_id"]
+
+
 def test_profile_rejects_unknown_tool_and_cross_mode_activation(tmp_path):
     db = tmp_path / "meta.db"
     snap = registry_snapshot(db_path=db)
