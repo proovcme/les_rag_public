@@ -43,3 +43,11 @@ def test_windows_does_not_mask_missing_docker(monkeypatch):
 
     assert normalized["checks"][0]["status"] == "err"
     assert normalized["checks"][0]["name"] == "Docker"
+
+
+def test_effective_model_factor_copy_is_human_and_not_color_only():
+    assert diag._runtime_factor_value(False) == "выключено"
+    assert diag._runtime_factor_value(None) == "не задано"
+    assert diag._runtime_factor_source("workflow_invariants > factory_preset") == (
+        "правила workflow → заводской пресет"
+    )

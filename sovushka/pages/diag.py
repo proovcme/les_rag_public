@@ -48,6 +48,27 @@ def _pipeline_badge(status: str) -> tuple[str, str]:
     }.get(str(status or "unknown").lower(), ("Нет данных", "muted"))
 
 
+def _runtime_factor_value(value) -> str:
+    if value is None or value == "":
+        return "не задано"
+    if isinstance(value, bool):
+        return "включено" if value else "выключено"
+    return str(value)
+
+
+def _runtime_factor_source(value: str) -> str:
+    labels = {
+        "workflow_invariants": "правила workflow",
+        "observed_backend_capacity": "фактическая ёмкость backend",
+        "factory_preset": "заводской пресет",
+        "operator_clone": "копия оператора",
+        "workflow_profile_restrictions": "ограничения профиля",
+        "unavailable": "нет наблюдения",
+    }
+    parts = [part.strip() for part in str(value or "unavailable").split(">")]
+    return " → ".join(labels.get(part, part) for part in parts if part)
+
+
 def _is_windows() -> bool:
     return sys.platform.startswith("win")
 
@@ -849,10 +870,44 @@ def build_diag():
             return
         counts = payload.get("counts") or {}
         runtime_registry_summary.set_text(
-            f"Всего: {int(counts.get('total') or 0)} · Danger: {int(counts.get('danger') or 0)} · "
+            f"Модель: {int(counts.get('effective') or 0)} · среда: {int(counts.get('total') or 0)} · "
+            f"Danger: {int(counts.get('danger') or 0)} · "
             f"секретов: {int(counts.get('secrets') or 0)} · скрытых: {int(counts.get('unregistered') or 0)}"
         )
         with runtime_registry_rows:
+            section_heading(
+                "Фактический контекст модели",
+                "Запрошенное значение, реально действующее ограничение и источник решения.",
+            )
+            for factor in payload.get("effective_factors") or []:
+                with panel(variant="inset", classes="w-full"):
+                    with ui.row().classes("w-full items-center gap-2"):
+                        with ui.column().classes("grow gap-0"):
+                            ui.label(str(factor.get("label") or factor.get("id") or "Параметр")).classes(
+                                "sov-ui-section-title"
+                            )
+                            ui.label(
+                                "Запрошено: "
+                                + _runtime_factor_value(factor.get("requested"))
+                                + " → действует: "
+                                + _runtime_factor_value(factor.get("effective"))
+                            ).classes("sov-ui-section-detail")
+                            detail = "Источник: " + _runtime_factor_source(
+                                str(factor.get("source") or "unavailable")
+                            )
+                            if factor.get("restart_required"):
+                                detail += " · нужен перезапуск"
+                            ui.label(detail).classes("sov-ui-section-detail")
+                            if factor.get("operator_action") == "profile_clone":
+                                ui.label(
+                                    "Изменение — только через копию профиля."
+                                ).classes("sov-ui-section-detail")
+                        status_badge("Только чтение", "muted")
+            ui.separator()
+            section_heading(
+                "Переменные среды",
+                "Технические значения runtime; секреты показываются только как заданные или незаданные.",
+            )
             for factor in payload.get("factors") or []:
                 key = str(factor.get("key") or "")
                 with panel(variant="inset", classes="w-full"):

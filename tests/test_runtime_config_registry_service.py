@@ -38,6 +38,12 @@ def test_registry_exposes_every_factor_but_never_secret_value(isolated_registry,
     assert by_key["LES_EXTERNAL_ALLOW_ANY"]["danger_label"] == "Danger"
     assert by_key["LES_RUNTIME_HOME"]["mutable"] is False
     assert snapshot["unregistered_runtime_factors"] == []
+    assert {row["id"] for row in snapshot["effective_factors"]} >= {
+        "model_preset",
+        "context_input_tokens",
+        "generation_reserve",
+        "reasoning",
+    }
 
 
 def test_registry_reports_literal_default_as_effective_value(monkeypatch):
@@ -79,6 +85,54 @@ def test_freetoken_runtime_defaults_are_visible_and_require_restart(monkeypatch)
     assert factor["restart_required"] is True
 
 
+def test_context_factors_are_registered_with_effective_source() -> None:
+    rows = registry.runtime_factor_rows(
+        {
+            "model_preset": {
+                "requested": "qwen3.5:9b",
+                "effective": "qwen-9b-restrictive",
+                "source": "workflow_invariants > factory_preset",
+                "restart_required": False,
+            },
+            "context_input_tokens": {
+                "requested": 8253,
+                "effective": 6000,
+                "source": "observed_backend_capacity > factory_preset",
+                "restart_required": False,
+            },
+            "generation_reserve": {
+                "requested": None,
+                "effective": 1200,
+                "source": "factory_preset",
+                "restart_required": False,
+            },
+            "safety_reserve": {
+                "requested": None,
+                "effective": 512,
+                "source": "workflow_invariants",
+                "restart_required": False,
+            },
+            "reasoning": {
+                "requested": False,
+                "effective": False,
+                "source": "workflow_invariants",
+                "restart_required": False,
+            },
+        }
+    )
+
+    assert {row["id"] for row in rows} == {
+        "model_preset",
+        "context_input_tokens",
+        "generation_reserve",
+        "safety_reserve",
+        "reasoning",
+    }
+    assert all("effective" in row and "source" in row for row in rows)
+    assert all(row["mutable"] is False for row in rows)
+    assert next(row for row in rows if row["id"] == "model_preset")["operator_action"] == "profile_clone"
+
+
 def test_registry_requires_exact_danger_confirmation(isolated_registry):
     with pytest.raises(registry.RuntimeConfigRegistryError, match="DANGER_CONFIRMATION_REQUIRED"):
         registry.update_factors({"LES_EXTERNAL_ALLOW_ANY": "1"})
@@ -116,6 +170,9 @@ def test_gui_and_api_expose_registry_and_advanced_rag_controls():
     assert "Все параметры среды" in diag
     assert "Danger" in diag
     assert "/api/settings/runtime-registry" in diag
+    assert "Фактический контекст модели" in diag
+    assert "Запрошено:" in diag and "действует:" in diag
+    assert "Только чтение" in diag
     assert "RAPTOR и ColBERT" in diag
     assert "/api/rag/advanced" in diag
     assert "include_router(rag_advanced_router)" in app

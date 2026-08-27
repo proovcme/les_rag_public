@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              602
-версия Tauri/NSIS:         5.1.602
+номер сборки:              603
+версия Tauri/NSIS:         5.1.603
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       governed ordinary-chat packets + presets + typed advisory memory
+dev implementation:       governed chat + visible effective model/context factors
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -167,6 +167,16 @@ dev implementation:       governed ordinary-chat packets + presets + typed advis
 > сохраняется и на следующем retry. Focused chat/context/UI-adjacent suites:
 > 102 passed; current behavior gate: 681 passed;
 > live model quality и active promotion не заявляются.
+
+> **0.29.0 model/context visibility (build 603):** GUI-first runtime registry
+> теперь возвращает и показывает preset, входной лимит, generation/safety
+> reserves и reasoning как человеческие `Запрошено → действует · источник`.
+> Факторы read-only, model/context направляют к копии профиля, физическая
+> ёмкость и safety не маскируются редактируемыми полями. Секреты не добавлены в
+> payload; UI использует существующие panel/heading/status primitives и текст,
+> а не один цвет. Focused registry/platform/profile/UI-kit: 62 passed; current
+> behavior gate: 682 passed; live
+> desktop/mobile визуальная приёмка остаётся release-гейтом.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

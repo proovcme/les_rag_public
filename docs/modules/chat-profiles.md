@@ -39,7 +39,11 @@ prompt/skill с режимом, allowlist инструментов, model policy
 - `qwen-35b-extended` доступен только при распознанной 35B и наблюдаемом KV;
 - reasoning по умолчанию выключен;
 - разрешение пресета не меняет `legacy`/`shadow`/`active` и не перезапускает backend;
-- `/api/version` показывает только безопасные `requested → effective · source`.
+- `/api/version` и GUI-first runtime registry показывают только безопасные
+  `requested → effective · source`;
+- фактический preset, лимиты, reserves и reasoning в реестре read-only:
+  model/context можно менять только через пользовательскую копию профиля,
+  safety и наблюдаемая ёмкость напрямую не редактируются.
 
 Точки входа: `proxy/services/model_execution_preset_service.py` и
 `proxy/services/llm_transport_profile_service.py`.

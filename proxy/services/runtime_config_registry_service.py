@@ -11,10 +11,21 @@ import tempfile
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
+
+from proxy.services.llm_transport_profile_service import (
+    effective_model_execution_diagnostics,
+)
 
 
 REGISTRY_SCHEMA = "les.runtime-config-registry.v1"
+_EFFECTIVE_FACTOR_LABELS = {
+    "model_preset": "Пресет модели",
+    "context_input_tokens": "Лимит входного контекста",
+    "generation_reserve": "Резерв ответа",
+    "safety_reserve": "Страховой резерв",
+    "reasoning": "Рассуждение модели",
+}
 _ROOT = Path(__file__).resolve().parents[2]
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
 _SECRET_MARKERS = (
@@ -163,21 +174,52 @@ def _factor(key: str, dotenv: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def runtime_factor_rows(
+    effective_payload: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Normalize read-only requested/effective model facts for API and GUI."""
+    payload = effective_payload if isinstance(effective_payload, Mapping) else {}
+    rows: list[dict[str, Any]] = []
+    for factor_id, label in _EFFECTIVE_FACTOR_LABELS.items():
+        raw = payload.get(factor_id)
+        values = raw if isinstance(raw, Mapping) else {}
+        rows.append(
+            {
+                "id": factor_id,
+                "label": label,
+                "requested": values.get("requested"),
+                "effective": values.get("effective"),
+                "source": str(values.get("source") or "unavailable"),
+                "restart_required": bool(values.get("restart_required", False)),
+                "mutable": False,
+                "operator_action": (
+                    "profile_clone"
+                    if factor_id in {"model_preset", "context_input_tokens"}
+                    else "read_only"
+                ),
+            }
+        )
+    return rows
+
+
 def registry_snapshot() -> dict[str, Any]:
     dotenv = _dotenv_values(env_path())
     keys = sorted(set(declared_env_keys()) | set(dotenv) | {
         key for key in os.environ if key.startswith(("LES_", "RAG_", "EMBED_", "QDRANT_", "MAIL_"))
     })
     factors = [_factor(key, dotenv) for key in keys]
+    effective_factors = runtime_factor_rows(effective_model_execution_diagnostics())
     return {
         "schema": REGISTRY_SCHEMA,
         "factors": factors,
+        "effective_factors": effective_factors,
         "counts": {
             "total": len(factors),
             "danger": sum(bool(item["danger"]) for item in factors),
             "secrets": sum(bool(item["secret"]) for item in factors),
             "read_only": sum(not bool(item["mutable"]) for item in factors),
             "unregistered": 0,
+            "effective": len(effective_factors),
         },
         "unregistered_runtime_factors": [],
     }
