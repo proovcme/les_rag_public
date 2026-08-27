@@ -28,3 +28,18 @@ prompt/skill с режимом, allowlist инструментов, model policy
 - `sovushka/pages/profiles.py` — редактор, счётчики и client-side guard;
 - `tests/test_chat_profile_service.py`, `tests/test_profiles_router.py`,
   `tests/test_profiles_ui.py` — service/API/UI contract.
+
+## Эффективный пресет исполнения модели
+
+Профиль чата может только сужать безопасный фабричный пресет. Итог определяется
+в порядке: инварианты workflow → наблюдаемая ёмкость backend → фабричный пресет →
+необязательный клон оператора → ограничения workflow/профиля.
+
+- неизвестная модель или неподтверждённая ёмкость получает `qwen-9b-restrictive`;
+- `qwen-35b-extended` доступен только при распознанной 35B и наблюдаемом KV;
+- reasoning по умолчанию выключен;
+- разрешение пресета не меняет `legacy`/`shadow`/`active` и не перезапускает backend;
+- `/api/version` показывает только безопасные `requested → effective · source`.
+
+Точки входа: `proxy/services/model_execution_preset_service.py` и
+`proxy/services/llm_transport_profile_service.py`.

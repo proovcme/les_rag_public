@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              598
-версия Tauri/NSIS:         5.1.598
+номер сборки:              599
+версия Tauri/NSIS:         5.1.599
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       Agent Foundation verified and committed; ContextGovernor plan next
+dev implementation:       capacity-bounded 9B/35B preset resolution; ContextGovernor next
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -128,6 +128,14 @@ dev implementation:       Agent Foundation verified and committed; ContextGovern
 > Task 5: Critical 0, Important 0, Ready. Runtime не развёртывался, live model
 > quality и promotion receipt не заявляются; следующий этап — ContextGovernor,
 > typed memory projection и реальные 9B/35B presets.
+
+> **0.29.0 model execution presets (build 599):** добавлены immutable
+> `qwen-9b-restrictive` и `qwen-35b-extended` с fail-closed разрешением по
+> model identity и наблюдаемой ёмкости backend. Настройка оператора и профиль
+> могут только сузить лимиты; reasoning остаётся выключен по умолчанию, а
+> разрешение пресета не меняет route mode и не переписывает provider config.
+> `/api/version` показывает redacted `requested/effective/source/restart_required`.
+> Focused contract: 8 passed до closing gates; live model quality не заявляется.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

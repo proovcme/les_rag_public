@@ -331,6 +331,9 @@ def version_info() -> dict[str, Any]:
         extractor = EXTRACTION_SCHEMA_VERSION
     align = runtime_alignment()
     ds = public_deploy_stamp()
+    from proxy.services.llm_transport_profile_service import (
+        effective_model_execution_diagnostics,
+    )
     import sys
     return {
         "product_version": PRODUCT_VERSION,
@@ -353,6 +356,7 @@ def version_info() -> dict[str, Any]:
         "runtime_path": str(_RUNTIME_ROOT),
         "python": sys.version.split()[0],
         "feature_flags": feature_flags(),
+        "model_execution": effective_model_execution_diagnostics(),
         "runtime_alignment": align,
         "components": {
             "proxy": APP_VERSION,

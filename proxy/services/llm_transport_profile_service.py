@@ -5,8 +5,85 @@ from __future__ import annotations
 import os
 from typing import Any, Mapping
 
+from proxy.services.model_execution_preset_service import (
+    BackendCapacity,
+    ModelExecutionPreset,
+    resolve_execution_preset,
+)
+
 
 LOCAL_OPENAI_PROVIDER_NAMES = frozenset({"freetoken"})
+
+
+def _configured_model(provider: str) -> str:
+    normalized = provider.strip().lower()
+    if normalized == "freetoken":
+        return os.getenv("FREETOKEN_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip()
+    if normalized == "ollama":
+        return os.getenv("OLLAMA_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip()
+    if normalized in {"mlx", "local"}:
+        return os.getenv("MLX_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip()
+    return os.getenv("OPENAI_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip()
+
+
+def _configured_context_request(provider: str) -> int | None:
+    env_name = "FREETOKEN_CONTEXT_TOKENS" if provider.strip().lower() == "freetoken" else ""
+    if not env_name:
+        return None
+    try:
+        value = int(os.getenv(env_name, "").strip())
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def resolve_transport_execution_profile(
+    *,
+    provider: str,
+    model_id: str,
+    observed_context_tokens: int | None = None,
+    observed: bool = False,
+    observed_source: str = "unavailable",
+    operator: Mapping[str, Any] | None = None,
+    restrictions: Mapping[str, Any] | None = None,
+) -> ModelExecutionPreset:
+    """Resolve a preset from transport facts without changing provider state."""
+    return resolve_execution_preset(
+        BackendCapacity(
+            provider=str(provider or "unknown"),
+            model_id=str(model_id or "unknown"),
+            context_tokens=observed_context_tokens,
+            observed=bool(observed),
+            source=str(observed_source or "unavailable"),
+        ),
+        operator=operator,
+        restrictions=restrictions,
+    )
+
+
+def effective_model_execution_diagnostics() -> dict[str, Any]:
+    """Describe configured request versus safe unprobed effective preset.
+
+    Version/config diagnostics have no live backend probe. Consequently configured
+    context is reported as requested capacity, never promoted to an observed fact.
+    """
+    provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+    model_id = _configured_model(provider) or "unknown"
+    requested_context = _configured_context_request(provider)
+    operator = {"input_tokens": requested_context} if requested_context else None
+    preset = resolve_transport_execution_profile(
+        provider=provider,
+        model_id=model_id,
+        observed_context_tokens=None,
+        observed=False,
+        operator=operator,
+    )
+    diagnostics = preset.diagnostics(requested_input_tokens=requested_context)
+    diagnostics["model_preset"] = {
+        **diagnostics["model_preset"],
+        "requested": model_id,
+    }
+    return diagnostics
 
 
 def assistant_delta_text(delta: Mapping[str, Any] | None) -> str:
