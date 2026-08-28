@@ -1,7 +1,9 @@
+import asyncio
 import hashlib
 import json
 from io import BytesIO
 from pathlib import Path
+from types import SimpleNamespace
 
 import openpyxl
 import pytest
@@ -467,9 +469,18 @@ def test_contract_exercise_rejects_unverified_runtime_identity(tmp_path, field, 
 
 
 def test_asgi_contract_exercises_guarded_multipart_sse_and_artifact_boundaries(monkeypatch, tmp_path):
-    """Hermetic HTTP boundary evidence, not a model-quality acceptance."""
+    """Hermetic HTTP boundary evidence, not a model-quality acceptance.
+
+    The real chat router/application/harvest composes the final SSE payload.
+    The fixture supplies an isolated profile snapshot plus empty retrieval/history
+    ports, and controls the model transport, tool shortlist, and workbook executor.
+    """
     from proxy.routers import artifacts, chat, datasets, runtime
-    from proxy.services import request_idempotency_service
+    from proxy.services import chat_profile_service, request_idempotency_service
+    from proxy.services import tool_harness_service
+    from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
+    from proxy.services.model_execution_preset_service import ModelExecutionPreset
+    from proxy.services.openai_compatible_transport_service import InferenceResponse
 
     monkeypatch.chdir(tmp_path)
     for key, path in {
@@ -529,22 +540,153 @@ def test_asgi_contract_exercises_guarded_multipart_sse_and_artifact_boundaries(m
     async def prepared_attachment(_temp_path, _original_name, **_kwargs):
         return {"attachment_id": attachment_id, "mode": "read", "name": "real-source.xlsx", "chars": 1, "text": "x", "truncated": False}
 
-    revisions = iter((first, second))
+    revision_queue = {"values": iter((first, second))}
 
-    async def model_boundary(_request, token_sink=None):
-        revision = next(revisions)
-        await token_sink({"event": "tool_progress", "data": {"checkpoint_id": revision.decision_checkpoint_id, "completed": 1, "total": 1}})
+    class ToolHarness:
+        def shortlist(self, *_args, **_kwargs):
+            return {"tools": [{"name": "build_vor_workbook"}]}
+
+    class ActiveResolver:
+        def resolve(self, role, **_kwargs):
+            assert role is ConnectionRole.ANSWER
+            return SimpleNamespace(
+                connection_id="conn:asgi",
+                revision_id="conn:asgi:r1",
+                display_name="ASGI fixture",
+                model_id="qwen3.5:9b",
+                locality=ConnectionLocality.LOOPBACK,
+                base_url="http://127.0.0.1:1919/v1",
+                secret_ref=None,
+                effective_preset=ModelExecutionPreset(
+                    preset_id="qwen-9b-restrictive",
+                    model_family="fixture",
+                    input_token_limit=6000,
+                    generation_reserve_tokens=20,
+                    safety_reserve_tokens=20,
+                    normal_tool_count=3,
+                    max_tools=5,
+                    max_batch_items=5,
+                    parallel_read_limit=1,
+                    reasoning_enabled=False,
+                    source_chain=("test",),
+                ),
+            )
+
+        def resolve_fallback(self, *_args, **_kwargs):
+            raise AssertionError("fallback must not be used")
+
+    class ActiveTransport:
+        def __init__(self, *_args, **_kwargs):
+            self.responses = iter((
+                InferenceResponse(
+                    text="",
+                    tool_calls=({
+                        "id": "workbook-call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "build_vor_workbook",
+                            "arguments": '{"attachment_id":"read_123456abcdef"}',
+                        },
+                    },),
+                    finish_reason="tool_calls",
+                    usage={},
+                ),
+                InferenceResponse(
+                    text="Workbook draft complete.",
+                    tool_calls=(),
+                    finish_reason="stop",
+                    usage={"completion_tokens": 5},
+                ),
+            ))
+
+        async def complete(self, _connection, _request):
+            return next(self.responses)
+
+    async def execute_workbook(call, context, progress):
+        assert call["tool"] == "build_vor_workbook"
+        assert context["attachment_id"] == attachment_id
+        revision = next(revision_queue["values"])
+        await progress({
+            "call_id": call.get("call_id") or "workbook-call-1",
+            "checkpoint_id": revision.decision_checkpoint_id,
+            "phase": "rows",
+            "completed": 1,
+            "total": 1,
+        })
         return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_vor_workbook",
+            "status": "complete",
             "artifact": revision.to_dict(),
-            "attachment_retry": {"attachment_id": attachment_id},
-            "checkpoint": {"checkpoint_id": revision.decision_checkpoint_id, "status": "complete"},
             "source": {"attachment_id": attachment_id, "sha256": source_sha256},
-            "model_connection": {"model_id": "qwen3.5:9b"},
+            "checkpoint": {"checkpoint_id": revision.decision_checkpoint_id, "status": "complete"},
+            "missing": [],
+            "blockers": [],
+        }
+
+    class FakeRetrieval:
+        chunks = []
+        trace = SimpleNamespace(status="ok", error_code="")
+        quality = SimpleNamespace(status="weak", top_score=0.0)
+
+        def payload(self):
+            return {"schema": "retrieval_trace_v1", "status": "ok"}
+
+    class FakeWindows:
+        chunks = []
+
+        def payload(self):
+            return {"schema": "context_windows_v1", "count": 0}
+
+    async def fake_retrieval(**_kwargs):
+        return FakeRetrieval()
+
+    async def no_dataset_ids(*_args, **_kwargs):
+        return []
+
+    async def no_dataset_names(*_args, **_kwargs):
+        return {}
+
+    def profile_snapshot(**_kwargs):
+        return {
+            "revision_id": "profile:7",
+            "mode": "rag",
+            "name": "ASGI acceptance profile",
+            "revision_no": 7,
+            "tools": ["build_vor_workbook"],
+            "prompt_text": "Use the workbook tool.",
+            "rag_policy": {"iterative": False},
         }
 
     monkeypatch.setattr(datasets, "save_upload_tmp", save_upload_in_isolated_root)
     monkeypatch.setattr(datasets, "_prepare_read_attachment", prepared_attachment)
-    monkeypatch.setattr(chat, "_run_chat_with_provider", model_boundary)
+    monkeypatch.setattr(chat_profile_service, "resolve_chat_profile", profile_snapshot)
+    monkeypatch.setattr(tool_harness_service, "harness", lambda: ToolHarness())
+    monkeypatch.setattr(chat, "_model_connection_resolver", lambda: (ActiveResolver(), object()))
+    monkeypatch.setattr(chat, "OpenAICompatibleTransport", ActiveTransport)
+    monkeypatch.setattr(chat, "_execute_chat_workbook_tool", execute_workbook)
+    monkeypatch.setattr(chat, "resolve_dataset_ids", no_dataset_ids)
+    monkeypatch.setattr(chat, "_dataset_name_map", no_dataset_names)
+    monkeypatch.setattr(chat, "build_context_memory_block", lambda **_kwargs: "")
+    monkeypatch.setattr(chat, "retrieve_chat_chunks", fake_retrieval)
+    monkeypatch.setattr(chat, "expand_context_windows", lambda *_args, **_kwargs: FakeWindows())
+    monkeypatch.setattr(chat, "source_excerpts", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(chat, "maybe_answer_table_query", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chat, "save_chat_history", lambda **_kwargs: "history-asgi")
+    monkeypatch.setattr(chat, "semantic_cache_enabled", lambda: False)
+    monkeypatch.setattr(chat, "chat_validation_enabled", lambda: False)
+    monkeypatch.setattr(
+        chat,
+        "_state",
+        chat.ChatRouterState(
+            rag_backend=SimpleNamespace(collection_name="fixture"),
+            llm_semaphore=asyncio.Semaphore(1),
+            crag_stats={"verified": 0, "no_data": 0},
+            chat_metrics={"latency_search": [], "latency_gen": [], "tokens": [], "crag_pass": 0, "crag_fail": 0},
+            reranker_available=False,
+            reranker_cls=None,
+        ),
+    )
     app = FastAPI()
     app.include_router(runtime.router)
     app.include_router(artifacts.router)
@@ -599,6 +741,25 @@ def test_asgi_contract_exercises_guarded_multipart_sse_and_artifact_boundaries(m
     assert len(stream_responses) == 2
     assert all("event: tool_progress" in response.text and "event: final" in response.text for response in stream_responses)
     assert [item[0] for item in tracking.calls] == ["GET", "POST", "POST", "GET", "GET", "POST", "GET", "GET"]
+
+    # A production-harvest mutation must make the runner refuse the SSE final.
+    from proxy.services import chat_evidence_application_service
+
+    original_harvest = chat_evidence_application_service.harvest_workbook_tool_result
+
+    def without_source(payload):
+        harvested = original_harvest(payload)
+        harvested.pop("source", None)
+        return harvested
+
+    monkeypatch.setattr(
+        chat_evidence_application_service,
+        "harvest_workbook_tool_result",
+        without_source,
+    )
+    revision_queue["values"] = iter((first, second))
+    with pytest.raises(LiveAcceptanceError, match="source attachment lineage"):
+        exercise_contract(config, client=tracking)
 
 
 def test_public_live_entrypoint_rejects_injected_transport(tmp_path):

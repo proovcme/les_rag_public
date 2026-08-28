@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              623
-версия Tauri/NSIS:         5.1.623
+номер сборки:              624
+версия Tauri/NSIS:         5.1.624
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       fail-closed ordinary-chat workbook live acceptance gate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
@@ -144,8 +144,20 @@ dev implementation:       fail-closed ordinary-chat workbook live acceptance gat
 > visible sheet, header минимум с двумя populated cells и populated data row
 > beneath it; в receipt остаются только structural counts. Hermetic ASGI
 > contract проходит реальные multipart candidate guard, two-turn SSE framing и
-> artifact metadata/download routers с mocked ниже-HTTP model boundary.
+> artifact metadata/download routers с fixture profile snapshot,
+> empty retrieval/history ports и нижними model transport, tool shortlist и
+> workbook executor.
 > **PENDING:** это не model-quality/live-runtime acceptance.
+
+> **Build 624 ASGI application composition:** test-only review-fix отдельно от
+> Build 623. Hermetic contract больше не подменяет `_run_chat_with_provider`
+> handcrafted final payload: real `_run_chat_with_provider → _run_chat →
+> evidence application → harvest` строит SSE final с artifact,
+> attachment-retry, checkpoint и source. Fixture задаёт isolated profile
+> snapshot, empty retrieval/history ports и нижние model transport, tool
+> shortlist/workbook executor; mutation, удаляющая `source` из production
+> harvest, заставляет runner fail-closed. **PENDING:** это
+> boundary contract evidence, не model-quality/live-runtime acceptance.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

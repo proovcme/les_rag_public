@@ -79,8 +79,11 @@
   attachment/meta/idempotency/workbook artifact paths должны оставаться под
   isolated CWD. Fake contract transport выдаёт только non-persistent
   `contract_test`, никогда не `live_runtime` receipt.
-  Hermetic ASGI contract проверяет реальные multipart/SSE/artifact router
-  boundaries; это не доказательство качества модели.
+  Hermetic ASGI contract идёт через реальные multipart/SSE/artifact routers и
+  `_run_chat_with_provider → _run_chat → evidence application → harvest`;
+  Fixture задаёт isolated profile snapshot и empty retrieval/history ports, а
+  также нижние model transport, tool shortlist и workbook executor. Это не
+  доказательство качества модели.
 
 ## Проверено на context checkpoint
 

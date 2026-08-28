@@ -45,8 +45,10 @@
 > `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`; candidate upload is guarded before
 > persistence and all effective workbook state stays below it. Public route остаётся shadow,
 > receipt не подделывается: fake transport имеет только nonpersistent `contract_test`.
-> Hermetic ASGI check uses real multipart/SSE/artifact route composition but is
-> not model-quality evidence.
+> Hermetic ASGI check uses real multipart/SSE/artifact route composition and
+> real chat application/harvest. Fixture supplies an isolated profile snapshot,
+> empty retrieval/history ports, and lower model transport, tool shortlist and
+> workbook executor. It is not model-quality evidence.
 > Статус: 🟡 **PENDING: live user-owned input/model acceptance**;
 > offline contracts не являются quality evidence.
 
