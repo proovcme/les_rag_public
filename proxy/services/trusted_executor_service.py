@@ -78,6 +78,7 @@ class ExecutionRequest:
     idempotency_key: str | None
     deadline_monotonic: float
     shadow: bool = False
+    allowed_attachment_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -404,7 +405,12 @@ class TrustedExecutor:
             return self._envelope(request, "rejected", schema_error)
         if request.deadline_monotonic <= time.monotonic():
             return self._envelope(request, "timeout", "TOOL_DEADLINE_EXCEEDED")
-        if self._scope_escapes(contract, request.arguments, request.allowed_dataset_ids):
+        if self._scope_escapes(
+            contract,
+            request.arguments,
+            request.allowed_dataset_ids,
+            request.allowed_attachment_ids,
+        ):
             return self._envelope(request, "rejected", "TOOL_SCOPE_VIOLATION")
         if request.shadow and (
             contract.effect in _SHADOW_BLOCKED_EFFECTS
@@ -572,7 +578,15 @@ class TrustedExecutor:
         contract: ToolContract,
         arguments: Mapping[str, Any],
         allowed_dataset_ids: tuple[str, ...],
+        allowed_attachment_ids: tuple[str, ...] = (),
     ) -> bool:
+        if "chat_attachment" in contract.scopes:
+            requested_attachment = str(arguments.get("attachment_id") or "").strip()
+            allowed_attachments = {
+                str(item).strip() for item in allowed_attachment_ids if str(item).strip()
+            }
+            if not requested_attachment or requested_attachment not in allowed_attachments:
+                return True
         if "dataset" not in contract.scopes:
             return False
         allowed = {str(item) for item in allowed_dataset_ids if str(item)}
@@ -601,7 +615,7 @@ class TrustedExecutor:
                 if str(item)
             )
         if not requested:
-            return True
+            return "chat_attachment" not in contract.scopes
         return bool(requested - allowed)
 
     def _approval_matches(

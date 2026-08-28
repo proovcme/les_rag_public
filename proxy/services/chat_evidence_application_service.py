@@ -85,6 +85,78 @@ from proxy.services.typed_memory_projection_service import MemoryLimits, project
 logger = logging.getLogger(__name__)
 
 
+def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Retain only workbook identifiers that the chat UI can safely use."""
+    result = payload if isinstance(payload, dict) else {}
+    if result.get("schema") != "les.workbook_tool_result.v1":
+        return {}
+
+    def selected(value: Any, fields: tuple[str, ...]) -> dict[str, Any]:
+        source = value if isinstance(value, dict) else {}
+        return {field: source[field] for field in fields if field in source}
+
+    safe = selected(result, ("schema", "tool", "status", "code"))
+    artifact = selected(
+        result.get("artifact"),
+        (
+            "artifact_id", "revision_id", "revision_no", "parent_revision_id",
+            "sha256", "byte_size", "download_url", "source_scope",
+            "decision_checkpoint_id",
+        ),
+    )
+    checkpoint = selected(
+        result.get("checkpoint"),
+        ("checkpoint_id", "phase", "status", "completed_items", "total_items", "resumed"),
+    )
+    source = selected(result.get("source"), ("attachment_id", "sha256", "rows"))
+    if artifact:
+        safe["artifact"] = artifact
+    if checkpoint:
+        safe["checkpoint"] = checkpoint
+    if source:
+        safe["source"] = source
+    return safe
+
+
+def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Project one completed workbook tool result into chat/history metadata."""
+    result = safe_workbook_history_projection(payload)
+    if (
+        result.get("schema") != "les.workbook_tool_result.v1"
+        or result.get("status") != "complete"
+    ):
+        return {}
+    artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
+    source = result.get("source") if isinstance(result.get("source"), dict) else {}
+    checkpoint = (
+        result.get("checkpoint") if isinstance(result.get("checkpoint"), dict) else {}
+    )
+    attachment_id = str(source.get("attachment_id") or "").strip()
+    checkpoint_id = str(checkpoint.get("checkpoint_id") or "").strip()
+    source_scope = artifact.get("source_scope")
+    if not isinstance(source_scope, (list, tuple, set)):
+        return {}
+    if (
+        not artifact.get("revision_id")
+        or not attachment_id
+        or not checkpoint_id
+        or str(checkpoint.get("status") or "") != "complete"
+        or str(artifact.get("decision_checkpoint_id") or "") != checkpoint_id
+        or f"attachment:{attachment_id}" not in source_scope
+    ):
+        return {}
+    return {
+        "artifact": dict(artifact),
+        "attachment_retry": {
+            "attachment_id": attachment_id,
+            "id": attachment_id,
+            "preserved": True,
+            "checkpoint_id": str(checkpoint.get("checkpoint_id") or ""),
+        },
+        "checkpoint": dict(checkpoint),
+    }
+
+
 def _context_objects(
     prefix: str,
     values: Sequence[Any],
@@ -338,6 +410,7 @@ class EvidenceRuntimeDeps:
     cloud_model_timeout: Callable
     model_connection_resolver: Callable | None = None
     model_connection_transport: Callable | None = None
+    workbook_tool_executor: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -411,6 +484,7 @@ async def run_chat_evidence_application(
         cloud_model_timeout=runtime.cloud_model_timeout,
         model_connection_resolver=runtime.model_connection_resolver,
         model_connection_transport=runtime.model_connection_transport,
+        workbook_tool_executor=runtime.workbook_tool_executor,
         save_chat_history=response.save_chat_history,
         token_sink=response.token_sink,
         _version_stamp=response.version_stamp,
@@ -513,6 +587,7 @@ async def _execute_chat_evidence_application(
     memory_block,
     model_connection_resolver,
     model_connection_transport,
+    workbook_tool_executor,
     notebook_study_prompt_block,
     os,
     query_route_payload,
@@ -1439,6 +1514,7 @@ async def _execute_chat_evidence_application(
                                     arguments = {}
                                 canonical_calls.append(
                                     {
+                                        "call_id": str(raw_call.get("id") or ""),
                                         "tool": str(function.get("name") or ""),
                                         "args": arguments,
                                     }
@@ -1526,6 +1602,7 @@ async def _execute_chat_evidence_application(
                     raise last_err
 
                 tool_results_for_model: list[dict[str, Any]] = []
+                workbook_chat_meta: dict[str, Any] = {}
                 tool_context = ""
                 visual_tool_requested = any(
                     marker in str(req.question or "").casefold().replace("ё", "е")
@@ -1534,6 +1611,12 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
+                if canonical_route.effective is not CanonicalRouteMode.ACTIVE:
+                    profile_tools = [
+                        name
+                        for name in profile_tools
+                        if name not in {"build_lsr_workbook", "build_vor_workbook"}
+                    ]
                 retrieval_trace["canonical_route"] = canonical_route.public_payload()
                 retrieval_trace["route_comparison"] = {
                     "schema": "les.canonical-route-comparison.v1",
@@ -1564,6 +1647,10 @@ async def _execute_chat_evidence_application(
                             execution_preset.max_batch_items,
                             max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
                         )
+                        workbook_phase = bool(
+                            getattr(req, "attachment_id", None)
+                            and {"build_lsr_workbook", "build_vor_workbook"}.intersection(profile_tools)
+                        )
                         shortlist = await asyncio.to_thread(
                             tool_harness.shortlist,
                             req.question,
@@ -1571,11 +1658,16 @@ async def _execute_chat_evidence_application(
                             allowed_tools=profile_tools,
                             limit=shortlist_limit,
                             dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
-                            workflow_phase="research",
+                            workflow_phase="draft" if workbook_phase else "research",
                             model_preset=execution_preset.preset_id,
                             runtime_available=frozenset(profile_tools),
                             calls_remaining=max_calls,
                             result_chars_remaining=35_000,
+                            **(
+                                {"attachment_ids": (str(req.attachment_id),)}
+                                if getattr(req, "attachment_id", None)
+                                else {}
+                            ),
                         )
                         allowed_tools = {
                             str(tool.get("name") or "")
@@ -1596,6 +1688,7 @@ async def _execute_chat_evidence_application(
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
                         seen_call_signatures: set[str] = set()
+                        workbook_call_attempted = False
                         stop_reason = "round_limit"
                         for research_round in range(1, max_rounds + 1):
                             prior_results = [
@@ -1605,7 +1698,8 @@ async def _execute_chat_evidence_application(
                             selector_profile = (
                                 profile_system_prompt(profile_snapshot, strict=False)
                                 + "\n\nТы управляешь коротким исследовательским чтением LES. "
-                                "Выбирай только read-only инструменты, чтобы закрыть конкретный пробел evidence. "
+                                "Выбирай read-only инструменты, чтобы закрыть конкретный пробел evidence. "
+                                "Если оператор просит собрать XLSX и доступен workbook-инструмент, выбери ровно один такой draft-вызов. "
                                 "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
                                 "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
                                 "текстовый read_pdf_source не заменяет просмотр пикселей. "
@@ -1707,11 +1801,57 @@ async def _execute_chat_evidence_application(
                                 stop_reason = "model_stop" if not proposed_calls else "repeated_call"
                                 break
                             for call in calls:
-                                payload = await asyncio.to_thread(
-                                    tool_harness.call, call["tool"], call.get("args") or {}
-                                )
+                                tool_name = str(call.get("tool") or "")
+                                if (
+                                    tool_name in {"build_lsr_workbook", "build_vor_workbook"}
+                                    and canonical_route.effective is CanonicalRouteMode.ACTIVE
+                                    and workbook_tool_executor is not None
+                                ):
+                                    workbook_call_attempted = True
+                                    async def workbook_progress(event: dict[str, Any]) -> None:
+                                        if token_sink is not None:
+                                            await token_sink({"event": "tool_progress", "data": event})
+
+                                    payload = await workbook_tool_executor(
+                                        call,
+                                        {
+                                            "session_id": str(req.session_id or ""),
+                                            "question": str(req.question or ""),
+                                            "dataset_ids": [str(item) for item in _dataset_ids],
+                                            "project_id": getattr(req, "project_id", None),
+                                            "attachment_id": str(getattr(req, "attachment_id", None) or ""),
+                                            "profile_revision_id": str((profile_snapshot or {}).get("revision_id") or ""),
+                                            "model_identity": str(
+                                                getattr(
+                                                    getattr(active_model_result, "connection", None),
+                                                    "model_id",
+                                                    "",
+                                                )
+                                                or llm_model
+                                            ),
+                                            "model_preset": execution_preset.preset_id,
+                                        },
+                                        workbook_progress,
+                                    )
+                                else:
+                                    payload = await asyncio.to_thread(
+                                        tool_harness.call, tool_name, call.get("args") or {}
+                                    )
                                 selected_calls.append(call)
-                                tool_results_for_model.append(payload)
+                                safe_payload = safe_workbook_history_projection(payload)
+                                tool_results_for_model.append(
+                                    safe_payload if safe_payload else payload
+                                )
+                                harvested = harvest_workbook_tool_result(safe_payload)
+                                if harvested:
+                                    workbook_chat_meta = harvested
+                                    stop_reason = "workbook_complete"
+                                    break
+                                if workbook_call_attempted:
+                                    stop_reason = "workbook_attempted"
+                                    break
+                            if workbook_chat_meta or workbook_call_attempted:
+                                break
                             if len(selected_calls) >= max_calls:
                                 stop_reason = "call_budget"
                                 break
@@ -1747,12 +1887,12 @@ async def _execute_chat_evidence_application(
                             },
                         ) from context_error
                     except Exception as tool_err:  # noqa: BLE001 - tool loop must degrade into trace, not block chat
-                        logger.warning("[TOOLS] model tool loop skipped: %s", tool_err)
+                        logger.warning("[TOOLS] model tool loop skipped: %s", type(tool_err).__name__)
                         retrieval_trace["tool_loop"] = {
                             "schema": "les_model_tool_loop_v1",
                             "enabled": True,
                             "status": "error",
-                            "error": f"{type(tool_err).__name__}: {tool_err}",
+                            "error_type": type(tool_err).__name__,
                         }
                 else:
                     retrieval_trace["tool_loop"] = {
@@ -2299,6 +2439,7 @@ async def _execute_chat_evidence_application(
                         source_dataset_names=source_dataset_names,
                         query_route=query_route_payload,
                         retrieval_trace=retrieval_trace,
+                        artifact=(workbook_chat_meta.get("artifact") or None),
                         cache_type=cache_marker,
                         validation_enabled=use_validation,
                     )
@@ -2360,6 +2501,8 @@ async def _execute_chat_evidence_application(
                 if active_model_result is not None:
                     response["model_connection"] = active_model_result.public_connection_payload()
                     response["model_connection"]["pending_tool_calls"] = active_pending_tool_calls
+                if workbook_chat_meta:
+                    response.update(workbook_chat_meta)
                 if notebook_study_pack is not None:
                     response["notebook_context"] = notebook_study_pack.payload()
                     if notebook_study_artifact:

@@ -1,5 +1,15 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **Ordinary-chat workbook revisions 0.29.0 / build 621:** active chat передаёт
+> один `build_lsr_workbook | build_vor_workbook` из model decision в canonical
+> registry/Trusted Executor. `CapabilityBroker` разрешает draft phase только
+> при server-owned `attachment_id`; `chat_evidence_application_service.py`
+> транслирует bounded `tool_progress`, harvest-ит exact artifact/checkpoint и
+> сохраняет immutable revision в history. `sovushka/pages/chat.py` использует
+> существующий status-region и file card; progress запрещает нестриминговый
+> duplicate retry. Точки входа: `_execute_chat_workbook_tool`,
+> `harvest_workbook_tool_result`, `should_retry_unstreamed_chat`.
+
 > **Canonical agent shadow 0.29.0:** `canonical_route_service.py` fail-closed
 > разрешает `legacy | shadow | active`; default/stale active — `shadow`.
 > `chat_evidence_application_service.py` сохраняет legacy answer, но первую

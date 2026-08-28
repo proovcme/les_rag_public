@@ -326,6 +326,16 @@ async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optio
         return False
 
 
+def should_retry_unstreamed_chat(
+    *,
+    got_token: bool,
+    got_progress: bool,
+    stream_error: object | None,
+) -> bool:
+    """Retry only when the stream failed before any server work became visible."""
+    return not bool(got_token or got_progress or stream_error)
+
+
 async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple[bytes, str]]:
     """GET бинарного файла (xlsx-отчёты и т.п.) → (содержимое, имя файла) или None."""
     from sovushka.config import PROXY_URL

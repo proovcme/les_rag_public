@@ -204,6 +204,7 @@ class ToolHarness:
         runtime_available: frozenset[str] | None = None,
         calls_remaining: int | None = None,
         result_chars_remaining: int = 35_000,
+        attachment_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         if allowed_tools is None:
             registrations = list(self._registry.registrations())
@@ -242,6 +243,7 @@ class ToolHarness:
                 runtime_available=available,
                 calls_remaining=requested_limit if calls_remaining is None else calls_remaining,
                 result_chars_remaining=result_chars_remaining,
+                attachment_ids=attachment_ids,
             )
         )
         selected = [contract.public_payload() | {"score": 0} for contract in result.contracts]

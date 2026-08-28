@@ -5,12 +5,312 @@ import json
 import sqlite3
 import time
 from dataclasses import fields
+from pathlib import Path
 from types import SimpleNamespace
 
+import openpyxl
 import pytest
 
 from proxy.routers import chat
 from proxy.services import chat_evidence_application_service as service
+from proxy.services.chat_attachment_service import preserve_read_attachment
+
+
+async def _async_append(target, value):
+    target.append(value)
+
+
+async def _fake_workbook_execution(call, context, progress, _events):
+    assert call["tool"] == "build_vor_workbook"
+    assert context["attachment_id"] == "read_123456abcdef"
+    await progress({
+        "call_id": call.get("call_id") or "workbook-call-1",
+        "checkpoint_id": "cp-1",
+        "phase": "rows",
+        "completed": 3,
+        "total": 10,
+        "label": "Собираю строки ВОР",
+    })
+    return {
+        "schema": "les.workbook_tool_result.v1",
+        "tool": "build_vor_workbook",
+        "status": "complete",
+        "artifact": {
+            "revision_id": "rev-2",
+            "artifact_id": "artifact-1",
+            "revision_no": 2,
+            "filename": "vor-r2.xlsx",
+            "download_url": "/api/artifacts/rev-2/download",
+            "source_scope": ["attachment:read_123456abcdef"],
+            "decision_checkpoint_id": "cp-1",
+        },
+        "source": {"attachment_id": "read_123456abcdef", "sha256": "a" * 64},
+        "checkpoint": {"checkpoint_id": "cp-1", "status": "complete"},
+        "missing": [],
+        "blockers": [],
+    }
+
+
+async def _tracked_workbook_execution(call, context, progress, events, calls):
+    calls.append(call)
+    return await _fake_workbook_execution(call, context, progress, events)
+
+
+async def _rejected_workbook_execution(call, calls):
+    calls.append(call)
+    return {
+        "schema": "les.workbook_tool_result.v1",
+        "tool": "build_vor_workbook",
+        "status": "rejected",
+        "code": "TOOL_SCOPE_VIOLATION",
+        "message": "foreign attachment must not execute",
+        "missing": [],
+        "blockers": [],
+    }
+
+
+def test_workbook_result_harvests_revision_retry_and_checkpoint():
+    harvested = service.harvest_workbook_tool_result(
+        {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_vor_workbook",
+            "status": "complete",
+            "artifact": {
+                "revision_id": "rev-2",
+                "artifact_id": "artifact-1",
+                "revision_no": 2,
+                "filename": "vor-r2.xlsx",
+                "download_url": "/api/artifacts/rev-2/download",
+                "source_scope": ["attachment:read_123456abcdef"],
+                "decision_checkpoint_id": "cp-1",
+            },
+            "source": {"attachment_id": "read_123456abcdef", "sha256": "a" * 64},
+            "checkpoint": {"checkpoint_id": "cp-1", "status": "complete"},
+        }
+    )
+
+    assert harvested["artifact"]["revision_id"] == "rev-2"
+    assert harvested["attachment_retry"]["attachment_id"] == "read_123456abcdef"
+    assert harvested["attachment_retry"]["preserved"] is True
+    assert harvested["checkpoint"]["checkpoint_id"] == "cp-1"
+
+
+def test_workbook_harvest_rejects_artifact_without_bound_attachment_checkpoint_lineage():
+    harvested = service.harvest_workbook_tool_result(
+        {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": "build_vor_workbook",
+            "status": "complete",
+            "artifact": {
+                "revision_id": "rev-2",
+                "artifact_id": "artifact-1",
+                "source_scope": ["attachment:read_foreign"],
+                "decision_checkpoint_id": "cp-other",
+            },
+            "source": {"attachment_id": "read_123456abcdef"},
+            "checkpoint": {"checkpoint_id": "cp-1", "status": "complete"},
+        }
+    )
+
+    assert harvested == {}
+
+
+def test_workbook_history_projection_redacts_failures_paths_and_unbounded_results():
+    raw = {
+        "schema": "les.workbook_tool_result.v1",
+        "tool": "build_vor_workbook",
+        "status": "failed",
+        "code": "WORKBOOK_GENERATION_FAILED",
+        "message": "adapter failed at C:/private/workbook.xlsx",
+        "artifact": {
+            "artifact_id": "art-1",
+            "revision_id": "rev-1",
+            "download_url": "/api/artifacts/rev-1/download",
+            "source_scope": ["attachment:read_123456abcdef"],
+            "decision_checkpoint_id": "cp-1",
+            "filename": "C:/private/workbook.xlsx",
+            "tool_calls": [{"private": "unbounded result"}],
+        },
+        "checkpoint": {"checkpoint_id": "cp-1", "status": "failed"},
+        "source": {"attachment_id": "read_123456abcdef", "name": "C:/private/source.xlsx"},
+        "blockers": ["RuntimeError: private filesystem detail"],
+        "result": {"raw": "unbounded result"},
+    }
+
+    safe = service.safe_workbook_history_projection(raw)
+
+    assert safe == {
+        "schema": "les.workbook_tool_result.v1",
+        "tool": "build_vor_workbook",
+        "status": "failed",
+        "code": "WORKBOOK_GENERATION_FAILED",
+        "artifact": {
+            "artifact_id": "art-1",
+            "revision_id": "rev-1",
+            "download_url": "/api/artifacts/rev-1/download",
+            "source_scope": ["attachment:read_123456abcdef"],
+            "decision_checkpoint_id": "cp-1",
+        },
+        "checkpoint": {"checkpoint_id": "cp-1", "status": "failed"},
+        "source": {"attachment_id": "read_123456abcdef"},
+    }
+    serialized = json.dumps(safe, ensure_ascii=False)
+    assert "private" not in serialized
+    assert "unbounded result" not in serialized
+    assert "RuntimeError" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_chat_workbook_executor_builds_revision_and_streams_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Раздел", "Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["ОВ", "Воздуховод", "м", 12.5])
+    workbook.save(source)
+    workbook.close()
+    attachment = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+    progress = []
+
+    async def on_progress(event):
+        progress.append(event)
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "call_id": "call-1",
+            "tool": "build_vor_workbook",
+            "args": {"attachment_id": attachment["attachment_id"]},
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ВОР",
+            "attachment_id": attachment["attachment_id"],
+            "dataset_ids": [],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        on_progress,
+    )
+
+    assert result["status"] == "complete"
+    assert result["artifact"]["revision_no"] == 1
+    assert result["source"]["attachment_id"] == attachment["attachment_id"]
+    assert f"attachment:{attachment['attachment_id']}" in result["artifact"]["source_scope"]
+    assert result["artifact"]["decision_checkpoint_id"] == result["checkpoint"]["checkpoint_id"]
+    assert progress[-1]["checkpoint_id"] == result["checkpoint"]["checkpoint_id"]
+    assert progress[-1]["label"] == "Собираю строки ВОР"
+    assert Path("storage/artifacts/meta.db").is_file()
+
+
+@pytest.mark.asyncio
+async def test_chat_workbook_executor_rejects_model_dataset_outside_chat_scope(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Кабель", "м", 2])
+    workbook.save(source)
+    workbook.close()
+    preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+
+    async def on_progress(_event):
+        raise AssertionError("rejected execution must not start")
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "tool": "build_vor_workbook",
+            "args": {
+                "attachment_id": "read_123456abcdef",
+                "dataset_ids": ["foreign-dataset"],
+            },
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ВОР",
+            "attachment_id": "read_123456abcdef",
+            "dataset_ids": [],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        on_progress,
+    )
+
+    assert result["execution"]["code"] == "TOOL_SCOPE_VIOLATION"
+    assert "artifact" not in result
+    with sqlite3.connect("storage/workbook_checkpoints.db") as connection:
+        count = connection.execute("SELECT COUNT(*) FROM workflow_checkpoints").fetchone()[0]
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_chat_workbook_executor_rejects_foreign_preserved_attachment_before_execution(
+    tmp_path, monkeypatch
+):
+    """A model cannot switch a request to another server-owned attachment."""
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Кабель", "м", 2])
+    workbook.save(source)
+    workbook.close()
+    bound = preserve_read_attachment(
+        source,
+        attachment_id="read_111111111111",
+        original_name="bound.xlsx",
+        root=attachment_root,
+    )
+    foreign = preserve_read_attachment(
+        source,
+        attachment_id="read_222222222222",
+        original_name="foreign.xlsx",
+        root=attachment_root,
+    )
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "tool": "build_vor_workbook",
+            "args": {"attachment_id": foreign["attachment_id"]},
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ВОР",
+            "attachment_id": bound["attachment_id"],
+            "dataset_ids": [],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        lambda _event: None,
+    )
+
+    assert result["status"] == "rejected"
+    assert result["code"] == "TOOL_SCOPE_VIOLATION"
+    assert not Path("storage/workbook_checkpoints.db").exists()
+    assert not Path("storage/artifacts/meta.db").exists()
 from proxy.services.canonical_route_service import CanonicalRouteMode
 from proxy.services.context_governor_service import (
     ContextKind,
@@ -251,7 +551,19 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["normal", "selector_overflow", "cloud_retry", "active"])
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "normal",
+        "selector_overflow",
+        "cloud_retry",
+        "active",
+        "active_workbook",
+        "active_workbook_rejected",
+        "shadow_workbook",
+        "legacy_workbook",
+    ],
+)
 async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_model_count(
     monkeypatch,
     tmp_path,
@@ -259,13 +571,24 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 ) -> None:
     selector_overflow = scenario == "selector_overflow"
     cloud_retry = scenario == "cloud_retry"
-    active = scenario == "active"
+    workbook_profile = scenario in {
+        "active_workbook",
+        "active_workbook_rejected",
+        "shadow_workbook",
+        "legacy_workbook",
+    }
+    active_workbook = scenario in {"active_workbook", "active_workbook_rejected"}
+    rejected_workbook = scenario == "active_workbook_rejected"
+    active = scenario in {"active", "active_workbook", "active_workbook_rejected"}
+    inactive_workbook = workbook_profile and not active
     model_calls = []
     shortlist_policies = []
     shadow_calls = []
     executor_codes = []
     legacy_calls = []
     history_rows = []
+    progress_events = []
+    workbook_executor_calls = []
     protected_db = tmp_path / "protected.db"
     with sqlite3.connect(protected_db) as conn:
         conn.execute("CREATE TABLE protected_events (value TEXT NOT NULL)")
@@ -394,7 +717,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             shortlist_policies.append(dict(kwargs))
             return {
                 "schema": "les_tool_shortlist_v1",
-                "tools": [{"name": "read_source"}],
+                "tools": [{"name": "build_vor_workbook" if workbook_profile else "read_source"}],
             }
 
         async def call_async(self, tool, args, **policy):
@@ -416,7 +739,8 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 )
             )
             executor_codes.append(envelope.code)
-            assert envelope.code == "TOOL_WOULD_EXECUTE"
+            if not workbook_profile:
+                assert envelope.code == "TOOL_WOULD_EXECUTE"
             raise RuntimeError("secret shadow failure")
 
         def call(self, tool, args):
@@ -527,6 +851,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                     InferenceResponse(
                         text="",
                         tool_calls=(
+                            (
+                                {"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
+                                {"id": "workbook-call-2", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
+                            )
+                            if rejected_workbook
+                            else ({"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },)
+                        ) if active_workbook else (
                             {"id": "c1", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d1"}'}},
                             {"id": "c2", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d2"}'}},
                         ),
@@ -554,6 +885,23 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 effective=CanonicalRouteMode.ACTIVE,
                 source="test",
                 reason="exact_test_receipt",
+                restart_required=False,
+            ),
+        )
+    elif scenario == "legacy_workbook":
+        from proxy.services.canonical_route_service import (
+            CanonicalRouteDecision,
+            CanonicalRouteMode,
+        )
+
+        monkeypatch.setattr(
+            service,
+            "resolve_canonical_route",
+            lambda **_kwargs: CanonicalRouteDecision(
+                requested=CanonicalRouteMode.LEGACY,
+                effective=CanonicalRouteMode.LEGACY,
+                source="test",
+                reason="explicit_legacy",
                 restart_required=False,
             ),
         )
@@ -602,6 +950,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             session_id="session-1",
             dataset_filter=None,
             project_id=0,
+            attachment_id="read_123456abcdef" if workbook_profile else None,
             reranker_enabled=None,
         ),
         dataset_ids=["selected"],
@@ -626,7 +975,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         request_started_at=1.0,
         profile_snapshot={
             "revision_id": "fixture-profile:1",
-            "tools": ["read_source"],
+            "tools": ["build_vor_workbook" if workbook_profile else "read_source"],
             "rag_policy": {"iterative": False},
             "prompt_text": "Answer only from evidence.",
         },
@@ -665,10 +1014,14 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         parse_model_tool_calls=(
             lambda raw, *_args, **_kwargs: json.loads(raw).get("calls", [])
             if active
-            else [
-                {"tool": "read_source", "args": {"doc_id": "d1"}},
-                {"tool": "read_source", "args": {"doc_id": "d2"}},
-            ]
+            else (
+                [{"tool": "build_vor_workbook", "args": {"attachment_id": "read_123456abcdef"}}]
+                if workbook_profile
+                else [
+                    {"tool": "read_source", "args": {"doc_id": "d1"}},
+                    {"tool": "read_source", "args": {"doc_id": "d2"}},
+                ]
+            )
         ),
         prepare_notebook_reader_memory=lambda *_args, **_kwargs: None,
         record_cloud_cost=lambda *_args, **_kwargs: None,
@@ -683,10 +1036,20 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         model_connection_transport=(
             (lambda _client, _secret_store: active_transport) if active else None
         ),
+        workbook_tool_executor=(
+            (lambda call, context, progress: _rejected_workbook_execution(call, workbook_executor_calls))
+            if rejected_workbook
+            else (
+                (lambda call, context, progress: _tracked_workbook_execution(
+                    call, context, progress, progress_events, workbook_executor_calls
+                ))
+                if active_workbook else None
+            )
+        ),
     )
     boundary = service.ResponseBoundary(
         save_chat_history=save_history,
-        token_sink=None,
+        token_sink=(lambda event: _async_append(progress_events, event)) if active_workbook else None,
         version_stamp=lambda: {},
     )
 
@@ -703,6 +1066,14 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
     after_protected = protected_hash()
+    if inactive_workbook:
+        assert result["answer"] == "legacy visible answer"
+        assert shortlist_policies == []
+        assert shadow_calls == []
+        assert legacy_calls == []
+        assert executor_codes == []
+        assert after_protected == before_protected
+        return
     if active:
         assert result["answer"] == "active visible answer"
         assert result["model_connection"] == {
@@ -712,10 +1083,22 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "model_id": "active-model",
                 "locality": "loopback",
                 "fallback_used": False,
-                "pending_tool_calls": 1,
+                "pending_tool_calls": 0 if active_workbook and not rejected_workbook else 1,
         }
         assert active_transport.revisions == ["conn:active:r3", "conn:active:r3"]
-        assert [call[1]["doc_id"] for call in legacy_calls] == ["d1"]
+        if active_workbook:
+            assert len(workbook_executor_calls) == 1
+            if rejected_workbook:
+                assert "artifact" not in result
+                assert history_rows[0]["retrieval_trace"]["tool_loop"]["stop_reason"] == "workbook_attempted"
+                return
+            assert result["artifact"]["revision_id"] == "rev-2"
+            assert result["attachment_retry"]["attachment_id"] == "read_123456abcdef"
+            assert history_rows[0]["artifact"]["revision_id"] == "rev-2"
+            assert any(event.get("event") == "tool_progress" for event in progress_events)
+            assert legacy_calls == []
+        else:
+            assert [call[1]["doc_id"] for call in legacy_calls] == ["d1"]
         assert history_rows[0]["retrieval_trace"]["context_governor"]["preset_id"] == "active-preset"
         assert after_protected == before_protected
         return

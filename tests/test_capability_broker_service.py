@@ -102,6 +102,25 @@ def test_broker_fails_closed_without_dataset_scope_or_budget() -> None:
     assert no_budget.omitted_by_reason["calls_budget"] == ("read_source",)
 
 
+def test_workbook_scope_accepts_server_attachment_without_dataset() -> None:
+    registry = ToolRegistry([
+        _registration(
+            "build_vor_workbook",
+            EffectClass.DRAFT,
+            scopes=("chat_attachment", "dataset"),
+        )
+    ])
+    request = _request(
+        profile_tools=("build_vor_workbook",),
+        dataset_ids=(),
+        attachment_ids=("read_123456abcdef",),
+        workflow_phase="draft",
+        runtime_available=frozenset({"build_vor_workbook"}),
+    )
+
+    assert CapabilityBroker(registry).shortlist(request).names == ("build_vor_workbook",)
+
+
 def test_registration_availability_is_authoritative() -> None:
     registry = ToolRegistry([_registration("read_source", EffectClass.READ, available=False)])
     request = _request(profile_tools=("read_source",), runtime_available=frozenset({"read_source"}))

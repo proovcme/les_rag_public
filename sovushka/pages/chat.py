@@ -24,6 +24,7 @@ from sovushka.state import (
     api_post,
     api_post_file,
     api_post_stream,
+    should_retry_unstreamed_chat,
     last_api_error_text,
     refresh_indexing_mode,
     refresh_samovar,
@@ -335,9 +336,10 @@ def _preserved_attachment(result: dict | None, sent: dict | None) -> dict:
 
     retry = (result or {}).get("attachment_retry") or {}
     sent_copy = dict(sent or {})
+    retry_id = str(retry.get("attachment_id") or retry.get("id") or "")
     if not retry.get("preserved") or not sent_copy.get("id"):
         return {}
-    if str(retry.get("id") or "") != str(sent_copy.get("id") or ""):
+    if retry_id != str(sent_copy.get("id") or ""):
         return {}
     return sent_copy
 
@@ -3218,6 +3220,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
         if not isinstance(artifact, dict):
             return
+        direct_download = str(artifact.get("download_url") or "").strip()
+        if direct_download:
+            filename = str(artifact.get("filename") or "artifact.xlsx").strip()
+            _register_file_artifact(filename, direct_download, "xlsx")
         downloads = artifact.get("downloads") or {}
         if not isinstance(downloads, dict):
             return
@@ -4088,6 +4094,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
                 ai_placeholder_label.update()
                 _scroll_chat_to_tail()
+            elif event == "tool_progress":
+                stream_state["got_progress"] = True
+                if isinstance(payload, dict):
+                    label = str(payload.get("label") or "Собираю файл").strip()
+                    completed_rows = payload.get("completed")
+                    total_rows = payload.get("total")
+                    if completed_rows is not None and total_rows is not None:
+                        label = f"{label} · {completed_rows}/{total_rows}"
+                    _status_text["v"] = label
+                else:
+                    _status_text["v"] = str(payload or "Собираю файл")
+                elapsed = int(time.monotonic() - _t0)
+                ai_placeholder_label.set_text(f"{_status_text['v']} {elapsed}с")
+                ai_placeholder_label.update()
+                _scroll_chat_to_tail()
             elif event == "smeta_row":
                 stream_state["got_progress"] = True
                 if isinstance(payload, dict) and isinstance(payload.get("row"), dict):
@@ -4224,7 +4245,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         await _refresh_resource_gate()
                     _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                     _render_artifact_error(message)
-                else:
+                elif should_retry_unstreamed_chat(
+                    got_token=bool(stream_state["got_token"]),
+                    got_progress=bool(stream_state["got_progress"]),
+                    stream_error=stream_state["error"],
+                ):
                     # Ни одного токена и нет SSE error (стрим-эндпоинт недоступен/обрыв до событий) —
                     # безопасный откат на нестриминговый /api/chat.
                     d = await api_post("/api/chat", payload)
@@ -4238,6 +4263,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             await _refresh_resource_gate()
                         _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
                         _render_artifact_error(message)
+                else:
+                    completed = True
+                    message = "Соединение прервано после начала сборки. Повторите запрос — продолжим с контрольной точки."
+                    _finish_ai_placeholder(ai_placeholder, ai_placeholder_label, message, error=True)
+                    _render_artifact_error(message)
         except asyncio.CancelledError:
             completed = True
             _finish_ai_placeholder(

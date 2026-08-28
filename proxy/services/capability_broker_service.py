@@ -39,6 +39,7 @@ class BrokerRequest:
     runtime_available: frozenset[str]
     calls_remaining: int
     result_chars_remaining: int
+    attachment_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,14 @@ class CapabilityBroker:
             if contract.effect not in allowed_effects:
                 omit("phase", name)
                 continue
-            if "dataset" in contract.scopes and not request.dataset_ids:
+            if (
+                "dataset" in contract.scopes
+                and "chat_attachment" not in contract.scopes
+                and not request.dataset_ids
+            ):
+                omit("scope", name)
+                continue
+            if "chat_attachment" in contract.scopes and not request.attachment_ids:
                 omit("scope", name)
                 continue
             if call_limit <= 0:

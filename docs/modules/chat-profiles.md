@@ -6,6 +6,13 @@
 contract. Уже созданные active revisions и session bindings не изменяются:
 оператор должен явно создать/опубликовать/активировать новую редакцию.
 
+**Build 621:** после явной активации подходящей profile revision ordinary chat
+показывает workbook contracts модели только в `draft` phase и только при
+server-owned read-вложении. Один model call проходит Trusted Executor; SSE
+публикует checkpoint progress, а complete result сохраняет immutable artifact
+revision в ответе и истории. UI не повторяет дорогой запрос после первого
+`tool_progress` и сохраняет вложение для безопасного resume/correction.
+
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию

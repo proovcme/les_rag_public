@@ -220,6 +220,17 @@ def test_chat_stream_keeps_reader_position_until_they_return_to_the_tail():
     assert 'chat_scroll.scroll_to(percent=1)' not in sse_handler
 
 
+def test_chat_ui_consumes_tool_progress_and_canonical_artifact_download():
+    source = inspect.getsource(chat_page.build_chat)
+    helper = inspect.getsource(chat_page._preserved_attachment)
+
+    assert 'elif event == "tool_progress":' in source
+    assert 'stream_state["got_progress"] = True' in source
+    assert 'should_retry_unstreamed_chat(' in source
+    assert 'artifact.get("download_url")' in source
+    assert 'retry.get("attachment_id")' in helper
+
+
 def test_chat_ui_mode_guidance_is_compact_and_input_focused():
     guidance = chat_page.CHAT_MODE_GUIDANCE
 

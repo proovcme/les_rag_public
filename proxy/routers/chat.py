@@ -703,7 +703,11 @@ def _parse_model_tool_calls(text: str, *, allowed_tools: set[str], max_calls: in
         if tool not in allowed_tools:
             continue
         args = item.get("args") if isinstance(item.get("args"), dict) else {}
-        calls.append({"tool": tool, "args": dict(args)})
+        parsed_call = {"tool": tool, "args": dict(args)}
+        call_id = str(item.get("call_id") or item.get("id") or "")
+        if call_id:
+            parsed_call["call_id"] = call_id
+        calls.append(parsed_call)
         if len(calls) >= max(1, max_calls):
             break
     return calls
@@ -733,7 +737,146 @@ def _augment_model_tool_args(
                 args["doc_name"] = target_file_ref.get("file_name") or ""
             if not args.get("doc_id") and target_file_ref.get("dataset_id"):
                 args["dataset_id"] = target_file_ref.get("dataset_id")
-    return {"tool": tool, "args": args}
+    augmented = {"tool": tool, "args": args}
+    if call.get("call_id"):
+        augmented["call_id"] = str(call["call_id"])
+    return augmented
+
+
+async def _execute_chat_workbook_tool(
+    call: dict[str, Any],
+    request_context: dict[str, Any],
+    progress_sink: Callable[[dict[str, Any]], Any],
+) -> dict[str, Any]:
+    """Execute one workbook draft through the canonical registry/trust boundary."""
+    from proxy.services.artifact_revision_service import ArtifactRevisionStore
+    from proxy.services.tool_registry_service import ToolRegistration, ToolRegistry
+    from proxy.services.trusted_executor_service import ExecutionRequest, TrustedExecutor
+    from proxy.services.workflow_checkpoint_service import WorkflowCheckpointService
+    from proxy.services.workbook_tool_service import (
+        BUILD_LSR_WORKBOOK,
+        BUILD_VOR_WORKBOOK,
+        WorkbookExecutionContext,
+        build_lsr_workbook,
+        build_vor_workbook,
+    )
+
+    tool_name = str(call.get("tool") or "")
+    contracts = {
+        "build_lsr_workbook": (BUILD_LSR_WORKBOOK, build_lsr_workbook),
+        "build_vor_workbook": (BUILD_VOR_WORKBOOK, build_vor_workbook),
+    }
+    if tool_name not in contracts:
+        raise ValueError("unsupported workbook tool")
+    args = dict(call.get("args") or {})
+    bound_attachment_id = str(request_context.get("attachment_id") or "").strip()
+    if not bound_attachment_id:
+        return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": tool_name,
+            "status": "rejected",
+            "code": "TOOL_ATTACHMENT_SCOPE_REQUIRED",
+            "missing": ["attachment_id"],
+            "blockers": [],
+        }
+    requested_attachment_id = str(args.get("attachment_id") or "").strip()
+    if requested_attachment_id and requested_attachment_id != bound_attachment_id:
+        return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": tool_name,
+            "status": "rejected",
+            "code": "TOOL_SCOPE_VIOLATION",
+            "missing": [],
+            "blockers": [],
+        }
+    args["attachment_id"] = bound_attachment_id
+    if request_context.get("question") and not args.get("question"):
+        args["question"] = request_context["question"]
+    bound_project_id = request_context.get("project_id")
+    if args.get("project_id") is not None and args.get("project_id") != bound_project_id:
+        return {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": tool_name,
+            "status": "rejected",
+            "code": "TOOL_SCOPE_VIOLATION",
+            "missing": [],
+            "blockers": [],
+        }
+    args["project_id"] = bound_project_id
+    if request_context.get("dataset_ids") and not args.get("dataset_ids"):
+        args["dataset_ids"] = list(request_context["dataset_ids"])
+
+    identity_payload = {
+        "session_id": str(request_context.get("session_id") or ""),
+        "tool": tool_name,
+        "args": args,
+        "profile_revision_id": str(request_context.get("profile_revision_id") or ""),
+    }
+    identity = hashlib.sha256(
+        json.dumps(identity_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    call_id = str(call.get("call_id") or f"workbook-{identity[:16]}")
+    pending_progress: list[asyncio.Task] = []
+
+    def emit_progress(event: dict[str, Any]) -> None:
+        phase = str(event.get("phase") or "rows")
+        label = (
+            "Собираю строки ВОР"
+            if tool_name == "build_vor_workbook"
+            else "Собираю строки ЛСР"
+        )
+        pending_progress.append(asyncio.create_task(progress_sink({
+            "call_id": call_id,
+            "checkpoint_id": str(event.get("checkpoint_id") or ""),
+            "phase": phase,
+            "completed": int(event.get("completed") or 0),
+            "total": event.get("total"),
+            "label": label,
+        })))
+
+    context = WorkbookExecutionContext(
+        session_id=str(request_context.get("session_id") or "anonymous"),
+        idempotency_key=f"workbook:{identity}",
+        model_decision_revision=call_id,
+        profile_revision_id=str(request_context.get("profile_revision_id") or "unknown"),
+        model_identity=str(request_context.get("model_identity") or "unknown"),
+        model_preset=str(request_context.get("model_preset") or "unknown"),
+        attachment_root=Path(os.getenv("LES_CHAT_ATTACHMENT_ROOT", "storage/chat_attachments")),
+        work_dir=Path("storage/workbook_work"),
+        checkpoints=WorkflowCheckpointService(Path("storage/workbook_checkpoints.db")),
+        artifacts=ArtifactRevisionStore(
+            Path("storage/artifacts/meta.db"), Path("storage/artifacts/files")
+        ),
+        progress_sink=emit_progress,
+    )
+    contract, builder = contracts[tool_name]
+
+    async def handler(handler_args: dict[str, Any]) -> dict[str, Any]:
+        return await builder(handler_args, context)
+
+    registry = ToolRegistry([ToolRegistration(contract=contract, handler=handler)])
+    executor = TrustedExecutor(registry)
+    envelope = await executor.execute(ExecutionRequest(
+        call_id=call_id,
+        tool_name=tool_name,
+        arguments=args,
+        allowed_dataset_ids=tuple(
+            str(item) for item in (request_context.get("dataset_ids") or ())
+        ),
+        actor_id=str(request_context.get("session_id") or "ordinary-chat"),
+        actor_role="user",
+        approval_receipt_id=None,
+        idempotency_key=f"workbook:{identity}",
+        deadline_monotonic=time.monotonic() + 900,
+        shadow=False,
+        allowed_attachment_ids=(bound_attachment_id,),
+    ))
+    if pending_progress:
+        await asyncio.gather(*pending_progress, return_exceptions=True)
+    result = envelope.to_dict()["result"]
+    if isinstance(result, dict):
+        result["execution"] = envelope.metadata()
+    return result
 
 
 def _compact_tool_result_for_prompt(payload: dict[str, Any], *, max_chars: int = 7000) -> dict[str, Any]:
@@ -3818,6 +3961,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             client=client,
             secret_store=secret_store,
         ),
+        workbook_tool_executor=_execute_chat_workbook_tool,
     )
     response_boundary = ResponseBoundary(
         save_chat_history=save_chat_history,

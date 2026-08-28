@@ -198,16 +198,16 @@ async def _build_workbook(
 ) -> dict[str, Any]:
     forbidden = sorted(set(args) & _MODEL_COMPUTED_FIELDS)
     if forbidden:
-        return _rejected(
+        return {**_rejected(
             "MODEL_DECISION_FIELD_NOT_ALLOWED",
             f"computed workbook fields are not accepted: {', '.join(forbidden)}",
-        )
+        ), "tool": tool_name}
     unknown = sorted(set(args) - _ALLOWED_ARGS)
     if unknown:
-        return _rejected("INVALID_TOOL_ARGUMENTS", f"unknown arguments: {', '.join(unknown)}")
+        return {**_rejected("INVALID_TOOL_ARGUMENTS", f"unknown arguments: {', '.join(unknown)}"), "tool": tool_name}
     normalized = _normalized_args(args)
     if not normalized["attachment_id"]:
-        return _rejected("INVALID_TOOL_ARGUMENTS", "attachment_id is required")
+        return {**_rejected("INVALID_TOOL_ARGUMENTS", "attachment_id is required"), "tool": tool_name}
     try:
         source_path, attachment_meta = await asyncio.to_thread(
             resolve_read_attachment,
@@ -215,10 +215,10 @@ async def _build_workbook(
             root=ctx.attachment_root,
         )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
-        return _rejected("ATTACHMENT_INVALID", str(error))
+        return {**_rejected("ATTACHMENT_INVALID", str(error)), "tool": tool_name}
     supported = {".xlsx", ".xlsm"} if artifact_kind == "vor_workbook" else {".pdf", ".xlsx", ".xlsm"}
     if source_path.suffix.lower() not in supported:
-        return _rejected("UNSUPPORTED_ATTACHMENT_TYPE", f"unsupported attachment type: {source_path.suffix}")
+        return {**_rejected("UNSUPPORTED_ATTACHMENT_TYPE", f"unsupported attachment type: {source_path.suffix}"), "tool": tool_name}
 
     checkpoint = ctx.checkpoints.begin_or_resume(CheckpointBeginRequest(
         session_id=ctx.session_id,
@@ -231,12 +231,12 @@ async def _build_workbook(
     ))
     if checkpoint.status == "complete" and checkpoint.artifact_revision_id:
         revision = ctx.artifacts.get_revision(checkpoint.artifact_revision_id)
-        return _result_from_revision(
+        return {**_result_from_revision(
             revision=revision,
             checkpoint=checkpoint,
             attachment_meta=attachment_meta,
             resumed=True,
-        )
+        ), "tool": tool_name}
 
     def progress(phase: str, completed: int, total: int | None) -> None:
         ctx.checkpoints.record_progress(
@@ -262,6 +262,7 @@ async def _build_workbook(
         )
         return {
             "schema": "les.workbook_tool_result.v1",
+            "tool": tool_name,
             "status": "failed",
             "code": "WORKBOOK_ADAPTER_UNAVAILABLE",
             "message": "LSR workbook adapter is not configured",
@@ -299,13 +300,13 @@ async def _build_workbook(
             parent_revision_id=normalized["parent_revision_id"],
         ))
         completed = ctx.checkpoints.complete(checkpoint.checkpoint_id, revision.revision_id)
-        return _result_from_revision(
+        return {**_result_from_revision(
             revision=revision,
             checkpoint=completed,
             attachment_meta=attachment_meta,
             source_rows=int(generated.get("source_rows") or 0),
             resumed=checkpoint.status != "running" or checkpoint.phase != "started",
-        )
+        ), "tool": tool_name}
     except Exception as error:
         failed = ctx.checkpoints.record_status(
             checkpoint.checkpoint_id,
@@ -314,6 +315,7 @@ async def _build_workbook(
         )
         return {
             "schema": "les.workbook_tool_result.v1",
+            "tool": tool_name,
             "status": "failed",
             "code": "WORKBOOK_GENERATION_FAILED",
             "message": str(error),

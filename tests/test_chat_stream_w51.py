@@ -27,6 +27,19 @@ def test_sse_event_framing():
     progress = _sse_event("progress", {"step": 1, "total": 2, "label": "Ищу"})
     assert progress.startswith("event: progress\ndata: ")
     assert json.loads(progress.split("data: ", 1)[1])["label"] == "Ищу"
+    tool_progress = _sse_event(
+        "tool_progress",
+        {
+            "call_id": "call-1",
+            "checkpoint_id": "cp-1",
+            "phase": "rows",
+            "completed": 3,
+            "total": 10,
+            "label": "Собираю строки ВОР",
+        },
+    )
+    assert tool_progress.startswith("event: tool_progress\ndata: ")
+    assert json.loads(tool_progress.split("data: ", 1)[1])["checkpoint_id"] == "cp-1"
 
 
 def test_recovered_stream_answer_is_persisted_for_session_reopen(monkeypatch):
@@ -87,6 +100,30 @@ async def test_chat_stream_emits_tokens_then_final(monkeypatch):
     assert final["answer_contract"]["id"]
     assert final["answer_contract_check"]["status"] in {"pass", "warn"}
     assert body.index("event: token") < body.index("event: final")
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_forwards_canonical_tool_progress(monkeypatch):
+    async def fake_run_chat(req, token_sink=None):
+        await token_sink({
+            "event": "tool_progress",
+            "data": {
+                "call_id": "call-1",
+                "checkpoint_id": "cp-1",
+                "phase": "rows",
+                "completed": 3,
+                "total": 10,
+                "label": "Собираю строки ВОР",
+            },
+        })
+        return {"answer": "ВОР готова", "crag_status": "VERIFIED", "sources": []}
+
+    monkeypatch.setattr(chat_router, "_run_chat", fake_run_chat)
+    response = await chat_stream(ChatRequest(question="Собери ВОР"), _user=None)
+    body = await _drain(response)
+
+    assert "event: tool_progress" in body
+    assert body.index("event: tool_progress") < body.index("event: final")
 
 
 @pytest.mark.asyncio
@@ -257,6 +294,19 @@ async def test_api_post_stream_parses_sse(monkeypatch):
     assert ("token", "вет") in events
     assert events[-1][0] == "final"
     assert events[-1][1]["crag_status"] == "VERIFIED"
+
+
+def test_ui_never_retries_after_progress_started():
+    assert sov_state.should_retry_unstreamed_chat(
+        got_token=False,
+        got_progress=True,
+        stream_error=None,
+    ) is False
+    assert sov_state.should_retry_unstreamed_chat(
+        got_token=False,
+        got_progress=False,
+        stream_error=None,
+    ) is True
 
 
 @pytest.mark.asyncio

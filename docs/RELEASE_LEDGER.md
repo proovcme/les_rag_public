@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              620
-версия Tauri/NSIS:         5.1.620
+номер сборки:              621
+версия Tauri/NSIS:         5.1.621
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       provenance-bound immutable workbook drafts
+dev implementation:       ordinary-chat workbook progress and artifact harvesting
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -103,6 +103,19 @@ dev implementation:       provenance-bound immutable workbook drafts
 > импортирует старый document workflow. Focused workbook/artifact/checkpoint/VOR:
 > 36 passed. Guard regression: 13 passed; `make verify` — 728 collected;
 > `make test` — 728 passed.
+
+> **Build 621 chat workbook integration:** active ordinary chat допускает ровно
+> один выбранный моделью workbook draft через Registry → Broker → Trusted
+> Executor. Broker различает server-owned chat attachment и dataset scope;
+> прогресс идёт SSE-событием `tool_progress` с call/checkpoint identity. Любой
+> такой progress запрещает UI запускать второй `/api/chat`; обрыв предлагает
+> продолжить с checkpoint. Завершённая immutable revision появляется в общей
+> карточке файлов, сохраняется в chat history вместе с attachment/checkpoint и
+> оставляет исходное вложение доступным для correction N+1. Focused
+> broker/workbook/chat/SSE/UI: 159 passed; architecture gate green;
+> `make verify` — 732 collected; `make test` — 732 passed / 5 warnings. Визуально
+> проверен offline-safe shell на 375 px и mobile landscape без horizontal
+> overflow; рабочий runtime этой ветки не развёртывался.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;
