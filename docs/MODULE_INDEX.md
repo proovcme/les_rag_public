@@ -41,8 +41,11 @@
 > surface доступен только administrator; обычный пользователь видит лишь
 > безопасный effective summary без endpoint/secret данных. Unsafe URL получает
 > 422 до записи, stale CAS — 409, отключение bound head требует явного
-> подтверждения. Статус док↔код: ✅ runtime integration + API; GUI — следующий
-> отдельный этап после общего UI/UX-аудита.
+> подтверждения. Статус док↔код: ✅ runtime integration + API + GUI. Build 615
+> добавляет `sovushka/pages/model_connections.py`: shared-UIKit registry с
+> role bindings, requested→effective context, capability evidence и guarded
+> create/copy/edit/test/secret/bind/disable actions; mobile contract закреплён
+> `tests/test_sovushka_model_connections.py`.
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy

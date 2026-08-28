@@ -256,8 +256,10 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert '"response_length": str(response_length_select.value or "standard")' in source
     assert 'aria_label="Действия чата"' in source
     assert 'classes="sov-mobile-chat-menu"' in source
-    for label in ("История", "Документы", "Артефакты", "Новый чат"):
+    for label in ("История", "Артефакты"):
         assert f'"{label}"' in source
+    assert 'ui.menu_item("Новый чат"' not in source
+    assert 'ui.menu_item(\n                                    "Документы"' not in source
     assert ".sov-mobile-chat-menu" in uikit
     assert ".sov-topbar-icon-action {\n    display: none !important;" in uikit
     assert 'aria-label="Дополнительные действия"' not in source
@@ -267,6 +269,7 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert ".sov-mode-guide" in styles
     assert ".sov-mode-example" in styles
     assert 'classes("sov-composer-footer")' in source
+    assert 'aria_label="Отправить"' in source
     assert 'props("rows=1 autogrow borderless")' in source
     assert ".sov-composer-footer" in uikit
     assert ".sov-mode-guidance-disclosure" in uikit

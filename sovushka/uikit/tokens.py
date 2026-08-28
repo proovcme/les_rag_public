@@ -939,6 +939,53 @@ html {
   display: none;
 }
 
+.sov-model-connections-page {
+  width: min(1120px, 100%);
+  margin: 0 auto;
+  padding: 24px;
+  gap: var(--sov-ui-space-3) !important;
+}
+
+.sov-model-page-head,
+.sov-model-connection__head {
+  width: 100%;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sov-ui-space-3);
+}
+
+.sov-model-connections-body {
+  width: 100%;
+  gap: var(--sov-ui-space-3) !important;
+}
+
+.sov-model-role-grid {
+  display: grid;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sov-ui-space-2);
+}
+
+.sov-model-role,
+.sov-model-connection {
+  min-width: 0;
+}
+
+.sov-model-actions {
+  width: 100%;
+  margin-top: var(--sov-ui-space-2);
+  gap: var(--sov-ui-space-2);
+  flex-wrap: wrap;
+}
+
+.sov-model-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-width: 100%;
+  padding: 20px;
+  gap: var(--sov-ui-space-3) !important;
+  font-family: var(--sov-ui-font-prose);
+}
+
 .sov-app-content .sov-composer-actions .q-btn:last-child,
 .sov-app-content .sov-send-btn {
   color: #ffffff !important;
@@ -3562,7 +3609,7 @@ html {
     flex-direction: column;
   }
   .sov-ui-shell .sov-chat-identity {
-    max-width: 156px;
+    max-width: min(230px, calc(100vw - 112px));
   }
   .sov-ui-card,
   .sov-ui-evidence-card {
@@ -3702,8 +3749,31 @@ html {
     min-height: var(--sov-ui-hit) !important;
   }
   .sov-send-btn {
+    width: var(--sov-ui-hit) !important;
+    min-width: var(--sov-ui-hit) !important;
     min-height: var(--sov-ui-hit) !important;
-    padding-inline: 13px !important;
+    padding-inline: 0 !important;
+  }
+  .sov-send-btn .q-btn__content {
+    gap: 0 !important;
+    font-size: 0 !important;
+  }
+  .sov-send-btn .q-icon {
+    font-size: 23px;
+  }
+  .sov-model-connections-page {
+    padding: 12px;
+  }
+  .sov-model-page-head,
+  .sov-model-connection__head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .sov-model-role-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sov-model-actions .sov-ui-button {
+    flex: 1 1 160px;
   }
   .sov-docs-sticky-ask { align-items: stretch; flex-direction: column; }
   .sov-docs-sticky-ask-button { width: 100%; }

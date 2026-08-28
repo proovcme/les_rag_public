@@ -347,6 +347,27 @@ non-GET запросы не перехватываются. Offline shell раз
 локальный draft через `localStorage`, но не отправляет, не ставит в очередь и не
 повторяет запрос после восстановления связи.
 
+## Models registry 0.29.0 / build 615
+
+`Конфигурация → Модели` — единая вертикальная operator surface над safe API
+`/api/model-connections`. Она повторно использует `panel`, `section_heading`,
+`status_badge`, `render_feedback_state`, `text_field`, `select_field` и четыре
+варианта `action_button`; отдельной card/badge-системы нет.
+
+Первый слой показывает назначения `Ответы`, `Эмбеддинги`, `Локальный резерв`,
+затем подключения с человеческой locality, enabled/secret состоянием,
+capability evidence, `Запрошено → Действует`, источником preset и признаком
+перезапуска. Диалог поддерживает blank/template/copy/revision edit и masked
+замену секрета. Remote/private endpoint и отключение назначенной ревизии требуют
+exact confirmation. Browser никогда не вызывает model endpoint и не получает
+secret value. На 390 px роли, connection header и actions переходят в одну
+колонку без page-level overflow.
+
+В мобильном чате полное имя `С.О.В.У.Ш.К.А.` не обрезается, отправка занимает
+одну квадратную icon-action 44×44 с доступным именем, а overflow-меню содержит
+только уникальные действия `История` и `Артефакты`. Переходы к документам и
+новому чату не дублируются внутри этого меню.
+
 ## Границы
 
 Filled КС commands use the same chat backend as the API: a ready download is

@@ -362,6 +362,7 @@ async def classic_admin_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.pages.diag import build_diag
     from sovushka.pages.instrumenty import build_instrumenty
+    from sovushka.pages.model_connections import build_model_connections
     from sovushka.pages.profiles import build_profiles
     from sovushka.pages.mail import build_mail_settings
     from sovushka.pages.samovar import build_samovar
@@ -398,6 +399,7 @@ async def classic_admin_page(request: Request):
         tab_samovar    = tr.get("samovar")
         tab_mail_settings = tr.get("mail_settings")
         tab_instrumenty = tr.get("instrumenty")
+        tab_model_connections = tr.get("model_connections")
         tab_profiles = tr.get("profiles")
         tab_qdrant_viz = tr.get("qdrant_viz")
         tab_volk       = tr.get("volk")
@@ -412,12 +414,14 @@ async def classic_admin_page(request: Request):
                 pass
         tabs.on("update:model-value", _save_tab)
 
-        _last_tab = app.storage.user.get("last_tab", "Состояние")
+        _requested_admin_tab = (request.query_params.get("tab") or "").strip().casefold()
+        _last_tab = "Модели" if _requested_admin_tab == "models" else app.storage.user.get("last_tab", "Состояние")
         _tab_map = {
             "Состояние": tab_diag,
             "Датасеты": tab_samovar,
             "Настройка почты": tab_mail_settings,
             "Инструменты": tab_instrumenty,
+            "Модели": tab_model_connections,
             "Профили": tab_profiles,
             "Визуал": tab_qdrant_viz,
             "Доступ": tab_volk,
@@ -432,6 +436,7 @@ async def classic_admin_page(request: Request):
                 (tab_samovar, lambda: build_samovar()),
                 (tab_mail_settings, lambda: build_mail_settings()),
                 (tab_instrumenty, lambda: build_instrumenty()),
+                (tab_model_connections, lambda: build_model_connections()),
                 (tab_profiles, lambda: build_profiles()),
                 (tab_qdrant_viz, lambda: _build_qdrant_visualizer_panel(visualizer_url)),
                 (tab_volk, lambda: build_volk()),

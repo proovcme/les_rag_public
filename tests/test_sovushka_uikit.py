@@ -181,6 +181,13 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert ".sov-ui-panel--inset" in UIKIT_CSS
 
 
+def test_mobile_chat_keeps_full_identity_and_uses_compact_send_action():
+    assert ".sov-ui-shell .sov-chat-identity {\n    max-width: min(230px, calc(100vw - 112px));" in UIKIT_CSS
+    assert ".sov-send-btn {\n    width: var(--sov-ui-hit) !important;" in UIKIT_CSS
+    assert ".sov-send-btn .q-btn__content {\n    gap: 0 !important;\n    font-size: 0 !important;" in UIKIT_CSS
+    assert ".sov-send-btn .q-icon {\n    font-size: 23px;" in UIKIT_CSS
+
+
 def test_component_registry_stays_small_and_explicit():
     assert BUTTON_VARIANTS == {"primary", "secondary", "quiet", "danger"}
     assert PANEL_VARIANTS == {"plain", "raised", "inset"}

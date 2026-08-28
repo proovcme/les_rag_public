@@ -1081,13 +1081,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ):
                         with ui.menu().classes("sov-mobile-chat-actions"):
                             ui.menu_item("История", on_click=lambda: _toggle_history())
-                            if tabs is not None and tab_documents is not None:
-                                ui.menu_item(
-                                    "Документы",
-                                    on_click=lambda: tabs.set_value(tab_documents),
-                                )
                             ui.menu_item("Артефакты", on_click=lambda: _open_artifacts())
-                            ui.menu_item("Новый чат", on_click=lambda: _clear_chat())
 
             scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
             scope_files_panel.set_visibility(False)
@@ -1374,6 +1368,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             icon="o_send",
                             on_click=lambda: asyncio.create_task(send_chat()),
                             variant="primary",
+                            aria_label="Отправить",
                             classes="sov-send-btn",
                         )
 

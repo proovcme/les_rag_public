@@ -244,6 +244,7 @@ def build_header(
                 tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
                 tab_refs["mail_settings"] = ui.tab("Почта", icon="o_mark_email_read")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
+                tab_refs["model_connections"] = ui.tab("Модели", icon="o_hub")
                 tab_refs["profiles"] = ui.tab("Профили", icon="o_manage_accounts")
                 tab_refs["qdrant_viz"] = ui.tab("Визуал",    icon="o_scatter_plot")
                 tab_refs["volk"]       = ui.tab("Доступ",    icon="o_vpn_key")  # В.О.Л.К. — контур доступа
@@ -272,6 +273,7 @@ def build_header(
             "history": "История",
             "mail_settings": "Настройка почты",
             "instrumenty": "Инструменты",
+            "model_connections": "Модели",
             "profiles": "Профили чата",
             "qdrant_viz": "Визуализация Qdrant",
             "volk": "Доступ",
@@ -288,6 +290,7 @@ def build_header(
             ("history", "История"),
             ("mail_settings", "Настройка почты"),
             ("instrumenty", "Инструменты"),
+            ("model_connections", "Модели"),
             ("profiles", "Профили"),
             ("qdrant_viz", "Визуал"),
             ("volk", "Доступ"),
@@ -384,6 +387,9 @@ def build_header(
                     )
                     ui.label("Настройки").style(
                         "font-size:.95rem;font-weight:800;margin:2px 0 8px;"
+                    )
+                    ui.label("Подключения моделей перенесены в Конфигурация → Модели.").classes(
+                        "sov-ui-section-detail"
                     )
 
                     def _set_acronym_expansions(event) -> None:
@@ -886,7 +892,7 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
-                ui.button("Настройки", icon="o_settings", on_click=lambda: settings_dialog.open()).props(
+                ui.button("Настройки", icon="o_settings", on_click=lambda: ui.navigate.to("/les/classic?tab=models")).props(
                     'flat dense no-caps aria-label="Настройки"'
                 ).classes("sov-ui-header-action").style("color:var(--dim);font-size:.62rem;")
 
