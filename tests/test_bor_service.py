@@ -10,6 +10,7 @@ from proxy.services.bor_service import (
     collect_spec_rows,
     generate_bor,
     normalize_unit,
+    source_rows_to_vor_xlsx,
 )
 
 
@@ -162,6 +163,28 @@ def test_generate_bor_empty_dataset(tmp_path):
     result = generate_bor("missing", storage_root=tmp_path, output_dir=tmp_path / "out")
     assert result["bor_lines"] == 0
     assert result["xlsx_path"] is None
+
+
+def test_source_rows_to_vor_xlsx_keeps_rows_quantities_units_and_locators(tmp_path):
+    rows = [
+        _spec_row(pos="7", unit="шт.", qty=2.75),
+        _spec_row(pos="8", name="Клапан", unit="", qty=None),
+    ]
+    target = tmp_path / "source-vor.xlsx"
+
+    assert source_rows_to_vor_xlsx(rows, target) == 2
+
+    from openpyxl import load_workbook
+
+    workbook = load_workbook(target, data_only=True, read_only=True)
+    try:
+        exported = list(workbook.active.iter_rows(min_row=4, values_only=True))
+    finally:
+        workbook.close()
+    assert exported[0][4] == "шт."
+    assert exported[0][5] == pytest.approx(2.75)
+    assert exported[0][6] == "spec_ov.xlsx#7"
+    assert exported[1][5] is None
 
 
 def test_bor_service_uses_no_llm():

@@ -182,6 +182,47 @@ def bor_to_xlsx(lines: list[BorLine], output_path: Path, title: str = "Ведо�
     return len(lines)
 
 
+def source_rows_to_vor_xlsx(
+    rows: list[dict], output_path: Path, *, title: str = "Ведомость объёмов работ"
+) -> int:
+    """Render source rows without grouping, changing quantities or losing provenance."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "ВОР"
+    sheet.append([title])
+    sheet["A1"].font = Font(bold=True, size=13)
+    sheet.append([])
+    headers = ["№", "Раздел", "Наименование", "Код/Шифр", "Ед. изм.", "Кол-во", "Источник"]
+    sheet.append(headers)
+    for cell in sheet[3]:
+        cell.font = Font(bold=True)
+        cell.alignment = Alignment(wrap_text=True)
+
+    for index, row in enumerate(rows, 1):
+        source = str(row.get("source_file") or "").strip()
+        position = str(row.get("pos") or row.get("position") or "").strip()
+        locator = f"{source}#{position}" if source and position else source
+        sheet.append([
+            index,
+            str(row.get("section") or "").strip(),
+            str(row.get("name") or row.get("work_name") or "").strip(),
+            str(row.get("code") or row.get("mark") or "").strip(),
+            str(row.get("unit") or "").strip(),
+            row.get("qty"),
+            locator,
+        ])
+
+    for column, width in {"A": 6, "B": 18, "C": 60, "D": 16, "E": 10, "F": 12, "G": 42}.items():
+        sheet.column_dimensions[column].width = width
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    workbook.save(output_path)
+    workbook.close()
+    return len(rows)
+
+
 def generate_bor(
     dataset_id: str,
     storage_root: Path = Path("storage/datasets"),

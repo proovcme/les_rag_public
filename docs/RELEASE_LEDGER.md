@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              619
-версия Tauri/NSIS:         5.1.619
+номер сборки:              620
+версия Tauri/NSIS:         5.1.620
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       canonical workbook tool contracts
+dev implementation:       provenance-bound immutable workbook drafts
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -93,6 +93,16 @@ dev implementation:       canonical workbook tool contracts
 > Ollama и MCP получают schema-only projection одной записи. Новые factory
 > seeds включают tools, существующие active profiles/session bindings не
 > меняются. Focused contract/projection/profile: 35 passed; architecture green.
+
+> **Build 620 workbook handlers:** VOR-handler проверяет opaque attachment ID,
+> size/SHA и тип, переносит строки/единицы/количества/source locator без свода и
+> публикует XLSX как immutable revision. Пустые unit/quantity возвращаются как
+> `missing`, не превращаются в нули. Повтор completed checkpoint не запускает
+> адаптер снова; correction создаёт revision N+1; hash drift и model-supplied
+> prices/totals fail closed. LSR boundary требует явный application-adapter и не
+> импортирует старый document workflow. Focused workbook/artifact/checkpoint/VOR:
+> 36 passed. Guard regression: 13 passed; `make verify` — 728 collected;
+> `make test` — 728 passed.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

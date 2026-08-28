@@ -37,6 +37,9 @@
 ## Где в коде
 
 - Сервис: `proxy/services/spec_to_bor_service.py` (без LLM).
+- Канонический workbook tool использует `bor_service.source_rows_to_vor_xlsx`:
+  это отдельный lossless-экспорт без свода — порядок, единицы, количества и
+  `source_file#position` переносятся 1:1, пустые значения остаются пустыми.
 - API: `GET /api/bor/{dataset_id}/from-spec` (превью), `POST …/from-spec/generate` (xlsx),
   `GET …/from-spec/download`.
 - GUI: вкладка «Инструменты» → карта ВОР, переключатель «Свод / Работы из спецификации (Ф9)».

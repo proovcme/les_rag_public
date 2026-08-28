@@ -38,6 +38,32 @@ def route(question: str) -> None:
     assert "FORCED_WORKBOOK_CALL" in _codes(tmp_path)
 
 
+def test_rejects_forced_workbook_language_membership(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/bad.py",
+        """def route(question: str) -> None:
+    if "лср" in question.lower():
+        call("build_lsr_workbook")
+""",
+    )
+
+    assert "FORCED_WORKBOOK_CALL" in _codes(tmp_path)
+
+
+def test_allows_schema_membership_assertion_near_workbook_lookup(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "tests/test_projection.py",
+        """def test_projection(registry, projected):
+    registry.require("build_vor_workbook")
+    assert "handler" not in projected
+""",
+    )
+
+    assert "FORCED_WORKBOOK_CALL" not in _codes(tmp_path)
+
+
 def test_rejects_implicit_profile_activation(tmp_path: Path) -> None:
     _write(
         tmp_path,

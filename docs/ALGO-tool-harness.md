@@ -1,12 +1,27 @@
 # ALGO-tool-harness — controlled tools for LES
 
-## Canonical workbook contracts (0.29.0 / build 619)
+## Canonical workbook execution (0.29.0 / build 620)
 
 Реестр содержит ровно `build_lsr_workbook` и `build_vor_workbook` версии
 `1.0.0` с effect `draft`, обязательным idempotency key, server-owned attachment
 scope и результатом `les.workbook_tool_result.v1`. Модель сама выбирает вызов;
 regex forcing и автоматическая активация профиля отсутствуют. OpenAI,
 OpenAI-compatible, Ollama и MCP получают schema-only проекцию одной записи.
+
+`WorkbookExecutionContext` связывает вызов с session/idempotency key,
+model-decision revision, профилем, моделью и preset. Перед генерацией сервер
+повторно проверяет ID, SHA-256 и тип вложения. Один idempotency key продолжает
+тот же durable checkpoint; завершённый повтор возвращает уже опубликованную
+revision и не запускает адаптер второй раз. Исправление с `parent_revision_id`
+создаёт N+1, не меняя N.
+
+VOR-адаптер переносит исходные строки, единицы, количества и locator в XLSX
+без группировки и подстановки нулей; пустые unit/quantity выходят как `missing`.
+LSR запускается только через явно переданный application-adapter: этот boundary
+не импортирует старый document workflow. Аргументы модели не могут передать
+готовые цены, суммы или рассчитанные строки. Публичный результат содержит
+artifact/revision metadata, SHA, progress, missing/blockers и download URL, но
+не filesystem path.
 
 ## Назначение
 

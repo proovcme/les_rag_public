@@ -22,6 +22,16 @@
 > fail-closed требует точного 9B acceptance receipt и явного действия оператора;
 > установка обновления ничего не активирует автоматически.
 
+> **0.29.0 workbook execution (build 620):** `build_vor_workbook` проверяет
+> server-owned attachment ID+SHA, сохраняет исходные XLSX-строки/количества и
+> locators без догадок, публикует append-only artifact revision и возобновляет
+> durable checkpoint по idempotency key. `build_lsr_workbook` принимает только
+> явно подключённый application-adapter; готовые цены/суммы/строки из tool args
+> запрещены. Точки входа: `proxy/services/{workbook_tool_service,bor_service,
+> artifact_revision_service,workflow_checkpoint_service}.py`.
+> Architecture guard отличает реальный language matching по question/query/
+> prompt/message/text от обычных membership-проверок JSON schema.
+
 > **0.29.0 model-connection runtime (build 610):** ordinary free и evidence
 > chat в `active` разрешают точную immutable ревизию роли `answer` и вызывают
 > единый OpenAI-compatible transport. Единственный fallback — точная привязка
@@ -144,7 +154,7 @@
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| smeta/estimator-tools | Planned `0.28.3`: estimator-only inspect/status/VOR-draft/LSR-draft поверх существующего application-adapter; model-owned selection, compact 9B result, SSE heartbeat и checkpoint/resume; без hidden routing, auto-activation и правок `smeta_core` | planned `proxy/services/estimator_tool_service.py`; existing `tool_harness_service.py`, `smeta_chat_application_service.py`, chat/profile routes | [design](superpowers/specs/2026-08-25-estimator-lsr-tool-slice-design.md) | 📋 |
+| workbook-tools | Канонические `build_lsr_workbook` / `build_vor_workbook`: server-owned attachment, required idempotency, durable checkpoint, immutable artifact lineage и bounded result без filesystem path. VOR сохраняет source rows 1:1; LSR требует явный application-adapter. Profile сам не активируется | `proxy/services/{workbook_tool_service,artifact_revision_service,workflow_checkpoint_service,bor_service}.py`; `proxy/routers/artifacts.py` | [ALGO-tool-harness](ALGO-tool-harness.md) | ✅ |
 | smeta/model-quality | Воспроизводимый live Qwen↔Gemma A/B на одном canonical XLSX/PDF→ЛСР workflow: одинаковые prompt, corpus, tools, seed, limits и начальное состояние; per-row calculated/partial/missing, tool calls/repeats, **stage_latency** (catalog/search/read/bind/llm p50/p95), unit/volume/provenance integrity, hierarchical-route trace и реальный checkpoint/resume. `--resume-run` продолжает существующий run только после совпадения source SHA, model profiles и fixed contract. Главный сравнительный gate вместо golden/ranx. Профессиональная правильность — только по явному `les.smeta.qrels.v1` | `tools/smeta_model_quality_benchmark.py`; `tests/test_smeta_model_quality_benchmark.py` | [modules/smeta-core.md](modules/smeta-core.md) · [BACKLOG_RAG_EXCEL_PDF.md](BACKLOG_RAG_EXCEL_PDF.md) | ✅ |
 | core/modules | лёгкий реестр профессиональных модулей LES: smeta, normcontrol, BIM/QTO, docs_review, procurement, contracts, project RAG; router выбирает модуль, но не решает предметную область | `les_module_service`, `active_state_service`, `scoped_rag_builder`, `skill_snippet_registry`, `tool_trace_policy` | [ALGO-routing.md](ALGO-routing.md) | ✅ |
 | core/chat-evidence | application-граница общего model-first RAG после scope/route и typed tools: named dense+sparse native RRF → evidence packet → governed tool-decision/answer packets → validation → sources/trace/history. Один capacity-bounded preset ограничивает shortlist/batch и оба provider calls; profile/request обязательны, typed memory/notebook остаются advisory/navigation, evidence/source-map — доказательным слоем. Required overflow блокирует provider call; redacted trace не хранит prompt/result text. Default shadow повторно использует ту же selector-выдачу, валидирует максимум один canonical call без persistence и сохраняет legacy answer | `proxy/services/chat_evidence_application_service.py`, `proxy/services/{context_governor,typed_memory_projection,model_execution_preset,llm_transport_profile}_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service`, `saferag_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [ALGO-context-memory.md](ALGO-context-memory.md) | ✅ |

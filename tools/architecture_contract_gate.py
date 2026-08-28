@@ -192,6 +192,15 @@ def _function_scope(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> ast.AST:
 
 
 def _has_language_matcher(function: ast.AST) -> bool:
+    language_subject_markers = ("question", "query", "prompt", "message", "user_input", "text")
+
+    def is_language_subject(node: ast.AST) -> bool:
+        return any(
+            isinstance(item, ast.Name)
+            and any(marker in item.id.casefold() for marker in language_subject_markers)
+            for item in ast.walk(node)
+        )
+
     for node in ast.walk(function):
         if isinstance(node, ast.Call) and _call_name(node) in {
             "re.search",
@@ -200,7 +209,11 @@ def _has_language_matcher(function: ast.AST) -> bool:
             "re.compile",
         }:
             return True
-        if isinstance(node, ast.Compare) and any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops):
+        if (
+            isinstance(node, ast.Compare)
+            and any(isinstance(op, (ast.In, ast.NotIn)) for op in node.ops)
+            and is_language_subject(node)
+        ):
             return True
     return False
 
