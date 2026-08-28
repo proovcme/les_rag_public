@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              607
-версия Tauri/NSIS:         5.1.607
+номер сборки:              608
+версия Tauri/NSIS:         5.1.608
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       model connection registry + exact role resolver
+dev implementation:       universal model connections through common transport
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -251,6 +251,16 @@ dev implementation:       model connection registry + exact role resolver
 > execution preset. Focused resolver/registry/security/secret/capability/preset
 > contract: 65 passed. No live endpoint was contacted and the ordinary chat
 > route remains unchanged.
+
+> **0.29.0 provider-neutral inference transport (build 608):** one bounded
+> OpenAI-compatible transport now consumes only `ResolvedModelConnection` for
+> chat, streaming and embeddings. Display/provider labels cannot alter request
+> behavior; request variants come from the recorded capability snapshot.
+> Authorization is resolved immediately before use, redirects and connected
+> peer mismatches fail closed, response bodies are bounded, tool calls stay
+> structured and embedding order follows server indices. Focused transport
+> contract: 12 passed. Ordinary chat and embedding call sites are not switched
+> yet; no live endpoint, deploy or publication was used.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
