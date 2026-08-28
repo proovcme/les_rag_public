@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              605
-версия Tauri/NSIS:         5.1.605
+номер сборки:              606
+версия Tauri/NSIS:         5.1.606
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       model connection registry + endpoint/secret security boundary
+dev implementation:       model connection registry + safe capability evidence
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -230,6 +230,16 @@ dev implementation:       model connection registry + endpoint/secret security b
 > `configured | missing | not_required` and never exposes a value through repr
 > or receipt. Focused security/secret contract: 25 passed. Live endpoints and
 > user `.env` were not accessed; runtime, deploy and publication unchanged.
+
+> **0.29.0 model capability evidence (build 606):** explicit bounded probes
+> record `supported | unsupported | unknown` for models, chat, streaming,
+> client tools, JSON Schema, Responses, embeddings, token count and rerank.
+> Unrequested features remain unknown; redirects, oversized responses and
+> transport failures cannot become support. Snapshot keeps only safe status/
+> endpoint evidence, expires after 24h and rejects template-only evidence for
+> active requirements. Probe output text is never persisted. Focused
+> capability+registry contract: 16 passed. No live endpoint was contacted and
+> no runtime route was changed.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
