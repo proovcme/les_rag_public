@@ -32,18 +32,21 @@
 > Architecture guard отличает реальный language matching по question/query/
 > prompt/message/text от обычных membership-проверок JSON schema.
 
-> **0.29.0 workbook live-acceptance (build 622):** opt-in
+> **0.29.0 workbook live-acceptance (build 623):** opt-in
 > `tools/live_workbook_acceptance.py` проверяет реальный ordinary-chat contract
 > через `/api/chat/attachments`, `/api/chat/stream` и authenticated
 > artifact metadata/download. Receipt содержит только redacted `live_runtime`:
-> exact version commit/build, profile/model/preset, attachment/provenance/checkpoint
-> lineage, immutable N+1 parent, complete monotonic SSE progress, readable XLSX
-> и downloaded SHA-256; missing/blockers сохраняются только как counts with
+> exact full 40-hex version commit/positive build/clean aligned runtime,
+> profile/model/preset, attachment/provenance/checkpoint lineage, immutable N+1
+> parent, complete monotonic SSE progress, readable XLSX with two-cell header
+> and data row, и downloaded SHA-256; missing/blockers сохраняются только как counts with
 > exact typed receipt allowlists. Guarded `candidate_acceptance` доступен лишь root-admin в отдельном
 > process-CWD, совпадающем с read-only Danger
 > `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`; candidate upload is guarded before
 > persistence and all effective workbook state stays below it. Public route остаётся shadow,
 > receipt не подделывается: fake transport имеет только nonpersistent `contract_test`.
+> Hermetic ASGI check uses real multipart/SSE/artifact route composition but is
+> not model-quality evidence.
 > Статус: 🟡 **PENDING: live user-owned input/model acceptance**;
 > offline contracts не являются quality evidence.
 

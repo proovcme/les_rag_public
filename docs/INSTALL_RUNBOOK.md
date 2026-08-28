@@ -354,12 +354,14 @@ $env:LES_LIVE_WORKBOOK_ACCEPTANCE_API_KEY = '<provided out of band>'
 make live-workbook-acceptance LIVE_WORKBOOK_ACCEPTANCE_ARGS='--attachment "C:\real-user-owned\source.xlsx" --base-url http://127.0.0.1:8050 --profile-revision "profile:immutable-revision" --model-preset qwen-9b --out artifacts\live-workbook-acceptance.json'
 ```
 
-The runner first binds the receipt to `/api/version` commit and positive build,
+The runner first binds the receipt to `/api/version` 40-hex `git_commit_full`,
+positive build, `repo_dirty=false` and `runtime_alignment=aligned`,
 then uses the public authenticated attachment and artifact APIs plus the
 ordinary chat SSE route. It writes a redacted `live_runtime` receipt only after
 revision 1 and correction revision 2 have distinct downloaded SHA-256 values,
 exact parent lineage, attachment provenance, profile/model/preset identity,
-checkpoint-bound complete monotonic progress, readable non-empty XLSX files,
+checkpoint-bound complete monotonic progress, readable XLSX files with a
+visible two-cell header and data row beneath it,
 `missing_count`/`blocker_count`, and the configured elapsed deadline. The
 receipt has an exact typed allowlist and never preserves the source runtime
 wording for either array. Repeat with

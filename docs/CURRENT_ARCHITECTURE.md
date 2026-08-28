@@ -62,8 +62,10 @@
   binding → `/api/chat/stream` SSE → metadata /
   download immutable revisions 1 и 2. Он fail-closed проверяет identity,
   attachment/provenance/checkpoint lineage, hash download, missing/blockers и
-  elapsed/deadline time; он требует readable XLSX с visible meaningful sheet,
-  checkpoint-bound monotonic SSE progress и runtime commit/build. JSON receipt
+  elapsed/deadline time; он требует readable XLSX с visible sheet, header из
+  минимум двух populated cells и data row beneath it, checkpoint-bound
+  monotonic SSE progress и verified full runtime commit/build/alignment
+  (`repo_dirty=false`). JSON receipt
   redacted и имеет только exact typed allowlisted fields с
   `evidence_kind=live_runtime`.
   В receipt сохраняются только счётчики `missing`/`blockers`, не их свободный
@@ -77,6 +79,8 @@
   attachment/meta/idempotency/workbook artifact paths должны оставаться под
   isolated CWD. Fake contract transport выдаёт только non-persistent
   `contract_test`, никогда не `live_runtime` receipt.
+  Hermetic ASGI contract проверяет реальные multipart/SSE/artifact router
+  boundaries; это не доказательство качества модели.
 
 ## Проверено на context checkpoint
 

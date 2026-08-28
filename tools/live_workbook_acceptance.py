@@ -48,6 +48,7 @@ _RELATIVE_SOURCE_PATH_RE = re.compile(
     r"(?:^|[\s'\"])(?:\.?[\\/])?(?:data|storage|rag_content|tests|attachments|workspace)[\\/]",
     re.IGNORECASE,
 )
+_FULL_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 
 
 class LiveAcceptanceError(ValueError):
@@ -196,16 +197,25 @@ def _runtime_version(client: HttpClient, config: AcceptanceConfig) -> dict[str, 
     payload = response.json()
     if not isinstance(payload, dict):
         raise LiveAcceptanceError("runtime version was not an object")
-    source_commit = _non_empty(payload.get("git_commit"), "runtime source commit")
-    if source_commit.casefold() == "unknown":
-        raise LiveAcceptanceError("runtime source commit is unavailable")
+    source_commit_full = str(payload.get("git_commit_full") or "").strip()
+    if not _FULL_COMMIT_RE.fullmatch(source_commit_full):
+        raise LiveAcceptanceError("runtime full source commit is invalid")
     build_number = payload.get("build_number")
-    if not isinstance(build_number, int) or build_number <= 0:
+    if isinstance(build_number, bool) or not isinstance(build_number, int) or build_number <= 0:
         raise LiveAcceptanceError("runtime build number is invalid")
-    return {"source_commit": source_commit, "build_number": build_number}
+    if payload.get("repo_dirty") is not False:
+        raise LiveAcceptanceError("runtime repository is dirty")
+    alignment = payload.get("runtime_alignment")
+    if not isinstance(alignment, dict) or alignment.get("status") != "aligned":
+        raise LiveAcceptanceError("runtime alignment is not verified")
+    return {
+        "source_commit_full": source_commit_full.lower(),
+        "build_number": build_number,
+        "runtime_alignment": "aligned",
+    }
 
 
-def _validate_downloaded_xlsx(content: bytes) -> None:
+def _validate_downloaded_xlsx(content: bytes) -> dict[str, int]:
     """Reject a hash-valid blob that is not a minimally meaningful workbook."""
     try:
         workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
@@ -215,11 +225,33 @@ def _validate_downloaded_xlsx(content: bytes) -> None:
         visible = [sheet for sheet in workbook.worksheets if sheet.sheet_state == "visible"]
         if not visible:
             raise LiveAcceptanceError("downloaded XLSX has no visible worksheet")
-        if not any(
-            any(cell is not None for row in sheet.iter_rows(values_only=True) for cell in row)
-            for sheet in visible
-        ):
-            raise LiveAcceptanceError("downloaded XLSX has no meaningful cells")
+        template_seen = False
+        for sheet in visible:
+            rows = iter(sheet.iter_rows(values_only=True))
+            for row in rows:
+                header_cells = sum(
+                    cell is not None and (not isinstance(cell, str) or bool(cell.strip()))
+                    for cell in row
+                )
+                if header_cells < 2:
+                    continue
+                template_seen = True
+                data_rows = sum(
+                    any(
+                        cell is not None and (not isinstance(cell, str) or bool(cell.strip()))
+                        for cell in data_row
+                    )
+                    for data_row in rows
+                )
+                if data_rows:
+                    return {
+                        "visible_sheet_count": len(visible),
+                        "header_cell_count": header_cells,
+                        "data_row_count": data_rows,
+                    }
+        if template_seen:
+            raise LiveAcceptanceError("downloaded XLSX has no populated data row beneath its header")
+        raise LiveAcceptanceError("downloaded XLSX has no nontrivial header")
     finally:
         workbook.close()
 
@@ -270,7 +302,7 @@ def _downloaded_revision(
     sha256 = _hex_sha(metadata.get("sha256"), "artifact SHA-256")
     if download_sha256 != sha256:
         raise LiveAcceptanceError("downloaded artifact SHA-256 differs from metadata")
-    _validate_downloaded_xlsx(download_response.content)
+    xlsx_structure = _validate_downloaded_xlsx(download_response.content)
     return {
         "artifact_id": _non_empty(metadata.get("artifact_id"), "artifact ID"),
         "revision_id": revision_id,
@@ -289,6 +321,7 @@ def _downloaded_revision(
         # without persisting their free text.
         "missing_count": len(missing),
         "blocker_count": len(blockers),
+        **xlsx_structure,
     }
 
 
@@ -429,7 +462,7 @@ def validate_report(
         )
         _only_keys(
             runtime,
-            frozenset({"source_commit", "build_number", "profile_revision_id", "model_preset", "observed_model_preset", "model_identity"}),
+            frozenset({"source_commit_full", "build_number", "runtime_alignment", "profile_revision_id", "model_preset", "observed_model_preset", "model_identity"}),
             "runtime",
         )
         _only_keys(attachment, frozenset({"attachment_id", "sha256"}), "attachment")
@@ -437,13 +470,17 @@ def validate_report(
             "artifact_id", "revision_id", "revision_no", "parent_revision_id", "sha256",
             "download_sha256", "byte_size", "source_scope", "profile_revision_id",
             "model_identity", "model_preset", "decision_checkpoint_id", "missing_count",
-            "blocker_count",
+            "blocker_count", "visible_sheet_count", "header_cell_count", "data_row_count",
         })
         _only_keys(first, revision_fields, "revision")
         _only_keys(second, revision_fields, "revision")
         profile_revision_id = _non_empty(runtime.get("profile_revision_id"), "runtime profile revision")
-        _non_empty(runtime.get("source_commit"), "runtime source commit")
+        source_commit_full = _non_empty(runtime.get("source_commit_full"), "runtime full source commit")
+        if not _FULL_COMMIT_RE.fullmatch(source_commit_full):
+            raise LiveAcceptanceError("runtime full source commit is invalid")
         _positive_int(runtime.get("build_number"), "runtime build number")
+        if runtime.get("runtime_alignment") != "aligned":
+            raise LiveAcceptanceError("runtime alignment is invalid")
         model_identity = _non_empty(runtime.get("model_identity"), "runtime model identity")
         model_preset = _non_empty(runtime.get("model_preset"), "runtime model preset")
         observed_preset = _non_empty(runtime.get("observed_model_preset"), "observed model preset")
@@ -474,6 +511,10 @@ def validate_report(
                 raise LiveAcceptanceError("acceptance report must remain redacted")
             for key in ("missing_count", "blocker_count"):
                 _nonnegative_int(revision.get(key), f"revision {expected_no} {key}")
+            _positive_int(revision.get("visible_sheet_count"), f"revision {expected_no} visible sheet count")
+            if _positive_int(revision.get("header_cell_count"), f"revision {expected_no} header cell count") < 2:
+                raise LiveAcceptanceError(f"revision {expected_no} header cell count is invalid")
+            _positive_int(revision.get("data_row_count"), f"revision {expected_no} data row count")
         if first.get("sha256") == second.get("sha256"):
             raise LiveAcceptanceError("immutable correction must change the workbook hash")
         if second.get("parent_revision_id") != first.get("revision_id"):

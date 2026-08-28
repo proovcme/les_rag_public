@@ -5,6 +5,11 @@ from pathlib import Path
 
 import openpyxl
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from proxy.security import ADMIN_ROLE, USER_ROLE, RequestUser, require_user
+from proxy.services.artifact_revision_service import ArtifactRevisionRequest, ArtifactRevisionStore
 
 from tools.live_workbook_acceptance import (
     AcceptanceConfig,
@@ -32,6 +37,9 @@ def _revision(*, revision_id: str, revision_no: int, sha256: str, parent_revisio
         "decision_checkpoint_id": f"cp-{revision_no}",
         "missing_count": 0,
         "blocker_count": 0,
+        "visible_sheet_count": 1,
+        "header_cell_count": 2,
+        "data_row_count": 1,
     }
 
 
@@ -43,8 +51,9 @@ def report() -> dict:
         "schema": "les.live_workbook_acceptance.v1",
         "evidence_kind": "live_runtime",
         "runtime": {
-            "source_commit": "6b4952d9",
+            "source_commit_full": "a" * 40,
             "build_number": 622,
+            "runtime_alignment": "aligned",
             "profile_revision_id": "profile:7",
             "model_preset": "qwen-9b",
             "observed_model_preset": "qwen-9b-restrictive",
@@ -190,8 +199,20 @@ def _xlsx_bytes(value: str) -> bytes:
     workbook = openpyxl.Workbook()
     worksheet = workbook.active
     worksheet.title = "Acceptance"
-    worksheet.append(["status"])
-    worksheet.append([value])
+    worksheet.append(["status", "revision"])
+    worksheet.append([value, 1])
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
+def _xlsx_with_rows(rows: list[list[object]]) -> bytes:
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Acceptance"
+    for row in rows:
+        worksheet.append(row)
     stream = BytesIO()
     workbook.save(stream)
     workbook.close()
@@ -207,7 +228,13 @@ class _FakeHttpClient:
     def request(self, method: str, url: str, **kwargs):
         self.requests.append((method, url, kwargs))
         if url.endswith("/api/version"):
-            return _FakeResponse(payload={"git_commit": "6b4952d9", "build_number": 622})
+            return _FakeResponse(payload={
+                "git_commit": "6b4952d9",
+                "git_commit_full": "a" * 40,
+                "build_number": 622,
+                "repo_dirty": False,
+                "runtime_alignment": {"status": "aligned"},
+            })
         if url.endswith("/api/chat/attachments"):
             return _FakeResponse(payload={
                 "attachment_id": "read_123456abcdef",
@@ -335,6 +362,28 @@ def test_contract_exercise_rejects_hash_valid_non_xlsx_artifact(tmp_path):
         exercise_contract(config, client=client)
 
 
+@pytest.mark.parametrize(
+    ("rows", "message"),
+    (([["status", "revision"]], "data row"), ([["only"]], "header")),
+)
+def test_contract_exercise_rejects_template_or_one_cell_xlsx(tmp_path, rows, message):
+    source = tmp_path / "user-owned.xlsx"
+    source.write_bytes(b"source")
+    client = _FakeHttpClient()
+    client._first = _xlsx_with_rows(rows)
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+
+    with pytest.raises(LiveAcceptanceError, match=message):
+        exercise_contract(config, client=client)
+
+
 def test_contract_exercise_rejects_incomplete_checkpoint_progress(tmp_path):
     source = tmp_path / "user-owned.xlsx"
     source.write_bytes(b"source")
@@ -380,6 +429,176 @@ def test_contract_exercise_rejects_elapsed_deadline(monkeypatch, tmp_path):
 
     with pytest.raises(LiveAcceptanceError, match="configured deadline"):
         exercise_contract(config, client=_FakeHttpClient())
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("git_commit_full", "a" * 12, "full source commit"),
+        ("git_commit_full", "unknown", "full source commit"),
+        ("repo_dirty", True, "dirty"),
+        ("runtime_alignment", {"status": "divergent"}, "alignment"),
+    ),
+)
+def test_contract_exercise_rejects_unverified_runtime_identity(tmp_path, field, value, message):
+    source = tmp_path / "user-owned.xlsx"
+    source.write_bytes(b"source")
+    client = _FakeHttpClient()
+    original_request = client.request
+
+    def invalid_version(method, url, **kwargs):
+        response = original_request(method, url, **kwargs)
+        if url.endswith("/api/version"):
+            response._payload[field] = value
+        return response
+
+    client.request = invalid_version
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+
+    with pytest.raises(LiveAcceptanceError, match=message):
+        exercise_contract(config, client=client)
+
+
+def test_asgi_contract_exercises_guarded_multipart_sse_and_artifact_boundaries(monkeypatch, tmp_path):
+    """Hermetic HTTP boundary evidence, not a model-quality acceptance."""
+    from proxy.routers import artifacts, chat, datasets, runtime
+    from proxy.services import request_idempotency_service
+
+    monkeypatch.chdir(tmp_path)
+    for key, path in {
+        "LES_CANONICAL_ACCEPTANCE_STATE_ROOT": tmp_path,
+        "LES_CHAT_ATTACHMENT_ROOT": tmp_path / "storage" / "chat_attachments",
+        "RAG_META_DB_PATH": tmp_path / "data" / "les_meta.db",
+        "LES_IDEMPOTENCY_DB": tmp_path / "storage" / "request_idempotency.db",
+    }.items():
+        monkeypatch.setenv(key, str(path))
+    monkeypatch.setattr(
+        request_idempotency_service,
+        "DEFAULT_DB_PATH",
+        tmp_path / "storage" / "request_idempotency.db",
+    )
+    attachment_id = "read_123456abcdef"
+    source = tmp_path / "real-source.xlsx"
+    source.write_bytes(_xlsx_bytes("source"))
+    source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+    store = ArtifactRevisionStore(tmp_path / "storage" / "artifacts" / "meta.db", tmp_path / "storage" / "artifacts" / "files")
+    first_file = tmp_path / "first.xlsx"
+    second_file = tmp_path / "second.xlsx"
+    first_file.write_bytes(_xlsx_bytes("first"))
+    second_file.write_bytes(_xlsx_bytes("second"))
+    request_base = {
+        "artifact_kind": "vor_workbook",
+        "source_scope": (f"attachment:{attachment_id}",),
+        "profile_revision_id": "profile:7",
+        "model_identity": "qwen3.5:9b",
+        "model_preset": "qwen-9b-restrictive",
+        "tool_calls": (),
+        "missing": (),
+        "blockers": (),
+    }
+    first = store.create_revision(ArtifactRevisionRequest(
+        file_path=first_file, decision_checkpoint_id="cp-1", parent_revision_id=None, **request_base,
+    ))
+    second = store.create_revision(ArtifactRevisionRequest(
+        file_path=second_file, decision_checkpoint_id="cp-2", parent_revision_id=first.revision_id, **request_base,
+    ))
+    monkeypatch.setattr(artifacts, "artifact_revision_store", store)
+    monkeypatch.setattr(runtime, "version_info", lambda: {
+        "git_commit": "a" * 12,
+        "git_commit_full": "a" * 40,
+        "build_number": 623,
+        "repo_dirty": False,
+        "runtime_alignment": {"status": "aligned"},
+    })
+    saved_upload_names: list[str] = []
+
+    async def save_upload_in_isolated_root(file, **_kwargs):
+        saved_upload_names.append(file.filename)
+        target = tmp_path / "storage" / "uploads" / str(file.filename)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(await file.read())
+        return target
+
+    async def prepared_attachment(_temp_path, _original_name, **_kwargs):
+        return {"attachment_id": attachment_id, "mode": "read", "name": "real-source.xlsx", "chars": 1, "text": "x", "truncated": False}
+
+    revisions = iter((first, second))
+
+    async def model_boundary(_request, token_sink=None):
+        revision = next(revisions)
+        await token_sink({"event": "tool_progress", "data": {"checkpoint_id": revision.decision_checkpoint_id, "completed": 1, "total": 1}})
+        return {
+            "artifact": revision.to_dict(),
+            "attachment_retry": {"attachment_id": attachment_id},
+            "checkpoint": {"checkpoint_id": revision.decision_checkpoint_id, "status": "complete"},
+            "source": {"attachment_id": attachment_id, "sha256": source_sha256},
+            "model_connection": {"model_id": "qwen3.5:9b"},
+        }
+
+    monkeypatch.setattr(datasets, "save_upload_tmp", save_upload_in_isolated_root)
+    monkeypatch.setattr(datasets, "_prepare_read_attachment", prepared_attachment)
+    monkeypatch.setattr(chat, "_run_chat_with_provider", model_boundary)
+    app = FastAPI()
+    app.include_router(runtime.router)
+    app.include_router(artifacts.router)
+    app.include_router(datasets.search_router)
+    app.include_router(chat.router)
+    current_user = {"value": RequestUser(role=USER_ROLE, source="api_key")}
+    app.dependency_overrides[require_user] = lambda: current_user["value"]
+    test_client = TestClient(app)
+
+    rejected = test_client.request(
+        "POST",
+        "/api/chat/attachments",
+        files={"file": ("real-source.xlsx", source.read_bytes(), "application/octet-stream")},
+        data={"candidate_acceptance": "true"},
+    )
+    assert rejected.status_code == 403
+    assert saved_upload_names == []
+
+    current_user["value"] = RequestUser(role=ADMIN_ROLE, source="trusted_network")
+
+    class TrackingClient:
+        def __init__(self):
+            self.calls: list[tuple[str, str, object]] = []
+
+        def request(self, method, url, **kwargs):
+            response = test_client.request(method, url, **kwargs)
+            self.calls.append((method, url, response))
+            return response
+
+    tracking = TrackingClient()
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://testserver",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+    report = exercise_contract(config, client=tracking)
+
+    assert report["runtime"] == {
+        "source_commit_full": "a" * 40,
+        "build_number": 623,
+        "runtime_alignment": "aligned",
+        "profile_revision_id": "profile:7",
+        "model_preset": "qwen-9b",
+        "observed_model_preset": "qwen-9b-restrictive",
+        "model_identity": "qwen3.5:9b",
+    }
+    assert saved_upload_names == ["real-source.xlsx"]
+    stream_responses = [response for method, url, response in tracking.calls if method == "POST" and url.endswith("/api/chat/stream")]
+    assert len(stream_responses) == 2
+    assert all("event: tool_progress" in response.text and "event: final" in response.text for response in stream_responses)
+    assert [item[0] for item in tracking.calls] == ["GET", "POST", "POST", "GET", "GET", "POST", "GET", "GET"]
 
 
 def test_public_live_entrypoint_rejects_injected_transport(tmp_path):
