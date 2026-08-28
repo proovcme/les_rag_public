@@ -34,6 +34,16 @@
 > `proxy/services/chat_evidence_application_service.py`,
 > `proxy/services/openai_compatible_transport_service.py`.
 
+> **0.29.0 model-connections API (build 611):** authenticated router
+> `proxy/routers/model_connections.py` управляет immutable revisions,
+> capability snapshots, server-owned masked secrets и exact bindings ролей
+> `answer | embeddings | local_fallback`. Полный registry/templates/write/test
+> surface доступен только administrator; обычный пользователь видит лишь
+> безопасный effective summary без endpoint/secret данных. Unsafe URL получает
+> 422 до записи, stale CAS — 409, отключение bound head требует явного
+> подтверждения. Статус док↔код: ✅ runtime integration + API; GUI — следующий
+> отдельный этап после общего UI/UX-аудита.
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная

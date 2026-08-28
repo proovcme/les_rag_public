@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              610
-версия Tauri/NSIS:         5.1.610
+номер сборки:              611
+версия Tauri/NSIS:         5.1.611
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       ordinary chat on exact bound model connections
+dev implementation:       authenticated model-connections API
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -288,6 +288,16 @@ dev implementation:       ordinary chat on exact bound model connections
 > canonical current gate: 722 passed. All Makefile pytest profiles now bind a
 > workspace-local `.test-tmp/<profile>` and no longer depend on Windows
 > `%TEMP%`. No live endpoint, service restart, deploy or publication was used.
+
+> **0.29.0 authenticated model-connections API (build 611):** registered
+> `/api/model-connections` router exposes administrator list/templates,
+> immutable create/revise/disable, masked server-owned secret replacement,
+> exact capability probe and CAS role binding. Ordinary users can read only
+> `/effective`, whose typed projection excludes endpoint and secret reference.
+> Unsafe endpoints fail before registry write; stale revision/binding returns
+> 409; disabling a bound head requires explicit confirmation. Focused API plus
+> registry/security/secret/probe/resolver/transport/chat regression: 81 passed.
+> No live endpoint, service restart, deploy or publication was used.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

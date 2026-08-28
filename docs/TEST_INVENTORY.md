@@ -1,5 +1,13 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.29.0 model-connections API (build 611):**
+> `tests/test_model_connections_router.py` проверяет user/admin boundary,
+> safe effective redaction, append-only create/revise, stale CAS 409, unsafe
+> endpoint 422 до записи, explicit capability selection, masked server-owned
+> secret replacement, bound-disable confirmation, templates без credentials и
+> регистрацию router в приложении. Совместный API/registry/security/secret/
+> capability/resolver/transport/chat gate: **81 passed**.
+
 > **0.29.0 bound chat and Windows-safe gates (build 610):**
 > `tests/test_model_connection_chat_integration.py` и расширенные chat/
 > architecture/runtime tests проверяют exact answer/fallback revisions,

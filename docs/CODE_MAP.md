@@ -39,6 +39,17 @@
 > rollback adapter. Персональный `provider_config` в установленном чате
 > отклоняется; demo-only legacy override требует отдельного Danger-фактора.
 
+> **Model connections API 0.29.0:**
+> `proxy/routers/model_connections.py` предоставляет admin-only список,
+> templates, create/revise/disable, masked secret replacement, exact capability
+> probe и CAS role binding. `GET /api/model-connections/effective` доступен
+> обычному пользователю, но возвращает только connection/revision/display/model/
+> locality/preset capacity без URL и secret reference. Все записи делегируют
+> append-only `model_connection_registry_service`; endpoint policy проверяется
+> до записи, secret reference генерируется сервером, а отключение текущей
+> role-binding требует явного `confirm_bound_roles`. Router подключён в
+> `proxy/app.py`; тесты — `tests/test_model_connections_router.py`.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical
