@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              603
-версия Tauri/NSIS:         5.1.603
+номер сборки:              604
+версия Tauri/NSIS:         5.1.604
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       governed chat + visible effective model/context factors
+dev implementation:       immutable global model connection revisions and role bindings
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -210,6 +210,16 @@ dev implementation:       governed chat + visible effective model/context factor
 > notebook memory, tool contracts и профили не изменяются. Runtime-код, версия
 > сборки, deploy и публикация на этом checkpoint не изменены. Канон:
 > [plan](superpowers/plans/2026-08-27-universal-model-connections-implementation.md).
+
+> **0.29.0 immutable model connections (build 604):** добавлены frozen
+> provider-neutral contracts и append-only SQLite registry редакций
+> подключений, capability snapshots и atomic compare-and-swap role bindings
+> `answer | embeddings | local_fallback`. Редактирование и отключение создают
+> новую редакцию, старая остаётся читаемой; disabled revision нельзя назначить,
+> active display names уникальны без учёта регистра. В registry нет значений
+> API-ключей и provider-поля. Focused registry contract: 8 passed. Endpoint,
+> secret, probing и transport boundaries ещё не реализованы; runtime не
+> переключался, deploy и публикация не выполнялись.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
