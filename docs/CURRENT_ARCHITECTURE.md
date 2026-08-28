@@ -58,18 +58,25 @@
   reasoning, источник значения и необходимость restart. Эти строки read-only;
   допустимые изменения делаются через копию профиля.
 - `tools/live_workbook_acceptance.py` — отдельный opt-in runner реального
-  ordinary-chat маршрута: `/api/chat/attachments` upload →
-  `/api/chat/stream` SSE → metadata /
+  ordinary-chat маршрута: `/api/chat/attachments` upload → `/api/version`
+  binding → `/api/chat/stream` SSE → metadata /
   download immutable revisions 1 и 2. Он fail-closed проверяет identity,
   attachment/provenance/checkpoint lineage, hash download, missing/blockers и
-  elapsed time; JSON receipt redacted и имеет только `evidence_kind=live_runtime`.
+  elapsed/deadline time; он требует readable XLSX с visible meaningful sheet,
+  checkpoint-bound monotonic SSE progress и runtime commit/build. JSON receipt
+  redacted и имеет только exact typed allowlisted fields с
+  `evidence_kind=live_runtime`.
   В receipt сохраняются только счётчики `missing`/`blockers`, не их свободный
   runtime-текст.
 - Отдельный `candidate_acceptance=true` допускает pre-promotion executor только
   для root-admin в process CWD, который точно равен read-only Danger bootstrap
   factor `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`. Он сохраняет публичное route
   decision `shadow`, не создаёт promotion receipt и явно отмечается в trace;
-  обычный shadow остаётся неперсистентным.
+  обычный shadow остаётся неперсистентным. Candidate upload проходит тот же
+  root/isolation guard до temporary-file и idempotency writes; все effective
+  attachment/meta/idempotency/workbook artifact paths должны оставаться под
+  isolated CWD. Fake contract transport выдаёт только non-persistent
+  `contract_test`, никогда не `live_runtime` receipt.
 
 ## Проверено на context checkpoint
 

@@ -42,6 +42,41 @@ def test_candidate_acceptance_rejects_missing_or_nonisolated_state_root(monkeypa
         require_candidate_acceptance(requested=True, user=_root_admin())
 
 
+@pytest.mark.parametrize(
+    "key",
+    ("LES_CHAT_ATTACHMENT_ROOT", "RAG_META_DB_PATH", "LES_IDEMPOTENCY_DB"),
+)
+def test_candidate_acceptance_rejects_effective_persistent_path_outside_isolated_root(
+    monkeypatch, tmp_path, key
+):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LES_CANONICAL_ACCEPTANCE_STATE_ROOT", str(tmp_path))
+    monkeypatch.setenv(key, str(tmp_path.parent / "outside"))
+
+    with pytest.raises(CandidateAcceptanceError, match="STATE_PATH_OUTSIDE_ROOT"):
+        require_candidate_acceptance(requested=True, user=_root_admin())
+
+
+def test_candidate_upload_rejects_unprivileged_request_before_temporary_save(monkeypatch):
+    from proxy.routers import datasets
+
+    async def unexpected_temp_save(*args, **kwargs):
+        raise AssertionError("candidate upload must be authorized before temporary save")
+
+    monkeypatch.setattr(datasets, "save_upload_tmp", unexpected_temp_save)
+
+    with pytest.raises(HTTPException, match="ROOT_ADMIN") as error:
+        asyncio.run(
+            datasets.create_chat_attachment(
+                file=object(),
+                candidate_acceptance=True,
+                _user=RequestUser(role=USER_ROLE, source="api_key"),
+            )
+        )
+
+    assert error.value.status_code == 403
+
+
 def test_candidate_acceptance_enables_execution_without_changing_public_route(monkeypatch):
     monkeypatch.setenv("LES_CANONICAL_AGENT_ROUTE_MODE", "active")
     decision = resolve_canonical_route(receipt=None)

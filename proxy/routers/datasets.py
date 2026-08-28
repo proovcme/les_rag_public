@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import httpx
-from fastapi import APIRouter, Depends, File, Header, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 
 from backend.interface import DatasetInfo
@@ -27,6 +27,10 @@ from backend.smart_index import SKIP_DIRS, build_smart_plan, should_index_source
 from proxy.config import max_upload_bytes, mlx_url, rag_upload_suffixes
 from proxy.security import require_admin, require_root_admin, require_user
 from proxy.services.context_expander_service import expand_context_windows
+from proxy.services.candidate_acceptance_service import (
+    CandidateAcceptanceError,
+    require_candidate_acceptance,
+)
 from proxy.services.context_memory_service import (
     benchmark_dataset_profile_warmup,
     build_dataset_profile,
@@ -3533,10 +3537,19 @@ async def _prepare_read_attachment(
 @search_router.post("/chat/attachments", status_code=201)
 async def create_chat_attachment(
     file: UploadFile = File(...),
+    candidate_acceptance: Annotated[bool, Form()] = False,
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key")] = "",
     _user=Depends(require_user),
 ):
     """Official external intake: one temporary read attachment for the next chat turn."""
+    try:
+        require_candidate_acceptance(
+            requested=candidate_acceptance,
+            user=_user,
+        )
+    except CandidateAcceptanceError as error:
+        status_code = 403 if "ROOT_ADMIN" in str(error) else 409
+        raise HTTPException(status_code, str(error)) from error
     from proxy.services.request_idempotency_service import (
         IdempotencyConflict,
         begin,

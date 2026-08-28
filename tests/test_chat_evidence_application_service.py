@@ -91,6 +91,10 @@ def test_workbook_result_harvests_revision_retry_and_checkpoint():
 
     assert harvested["artifact"]["revision_id"] == "rev-2"
     assert harvested["attachment_retry"]["attachment_id"] == "read_123456abcdef"
+    assert harvested["source"] == {
+        "attachment_id": "read_123456abcdef",
+        "sha256": "a" * 64,
+    }
     assert harvested["attachment_retry"]["preserved"] is True
     assert harvested["checkpoint"]["checkpoint_id"] == "cp-1"
 

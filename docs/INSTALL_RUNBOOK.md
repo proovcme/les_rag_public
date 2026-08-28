@@ -338,7 +338,10 @@ the normal runtime. Before starting that process through the standard launcher,
 set `LES_CANONICAL_ACCEPTANCE_STATE_ROOT` to its exact process working
 directory. The server exposes this bootstrap factor as read-only `Danger` and
 restart-required; an ordinary user, a non-root administrator, an unset factor,
-or a different process CWD receives a fail-closed rejection. Do not set it in
+or a different process CWD receives a fail-closed rejection. The configured
+attachment root, RAG/meta DB, idempotency DB and workbook checkpoint/artifact
+paths must all resolve below that same CWD; candidate upload is rejected before
+temporary-file/idempotency persistence otherwise. Do not set it in
 the normal runtime. `candidate_acceptance=true` is carried only by the runner;
 it enables a candidate execution without a promotion receipt and remains
 explicitly traceable as `candidate_acceptance`, never `active` rollout.
@@ -351,12 +354,15 @@ $env:LES_LIVE_WORKBOOK_ACCEPTANCE_API_KEY = '<provided out of band>'
 make live-workbook-acceptance LIVE_WORKBOOK_ACCEPTANCE_ARGS='--attachment "C:\real-user-owned\source.xlsx" --base-url http://127.0.0.1:8050 --profile-revision "profile:immutable-revision" --model-preset qwen-9b --out artifacts\live-workbook-acceptance.json'
 ```
 
-The runner uses the public authenticated attachment and artifact APIs plus the
+The runner first binds the receipt to `/api/version` commit and positive build,
+then uses the public authenticated attachment and artifact APIs plus the
 ordinary chat SSE route. It writes a redacted `live_runtime` receipt only after
 revision 1 and correction revision 2 have distinct downloaded SHA-256 values,
 exact parent lineage, attachment provenance, profile/model/preset identity,
-checkpoint IDs, `missing_count`/`blocker_count`, and elapsed time. The receipt
-never preserves the source runtime wording for either array. Repeat with
+checkpoint-bound complete monotonic progress, readable non-empty XLSX files,
+`missing_count`/`blocker_count`, and the configured elapsed deadline. The
+receipt has an exact typed allowlist and never preserves the source runtime
+wording for either array. Repeat with
 `--model-preset qwen-35b` only when that configured runtime exists; its contract
 must remain identical.
 

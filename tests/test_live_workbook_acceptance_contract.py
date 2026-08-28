@@ -1,12 +1,16 @@
 import hashlib
 import json
+from io import BytesIO
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 from tools.live_workbook_acceptance import (
     AcceptanceConfig,
+    CONTRACT_TEST,
     LiveAcceptanceError,
+    exercise_contract,
     run_acceptance,
     validate_report,
 )
@@ -39,6 +43,8 @@ def report() -> dict:
         "schema": "les.live_workbook_acceptance.v1",
         "evidence_kind": "live_runtime",
         "runtime": {
+            "source_commit": "6b4952d9",
+            "build_number": 622,
             "profile_revision_id": "profile:7",
             "model_preset": "qwen-9b",
             "observed_model_preset": "qwen-9b-restrictive",
@@ -72,14 +78,22 @@ def test_acceptance_requires_two_immutable_revisions(report):
 def test_acceptance_report_rejects_unredacted_runtime_data(report):
     report["runtime"]["authorization"] = "Bearer secret"
 
-    with pytest.raises(ValueError, match="redacted"):
+    with pytest.raises(ValueError, match="redacted|unknown"):
+        validate_report(report)
+
+
+@pytest.mark.parametrize("field", ["access_token", "raw_prompt", "unexpected"])
+def test_acceptance_report_rejects_unknown_structured_fields(report, field):
+    report["runtime"][field] = "value"
+
+    with pytest.raises(ValueError, match="unknown"):
         validate_report(report)
 
 
 def test_acceptance_report_rejects_source_path_embedded_in_blocker(report):
     report["revision_1"]["blockers"] = ["adapter wrote C:\\private\\source.xlsx"]
 
-    with pytest.raises(ValueError, match="redacted"):
+    with pytest.raises(ValueError, match="redacted|unknown"):
         validate_report(report)
 
 
@@ -121,7 +135,21 @@ def test_acceptance_report_rejects_even_safe_looking_raw_status_arrays(report):
     report["revision_1"]["missing"] = ["id.with.dots"]
     report["revision_1"]["blockers"] = ["status.code"]
 
-    with pytest.raises(ValueError, match="redacted"):
+    with pytest.raises(ValueError, match="redacted|unknown"):
+        validate_report(report)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("build_number", True), ("revision_no", True), ("source_scope", [1]), ("elapsed_seconds", float("nan"))),
+)
+def test_acceptance_report_rejects_wrong_allowed_field_types(report, field, value):
+    target = report["runtime"] if field == "build_number" else report["revision_1"]
+    if field == "elapsed_seconds":
+        target = report
+    target[field] = value
+
+    with pytest.raises(ValueError, match="invalid|must contain"):
         validate_report(report)
 
 
@@ -139,7 +167,7 @@ def test_acceptance_rejects_fixture_path_before_any_live_request(tmp_path):
     )
 
     with pytest.raises(LiveAcceptanceError, match="tests/fixtures"):
-        run_acceptance(config, client=object())
+        exercise_contract(config, client=object())
 
 
 class _FakeResponse:
@@ -158,14 +186,28 @@ class _FakeResponse:
         return iter(self._lines)
 
 
+def _xlsx_bytes(value: str) -> bytes:
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Acceptance"
+    worksheet.append(["status"])
+    worksheet.append([value])
+    stream = BytesIO()
+    workbook.save(stream)
+    workbook.close()
+    return stream.getvalue()
+
+
 class _FakeHttpClient:
     def __init__(self):
         self.requests: list[tuple[str, str, dict]] = []
-        self._first = b"revision"
-        self._second = b"revision-2"
+        self._first = _xlsx_bytes("revision")
+        self._second = _xlsx_bytes("revision-2")
 
     def request(self, method: str, url: str, **kwargs):
         self.requests.append((method, url, kwargs))
+        if url.endswith("/api/version"):
+            return _FakeResponse(payload={"git_commit": "6b4952d9", "build_number": 622})
         if url.endswith("/api/chat/attachments"):
             return _FakeResponse(payload={
                 "attachment_id": "read_123456abcdef",
@@ -199,7 +241,15 @@ class _FakeHttpClient:
                 },
                 "model_connection": {"model_id": "qwen3.5:9b"},
             }
-            return _FakeResponse(lines=("event: final", f"data: {json.dumps(payload)}", ""))
+            checkpoint_id = "cp-2" if second else "cp-1"
+            return _FakeResponse(lines=(
+                "event: tool_progress",
+                f"data: {json.dumps({'checkpoint_id': checkpoint_id, 'completed': 1, 'total': 1})}",
+                "",
+                "event: final",
+                f"data: {json.dumps(payload)}",
+                "",
+            ))
         if url.endswith("/api/artifacts/rev_1") or url.endswith("/api/artifacts/rev_2"):
             second = url.endswith("rev_2")
             payload = {
@@ -225,7 +275,7 @@ class _FakeHttpClient:
         raise AssertionError(f"unexpected request: {method} {url}")
 
 
-def test_acceptance_uses_public_boundaries_and_redacts_receipt(tmp_path):
+def test_contract_exercise_uses_public_boundaries_without_live_receipt(tmp_path):
     source = tmp_path / "user-owned.xlsx"
     source.write_bytes(b"source")
     client = _FakeHttpClient()
@@ -238,11 +288,14 @@ def test_acceptance_uses_public_boundaries_and_redacts_receipt(tmp_path):
         api_key="test-secret",
     )
 
-    report = run_acceptance(config, client=client)
+    report = exercise_contract(config, client=client)
 
-    validate_report(report)
+    validate_report(report, expected_evidence_kind=CONTRACT_TEST)
+    assert not config.out.exists()
+    assert report["evidence_kind"] == CONTRACT_TEST
     methods_urls = [(method, url) for method, url, _ in client.requests]
     assert methods_urls == [
+        ("GET", "http://127.0.0.1:8050/api/version"),
         ("POST", "http://127.0.0.1:8050/api/chat/attachments"),
         ("POST", "http://127.0.0.1:8050/api/chat/stream"),
         ("GET", "http://127.0.0.1:8050/api/artifacts/rev_1"),
@@ -251,8 +304,9 @@ def test_acceptance_uses_public_boundaries_and_redacts_receipt(tmp_path):
         ("GET", "http://127.0.0.1:8050/api/artifacts/rev_2"),
         ("GET", "http://127.0.0.1:8050/api/artifacts/rev_2/download"),
     ]
-    first_chat = client.requests[1][2]["json"]
-    second_chat = client.requests[4][2]["json"]
+    first_chat = client.requests[2][2]["json"]
+    second_chat = client.requests[5][2]["json"]
+    assert client.requests[1][2]["data"] == {"candidate_acceptance": "true"}
     assert first_chat["attachment_id"] == second_chat["attachment_id"] == "read_123456abcdef"
     assert first_chat["candidate_acceptance"] is True
     assert second_chat["candidate_acceptance"] is True
@@ -261,3 +315,82 @@ def test_acceptance_uses_public_boundaries_and_redacts_receipt(tmp_path):
     assert str(source) not in serialized
     assert "test-secret" not in serialized
     assert "Authorization" not in serialized
+
+
+def test_contract_exercise_rejects_hash_valid_non_xlsx_artifact(tmp_path):
+    source = tmp_path / "user-owned.xlsx"
+    source.write_bytes(b"source")
+    client = _FakeHttpClient()
+    client._first = b"not-an-xlsx"
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+
+    with pytest.raises(LiveAcceptanceError, match="readable XLSX"):
+        exercise_contract(config, client=client)
+
+
+def test_contract_exercise_rejects_incomplete_checkpoint_progress(tmp_path):
+    source = tmp_path / "user-owned.xlsx"
+    source.write_bytes(b"source")
+    client = _FakeHttpClient()
+    original_request = client.request
+
+    def incomplete_progress(method, url, **kwargs):
+        response = original_request(method, url, **kwargs)
+        if url.endswith("/api/chat/stream"):
+            response._lines[1] = response._lines[1].replace('"completed": 1', '"completed": 0')
+        return response
+
+    client.request = incomplete_progress
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+
+    with pytest.raises(LiveAcceptanceError, match="did not complete"):
+        exercise_contract(config, client=client)
+
+
+def test_contract_exercise_rejects_elapsed_deadline(monkeypatch, tmp_path):
+    from tools import live_workbook_acceptance as acceptance
+
+    source = tmp_path / "user-owned.xlsx"
+    source.write_bytes(b"source")
+    ticks = iter((100.0, 102.0))
+    monkeypatch.setattr(acceptance.time, "monotonic", lambda: next(ticks))
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+        max_elapsed_seconds=1,
+    )
+
+    with pytest.raises(LiveAcceptanceError, match="configured deadline"):
+        exercise_contract(config, client=_FakeHttpClient())
+
+
+def test_public_live_entrypoint_rejects_injected_transport(tmp_path):
+    config = AcceptanceConfig(
+        attachment=tmp_path / "source.xlsx",
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+
+    with pytest.raises(TypeError):
+        run_acceptance(config, client=_FakeHttpClient())

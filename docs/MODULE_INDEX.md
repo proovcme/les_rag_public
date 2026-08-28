@@ -36,12 +36,15 @@
 > `tools/live_workbook_acceptance.py` проверяет реальный ordinary-chat contract
 > через `/api/chat/attachments`, `/api/chat/stream` и authenticated
 > artifact metadata/download. Receipt содержит только redacted `live_runtime`:
-> exact profile/model/preset, attachment/provenance/checkpoint lineage, immutable
-> N+1 parent и downloaded SHA-256; missing/blockers сохраняются только как
-> counts. Guarded `candidate_acceptance` доступен лишь root-admin в отдельном
+> exact version commit/build, profile/model/preset, attachment/provenance/checkpoint
+> lineage, immutable N+1 parent, complete monotonic SSE progress, readable XLSX
+> и downloaded SHA-256; missing/blockers сохраняются только как counts with
+> exact typed receipt allowlists. Guarded `candidate_acceptance` доступен лишь root-admin в отдельном
 > process-CWD, совпадающем с read-only Danger
-> `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`; публичный route остаётся shadow, receipt
-> не подделывается. Статус: 🟡 **PENDING: live user-owned input/model acceptance**;
+> `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`; candidate upload is guarded before
+> persistence and all effective workbook state stays below it. Public route остаётся shadow,
+> receipt не подделывается: fake transport имеет только nonpersistent `contract_test`.
+> Статус: 🟡 **PENDING: live user-owned input/model acceptance**;
 > offline contracts не являются quality evidence.
 
 > **0.29.0 model-connection runtime (build 610):** ordinary free и evidence

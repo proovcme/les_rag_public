@@ -121,13 +121,17 @@ dev implementation:       fail-closed ordinary-chat workbook live acceptance gat
 > `make live-workbook-acceptance` запускает только owner-authorized real-input
 > ordinary-chat workflow: authenticated attachment upload, SSE workbook draft,
 > artifact metadata/download, correction N+1 with the same attachment and exact
-> parent lineage. Runner fail-closed сверяет downloaded SHA-256, provenance,
-> profile/model/preset/checkpoint identity, counts missing/blockers и elapsed
-> time и пишет только structured/redacted `live_runtime` receipt. План требовал
+> parent lineage. Runner first binds `/api/version` git commit + positive build,
+> then fail-closed сверяет downloaded SHA-256, readable meaningful XLSX,
+> provenance, profile/model/preset/checkpoint identity, complete monotonic SSE
+> progress, counts missing/blockers и deadline; receipt has an exact typed
+> allowlist. Live entrypoint constructs its own transport and only it can persist
+> `live_runtime`; fakes are nonpersistent `contract_test`. План требовал
 > pre-promotion execution, поскольку обычный `active` без receipt корректно
 > остаётся shadow; поэтому guarded `candidate_acceptance` доступен только
 > root-admin в exact isolated process CWD из read-only Danger
-> `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`. Он не создаёт/обходит receipt, не
+> `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`, and all effective state paths must stay
+> below that root before candidate upload persistence. Он не создаёт/обходит receipt, не
 > помечает rollout active и оставляет trace evidence. **PENDING: live user-owned
 > input/model acceptance** — offline contracts не объявляют качество модели или
 > promotion доказанными; runtime этой ветки не развёртывался.

@@ -168,6 +168,11 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
         return {}
     return {
         "artifact": dict(artifact),
+        "source": {
+            key: source[key]
+            for key in ("attachment_id", "sha256")
+            if key in source
+        },
         "attachment_retry": {
             "attachment_id": attachment_id,
             "id": attachment_id,
