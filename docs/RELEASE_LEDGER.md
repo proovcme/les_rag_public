@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              606
-версия Tauri/NSIS:         5.1.606
+номер сборки:              607
+версия Tauri/NSIS:         5.1.607
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       model connection registry + safe capability evidence
+dev implementation:       model connection registry + exact role resolver
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -240,6 +240,17 @@ dev implementation:       model connection registry + safe capability evidence
 > active requirements. Probe output text is never persisted. Focused
 > capability+registry contract: 16 passed. No live endpoint was contacted and
 > no runtime route was changed.
+
+> **0.29.0 exact model role resolver (build 607):** deterministic legacy import
+> preserves the previously effective FreeToken/OpenAI/OpenRouter/Ollama/
+> Lemonade/MLX configuration without copying secrets or rewriting environment
+> values. `answer`, `embeddings` and `local_fallback` resolve only their exact
+> immutable binding; missing secret, disabled head, stale/missing capability or
+> unsafe endpoint fails closed. Fallback never scans connections. Verified
+> backend capacity plus the saved operator limit selects the existing 9B/35B
+> execution preset. Focused resolver/registry/security/secret/capability/preset
+> contract: 65 passed. No live endpoint was contacted and the ordinary chat
+> route remains unchanged.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

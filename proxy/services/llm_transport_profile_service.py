@@ -67,6 +67,31 @@ def resolve_transport_execution_profile(
     )
 
 
+def resolve_connection_execution_profile(
+    *,
+    model_id: str,
+    requested_context_tokens: int | None,
+    observed_context_tokens: int | None,
+    observed_source: str,
+    restrictions: Mapping[str, Any] | None = None,
+) -> ModelExecutionPreset:
+    """Resolve execution limits from one saved, capability-observed connection."""
+    operator = (
+        {"input_tokens": requested_context_tokens}
+        if requested_context_tokens is not None and requested_context_tokens > 0
+        else None
+    )
+    return resolve_transport_execution_profile(
+        provider="model_connection",
+        model_id=model_id,
+        observed_context_tokens=observed_context_tokens,
+        observed=observed_context_tokens is not None,
+        observed_source=observed_source,
+        operator=operator,
+        restrictions=restrictions,
+    )
+
+
 def effective_model_execution_diagnostics() -> dict[str, Any]:
     """Describe configured request versus safe unprobed effective preset.
 

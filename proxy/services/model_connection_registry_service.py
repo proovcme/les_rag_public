@@ -267,6 +267,70 @@ class ModelConnectionRegistry:
             )
         return revision
 
+    def import_connection(
+        self,
+        *,
+        stable_connection_id: str,
+        display_name: str,
+        base_url: str,
+        model_id: str,
+        locality: ConnectionLocality,
+        requested_context_tokens: int | None,
+        secret_ref: str | None,
+        extension_type: str | None,
+        actor: str,
+    ) -> ModelConnectionRevision:
+        """Create one deterministic legacy revision, or return its existing head.
+
+        This is deliberately narrower than normal creation. It exists only so
+        startup migration can be idempotent without storing provider settings or
+        secret bytes in application data.
+        """
+        connection_id = str(stable_connection_id or "").strip()
+        if not connection_id.startswith("legacy:") or connection_id == "legacy:":
+            raise ModelConnectionRegistryError("LEGACY_CONNECTION_ID_INVALID")
+        revision = ModelConnectionRevision(
+            connection_id=connection_id,
+            revision_id=f"{connection_id}:r1",
+            revision_no=1,
+            display_name=display_name,
+            protocol="openai_compatible",
+            base_url=base_url,
+            model_id=model_id,
+            locality=ConnectionLocality(locality),
+            requested_context_tokens=requested_context_tokens,
+            secret_ref=secret_ref,
+            extension_type=extension_type,
+            enabled=True,
+            created_at=_now(),
+            created_by=actor,
+        )
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            existing = conn.execute(
+                """SELECT r.* FROM les_model_connection_heads h
+                   JOIN les_model_connection_revisions r ON r.revision_id=h.revision_id
+                   WHERE h.connection_id=?""",
+                (connection_id,),
+            ).fetchone()
+            if existing is not None:
+                return self._revision_from_row(existing)
+            self._assert_display_name_available(conn, revision.display_name)
+            self._insert_revision(conn, revision)
+            conn.execute(
+                "INSERT INTO les_model_connection_heads(connection_id,revision_id) VALUES(?,?)",
+                (revision.connection_id, revision.revision_id),
+            )
+            self._audit(
+                conn,
+                action="legacy_connection_imported",
+                actor=revision.created_by,
+                connection_id=revision.connection_id,
+                revision_id=revision.revision_id,
+                details={"revision_no": 1},
+            )
+        return revision
+
     def revise_connection(
         self,
         connection_id: str,
