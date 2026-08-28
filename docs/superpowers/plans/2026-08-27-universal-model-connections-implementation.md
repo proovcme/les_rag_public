@@ -564,7 +564,7 @@ Reject `ChatRequest.provider_config` in installed mode with `SESSION_PROVIDER_OV
 
 Pass `connection.effective_preset` into the existing ContextGovernor. Populate cloud consent and memory routing from `connection.locality`, not a provider name. Include safe `connection_id`, `revision_id`, `display_name`, `model_id`, `locality` and `fallback_used` in trace/final payload; exclude URL and secret reference from ordinary-user payloads.
 
-- [ ] **Step 5: Run focused chat gates and commit build 609**
+- [ ] **Step 5: Run focused chat gates and commit build 610**
 
 Run:
 
@@ -639,7 +639,7 @@ All writes, templates and full-list reads depend on `require_admin`; effective s
 
 - [ ] **Step 4: Register router and update module maps**
 
-Import and include the router in `proxy/app.py`. Add the model-connections service/router/test entry points to `docs/MODULE_INDEX.md` and `docs/CODE_MAP.md`, marking runtime integration implemented only where Task 6 proves it.
+Import and include the router in `proxy/app.py`. Add the model-connections service/router/test entry points to `docs/MODULE_INDEX.md` and `docs/CODE_MAP.md`, marking runtime integration implemented only where Task 7 proves it.
 
 - [ ] **Step 5: Run focused API tests and commit build 611**
 
@@ -660,7 +660,7 @@ Run router, security, secret, capability and registry tests; update version surf
 - Modify: version surfaces and `docs/RELEASE_LEDGER.md`
 
 **Interfaces:**
-- Consumes: Task 7 API and existing `panel`, `status_badge`, feedback, dialog and form components.
+- Consumes: Task 8 API and existing `panel`, `status_badge`, feedback, dialog and form components.
 - Produces: `build_model_connections()` configuration surface.
 
 - [ ] **Step 1: Read the mandatory UI sources**
