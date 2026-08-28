@@ -3,12 +3,12 @@
 UIKIT_CSS = """
 <style id="sovushka-uikit">
 :root {
-  --sov-ui-font-prose: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    "Helvetica Neue", Inter, system-ui, sans-serif;
+  --sov-ui-font-prose: "Segoe UI Variable Text", "Segoe UI", -apple-system,
+    BlinkMacSystemFont, system-ui, sans-serif;
   --sov-ui-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
-  --sov-ui-font-size-body: 14px;
-  --sov-ui-font-size-control: 13px;
+  --sov-ui-font-size-body: 16px;
+  --sov-ui-font-size-control: 14px;
   --sov-ui-font-size-meta: 12px;
   --sov-ui-line-body: 1.5;
   --sov-ui-line-control: 1.25;
@@ -20,12 +20,10 @@ UIKIT_CSS = """
   --sov-ui-border: 1px solid var(--border);
   --sov-ui-radius-control: 8px;
   --sov-ui-radius-card: 8px;
-  --sov-ui-hit: 40px;
+  --sov-ui-hit: 44px;
   --sov-ui-icon-column: 20px;
   --sov-ui-icon-gap: 8px;
-  --sov-ui-shadow-card:
-    0 1px 2px rgba(20, 52, 34, .05),
-    0 5px 16px rgba(20, 52, 34, .035);
+  --sov-ui-shadow-card: 0 1px 2px rgba(20, 52, 34, .045);
   --sov-ui-shadow-focus: 0 0 0 3px color-mix(in srgb, var(--accent) 24%, transparent);
 }
 
@@ -109,7 +107,7 @@ html {
 
 .sov-ui-section-title {
   color: var(--text);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 750;
   line-height: 1.3;
 }
@@ -167,7 +165,7 @@ html {
   overflow: hidden;
   color: var(--accent);
   font-family: var(--sov-ui-font-prose);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 800;
   line-height: 1.25;
   letter-spacing: .015em;
@@ -296,7 +294,7 @@ html {
 .sov-ui-shell .sov-chat-title {
   color: var(--accent);
   font-family: var(--sov-ui-font-prose);
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 800;
   line-height: 1.25;
   letter-spacing: 0;
@@ -336,7 +334,7 @@ html {
 }
 
 .sov-ui-button {
-  min-width: 40px;
+  min-width: var(--sov-ui-hit);
   padding: 0 13px !important;
   border: var(--sov-ui-border) !important;
   color: var(--text) !important;
@@ -676,6 +674,36 @@ html {
   font-size: 20px;
 }
 
+.sov-nav-switch--placeholder,
+.sov-nav-switch--placeholder.q-btn--disabled {
+  opacity: 1 !important;
+  color: var(--dim) !important;
+  border-color: transparent !important;
+  background: transparent !important;
+  cursor: default !important;
+}
+
+.sov-mobile-chat-menu {
+  display: none !important;
+}
+
+.sov-mobile-chat-actions {
+  min-width: 220px;
+  padding: 6px;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-card);
+  color: var(--text);
+  background: var(--bg-panel) !important;
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-mobile-chat-actions .q-item {
+  min-height: var(--sov-ui-hit);
+  border-radius: 7px;
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 650;
+}
+
 .sov-composer-prompt-head {
   width: 100%;
   margin-bottom: 4px;
@@ -708,6 +736,207 @@ html {
 .sov-app-content .sov-composer-input:focus-within {
   border-color: var(--accent) !important;
   box-shadow: var(--sov-ui-shadow-focus);
+}
+
+/* Chat first layer: prompt, one mode selector, attachment, settings and send.
+   Guidance stays inside the settings menu and never floats over the thread. */
+.sov-composer-footer {
+  min-height: var(--sov-ui-hit);
+}
+
+.sov-composer-actions {
+  width: 100%;
+  min-width: 0;
+  gap: var(--sov-ui-space-2);
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.sov-mode-select {
+  width: 152px;
+  min-width: 132px;
+  flex: 0 0 152px;
+}
+
+.sov-mode-select .q-field__control {
+  min-height: var(--sov-ui-hit) !important;
+}
+
+.sov-response-settings-btn {
+  flex: 0 0 var(--sov-ui-hit);
+}
+
+.sov-response-settings-menu {
+  width: min(380px, calc(100vw - 24px));
+  padding: var(--sov-ui-space-3);
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-card);
+  color: var(--text);
+  background: var(--bg-panel) !important;
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-mode-guidance-disclosure {
+  width: 100%;
+  margin-top: var(--sov-ui-space-2);
+  color: var(--text);
+  border-top: var(--sov-ui-border);
+}
+
+.sov-mode-guidance-disclosure > .q-expansion-item__container > .q-item {
+  min-height: var(--sov-ui-hit);
+  padding-inline: 0;
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 700;
+}
+
+.sov-mode-guidance-disclosure .q-expansion-item__content {
+  padding-bottom: var(--sov-ui-space-2);
+}
+
+.sov-mode-guidance-disclosure .sov-mode-guide {
+  position: static;
+  width: 100%;
+  margin-top: var(--sov-ui-space-2);
+  padding: var(--sov-ui-space-2);
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-control);
+  background: var(--bg-mod);
+  box-shadow: none;
+}
+
+.sov-mode-guidance-disclosure .sov-mode-guide-copy,
+.sov-mode-guidance-disclosure .sov-mode-data-hint {
+  display: block;
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+}
+
+.sov-mode-guidance-disclosure .sov-mode-example {
+  min-height: 36px !important;
+  font-size: var(--sov-ui-font-size-meta) !important;
+}
+
+.sov-apply-profile-action {
+  width: 100%;
+  margin-top: var(--sov-ui-space-2);
+}
+
+.sov-attach-dialog {
+  width: min(520px, calc(100vw - 24px));
+  max-width: 100%;
+  padding: 20px;
+  gap: var(--sov-ui-space-3) !important;
+  border: var(--sov-ui-border);
+  border-radius: 12px;
+  color: var(--text);
+  font-family: var(--sov-ui-font-prose);
+  background: var(--bg-panel) !important;
+  box-shadow: var(--sov-ui-shadow-card);
+}
+
+.sov-attach-dialog__head {
+  width: 100%;
+  min-width: 0;
+  gap: var(--sov-ui-space-3);
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+}
+
+.sov-attach-dialog__copy {
+  min-width: 0;
+  flex: 1;
+  gap: var(--sov-ui-space-1) !important;
+}
+
+.sov-attach-dialog__title {
+  color: var(--text);
+  font-size: 20px;
+  font-weight: 760;
+  line-height: 1.25;
+  letter-spacing: -.015em;
+}
+
+.sov-attach-dialog__intro,
+.sov-attach-mode-detail {
+  color: var(--dim);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.sov-attach-dialog__label {
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 750;
+}
+
+.sov-attach-mode-picker {
+  display: grid;
+  width: 100%;
+  gap: 6px;
+  font-family: var(--sov-ui-font-prose);
+}
+
+.sov-attach-mode-picker .q-radio {
+  width: 100%;
+  min-height: var(--sov-ui-hit);
+  margin: 0;
+  padding: 7px 9px;
+  border: var(--sov-ui-border);
+  border-radius: var(--sov-ui-radius-control);
+  background: var(--card-bg);
+}
+
+.sov-attach-mode-picker .q-radio[aria-checked="true"] {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  background: color-mix(in srgb, var(--accent) 8%, var(--card-bg));
+}
+
+.sov-attach-mode-picker .q-radio__label {
+  color: var(--text);
+  font-size: var(--sov-ui-font-size-control);
+  font-weight: 680;
+}
+
+.sov-attach-mode-detail {
+  min-height: 36px;
+  padding: 0 2px;
+}
+
+.sov-attach-status {
+  min-height: 20px;
+  color: var(--ok);
+  font-size: var(--sov-ui-font-size-meta);
+}
+
+.sov-chat-file-picker {
+  width: 100%;
+  min-height: var(--sov-ui-hit) !important;
+  max-height: var(--sov-ui-hit) !important;
+  border: 1px solid var(--accent);
+  border-radius: var(--sov-ui-radius-control);
+  overflow: hidden;
+  font-family: var(--sov-ui-font-prose);
+  box-shadow: none !important;
+}
+
+.sov-chat-file-picker .q-uploader__header {
+  min-height: calc(var(--sov-ui-hit) - 2px);
+  padding: 0 10px;
+  color: #ffffff;
+  background: var(--accent);
+}
+
+.sov-chat-file-picker .q-uploader__header-content {
+  min-height: calc(var(--sov-ui-hit) - 2px);
+  padding: 0;
+}
+
+.sov-chat-file-picker .q-uploader__subtitle,
+.sov-chat-file-picker .q-uploader__list {
+  display: none;
 }
 
 .sov-app-content .sov-composer-actions .q-btn:last-child,
@@ -2733,7 +2962,7 @@ html {
 @media (min-width: 901px) {
   .sov-app-shell {
     display: grid !important;
-    grid-template-columns: 160px minmax(0, 1fr);
+    grid-template-columns: 184px minmax(0, 1fr);
     grid-template-rows: 100vh;
     align-items: stretch;
     overflow: hidden;
@@ -2743,10 +2972,10 @@ html {
     grid-column: 1;
     grid-row: 1;
     display: flex !important;
-    width: 160px !important;
+    width: 184px !important;
     height: 100vh !important;
     min-height: 0;
-    padding: 12px 8px 10px !important;
+    padding: 14px 10px 12px !important;
     gap: 6px !important;
     align-items: stretch !important;
     flex-direction: column;
@@ -2775,7 +3004,7 @@ html {
   }
 
   .sov-brand-block .sov-acronym-copy {
-    max-width: 105px;
+    max-width: 126px;
   }
 
   .sov-brand-block .sov-acronym-title {
@@ -2820,12 +3049,12 @@ html {
 
   .sov-nav-switch {
     width: 100%;
-    min-height: 36px !important;
-    height: 36px !important;
-    padding: 0 7px !important;
+    min-height: 40px !important;
+    height: 40px !important;
+    padding: 0 9px !important;
     justify-content: flex-start !important;
     text-align: left !important;
-    font-size: 12.5px !important;
+    font-size: 13.5px !important;
     font-weight: 700 !important;
     line-height: 1.2 !important;
   }
@@ -2884,10 +3113,10 @@ html {
   }
 
   .les-top-tabs .q-tab {
-    flex: 0 0 36px !important;
+    flex: 0 0 40px !important;
     width: 100%;
-    height: 36px !important;
-    min-height: 36px !important;
+    height: 40px !important;
+    min-height: 40px !important;
     margin: 1px 0;
     padding: 0 8px !important;
     border-radius: 7px;
@@ -2908,8 +3137,8 @@ html {
   .les-top-tabs .q-tab__content {
     min-width: 0;
     width: 100%;
-    height: 36px !important;
-    min-height: 36px !important;
+    height: 40px !important;
+    min-height: 40px !important;
     gap: var(--sov-ui-icon-gap) !important;
     align-items: center;
     flex-direction: row;
@@ -2930,7 +3159,7 @@ html {
   .les-top-tabs .q-tab__label {
     display: block;
     overflow: hidden;
-    font-size: 13px;
+    font-size: 13.5px;
     font-weight: 650;
     line-height: 1.2;
     text-align: left;
@@ -2963,13 +3192,13 @@ html {
   .sov-ui-header-secondary,
   .sov-ui-header-action {
     width: 100%;
-    min-height: 36px;
+    min-height: 40px;
     margin: 0 !important;
     padding: 0 8px !important;
     border-radius: 8px;
     color: var(--text) !important;
     font-family: var(--sov-ui-font-prose) !important;
-    font-size: 12px !important;
+    font-size: 13px !important;
     font-weight: 650 !important;
     line-height: 1.25;
     justify-content: flex-start !important;
@@ -3301,6 +3530,10 @@ html {
 }
 
 @media (max-width: 900px) {
+  :root {
+    --sov-mobile-header: 56px;
+    --sov-mobile-nav: calc(62px + env(safe-area-inset-bottom));
+  }
   .sov-checklist__setup {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -3329,7 +3562,7 @@ html {
     flex-direction: column;
   }
   .sov-ui-shell .sov-chat-identity {
-    max-width: min(420px, 72vw);
+    max-width: 156px;
   }
   .sov-ui-card,
   .sov-ui-evidence-card {
@@ -3337,8 +3570,8 @@ html {
   }
   .sov-app-shell > .sov-ui-header {
     width: 100% !important;
-    height: 62px !important;
-    min-height: 62px;
+    height: var(--sov-mobile-header) !important;
+    min-height: var(--sov-mobile-header);
     padding-inline: 6px !important;
     gap: 2px !important;
     flex-direction: row;
@@ -3370,6 +3603,10 @@ html {
     font-weight: 700 !important;
   }
   .sov-topbar-icon-action {
+    display: none !important;
+  }
+  .sov-mobile-chat-menu {
+    display: inline-flex !important;
     width: var(--sov-ui-hit);
     min-width: var(--sov-ui-hit) !important;
     height: var(--sov-ui-hit);
@@ -3386,12 +3623,21 @@ html {
   .sov-ui-header-action {
     display: none !important;
   }
-  .sov-primary-nav {
-    flex: 0 0 auto;
-    gap: 2px;
-    padding: 1px;
-    background: transparent;
-    box-shadow: none;
+  .sov-mobile-primary-nav {
+    position: fixed;
+    z-index: 40;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    height: var(--sov-mobile-nav);
+    padding: 5px max(12px, env(safe-area-inset-left)) env(safe-area-inset-bottom)
+      max(12px, env(safe-area-inset-right));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-panel) 96%, transparent);
+    box-shadow: 0 -1px 8px rgba(20, 52, 34, .06);
   }
   .sov-ui-header-action {
     width: var(--sov-ui-hit);
@@ -3407,28 +3653,57 @@ html {
     font-size: 20px;
   }
   .sov-nav-switch {
-    min-width: var(--sov-ui-hit) !important;
-    width: var(--sov-ui-hit);
-    padding: 0 !important;
+    width: 100%;
+    min-width: 0 !important;
+    height: 52px;
+    min-height: 52px !important;
+    padding: 4px 6px !important;
   }
   .sov-nav-switch .q-btn__content {
-    gap: 0;
-    font-size: 0;
+    width: 100%;
+    gap: 2px;
+    flex-direction: column;
+    justify-content: center !important;
+    font-size: 11px;
+    line-height: 1.1;
   }
   .sov-nav-switch .q-icon {
-    font-size: 20px;
+    width: 20px;
+    min-width: 20px;
+    font-size: 19px;
   }
   .sov-app-content {
-    height: calc(100vh - 62px);
+    height: calc(100dvh - var(--sov-mobile-header) - var(--sov-mobile-nav));
+    margin-bottom: var(--sov-mobile-nav);
   }
   .sov-app-content > .q-panel-parent > .q-tab-panel,
   .sov-app-content .nicegui-tab-panel {
     padding: 0 !important;
   }
   .sov-app-content .sov-chat-shell {
-    height: calc(100vh - 62px);
+    height: calc(100dvh - var(--sov-mobile-header) - var(--sov-mobile-nav));
     min-height: 0;
     padding: 4px;
+  }
+  .sov-composer-actions {
+    gap: 6px;
+  }
+  .sov-mode-select {
+    width: auto;
+    min-width: 112px;
+    flex: 1 1 132px;
+  }
+  .sov-response-settings-btn,
+  .sov-composer-action,
+  .sov-attach-btn {
+    width: var(--sov-ui-hit) !important;
+    min-width: var(--sov-ui-hit) !important;
+    height: var(--sov-ui-hit) !important;
+    min-height: var(--sov-ui-hit) !important;
+  }
+  .sov-send-btn {
+    min-height: var(--sov-ui-hit) !important;
+    padding-inline: 13px !important;
   }
   .sov-docs-sticky-ask { align-items: stretch; flex-direction: column; }
   .sov-docs-sticky-ask-button { width: 100%; }

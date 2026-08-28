@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              612
-версия Tauri/NSIS:         5.1.612
+номер сборки:              613
+версия Tauri/NSIS:         5.1.613
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       approved Sovushka/PWA frontend-backend boundary
+dev implementation:       Sovushka product-shell foundation and hidden Studio placeholder
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -34,6 +34,16 @@ dev implementation:       approved Sovushka/PWA frontend-backend boundary
 > память, инструменты, secrets и model registry на execution node. Tauri
 > остаётся Windows lifecycle shell, а отдельный аутентифицированный VPS→node
 > протокол не объявляется реализованным до собственного design/acceptance.
+
+> **Build 613 Sovushka shell checkpoint:** основной текст/controls/metadata
+> приведены к 16/14/12 px, общий hit target — к 44 px, desktop rail — к 184 px.
+> На mobile три первичных раздела живут в нижней навигации, вторичные действия
+> чата собраны в одно меню. Composer оставляет на первом слое вложение, один
+> selector режима, настройки и отправку; примеры запросов раскрываются внутри
+> настроек. Диалог файла формулирует три пользовательские задачи и показывает
+> один русский выбор файла. Недоделанная Студия сохранена в коде и API, но в
+> production представлена disabled-заглушкой `Студия · скоро`; старый
+> `?tab=studio` перенаправляется в чат.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

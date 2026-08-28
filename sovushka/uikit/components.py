@@ -104,6 +104,7 @@ def select_field(
     *,
     value: Any = None,
     label: str = "",
+    on_change: Callable[..., Any] | None = None,
     aria_label: str = "",
     clearable: bool = False,
     multiple: bool = False,
@@ -118,7 +119,12 @@ def select_field(
     accessible_name = aria_label or label
     if accessible_name:
         props.append(f'aria-label="{accessible_name}"')
-    return ui.select(options, value=value, label=label or None).props(
+    return ui.select(
+        options,
+        value=value,
+        label=label or None,
+        on_change=on_change,
+    ).props(
         " ".join(props)
     ).classes(" ".join(["sov-ui-select", classes]).strip())
 

@@ -234,6 +234,7 @@ def test_chat_ui_mode_guidance_is_compact_and_input_focused():
 def test_chat_ui_primary_surface_uses_progressive_disclosure():
     source = inspect.getsource(chat_page.build_chat)
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+    uikit = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
 
     assert '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>' in source
     assert "С.О.В.У.Ш.К.А. · Чат" not in source
@@ -241,14 +242,24 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert "Классифицированная, Автоматизированная" in source
     assert 'class="sov-owl-mark"' in source
     assert "technical_status.set_visibility(False)" in source
+    assert 'with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False)' in source
+    assert '"sov-mode-guidance-disclosure"' in source
     assert 'classes("sov-mode-guide")' in source
     assert 'classes("sov-mode-example")' in source
-    assert "lambda _event, mm=_m: _set_mode(mm)" in source
+    assert "select_field(" in source
+    assert 'classes="sov-mode-select"' in source
+    assert "on_change=lambda event: _set_mode(str(event.value))" in source
     assert "lambda _event, example=_example: _fill_prompt(str(example))" in source
     assert '"Настройки ответа"' in source
-    assert 'aria-label="Настройки ответа"' in source
+    assert 'aria_label="Настройки ответа"' in source
     assert 'response_length_select = ui.select(' in source
     assert '"response_length": str(response_length_select.value or "standard")' in source
+    assert 'aria_label="Действия чата"' in source
+    assert 'classes="sov-mobile-chat-menu"' in source
+    for label in ("История", "Документы", "Артефакты", "Новый чат"):
+        assert f'"{label}"' in source
+    assert ".sov-mobile-chat-menu" in uikit
+    assert ".sov-topbar-icon-action {\n    display: none !important;" in uikit
     assert 'aria-label="Дополнительные действия"' not in source
     assert '"Максимум (полный анализ)": "Проведи максимально подробный анализ.' not in source
     assert 'if key == "text":' in source
@@ -257,19 +268,37 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert ".sov-mode-example" in styles
     assert 'classes("sov-composer-footer")' in source
     assert 'props("rows=1 autogrow borderless")' in source
-    assert ".sov-composer-footer" in styles
-    assert ".sov-mode-guides {\n  position: absolute;" in styles
-    assert "bottom: calc(100% + 10px);" in styles
-    assert "pointer-events: none;" in styles
-    assert "padding-right: 420px" in styles
+    assert ".sov-composer-footer" in uikit
+    assert ".sov-mode-guidance-disclosure" in uikit
+    assert ".sov-mode-guidance-disclosure {\n  width: 100%;" in uikit
+    assert "padding-right: 420px" not in uikit
     assert "Shift+Enter — перенос строки" not in source
-    assert "position: absolute" in styles
-    assert "pointer-events: auto;" in styles
-    assert "background: transparent" in styles
-    assert "width: auto" in styles
-    assert "min-height: 40px" in styles
+    assert "background: transparent" in uikit
+    assert "min-height: var(--sov-ui-hit)" in uikit
     assert "scale: .96" in styles
     assert "max-width: 1440px" in styles
+
+
+def test_chat_file_picker_uses_task_language_and_compact_uikit_surface():
+    source = inspect.getsource(chat_page.build_chat)
+    uikit = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
+
+    for label in (
+        "Добавить файл",
+        "Задать вопрос по файлу",
+        "Сверить таблицу",
+        "Сохранить в базе ЛЕС",
+        "Выбрать файл",
+    ):
+        assert label in source
+    assert "attach_mode = ui.radio(" in source
+    assert "attach_mode = ui.toggle(" not in source
+    assert 'classes("sov-attach-dialog")' in source
+    assert '"sov-attach-mode-detail"' in source
+    assert '"sov-chat-file-picker"' in source
+    assert 'max_files=1' in source
+    assert ".sov-attach-dialog" in uikit
+    assert ".sov-chat-file-picker" in uikit
 
 
 def test_instrumenty_has_editable_prompt_controls():

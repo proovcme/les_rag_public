@@ -204,7 +204,7 @@ def build_header(
                 nav_buttons[key] = button
                 return button
 
-            with ui.row().classes("sov-primary-nav"):
+            with ui.row().classes("sov-primary-nav sov-mobile-primary-nav"):
                 _primary_button(
                     "chat",
                     "Чат",
@@ -212,13 +212,14 @@ def build_header(
                     "/classic?tab=chat",
                     "Перейти в рабочий чат",
                 )
-                _primary_button(
-                    "studio",
-                    "Студия",
-                    "o_edit_note",
-                    "/classic?tab=studio",
-                    "Открыть Студию документов",
-                )
+                studio_placeholder = ui.button(
+                    "Студия · скоро",
+                    color=None,
+                    icon="o_edit_note",
+                ).props('flat no-caps disable aria-label="Студия — скоро"').classes(
+                    "sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"
+                ).tooltip("Раздел готовится к выпуску")
+                nav_buttons["studio"] = studio_placeholder
                 _primary_button(
                     "config",
                     "Конфигурация",

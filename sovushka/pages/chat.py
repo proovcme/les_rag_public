@@ -29,7 +29,7 @@ from sovushka.state import (
     refresh_samovar,
     state,
 )
-from sovushka.uikit import action_button
+from sovushka.uikit import action_button, select_field
 
 
 async def _copy_text(text: str) -> None:
@@ -746,7 +746,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         variant="quiet",
                         icon_only=True,
                         aria_label="История чата",
-                        classes="sov-icon-btn",
+                        classes="sov-icon-btn sov-topbar-icon-action",
                     )
                     with ui.column().classes("sov-chat-heading"):
                         _html(
@@ -1072,6 +1072,22 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         aria_label="Новый чат",
                         classes="sov-new-chat-btn sov-topbar-icon-action",
                     ).tooltip("Новая сессия без памяти прошлого диалога")
+                    with action_button(
+                        icon="o_more_horiz",
+                        variant="quiet",
+                        icon_only=True,
+                        aria_label="Действия чата",
+                        classes="sov-mobile-chat-menu",
+                    ):
+                        with ui.menu().classes("sov-mobile-chat-actions"):
+                            ui.menu_item("История", on_click=lambda: _toggle_history())
+                            if tabs is not None and tab_documents is not None:
+                                ui.menu_item(
+                                    "Документы",
+                                    on_click=lambda: tabs.set_value(tab_documents),
+                                )
+                            ui.menu_item("Артефакты", on_click=lambda: _open_artifacts())
+                            ui.menu_item("Новый чат", on_click=lambda: _clear_chat())
 
             scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
             scope_files_panel.set_visibility(False)
@@ -1169,22 +1185,55 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 elif d.get("mode") == "read":
                     ui.notify("Файл будет отправлен модели вместе со следующим сообщением", type="info")
 
-            with ui.dialog() as attach_dialog, ui.card().classes("sov-control-card").style("min-width:360px"):
-                _html('<div class="section-title">Добавить файл к сообщению</div>')
-                attach_mode = ui.toggle(
-                    {"read": "В чат", "quick": "Таблица", "index": "В базу"},
+            with ui.dialog() as attach_dialog, ui.card().classes("sov-attach-dialog"):
+                with ui.row().classes("sov-attach-dialog__head"):
+                    with ui.column().classes("sov-attach-dialog__copy"):
+                        ui.label("Добавить файл").classes("sov-attach-dialog__title")
+                        ui.label(
+                            "Выберите задачу, затем файл. ЛЕС покажет результат под полем запроса."
+                        ).classes("sov-attach-dialog__intro")
+                    action_button(
+                        icon="o_close",
+                        on_click=attach_dialog.close,
+                        variant="quiet",
+                        icon_only=True,
+                        aria_label="Закрыть",
+                        classes="sov-attach-dialog__close",
+                    )
+
+                _ATTACH_MODE_DETAILS = {
+                    "read": "Файл один раз передаётся модели со следующим вопросом и не добавляется в базу.",
+                    "quick": "XLSX или CSV временно открывается для вопросов, проверки и сравнения строк.",
+                    "index": "Документ сохраняется в наборе «Вложения чата» и становится источником ЛЕС.",
+                }
+                ui.label("Что сделать с файлом?").classes("sov-attach-dialog__label")
+                attach_mode_detail = ui.label(_ATTACH_MODE_DETAILS["read"]).classes(
+                    "sov-attach-mode-detail"
+                )
+
+                def _set_attach_mode_detail(event) -> None:
+                    attach_mode_detail.set_text(
+                        _ATTACH_MODE_DETAILS.get(str(event.value), _ATTACH_MODE_DETAILS["read"])
+                    )
+
+                attach_mode = ui.radio(
+                    {
+                        "read": "Задать вопрос по файлу",
+                        "quick": "Сверить таблицу",
+                        "index": "Сохранить в базе ЛЕС",
+                    },
                     value="read",
-                ).props("no-caps")
-                ui.label(
-                    "В чат: текст файла уйдёт модели вместе со следующим сообщением и не попадёт в базу. "
-                    "Таблица: xlsx/csv станет временным датасетом для сверки. "
-                    "В базу: документ добавится в RAG-датасет."
-                ).style("font-size:.66rem;color:var(--dim);")
-                attach_status = ui.label("").style("font-size:.7rem;color:var(--ok);")
+                    on_change=_set_attach_mode_detail,
+                ).props("color=primary").classes("sov-attach-mode-picker")
+                attach_status = ui.label("").classes("sov-attach-status")
                 ui.upload(
+                    label="Выбрать файл",
                     auto_upload=True,
+                    max_files=1,
                     on_upload=_do_attach,
-                ).props("flat accept=.xlsx,.xls,.csv,.pdf,.docx").classes("w-full")
+                ).props("flat accept=.xlsx,.xls,.csv,.pdf,.docx").classes(
+                    "sov-chat-file-picker"
+                )
 
             def _clear_attachment(*, notify: bool = True):
                 attach_state.clear()
@@ -1224,65 +1273,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
                 # Режим только направляет модель к подходящему workflow. Подсказки объясняют
                 # ожидаемые данные, но не превращаются в шаблон ответа или keyword-gate.
-                _MODE_CHIPS = (
-                    ("search", "o_search", "Поиск"),
-                    ("agent", "o_travel_explore", "Агент"),
-                    ("estimator", "o_calculate", "Сметчик"),
-                    ("engineer", "o_engineering", "Инженер"),
-                )
-                _mode_chip_refs: dict = {}
+                _MODE_OPTIONS = {
+                    "search": "Поиск",
+                    "agent": "Агент",
+                    "estimator": "Сметчик",
+                    "engineer": "Инженер",
+                }
                 _mode_hint_refs: dict = {}
 
-                def _chip_style(on: bool) -> str:
-                    base = ("border:1px solid var(--accent);color:var(--accent);background:rgba(52,211,153,.12);"
-                            if on else "border:1px solid var(--border);color:var(--dim);background:transparent;")
-                    return base
-
                 def _set_mode(m: str) -> None:
-                    new = m
-                    out_mode_val["v"] = new
-                    for _k, _btn in _mode_chip_refs.items():
-                        _btn.style(_chip_style(_k == new))
+                    if m not in _MODE_OPTIONS:
+                        return
+                    out_mode_val["v"] = m
                     for _k, _panel in _mode_hint_refs.items():
-                        _panel.set_visibility(_k == new)
+                        _panel.set_visibility(_k == m)
 
                 def _fill_prompt(text: str) -> None:
                     chat_input.value = text
                     chat_input.update()
-
-                with ui.row().classes("sov-mode-picker"):
-                    for _m, _ic, _lb in _MODE_CHIPS:
-                        _cb = ui.button(_lb, icon=_ic, on_click=lambda _event, mm=_m: _set_mode(mm)).props(
-                            "flat dense no-caps").classes("sov-mode-btn").style(
-                            _chip_style(_m == out_mode_val["v"])
-                        )
-                        _mode_chip_refs[_m] = _cb
-                    action_button(
-                        "Применить активную версию",
-                        icon="o_sync",
-                        on_click=lambda: (
-                            apply_active_profile.__setitem__("v", True),
-                            ui.notify("Активная версия применится к следующему сообщению", type="info"),
-                        ),
-                        variant="quiet",
-                        compact=True,
-                    )
-
-                with ui.element("div").classes("sov-mode-guides"):
-                    for _mode_key, _guide in CHAT_MODE_GUIDANCE.items():
-                        with ui.element("div").classes("sov-mode-guide") as _guide_panel:
-                            with ui.row().classes("sov-mode-guide-head"):
-                                ui.label(str(_guide["title"])).classes("sov-mode-guide-title")
-                                ui.label(str(_guide["description"])).classes("sov-mode-guide-copy")
-                            ui.label(str(_guide["data_hint"])).classes("sov-mode-data-hint")
-                            with ui.row().classes("sov-mode-examples"):
-                                for _example in _guide["examples"]:
-                                    ui.button(
-                                        str(_example),
-                                        on_click=lambda _event, example=_example: _fill_prompt(str(example)),
-                                    ).props("flat dense no-caps").classes("sov-mode-example")
-                        _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
-                        _mode_hint_refs[_mode_key] = _guide_panel
 
                 with ui.element("div").classes("sov-composer-footer"):
                     with ui.row().classes("sov-composer-actions"):
@@ -1294,14 +1302,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             aria_label="Прикрепить файл",
                             classes="sov-composer-action sov-attach-btn",
                         ).tooltip("Прикрепить файл")
-                        response_settings_btn = ui.button(
-                            "Настройки ответа", icon="o_tune"
-                        ).props('no-caps flat dense aria-label="Настройки ответа"').classes(
-                            "sov-response-settings-btn"
+                        mode_select = select_field(
+                            _MODE_OPTIONS,
+                            value=out_mode_val["v"],
+                            label="Режим",
+                            on_change=lambda event: _set_mode(str(event.value)),
+                            aria_label="Режим работы",
+                            classes="sov-mode-select",
+                        )
+                        response_settings_btn = action_button(
+                            icon="o_tune",
+                            variant="quiet",
+                            icon_only=True,
+                            aria_label="Настройки ответа",
+                            classes="sov-response-settings-btn",
                         )
                         with response_settings_btn:
                             with ui.menu().classes("sov-response-settings-menu"):
-                                ui.label("Длина ответа").classes("sov-tools-title")
+                                ui.label("Настройки ответа").classes("sov-tools-title")
                                 response_length_select = ui.select(
                                     {
                                         "short": "Короткий",
@@ -1312,6 +1330,37 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     value="standard",
                                     label="Длина ответа",
                                 ).props("outlined dense options-dense").classes("sov-response-length-select")
+                                with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False).classes(
+                                    "sov-mode-guidance-disclosure"
+                                ):
+                                    for _mode_key, _guide in CHAT_MODE_GUIDANCE.items():
+                                        with ui.element("div").classes("sov-mode-guide") as _guide_panel:
+                                            with ui.row().classes("sov-mode-guide-head"):
+                                                ui.label(str(_guide["title"])).classes("sov-mode-guide-title")
+                                                ui.label(str(_guide["description"])).classes("sov-mode-guide-copy")
+                                            ui.label(str(_guide["data_hint"])).classes("sov-mode-data-hint")
+                                            with ui.row().classes("sov-mode-examples"):
+                                                for _example in _guide["examples"]:
+                                                    ui.button(
+                                                        str(_example),
+                                                        on_click=lambda _event, example=_example: _fill_prompt(str(example)),
+                                                    ).props("flat dense no-caps").classes("sov-mode-example")
+                                        _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
+                                        _mode_hint_refs[_mode_key] = _guide_panel
+                                action_button(
+                                    "Применить активную версию",
+                                    icon="o_sync",
+                                    on_click=lambda: (
+                                        apply_active_profile.__setitem__("v", True),
+                                        ui.notify(
+                                            "Активная версия применится к следующему сообщению",
+                                            type="info",
+                                        ),
+                                    ),
+                                    variant="quiet",
+                                    compact=True,
+                                    classes="sov-apply-profile-action",
+                                )
                         stop_dialog_btn = ui.button(
                             "Остановить диалог",
                             icon="o_stop_circle",

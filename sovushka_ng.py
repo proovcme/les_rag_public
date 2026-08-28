@@ -235,6 +235,8 @@ async def classic_chat_page(request: Request):
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")
+    if (request.query_params.get("tab") or "").strip().casefold() == "studio":
+        return RedirectResponse("/classic?tab=chat")
 
     _apply_theme()
 
@@ -250,11 +252,7 @@ async def classic_chat_page(request: Request):
             include_datasets=is_admin,
             include_documents=True,
             admin_link=is_admin,
-            active_primary=(
-                "studio"
-                if (request.query_params.get("tab") or "").strip().casefold() == "studio"
-                else "chat"
-            ),
+            active_primary="chat",
         )
 
         tab_chat = tr["chat"]
@@ -269,7 +267,6 @@ async def classic_chat_page(request: Request):
         _forced_chat_tab = bool((request.query_params.get("question") or "").strip())
         _query_tab = {
             "chat": "AI ЧАТ",
-            "studio": "Студия",
             "documents": "Документы",
             "datasets": "Датасеты",
         }.get(_requested_tab)
@@ -278,6 +275,8 @@ async def classic_chat_page(request: Request):
             if _forced_chat_tab
             else (_query_tab or app.storage.user.get("last_chat_tab", "AI ЧАТ"))
         )
+        if _last_tab == "Студия":
+            _last_tab = "AI ЧАТ"
         _target = {
             "AI ЧАТ": tab_chat,
             "Датасеты": tab_samovar,

@@ -143,7 +143,7 @@ def test_classic_surfaces_use_shared_lazy_panels():
 
 
 def test_uikit_has_accessible_motion_and_control_contract():
-    assert "--sov-ui-hit: 40px" in UIKIT_CSS
+    assert "--sov-ui-hit: 44px" in UIKIT_CSS
     assert ":focus-visible" in UIKIT_CSS
     assert "outline: 2px solid var(--accent) !important" in UIKIT_CSS
     assert "prefers-reduced-motion: reduce" in UIKIT_CSS
@@ -158,10 +158,12 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert "font-variant-numeric: tabular-nums" in UIKIT_CSS
     assert "text-wrap: balance" in UIKIT_CSS
     assert "text-wrap: pretty" in UIKIT_CSS
-    assert "grid-template-columns: 160px minmax(0, 1fr)" in UIKIT_CSS
+    assert "grid-template-columns: 184px minmax(0, 1fr)" in UIKIT_CSS
     assert "@media (max-width: 900px)" in UIKIT_CSS
-    assert "--sov-ui-font-size-body: 14px" in UIKIT_CSS
-    assert "--sov-ui-font-size-control: 13px" in UIKIT_CSS
+    assert '--sov-ui-font-prose: "Segoe UI Variable Text", "Segoe UI"' in UIKIT_CSS
+    assert "--sov-ui-font-size-body: 16px" in UIKIT_CSS
+    assert "--sov-ui-font-size-control: 14px" in UIKIT_CSS
+    assert "--sov-ui-font-size-meta: 12px" in UIKIT_CSS
     assert "font-synthesis: none" in UIKIT_CSS
     assert ".sov-nav-switch--active .q-btn__content" in UIKIT_CSS
     assert ".sov-ui-shell .sov-chat-title" in UIKIT_CSS
@@ -198,15 +200,20 @@ def test_component_registry_stays_small_and_explicit():
 
 def test_navigation_has_one_icon_column_and_equal_primary_rows():
     assert ".sov-nav-switch--config .q-btn__content" not in UIKIT_CSS
-    assert "height: 36px !important" in UIKIT_CSS
-    assert "padding: 0 7px !important" in UIKIT_CSS
+    assert "height: 40px !important" in UIKIT_CSS
+    assert "padding: 0 9px !important" in UIKIT_CSS
     assert "padding: 0 8px !important" in UIKIT_CSS
     assert "gap: var(--sov-ui-icon-gap)" in UIKIT_CSS
     assert "flex: 0 0 var(--sov-ui-icon-column)" in UIKIT_CSS
 
     header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
-    assert 'with ui.row().classes("sov-primary-nav")' in header
-    assert header.count("_primary_button(") == 4
+    assert 'with ui.row().classes("sov-primary-nav sov-mobile-primary-nav")' in header
+    assert header.count("_primary_button(") == 3
+    assert '"sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"' in header
+    assert ".sov-mobile-primary-nav" in UIKIT_CSS
+    assert "env(safe-area-inset-bottom)" in UIKIT_CSS
+    mobile_nav = UIKIT_CSS[UIKIT_CSS.index(".sov-mobile-primary-nav") :]
+    assert ".sov-nav-switch .q-btn__content {\n    width: 100%;\n    gap: 2px;" in mobile_nav
 
 
 def _contrast_ratio(foreground: str, background: str) -> float:
@@ -333,13 +340,12 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
 
     for key, label, icon in (
         ("chat", "Чат", "o_forum"),
-        ("studio", "Студия", "o_edit_note"),
         ("config", "Конфигурация", "o_tune"),
     ):
         assert f'"{key}",' in header
         assert f'"{label}",' in header
         assert f'"{icon}",' in header
-    assert "sov-primary-nav" in header
+    assert "sov-primary-nav sov-mobile-primary-nav" in header
     assert "Рабочие разделы" in header
     assert "sov-runtime-state" in header
     assert "ЛЕС на связи" in header
@@ -353,7 +359,12 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     assert 'tab_refs[key].tooltip(label)' in header
     assert 'f"sov-nav-switch sov-nav-switch--{key}"' in header
     assert "sov-nav-switch--active" in header
-    assert "/classic?tab=studio" in header
+    assert '"Студия · скоро"' in header
+    assert '"Раздел готовится к выпуску"' in header
+    assert '"sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"' in header
+    assert '.props(\'flat no-caps disable aria-label="Студия — скоро"\')' in header
+    assert ".sov-nav-switch--placeholder.q-btn--disabled" in UIKIT_CSS
+    assert "/classic?tab=studio" not in header
     assert "tabs.set_value(tab_refs[key])" in header
     assert "window.history.replaceState" in header
     assert 'active_primary="config"' in Path("sovushka_ng.py").read_text(encoding="utf-8")
@@ -362,6 +373,16 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     assert '"Забрать ещё"' in mail
     assert "sov-mail-status-strip" in mail
     assert '"target_file"' in mail
+
+
+def test_hidden_studio_route_falls_back_to_chat_without_deleting_studio_code():
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    assert 'build_documents(surface="studio")' in shell
+    assert 'return RedirectResponse("/classic?tab=chat")' in shell
+    assert '"studio": "Студия"' not in shell
+    assert 'if _last_tab == "Студия":' in shell
+    assert '_last_tab = "AI ЧАТ"' in shell
 
 
 def test_configuration_home_uses_uikit_and_progressive_disclosure():
