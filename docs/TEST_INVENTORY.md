@@ -1,5 +1,15 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.29.0 bound chat and Windows-safe gates (build 610):**
+> `tests/test_model_connection_chat_integration.py` и расширенные chat/
+> architecture/runtime tests проверяют exact answer/fallback revisions,
+> zero-call shadow, consent по locality, безопасную provenance, governed memory,
+> один canonical tool call и запрет engine-name routing в нейтральных сервисах.
+> Все pytest-профили `Makefile` теперь сами задают отдельный workspace-local
+> `.test-tmp/<profile>`; регрессия закреплена в `tests/test_test_profiles.py`,
+> поэтому обычный `make test` не зависит от Windows `%TEMP%`. `make verify`:
+> **722 collected**; `make test`: **722 passed**.
+
 > **0.29.0 governed context and preset parity (build 603):**
 > `tests/test_model_execution_preset_service.py`,
 > `test_context_governor_service.py`, `test_typed_memory_projection_service.py`,
@@ -22,8 +32,7 @@
 > Сквозной chat-test использует настоящий TrustedExecutor и SQLite persistence
 > probe, проверяя one-call shadow, exact Broker context, legacy answer/history и
 > продолжение после redacted candidate exception. Полный current behavior gate:
-> **681 passed** с workspace-local `--basetemp`; системный Windows `%TEMP%`
-> недоступен и не считается провалом кода.
+> **681 passed** с workspace-local `--basetemp`; это исторический checkpoint.
 
 > **0.27.77 ordinary smeta RAG and physical KV:**
 > `tests/test_publish_smeta_norm_dataset.py` фиксирует read-only card rendering

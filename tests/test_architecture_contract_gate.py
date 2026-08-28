@@ -126,3 +126,31 @@ def test_gate_self_test_fixtures_are_not_product_findings(tmp_path: Path) -> Non
     )
 
     assert scan_architecture(tmp_path) == []
+
+
+def test_rejects_engine_name_routing_in_provider_neutral_chat_boundary(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/canonical_route_service.py",
+        """def complete(connection):
+    if connection.display_name == "Ollama":
+        return native_call(connection)
+    return common_call(connection)
+""",
+    )
+
+    assert "ENGINE_NAME_ROUTING" in _codes(tmp_path)
+
+
+def test_allows_provider_names_only_inside_legacy_importer(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/model_connection_resolver_service.py",
+        """class LegacyConnectionImporter:
+    def import_effective(self, provider):
+        if provider == "Ollama":
+            return "legacy:ollama"
+""",
+    )
+
+    assert "ENGINE_NAME_ROUTING" not in _codes(tmp_path)

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from backend.rag_config import rag_meta_db_path
+from proxy.config import ENV_PATH
 from proxy.security import require_user
 from proxy.services.answer_form_service import classify_answer_form
 from proxy.services.chat_evidence_application_service import (
@@ -33,6 +34,19 @@ from proxy.services.chat_evidence_application_service import (
 from proxy.services.answer_contract_service import decorate_payload, scenario_for_request
 from proxy.services.class_router_service import build_class_suggestions
 from proxy.services.chat_provider_session_service import ChatProviderConfig
+from proxy.services.canonical_route_service import (
+    BoundModelChatRunner,
+    CanonicalRouteMode,
+    resolve_canonical_route,
+)
+from proxy.services.model_connection_registry_service import ModelConnectionRegistry
+from proxy.services.model_connection_resolver_service import ModelConnectionResolver
+from proxy.services.model_secret_service import EnvironmentSecretStore
+from proxy.services.openai_compatible_transport_service import (
+    InferenceRequest,
+    InferenceResponse,
+    OpenAICompatibleTransport,
+)
 from backend.inference.validator import rules_pre_verdict
 from backend.inference.routing import (
     decide_provider,
@@ -408,6 +422,8 @@ class LlmRuntime:
     model: str
     api_key: str
     supports_validation: bool
+    requires_cache_alignment: bool = False
+    uses_native_chat: bool = False
 
 
 def _join_openai_path(base_url: str, path: str) -> str:
@@ -461,6 +477,7 @@ def _llm_runtime() -> LlmRuntime:
             model,
             api_key,
             False,
+            requires_cache_alignment=True,
         )
     if provider == "openrouter":
         base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").strip()
@@ -480,7 +497,15 @@ def _llm_runtime() -> LlmRuntime:
         base_url = os.getenv("OLLAMA_BASE_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")).strip()
         model = os.getenv("OLLAMA_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
         api_key = os.getenv("OLLAMA_API_KEY", "").strip()
-        return LlmRuntime(provider, base_url, _join_openai_path(base_url, "/chat/completions"), model, api_key, False)
+        return LlmRuntime(
+            provider,
+            base_url,
+            _join_openai_path(base_url, "/chat/completions"),
+            model,
+            api_key,
+            False,
+            uses_native_chat=True,
+        )
     if provider == "lemonade":
         base_url = os.getenv("LEMONADE_BASE_URL", "http://127.0.0.1:13305/api/v1").strip()
         model = os.getenv("LEMONADE_MODEL", "").strip() or os.getenv("LLM_MODEL", "")
@@ -524,6 +549,13 @@ async def _run_chat_with_provider(req: ChatRequest, token_sink=None):
         if token_sink is None:
             return await _run_chat(req)
         return await _run_chat(req, token_sink=token_sink)
+    if os.getenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }:
+        raise HTTPException(409, "SESSION_PROVIDER_OVERRIDE_DISABLED")
     runtime = _runtime_from_provider_config(req.provider_config)
     runtime_token = _REQUEST_LLM_RUNTIME.set(runtime)
     consent_token = _REQUEST_CLOUD_CONSENT.set(is_cloud_provider(runtime.provider))
@@ -572,6 +604,29 @@ def cloud_model_timeout() -> float:
     """Конечный таймаут на одну облачную модель — зависший провайдер не держит
     запрос 300с, а быстро уступает следующей модели / локальному MLX."""
     return _env_float("LES_CLOUD_MODEL_TIMEOUT_SEC", 45.0)
+
+
+def _effective_model_connection_mode() -> CanonicalRouteMode:
+    return resolve_canonical_route(receipt=None).effective
+
+
+def _bound_model_chat_runner(client: httpx.AsyncClient) -> BoundModelChatRunner:
+    resolver, secret_store = _model_connection_resolver()
+    return BoundModelChatRunner(
+        resolver=resolver,
+        transport=OpenAICompatibleTransport(
+            client=client,
+            secret_store=secret_store,
+        ),
+    )
+
+
+def _model_connection_resolver() -> tuple[ModelConnectionResolver, EnvironmentSecretStore]:
+    secret_store = EnvironmentSecretStore(ENV_PATH)
+    return ModelConnectionResolver(
+        registry=ModelConnectionRegistry(),
+        secret_store=secret_store,
+    ), secret_store
 
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+")
@@ -1722,54 +1777,103 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
     except Exception as err:
         logger.warning("[MEMORY] free session recall failed: %s", err)
         session_block = ""
-    body = {
-        "model": runtime.model,
-        "messages": [{"role": "system", "content": sys_prompt},
-                     {"role": "user", "content": (f"{session_block}\n\n" if session_block else "") + attachment + req.question}],
-        "temperature": 0.85, "max_tokens": 1400,
-    }
-    body = _cloud_body_for_model(body, runtime.model, runtime.provider)
-    headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+    messages = [
+        {"role": "system", "content": sys_prompt},
+        {
+            "role": "user",
+            "content": (f"{session_block}\n\n" if session_block else "")
+            + attachment
+            + req.question,
+        },
+    ]
+    request = InferenceRequest(
+        messages=tuple(messages),
+        temperature=0.85,
+        max_output_tokens=1400,
+    )
     acc: list[str] = []
     try:
         if token_sink is not None:
             await token_sink({"event": "token", "data": disclaimer})
         async with httpx.AsyncClient(timeout=300.0) as client:
-            if runtime.provider == "ollama":
-                # #1b: нативный /api/chat think:false → чистый ответ (OpenAI-compat ollama
-                # игнорирует управление reasoning; модель иначе уходит в дамп размышлений).
-                text, _ = await _ollama_native_complete(
-                    client, runtime, body["messages"], max_tokens=1400, temperature=0.85,
-                    headers=headers, token_sink=token_sink)
-                acc.append(text)
-            elif token_sink is not None:
-                sbody = {**body, "stream": True}
-                if is_cloud_provider(runtime.provider):
-                    sbody["stream_options"] = {"include_usage": True}
-                async with client.stream("POST", runtime.chat_url, headers=headers, json=sbody) as sresp:
-                    sresp.raise_for_status()
-                    async for line in sresp.aiter_lines():
-                        if not line or not line.startswith("data:"):
-                            continue
-                        p = line[5:].strip()
-                        if p == "[DONE]":
-                            break
-                        try:
-                            chunk = json.loads(p)
-                        except json.JSONDecodeError:
-                            continue
-                        ch = chunk.get("choices") or []
-                        _delta = ch[0].get("delta", {}) if ch else {}
-                        # reasoning-модели стримят размышления в delta.reasoning, content пуст —
-                        # берём reasoning как fallback, иначе стрим был бы пустым (#1, Windows ollama).
-                        piece = assistant_delta_text(_delta)
-                        if piece:
-                            acc.append(piece)
-                            await token_sink({"event": "token", "data": piece})
-            else:
-                r = await client.post(runtime.chat_url, headers=headers, json=body)
-                r.raise_for_status()
-                acc.append(_assistant_text(r.json().get("choices", [{}])[0].get("message", {})))
+            connection_mode = _effective_model_connection_mode()
+            async def legacy_complete(_request: InferenceRequest) -> InferenceResponse:
+                body = {
+                    "model": runtime.model,
+                    "messages": messages,
+                    "temperature": 0.85,
+                    "max_tokens": 1400,
+                }
+                body = _cloud_body_for_model(body, runtime.model, runtime.provider)
+                headers = {"Authorization": f"Bearer {runtime.api_key}"} if runtime.api_key else {}
+                if runtime.provider == "ollama":
+                    text, usage = await _ollama_native_complete(
+                        client,
+                        runtime,
+                        messages,
+                        max_tokens=1400,
+                        temperature=0.85,
+                        headers=headers,
+                        token_sink=token_sink,
+                    )
+                    return InferenceResponse(text=text, tool_calls=(), finish_reason="stop", usage=usage)
+                if token_sink is not None:
+                    sbody = {**body, "stream": True}
+                    if is_cloud_provider(runtime.provider):
+                        sbody["stream_options"] = {"include_usage": True}
+                    pieces: list[str] = []
+                    usage: dict[str, int] = {}
+                    async with client.stream(
+                        "POST", runtime.chat_url, headers=headers, json=sbody
+                    ) as sresp:
+                        sresp.raise_for_status()
+                        async for line in sresp.aiter_lines():
+                            if not line or not line.startswith("data:"):
+                                continue
+                            payload = line[5:].strip()
+                            if payload == "[DONE]":
+                                break
+                            try:
+                                chunk = json.loads(payload)
+                            except json.JSONDecodeError:
+                                continue
+                            choices = chunk.get("choices") or []
+                            delta = choices[0].get("delta", {}) if choices else {}
+                            piece = assistant_delta_text(delta)
+                            if piece:
+                                pieces.append(piece)
+                                await token_sink({"event": "token", "data": piece})
+                            if chunk.get("usage"):
+                                usage = chunk["usage"]
+                    return InferenceResponse(
+                        text="".join(pieces),
+                        tool_calls=(),
+                        finish_reason="stop",
+                        usage=usage,
+                    )
+                response = await client.post(runtime.chat_url, headers=headers, json=body)
+                response.raise_for_status()
+                payload = response.json()
+                choice = (payload.get("choices") or [{}])[0]
+                return InferenceResponse(
+                    text=_assistant_text(choice.get("message", {})),
+                    tool_calls=tuple((choice.get("message") or {}).get("tool_calls") or ()),
+                    finish_reason=str(choice.get("finish_reason") or ""),
+                    usage=payload.get("usage", {}) or {},
+                )
+
+            result = await _bound_model_chat_runner(client).complete(
+                mode=connection_mode,
+                request=request,
+                legacy_complete=legacy_complete,
+            )
+            acc.append(result.response.text)
+            if (
+                token_sink is not None
+                and connection_mode is CanonicalRouteMode.ACTIVE
+                and result.response.text
+            ):
+                await token_sink({"event": "token", "data": result.response.text})
     except Exception as e:  # noqa: BLE001
         logger.warning("[FREE] generation failed: %s", e)
         return disclaimer + f"Не удалось получить вольный ответ: {type(e).__name__}: {e}"
@@ -3709,6 +3813,11 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         table_query_response=_table_query_response,
         cloud_fallback_models=cloud_fallback_models,
         cloud_model_timeout=cloud_model_timeout,
+        model_connection_resolver=_model_connection_resolver,
+        model_connection_transport=lambda client, secret_store: OpenAICompatibleTransport(
+            client=client,
+            secret_store=secret_store,
+        ),
     )
     response_boundary = ResponseBoundary(
         save_chat_history=save_chat_history,

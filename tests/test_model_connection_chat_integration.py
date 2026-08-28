@@ -1,0 +1,248 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import pytest
+
+from proxy.routers import chat
+from proxy.services.canonical_route_service import (
+    BoundModelChatRunner,
+    CanonicalRouteMode,
+    ModelChatResult,
+)
+from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
+from proxy.services.model_connection_resolver_service import ModelConnectionResolutionError
+from proxy.services.openai_compatible_transport_service import (
+    InferenceRequest,
+    InferenceResponse,
+    ModelTransportError,
+)
+
+
+def _connection(revision_id: str, locality=ConnectionLocality.LOOPBACK):
+    return SimpleNamespace(
+        connection_id=revision_id.rsplit(":r", 1)[0],
+        revision_id=revision_id,
+        display_name="Main model",
+        model_id="model-1",
+        locality=locality,
+        base_url="https://must-not-leak.example/v1",
+        secret_ref="env:MUST_NOT_LEAK",
+    )
+
+
+class Resolver:
+    def __init__(self, primary, fallback=None):
+        self.primary = primary
+        self.fallback = fallback
+        self.resolved_roles = []
+
+    def resolve(self, role, *, required_capabilities=frozenset()):
+        self.resolved_roles.append(role)
+        if role is ConnectionRole.ANSWER:
+            return self.primary
+        raise AssertionError(f"unexpected role: {role}")
+
+    def resolve_fallback(self, failed_revision_id, *, required_capabilities=frozenset()):
+        if self.fallback is None:
+            raise ModelConnectionResolutionError("ROLE_BINDING_MISSING: local_fallback")
+        return self.fallback
+
+
+class Transport:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.revision_calls = []
+
+    async def complete(self, connection, request):
+        self.revision_calls.append(connection.revision_id)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
+def _answer(text: str) -> InferenceResponse:
+    return InferenceResponse(text=text, tool_calls=(), finish_reason="stop", usage={})
+
+
+def _tool_answer(*names: str) -> InferenceResponse:
+    return InferenceResponse(
+        text="",
+        tool_calls=tuple(
+            {
+                "id": f"call-{index}",
+                "type": "function",
+                "function": {"name": name, "arguments": "{}"},
+            }
+            for index, name in enumerate(names, 1)
+        ),
+        finish_reason="tool_calls",
+        usage={},
+    )
+
+
+def _request() -> InferenceRequest:
+    return InferenceRequest(
+        messages=({"role": "user", "content": "Прочитай файл"},),
+        max_output_tokens=64,
+    )
+
+
+@pytest.mark.asyncio
+async def test_shadow_compares_resolution_without_second_model_call() -> None:
+    legacy_calls = []
+    resolver = Resolver(_connection("conn:primary:r1"))
+    transport = Transport([_answer("candidate must stay unused")])
+    runner = BoundModelChatRunner(resolver=resolver, transport=transport)
+
+    async def legacy_call(_request):
+        legacy_calls.append("called")
+        return _answer("legacy answer")
+
+    result = await runner.complete(
+        mode=CanonicalRouteMode.SHADOW,
+        request=_request(),
+        legacy_complete=legacy_call,
+    )
+
+    assert result.response.text == "legacy answer"
+    assert result.connection is None
+    assert legacy_calls == ["called"]
+    assert transport.revision_calls == []
+
+
+@pytest.mark.asyncio
+async def test_active_uses_only_bound_fallback_and_records_revision() -> None:
+    primary = _connection("conn:primary:r1")
+    fallback = _connection("conn:fallback:r4")
+    transport = Transport([ModelTransportError("UPSTREAM_HTTP_ERROR: 503"), _answer("fallback")])
+    runner = BoundModelChatRunner(
+        resolver=Resolver(primary, fallback),
+        transport=transport,
+    )
+
+    result = await runner.complete(
+        mode=CanonicalRouteMode.ACTIVE,
+        request=_request(),
+        legacy_complete=lambda _request: pytest.fail("legacy path must not run in active mode"),
+    )
+
+    assert result.response.text == "fallback"
+    assert result.public_connection_payload() == {
+        "connection_id": "conn:fallback",
+        "revision_id": "conn:fallback:r4",
+        "display_name": "Main model",
+        "model_id": "model-1",
+        "locality": "loopback",
+        "fallback_used": True,
+    }
+    assert transport.revision_calls == ["conn:primary:r1", "conn:fallback:r4"]
+
+
+@pytest.mark.asyncio
+async def test_active_missing_fallback_fails_without_legacy_or_registry_scan() -> None:
+    primary = _connection("conn:primary:r1")
+    transport = Transport([ModelTransportError("UPSTREAM_REQUEST_FAILED")])
+    runner = BoundModelChatRunner(resolver=Resolver(primary), transport=transport)
+
+    with pytest.raises(ModelConnectionResolutionError, match="ROLE_BINDING_MISSING: local_fallback"):
+        await runner.complete(
+            mode=CanonicalRouteMode.ACTIVE,
+            request=_request(),
+            legacy_complete=lambda _request: pytest.fail("legacy fallback is forbidden"),
+        )
+
+    assert transport.revision_calls == ["conn:primary:r1"]
+
+
+@pytest.mark.asyncio
+async def test_remote_connection_without_consent_uses_only_explicit_fallback() -> None:
+    primary = _connection("conn:remote:r1", ConnectionLocality.REMOTE)
+    fallback = _connection("conn:local:r2")
+    transport = Transport([_answer("local answer")])
+    runner = BoundModelChatRunner(resolver=Resolver(primary, fallback), transport=transport)
+
+    result = await runner.complete(
+        mode=CanonicalRouteMode.ACTIVE,
+        request=_request(),
+        legacy_complete=lambda _request: pytest.fail("legacy fallback is forbidden"),
+        remote_allowed=False,
+    )
+
+    assert result.response.text == "local answer"
+    assert result.fallback_used is True
+    assert transport.revision_calls == ["conn:local:r2"]
+
+
+def test_public_connection_payload_never_contains_endpoint_or_secret() -> None:
+    runner_result = ModelChatResult(
+        response=_answer("ok"),
+        connection=_connection("conn:c1:r1", ConnectionLocality.REMOTE),
+        fallback_used=False,
+    )
+
+    payload = runner_result.public_connection_payload()
+
+    assert payload["revision_id"] == "conn:c1:r1"
+    assert "base_url" not in payload
+    assert "secret_ref" not in payload
+
+
+@pytest.mark.asyncio
+async def test_active_exposes_one_tool_decision_and_keeps_the_rest_pending() -> None:
+    primary = _connection("conn:primary:r1")
+    runner = BoundModelChatRunner(
+        resolver=Resolver(primary),
+        transport=Transport([_tool_answer("read_source", "read_table")]),
+    )
+
+    result = await runner.complete(
+        mode=CanonicalRouteMode.ACTIVE,
+        request=_request(),
+        legacy_complete=lambda _request: pytest.fail("legacy path must not run"),
+    )
+
+    assert [call["function"]["name"] for call in result.response.tool_calls] == ["read_source"]
+    assert result.pending_tool_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_free_chat_active_uses_bound_runner_without_legacy_http(monkeypatch) -> None:
+    primary = _connection("conn:primary:r7")
+    transport = Transport([_answer("active answer")])
+    runner = BoundModelChatRunner(resolver=Resolver(primary), transport=transport)
+    monkeypatch.setattr(chat, "_bound_model_chat_runner", lambda _client: runner)
+    monkeypatch.setattr(chat, "_effective_model_connection_mode", lambda: CanonicalRouteMode.ACTIVE)
+    monkeypatch.setattr(chat, "session_memory", lambda *_args, **_kwargs: "remembered")
+
+    result = await chat._run_free_mode(
+        chat.ChatRequest(question="Что известно?", mode="free")
+    )
+
+    assert result.endswith("active answer")
+    assert transport.revision_calls == ["conn:primary:r7"]
+
+
+@pytest.mark.asyncio
+async def test_installed_chat_rejects_per_request_provider_secret(monkeypatch) -> None:
+    monkeypatch.delenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", raising=False)
+    monkeypatch.setattr(
+        chat,
+        "_run_chat",
+        lambda *_args, **_kwargs: pytest.fail("request override must fail before chat"),
+    )
+    request = chat.ChatRequest(
+        question="test",
+        provider_config={
+            "provider": "openrouter",
+            "model": "openai/test",
+            "api_key": "sk-private-key",
+        },
+    )
+
+    with pytest.raises(chat.HTTPException) as error:
+        await chat._run_chat_with_provider(request)
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "SESSION_PROVIDER_OVERRIDE_DISABLED"

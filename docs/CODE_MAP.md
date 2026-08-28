@@ -25,6 +25,20 @@
 > Cloud→MLX fallback заново разрешает preset и перепаковывает packet; retry уже
 > не может повторно использовать прежний cloud budget.
 
+> **Bound model connections 0.29.0:** `routers/chat.py` создаёт
+> `ModelConnectionResolver` и `OpenAICompatibleTransport`, а
+> `canonical_route_service.BoundModelChatRunner` применяет rollout без второго
+> shadow-вызова. В `active` free/evidence chat использует точную immutable
+> ревизию роли `answer`; transport failure или запрет remote consent разрешает
+> только точную роль `local_fallback`, без перебора моделей и provider scan.
+> `chat_evidence_application_service.py` передаёт `effective_preset` соединения
+> в ContextGovernor, сохраняет notebook/attachment context и публикует только
+> безопасные connection/revision/model/locality поля. Архитектурный гейт
+> запрещает сравнение названий движков в нейтральных chat/transport services.
+> Provider-specific cache/native-chat признаки существуют только в legacy
+> rollback adapter. Персональный `provider_config` в установленном чате
+> отклоняется; demo-only legacy override требует отдельного Danger-фактора.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical

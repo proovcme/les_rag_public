@@ -34,6 +34,7 @@ _SECRET_MARKERS = (
 )
 _DANGER_KEYS = {
     "LES_CANONICAL_AGENT_ROUTE_MODE",
+    "LES_DEMO_PROVIDER_OVERRIDE_ENABLED",
     "LES_ALLOW_RUNTIME_SIDECAR_WRITE",
     "LES_EXTERNAL_ALLOW_ANY",
     "DOCKER_CONTROL_ENABLED",
@@ -52,7 +53,10 @@ _RESTART_PREFIXES = (
     "RAG_", "EMBED_", "QDRANT_", "LES_RUNTIME_", "LES_REPO_", "LES_ENV_",
     "SOVUSHKA_", "PROXY_", "MLX_", "OLLAMA_", "LEMONADE_", "FREETOKEN_",
 )
-_RESTART_KEYS = {"LES_CANONICAL_AGENT_ROUTE_MODE"}
+_RESTART_KEYS = {
+    "LES_CANONICAL_AGENT_ROUTE_MODE",
+    "LES_DEMO_PROVIDER_OVERRIDE_ENABLED",
+}
 _SKIP_PARTS = {
     ".git", ".venv", ".test-tmp", "data", "logs", "storage", "dist",
     "docs", "local_private_archive", "node_modules", "target", "build",

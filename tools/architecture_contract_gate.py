@@ -31,6 +31,19 @@ _GATE_SELF_PATHS = {
     "tests/test_architecture_contract_gate.py",
     "tools/architecture_contract_gate.py",
 }
+_PROVIDER_NEUTRAL_MODEL_PATHS = {
+    "proxy/services/canonical_route_service.py",
+    "proxy/services/chat_evidence_application_service.py",
+    "proxy/services/openai_compatible_transport_service.py",
+}
+_ENGINE_NAMES = {
+    "freetoken",
+    "lemonade",
+    "lm studio",
+    "lmstudio",
+    "mlx",
+    "ollama",
+}
 
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
@@ -139,6 +152,25 @@ def _enclosing_function_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> 
     return "<module>"
 
 
+def _enclosing_class_name(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> str | None:
+    current = parents.get(node)
+    while current is not None:
+        if isinstance(current, ast.ClassDef):
+            return current.name
+        current = parents.get(current)
+    return None
+
+
+def _engine_name_literals(node: ast.AST) -> set[str]:
+    return {
+        item.value.strip().lower()
+        for item in ast.walk(node)
+        if isinstance(item, ast.Constant)
+        and isinstance(item.value, str)
+        and item.value.strip().lower() in _ENGINE_NAMES
+    }
+
+
 def _contains_context_governor(function: ast.AST) -> bool:
     for node in ast.walk(function):
         if isinstance(node, ast.Name) and "context_governor" in node.id.lower():
@@ -206,6 +238,21 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
             )
 
     for node in ast.walk(tree):
+        if (
+            relative in _PROVIDER_NEUTRAL_MODEL_PATHS
+            and isinstance(node, (ast.Compare, ast.MatchValue))
+            and _enclosing_class_name(node, parents) != "LegacyConnectionImporter"
+        ):
+            engine_names = _engine_name_literals(node)
+            if engine_names:
+                yield ArchitectureViolation(
+                    "ENGINE_NAME_ROUTING",
+                    relative,
+                    getattr(node, "lineno", 1),
+                    "provider-neutral model path branches on engine name "
+                    + ", ".join(sorted(engine_names)),
+                )
+
         if isinstance(node, (ast.Name, ast.Constant)):
             value = node.id if isinstance(node, ast.Name) else node.value
             if isinstance(value, str) and _PARALLEL_WORKBOOK_RE.fullmatch(value):

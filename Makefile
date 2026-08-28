@@ -10,6 +10,7 @@ MAC_UPDATE_BRANCH ?= codex/audit-rag
 WINDOWS_UPDATE_ARGS ?=
 WINDOWS_SHELL_ARGS ?=
 DEPLOY_FORCE_FILES ?=
+PYTEST_BASETEMP ?= .test-tmp
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
 SMOKE_ARGS ?=
@@ -85,14 +86,14 @@ architecture-gate:
 verify:
 	uv run python tools/sync_version_contract.py --check
 	uv run python -m compileall -q $(PKGS)
-	uv run python -m pytest --collect-only -q $(CURRENT_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/verify --collect-only -q $(CURRENT_TESTS)
 	@echo "OK — verify зелёный (синтаксис + импорт-смоук current gate)."
 
 test:
-	uv run python -m pytest -q --durations=20 $(CURRENT_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/test -q --durations=20 $(CURRENT_TESTS)
 
 test-unit:
-	uv run python -m pytest -q --durations=15 $(UNIT_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/unit -q --durations=15 $(UNIT_TESTS)
 
 test-smoke:
 	uv run python tools/test_runner.py smoke
@@ -104,7 +105,7 @@ test-ci:
 	uv run python tools/test_runner.py ci
 
 test-integration:
-	uv run python -m pytest -q --durations=15 $(INTEGRATION_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/integration -q --durations=15 $(INTEGRATION_TESTS)
 
 test-release: test smoke-active-artifacts
 	@echo "OK — code regression и фактические active-артефакты зелёные. Далее обязателен installed Windows smoke."
@@ -115,19 +116,19 @@ test-architecture:
 	$(MAKE) test
 
 test-legacy:
-	uv run python -m pytest -o addopts= --durations=20 $(LEGACY_ARCHITECTURE_TESTS)
+	uv run python -m pytest -o addopts= --basetemp=$(PYTEST_BASETEMP)/legacy --durations=20 $(LEGACY_ARCHITECTURE_TESTS)
 
 test-legacy-full:
-	uv run python -m pytest -o addopts= --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
+	uv run python -m pytest -o addopts= --basetemp=$(PYTEST_BASETEMP)/legacy-full --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
 
 test-focused:
-	uv run python -m pytest $(FOCUS_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/focused $(FOCUS_TESTS)
 
 test-rag-core:
-	uv run python -m pytest -q --durations=15 $(RAG_CORE_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/rag-core -q --durations=15 $(RAG_CORE_TESTS)
 
 test-mail:
-	uv run python -m pytest -q --durations=15 $(MAIL_TESTS)
+	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/mail -q --durations=15 $(MAIL_TESTS)
 
 test-mail-release: test-mail test-tauri
 	@echo "OK — offline/static mail gate зелёный. Следующий обязательный гейт: installed Legion + classic Outlook."

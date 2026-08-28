@@ -251,7 +251,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("scenario", ["normal", "selector_overflow", "cloud_retry"])
+@pytest.mark.parametrize("scenario", ["normal", "selector_overflow", "cloud_retry", "active"])
 async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_model_count(
     monkeypatch,
     tmp_path,
@@ -259,6 +259,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 ) -> None:
     selector_overflow = scenario == "selector_overflow"
     cloud_retry = scenario == "cloud_retry"
+    active = scenario == "active"
     model_calls = []
     shortlist_policies = []
     shadow_calls = []
@@ -487,6 +488,75 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     monkeypatch.setattr(service.httpx, "AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(service, "maybe_answer_table_query", lambda *_a, **_k: None)
     monkeypatch.setattr(service, "dataset_memory_prompt_excerpt", lambda *_a, **_k: "")
+    active_transport = None
+    active_connection = None
+    if active:
+        from proxy.services.canonical_route_service import (
+            CanonicalRouteDecision,
+            CanonicalRouteMode,
+        )
+        from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
+        from proxy.services.openai_compatible_transport_service import InferenceResponse
+
+        active_connection = SimpleNamespace(
+            connection_id="conn:active",
+            revision_id="conn:active:r3",
+            display_name="Active fixture",
+            model_id="active-model",
+            locality=ConnectionLocality.LOOPBACK,
+            base_url="http://127.0.0.1:1919/v1",
+            secret_ref=None,
+            effective_preset=_governor_preset(
+                input_tokens=6000,
+                preset_id="active-preset",
+            ),
+        )
+
+        class ActiveResolver:
+            def resolve(self, role, **_kwargs):
+                assert role is ConnectionRole.ANSWER
+                return active_connection
+
+            def resolve_fallback(self, *_args, **_kwargs):
+                raise AssertionError("fallback must not be used")
+
+        class ActiveTransport:
+            def __init__(self):
+                self.revisions = []
+                self.responses = [
+                    InferenceResponse(
+                        text="",
+                        tool_calls=(
+                            {"id": "c1", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d1"}'}},
+                            {"id": "c2", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d2"}'}},
+                        ),
+                        finish_reason="tool_calls",
+                        usage={},
+                    ),
+                    InferenceResponse(
+                        text="active visible answer",
+                        tool_calls=(),
+                        finish_reason="stop",
+                        usage={"completion_tokens": 5},
+                    ),
+                ]
+
+            async def complete(self, connection, _request):
+                self.revisions.append(connection.revision_id)
+                return self.responses.pop(0)
+
+        active_transport = ActiveTransport()
+        monkeypatch.setattr(
+            service,
+            "resolve_canonical_route",
+            lambda **_kwargs: CanonicalRouteDecision(
+                requested=CanonicalRouteMode.ACTIVE,
+                effective=CanonicalRouteMode.ACTIVE,
+                source="test",
+                reason="exact_test_receipt",
+                restart_required=False,
+            ),
+        )
     if cloud_retry:
         monkeypatch.setattr(
             service,
@@ -592,10 +662,14 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         names_for_dataset_ids=lambda *_args: [],
         notebook_study_validation_status=lambda status, **_kwargs: status,
         ollama_native_complete=lambda *_args, **_kwargs: None,
-        parse_model_tool_calls=lambda *_args, **_kwargs: [
-            {"tool": "read_source", "args": {"doc_id": "d1"}},
-            {"tool": "read_source", "args": {"doc_id": "d2"}},
-        ],
+        parse_model_tool_calls=(
+            lambda raw, *_args, **_kwargs: json.loads(raw).get("calls", [])
+            if active
+            else [
+                {"tool": "read_source", "args": {"doc_id": "d1"}},
+                {"tool": "read_source", "args": {"doc_id": "d2"}},
+            ]
+        ),
         prepare_notebook_reader_memory=lambda *_args, **_kwargs: None,
         record_cloud_cost=lambda *_args, **_kwargs: None,
         retrieve_chat_chunks=lambda **_kwargs: _async_value(FakeRetrieval()),
@@ -603,6 +677,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         table_query_response=lambda **_kwargs: None,
         cloud_fallback_models=lambda runtime: [runtime.model] if cloud_retry else [],
         cloud_model_timeout=lambda: 1.0,
+        model_connection_resolver=(
+            (lambda: (ActiveResolver(), object())) if active else None
+        ),
+        model_connection_transport=(
+            (lambda _client, _secret_store: active_transport) if active else None
+        ),
     )
     boundary = service.ResponseBoundary(
         save_chat_history=save_history,
@@ -623,6 +703,22 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
     after_protected = protected_hash()
+    if active:
+        assert result["answer"] == "active visible answer"
+        assert result["model_connection"] == {
+            "connection_id": "conn:active",
+            "revision_id": "conn:active:r3",
+            "display_name": "Active fixture",
+            "model_id": "active-model",
+                "locality": "loopback",
+                "fallback_used": False,
+                "pending_tool_calls": 1,
+        }
+        assert active_transport.revisions == ["conn:active:r3", "conn:active:r3"]
+        assert [call[1]["doc_id"] for call in legacy_calls] == ["d1"]
+        assert history_rows[0]["retrieval_trace"]["context_governor"]["preset_id"] == "active-preset"
+        assert after_protected == before_protected
+        return
     assert result["answer"] == "legacy visible answer"
     if cloud_retry:
         assert model_calls == [

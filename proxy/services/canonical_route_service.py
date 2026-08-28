@@ -4,9 +4,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import inspect
 import os
 import re
-from typing import Any, Iterable, Mapping
+from typing import Any, Awaitable, Callable, Iterable, Mapping
+
+from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
+from proxy.services.model_connection_resolver_service import (
+    ModelConnectionResolver,
+    ResolvedModelConnection,
+)
+from proxy.services.openai_compatible_transport_service import (
+    InferenceRequest,
+    InferenceResponse,
+    ModelTransportError,
+    OpenAICompatibleTransport,
+)
 
 
 class CanonicalRouteMode(str, Enum):
@@ -49,6 +62,116 @@ class CanonicalModelDecision:
     executed_calls: int
     pending_calls: int
     proposed_calls: int
+
+
+@dataclass(frozen=True)
+class ModelChatResult:
+    response: InferenceResponse
+    connection: ResolvedModelConnection | Any | None
+    fallback_used: bool
+    pending_tool_calls: int = 0
+
+    def public_connection_payload(self) -> dict[str, Any] | None:
+        if self.connection is None:
+            return None
+        locality = self.connection.locality
+        return {
+            "connection_id": self.connection.connection_id,
+            "revision_id": self.connection.revision_id,
+            "display_name": self.connection.display_name,
+            "model_id": self.connection.model_id,
+            "locality": locality.value if isinstance(locality, ConnectionLocality) else str(locality),
+            "fallback_used": self.fallback_used,
+        }
+
+
+LegacyComplete = Callable[
+    [InferenceRequest],
+    InferenceResponse | Awaitable[InferenceResponse],
+]
+
+
+class BoundModelChatRunner:
+    """Execute one ordinary model turn without provider or registry scans."""
+
+    def __init__(
+        self,
+        *,
+        resolver: ModelConnectionResolver,
+        transport: OpenAICompatibleTransport,
+    ):
+        self.resolver = resolver
+        self.transport = transport
+
+    @staticmethod
+    def _bounded_result(
+        response: InferenceResponse,
+        *,
+        connection: ResolvedModelConnection | Any | None,
+        fallback_used: bool,
+    ) -> ModelChatResult:
+        calls = tuple(response.tool_calls)
+        bounded = InferenceResponse(
+            text=response.text,
+            tool_calls=calls[:1],
+            finish_reason=response.finish_reason,
+            usage=response.usage,
+        )
+        return ModelChatResult(
+            response=bounded,
+            connection=connection,
+            fallback_used=fallback_used,
+            pending_tool_calls=max(0, len(calls) - 1),
+        )
+
+    @staticmethod
+    async def _legacy(
+        legacy_complete: LegacyComplete,
+        request: InferenceRequest,
+    ) -> InferenceResponse:
+        result = legacy_complete(request)
+        if inspect.isawaitable(result):
+            result = await result
+        return result
+
+    async def complete(
+        self,
+        *,
+        mode: CanonicalRouteMode,
+        request: InferenceRequest,
+        legacy_complete: LegacyComplete,
+        remote_allowed: bool = True,
+    ) -> ModelChatResult:
+        canonical_mode = CanonicalRouteMode(mode)
+        if canonical_mode is CanonicalRouteMode.LEGACY:
+            return self._bounded_result(
+                await self._legacy(legacy_complete, request),
+                connection=None,
+                fallback_used=False,
+            )
+        if canonical_mode is CanonicalRouteMode.SHADOW:
+            try:
+                self.resolver.resolve(ConnectionRole.ANSWER)
+            except Exception:
+                pass
+            return self._bounded_result(
+                await self._legacy(legacy_complete, request),
+                connection=None,
+                fallback_used=False,
+            )
+
+        primary = self.resolver.resolve(ConnectionRole.ANSWER)
+        if primary.locality is ConnectionLocality.REMOTE and not remote_allowed:
+            fallback = self.resolver.resolve_fallback(primary.revision_id)
+            response = await self.transport.complete(fallback, request)
+            return self._bounded_result(response, connection=fallback, fallback_used=True)
+        try:
+            response = await self.transport.complete(primary, request)
+            return self._bounded_result(response, connection=primary, fallback_used=False)
+        except ModelTransportError:
+            fallback = self.resolver.resolve_fallback(primary.revision_id)
+            response = await self.transport.complete(fallback, request)
+            return self._bounded_result(response, connection=fallback, fallback_used=True)
 
 
 def resolve_canonical_route(

@@ -17,15 +17,26 @@ from typing import Any, Callable, Sequence
 import httpx
 from fastapi import HTTPException
 
-from backend.inference.routing import decide_provider, is_cloud_provider, memory_aware_provider
+from backend.inference.routing import (
+    cloud_allowed,
+    decide_provider,
+    is_cloud_provider,
+    memory_aware_provider,
+)
 from backend.inference.validator import rules_pre_verdict
 from proxy.services.answer_form_service import classify_answer_form
 from proxy.services.answer_form_service import apply_response_length
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.canonical_route_service import (
+    BoundModelChatRunner,
     CanonicalRouteMode,
     one_model_decision_from_calls,
     resolve_canonical_route,
+)
+from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
+from proxy.services.openai_compatible_transport_service import (
+    InferenceRequest,
+    InferenceResponse,
 )
 from proxy.services.context_governor_service import (
     ContextCandidate,
@@ -325,6 +336,8 @@ class EvidenceRuntimeDeps:
     table_query_response: Callable
     cloud_fallback_models: Callable
     cloud_model_timeout: Callable
+    model_connection_resolver: Callable | None = None
+    model_connection_transport: Callable | None = None
 
 
 @dataclass(frozen=True)
@@ -396,6 +409,8 @@ async def run_chat_evidence_application(
         _table_query_response=runtime.table_query_response,
         cloud_fallback_models=runtime.cloud_fallback_models,
         cloud_model_timeout=runtime.cloud_model_timeout,
+        model_connection_resolver=runtime.model_connection_resolver,
+        model_connection_transport=runtime.model_connection_transport,
         save_chat_history=response.save_chat_history,
         token_sink=response.token_sink,
         _version_stamp=response.version_stamp,
@@ -496,6 +511,8 @@ async def _execute_chat_evidence_application(
     maybe_answer_table_query,
     memory_aware_provider,
     memory_block,
+    model_connection_resolver,
+    model_connection_transport,
     notebook_study_prompt_block,
     os,
     query_route_payload,
@@ -1121,6 +1138,20 @@ async def _execute_chat_evidence_application(
     t_ctx = time.time() - t_ctx_start
     validation_context = ""
 
+    canonical_route = resolve_canonical_route(receipt=None)
+    connection_resolver = None
+    connection_secret_store = None
+    resolved_connection = None
+    connection_resolution_error = ""
+    if canonical_route.effective is not CanonicalRouteMode.LEGACY:
+        try:
+            connection_resolver, connection_secret_store = model_connection_resolver()
+            resolved_connection = connection_resolver.resolve(ConnectionRole.ANSWER)
+        except Exception as error:  # shadow is diagnostic; active is fail-closed
+            connection_resolution_error = type(error).__name__
+            if canonical_route.effective is CanonicalRouteMode.ACTIVE:
+                raise HTTPException(503, f"MODEL_CONNECTION_RESOLUTION_FAILED: {error}") from error
+
     configured_runtime = _llm_runtime()
     # W3.3 (ADR-9): гейт чувствительности. P0-данные физически не уходят в облако;
     # P2 — только при явном LES_CLOUD_CONSENT; иначе принудительный fallback на MLX.
@@ -1146,7 +1177,10 @@ async def _execute_chat_evidence_application(
         if _mem_reason:
             logger.warning("[ROUTE] %s", _mem_reason)
     cache_state: dict[str, Any] = {}
-    if llm_runtime.provider == "freetoken":
+    if (
+        canonical_route.effective is not CanonicalRouteMode.ACTIVE
+        and getattr(llm_runtime, "requires_cache_alignment", False)
+    ):
         from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
 
         desired_kv = _env_int("FREETOKEN_CONTEXT_TOKENS", 8253)
@@ -1181,6 +1215,8 @@ async def _execute_chat_evidence_application(
         observed_source=observed_source,
         operator=model_policy,
     )
+    if canonical_route.effective is CanonicalRouteMode.ACTIVE and resolved_connection is not None:
+        execution_preset = resolved_connection.effective_preset
     preset_diagnostics = execution_preset.diagnostics(
         requested_input_tokens=cache_state.get("desired_kv_tokens")
     )
@@ -1227,8 +1263,23 @@ async def _execute_chat_evidence_application(
         "downgraded": llm_runtime.provider != configured_runtime.provider,
         "is_cloud": is_cloud_provider(llm_runtime.provider),
     }
-    llm_model = llm_runtime.model
-    val_url = llm_runtime.base_url.rstrip("/")
+    if resolved_connection is not None:
+        retrieval_trace["model_connection_candidate"] = {
+            "revision_id": resolved_connection.revision_id,
+            "locality": resolved_connection.locality.value,
+            "effective": canonical_route.effective is CanonicalRouteMode.ACTIVE,
+            "resolution_error": connection_resolution_error,
+        }
+    llm_model = (
+        resolved_connection.model_id
+        if canonical_route.effective is CanonicalRouteMode.ACTIVE and resolved_connection is not None
+        else llm_runtime.model
+    )
+    val_url = (
+        resolved_connection.base_url.rstrip("/")
+        if canonical_route.effective is CanonicalRouteMode.ACTIVE and resolved_connection is not None
+        else llm_runtime.base_url.rstrip("/")
+    )
     # Локальный MLX-хост всегда держит /api/validate (coreml NLI, ~0.1с). Облачные ответы
     # валидируем им же, а не повторным промптом в облако (это давало 3-11с на P1-ответ).
     local_val_url = _mlx_runtime().base_url.rstrip("/")
@@ -1237,7 +1288,13 @@ async def _execute_chat_evidence_application(
     # W3.4-частично (вопрос оператора 2026-06-14 «почему не валидируем облаком?»):
     # у не-MLX провайдеров нет /api/validate — валидируем ТОЙ ЖЕ моделью
     # компактным промптом-вердиктом (VERIFIED/HALLUCINATION/NO_DATA).
-    validate_via_llm = bool(use_validation and not llm_runtime.supports_validation)
+    validate_via_llm = bool(
+        use_validation
+        and (
+            canonical_route.effective is CanonicalRouteMode.ACTIVE
+            or not llm_runtime.supports_validation
+        )
+    )
     if validate_via_llm:
         logger.info("[TOSKA] validation via provider=%s (no LES /api/validate)", llm_runtime.provider)
 
@@ -1309,12 +1366,93 @@ async def _execute_chat_evidence_application(
                 answer = ""
                 crag_status = "UNKNOWN"
                 tokens = 0
+                active_model_result = None
+                active_pending_tool_calls = 0
+                bound_runner = None
+                if canonical_route.effective is CanonicalRouteMode.ACTIVE:
+                    if connection_resolver is None or connection_secret_store is None:
+                        raise HTTPException(503, "MODEL_CONNECTION_RESOLVER_REQUIRED")
+                    bound_runner = BoundModelChatRunner(
+                        resolver=connection_resolver,
+                        transport=model_connection_transport(client, connection_secret_store),
+                    )
 
                 async def _post_llm(runtime, model, hdrs, body, *, allow_stream: bool = True):
                     """Один вызов LLM. token_sink задан → стрим (токены клиенту по
                     мере генерации), иначе — обычный POST (поведение неизменно).
                     Возвращает (answer_text, usage_dict)."""
-                    if runtime.provider == "ollama":
+                    nonlocal active_model_result, active_pending_tool_calls
+                    if bound_runner is not None:
+                        inference_request = InferenceRequest(
+                            messages=tuple(body.get("messages") or ()),
+                            max_output_tokens=max(
+                                1,
+                                int(
+                                    body.get("max_completion_tokens")
+                                    or body.get("max_tokens")
+                                    or 1
+                                ),
+                            ),
+                            temperature=body.get("temperature"),
+                            tools=tuple(body.get("tools") or ()),
+                            response_format=body.get("response_format"),
+                        )
+
+                        async def no_legacy_call(_request):
+                            raise RuntimeError("LEGACY_MODEL_CALL_FORBIDDEN_IN_ACTIVE_MODE")
+
+                        sensitivities = _dataset_sensitivities(
+                            set(_dataset_ids_from_chunks(chunks))
+                            | {str(item) for item in (_dataset_ids or [])}
+                        )
+                        active_model_result = await bound_runner.complete(
+                            mode=CanonicalRouteMode.ACTIVE,
+                            request=inference_request,
+                            legacy_complete=no_legacy_call,
+                            remote_allowed=cloud_allowed(
+                                sensitivities,
+                                consent=_env_bool("LES_CLOUD_CONSENT", False),
+                            ),
+                        )
+                        active_pending_tool_calls += active_model_result.pending_tool_calls
+                        if token_sink is not None and allow_stream and active_model_result.response.text:
+                            await token_sink(
+                                {"event": "token", "data": active_model_result.response.text}
+                            )
+                        retrieval_trace["model_connection"] = (
+                            active_model_result.public_connection_payload()
+                        )
+                        retrieval_trace["model_connection"]["pending_tool_calls"] = active_pending_tool_calls
+                        model_text = active_model_result.response.text
+                        if active_model_result.response.tool_calls:
+                            canonical_calls: list[dict[str, Any]] = []
+                            for raw_call in active_model_result.response.tool_calls:
+                                function = raw_call.get("function") or {}
+                                raw_arguments = function.get("arguments") or "{}"
+                                try:
+                                    arguments = (
+                                        json.loads(raw_arguments)
+                                        if isinstance(raw_arguments, str)
+                                        else dict(raw_arguments)
+                                    )
+                                except (TypeError, ValueError, json.JSONDecodeError):
+                                    arguments = {}
+                                canonical_calls.append(
+                                    {
+                                        "tool": str(function.get("name") or ""),
+                                        "args": arguments,
+                                    }
+                                )
+                            model_text = json.dumps(
+                                {"calls": canonical_calls},
+                                ensure_ascii=False,
+                                separators=(",", ":"),
+                            )
+                        return (
+                            model_text,
+                            dict(active_model_result.response.usage),
+                        )
+                    if getattr(runtime, "uses_native_chat", False):
                         # #1b: нативный /api/chat think:false → чистый ответ без CoT-дампа
                         # (OpenAI-compat ollama игнорирует reasoning-контроль). Облачного
                         # fallback у ollama нет — model == runtime.model.
@@ -1396,7 +1534,6 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
-                canonical_route = resolve_canonical_route(receipt=None)
                 retrieval_trace["canonical_route"] = canonical_route.public_payload()
                 retrieval_trace["route_comparison"] = {
                     "schema": "les.canonical-route-comparison.v1",
@@ -1862,7 +1999,13 @@ async def _execute_chat_evidence_application(
                         await token_sink({"event": "reset", "data": ""})
                     t_llm_call = time.time()
                     try:
-                        if is_cloud_provider(llm_runtime.provider):
+                        if canonical_route.effective is CanonicalRouteMode.ACTIVE:
+                            answer, usage = await _post_llm(
+                                llm_runtime, llm_model, headers, chat_body
+                            )
+                            if active_model_result is not None:
+                                llm_model = active_model_result.connection.model_id
+                        elif is_cloud_provider(llm_runtime.provider):
                             # Облако: цепочка моделей с таймаутом на модель (зависла → следующая).
                             answer, usage, llm_model = await _post_cloud_fallback(llm_runtime, headers, chat_body)
                         else:
@@ -2214,6 +2357,9 @@ async def _execute_chat_evidence_application(
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,
                 }
+                if active_model_result is not None:
+                    response["model_connection"] = active_model_result.public_connection_payload()
+                    response["model_connection"]["pending_tool_calls"] = active_pending_tool_calls
                 if notebook_study_pack is not None:
                     response["notebook_context"] = notebook_study_pack.payload()
                     if notebook_study_artifact:

@@ -4,14 +4,14 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-27)
+## Текущее состояние (2026-08-28)
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              609
-версия Tauri/NSIS:         5.1.609
-ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       common model transport + exact embeddings role
+номер сборки:              610
+версия Tauri/NSIS:         5.1.610
+ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
+dev implementation:       ordinary chat on exact bound model connections
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -271,6 +271,23 @@ dev implementation:       common model transport + exact embeddings role
 > native RRF, retrieval and reranking semantics are unchanged. Focused
 > embedding/parse/RRF/retrieval regression: 86 passed. No live endpoint,
 > service restart, deploy or publication was used.
+
+> **0.29.0 bound ordinary chat (build 610):** free and evidence chat now use
+> the exact immutable `answer` connection in active mode and only the exact
+> `local_fallback` binding after a transport failure or denied remote consent.
+> Shadow resolves candidate metadata but performs no candidate inference, so
+> the authoritative legacy model-call count remains unchanged. ContextGovernor
+> receives the bound execution preset; notebook memory and attachment context
+> remain in the governed packet. One turn exposes at most one canonical tool
+> call and reports additional calls as pending. Ordinary payloads include safe
+> connection/revision/model/locality provenance but never endpoint or secret
+> references. Installed chat rejects per-request provider credentials unless
+> the explicit demo-only legacy override is enabled. The architecture gate now
+> rejects engine-name routing in provider-neutral chat and transport services.
+> Focused chat/route/transport/governor/architecture regression: 115 passed;
+> canonical current gate: 722 passed. All Makefile pytest profiles now bind a
+> workspace-local `.test-tmp/<profile>` and no longer depend on Windows
+> `%TEMP%`. No live endpoint, service restart, deploy or publication was used.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

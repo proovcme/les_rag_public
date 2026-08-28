@@ -64,6 +64,7 @@ def test_chat_provider_config_rejects_incomplete_cloud_choice() -> None:
 
 @pytest.mark.asyncio
 async def test_request_provider_is_context_scoped_and_secret_is_redacted(monkeypatch) -> None:
+    monkeypatch.setenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", "true")
     server_runtime = chat.LlmRuntime("mlx", "http://local", "http://local/v1/chat/completions", "local", "", True)
     monkeypatch.setattr(chat, "_mlx_runtime", lambda: server_runtime)
 

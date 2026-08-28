@@ -47,6 +47,13 @@ def test_current_les_gate_is_explicit_and_does_not_collect_the_old_full_suite() 
         assert "testpaths" not in command
 
 
+def test_canonical_pytest_profiles_use_workspace_local_temp() -> None:
+    for target in ("verify", "test", "test-unit", "test-integration", "test-focused"):
+        command = _dry_make(target)
+        assert "--basetemp=.test-tmp/" in command
+        assert "%TEMP%" not in command
+
+
 def test_historical_harness_has_explicit_opt_in_profile() -> None:
     command = _dry_make("test-legacy")
 

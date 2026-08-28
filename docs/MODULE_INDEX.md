@@ -22,6 +22,18 @@
 > fail-closed требует точного 9B acceptance receipt и явного действия оператора;
 > установка обновления ничего не активирует автоматически.
 
+> **0.29.0 model-connection runtime (build 610):** ordinary free и evidence
+> chat в `active` разрешают точную immutable ревизию роли `answer` и вызывают
+> единый OpenAI-compatible transport. Единственный fallback — точная привязка
+> `local_fallback`; shadow не делает второй inference-вызов. Bound preset идёт
+> в ContextGovernor, notebook memory и вложения остаются частью того же
+> governed packet, а из нескольких tool calls исполняемым становится только
+> первый, остальные учитываются как pending. Публичная трасса не содержит URL
+> и secret reference. Точки входа: `proxy/routers/chat.py`,
+> `proxy/services/canonical_route_service.py`,
+> `proxy/services/chat_evidence_application_service.py`,
+> `proxy/services/openai_compatible_transport_service.py`.
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная

@@ -68,7 +68,7 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 
 ## Грабли и осторожность
 - **uv-проект:** зависимости/запуск через `uv run`. Не ставить пакеты без одобрения (`uv add` меняет lock).
-- **Windows-гейт:** если `make` отсутствует, сначала проверить команду и выполнить точные `uv`-команды цели из `Makefile`; pytest запускать с workspace-local `--basetemp=.test-tmp/<gate>`, потому что системный `%TEMP%\pytest-of-Oleg` на Legion может быть недоступен. Не считать setup `PermissionError` провалом кода и не повторять запуск без `--basetemp`.
+- **Windows-гейт:** канонические pytest-цели `Makefile` уже используют workspace-local `.test-tmp/<gate>`. Если `make` отсутствует, сначала проверить команду и выполнить точные `uv`-команды цели, сохранив `--basetemp=.test-tmp/<gate>`; системный `%TEMP%\pytest-of-Oleg` на Legion может быть недоступен. Не считать setup `PermissionError` провалом кода и не запускать pytest без локального `--basetemp`.
 - **НЕ дёргать сервисы** (launchd: qdrant/mlx/proxy/sovushka/pauk) без явной нужды — это живой рантайм. Рестарты — `tools/les_runtime_control.py` / `lesctl.py`, осознанно.
 - **Деструктивное — запрещено без явной просьбы** (Guardrails в [SKILL.md](SKILL.md)): не удалять `data/qdrant/`, `data/les_meta_qwen.db`, `storage/`, `RAG_Content/`; не запускать полный реиндекс; беречь таблицу `structured_rules`; `VALIDATOR_BACKEND=rules` — текущий стабильный дефолт.
 - **MLX/память:** модели TTL-выгружаются, metal-семафор; не ломать `backend/mlx_adapter.py` логику памяти.

@@ -74,6 +74,16 @@ def test_canonical_route_mode_is_visible_danger_and_requires_restart(monkeypatch
     assert factor["restart_required"] is True
 
 
+def test_demo_provider_override_is_visible_danger_and_requires_restart(monkeypatch):
+    monkeypatch.delenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", raising=False)
+
+    factor = registry._factor("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", {})
+
+    assert factor["effective_value"] == "false"
+    assert factor["danger_label"] == "Danger"
+    assert factor["restart_required"] is True
+
+
 def test_freetoken_runtime_defaults_are_visible_and_require_restart(monkeypatch):
     registry.declared_env_defaults.cache_clear()
     monkeypatch.delenv("FREETOKEN_BASE_URL", raising=False)
