@@ -61,6 +61,16 @@
 > `tests/test_sovushka_{data_workspace,samovar,documents,uikit}.py`,
 > `tests/test_static_assets.py`, `tests/test_outlook_mail_poller.py`.
 
+> **Immutable artifact revisions 0.29.0 / build 617:**
+> `proxy/services/artifact_revision_service.py` атомарно публикует server-owned
+> XLSX как append-only revision с SHA-256, lineage, bounded provenance и
+> относительным download URL. Исправление создаёт revision N+1; существующий
+> файл не перезаписывается, а чтение и скачивание fail-closed проверяют hash и
+> размер. Авторизованные endpoints находятся в `proxy/routers/artifacts.py`:
+> metadata, verified download и ordered artifact lineage. Файловые пути наружу
+> не возвращаются. Контракты: `tests/test_artifact_revision_service.py`,
+> `tests/test_artifacts_router.py`.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical

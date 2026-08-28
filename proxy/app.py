@@ -23,6 +23,7 @@ from backend.rag_config import embedding_api_model, rag_meta_db_path
 from proxy.config import CORS_ALLOWED_ORIGIN_REGEX, CORS_ALLOWED_ORIGINS
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.routers.auth import router as auth_router, seed_admin_key
+from proxy.routers.artifacts import router as artifacts_router
 from proxy.routers.bor import router as bor_router
 from proxy.routers.diff import router as diff_router
 from proxy.routers.filemap import router as filemap_router
@@ -676,6 +677,7 @@ def create_app():
         allow_headers=["*"],
     )
     fastapi_app.include_router(auth_router)
+    fastapi_app.include_router(artifacts_router)
     fastapi_app.include_router(bor_router)
     fastapi_app.include_router(diff_router)
     fastapi_app.include_router(filemap_router)

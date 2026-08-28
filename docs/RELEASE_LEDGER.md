@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              616
-версия Tauri/NSIS:         5.1.616
+номер сборки:              617
+версия Tauri/NSIS:         5.1.617
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       unified role-aware Data workspace
+dev implementation:       immutable artifact revision store
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -71,6 +71,14 @@ dev implementation:       unified role-aware Data workspace
 > каталоге как источник `Почта`, но отдельная кнопка Mail скрыта. Studio и
 > CAD/BIM сохранены за disabled-заглушками. Desktop и 390 px mobile используют
 > один маршрут без дублирующего selector и horizontal overflow.
+
+> **Build 617 immutable artifacts checkpoint:** общий
+> `ArtifactRevisionStore` атомарно сохраняет server-owned XLSX как append-only
+> revisions с SHA-256, размером, parent lineage и bounded provenance.
+> Исправление создаёт N+1 и сохраняет N; hash drift блокирует чтение/скачивание.
+> Авторизованные metadata/download/lineage API возвращают только стабильные
+> artifact/revision IDs и относительный download URL, без filesystem path.
+> Focused artifact/router/harness: 74 passed; architecture gate green.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

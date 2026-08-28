@@ -749,6 +749,16 @@ role-aware каталог `samovar.py` и focused detail `documents.py` по exa
 `tests/test_sovushka_{data_workspace,samovar,documents,uikit}.py`,
 `tests/test_static_assets.py`, `tests/test_outlook_mail_poller.py`.
 
+**0.29.0 / build 617:** добавлен общий `artifacts/immutable-revisions`:
+`ArtifactRevisionStore` хранит append-only XLSX revisions с SHA-256, размером,
+parent lineage и bounded provenance, публикует файл через temporary sibling +
+atomic replace и никогда не переиспользует revision path. Авторизованные
+`GET /api/artifacts/{revision_id}`, `/download` и
+`/{artifact_id}/revisions` проверяют identity/hash и не раскрывают filesystem
+paths. Точки входа: `proxy/services/artifact_revision_service.py`,
+`proxy/routers/artifacts.py`, `proxy/app.py`; тесты
+`test_artifact_revision_service.py`, `test_artifacts_router.py`. ✅
+
 **0.27.67 / build 574:** `rag/answer-render` на каждом terminal-событии
 `smeta_row` обновляет один черновой Markdown-артефакт с уже готовыми строками.
 Это UI-проекция существующего stream/checkpoint-контракта: сметное ядро, выбор
