@@ -759,6 +759,14 @@ paths. Точки входа: `proxy/services/artifact_revision_service.py`,
 `proxy/routers/artifacts.py`, `proxy/app.py`; тесты
 `test_artifact_revision_service.py`, `test_artifacts_router.py`. ✅
 
+**0.29.0 / build 618:** `workflows/durable-checkpoint` связывает idempotency key
+с session/tool, неизменяемыми attachment ID+SHA-256, canonical args hash и
+model-decision revision. Повтор продолжает последний bounded progress; identity
+drift fail-closed, completion хранит exact artifact revision. Точки входа:
+`proxy/services/workflow_checkpoint_service.py`, существующий
+`chat_attachment_service.py`; тесты `test_workflow_checkpoint_service.py`,
+`test_chat_attachment_service.py`. ✅
+
 **0.27.67 / build 574:** `rag/answer-render` на каждом terminal-событии
 `smeta_row` обновляет один черновой Markdown-артефакт с уже готовыми строками.
 Это UI-проекция существующего stream/checkpoint-контракта: сметное ядро, выбор

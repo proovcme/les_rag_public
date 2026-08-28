@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              617
-версия Tauri/NSIS:         5.1.617
+номер сборки:              618
+версия Tauri/NSIS:         5.1.618
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       immutable artifact revision store
+dev implementation:       durable workflow checkpoints
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -79,6 +79,13 @@ dev implementation:       immutable artifact revision store
 > Авторизованные metadata/download/lineage API возвращают только стабильные
 > artifact/revision IDs и относительный download URL, без filesystem path.
 > Focused artifact/router/harness: 74 passed; architecture gate green.
+
+> **Build 618 durable checkpoint:** idempotency key теперь жёстко связан с
+> session/tool, server-owned attachment ID+SHA-256, canonical arguments и
+> model-decision revision. Повтор продолжает тот же bounded progress; identity
+> drift блокируется, completion сохраняет exact immutable artifact revision.
+> `dataset_ids=None|[]` нормализуются одинаково; prompt dumps не сохраняются.
+> Focused checkpoint/attachment: 8 passed.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

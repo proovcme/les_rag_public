@@ -1,5 +1,14 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+## Durable workflow checkpoints (0.29.0 / build 618)
+
+`workflow_checkpoint_service` хранит только bounded рабочее состояние: identity
+сессии, инструмента, server-owned attachment и его SHA-256, canonical hash
+аргументов, model-decision revision, последний progress, missing/blockers и
+готовую artifact revision. Повтор с тем же idempotency key возобновляет ту же
+запись; смена вложения, hash, аргументов или решения fail-closed конфликтует.
+Prompt dumps не сохраняются. `dataset_ids=None` и `[]` имеют одну identity.
+
 ## Назначение
 
 Дать ЛЕС “взрослую” рабочую память без подмены evidence: текущий чат получает компактный паспорт
