@@ -19,6 +19,12 @@ This design preserves the existing notebook memory, ContextGovernor, model
 presets, Tool Registry, Capability Broker and Trusted Executor. It does not
 introduce a new model loop, a new memory system or an estimator workflow.
 
+It also preserves a deployment boundary needed by the future headless mode:
+the browser and Sovushka never become model clients. They talk to an LES node;
+that node owns files, datasets, retrieval, notebook memory, tools and model
+connections. The UI/API entrypoint may later be hosted separately from that
+execution node without changing the model-connection contract.
+
 ## Confirmed compatibility boundary
 
 The common inference baseline is the OpenAI-compatible Chat Completions API:
@@ -86,6 +92,10 @@ This change does not:
 - claim model quality from mocked or synthetic inference;
 - make server-owned autonomous tools part of the canonical LES tool loop;
 - require Responses API for ordinary chat;
+- implement the separate authenticated control-plane protocol needed to place
+  Sovushka on a VPS and an LES execution node on another machine;
+- let a browser or UI host call a model endpoint directly, even in a split
+  deployment;
 - publish or deploy a release.
 
 ## User model
@@ -113,6 +123,39 @@ chat/workflow request
   -> OpenAI-compatible transport
   -> existing model response/tool decision
 ```
+
+### Deployment topology boundary
+
+The logical request path is always:
+
+```text
+browser
+  -> Sovushka / LES control-plane API
+  -> one explicitly selected LES execution node
+  -> files + datasets + retrieval + notebook memory + tools
+  -> role-bound model connection
+```
+
+In the initial release the UI/API and execution node may remain in one LES
+installation. A later headless deployment may put Sovushka and its authenticated
+control-plane entrypoint on a VPS while the execution node runs on another
+machine. That split must preserve these invariants:
+
+- the execution node, not the VPS or browser, owns user files, indices,
+  notebook memory, tool execution and model credentials;
+- the VPS forwards typed LES requests to one explicitly selected node and does
+  not reimplement retrieval, memory, tools or inference;
+- the UI never receives a model secret and never connects directly to a model;
+- node selection and failover are explicit bindings; connection loss fails
+  closed and cannot scan for another node or model;
+- attachment transfer is an explicit bounded operation with identity,
+  integrity, size and retention metadata, never an implicit VPS copy;
+- node authentication, authorization, transport encryption, replay protection,
+  audit and reconnect semantics require their own approved design and tests.
+
+`ModelConnectionRegistry` is local to the execution node. It describes how that
+node reaches a model; it is not a registry of LES nodes and must not acquire
+control-plane routing responsibilities.
 
 Optional engine operations use a separate path:
 
@@ -402,6 +445,11 @@ The implementation plan must proceed in bounded slices:
 7. resume workbook provider projections over the common connection contract.
 
 No slice may modify `proxy/smeta_core/**`.
+
+The separate VPS-to-headless-node control plane follows this foundation as its
+own design and implementation plan. This release must not fake that topology by
+exposing model URLs to Sovushka, copying notebook memory to the UI host or
+tunnelling arbitrary filesystem operations through the model-connection API.
 
 ## Acceptance
 

@@ -20,6 +20,8 @@
 - Secrets are never stored in SQLite, returned by APIs, printed in logs or included in diagnostics. Only `secret_ref` and `configured|missing|not_required` are public.
 - Local HTTP is allowed only under the explicit locality policy. Remote connections require HTTPS. Redirects are disabled and connected peers are revalidated.
 - Fallback uses only the exact connection bound to `local_fallback`; no model list, provider scan or implicit MLX switch remains in ordinary chat.
+- Preserve the headless deployment boundary: Sovushka/browser calls LES, and the LES execution node owns files, retrieval, notebook memory, tools, secrets and model connections. Never make the UI a direct model client.
+- Do not turn `ModelConnectionRegistry` into an LES-node registry or add an ad-hoc VPS tunnel here. The authenticated VPS control-plane → explicit headless LES-node protocol is a separate owner-approved design and plan; connection or node loss must eventually fail closed without scanning for substitutes.
 - Existing provider environment values remain rollback inputs and are not deleted, overwritten or copied into SQLite.
 - Do not add dependencies. Use the bundled `httpx`, SQLite and standard-library URL/IP tools.
 - Before Task 9, read `skills/sovushka-ui/SKILL.md` and `docs/modules/sovushka-uikit.md`; reuse existing components and tokens.
@@ -783,6 +785,7 @@ Run extension, router, transport and existing FreeToken cache tests. Update code
 **Interfaces:**
 - Consumes: the complete model-connection subsystem.
 - Produces: hermetic permanent gate coverage, an owner-gated paired live receipt and an explicit workbook-plan dependency on `ResolvedModelConnection`.
+- Preserves: the documented co-located-now / separable-later headless-node boundary without claiming that the remote control plane is implemented by this plan.
 
 - [ ] **Step 1: Write failing receipt tests**
 
@@ -828,6 +831,10 @@ Add all new non-live model-connection tests to the canonical current gate. Exten
 - [ ] **Step 5: Update canonical docs and workbook dependency**
 
 Document the implemented request path, safe GUI/API factors, rollback and test locations. In the workbook plan, make provider projection consume `ResolvedModelConnection` and `OpenAICompatibleTransport`; forbid new FreeToken/Ollama/Lemonade/MLX branches. Do not alter workbook contracts or the two paused RED artifact tests.
+
+Also document that the implemented model registry lives on the LES execution
+node. Record the future VPS/Sovushka → authenticated headless LES-node control
+plane as a separate planned module, not as a capability of the connection API.
 
 - [ ] **Step 6: Set build 614 and run closing verification**
 
