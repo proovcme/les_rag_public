@@ -39,6 +39,12 @@ from .interface import Chunk, DatasetInfo, EmbeddingContractError, RAGBackend
 from .mail_profile import build_mail_vector_profile, deterministic_mail_node_id
 from .parquet_writer import TableNormalizer
 from proxy.services.dataset_memory_service import chunk_payload_typing, current_dataset_revision_id
+from proxy.config import ENV_PATH
+from proxy.services.model_connection_contracts import CapabilityName, ConnectionRole
+from proxy.services.model_connection_registry_service import ModelConnectionRegistry
+from proxy.services.model_connection_resolver_service import ModelConnectionResolver
+from proxy.services.model_secret_service import EnvironmentSecretStore
+from proxy.services.openai_compatible_transport_service import OpenAICompatibleTransport
 from .rag_config import (
     chunking_config,
     index_contract_status,
@@ -711,15 +717,89 @@ class EmbedClient:
         model: str = "bge-m3",
         *,
         backend: str | None = None,
+        connection_mode: str = "legacy",
+        connection_resolver: ModelConnectionResolver | None = None,
+        connection_transport: OpenAICompatibleTransport | None = None,
     ):
         self.url   = f"{base_url.rstrip('/')}/v1/embeddings"
         self.model = model
+        normalized_mode = str(connection_mode or "legacy").strip().lower()
+        if normalized_mode not in {"legacy", "shadow", "active"}:
+            raise ValueError("connection_mode must be legacy, shadow or active")
+        self.connection_mode = normalized_mode
+        self.connection_resolver = connection_resolver
+        self.connection_transport = connection_transport
+        self._connection_secret_store: EnvironmentSecretStore | None = None
+        if self.connection_mode != "legacy" and self.connection_resolver is None:
+            self._connection_secret_store = EnvironmentSecretStore(ENV_PATH)
+            self.connection_resolver = ModelConnectionResolver(
+                registry=ModelConnectionRegistry(),
+                secret_store=self._connection_secret_store,
+            )
         if backend is not None:
             self.backend = str(backend).strip().lower()
         elif "11434" in base_url or "ollama" in base_url or os.getenv("EMBED_BACKEND") == "ollama":
             self.backend = "ollama"
         else:
             self.backend = os.getenv("EMBED_BACKEND", "sentence_transformers").strip().lower()
+
+    def _resolve_embedding_connection(self):
+        if self.connection_resolver is None:
+            raise RuntimeError("MODEL_CONNECTION_RESOLVER_REQUIRED")
+        return self.connection_resolver.resolve(
+            ConnectionRole.EMBEDDINGS,
+            required_capabilities=frozenset({CapabilityName.EMBEDDINGS}),
+        )
+
+    def _shadow_compare(self) -> None:
+        try:
+            self._resolve_embedding_connection()
+        except Exception as exc:
+            logger.info("Embedding connection shadow comparison unavailable: %s", type(exc).__name__)
+
+    def _vectors_from_connection_response(self, response: Any, expected_count: int) -> List[List[float]]:
+        expected = self._normalise_model_id(self.model)
+        actual_model = str(response.model_id or "").strip()
+        actual = self._normalise_model_id(actual_model)
+        if not expected or not actual or (expected not in actual and actual not in expected):
+            raise EmbeddingContractError(
+                f"embedding contract mismatch: expected={self.model}, actual={actual_model}"
+            )
+        vectors = [[float(value) for value in row] for row in response.vectors]
+        if len(vectors) != expected_count:
+            raise EmbeddingContractError(
+                f"embedding count mismatch: expected={expected_count}, actual={len(vectors)}"
+            )
+        dimensions = {len(row) for row in vectors}
+        if not dimensions or 0 in dimensions or len(dimensions) != 1:
+            raise EmbeddingContractError("embedding dimension mismatch")
+        return vectors
+
+    async def _encode_connection_async(self, texts: List[str]) -> List[List[float]]:
+        connection = self._resolve_embedding_connection()
+        if self.connection_transport is not None:
+            response = await self.connection_transport.embed(connection, texts)
+        else:
+            secret_store = self._connection_secret_store or EnvironmentSecretStore(ENV_PATH)
+            async with httpx.AsyncClient(timeout=EMBED_TIMEOUT) as client:
+                transport = OpenAICompatibleTransport(
+                    client=client,
+                    secret_store=secret_store,
+                    timeout=EMBED_TIMEOUT,
+                )
+                response = await transport.embed(connection, texts)
+        return self._vectors_from_connection_response(response, len(texts))
+
+    def _encode_connection_sync(self, texts: List[str]) -> List[List[float]]:
+        def run() -> List[List[float]]:
+            return asyncio.run(self._encode_connection_async(texts))
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return run()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(run).result()
 
     @staticmethod
     def _normalise_model_id(value: object) -> str:
@@ -836,11 +916,19 @@ class EmbedClient:
         """Синхронный parse-клиент с bounded retry и изоляцией плохого фрагмента."""
         if not texts:
             return []
+        if self.connection_mode == "active":
+            return self._encode_connection_sync(texts)
+        if self.connection_mode == "shadow":
+            self._shadow_compare()
         return self._encode_sync_resilient(texts)
 
     async def encode_async(self, texts: List[str], *, query: bool = False) -> List[List[float]]:
         """Асинхронный вариант для retrieve; query contract never touches documents."""
         payload_texts = [prepare_query_for_embedding(text) for text in texts] if query else texts
+        if self.connection_mode == "active":
+            return await self._encode_connection_async(payload_texts)
+        if self.connection_mode == "shadow":
+            self._shadow_compare()
         async with httpx.AsyncClient(timeout=30.0) as c:
             r = await c.post(
                 self.url,

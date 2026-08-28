@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              608
-версия Tauri/NSIS:         5.1.608
+номер сборки:              609
+версия Tauri/NSIS:         5.1.609
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       universal model connections through common transport
+dev implementation:       common model transport + exact embeddings role
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -261,6 +261,16 @@ dev implementation:       universal model connections through common transport
 > structured and embedding order follows server indices. Focused transport
 > contract: 12 passed. Ordinary chat and embedding call sites are not switched
 > yet; no live endpoint, deploy or publication was used.
+
+> **0.29.0 bound embeddings role (build 609):** `EmbedClient` preserves its
+> legacy public methods, vector identity/dimension checks, batching order and
+> query preparation while adding explicit `legacy | shadow | active` injection.
+> Shadow resolves safe candidate facts but performs exactly one legacy request;
+> active requires the exact `embeddings` binding and capability and never
+> substitutes `answer` or `local_fallback`. Dense+sparse collection contracts,
+> native RRF, retrieval and reranking semantics are unchanged. Focused
+> embedding/parse/RRF/retrieval regression: 86 passed. No live endpoint,
+> service restart, deploy or publication was used.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,

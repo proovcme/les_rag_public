@@ -32,11 +32,16 @@ class ChatProvider(Protocol):
 
 @runtime_checkable
 class EmbedProvider(Protocol):
-    """Эмбеддер. Текущая реализация — `EmbedClient` к MLX `/v1/embeddings`."""
+    """Эмбеддер с legacy и role-bound OpenAI-compatible реализациями."""
 
     def encode_sync(self, texts: list[str]) -> list[list[float]]: ...
 
-    async def encode_async(self, texts: list[str]) -> list[list[float]]: ...
+    async def encode_async(
+        self,
+        texts: list[str],
+        *,
+        query: bool = False,
+    ) -> list[list[float]]: ...
 
 
 @runtime_checkable
