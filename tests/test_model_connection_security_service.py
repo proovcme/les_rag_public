@@ -154,4 +154,3 @@ def test_openai_path_join_preserves_existing_api_root() -> None:
     assert join_openai_path(endpoint, "/chat/completions") == (
         "http://127.0.0.1:13305/api/v1/chat/completions"
     )
-
