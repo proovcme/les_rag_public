@@ -34,6 +34,7 @@ from proxy.services.canonical_route_service import (
     one_model_decision_from_calls,
     resolve_canonical_route,
 )
+from proxy.services.candidate_acceptance_service import execution_mode_for_candidate_acceptance
 from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
 from proxy.services.openai_compatible_transport_service import (
     InferenceRequest,
@@ -1234,17 +1235,29 @@ async def _execute_chat_evidence_application(
     validation_context = ""
 
     canonical_route = resolve_canonical_route(receipt=None)
+    candidate_acceptance = bool(getattr(req, "candidate_acceptance", False))
+    canonical_execution_mode = execution_mode_for_candidate_acceptance(
+        candidate_acceptance=candidate_acceptance,
+        route=canonical_route,
+    )
+    if candidate_acceptance:
+        retrieval_trace["candidate_acceptance"] = {
+            "enabled": True,
+            "execution_mode": canonical_execution_mode.value,
+            "promotion_receipt": "not_used",
+            "state_root": "process_cwd_isolated",
+        }
     connection_resolver = None
     connection_secret_store = None
     resolved_connection = None
     connection_resolution_error = ""
-    if canonical_route.effective is not CanonicalRouteMode.LEGACY:
+    if canonical_execution_mode is not CanonicalRouteMode.LEGACY:
         try:
             connection_resolver, connection_secret_store = model_connection_resolver()
             resolved_connection = connection_resolver.resolve(ConnectionRole.ANSWER)
         except Exception as error:  # shadow is diagnostic; active is fail-closed
             connection_resolution_error = type(error).__name__
-            if canonical_route.effective is CanonicalRouteMode.ACTIVE:
+            if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                 raise HTTPException(503, f"MODEL_CONNECTION_RESOLUTION_FAILED: {error}") from error
 
     configured_runtime = _llm_runtime()
@@ -1273,7 +1286,7 @@ async def _execute_chat_evidence_application(
             logger.warning("[ROUTE] %s", _mem_reason)
     cache_state: dict[str, Any] = {}
     if (
-        canonical_route.effective is not CanonicalRouteMode.ACTIVE
+        canonical_execution_mode is not CanonicalRouteMode.ACTIVE
         and getattr(llm_runtime, "requires_cache_alignment", False)
     ):
         from proxy.services.freetoken_cache_profile_service import reconcile_freetoken_cache
@@ -1310,7 +1323,7 @@ async def _execute_chat_evidence_application(
         observed_source=observed_source,
         operator=model_policy,
     )
-    if canonical_route.effective is CanonicalRouteMode.ACTIVE and resolved_connection is not None:
+    if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None:
         execution_preset = resolved_connection.effective_preset
     preset_diagnostics = execution_preset.diagnostics(
         requested_input_tokens=cache_state.get("desired_kv_tokens")
@@ -1362,17 +1375,17 @@ async def _execute_chat_evidence_application(
         retrieval_trace["model_connection_candidate"] = {
             "revision_id": resolved_connection.revision_id,
             "locality": resolved_connection.locality.value,
-            "effective": canonical_route.effective is CanonicalRouteMode.ACTIVE,
+            "effective": canonical_execution_mode is CanonicalRouteMode.ACTIVE,
             "resolution_error": connection_resolution_error,
         }
     llm_model = (
         resolved_connection.model_id
-        if canonical_route.effective is CanonicalRouteMode.ACTIVE and resolved_connection is not None
+        if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None
         else llm_runtime.model
     )
     val_url = (
         resolved_connection.base_url.rstrip("/")
-        if canonical_route.effective is CanonicalRouteMode.ACTIVE and resolved_connection is not None
+        if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None
         else llm_runtime.base_url.rstrip("/")
     )
     # Локальный MLX-хост всегда держит /api/validate (coreml NLI, ~0.1с). Облачные ответы
@@ -1386,7 +1399,7 @@ async def _execute_chat_evidence_application(
     validate_via_llm = bool(
         use_validation
         and (
-            canonical_route.effective is CanonicalRouteMode.ACTIVE
+            canonical_execution_mode is CanonicalRouteMode.ACTIVE
             or not llm_runtime.supports_validation
         )
     )
@@ -1464,7 +1477,7 @@ async def _execute_chat_evidence_application(
                 active_model_result = None
                 active_pending_tool_calls = 0
                 bound_runner = None
-                if canonical_route.effective is CanonicalRouteMode.ACTIVE:
+                if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                     if connection_resolver is None or connection_secret_store is None:
                         raise HTTPException(503, "MODEL_CONNECTION_RESOLVER_REQUIRED")
                     bound_runner = BoundModelChatRunner(
@@ -1501,7 +1514,7 @@ async def _execute_chat_evidence_application(
                             | {str(item) for item in (_dataset_ids or [])}
                         )
                         active_model_result = await bound_runner.complete(
-                            mode=CanonicalRouteMode.ACTIVE,
+                            mode=canonical_execution_mode,
                             request=inference_request,
                             legacy_complete=no_legacy_call,
                             remote_allowed=cloud_allowed(
@@ -1631,7 +1644,7 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
-                if canonical_route.effective is not CanonicalRouteMode.ACTIVE:
+                if canonical_execution_mode is not CanonicalRouteMode.ACTIVE:
                     profile_tools = [
                         name
                         for name in profile_tools
@@ -1643,7 +1656,7 @@ async def _execute_chat_evidence_application(
                     "requested": canonical_route.requested.value,
                     "effective": canonical_route.effective.value,
                     "legacy_output_authoritative": (
-                        canonical_route.effective is not CanonicalRouteMode.ACTIVE
+                        canonical_execution_mode is not CanonicalRouteMode.ACTIVE
                     ),
                     "same_request": True,
                     "profile_revision": str(
@@ -1652,6 +1665,8 @@ async def _execute_chat_evidence_application(
                     "canonical_provider_calls_added": 0,
                     "persisted_effects": 0,
                 }
+                if candidate_acceptance:
+                    retrieval_trace["route_comparison"]["candidate_acceptance"] = True
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
                 if tool_loop_enabled:
@@ -1789,7 +1804,7 @@ async def _execute_chat_evidence_application(
                             ]
                             if (
                                 not canonical_shadow_recorded
-                                and canonical_route.effective is CanonicalRouteMode.SHADOW
+                                and canonical_execution_mode is CanonicalRouteMode.SHADOW
                             ):
                                 shadow_trace = await safe_execute_canonical_shadow_decision(
                                         proposed_calls=proposed_calls,
@@ -1824,7 +1839,7 @@ async def _execute_chat_evidence_application(
                                 tool_name = str(call.get("tool") or "")
                                 if (
                                     tool_name in {"build_lsr_workbook", "build_vor_workbook"}
-                                    and canonical_route.effective is CanonicalRouteMode.ACTIVE
+                                    and canonical_execution_mode is CanonicalRouteMode.ACTIVE
                                     and workbook_tool_executor is not None
                                 ):
                                     workbook_call_attempted = True
@@ -1924,7 +1939,7 @@ async def _execute_chat_evidence_application(
                         "model_owns_final_answer": True,
                     }
                 if (
-                    canonical_route.effective is CanonicalRouteMode.SHADOW
+                    canonical_execution_mode is CanonicalRouteMode.SHADOW
                     and not canonical_shadow_recorded
                 ):
                     retrieval_trace["canonical_shadow"] = {
@@ -2161,7 +2176,7 @@ async def _execute_chat_evidence_application(
                         await token_sink({"event": "reset", "data": ""})
                     t_llm_call = time.time()
                     try:
-                        if canonical_route.effective is CanonicalRouteMode.ACTIVE:
+                        if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                             answer, usage = await _post_llm(
                                 llm_runtime, llm_model, headers, chat_body
                             )

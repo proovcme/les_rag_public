@@ -621,6 +621,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
     ],
@@ -636,6 +637,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
     }
@@ -643,13 +645,16 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "candidate_workbook",
     }
+    candidate_acceptance = scenario == "candidate_workbook"
     rejected_workbook = scenario == "active_workbook_rejected"
     active = scenario in {
         "active",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "candidate_workbook",
     }
     inactive_workbook = workbook_profile and not active
     model_calls = []
@@ -952,10 +957,18 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             service,
             "resolve_canonical_route",
             lambda **_kwargs: CanonicalRouteDecision(
-                requested=CanonicalRouteMode.ACTIVE,
-                effective=CanonicalRouteMode.ACTIVE,
+                requested=(
+                    CanonicalRouteMode.SHADOW
+                    if candidate_acceptance
+                    else CanonicalRouteMode.ACTIVE
+                ),
+                effective=(
+                    CanonicalRouteMode.SHADOW
+                    if candidate_acceptance
+                    else CanonicalRouteMode.ACTIVE
+                ),
                 source="test",
-                reason="exact_test_receipt",
+                reason=("receipt_missing" if candidate_acceptance else "exact_test_receipt"),
                 restart_required=False,
             ),
         )
@@ -1022,6 +1035,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             dataset_filter=None,
             project_id=0,
             attachment_id="read_123456abcdef" if workbook_profile else None,
+            candidate_acceptance=candidate_acceptance,
             reranker_enabled=None,
         ),
         dataset_ids=["selected"],
@@ -1177,6 +1191,17 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 assert "C:/private/les" not in json.dumps(history_rows[0], ensure_ascii=False)
             assert any(event.get("event") == "tool_progress" for event in progress_events)
             assert legacy_calls == []
+            if candidate_acceptance:
+                trace = history_rows[0]["retrieval_trace"]
+                assert trace["canonical_route"]["effective"] == "shadow"
+                assert trace["candidate_acceptance"] == {
+                    "enabled": True,
+                    "execution_mode": "active",
+                    "promotion_receipt": "not_used",
+                    "state_root": "process_cwd_isolated",
+                }
+                assert trace["route_comparison"]["candidate_acceptance"] is True
+                assert trace["route_comparison"]["legacy_output_authoritative"] is False
         else:
             assert [call[1]["doc_id"] for call in legacy_calls] == ["d1"]
         assert history_rows[0]["retrieval_trace"]["context_governor"]["preset_id"] == "active-preset"

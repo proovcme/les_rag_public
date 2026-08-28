@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              621
-версия Tauri/NSIS:         5.1.621
+номер сборки:              622
+версия Tauri/NSIS:         5.1.622
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       ordinary-chat workbook progress and artifact harvesting
+dev implementation:       fail-closed ordinary-chat workbook live acceptance gate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -116,6 +116,21 @@ dev implementation:       ordinary-chat workbook progress and artifact harvestin
 > `make verify` — 742 collected; `make test` — 742 passed / 5 warnings. Визуально
 > проверен offline-safe shell на 375 px и mobile landscape без horizontal
 > overflow; рабочий runtime этой ветки не развёртывался.
+
+> **Build 622 workbook live-acceptance contract:** opt-in
+> `make live-workbook-acceptance` запускает только owner-authorized real-input
+> ordinary-chat workflow: authenticated attachment upload, SSE workbook draft,
+> artifact metadata/download, correction N+1 with the same attachment and exact
+> parent lineage. Runner fail-closed сверяет downloaded SHA-256, provenance,
+> profile/model/preset/checkpoint identity, counts missing/blockers и elapsed
+> time и пишет только structured/redacted `live_runtime` receipt. План требовал
+> pre-promotion execution, поскольку обычный `active` без receipt корректно
+> остаётся shadow; поэтому guarded `candidate_acceptance` доступен только
+> root-admin в exact isolated process CWD из read-only Danger
+> `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`. Он не создаёт/обходит receipt, не
+> помечает rollout active и оставляет trace evidence. **PENDING: live user-owned
+> input/model acceptance** — offline contracts не объявляют качество модели или
+> promotion доказанными; runtime этой ветки не развёртывался.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac help
+.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance help
 
 PATCH_RELEASE_ARGS ?=
 GITHUB_PATCH_RELEASE_ARGS ?=
@@ -10,6 +10,7 @@ MAC_UPDATE_BRANCH ?= codex/audit-rag
 WINDOWS_UPDATE_ARGS ?=
 WINDOWS_SHELL_ARGS ?=
 DEPLOY_FORCE_FILES ?=
+LIVE_WORKBOOK_ACCEPTANCE_ARGS ?=
 PYTEST_BASETEMP ?= .test-tmp
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
@@ -76,12 +77,16 @@ help:
 	@echo "make status-mac-update — показать состояние установки/отката"
 	@echo "make deploy-audit-rag — совместимый псевдоним apply-mac-update; Legion намеренно отключён"
 	@echo "make version-sync — синхронизировать Cargo/Tauri/паспорт версий из config/version.json"
+	@echo "make live-workbook-acceptance — opt-in receipt ordinary workbook chat on real user-owned input"
 
 version-sync:
 	uv run python tools/sync_version_contract.py
 
 architecture-gate:
 	uv run python tools/architecture_contract_gate.py
+
+live-workbook-acceptance:
+	uv run python tools/live_workbook_acceptance.py $(LIVE_WORKBOOK_ACCEPTANCE_ARGS)
 
 verify:
 	uv run python tools/sync_version_contract.py --check

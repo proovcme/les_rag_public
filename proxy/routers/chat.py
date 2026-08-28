@@ -39,6 +39,10 @@ from proxy.services.canonical_route_service import (
     CanonicalRouteMode,
     resolve_canonical_route,
 )
+from proxy.services.candidate_acceptance_service import (
+    CandidateAcceptanceError,
+    require_candidate_acceptance,
+)
 from proxy.services.model_connection_registry_service import ModelConnectionRegistry
 from proxy.services.model_connection_resolver_service import ModelConnectionResolver
 from proxy.services.model_secret_service import EnvironmentSecretStore
@@ -249,6 +253,7 @@ class ChatRequest(BaseModel):
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
     profile_revision_id: Optional[str] = None
     apply_profile_revision: bool = False
+    candidate_acceptance: bool = False  # root-admin only; isolated pre-promotion execution
     attachment_context: Optional[str] = None  # текст файла из скрепки (read-mode), без индексации
     attachment_id: Optional[str] = None  # server-owned read_<id>; клиентский путь не принимается
     target_file: Optional[str] = None  # точный file_name из MetaDB documents (для клика по реестру/узкого RAG)
@@ -325,6 +330,17 @@ class ChatRequest(BaseModel):
                 raise ValueError("Имя выбранного документа слишком длинное")
             result.append(value)
         return result or None
+
+
+def _require_candidate_acceptance(req: ChatRequest, user: Any) -> None:
+    try:
+        require_candidate_acceptance(
+            requested=bool(req.candidate_acceptance),
+            user=user,
+        )
+    except CandidateAcceptanceError as error:
+        status_code = 403 if "ROOT_ADMIN" in str(error) else 409
+        raise HTTPException(status_code, str(error)) from error
 
 
 @dataclass
@@ -1754,6 +1770,7 @@ async def chat(
     получит исходный ответ без нового вызова модели; тот же ключ с другим телом
     отклоняется.
     """
+    _require_candidate_acceptance(req, _user)
     if not idempotency_key:
         return decorate_payload(await _run_chat_with_provider(req))
 
@@ -1827,6 +1844,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
     а затем авторитетный final payload."""
     if not req.question.strip():
         raise HTTPException(400, "Empty question")
+    _require_candidate_acceptance(req, _user)
     queue: asyncio.Queue = asyncio.Queue()
     stream_state: dict[str, Any] = {
         "tokens": 0,

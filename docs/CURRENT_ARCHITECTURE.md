@@ -57,6 +57,19 @@
 - Совушка показывает effective preset, input limit, generation/safety reserves,
   reasoning, источник значения и необходимость restart. Эти строки read-only;
   допустимые изменения делаются через копию профиля.
+- `tools/live_workbook_acceptance.py` — отдельный opt-in runner реального
+  ordinary-chat маршрута: `/api/chat/attachments` upload →
+  `/api/chat/stream` SSE → metadata /
+  download immutable revisions 1 и 2. Он fail-closed проверяет identity,
+  attachment/provenance/checkpoint lineage, hash download, missing/blockers и
+  elapsed time; JSON receipt redacted и имеет только `evidence_kind=live_runtime`.
+  В receipt сохраняются только счётчики `missing`/`blockers`, не их свободный
+  runtime-текст.
+- Отдельный `candidate_acceptance=true` допускает pre-promotion executor только
+  для root-admin в process CWD, который точно равен read-only Danger bootstrap
+  factor `LES_CANONICAL_ACCEPTANCE_STATE_ROOT`. Он сохраняет публичное route
+  decision `shadow`, не создаёт promotion receipt и явно отмечается в trace;
+  обычный shadow остаётся неперсистентным.
 
 ## Проверено на context checkpoint
 
@@ -69,9 +82,12 @@
 - Это offline structural/behavior evidence; живое качество 9B и release
   promotion им не подменяются.
 
-## Запланировано, но ещё не реализовано
+## Ожидает owner-run evidence
 
-- versioned workbook artifacts и paired live 9B acceptance.
+- **PENDING: live user-owned input/model acceptance.** Offline tests этого
+  runner-а не являются evidence качества модели и не повышают маршрут до
+  `active`. Обязателен owner-authorized запуск на реальном документе и
+  configured Qwen 3.5 9B; 35B запускается дополнительно только если настроен.
 
 `make architecture-gate` является только структурным доказательством. Он не
 доказывает качество ответа модели, корректность профессионального решения или
