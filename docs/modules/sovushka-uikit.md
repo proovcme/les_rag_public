@@ -333,6 +333,20 @@ progressive disclosure настроек. Диалог вложения испо�
 `Студия · скоро`, а `/classic?tab=studio` перенаправляет в чат. Код Студии и
 lazy panel не удаляются.
 
+## PWA shell 0.29.0 / build 614
+
+Browser, установленная PWA и Tauri WebView продолжают отображать один NiceGUI-
+frontend. Manifest доступен по `/pwa/manifest.webmanifest`, использует стабильный
+`/classic?source=pwa`, standalone display и существующую иконку Tauri. Root-
+service-worker отдаётся с `Service-Worker-Allowed: /` и `Cache-Control: no-cache`.
+
+Runtime cache закрыт по умолчанию. Предварительно сохраняются только
+`/pwa/offline.html` и `/pwa-icons/icon.png`; navigation остаётся network-first.
+`/api/`, `/lite-api/`, streams/events, documents/files, cross-origin и все
+non-GET запросы не перехватываются. Offline shell разрешает редактировать один
+локальный draft через `localStorage`, но не отправляет, не ставит в очередь и не
+повторяет запрос после восстановления связи.
+
 ## Границы
 
 Filled КС commands use the same chat backend as the API: a ready download is

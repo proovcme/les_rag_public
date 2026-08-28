@@ -1,0 +1,20 @@
+{
+  "name": "С.О.В.У.Ш.К.А. · Л.Е.С.",
+  "short_name": "Совушка",
+  "description": "Рабочий интерфейс Л.Е.С. для чата, файлов, источников и конфигурации.",
+  "lang": "ru",
+  "start_url": "/classic?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "theme_color": "#176b46",
+  "background_color": "#f4f6f2",
+  "icons": [
+    {
+      "src": "/pwa-icons/icon.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

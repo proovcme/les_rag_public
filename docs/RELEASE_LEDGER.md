@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              613
-версия Tauri/NSIS:         5.1.613
+номер сборки:              614
+версия Tauri/NSIS:         5.1.614
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       Sovushka product-shell foundation and hidden Studio placeholder
+dev implementation:       safe installable Sovushka PWA shell
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -44,6 +44,13 @@ dev implementation:       Sovushka product-shell foundation and hidden Studio pl
 > один русский выбор файла. Недоделанная Студия сохранена в коде и API, но в
 > production представлена disabled-заглушкой `Студия · скоро`; старый
 > `?tab=studio` перенаправляется в чат.
+
+> **Build 614 PWA checkpoint:** тот же NiceGUI frontend публикует installable
+> manifest для `С.О.В.У.Ш.К.А. · Л.Е.С.`, общий Tauri icon и root-scoped service
+> worker. Worker работает network-first для navigation и кэширует только
+> versioned offline page и identity icon. API, event streams, документы, файлы,
+> cross-origin и non-GET запросы обходят Cache API. Offline page сохраняет лишь
+> локальный неотправленный draft и не ставит запрос в очередь.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

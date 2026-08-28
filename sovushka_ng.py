@@ -10,7 +10,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from fastapi import Request
 from nicegui import app, ui
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import FileResponse, HTMLResponse, RedirectResponse
 
 from sovushka.config import QDRANT_VISUALIZER_PORT, STORAGE_SECRET, UI_HOST, UI_PORT
 from sovushka.state import bg_loop
@@ -33,6 +33,14 @@ qdrant_visualizer_dir = Path(__file__).resolve().parent / "qdrant_visualizer"
 if qdrant_visualizer_dir.exists():
     app.add_static_files("/qdrant-visualizer", str(qdrant_visualizer_dir))
 
+pwa_dir = Path(__file__).resolve().parent / "frontend" / "pwa"
+if pwa_dir.exists():
+    app.add_static_files("/pwa", str(pwa_dir))
+
+pwa_icon_dir = Path(__file__).resolve().parent / "desktop" / "tauri" / "src-tauri" / "icons"
+if pwa_icon_dir.exists():
+    app.add_static_files("/pwa-icons", str(pwa_icon_dir))
+
 # Регистрируем /login (отдельная страница, без обвязки main_page)
 register_login_page()
 register_provider_setup_page()
@@ -46,6 +54,18 @@ register_m5_display_routes()
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok", "service": "sovushka"}
+
+
+@app.get("/service-worker.js", include_in_schema=False)
+async def pwa_service_worker():
+    return FileResponse(
+        pwa_dir / "service-worker.js",
+        media_type="application/javascript",
+        headers={
+            "Cache-Control": "no-cache",
+            "Service-Worker-Allowed": "/",
+        },
+    )
 
 
 @app.get("/verify-image")
@@ -194,6 +214,20 @@ def _apply_theme() -> None:
     ui.add_head_html(CUSTOM_CSS)
     ui.add_head_html(theme_vars_css(_dark))
     ui.add_head_html(UIKIT_CSS)
+    ui.add_head_html(
+        """
+        <link rel="manifest" href="/pwa/manifest.webmanifest">
+        <link rel="apple-touch-icon" href="/pwa-icons/icon.png">
+        <meta name="theme-color" content="#176b46">
+        <script>
+          if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/service-worker.js', {scope: '/'});
+            });
+          }
+        </script>
+        """
+    )
     # WCAG 3.1.1 Language of Page: интерфейс и контент русские — помечаем
     # документ lang=ru, иначе скринридеры читают кириллицу как английский.
     ui.add_head_html("<script>document.documentElement.lang='ru'</script>")
