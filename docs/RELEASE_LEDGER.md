@@ -112,8 +112,8 @@ dev implementation:       ordinary-chat workbook progress and artifact harvestin
 > продолжить с checkpoint. Завершённая immutable revision появляется в общей
 > карточке файлов, сохраняется в chat history вместе с attachment/checkpoint и
 > оставляет исходное вложение доступным для correction N+1. Focused
-> broker/workbook/chat/SSE/UI: 159 passed; architecture gate green;
-> `make verify` — 732 collected; `make test` — 732 passed / 5 warnings. Визуально
+> broker/workbook/chat/SSE/UI: 162 passed; architecture gate green;
+> `make verify` — 742 collected; `make test` — 742 passed / 5 warnings. Визуально
 > проверен offline-safe shell на 375 px и mobile landscape без horizontal
 > overflow; рабочий runtime этой ветки не развёртывался.
 

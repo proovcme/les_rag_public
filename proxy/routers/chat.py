@@ -803,8 +803,29 @@ async def _execute_chat_workbook_tool(
             "blockers": [],
         }
     args["project_id"] = bound_project_id
-    if request_context.get("dataset_ids") and not args.get("dataset_ids"):
-        args["dataset_ids"] = list(request_context["dataset_ids"])
+    bound_dataset_ids = list(dict.fromkeys(
+        str(item).strip()
+        for item in (request_context.get("dataset_ids") or ())
+        if str(item).strip()
+    ))
+    requested_dataset_ids = args.get("dataset_ids")
+    if requested_dataset_ids is not None:
+        requested_scope = {
+            str(item).strip()
+            for item in requested_dataset_ids
+            if str(item).strip()
+        }
+        if requested_scope != set(bound_dataset_ids):
+            return {
+                "schema": "les.workbook_tool_result.v1",
+                "tool": tool_name,
+                "status": "rejected",
+                "code": "TOOL_SCOPE_VIOLATION",
+                "missing": [],
+                "blockers": [],
+            }
+    # Dataset ordering is not semantic, but artifact provenance is server-owned.
+    args["dataset_ids"] = bound_dataset_ids
 
     identity_payload = {
         "session_id": str(request_context.get("session_id") or ""),

@@ -255,11 +255,71 @@ async def test_chat_workbook_executor_rejects_model_dataset_outside_chat_scope(
         on_progress,
     )
 
-    assert result["execution"]["code"] == "TOOL_SCOPE_VIOLATION"
+    assert result["code"] == "TOOL_SCOPE_VIOLATION"
     assert "artifact" not in result
-    with sqlite3.connect("storage/workbook_checkpoints.db") as connection:
-        count = connection.execute("SELECT COUNT(*) FROM workflow_checkpoints").fetchone()[0]
-    assert count == 0
+    assert not Path("storage/workbook_checkpoints.db").exists()
+    assert not Path("storage/artifacts/meta.db").exists()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("model_dataset_ids", "expected_status"),
+    ((["selected-a"], "rejected"), (["selected-b", "selected-a"], "complete")),
+)
+async def test_chat_workbook_executor_binds_exact_request_dataset_scope(
+    tmp_path, monkeypatch, model_dataset_ids, expected_status
+):
+    """A workbook artifact always records the full server-owned request scope."""
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Кабель", "м", 2])
+    workbook.save(source)
+    workbook.close()
+    attachment = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+
+    async def on_progress(_event):
+        return None
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "tool": "build_vor_workbook",
+            "args": {
+                "attachment_id": attachment["attachment_id"],
+                "dataset_ids": model_dataset_ids,
+            },
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ВОР",
+            "attachment_id": attachment["attachment_id"],
+            "dataset_ids": ["selected-a", "selected-b"],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        on_progress,
+    )
+
+    assert result["status"] == expected_status
+    if expected_status == "rejected":
+        assert result["code"] == "TOOL_SCOPE_VIOLATION"
+        assert "artifact" not in result
+        return
+    assert result["artifact"]["source_scope"] == [
+        f"attachment:{attachment['attachment_id']}",
+        "dataset:selected-a",
+        "dataset:selected-b",
+    ]
 
 
 @pytest.mark.asyncio
@@ -559,6 +619,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "cloud_retry",
         "active",
         "active_workbook",
+        "active_workbook_private_arg",
         "active_workbook_rejected",
         "shadow_workbook",
         "legacy_workbook",
@@ -573,13 +634,23 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     cloud_retry = scenario == "cloud_retry"
     workbook_profile = scenario in {
         "active_workbook",
+        "active_workbook_private_arg",
         "active_workbook_rejected",
         "shadow_workbook",
         "legacy_workbook",
     }
-    active_workbook = scenario in {"active_workbook", "active_workbook_rejected"}
+    active_workbook = scenario in {
+        "active_workbook",
+        "active_workbook_private_arg",
+        "active_workbook_rejected",
+    }
     rejected_workbook = scenario == "active_workbook_rejected"
-    active = scenario in {"active", "active_workbook", "active_workbook_rejected"}
+    active = scenario in {
+        "active",
+        "active_workbook",
+        "active_workbook_private_arg",
+        "active_workbook_rejected",
+    }
     inactive_workbook = workbook_profile and not active
     model_calls = []
     shortlist_policies = []
@@ -856,7 +927,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                                 {"id": "workbook-call-2", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
                             )
                             if rejected_workbook
-                            else ({"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },)
+                                else ({"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": ('{"attachment_id":"read_123456abcdef","question":"C:/private/les/SECRET_TRACE_TOKEN"}' if scenario == "active_workbook_private_arg" else '{"attachment_id":"read_123456abcdef"}')} },)
                         ) if active_workbook else (
                             {"id": "c1", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d1"}'}},
                             {"id": "c2", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d2"}'}},
@@ -1095,6 +1166,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             assert result["artifact"]["revision_id"] == "rev-2"
             assert result["attachment_retry"]["attachment_id"] == "read_123456abcdef"
             assert history_rows[0]["artifact"]["revision_id"] == "rev-2"
+            if scenario == "active_workbook_private_arg":
+                selected_calls = result["retrieval_trace"]["tool_loop"]["selected_calls"]
+                assert selected_calls == history_rows[0]["retrieval_trace"]["tool_loop"]["selected_calls"]
+                assert selected_calls[0]["tool"] == "build_vor_workbook"
+                assert selected_calls[0]["call_id"] == "workbook-call-1"
+                assert len(selected_calls[0]["arguments_sha256"]) == 64
+                assert "args" not in selected_calls[0]
+                assert "SECRET_TRACE_TOKEN" not in json.dumps(result, ensure_ascii=False)
+                assert "C:/private/les" not in json.dumps(history_rows[0], ensure_ascii=False)
             assert any(event.get("event") == "tool_progress" for event in progress_events)
             assert legacy_calls == []
         else:

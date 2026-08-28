@@ -6,6 +6,7 @@ unchanged retrieval -> context/evidence -> model -> sources/trace execution bran
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -83,6 +84,25 @@ from proxy.services.model_execution_preset_service import ModelExecutionPreset
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
+
+
+def safe_selected_call_trace(call: dict[str, Any]) -> dict[str, str]:
+    """Expose a call's shape without retaining model-supplied argument text."""
+    arguments = call.get("args") if isinstance(call.get("args"), dict) else {}
+    encoded_arguments = json.dumps(
+        arguments,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    trace = {
+        "tool": str(call.get("tool") or ""),
+        "arguments_sha256": hashlib.sha256(encoded_arguments).hexdigest(),
+    }
+    if call.get("call_id"):
+        trace["call_id"] = str(call["call_id"])
+    return trace
 
 
 def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str, Any]:
@@ -1863,7 +1883,9 @@ async def _execute_chat_evidence_application(
                             "selector_model": llm_model,
                             "selector_provider": llm_runtime.provider,
                             "shortlist": shortlist,
-                            "selected_calls": selected_calls,
+                            "selected_calls": [
+                                safe_selected_call_trace(call) for call in selected_calls
+                            ],
                             "selector_usage": selector_usage,
                             "results": tool_results_for_model,
                             "rounds": research_rounds,
