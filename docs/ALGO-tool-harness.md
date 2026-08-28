@@ -1,5 +1,13 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Canonical workbook contracts (0.29.0 / build 619)
+
+Реестр содержит ровно `build_lsr_workbook` и `build_vor_workbook` версии
+`1.0.0` с effect `draft`, обязательным idempotency key, server-owned attachment
+scope и результатом `les.workbook_tool_result.v1`. Модель сама выбирает вызов;
+regex forcing и автоматическая активация профиля отсутствуют. OpenAI,
+OpenAI-compatible, Ollama и MCP получают schema-only проекцию одной записи.
+
 ## Назначение
 
 `tool_harness_service` даёт ЛЕСу единый слой инструментов: поиск/чтение источников,

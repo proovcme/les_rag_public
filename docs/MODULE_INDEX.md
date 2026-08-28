@@ -767,6 +767,16 @@ drift fail-closed, completion хранит exact artifact revision. Точки �
 `chat_attachment_service.py`; тесты `test_workflow_checkpoint_service.py`,
 `test_chat_attachment_service.py`. ✅
 
+**0.29.0 / build 619:** `tools/workbook-contracts` регистрирует только
+`build_lsr_workbook` и `build_vor_workbook` как provider-neutral draft tools с
+required idempotency и immutable-artifact provenance. Schema-only проекции
+OpenAI/OpenAI-compatible/Ollama/MCP сохраняют name/version/effect/schema без
+handler. Только новые factory estimator seeds получают allowlist; active
+revisions/session bindings не меняются. Точки входа:
+`workbook_tool_service.py`, `tool_provider_projection_service.py`,
+`tool_harness_service.py`, `chat_profile_service.py`; тесты
+`test_workbook_tool_contracts.py`, `test_tool_provider_projection_service.py`. ✅
+
 **0.27.67 / build 574:** `rag/answer-render` на каждом terminal-событии
 `smeta_row` обновляет один черновой Markdown-артефакт с уже готовыми строками.
 Это UI-проекция существующего stream/checkpoint-контракта: сметное ядро, выбор

@@ -1,5 +1,11 @@
 # Chat profiles
 
+## Workbook tools in new factory seeds (0.29.0 / build 619)
+
+Новый Factory Base профиля `estimator` включает два канонических workbook tool
+contract. Уже созданные active revisions и session bindings не изменяются:
+оператор должен явно создать/опубликовать/активировать новую редакцию.
+
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию

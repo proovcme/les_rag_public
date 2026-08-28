@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              618
-версия Tauri/NSIS:         5.1.618
+номер сборки:              619
+версия Tauri/NSIS:         5.1.619
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       durable workflow checkpoints
+dev implementation:       canonical workbook tool contracts
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -86,6 +86,13 @@ dev implementation:       durable workflow checkpoints
 > drift блокируется, completion сохраняет exact immutable artifact revision.
 > `dataset_ids=None|[]` нормализуются одинаково; prompt dumps не сохраняются.
 > Focused checkpoint/attachment: 8 passed.
+
+> **Build 619 workbook contracts:** реестр содержит только канонические
+> `build_lsr_workbook` / `build_vor_workbook` с effect `draft`, required
+> idempotency и immutable-artifact provenance. OpenAI, OpenAI-compatible,
+> Ollama и MCP получают schema-only projection одной записи. Новые factory
+> seeds включают tools, существующие active profiles/session bindings не
+> меняются. Focused contract/projection/profile: 35 passed; architecture green.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

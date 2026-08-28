@@ -194,6 +194,8 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
             "read_excel_source",
             "search_project_tables",
             "read_project_table",
+            "build_lsr_workbook",
+            "build_vor_workbook",
         )
         if name in registered
     ]

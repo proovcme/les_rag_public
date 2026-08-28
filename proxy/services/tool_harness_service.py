@@ -169,6 +169,8 @@ class ToolHarness:
     def __init__(self) -> None:
         self._registry = ToolRegistry()
         self._register_defaults()
+        from proxy.services.workbook_tool_service import register_workbook_contracts
+        register_workbook_contracts(self._registry)
         self._executor = TrustedExecutor(
             self._registry,
             scope_resolver=resolve_authoritative_dataset_scope,
