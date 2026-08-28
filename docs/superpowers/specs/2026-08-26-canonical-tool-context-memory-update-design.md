@@ -38,6 +38,12 @@ There is no estimator-specific chat intercept, regex intent router or second
 tool family. The protected `proxy/smeta_core/**` remains a compatibility/library
 boundary and is not a workflow entry point for new code.
 
+The product interface and execution node follow the separately approved
+[Sovushka Product UI and PWA Design](2026-08-28-sovushka-product-ui-pwa-design.md).
+Sovushka and LES use one API contract in co-located local mode and in the future
+split VPS/headless mode. Tauri remains the local Windows lifecycle shell over
+the same Sovushka; it is not another frontend or a domain runtime.
+
 ## Canonical workbook tools
 
 PR13 established the correct product contracts:
@@ -277,3 +283,6 @@ testable checkpoint:
    — focused PR5/7/9/10/12/14–18 behavior without bulk merging private branches.
 5. [Canonical Update, Rollback and Release](../plans/2026-08-26-canonical-update-rollback-release-implementation.md)
    — route rollback, exact manifest, apply/skip/rollback and release evidence.
+6. [Universal Model Connections](../plans/2026-08-27-universal-model-connections-implementation.md)
+   — provider-neutral backend registry, shared Sovushka/PWA foundation and the
+   administrator Models surface.

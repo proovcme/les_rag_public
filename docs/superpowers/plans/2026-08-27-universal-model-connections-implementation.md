@@ -25,6 +25,7 @@
 - Existing provider environment values remain rollback inputs and are not deleted, overwritten or copied into SQLite.
 - Do not add dependencies. Use the bundled `httpx`, SQLite and standard-library URL/IP tools.
 - Before Task 9, read `skills/sovushka-ui/SKILL.md` and `docs/modules/sovushka-uikit.md`; reuse existing components and tokens.
+- Before Task 9, complete `2026-08-28-sovushka-ui-pwa-foundation-implementation.md` so the Models page lands on the owner-approved shared desktop/mobile/PWA shell.
 - Every implementation task increments `build_number` once, changes `desktop_version` to `5.1.<build>`, runs `uv run python tools/sync_version_contract.py`, updates `docs/RELEASE_LEDGER.md`, and commits only that task's files.
 - Use `uv run python -m pytest -q --basetemp=.test-tmp/model-connections-N tests/test_name.py` on Windows, with the task number and exact test file substituted.
 - Live engines and services are not restarted during Tasks 1-10. Task 11 creates the owner-gated live acceptance command but does not promote, deploy or publish.
@@ -649,7 +650,7 @@ Run router, security, secret, capability and registry tests; update version surf
 
 ### Task 9: GUI-first administrator registry
 
-**Build:** 612
+**Build:** 615
 
 **Files:**
 - Create: `sovushka/pages/model_connections.py`
@@ -706,13 +707,13 @@ Templates prefill FreeToken, Ollama, Lemonade, MLX, LM Studio, llama.cpp and gen
 
 Add `Модели` to configuration tabs and lazy page construction in `sovushka_ng.py`. Replace the installed-mode FreeToken/Ollama/Lemonade/OpenAI fields in the header settings dialog with a link to `Конфигурация → Модели`; keep unrelated mail and bootstrap settings unchanged. Do not modify smeta settings or smeta labels in this task.
 
-- [ ] **Step 6: Run UI and API tests, update docs, commit build 612**
+- [ ] **Step 6: Run UI and API tests, update docs, commit build 615**
 
 Run the new UI test plus existing header/UI-kit/runtime-registry tests. Update the UI-kit module doc and module index, version surfaces and ledger; commit with `git commit -m "feat(ui): manage global model connections"`.
 
 ### Task 10: Isolated engine extensions
 
-**Build:** 613
+**Build:** 616
 
 **Files:**
 - Create: `proxy/services/model_engine_extension_service.py`
@@ -761,13 +762,13 @@ Register read-only FreeToken cache status and MLX health/memory/model status ada
 
 Add `GET /api/model-connections/{connection_id}/extension/status`. Do not add a mutating endpoint in this release; the approval-aware protocol is tested for future use, while the public router remains read-only.
 
-- [ ] **Step 5: Run focused tests and commit build 613**
+- [ ] **Step 5: Run focused tests and commit build 616**
 
 Run extension, router, transport and existing FreeToken cache tests. Update code map, version surfaces and ledger; commit with `git commit -m "feat(models): isolate engine management extensions"`.
 
 ### Task 11: Closing gates, exact live acceptance command and workbook handoff
 
-**Build:** 614
+**Build:** 617
 
 **Files:**
 - Create: `tools/model_connection_live_acceptance.py`
@@ -792,7 +793,7 @@ Run extension, router, transport and existing FreeToken cache tests. Update code
 ```python
 def test_receipt_binds_exact_commit_build_revision_snapshot_and_model():
     receipt = build_receipt(
-        source_commit="abc123", build_number=614,
+        source_commit="abc123", build_number=617,
         connection_revision_id="conn:c1:r2", capability_snapshot_id="cap:s1",
         preset_id="qwen-9b-restrictive", observed_model_identity="qwen3.5:9b",
         cases=(passing_case("chat"), passing_case("stream")),
@@ -805,7 +806,7 @@ def test_receipt_binds_exact_commit_build_revision_snapshot_and_model():
 def test_synthetic_or_mock_transport_cannot_issue_passing_receipt():
     with pytest.raises(ValueError, match="LIVE_EVIDENCE_REQUIRED"):
         build_receipt(
-            source_commit="abc123", build_number=614,
+            source_commit="abc123", build_number=617,
             connection_revision_id="conn:c1:r2", capability_snapshot_id="cap:s1",
             preset_id="qwen-9b-restrictive", observed_model_identity="qwen3.5:9b",
             cases=(passing_case("chat"),), transport_kind="mock",
@@ -836,9 +837,9 @@ Also document that the implemented model registry lives on the LES execution
 node. Record the future VPS/Sovushka → authenticated headless LES-node control
 plane as a separate planned module, not as a capability of the connection API.
 
-- [ ] **Step 6: Set build 614 and run closing verification**
+- [ ] **Step 6: Set build 617 and run closing verification**
 
-Set build 614 in `config/version.json`, run the version synchronizer, update the ledger with the pending checkpoint, then run in order:
+Set build 617 in `config/version.json`, run the version synchronizer, update the ledger with the pending checkpoint, then run in order:
 
 ```powershell
 uv run python -m pytest -q --basetemp=.test-tmp/model-connections-final tests/test_model_connection_registry_service.py tests/test_model_connection_security_service.py tests/test_model_secret_service.py tests/test_model_capability_service.py tests/test_model_connection_resolver_service.py tests/test_openai_compatible_transport_service.py tests/test_model_connection_chat_integration.py tests/test_model_connections_router.py tests/test_sovushka_model_connections.py tests/test_model_engine_extension_service.py tests/test_model_connection_live_acceptance.py tests/test_architecture_gate.py
@@ -850,7 +851,7 @@ git diff --check
 
 Expected: focused suite passes, version drift is empty, current behavior gate passes, verify collects the same canonical set, and diff check is clean. If `make` is unavailable, execute the exact commands from the corresponding Makefile targets with workspace-local `--basetemp`.
 
-- [ ] **Step 7: Commit build 614**
+- [ ] **Step 7: Commit build 617**
 
 Replace the pending ledger counts with exact fresh gate counts. Commit:
 

@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              611
-версия Tauri/NSIS:         5.1.611
+номер сборки:              612
+версия Tauri/NSIS:         5.1.612
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       authenticated model-connections API
+dev implementation:       approved Sovushka/PWA frontend-backend boundary
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -27,6 +27,13 @@ dev implementation:       authenticated model-connections API
 > PR6 требует отдельного полного installer, PR8/11 — отдельная extension-линия,
 > private PR13 не меняет защищённый smeta-core в этом релизе. Канон:
 > [active design](superpowers/specs/2026-08-26-canonical-tool-context-memory-update-design.md).
+
+> **Build 612 UI/PWA checkpoint:** Совушка зафиксирована как один frontend/BFF
+> для Browser, устанавливаемой PWA и локального Tauri WebView. Co-located режим
+> Mac/Legion не зависит от VPS; split headless режим оставляет LES, файлы,
+> память, инструменты, secrets и model registry на execution node. Tauri
+> остаётся Windows lifecycle shell, а отдельный аутентифицированный VPS→node
+> протокол не объявляется реализованным до собственного design/acceptance.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;
