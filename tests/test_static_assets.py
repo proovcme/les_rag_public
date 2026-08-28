@@ -22,24 +22,32 @@ def test_admin_instruments_tab_is_mounted():
     assert "build_instrumenty()" in app_shell
 
 
-def test_work_surfaces_are_mounted_outside_configurator():
+def test_data_is_the_only_live_corpus_surface_and_dormant_code_stays_present():
     header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
     app_shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
     page = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+    mail = Path("sovushka/pages/mail.py").read_text(encoding="utf-8")
 
-    for label in ("Документы", "Студия", "CAD/BIM", "Почта"):
-        assert f'ui.tab("{label}"' in header
-    for surface in ("documents", "studio", "cad_bim"):
-        assert f'build_documents(surface="{surface}")' in app_shell
-    assert 'def build_documents(*, surface: str = "documents")' in page
-    assert "include_documents=True" in app_shell
+    assert 'tab_refs["data"] = ui.tab("Данные", icon="o_database")' in header
+    for label in ("Документы", "Датасеты", "Почта"):
+        assert f'ui.tab("{label}"' not in header
+    assert '"CAD/BIM · скоро"' in header
+    assert 'aria-label="CAD/BIM — скоро"' in header
+    for surface in ("studio", "cad_bim"):
+        assert f'build_documents(surface="{surface}")' not in app_shell
+    assert "def build_documents(" in page
+    assert 'surface: str = "documents"' in page
+    assert "include_data=True" in app_shell
+    assert "build_data_workspace(is_admin=is_admin)" in app_shell
+    assert "def build_mail()" in mail
+    assert "def build_mail_settings()" in mail
 
     admin_shell = app_shell.split("async def classic_admin_page", 1)[1]
     assert "build_documents" not in admin_shell
     assert "build_mail()" not in admin_shell
-    assert 'tab_refs["mail_settings"] = ui.tab("Почта"' in header
-    assert '"mail_settings": "Настройка почты"' in header
-    assert "build_mail_settings()" in admin_shell
+    assert 'tab_refs["mail_settings"] = ui.tab("Почта"' not in header
+    assert '"mail_settings": "Настройка почты"' not in header
+    assert "build_mail_settings()" not in admin_shell
 
 
 def test_documents_ui_shows_only_rag_content_and_original():
@@ -110,7 +118,8 @@ def test_mail_settings_are_configurator_only():
     assert "Забрать новые письма" in mail
     assert ".sov-mail-settings-page" in styles
     admin_shell = app_shell.split("async def classic_admin_page", 1)[1]
-    assert "build_mail_settings()" in admin_shell
+    assert "from sovushka.pages.mail import" not in app_shell
+    assert "build_mail_settings()" not in admin_shell
     assert "build_mail()" not in admin_shell
     work_mail = mail.split("def build_mail_settings()", 1)[0]
     assert "open_add_account_dialog" not in work_mail

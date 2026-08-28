@@ -32,7 +32,7 @@ def _smeta_runtime_settings(engine: str, model: str) -> dict[str, str]:
 
 def visible_workspace_sections() -> tuple[str, ...]:
     """Product-visible workspace sections; legacy RIM remains data-compatible only."""
-    return ("chat", "samovar", "documents", "studio", "cad_bim", "mail", "history")
+    return ("chat", "data", "studio", "cad_bim_placeholder", "history")
 
 
 def build_header(
@@ -42,9 +42,7 @@ def build_header(
     *,
     admin_tabs: bool | None = None,
     include_chat: bool = True,
-    include_documents: bool = False,
-    include_datasets: bool = False,
-    include_mail: bool = True,
+    include_data: bool = False,
     admin_link: bool = False,
     chat_link: bool = False,
     active_primary: str = "",
@@ -241,8 +239,6 @@ def build_header(
                 # v0.24: админка с чистыми именами; рабочие инструменты оставляем видимыми,
                 # иначе оператор не видит служебные источники, ВОР и нормоконтроль.
                 tab_refs["diag"]       = ui.tab("Состояние", icon="o_health_and_safety")
-                tab_refs["samovar"]    = ui.tab("Датасеты",  icon="o_inventory_2")
-                tab_refs["mail_settings"] = ui.tab("Почта", icon="o_mark_email_read")
                 tab_refs["instrumenty"] = ui.tab("Инструменты", icon="o_build")
                 tab_refs["model_connections"] = ui.tab("Модели", icon="o_hub")
                 tab_refs["profiles"] = ui.tab("Профили", icon="o_manage_accounts")
@@ -252,26 +248,20 @@ def build_header(
                 tab_refs["chat"] = ui.tab("AI ЧАТ", icon="o_forum").classes(
                     "sov-primary-tab-mirrored"
                 )
-                if include_datasets and "samovar" not in tab_refs:
-                    tab_refs["samovar"] = ui.tab("Датасеты", icon="o_inventory_2")
-                if include_documents and "documents" not in tab_refs:
-                    tab_refs["documents"] = ui.tab("Документы", icon="o_folder_open")
-                    tab_refs["studio"] = ui.tab("Студия", icon="o_edit_note").classes(
-                        "sov-primary-tab-mirrored"
-                    )
-                    tab_refs["cad_bim"] = ui.tab("CAD/BIM", icon="o_view_in_ar")
-                if include_mail and "mail" not in tab_refs:
-                    tab_refs["mail"] = ui.tab("Почта", icon="o_mail")
+                if include_data:
+                    tab_refs["data"] = ui.tab("Данные", icon="o_database")
+                    ui.button(
+                        "CAD/BIM · скоро",
+                        icon="o_view_in_ar",
+                    ).props('flat no-caps disable aria-label="CAD/BIM — скоро"').classes(
+                        "sov-secondary-placeholder"
+                    ).tooltip("Раздел готовится к выпуску")
                 tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
 
         for key, label in {
             "diag": "Состояние",
-            "samovar": "Датасеты",
-            "documents": "Документы",
-            "cad_bim": "CAD/BIM",
-            "mail": "Почта",
+            "data": "Данные",
             "history": "История",
-            "mail_settings": "Настройка почты",
             "instrumenty": "Инструменты",
             "model_connections": "Модели",
             "profiles": "Профили чата",
@@ -283,12 +273,8 @@ def build_header(
 
         mobile_sections = (
             ("diag", "Состояние"),
-            ("samovar", "Датасеты"),
-            ("documents", "Документы"),
-            ("cad_bim", "CAD/BIM"),
-            ("mail", "Почта"),
+            ("data", "Данные"),
             ("history", "История"),
-            ("mail_settings", "Настройка почты"),
             ("instrumenty", "Инструменты"),
             ("model_connections", "Модели"),
             ("profiles", "Профили"),
@@ -305,6 +291,10 @@ def build_header(
                             label,
                             on_click=lambda tab=tab_refs[key]: tabs.set_value(tab),
                         )
+                if include_data:
+                    ui.menu_item("CAD/BIM · скоро").props(
+                        'disable aria-label="CAD/BIM — скоро"'
+                    )
 
         # ── Служебная зона: статус и действия собраны в один ровный блок ─────
         with ui.column().classes("sov-ui-header-controls").style(

@@ -50,6 +50,17 @@
 > role-binding требует явного `confirm_bound_roles`. Router подключён в
 > `proxy/app.py`; тесты — `tests/test_model_connections_router.py`.
 
+> **Unified Data workspace 0.29.0 / build 616:**
+> `sovushka/pages/data_workspace.py` — единый dispatch каталога и focused
+> dataset detail. `sovushka_ng.py` канонизирует `documents|datasets → data` с
+> сохранением query-параметров; `pages/samovar.py` строит role-aware каталог, а
+> `pages/documents.py` повторно использует существующий reader без второго
+> selector набора. Production shell не строит Mail, Studio или CAD/BIM panels:
+> Studio/CAD представлены disabled-заглушками, Mail UI скрыт, но её collector,
+> dataset, страницы и API не удалены. Контракты:
+> `tests/test_sovushka_{data_workspace,samovar,documents,uikit}.py`,
+> `tests/test_static_assets.py`, `tests/test_outlook_mail_poller.py`.
+
 > **Ordinary smeta RAG 0.27.77:**
 > `tools/publish_smeta_norm_dataset.py` читает active typed SQLite base только в
 > режиме read-only и пакетно публикует одну карточку на норму в canonical
@@ -234,7 +245,7 @@ Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /ap
 | Файл | Порт | Роль |
 |---|---|---|
 | [proxy_server.py](../proxy_server.py) | 8050 | API-шлюз: `from proxy.app import create_app()` |
-| [sovushka_ng.py](../sovushka_ng.py) | 8051 | NiceGUI-приложение (UI/админка), монтирует static и `/qdrant-visualizer`, поднимает визуализатор |
+| [sovushka_ng.py](../sovushka_ng.py) | 8051 | NiceGUI-приложение: канонические рабочие панели `Чат`, `Данные`, `История`, production-заглушки Studio/CAD, static и `/qdrant-visualizer` |
 | [mlx_host.py](../mlx_host.py) | 8080 | Инференс: main LLM + deterministic `rules` validator + Core ML embedder; 9B TTL 3600 с, bounded stable-message KV/prefix cache, memory-guard warning ниже 6 ГБ и main unload ниже 4 ГБ/выше 85% swap; `tools/coreml_embed_worker.py` переиспользует один revision-keyed compiled cache вместо случайных temp-копий |
 | Консольные ([pyproject.toml](../pyproject.toml)) | — | `lesctl` / `les-runtime` / `les-install` → `tools/` |
 

@@ -557,6 +557,23 @@ html {
   display: none !important;
 }
 
+.les-top-tabs .sov-secondary-placeholder,
+.les-top-tabs .sov-secondary-placeholder.q-btn--disabled {
+  width: 100%;
+  min-height: 40px;
+  justify-content: flex-start;
+  color: var(--dim) !important;
+  opacity: 1 !important;
+}
+
+.les-top-tabs .sov-secondary-placeholder .q-btn__content {
+  width: 100%;
+  gap: var(--sov-ui-icon-gap);
+  justify-content: flex-start;
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
 .sov-sidebar-caption {
   display: none;
   color: var(--text);
@@ -2328,6 +2345,22 @@ html {
   flex-wrap: nowrap;
 }
 
+.sov-datasets-hero__icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  color: var(--accent);
+  font-size: 25px;
+}
+
+.sov-datasets-hero__title {
+  color: var(--text);
+  font-size: clamp(20px, 2vw, 26px);
+  font-weight: 820;
+  line-height: 1.15;
+  letter-spacing: -.025em;
+}
+
 .sov-datasets-hero__detail {
   max-width: 720px;
   margin-top: 8px;
@@ -2335,6 +2368,20 @@ html {
   font-size: 12px;
   line-height: 1.45;
   text-wrap: pretty;
+}
+
+.sov-data-detail-back {
+  flex: 0 0 auto;
+}
+
+.sov-docs-workspace.sov-data-detail--focused .sov-docs-files-panel {
+  width: min(380px, 36vw);
+  min-width: 300px;
+}
+
+.sov-docs-workspace.sov-data-detail--focused .sov-docs-view-panel {
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .sov-dataset-add {
@@ -3777,6 +3824,20 @@ html {
   }
   .sov-docs-sticky-ask { align-items: stretch; flex-direction: column; }
   .sov-docs-sticky-ask-button { width: 100%; }
+  .sov-docs-workspace.sov-data-detail--focused {
+    flex-flow: column nowrap !important;
+    overflow-x: hidden !important;
+  }
+  .sov-docs-workspace.sov-data-detail--focused .sov-docs-files-panel,
+  .sov-docs-workspace.sov-data-detail--focused .sov-docs-view-panel {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    max-height: none !important;
+  }
+  .sov-data-detail-back {
+    width: 100%;
+  }
   .sov-mail-page,
   .sov-mail-settings-page,
   .sov-tools-page {

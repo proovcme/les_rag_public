@@ -93,8 +93,11 @@ def test_mail_has_a_dedicated_offline_and_windows_static_release_gate():
 def test_mail_ui_is_read_only_and_scopes_chat_to_the_mailbox_dataset():
     header = (ROOT / "sovushka/components/header.py").read_text(encoding="utf-8")
     page = (ROOT / "sovushka/pages/mail.py").read_text(encoding="utf-8")
+    shell = (ROOT / "sovushka_ng.py").read_text(encoding="utf-8")
 
-    assert 'ui.tab("Почта"' in header
+    assert 'ui.tab("Почта"' not in header
+    assert "build_mail()" not in shell
+    assert "build_mail_settings()" not in shell
     assert "/api/mail/accounts" in page
     assert "/api/mail/messages" in page
     assert "Открыть в Outlook" in page

@@ -8,6 +8,7 @@ import threading
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlencode
 from fastapi import Request
 from nicegui import app, ui
 from starlette.responses import FileResponse, HTMLResponse, RedirectResponse
@@ -256,68 +257,75 @@ def _resolve_auth(request: Request):
     return True, role, holder, is_admin
 
 
+def _canonical_workspace_tab(value: str) -> str:
+    requested = str(value or "").strip().casefold()
+    return {
+        "documents": "data",
+        "datasets": "data",
+        "mail": "chat",
+        "studio": "chat",
+        "cad_bim": "chat",
+        "": "chat",
+    }.get(requested, requested)
+
+
 @ui.page("/classic")
 async def classic_chat_page(request: Request):
     from sovushka.components.header import build_header
     from sovushka.pages.chat import build_chat
-    from sovushka.pages.documents import build_documents
+    from sovushka.pages.data_workspace import build_data_workspace
     from sovushka.pages.history import build_history
-    from sovushka.pages.mail import build_mail
-    from sovushka.pages.samovar import build_samovar
     from sovushka.uikit.components import lazy_tab_panels
 
     allowed, role, holder, is_admin = _resolve_auth(request)
     if not allowed:
         return RedirectResponse("/login")
-    if (request.query_params.get("tab") or "").strip().casefold() == "studio":
-        return RedirectResponse("/classic?tab=chat")
+    _requested_raw = (request.query_params.get("tab") or "").strip().casefold()
+    _canonical_tab = _canonical_workspace_tab(_requested_raw)
+    if _requested_raw != _canonical_tab:
+        query_items = [(key, value) for key, value in request.query_params.multi_items() if key != "tab"]
+        query_items.append(("tab", _canonical_tab))
+        return RedirectResponse(f"/classic?{urlencode(query_items, doseq=True)}")
 
     _apply_theme()
 
-    # Chat shell: chat/history plus the no-AI Documents explorer.
-    # Documents are a reader UI, not an admin-only console; API permissions still
-    # stay on the backend routes.
+    # Chat shell: chat/history plus one unified Data workspace.
     with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell"):
         tabs, tr = build_header(
             is_admin,
             role,
             holder,
             admin_tabs=False,
-            include_datasets=is_admin,
-            include_documents=True,
+            include_data=True,
             admin_link=is_admin,
             active_primary="chat",
         )
 
         tab_chat = tr["chat"]
-        tab_samovar = tr.get("samovar")
-        tab_documents = tr.get("documents")
-        tab_studio = tr.get("studio")
-        tab_cad_bim = tr.get("cad_bim")
-        tab_mail = tr.get("mail")
+        tab_data = tr.get("data")
         tab_history = tr["history"]
 
-        _requested_tab = (request.query_params.get("tab") or "").strip().casefold()
+        _requested_tab = _canonical_tab
         _forced_chat_tab = bool((request.query_params.get("question") or "").strip())
         _query_tab = {
             "chat": "AI ЧАТ",
-            "documents": "Документы",
-            "datasets": "Датасеты",
+            "data": "Данные",
         }.get(_requested_tab)
         _last_tab = (
             "AI ЧАТ"
             if _forced_chat_tab
             else (_query_tab or app.storage.user.get("last_chat_tab", "AI ЧАТ"))
         )
-        if _last_tab == "Студия":
-            _last_tab = "AI ЧАТ"
+        _last_tab = {
+            "Документы": "Данные",
+            "Датасеты": "Данные",
+            "Почта": "AI ЧАТ",
+            "Студия": "AI ЧАТ",
+            "CAD/BIM": "AI ЧАТ",
+        }.get(str(_last_tab), _last_tab)
         _target = {
             "AI ЧАТ": tab_chat,
-            "Датасеты": tab_samovar,
-            "Документы": tab_documents,
-            "Студия": tab_studio,
-            "CAD/BIM": tab_cad_bim,
-            "Почта": tab_mail,
+            "Данные": tab_data,
             "ИСТОРИЯ": tab_history,
         }.get(_last_tab) or tab_chat
 
@@ -326,7 +334,7 @@ async def classic_chat_page(request: Request):
                 val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
                 if val:
                     app.storage.user["last_chat_tab"] = str(val)
-                    primary = {"AI ЧАТ": "chat", "Студия": "studio"}.get(str(val))
+                    primary = {"AI ЧАТ": "chat"}.get(str(val))
                     for key, button in (tr.get("_primary_nav") or {}).items():
                         if key == primary:
                             button.classes(add="sov-nav-switch--active")
@@ -342,12 +350,8 @@ async def classic_chat_page(request: Request):
         lazy_tab_panels(
             tabs,
             [
-                (tab_chat, lambda: build_chat(is_admin, tabs, None, tab_documents)),
-                *(([(tab_samovar, build_samovar)] if tab_samovar else [])),
-                *(([(tab_documents, lambda: build_documents(surface="documents"))] if tab_documents else [])),
-                *(([(tab_studio, lambda: build_documents(surface="studio"))] if tab_studio else [])),
-                *(([(tab_cad_bim, lambda: build_documents(surface="cad_bim"))] if tab_cad_bim else [])),
-                *(([(tab_mail, build_mail)] if tab_mail else [])),
+                (tab_chat, lambda: build_chat(is_admin, tabs, None, tab_data)),
+                *(([(tab_data, lambda: build_data_workspace(is_admin=is_admin))] if tab_data else [])),
                 (tab_history, lambda: build_history(tabs, tab_chat)),
             ],
             initial=_target,
@@ -364,8 +368,6 @@ async def classic_admin_page(request: Request):
     from sovushka.pages.instrumenty import build_instrumenty
     from sovushka.pages.model_connections import build_model_connections
     from sovushka.pages.profiles import build_profiles
-    from sovushka.pages.mail import build_mail_settings
-    from sovushka.pages.samovar import build_samovar
     from sovushka.pages.volk import build_volk
     from sovushka.uikit.components import lazy_tab_panels
 
@@ -396,8 +398,6 @@ async def classic_admin_page(request: Request):
         )
 
         tab_diag       = tr.get("diag")
-        tab_samovar    = tr.get("samovar")
-        tab_mail_settings = tr.get("mail_settings")
         tab_instrumenty = tr.get("instrumenty")
         tab_model_connections = tr.get("model_connections")
         tab_profiles = tr.get("profiles")
@@ -418,8 +418,6 @@ async def classic_admin_page(request: Request):
         _last_tab = "Модели" if _requested_admin_tab == "models" else app.storage.user.get("last_tab", "Состояние")
         _tab_map = {
             "Состояние": tab_diag,
-            "Датасеты": tab_samovar,
-            "Настройка почты": tab_mail_settings,
             "Инструменты": tab_instrumenty,
             "Модели": tab_model_connections,
             "Профили": tab_profiles,
@@ -433,8 +431,6 @@ async def classic_admin_page(request: Request):
             tabs,
             [
                 (tab_diag, lambda: build_diag()),
-                (tab_samovar, lambda: build_samovar()),
-                (tab_mail_settings, lambda: build_mail_settings()),
                 (tab_instrumenty, lambda: build_instrumenty()),
                 (tab_model_connections, lambda: build_model_connections()),
                 (tab_profiles, lambda: build_profiles()),

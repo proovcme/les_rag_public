@@ -132,7 +132,7 @@ def test_heavy_tab_builders_return_pauseable_timers():
 
     assert 'return {"timers": [resource_gate_timer, model_chip_timer]}' in chat
     assert 'return {"timers": [mapping_progress_timer]}' in rim
-    assert 'return {"timers": [status_timer, refresh_timer]}' in samovar
+    assert 'return {"timers": [timer for timer in (status_timer, refresh_timer) if timer is not None]}' in samovar
 
 
 def test_classic_surfaces_use_shared_lazy_panels():
@@ -326,18 +326,43 @@ def test_acronym_identity_is_shared_and_user_can_hide_expansions():
     assert "sov-hide-acronym-expansions" in shell
     assert ".sov-hide-acronym-expansions .sov-acronym-expansion" in UIKIT_CSS
 
-    for page in ("diag.py", "volk.py", "prorab.py", "overview.py", "samovar.py", "mail.py", "documents.py"):
+    for page in ("diag.py", "volk.py", "prorab.py", "overview.py", "mail.py", "documents.py"):
         source = Path("sovushka/pages", page).read_text(encoding="utf-8")
         assert "acronym_identity(" in source
+    samovar = Path("sovushka/pages/samovar.py").read_text(encoding="utf-8")
+    assert 'ui.label(workspace_title).classes("sov-datasets-hero__title")' in samovar
 
 
 def test_documents_surface_contract_is_keyword_only_and_complete():
     page = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
     shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
 
-    assert 'def build_documents(*, surface: str = "documents")' in page
-    for surface in ("documents", "studio", "cad_bim"):
-        assert f'build_documents(surface="{surface}")' in shell
+    assert "def build_documents(" in page
+    assert 'surface: str = "documents"' in page
+    assert "build_data_workspace(is_admin=is_admin)" in shell
+    for surface in ("studio", "cad_bim"):
+        assert f'build_documents(surface="{surface}")' not in shell
+
+
+def test_product_navigation_has_one_data_destination_and_dormant_surfaces():
+    header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
+    shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+
+    assert 'tab_refs["data"] = ui.tab("Данные", icon="o_database")' in header
+    assert 'ui.tab("Документы"' not in header
+    assert 'ui.tab("Датасеты"' not in header
+    assert 'ui.tab("Почта"' not in header
+    assert '"CAD/BIM · скоро"' in header
+    assert 'aria-label="CAD/BIM — скоро"' in header
+    assert '"documents": "data"' in shell
+    assert '"datasets": "data"' in shell
+    assert '"mail": "chat"' in shell
+    assert '"studio": "chat"' in shell
+    assert '"cad_bim": "chat"' in shell
+    assert 'build_documents(surface="studio")' not in shell
+    assert 'build_documents(surface="cad_bim")' not in shell
+    assert "build_mail()" not in shell
+    assert "build_mail_settings()" not in shell
 
 
 def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
@@ -384,12 +409,14 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
 
 def test_hidden_studio_route_falls_back_to_chat_without_deleting_studio_code():
     shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
+    documents = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
 
-    assert 'build_documents(surface="studio")' in shell
-    assert 'return RedirectResponse("/classic?tab=chat")' in shell
-    assert '"studio": "Студия"' not in shell
-    assert 'if _last_tab == "Студия":' in shell
-    assert '_last_tab = "AI ЧАТ"' in shell
+    assert 'build_documents(surface="studio")' not in shell
+    assert 'build_documents(surface="cad_bim")' not in shell
+    assert '"studio": "chat"' in shell
+    assert '"cad_bim": "chat"' in shell
+    assert '"studio"' in documents
+    assert '"cad_bim"' in documents
 
 
 def test_configuration_home_uses_uikit_and_progressive_disclosure():
@@ -450,13 +477,13 @@ def test_dataset_registry_uses_uikit_and_keeps_operator_controls_secondary():
     active = source.split("def build_samovar_legacy()", maxsplit=1)[0]
 
     assert '.classes("w-full sov-datasets-page")' in active
-    assert '"Добавить датасет"' in active
+    assert '"Добавить набор"' in active
     assert '"Сводка корпуса"' in active
-    assert '"Найти датасет по названию"' in active
+    assert '"Найти набор данных"' in active
     assert '"Открыть файлы"' in active
     assert "files_dialog" not in active
-    assert "'tab': 'documents'" in active
-    assert 'ui.navigate.to(f"/classic?' in active
+    assert "'tab': open_tab" in active
+    assert 'ui.navigate.to(f"{target_path}?' in active
     assert '"Путь к папке"' in active
     assert '"Проводник…"' in active
     assert '"Управление индексатором"' in active
@@ -489,8 +516,10 @@ def test_documents_service_upload_is_a_compact_action_until_a_file_is_selected()
 def test_documents_deep_link_selects_requested_dataset():
     shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
     documents = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
+    data_workspace = Path("sovushka/pages/data_workspace.py").read_text(encoding="utf-8")
 
-    assert '"documents": "Документы"' in shell
+    assert '"documents": "data"' in shell
+    assert 'query_params.get("dataset_id")' in data_workspace
     assert 'query_params.get("dataset_id")' in documents
     assert 'await _select_dataset(initial_dataset)' in documents
 

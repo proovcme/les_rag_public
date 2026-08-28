@@ -739,6 +739,16 @@ cross-origin и non-GET не кэшируются и не переигрываю
 `frontend/pwa/{manifest.webmanifest,service-worker.js,offline.html}`,
 `sovushka_ng.py`; contract: `tests/test_sovushka_pwa.py`.
 
+**0.29.0 / build 616:** `rag/answer-render` и `rag/document-explorer` имеют один
+production-вход `Данные`: `sovushka/pages/data_workspace.py` переключает
+role-aware каталог `samovar.py` и focused detail `documents.py` по exact
+`dataset_id`; старые `documents|datasets` routes канонизируются в `data` с
+сохранением query-параметров. Mail collector/dataset/API сохранены без отдельной
+кнопки; Studio и CAD/BIM представлены disabled-заглушками. Обычный пользователь
+не получает mutation controls. Контракты:
+`tests/test_sovushka_{data_workspace,samovar,documents,uikit}.py`,
+`tests/test_static_assets.py`, `tests/test_outlook_mail_poller.py`.
+
 **0.27.67 / build 574:** `rag/answer-render` на каждом terminal-событии
 `smeta_row` обновляет один черновой Markdown-артефакт с уже готовыми строками.
 Это UI-проекция существующего stream/checkpoint-контракта: сметное ядро, выбор

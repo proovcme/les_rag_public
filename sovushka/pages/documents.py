@@ -46,24 +46,34 @@ DATASET_GROUP_OPTIONS = {
 }
 
 
-def build_documents(*, surface: str = "documents") -> None:
-    if surface not in {"documents", "studio", "cad_bim"}:
+def build_documents(
+    *,
+    surface: str = "documents",
+    initial_dataset_id: str = "",
+    show_dataset_picker: bool = True,
+    can_manage: bool = False,
+) -> None:
+    if surface not in {"documents", "data", "studio", "cad_bim"}:
         raise ValueError(f"Unknown documents surface: {surface}")
-    initial_mode = {"documents": "map", "studio": "studio", "cad_bim": "cad"}[surface]
+    initial_mode = {"documents": "map", "data": "map", "studio": "studio", "cad_bim": "cad"}[surface]
     initial_title = {
         "documents": "Выберите файл",
+        "data": "Выберите файл",
         "studio": "Студия документов",
         "cad_bim": "CAD/BIM",
     }[surface]
     initial_note = {
         "documents": "Выберите файл: покажем только извлечённое содержимое и оригинал.",
+        "data": "Файлы, извлечённое содержимое, оригиналы и доказательства.",
         "studio": "Черновики DOCX/XLSX по выбранным источникам с обязательной проверкой.",
         "cad_bim": "Отдельный контур моделей и их проекций.",
     }[surface]
-    try:
-        initial_dataset = str(context.client.request.query_params.get("dataset_id") or "").strip()
-    except (AttributeError, RuntimeError):
-        initial_dataset = ""
+    initial_dataset = str(initial_dataset_id or "").strip()
+    if not initial_dataset:
+        try:
+            initial_dataset = str(context.client.request.query_params.get("dataset_id") or "").strip()
+        except (AttributeError, RuntimeError):
+            initial_dataset = ""
     state = {
         "datasets": [],
         "documents": [],
@@ -700,7 +710,7 @@ def build_documents(*, surface: str = "documents") -> None:
         state["view_note"] = initial_note
         service_upload = refs.get("service_upload")
         if service_upload is not None:
-            service_upload.set_visibility(_is_system_dataset())
+            service_upload.set_visibility(_is_system_dataset() and can_manage)
         await _load_documents()
         await asyncio.gather(
             _load_memory(),
@@ -2062,13 +2072,20 @@ def build_documents(*, surface: str = "documents") -> None:
             with ui.row().classes("items-center w-full").style("gap:8px;flex-wrap:wrap;"):
                 ui.icon("o_label").style("font-size:18px;color:var(--accent);")
                 _label("Тип датасета", size="13px", weight=900)
-                kind_select = ui.select(
-                    DATASET_KIND_EDIT_OPTIONS,
-                    value=_selected_dataset_kind(),
-                ).props("dense outlined emit-value map-options").style(
-                    "min-width:180px;background:var(--input-bg);"
-                )
-                kind_select.on("update:model-value", lambda e: _schedule(_save_dataset_kind(str(e.args or ""))))
+                if can_manage:
+                    kind_select = ui.select(
+                        DATASET_KIND_EDIT_OPTIONS,
+                        value=_selected_dataset_kind(),
+                    ).props("dense outlined emit-value map-options").style(
+                        "min-width:180px;background:var(--input-bg);"
+                    )
+                    kind_select.on("update:model-value", lambda e: _schedule(_save_dataset_kind(str(e.args or ""))))
+                else:
+                    _label(
+                        DATASET_KIND_EDIT_OPTIONS.get(_selected_dataset_kind(), "Не помечен"),
+                        size="11px",
+                        color="var(--dim)",
+                    )
                 ui.element("div").style("flex:1;")
                 ui.button(
                     "Спросить проект",
@@ -2125,11 +2142,12 @@ def build_documents(*, surface: str = "documents") -> None:
                     ui.spinner(size="sm")
                     _label("Проверяю источники и все каналы поиска…", size="11px", color="var(--dim)")
                 ui.element("div").style("flex:1;")
-                ui.button(
-                    "Проверить и починить",
-                    icon="o_build_circle",
-                    on_click=lambda: _schedule(_repair_dataset_integrity()),
-                ).props("flat dense no-caps").set_enabled(not loading)
+                if can_manage:
+                    ui.button(
+                        "Проверить и починить",
+                        icon="o_build_circle",
+                        on_click=lambda: _schedule(_repair_dataset_integrity()),
+                    ).props("flat dense no-caps").set_enabled(not loading)
             if loading:
                 return
             if not result:
@@ -2594,7 +2612,7 @@ def build_documents(*, surface: str = "documents") -> None:
                         with ui.element("div").classes("sov-dataset-icon"):
                             ui.icon("o_push_pin" if _is_system_dataset(row) else "o_folder_open")
                         _label(_dataset_title(row), size="13px", weight=850).classes("sov-dataset-name")
-                        if not _is_system_dataset(row):
+                        if can_manage and not _is_system_dataset(row):
                             d_name = _dataset_title(row)
                             d_grp = str(row.get("group_name") or "")
                             with ui.row().classes("items-center gap-0.5 ml-auto"):
@@ -2907,7 +2925,7 @@ def build_documents(*, surface: str = "documents") -> None:
                 _render_document_row(row)
             if not rows:
                 _label("Файлы и папки не найдены", color="var(--dim)")
-            if surface == "documents" and selected_ids:
+            if surface in {"documents", "data"} and selected_ids:
                 with ui.element("div").classes("sov-docs-sticky-ask"):
                     with ui.column().classes("gap-0").style("min-width:0;flex:1;"):
                         _label(
@@ -3708,14 +3726,14 @@ def build_documents(*, surface: str = "documents") -> None:
                 with ui.element("div").classes("sov-docs-view-icon"):
                     ui.icon(
                         "o_folder_open"
-                        if surface == "documents"
+                        if surface in {"documents", "data"}
                         else ("o_edit_document" if surface == "studio" else "o_view_in_ar")
                     )
                 _label(state["view_title"], size="15px", weight=900).classes("sov-docs-view-title").style(
                     "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;"
                 )
             _label(state["view_note"], size="11.5px", color="var(--dim)").classes("sov-docs-view-note")
-            if surface == "documents":
+            if surface in {"documents", "data"}:
                 _render_document_reader()
             elif surface == "cad_bim":
                 _render_cad_inventory()
@@ -3741,21 +3759,39 @@ def build_documents(*, surface: str = "documents") -> None:
 
     surface_title = {
         "documents": "Документы",
+        "data": "Данные",
         "studio": "Студия",
         "cad_bim": "CAD/BIM",
     }[surface]
     surface_subtitle = {
         "documents": "Содержимое в RAG и оригинал файла",
+        "data": "Файлы и доказательства выбранного набора",
         "studio": "Датасет → том → файлы-основания → проверяемый черновик",
         "cad_bim": "Модели и проекции — отдельно от документов",
     }[surface]
 
-    with ui.column().classes("w-full h-full gap-0 sov-docs-shell sov-ui-shell sov-ui-documents"):
+    focused_class = " sov-data-detail--focused" if not show_dataset_picker else ""
+    with ui.column().classes(
+        f"w-full h-full gap-0 sov-docs-shell sov-ui-shell sov-ui-documents{focused_class}"
+    ):
         with ui.row().classes("items-center w-full sov-docs-topbar"):
             with ui.column().classes("sov-docs-heading"):
                 _label(surface_title, size="16px", weight=900).classes("sov-docs-title")
                 _label(surface_subtitle, size="11.5px", color="var(--dim)").classes(
                     "sov-docs-subtitle"
+                )
+            if surface == "data":
+                def _back_to_data() -> None:
+                    request_path = str(getattr(context.client.request, "url", "") or "")
+                    target_path = "/les/classic" if "/les/classic" in request_path else "/classic"
+                    ui.navigate.to(f"{target_path}?tab=data")
+
+                action_button(
+                    "Назад ко всем данным",
+                    icon="o_arrow_back",
+                    on_click=_back_to_data,
+                    variant="quiet",
+                    classes="sov-data-detail-back",
                 )
             q_input = text_field(
                 placeholder="Найти файл, шифр, раздел или текст…",
@@ -3783,7 +3819,7 @@ def build_documents(*, surface: str = "documents") -> None:
                 readiness_summary.set_visibility(False)
                 search_button.set_visibility(False)
 
-        with ui.row().classes("w-full flex-1 no-wrap sov-docs-workspace"):
+        with ui.row().classes(f"w-full flex-1 no-wrap sov-docs-workspace{focused_class}"):
             with ui.column().classes("h-full no-wrap sov-docs-datasets-panel") as datasets_column:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):
                     ui.icon("o_dataset")
@@ -3812,8 +3848,7 @@ def build_documents(*, surface: str = "documents") -> None:
                 dataset_filter.on("keydown.enter", lambda _e: _schedule(_load_datasets(select_first=True)))
                 with ui.column().classes("w-full gap-2 sov-docs-list") as datasets_panel:
                     refs["datasets"] = datasets_panel
-                if surface == "cad_bim":
-                    datasets_column.set_visibility(False)
+                datasets_column.set_visibility(show_dataset_picker and surface != "cad_bim")
 
             with ui.column().classes("h-full no-wrap sov-docs-files-panel") as files_column:
                 with ui.row().classes("items-center w-full sov-docs-panel-title"):

@@ -139,8 +139,36 @@ def _operator_queue_notice(
     return (f"ОСТАНОВЛЕНО · {pending} файлов ждут · {message}", "error")
 
 
-def build_samovar():
-    """Датасеты — реестр наборов, их фактическая готовность и управление индексатором."""
+def _dataset_source_label(row: dict) -> str:
+    """Return a human source label without creating another navigation layer."""
+    source = str(row.get("source_type") or "").casefold()
+    kind = str(row.get("dataset_kind") or row.get("kind") or "").casefold()
+    name = str(row.get("name") or "").upper()
+    if (
+        source in {"imap", "mail", "outlook"}
+        or kind == "correspondence"
+        or "_MAIL_" in name
+        or name.startswith("MAIL_")
+    ):
+        return "Почта"
+    if str(row.get("dataset_scope") or "").casefold() == "system":
+        return "Служебные данные"
+    return {
+        "project": "Проект",
+        "norm": "Нормативы",
+        "estimate": "Сметы",
+        "catalog": "Каталог",
+        "cad_bim": "CAD/BIM",
+    }.get(kind, "Данные")
+
+
+def build_samovar(
+    *,
+    can_manage: bool = True,
+    open_tab: str = "data",
+    workspace_title: str = "Данные",
+):
+    """Data catalog with role-gated index and registration controls."""
     _S = {
         "rows": [],
         "q": "",
@@ -427,7 +455,10 @@ def build_samovar():
                          "group": d.get("group_name", ""), "indexed": a["INDEXED"], "pending": a["PENDING"],
                          "pending_ocr": a["pending_ocr"], "pending_light": a["pending_light"],
                          "pending_unknown": a["pending_unknown"], "error": a["ERROR"], "missing": a["MISSING"],
-                         "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot})
+                         "chunks": a["chunks"] or int(d.get("chunk_count") or 0), "total": tot,
+                         "dataset_kind": d.get("dataset_kind") or d.get("kind") or "",
+                         "source_type": d.get("source_type") or "",
+                         "dataset_scope": d.get("dataset_scope") or "user"})
         rows.sort(key=lambda r: (0 if r["error"] else 1, 0 if r["pending"] else 1, r["name"].lower()))
         _S["rows"] = rows
 
@@ -523,12 +554,14 @@ def build_samovar():
         if not ds_id:
             _notify("У датасета нет id", type="warning")
             return
-        ui.navigate.to(f"/classic?{urlencode({'tab': 'documents', 'dataset_id': ds_id})}")
+        request_path = str(getattr(context.client.request, "url", "") or "")
+        target_path = "/les/classic" if "/les/classic" in request_path else "/classic"
+        ui.navigate.to(f"{target_path}?{urlencode({'tab': open_tab, 'dataset_id': ds_id})}")
 
-    registry_dialog = ui.dialog()
+    registry_dialog = ui.dialog() if can_manage else None
 
     async def _open_registry(r):
-        if not isinstance(r, dict):
+        if registry_dialog is None or not isinstance(r, dict):
             return
         ds_id = str((r or {}).get("id") or (r or {}).get("dataset_id") or "").strip()
         ds_name = str((r or {}).get("name") or (r or {}).get("folder") or "Датасет")
@@ -696,15 +729,17 @@ def build_samovar():
                 action_button("Сохранить", icon="o_save", on_click=_save, variant="primary", compact=True)
         dlg.open()
 
-    add_dialog = ui.dialog()
+    add_dialog = ui.dialog() if can_manage else None
 
     def _open_add():
+        if add_dialog is None:
+            return
         add_dialog.clear()
         picked = {"path": ""}
         browse = {"path": ""}
         auto_name = {"derived": ""}
         with add_dialog, ui.card().classes("sov-advanced-dialog").style("min-width:560px;"):
-            ui.label("Добавить датасет").classes("sov-panel-title")
+            ui.label("Новый набор данных").classes("sov-panel-title")
             ui.label("Папка индексируется на месте: исходные файлы не копируются.").classes("sov-muted")
             name_in = ui.input("Название").props("dense outlined").classes("w-full")
             with ui.row().classes("items-center w-full").style("gap:8px;"):
@@ -907,47 +942,32 @@ def build_samovar():
             variant="primary",
             compact=True,
         )
-        action_button(
-            "Реестр файлов",
-            icon="o_table_chart",
-            on_click=_ui_handler(_open_registry, r),
-            variant="secondary",
-            compact=True,
-        )
-        with action_button(
-            icon="o_more_horiz",
-            variant="quiet",
-            compact=True,
-            icon_only=True,
-            aria_label=f"Другие действия: {r['name']}",
-            classes="sov-dataset-more",
-        ):
-            with ui.menu().classes("sov-dataset-actions-menu"):
-                ui.menu_item(
-                    "Переименовать датасет",
-                    on_click=_ui_handler(_rename_dataset, r),
-                )
-                ui.menu_item(
-                    "Изменить группу",
-                    on_click=_ui_handler(_change_group, r),
-                )
-                ui.menu_item(
-                    "О проекте",
-                    on_click=_ui_handler(_ask_project, r),
-                )
-                ui.menu_item(
-                    "Запустить одну партию",
-                    on_click=_ui_handler(_parse, r),
-                )
-                ui.menu_item(
-                    "Проверить и починить",
-                    on_click=_ui_handler(_repair, r),
-                )
-                ui.separator()
-                ui.menu_item(
-                    "Удалить датасет",
-                    on_click=_ui_handler(_delete, r),
-                ).classes("sov-dataset-menu-danger")
+        if can_manage:
+            action_button(
+                "Реестр файлов",
+                icon="o_table_chart",
+                on_click=_ui_handler(_open_registry, r),
+                variant="secondary",
+                compact=True,
+            )
+            with action_button(
+                icon="o_more_horiz",
+                variant="quiet",
+                compact=True,
+                icon_only=True,
+                aria_label=f"Другие действия: {r['name']}",
+                classes="sov-dataset-more",
+            ):
+                with ui.menu().classes("sov-dataset-actions-menu"):
+                    ui.menu_item("Переименовать датасет", on_click=_ui_handler(_rename_dataset, r))
+                    ui.menu_item("Изменить группу", on_click=_ui_handler(_change_group, r))
+                    ui.menu_item("О проекте", on_click=_ui_handler(_ask_project, r))
+                    ui.menu_item("Запустить одну партию", on_click=_ui_handler(_parse, r))
+                    ui.menu_item("Проверить и починить", on_click=_ui_handler(_repair, r))
+                    ui.separator()
+                    ui.menu_item("Удалить датасет", on_click=_ui_handler(_delete, r)).classes(
+                        "sov-dataset-menu-danger"
+                    )
 
     def _visible_rows():
         q = (_S.get("q") or "").strip().lower()
@@ -1010,7 +1030,7 @@ def build_samovar():
                                 ui.icon(ico).classes("sov-dataset-row__state-icon").style(f"color:{col};")
                                 with ui.column().classes("sov-dataset-row__copy"):
                                     ui.label(r["name"]).classes("sov-dataset-row__name")
-                                    scope = "Служебный набор" if "_SERVICE_" in str(r["name"]).upper() else "Пользовательский набор"
+                                    scope = _dataset_source_label(r)
                                     group = f" · {r['group']}" if r.get("group") else ""
                                     ui.label(f"{scope}{group}").classes("sov-dataset-row__scope")
                             status_badge(txt, tone)
@@ -1044,6 +1064,8 @@ def build_samovar():
                             _row_actions(r)
 
     async def _refresh_status():
+        if not can_manage:
+            return
         # Тикает каждые 5с НЕЗАВИСИМО от _parse. Верим активной job, а не stale dataset.status:
         # PENDING — это очередь, PARSING — только если есть живой scheduler/batch.
         st = await api_get("/api/runtime/dispatcher/reindex/status") or {}
@@ -1106,19 +1128,17 @@ def build_samovar():
     with ui.column().classes("w-full sov-datasets-page"):
         with panel(variant="raised", classes="sov-datasets-hero"):
             with ui.row().classes("items-center w-full sov-datasets-hero__row"):
-                acronym_identity(
-                    "С.А.М.О.В.А.Р.",
-                    "Система Автономная Машинной Обработки Внутренних Архивов РАГ",
-                    icon="o_inventory_2",
-                )
+                ui.icon("o_database").classes("sov-datasets-hero__icon")
+                ui.label(workspace_title).classes("sov-datasets-hero__title")
                 ui.element("div").classes("sov-flex-spacer")
-                action_button(
-                    "Добавить датасет",
-                    icon="o_add",
-                    on_click=_open_add,
-                    variant="primary",
-                    classes="sov-dataset-add",
-                )
+                if can_manage:
+                    action_button(
+                        "Добавить набор",
+                        icon="o_add",
+                        on_click=_open_add,
+                        variant="primary",
+                        classes="sov-dataset-add",
+                    )
             ui.label(
                 "Наборы документов, по которым ЛЕС ищет доказательства. "
                 "Откройте файлы, чтобы проверить фактический состав и готовность индекса."
@@ -1148,7 +1168,7 @@ def build_samovar():
             "Управление индексатором",
             icon="o_settings_input_component",
             value=False,
-        ).classes("w-full sov-dataset-disclosure"):
+        ).classes("w-full sov-dataset-disclosure") as operator_disclosure:
             ui.label(
                 "Служебные операции и настройки индексации. "
                 "Для просмотра и поиска по готовым данным открывать этот блок не нужно."
@@ -1248,11 +1268,12 @@ def build_samovar():
                 min_ram_in.on_value_change(lambda *_: _set_setting("min_free_gb", min_ram_in.value))
                 swap_in.on_value_change(lambda *_: _set_setting("max_swap_pct", swap_in.value))
                 row_batch_in.on_value_change(lambda *_: _set_setting("row_batch_limit", row_batch_in.value))
+        operator_disclosure.set_visibility(can_manage)
 
         with panel(variant="plain", classes="sov-dataset-registry-panel"):
             with ui.row().classes("items-center w-full sov-dataset-section-head"):
                 section_heading(
-                    "Датасеты",
+                    "Наборы данных",
                     "Найдите набор, проверьте его состав и откройте нужные файлы.",
                 )
                 ui.element("div").classes("sov-flex-spacer")
@@ -1268,7 +1289,7 @@ def build_samovar():
             _refs["fbtn"] = {}
             with ui.element("div").classes("sov-dataset-toolbar"):
                 _fsearch = text_field(
-                    placeholder="Найти датасет по названию",
+                    placeholder="Найти набор данных",
                     clearable=True,
                     classes="sov-dataset-search",
                 )
@@ -1293,9 +1314,9 @@ def build_samovar():
 
     ui.timer(0.1, _refresh, once=True)
     # Авто-обновление: статус индексатора часто и дёшево, полная сводка (счётчики+строки) реже
-    status_timer = ui.timer(5.0, _refresh_status)
+    status_timer = ui.timer(5.0, _refresh_status) if can_manage else None
     refresh_timer = ui.timer(20.0, _refresh)
-    return {"timers": [status_timer, refresh_timer]}
+    return {"timers": [timer for timer in (status_timer, refresh_timer) if timer is not None]}
 
 
 def build_samovar_legacy():
