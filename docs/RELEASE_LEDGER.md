@@ -8,10 +8,10 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              604
-версия Tauri/NSIS:         5.1.604
+номер сборки:              605
+версия Tauri/NSIS:         5.1.605
 ветка разработки:          codex/les-0.29.0-canonical-architecture от public v0.28.2
-dev implementation:       immutable global model connection revisions and role bindings
+dev implementation:       model connection registry + endpoint/secret security boundary
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -220,6 +220,16 @@ dev implementation:       immutable global model connection revisions and role b
 > API-ключей и provider-поля. Focused registry contract: 8 passed. Endpoint,
 > secret, probing и transport boundaries ещё не реализованы; runtime не
 > переключался, deploy и публикация не выполнялись.
+
+> **0.29.0 model endpoint and secret boundary (build 605):** endpoint policy
+> canonicalizes model URLs, rejects embedded credentials/query/fragment,
+> remote HTTP, unsafe private HTTP, metadata/link-local/multicast/unspecified
+> destinations, mixed-locality DNS, redirects and connected-peer mismatch.
+> Environment secret store accepts only dedicated connection refs and the fixed
+> legacy migration allowlist, writes atomically, distinguishes
+> `configured | missing | not_required` and never exposes a value through repr
+> or receipt. Focused security/secret contract: 25 passed. Live endpoints and
+> user `.env` were not accessed; runtime, deploy and publication unchanged.
 
 > **0.28.2 RC — installer/profile integrity:** Docker/Qdrant стали optional warnings,
 > persistent environment получил lock/runtime/cache-bound marker и `environment_action`,
