@@ -4,35 +4,47 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_settings_exposes_platform_native_manual_update_flow_with_status():
+def test_update_dialog_exposes_platform_native_manual_update_flow_with_status():
     source = (ROOT / "sovushka" / "components" / "header.py").read_text(encoding="utf-8")
-    section = source[source.index('ui.label("Обновление ЛЕС")') : source.index('ui.label("⚠ Опасная зона")')]
+    section = source[source.index('with ui.dialog() as update_dialog') : source.index('update_entry_button = ui.button')]
     assert '"Проверить обновление"' in section
     assert '"Установить"' in section
-    assert '"/api/update/patch/check" if is_windows' in section
-    assert '"/api/update/patch/install" if is_windows' in section
-    assert '"/api/update/patch/status" if is_windows' in section
-    assert '"/api/update/mac/check"' in section
-    assert '"/api/update/mac/install"' in section
-    assert '"/api/update/mac/status"' in section
-    assert '"/api/update/check"' in section
-    assert '"/api/update/install"' in section
-    assert '"/api/update/status"' in section
+    assert '"/api/update/patch/check" if is_windows' in source
+    assert '"/api/update/patch/install" if is_windows' in source
+    assert '"/api/update/patch/status" if is_windows' in source
+    assert '"/api/update/mac/check"' in source
+    assert '"/api/update/mac/install"' in source
+    assert '"/api/update/mac/status"' in source
+    assert '"/api/update/check"' in source
+    assert '"/api/update/install"' in source
+    assert '"/api/update/status"' in source
     assert '"Переустановить выпуск"' in section
-    assert "заменяет всё дерево программы" in section
-    assert "api_get(update_check_path)" in section
-    assert "api_post(update_install_path, {})" in section
-    assert "api_get(update_status_path)" in section
+    assert "Полный выпуск нужен только" in section
+    assert "api_get(update_check_path)" in source
+    assert "api_post(update_install_path, {})" in source
+    assert "api_get(update_status_path)" in source
     assert "Тесты и сборка по кнопке не запускаются" in section
-    assert "предыдущая версия восстановлена" in section
+    assert "предыдущая версия восстановлена" in source
     assert "ui.timer" not in section
+
+
+def test_legacy_settings_dialog_has_no_update_controls():
+    source = (ROOT / "sovushka" / "components" / "header.py").read_text(encoding="utf-8")
+    settings = source[source.index('with ui.dialog() as settings_dialog') : source.index('with ui.dialog() as update_dialog')]
+
+    assert 'ui.label("Обновление ЛЕС")' not in settings
+    assert '"Проверить обновление"' not in settings
+    assert '"Установить"' not in settings
+    assert '"Проверить полный выпуск"' not in settings
 
 
 def test_header_exposes_lightweight_application_update_separately_from_data_refresh():
     source = (ROOT / "sovushka" / "components" / "header.py").read_text(encoding="utf-8")
 
     assert '"Обновить ЛЕС"' in source
-    assert "on_click=settings_dialog.open" in source
+    assert "on_click=update_dialog.open" in source
+    assert "on_click=settings_dialog.open" not in source
+    assert 'ui.label("Обновление ЛЕС")' in source
     assert '"Обновить данные"' in source
 
 

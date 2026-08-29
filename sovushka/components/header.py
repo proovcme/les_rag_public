@@ -654,10 +654,6 @@ def build_header(
                             set_mail_ocr.set_value(bool(mail.get("attachment_ocr_enabled", True)))
 
                     asyncio.create_task(_load_settings())
-                    ui.separator().style("border-color:var(--border);margin:12px 0;")
-                    ui.label("Обновление ЛЕС").style(
-                        "color:var(--dim);font-size:.65rem;font-weight:900;text-transform:uppercase;"
-                    )
                     update_check_path = (
                         "/api/update/patch/check" if is_windows else "/api/update/mac/check"
                     )
@@ -667,43 +663,47 @@ def build_header(
                     update_status_path = (
                         "/api/update/patch/status" if is_windows else "/api/update/mac/status"
                     )
-                    update_status = ui.label(
-                        "Устанавливается только заранее подготовленный пакет кода. "
-                        "Тесты и сборка по кнопке не запускаются; рабочие данные не затрагиваются."
-                    ).style("color:var(--dim);font-size:.68rem;width:100%;")
+                    def _set_patch_update_status(text: str) -> None:
+                        update_status.set_text(text)
+
+                    def _set_patch_install_enabled(enabled: bool) -> None:
+                        if enabled:
+                            update_button.enable()
+                        else:
+                            update_button.disable()
 
                     async def _check_application_update() -> None:
                         from sovushka.state import api_get
 
-                        update_button.disable()
-                        update_status.set_text("Проверяю подготовленный пакет…")
+                        _set_patch_install_enabled(False)
+                        _set_patch_update_status("Проверяю подготовленный пакет…")
                         result = await api_get(update_check_path)
                         if not isinstance(result, dict):
-                            update_status.set_text(last_api_error_text("Не удалось проверить обновление"))
+                            _set_patch_update_status(last_api_error_text("Не удалось проверить обновление"))
                             return
                         if not result.get("available"):
-                            update_status.set_text(str(result.get("message") or "Обновлений нет."))
+                            _set_patch_update_status(str(result.get("message") or "Обновлений нет."))
                             return
                         if not result.get("compatible"):
-                            update_status.set_text(str(result.get("message") or "Требуется полный выпуск."))
+                            _set_patch_update_status(str(result.get("message") or "Требуется полный выпуск."))
                             return
                         package_kib = max(1, int(result.get("bytes") or 0) // 1024)
-                        update_status.set_text(
+                        _set_patch_update_status(
                             f"Готово: {int(result.get('files') or 0)} файлов · {package_kib} КБ · "
                             "с автоматическим откатом."
                         )
-                        update_button.enable()
+                        _set_patch_install_enabled(True)
 
                     async def _install_application_update() -> None:
                         from sovushka.state import api_post
 
-                        update_button.disable()
-                        update_status.set_text("Проверяю пакет и точку отката…")
+                        _set_patch_install_enabled(False)
+                        _set_patch_update_status("Проверяю пакет и точку отката…")
                         result = await api_post(update_install_path, {})
                         if not isinstance(result, dict):
-                            update_status.set_text(last_api_error_text("Не удалось запустить обновление"))
+                            _set_patch_update_status(last_api_error_text("Не удалось запустить обновление"))
                             return
-                        update_status.set_text("Пакет проверен. ЛЕС перезапустится и проверит версию и health.")
+                        _set_patch_update_status("Пакет проверен. ЛЕС перезапустится и проверит версию и health.")
                         ui.notify("Быстрое обновление запущено", type="positive")
 
                         async def _watch_patch() -> None:
@@ -712,7 +712,7 @@ def build_header(
                                 state = await api_get(update_status_path)
                                 if not isinstance(state, dict):
                                     continue
-                                update_status.set_text(str(state.get("message") or "Обновляю ЛЕС…"))
+                                _set_patch_update_status(str(state.get("message") or "Обновляю ЛЕС…"))
                                 if state.get("state") in {"ready", "failed"}:
                                     if state.get("state") == "ready":
                                         ui.notify("ЛЕС обновлён", type="positive")
@@ -722,28 +722,7 @@ def build_header(
 
                         asyncio.create_task(_watch_patch())
 
-                    with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
-                        ui.button(
-                            "Проверить обновление",
-                            icon="o_system_update_alt",
-                            on_click=_check_application_update,
-                        ).props("no-caps flat").style(
-                            "border:1px solid var(--border);color:var(--accent);background:transparent;"
-                        )
-                        update_button = ui.button(
-                            "Установить",
-                            icon="o_download",
-                            on_click=_install_application_update,
-                        ).props("no-caps disable").style(
-                            "border:1px solid var(--accent);color:var(--accent);background:transparent;"
-                        )
-
                     if is_windows:
-                        hard_update_status = ui.label(
-                            "Полный выпуск заменяет всё дерево программы, но сохраняет "
-                            "датасеты, документы, настройки и другие пользовательские данные."
-                        ).style("color:var(--dim);font-size:.68rem;width:100%;")
-
                         async def _check_hard_update() -> None:
                             from sovushka.state import api_get
 
@@ -797,22 +776,6 @@ def build_header(
                                         return
 
                             asyncio.create_task(_watch_hard_update())
-
-                        with ui.row().classes("w-full gap-2").style("margin:6px 0 12px;"):
-                            ui.button(
-                                "Проверить полный выпуск",
-                                icon="o_verified",
-                                on_click=_check_hard_update,
-                            ).props("no-caps flat").style(
-                                "border:1px solid var(--border);color:var(--accent);background:transparent;"
-                            )
-                            hard_update_button = ui.button(
-                                "Переустановить выпуск",
-                                icon="o_system_update",
-                                on_click=_install_hard_update,
-                            ).props("no-caps disable").style(
-                                "border:1px solid var(--accent);color:var(--accent);background:transparent;"
-                            )
 
                     ui.separator().style("border-color:var(--border);margin:12px 0;")
                     ui.label("⚠ Опасная зона").style("color:var(--err);font-size:.65rem;font-weight:900;text-transform:uppercase;")
@@ -882,10 +845,47 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
+                with ui.dialog() as update_dialog, ui.card().classes("sov-ui-dialog-card"):
+                    ui.label("Обновление ЛЕС").classes("sov-ui-section-title")
+                    update_status = ui.label(
+                        "Устанавливается только заранее подготовленный пакет кода. "
+                        "Тесты и сборка по кнопке не запускаются; рабочие данные не затрагиваются."
+                    ).classes("sov-ui-section-detail")
+                    with ui.row().classes("w-full gap-2"):
+                        ui.button(
+                            "Проверить обновление",
+                            icon="o_system_update_alt",
+                            on_click=_check_application_update,
+                        ).props("no-caps flat")
+                        update_button = ui.button(
+                            "Установить",
+                            icon="o_download",
+                            on_click=_install_application_update,
+                        ).props("no-caps disable")
+                        ui.button("Закрыть", on_click=update_dialog.close).props("no-caps flat")
+
+                    if is_windows:
+                        ui.separator().style("border-color:var(--border);margin:8px 0;")
+                        hard_update_status = ui.label(
+                            "Полный выпуск нужен только для оболочки, установщика или встроенного runtime. "
+                            "Пользовательские данные сохраняются."
+                        ).classes("sov-ui-section-detail")
+                        with ui.row().classes("w-full gap-2"):
+                            ui.button(
+                                "Проверить полный выпуск",
+                                icon="o_verified",
+                                on_click=_check_hard_update,
+                            ).props("no-caps flat")
+                            hard_update_button = ui.button(
+                                "Переустановить выпуск",
+                                icon="o_system_update",
+                                on_click=_install_hard_update,
+                            ).props("no-caps disable")
+
                 update_entry_button = ui.button(
                     "Обновить ЛЕС",
                     icon="o_system_update_alt",
-                    on_click=settings_dialog.open,
+                    on_click=update_dialog.open,
                 ).props('flat dense no-caps aria-label="Обновить ЛЕС"').classes(
                     "sov-ui-header-utility"
                 )
@@ -901,8 +901,8 @@ def build_header(
                         update_entry_button.style(
                             "border-color:var(--warn);color:var(--warn);font-weight:900;"
                         )
-                        update_status.set_text(str(result.get("message") or "Доступен патч ЛЕС."))
-                        update_button.enable()
+                        _set_patch_update_status(str(result.get("message") or "Доступен патч ЛЕС."))
+                        _set_patch_install_enabled(True)
 
                 ui.timer(5.0, _check_update_in_background, once=True)
                 ui.timer(86400.0, _check_update_in_background)
