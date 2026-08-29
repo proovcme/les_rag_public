@@ -488,9 +488,10 @@ async def refresh_indexing_mode():
 
 
 async def refresh_proxy_logs(limit: int = 120):
+    from backend.runtime_paths import mutable_path
     from sovushka.config import PROXY_URL
 
-    logs_path = Path("logs/proxy.log")
+    logs_path = mutable_path("logs/proxy.log")
     if logs_path.exists():
         try:
             lines = await asyncio.to_thread(lambda: logs_path.read_text(errors="replace").splitlines()[-limit:])

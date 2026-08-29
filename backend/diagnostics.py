@@ -9,8 +9,9 @@ from pathlib import Path
 from datetime import datetime
 
 from backend.rag_config import rag_collection_name
+from backend.runtime_paths import mutable_path
 
-DIAG_DIR = Path('./data/diagnostics')
+DIAG_DIR = mutable_path("data/diagnostics")
 DIAG_DIR.mkdir(parents=True, exist_ok=True)
 
 def run_cmd(cmd: list[str], timeout=10):

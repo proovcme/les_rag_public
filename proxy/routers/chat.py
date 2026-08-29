@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, field_validator
 
 from backend.rag_config import rag_meta_db_path
+from backend.runtime_paths import mutable_path
 from proxy.config import ENV_PATH
 from proxy.security import require_user
 from proxy.services.answer_form_service import classify_answer_form
@@ -873,6 +874,7 @@ async def _execute_chat_workbook_tool(
             "label": label,
         })))
 
+    configured_attachment_root = os.getenv("LES_CHAT_ATTACHMENT_ROOT", "").strip()
     context = WorkbookExecutionContext(
         session_id=str(request_context.get("session_id") or "anonymous"),
         idempotency_key=f"workbook:{identity}",
@@ -880,11 +882,18 @@ async def _execute_chat_workbook_tool(
         profile_revision_id=str(request_context.get("profile_revision_id") or "unknown"),
         model_identity=str(request_context.get("model_identity") or "unknown"),
         model_preset=str(request_context.get("model_preset") or "unknown"),
-        attachment_root=Path(os.getenv("LES_CHAT_ATTACHMENT_ROOT", "storage/chat_attachments")),
-        work_dir=Path("storage/workbook_work"),
-        checkpoints=WorkflowCheckpointService(Path("storage/workbook_checkpoints.db")),
+        attachment_root=(
+            Path(configured_attachment_root)
+            if configured_attachment_root
+            else mutable_path("storage/chat_attachments")
+        ),
+        work_dir=mutable_path("storage/workbook_work"),
+        checkpoints=WorkflowCheckpointService(
+            mutable_path("storage/workbook_checkpoints.db")
+        ),
         artifacts=ArtifactRevisionStore(
-            Path("storage/artifacts/meta.db"), Path("storage/artifacts/files")
+            mutable_path("storage/artifacts/meta.db"),
+            mutable_path("storage/artifacts/files"),
         ),
         progress_sink=emit_progress,
     )

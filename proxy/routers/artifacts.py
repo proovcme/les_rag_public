@@ -1,9 +1,9 @@
 """Authenticated metadata and verified downloads for immutable artifacts."""
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
+from backend.runtime_paths import mutable_path
 from proxy.security import require_user
 from proxy.services.artifact_revision_service import (
     ArtifactImmutableError,
@@ -13,7 +13,8 @@ from proxy.services.artifact_revision_service import (
 
 router = APIRouter(prefix="/api/artifacts", tags=["artifacts"])
 artifact_revision_store = ArtifactRevisionStore(
-    Path("storage/artifacts/meta.db"), Path("storage/artifacts/files")
+    mutable_path("storage/artifacts/meta.db"),
+    mutable_path("storage/artifacts/files"),
 )
 
 

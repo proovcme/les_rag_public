@@ -29,32 +29,31 @@ def test_ensure_dirs_creates_nested_directory_through_windows_state_junction(
     test_root = Path(tempfile.mkdtemp(prefix="LES-junction-test-", dir=programs_root))
     runtime_root = test_root / "runtime"
     state_root = test_root / "state"
-    junction = runtime_root / "artifacts"
+    junctions = {
+        runtime_root / "artifacts": state_root / "artifacts",
+        runtime_root / "storage": state_root / "storage",
+    }
     try:
         runtime_root.mkdir()
-        (state_root / "artifacts").mkdir(parents=True)
-        subprocess.run(
-            [
-                "cmd.exe",
-                "/c",
-                "mklink",
-                "/J",
-                str(junction),
-                str(state_root / "artifacts"),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        for junction, target in junctions.items():
+            target.mkdir(parents=True)
+            subprocess.run(
+                ["cmd.exe", "/c", "mklink", "/J", str(junction), str(target)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
         monkeypatch.setattr(install_les, "ROOT", runtime_root)
 
         created = install_les.ensure_dirs()
 
         assert "artifacts/backups" in created
         assert (state_root / "artifacts" / "backups").is_dir()
+        assert (state_root / "storage" / "artifacts" / "files").is_dir()
     finally:
-        if junction.is_junction():
-            junction.rmdir()
+        for junction in junctions:
+            if junction.is_junction():
+                junction.rmdir()
         shutil.rmtree(test_root, ignore_errors=True)
 
 

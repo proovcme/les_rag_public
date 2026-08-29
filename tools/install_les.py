@@ -30,6 +30,8 @@ REQUIRED_DIRS = (
     "RAG_Content",
     "artifacts",
     "artifacts/backups",
+    "storage/artifacts",
+    "storage/artifacts/files",
     "data/mail_imap_checkpoints",
 )
 
