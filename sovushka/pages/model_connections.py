@@ -21,17 +21,20 @@ _CAPS = {"models": "Список моделей", "chat_completions": "Чат", 
 
 
 def build_model_connections():
-    data: dict[str, Any] = {"connections": [], "bindings": {}, "templates": [], "effective": {}}
+    data: dict[str, Any] = {
+        "connections": [], "bindings": {}, "templates": [], "effective": {}, "qdrant": {},
+    }
     refs: dict[str, Any] = {}
 
     async def _reload() -> None:
         refs["body"].clear()
         with refs["body"]:
             render_feedback_state("loading", detail="Читаю реестр подключений…")
-        listing, templates, effective = await asyncio.gather(
+        listing, templates, effective, runtime_registry = await asyncio.gather(
             api_get("/api/model-connections"),
             api_get("/api/model-connections/templates"),
             api_get("/api/model-connections/effective"),
+            api_get("/api/settings/runtime-registry"),
         )
         if not isinstance(listing, dict):
             refs["body"].clear()
@@ -42,7 +45,20 @@ def build_model_connections():
         data["bindings"] = dict(listing.get("bindings") or {})
         data["templates"] = list((templates or {}).get("templates") or []) if isinstance(templates, dict) else []
         data["effective"] = dict((effective or {}).get("roles") or {}) if isinstance(effective, dict) else {}
+        factors = list((runtime_registry or {}).get("factors") or []) if isinstance(runtime_registry, dict) else []
+        data["qdrant"] = next((item for item in factors if item.get("key") == "QDRANT_URL"), {})
         _render()
+
+    async def _save_qdrant(value: str) -> None:
+        result = await api_put(
+            "/api/settings/runtime-registry",
+            {"updates": {"QDRANT_URL": value}, "danger_confirmations": []},
+        )
+        if result:
+            ui.notify("Адрес Qdrant сохранён", type="positive")
+            await _reload()
+        else:
+            ui.notify(last_api_error_text("Адрес Qdrant не сохранён"), type="negative")
 
     async def _bind(role: str, connection: dict[str, Any]) -> None:
         previous = data["bindings"].get(role) or {}
@@ -137,6 +153,27 @@ def build_model_connections():
     def _render() -> None:
         body = refs["body"]; body.clear()
         with body:
+            qdrant = data.get("qdrant") or {}
+            with panel(variant="raised", classes="sov-model-summary"):
+                section_heading(
+                    "Подключение RAG",
+                    "Qdrant хранит индекс. Ответы, эмбеддинги и резерв назначаются ниже независимо.",
+                )
+                with ui.row().classes("w-full items-end gap-2"):
+                    qdrant_url = text_field(
+                        label="Адрес Qdrant",
+                        value=str(qdrant.get("display_value") or "http://127.0.0.1:6333"),
+                        classes="grow",
+                    )
+                    action_button(
+                        "Сохранить Qdrant",
+                        icon="o_save",
+                        on_click=lambda: asyncio.create_task(_save_qdrant(str(qdrant_url.value or ""))),
+                        variant="secondary",
+                    )
+                ui.label(
+                    f"Источник: {qdrant.get('source', 'default')} · применяется после перезапуска ЛЕС"
+                ).classes("sov-ui-section-detail")
             with panel(variant="raised", classes="sov-model-summary"):
                 section_heading("Роли модели", "Назначения атомарно привязаны к точной ревизии подключения.")
                 with ui.row().classes("sov-model-role-grid"):
@@ -146,6 +183,8 @@ def build_model_connections():
                             ui.label(label).classes("sov-ui-section-title")
                             ui.label(effective.get("display_name") or "Не назначено")
                             if effective:
+                                if role == "answer" and effective.get("status") != "blocked":
+                                    status_badge("Работает в чате", "ok")
                                 ui.label(f"Действует: {effective.get('input_token_limit', '—')} токенов · Источник: {effective.get('preset_id', '—')}").classes("sov-ui-section-detail")
             connections = data["connections"]
             if not connections:

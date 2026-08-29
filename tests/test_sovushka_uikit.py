@@ -381,7 +381,8 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     assert "Рабочие разделы" in header
     assert "sov-runtime-state" in header
     assert "ЛЕС на связи" in header
-    assert 'ui.button("Обновить", icon="o_refresh"' in header
+    assert 'ui.button("Обновить данные", icon="o_refresh"' in header
+    assert '"Обновить ЛЕС",' in header
     assert '"Тема",' in header
     assert 'ui.label("Qdrant")' in header
     assert '"Профиль",' in header
@@ -446,6 +447,16 @@ def test_configuration_home_uses_uikit_and_progressive_disclosure():
     assert '"Preflight без загрузки модели"' in diag
     assert '"Ошибок до stop ColBERT"' in diag
     assert '"Локальный API резюме"' in diag
+    assert "Основной RAG/RRF работает независимо" in diag
+    assert "Политика включена, индекс ещё не построен" in diag
+    assert "Модель не загружена; базовый поиск продолжает работать" in diag
+    for internal_detail in (
+        "model_loaded=false",
+        'f"checkpoint {raptor.get',
+        'detail_parts.append(f"circuit',
+        'detail_parts.append(f"ошибка',
+    ):
+        assert internal_detail not in diag
     for disclosure in (
         "Детали последней проверки",
         "С.У.Х.А.Р.И.К. · Резервные копии",
@@ -549,14 +560,14 @@ def test_mail_surfaces_use_uikit_and_keep_host_names_out_of_product_copy():
         assert contract in UIKIT_CSS
 
 
-def test_tools_surface_separates_sources_from_connected_prompt_editor():
+def test_tools_surface_contains_sources_without_competing_prompt_editor():
     tools = Path("sovushka/pages/instrumenty.py").read_text(encoding="utf-8")
 
     assert "sov-tools-page" in tools
     assert '"Источники данных"' in tools
-    assert '"Системные промпты"' in tools
-    assert '"Подключён"' in tools
-    assert "лишних: {extra}" in tools
+    assert '"Системные промпты"' not in tools
+    assert "/api/prompts" not in tools
+    assert "_refresh_prompts" not in tools
     assert "_render_prompt_block" not in tools
     assert "action_button(" in tools
     assert "panel(" in tools

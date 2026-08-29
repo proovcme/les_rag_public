@@ -108,6 +108,18 @@ def test_qdrant_url_is_a_named_editable_runtime_connection(monkeypatch):
     assert factor["restart_required"] is True
 
 
+def test_assigned_model_timeout_is_named_and_restart_bound(monkeypatch):
+    registry.declared_env_defaults.cache_clear()
+    monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+
+    factor = registry._factor("LES_MODEL_CONNECTION_TIMEOUT_SEC", {})
+
+    assert factor["effective_value"] == "300.0"
+    assert factor["label"] == "Таймаут ответа модели, сек"
+    assert factor["mutable"] is True
+    assert factor["restart_required"] is True
+
+
 def test_context_factors_are_registered_with_effective_source() -> None:
     rows = registry.runtime_factor_rows(
         {

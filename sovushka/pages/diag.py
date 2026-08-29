@@ -639,9 +639,8 @@ def build_diag():
         raptor_runtime = status.get("raptor") or {}
         colbert_runtime = status.get("colbert") or {}
         rag_advanced_status.set_text(
-            f"RAPTOR: {raptor_runtime.get('readiness', 'нет данных')} · "
-            f"ColBERT: {colbert_runtime.get('readiness', 'нет данных')} · "
-            f"ревизия {int(policy.get('revision') or 0)}"
+            "Основной RAG/RRF работает независимо от дополнительных стадий ниже. "
+            f"Ревизия политики {int(policy.get('revision') or 0)}."
         )
         raptor_active = str(raptor_runtime.get("readiness") or "") in {
             "queued", "building", "verifying"
@@ -668,22 +667,19 @@ def build_diag():
                     else "configured"
                 )
                 progress = round(float(runtime.get("progress") or 0) * 100)
-                detail_parts = [f"прогресс {progress}%"]
-                if runtime.get("documents_total"):
-                    detail_parts.append(
-                        f"документы {int(runtime.get('documents_completed') or 0)}/"
-                        f"{int(runtime.get('documents_total') or 0)}"
-                    )
-                if runtime.get("published_nodes"):
-                    detail_parts.append(f"узлы {int(runtime.get('published_nodes') or 0)}")
-                detail_parts.append(f"circuit {runtime.get('circuit_state') or 'closed'}")
-                if runtime.get("last_error_code"):
-                    detail_parts.append(f"ошибка {runtime.get('last_error_code')}")
+                if readiness in {"queued", "building", "retrying", "verifying"}:
+                    detail = f"Построение индекса: {progress}%"
+                elif readiness == "ready":
+                    detail = "Дополнительный индекс готов."
+                elif title == "RAPTOR":
+                    detail = "Политика включена, индекс ещё не построен."
+                else:
+                    detail = "Модель не загружена; базовый поиск продолжает работать."
                 with panel(variant="inset", classes="w-full"):
                     with ui.row().classes("w-full items-center gap-3 no-wrap"):
                         with ui.column().classes("grow gap-0"):
                             ui.label(title).classes("sov-ui-section-title")
-                            ui.label(" · ".join(detail_parts)).classes("sov-ui-section-detail")
+                            ui.label(detail).classes("sov-ui-section-detail")
                         status_badge(badge_text, badge_tone)
 
     async def load_rag_preflight():
@@ -707,11 +703,11 @@ def build_diag():
             with panel(variant="inset", classes="w-full"):
                 section_heading(
                     "Preflight без загрузки модели",
-                    "Проверка только читает метаданные cache и индекса; model_loaded=false.",
+                    "Проверка только читает метаданные кэша и индекса; модель не загружается.",
                 )
                 ui.label(
-                    f"ColBERT: {colbert.get('status', 'unknown')} · "
-                    f"индекс ≈ {estimated_gb:.2f} ГБ · догрузить модель ≈ {remaining_gb:.2f} ГБ"
+                    "ColBERT: модель не загружена; базовый поиск продолжает работать. "
+                    f"Индекс потребует ≈ {estimated_gb:.2f} ГБ, загрузка модели ≈ {remaining_gb:.2f} ГБ."
                 ).classes("sov-ui-section-detail")
                 ui.label(
                     "Свободное место хранилища Qdrant: неизвестно — Qdrant API его не сообщает. "
@@ -719,8 +715,7 @@ def build_diag():
                 ).classes("sov-ui-section-detail")
                 ui.label(
                     f"RAPTOR: ≈ {int(raptor.get('estimated_navigation_nodes') or 0)} узлов · "
-                    f"модель {raptor.get('summary_model') or 'не задана'} · "
-                    f"checkpoint {raptor.get('checkpoint_path') or 'не задан'}"
+                    f"модель резюме {raptor.get('summary_model') or 'не задана'}"
                 ).classes("sov-ui-section-detail")
             blockers = colbert.get("blockers") or []
             advanced_ui["colbert_preflight_ready"] = not blockers
@@ -729,7 +724,7 @@ def build_diag():
             else:
                 colbert_build_btn.props(remove="disabled")
                 if blockers:
-                    ui.label("Блокеры: " + ", ".join(str(item) for item in blockers)).classes(
+                    ui.label("Тяжёлая сборка пока недоступна; завершите проверку модели и места.").classes(
                         "sov-ui-section-detail"
                     )
 

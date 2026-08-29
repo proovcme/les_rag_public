@@ -127,3 +127,16 @@ def test_allowed_runtime_file_is_packaged_and_unknown_runtime_path_blocks_patch(
     assert full_result.kind == "full"
     assert full_result.triggers[0].path == "unexpected_runtime.bin"
     assert "not allowed in a lightweight patch" in full_result.triggers[0].reason
+
+
+def test_release_only_tooling_does_not_force_full_runtime_release(release_repo):
+    repo, base = release_repo
+    tool = repo / "tools" / "github_patch_release.py"
+    tool.parent.mkdir(parents=True)
+    tool.write_text("VALUE = 1\n", encoding="utf-8")
+
+    result = classify_release(base, _commit(repo, "release tooling"), root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ()
+    assert result.triggers == ()

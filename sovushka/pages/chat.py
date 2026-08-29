@@ -3336,6 +3336,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         """Human label for the model that produced this answer."""
         if not isinstance(meta, dict):
             return ""
+        connection = meta.get("model_connection") if isinstance(meta.get("model_connection"), dict) else {}
+        if connection:
+            return _model_label(
+                str(connection.get("display_name") or "подключение"),
+                str(connection.get("model_id") or ""),
+            )
         trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
         routing = trace.get("routing") if isinstance(trace.get("routing"), dict) else {}
         versions = meta.get("versions") if isinstance(meta.get("versions"), dict) else {}
@@ -3360,6 +3366,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "Модель/провайдер этого ответа"
             )
 
+    def _render_dataset_scope_badge(meta: dict | None) -> None:
+        if not isinstance(meta, dict):
+            return
+        trace = meta.get("retrieval_trace") if isinstance(meta.get("retrieval_trace"), dict) else {}
+        scope = meta.get("source_scope") if isinstance(meta.get("source_scope"), dict) else trace.get("source_scope")
+        if not isinstance(scope, dict):
+            return
+        names = [str(item) for item in (scope.get("used_names") or []) if str(item)]
+        if not names:
+            return
+        label = ", ".join(names[:2]) + (f" +{len(names) - 2}" if len(names) > 2 else "")
+        ui.label(f"ДАТАСЕТЫ {label}").classes("sov-model-badge").tooltip(
+            "Фактические датасеты, из которых взяты фрагменты ответа"
+        )
+
     def _render_answer_actions(text: str, srcs: list) -> None:
         """v0.20: панель действий ответа — «Копировать» (чистый текст) и «С источниками» (без полного
         тела письма — только chip-локатор). Без скрытого trace."""
@@ -3383,6 +3404,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with ui.element("div").classes(class_name) as bubble:
             if _is_ai:
                 _render_model_badge(meta)
+                _render_dataset_scope_badge(meta)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
@@ -3426,6 +3448,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with bubble:
             if not error:
                 _render_model_badge(meta)
+                _render_dataset_scope_badge(meta)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
             explicit_artifact = bool(_artifact_from_meta(meta))

@@ -280,7 +280,7 @@ def run_isolated_update_gate(
     rollback_ok = all(
         current.get(path) == before for path, before in original.items() if before is not None
     ) and stamp == old_stamp
-    new_file_removed = bool(target_only) and all(path not in current for path in target_only)
+    new_file_removed = not target_only or all(path not in current for path in target_only)
     durations["rollback"] = round((time.perf_counter() - rollback_started) * 1000)
 
     evidence = {

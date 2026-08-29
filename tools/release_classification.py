@@ -47,6 +47,11 @@ VERSION_SURFACES = {
     "desktop/tauri/src-tauri/tauri.conf.json": "tauri_json",
 }
 
+RELEASE_ONLY_FILES = {
+    "tools/github_patch_release.py",
+    "tools/release_classification.py",
+}
+
 
 @dataclass(frozen=True)
 class ReleaseTrigger:
@@ -142,6 +147,8 @@ def classify_release(base: str, target: str, *, root: Path) -> ReleaseClassifica
     for path in _changed_paths(root, base, target):
         parts = PurePosixPath(path).parts
         if parts[:1] in {("docs",), ("tests",), (".github",)}:
+            continue
+        if path in RELEASE_ONLY_FILES:
             continue
 
         surface_kind = VERSION_SURFACES.get(path)

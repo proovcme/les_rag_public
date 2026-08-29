@@ -318,8 +318,8 @@ def build_header(
 
             ui.timer(3.0, _upd_proxy_dot)
 
-            # Обновить
-            ui.button("Обновить", icon="o_refresh", on_click=lambda: asyncio.create_task(_full_refresh())
+            # Обновить данные текущего экрана (не обновление приложения).
+            ui.button("Обновить данные", icon="o_refresh", on_click=lambda: asyncio.create_task(_full_refresh())
             ).props('flat dense no-caps aria-label="Обновить данные"').classes(
                 "sov-ui-header-utility"
             )
@@ -882,6 +882,30 @@ def build_header(
                             "border:1px solid var(--accent);color:var(--accent);background:transparent;"
                         )
 
+                update_entry_button = ui.button(
+                    "Обновить ЛЕС",
+                    icon="o_system_update_alt",
+                    on_click=settings_dialog.open,
+                ).props('flat dense no-caps aria-label="Обновить ЛЕС"').classes(
+                    "sov-ui-header-utility"
+                )
+
+                async def _check_update_in_background() -> None:
+                    from sovushka.state import api_get
+
+                    result = await api_get(update_check_path)
+                    if not isinstance(result, dict):
+                        return
+                    if result.get("available") and result.get("compatible"):
+                        update_entry_button.set_text("Доступно обновление")
+                        update_entry_button.style(
+                            "border-color:var(--warn);color:var(--warn);font-weight:900;"
+                        )
+                        update_status.set_text(str(result.get("message") or "Доступен патч ЛЕС."))
+                        update_button.enable()
+
+                ui.timer(5.0, _check_update_in_background, once=True)
+                ui.timer(86400.0, _check_update_in_background)
                 ui.button("Настройки", icon="o_settings", on_click=lambda: ui.navigate.to("/les/classic?tab=models")).props(
                     'flat dense no-caps aria-label="Настройки"'
                 ).classes("sov-ui-header-action").style("color:var(--dim);font-size:.62rem;")

@@ -1179,6 +1179,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 "fallback_used": False,
                 "pending_tool_calls": 0 if active_workbook and not rejected_workbook else 1,
         }
+        assert result["source_scope"] == {
+            "requested": ["selected"],
+            "resolved": ["selected"],
+            "used": [],
+            "used_names": [],
+        }
         assert active_transport.revisions == ["conn:active:r3", "conn:active:r3"]
         if active_workbook:
             assert len(workbook_executor_calls) == 1

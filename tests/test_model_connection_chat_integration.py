@@ -141,12 +141,12 @@ async def test_active_uses_only_bound_fallback_and_records_revision() -> None:
 
 
 @pytest.mark.asyncio
-async def test_active_missing_fallback_fails_without_legacy_or_registry_scan() -> None:
+async def test_active_missing_fallback_preserves_primary_transport_error() -> None:
     primary = _connection("conn:primary:r1")
     transport = Transport([ModelTransportError("UPSTREAM_REQUEST_FAILED")])
     runner = BoundModelChatRunner(resolver=Resolver(primary), transport=transport)
 
-    with pytest.raises(ModelConnectionResolutionError, match="ROLE_BINDING_MISSING: local_fallback"):
+    with pytest.raises(ModelTransportError, match="UPSTREAM_REQUEST_FAILED"):
         await runner.complete(
             mode=CanonicalRouteMode.ACTIVE,
             request=_request(),
@@ -154,6 +154,14 @@ async def test_active_missing_fallback_fails_without_legacy_or_registry_scan() -
         )
 
     assert transport.revision_calls == ["conn:primary:r1"]
+
+
+def test_assigned_model_timeout_matches_full_chat_window(monkeypatch) -> None:
+    monkeypatch.delenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", raising=False)
+    assert chat.model_connection_timeout() == 300.0
+
+    monkeypatch.setenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", "420")
+    assert chat.model_connection_timeout() == 420.0
 
 
 @pytest.mark.asyncio
@@ -187,6 +195,20 @@ def test_public_connection_payload_never_contains_endpoint_or_secret() -> None:
     assert payload["revision_id"] == "conn:c1:r1"
     assert "base_url" not in payload
     assert "secret_ref" not in payload
+
+
+def test_ordinary_chat_uses_bound_answer_without_promotion_receipt(monkeypatch) -> None:
+    primary = _connection("conn:answer:r9")
+    resolver = Resolver(primary)
+    monkeypatch.setattr(chat, "_model_connection_resolver", lambda: (resolver, object()))
+    monkeypatch.setattr(
+        chat,
+        "resolve_promoted_route",
+        lambda **_kwargs: pytest.fail("promotion receipt must not gate a user binding"),
+    )
+
+    assert chat._effective_model_connection_mode() is CanonicalRouteMode.ACTIVE
+    assert resolver.resolved_roles == [ConnectionRole.ANSWER]
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping
 
 from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
 from proxy.services.model_connection_resolver_service import (
+    ModelConnectionResolutionError,
     ModelConnectionResolver,
     ResolvedModelConnection,
 )
@@ -168,8 +169,11 @@ class BoundModelChatRunner:
         try:
             response = await self.transport.complete(primary, request)
             return self._bounded_result(response, connection=primary, fallback_used=False)
-        except ModelTransportError:
-            fallback = self.resolver.resolve_fallback(primary.revision_id)
+        except ModelTransportError as primary_error:
+            try:
+                fallback = self.resolver.resolve_fallback(primary.revision_id)
+            except ModelConnectionResolutionError:
+                raise primary_error
             response = await self.transport.complete(fallback, request)
             return self._bounded_result(response, connection=fallback, fallback_used=True)
 

@@ -315,23 +315,19 @@ def test_chat_file_picker_uses_task_language_and_compact_uikit_surface():
     assert ".sov-chat-file-picker" in uikit
 
 
-def test_instrumenty_has_editable_prompt_controls():
+def test_instrumenty_has_no_competing_prompt_controls():
     source = inspect.getsource(instrumenty_page.build_instrumenty)
-    styles = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
 
-    assert "_render_prompt_editor" in source
-    assert "api_patch(f\"/api/prompts/" in source
-    assert "api_delete(f\"/api/prompts/" in source
-    assert "sov-tools-prompt" in source
-    assert ".sov-tools-prompt" in styles
+    assert "_render_prompt_editor" not in source
+    assert "/api/prompts" not in source
+    assert "Системные промпты" not in source
 
 
 def test_instrumenty_refresh_buttons_bind_after_handlers_exist():
     source = inspect.getsource(instrumenty_page.build_instrumenty)
 
     assert "ui.button(\"ОБНОВИТЬ\", on_click=_refresh)" not in source
-    assert "ui.button(\"ОБНОВИТЬ\", on_click=_refresh_prompts)" not in source
-    assert source.index("async def _refresh_prompts") < source.index("refresh_prompts_btn.on(\"click\", _refresh_prompts)")
+    assert "_refresh_prompts" not in source
     assert source.index("async def _refresh") < source.index("refresh_btn.on(\"click\", _refresh)")
 
 
@@ -418,6 +414,14 @@ def test_selected_dataset_ids_stay_in_model_owned_scope_without_deterministic_fi
     source = inspect.getsource(chat_router._run_chat)
 
     assert 'req.dataset_ids = _scope_snap["resolved_dataset_ids"]' in source
+
+
+def test_answer_shows_actual_model_connection_and_dataset_scope():
+    source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+
+    assert 'meta.get("model_connection")' in source
+    assert "ДАТАСЕТЫ" in source
+    assert 'trace.get("source_scope")' in source
     assert "_det_channels" not in source
     assert "can_return_deterministic_final" not in source
     assert "maybe_handle_glossary_query" not in source
@@ -665,6 +669,11 @@ class _FakeAsyncClient:
 
 @pytest.mark.asyncio
 async def test_free_mode_injects_session_memory(monkeypatch):
+    monkeypatch.setattr(
+        chat_router,
+        "_effective_model_connection_mode",
+        lambda: chat_router.CanonicalRouteMode.LEGACY,
+    )
     monkeypatch.setattr(
         chat_router,
         "_llm_runtime",

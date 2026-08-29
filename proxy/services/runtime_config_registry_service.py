@@ -34,6 +34,11 @@ _FACTOR_PRESENTATION = {
         "help_text": "Хранилище индекса: локальная машина, LAN или VPS.",
         "category": "storage",
     },
+    "LES_MODEL_CONNECTION_TIMEOUT_SEC": {
+        "label": "Таймаут ответа модели, сек",
+        "help_text": "Общий срок ожидания модели, назначенной на роль «Ответы».",
+        "category": "models",
+    },
 }
 _ROOT = Path(__file__).resolve().parents[2]
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
@@ -68,6 +73,7 @@ _RESTART_KEYS = {
     "LES_CANONICAL_ACCEPTANCE_STATE_ROOT",
     "LES_CANONICAL_AGENT_ROUTE_MODE",
     "LES_DEMO_PROVIDER_OVERRIDE_ENABLED",
+    "LES_MODEL_CONNECTION_TIMEOUT_SEC",
 }
 _SKIP_PARTS = {
     ".git", ".venv", ".test-tmp", "data", "logs", "storage", "dist",

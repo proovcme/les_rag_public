@@ -7,16 +7,32 @@
 ## Текущее состояние (2026-08-29)
 
 ```
-версия продукта (SemVer):  0.29.3 (Windows release source; публичный статус — GitHub tag v0.29.3)
-номер сборки:              632
-версия Tauri/NSIS:         5.1.632
-ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       private model nodes, exact promotion and split runtime profiles
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.3 / build 632 (exact source/tag commit)
+версия продукта (SemVer):  0.30.0
+номер сборки:              634
+версия Tauri/NSIS:         5.1.634
+ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
+dev implementation:       authoritative answer binding + exact dataset scope + automatic GitHub updater discovery
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.29.4 / build 633 runtime acceptance
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
-следующий выпуск:          post-release cleanup: installer contents audit and Settings/Configuration UI consolidation
-рантайм /api/version:      Legion 0.29.3 / build 632 / desktop 5.1.632, aligned, full mode, UI 200
+следующий выпуск:          0.30.0 bootstrap installer; после него штатный канал — lightweight runtime patches
+рантайм /api/version:      Legion 0.29.4 / build 633 / desktop 5.1.633; назначенная answer model и scoped native RRF приняты живым запросом
 ```
+
+> **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
+> authoritative для обычного чата: вызывается любая выбранная answer model без
+> model-specific маршрута, а
+> promotion/shadow остаётся только изолированной телеметрией. Неявного legacy
+> Ollama fallback нет; допускается лишь назначенный `local_fallback`. Response и
+> retrieval trace несут фактические dataset IDs/names, Совушка показывает их и
+> реальную model connection в заголовке ответа. Явно выбранный датасет остаётся
+> exact scope и не расширяется до почты или всего корпуса. В шапке доступна
+> `Обновить ЛЕС`; совместимый GitHub patch проверяется при старте и раз в сутки,
+> установка выполняется только по явному нажатию. Этот installer является
+> bootstrap-переходом; последующие обычные исправления выпускаются runtime-патчами.
+> Таймаут назначенного подключения синхронизирован на 300 секунд, показывается в
+> GUI-first runtime registry и не маскируется отсутствующим fallback. Qdrant URL
+> вынесен рядом с модельными подключениями, а «Инструменты» больше не содержат
+> конкурирующего редактора промптов: пользовательский prompt/skill задаёт профиль.
 
 > **Build 632 public-surface cleanup:** финальный release source удаляет
 > machine-specific IP и устаревший public tunnel из exporter defaults, auth/status

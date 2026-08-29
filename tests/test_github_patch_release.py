@@ -87,6 +87,29 @@ def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypat
     assert published["evidence"]["skipped_version_ok"] is True
     assert set(published["evidence"]["durations_ms"]) == {"apply", "rollback", "skipped_version"}
 
+    runtime.write_text("VALUE = 3\n", encoding="utf-8")
+    contract.update(product_version="0.28.3", build_number=590, desktop_version="5.1.590")
+    version.write_text(json.dumps(contract), encoding="utf-8")
+    second_target = _commit(repo, "existing files only")
+    full_feed.write_text(
+        json.dumps(
+            {
+                "schema": "les.update.v1",
+                "version": "0.28.2",
+                "build_number": 589,
+                "desktop_version": "5.1.589",
+                "commit": target,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    second = github_patch_release.build_github_patch_release(
+        target, second_target, tmp_path / "out-existing", full_feed=full_feed
+    )
+
+    assert second["evidence"]["new_file_removed_on_rollback"] is True
+
 
 def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkeypatch):
     assets = []

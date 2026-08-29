@@ -183,6 +183,77 @@ async def test_complete_preserves_tool_calls_auth_and_output_field(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_complete_places_system_messages_before_conversation(tmp_path):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        await transport.complete(
+            _resolved(),
+            InferenceRequest(
+                messages=(
+                    {"role": "user", "content": "question"},
+                    {"role": "system", "content": "policy"},
+                    {"role": "assistant", "content": "prior"},
+                    {"role": "system", "content": "evidence rules"},
+                ),
+                max_output_tokens=32,
+            ),
+        )
+    finally:
+        await client.aclose()
+
+    assert [item["role"] for item in captured["body"]["messages"]] == [
+        "system",
+        "user",
+        "assistant",
+    ]
+    assert captured["body"]["messages"][0]["content"] == "policy\n\nevidence rules"
+
+
+@pytest.mark.asyncio
+async def test_complete_retries_without_system_role_for_restrictive_compatible_server(tmp_path):
+    bodies = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        bodies.append(body)
+        if any(item.get("role") == "system" for item in body["messages"]):
+            return httpx.Response(502, json={"error": "System message must be at the beginning."})
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}]},
+        )
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        result = await transport.complete(
+            _resolved(),
+            InferenceRequest(
+                messages=(
+                    {"role": "system", "content": "policy"},
+                    {"role": "user", "content": "question"},
+                ),
+                max_output_tokens=32,
+            ),
+        )
+    finally:
+        await client.aclose()
+
+    assert result.text == "ok"
+    assert len(bodies) == 2
+    assert [item["role"] for item in bodies[1]["messages"]] == ["user"]
+    assert bodies[1]["messages"][0]["content"] == "policy\n\nquestion"
+
+
+@pytest.mark.asyncio
 async def test_stream_normalizes_text_deltas_and_finish(tmp_path):
     payload = (
         'data: {"model":"observed-stream-model","choices":[{"delta":{"reasoning":"one"}}]}\n\n'

@@ -42,6 +42,24 @@ def test_model_page_explains_locality_context_source_and_restart():
     assert "BOUND_CONNECTION" in source
 
 
+def test_model_page_calls_bound_answer_the_actual_chat_model():
+    source = Path("sovushka/pages/model_connections.py").read_text(encoding="utf-8")
+
+    assert "Работает в чате" in source
+    assert "Назначено, но не используется" not in source
+
+
+def test_qdrant_connection_is_exposed_next_to_model_roles():
+    source = Path("sovushka/pages/model_connections.py").read_text(encoding="utf-8")
+
+    assert 'api_get("/api/settings/runtime-registry")' in source
+    assert 'item.get("key") == "QDRANT_URL"' in source
+    assert '"Подключение RAG"' in source
+    assert 'label="Адрес Qdrant"' in source
+    assert '"Сохранить Qdrant"' in source
+    assert '"updates": {"QDRANT_URL": value}' in source
+
+
 def test_configuration_navigation_has_model_connections_tab():
     header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
     shell = Path("sovushka_ng.py").read_text(encoding="utf-8")

@@ -7,12 +7,10 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from urllib.parse import quote
-
 from nicegui import ui
 
 from sovushka.checklist_review_panel import build_checklist_review_card
-from sovushka.state import add_log, api_delete, api_get, api_patch, api_post, last_api_error_text
+from sovushka.state import add_log, api_get, api_post, last_api_error_text
 from sovushka.uikit.components import (
     action_button,
     panel,
@@ -227,7 +225,7 @@ def build_instrumenty():
             with ui.row().classes("sov-tools-hero__row"):
                 section_heading(
                     "Инструменты",
-                    "Рабочие источники ЛЕС и только те системные промпты, которые подключены к генерации.",
+                    "Рабочие источники ЛЕС: папки, датасеты и безопасные операции с ними.",
                 )
                 with ui.row().classes("sov-tools-actions"):
                     refresh_btn = action_button(
@@ -273,21 +271,6 @@ def build_instrumenty():
                     fgis_log.push("Ожидаем запуск обновления…")
                 fgis_log_state = {"seen": set(), "started": False}
             cards = ui.column().classes("w-full sov-tools-source-list")
-
-        with panel(variant="plain", classes="sov-tools-section sov-tools-prompts"):
-            with ui.row().classes("sov-tools-section__head"):
-                section_heading(
-                    "Системные промпты",
-                    "Редактируются только пять реальных генераторов плюс общий характер и тон.",
-                )
-                refresh_prompts_btn = action_button(
-                    "Обновить",
-                    icon="o_refresh",
-                    compact=True,
-                    variant="quiet",
-                )
-            prompt_summary = ui.label("Проверяю подключения…").classes("sov-tools-summary")
-            prompts_box = ui.column().classes("w-full sov-tools-prompt-list")
 
         async def _process_source(source_id: str) -> None:
             d = await api_post(f"/api/service-sources/{source_id}/process", {})
@@ -420,79 +403,6 @@ def build_instrumenty():
                                         )
                                         ui.label(f"Найдено: {found}").classes("sov-tools-source__meta")
 
-        def _render_prompt_editor(item: dict) -> None:
-            key = str(item.get("key") or "")
-            title = str(item.get("label") or key)
-            overridden = bool(item.get("overridden"))
-            runtime_uses = [str(value) for value in item.get("runtime_uses") or []]
-            with ui.expansion(title, icon="o_tune").classes(
-                "w-full sov-tools-prompt"
-            ).props("dense"):
-                with ui.row().classes("sov-tools-prompt__meta"):
-                    status_badge("Подключён", "ok")
-                    ui.label("изменён оператором" if overridden else "встроенный").classes(
-                        "sov-tools-source__meta"
-                    )
-                if runtime_uses:
-                    ui.label("Используется: " + " · ".join(runtime_uses)).classes(
-                        "sov-tools-prompt__runtime"
-                    )
-                with ui.column().classes("w-full sov-tools-prompt__editor"):
-                    editor = ui.textarea(value=str(item.get("value") or "")).props(
-                        "outlined dense autogrow"
-                    ).classes("w-full sov-prompt-textarea")
-                    with ui.row().classes("sov-tools-prompt__actions"):
-                        async def _save_prompt() -> None:
-                            d = await api_patch(f"/api/prompts/{quote(key, safe='')}", {"value": editor.value or ""})
-                            if isinstance(d, dict):
-                                ui.notify("Промт сохранён", type="positive")
-                                await _refresh_prompts()
-                            else:
-                                ui.notify(last_api_error_text("Промт не сохранён"), type="negative")
-
-                        async def _reset_prompt() -> None:
-                            d = await api_delete(f"/api/prompts/{quote(key, safe='')}")
-                            if isinstance(d, dict):
-                                ui.notify("Промт сброшен", type="positive")
-                                await _refresh_prompts()
-                            else:
-                                ui.notify(last_api_error_text("Промт не сброшен"), type="negative")
-
-                        action_button(
-                            "Сохранить",
-                            icon="o_save",
-                            on_click=_save_prompt,
-                            compact=True,
-                            variant="primary",
-                        )
-                        reset = action_button(
-                            "Сбросить",
-                            icon="o_restart_alt",
-                            on_click=_reset_prompt,
-                            compact=True,
-                            variant="quiet",
-                        )
-                        if not overridden:
-                            reset.props("disable")
-
-        async def _refresh_prompts() -> None:
-            d = await api_get("/api/prompts")
-            if not isinstance(d, dict):
-                ui.notify(last_api_error_text("Промты недоступны"), type="negative")
-                return
-            editable = [item for item in d.get("editable") or [] if isinstance(item, dict)]
-            connected = [item for item in editable if item.get("connected")]
-            changed = sum(1 for item in editable if item.get("overridden"))
-            extra = len(editable) - len(connected)
-            prompt_summary.text = (
-                f"Подключено: {len(connected)} · лишних: {extra} · изменений: {changed}. "
-                "Правка применяется к следующему вызову модели."
-            )
-            prompts_box.clear()
-            with prompts_box:
-                for item in connected:
-                    _render_prompt_editor(item)
-
         async def _refresh() -> None:
             d = await api_get("/api/service-sources")
             if not isinstance(d, dict):
@@ -616,8 +526,6 @@ def build_instrumenty():
 
         refresh_btn.on("click", _refresh)
         fgis_update_btn.on("click", _update_all_fgis)
-        refresh_prompts_btn.on("click", _refresh_prompts)
         ui.timer(0.2, _refresh, once=True)
         ui.timer(0.25, _refresh_fgis_status, once=True)
         ui.timer(3.0, _refresh_fgis_status)
-        ui.timer(0.35, _refresh_prompts, once=True)

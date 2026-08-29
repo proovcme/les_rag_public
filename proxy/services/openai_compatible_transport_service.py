@@ -146,9 +146,17 @@ class OpenAICompatibleTransport:
         *,
         stream: bool,
     ) -> dict[str, Any]:
+        messages = [dict(item) for item in request.messages]
+        system_messages = [item for item in messages if item.get("role") == "system"]
+        conversation = [item for item in messages if item.get("role") != "system"]
+        if system_messages and all(isinstance(item.get("content"), str) for item in system_messages):
+            system_messages = [{
+                **system_messages[0],
+                "content": "\n\n".join(str(item["content"]) for item in system_messages),
+            }]
         body: dict[str, Any] = {
             "model": connection.model_id,
-            "messages": [dict(item) for item in request.messages],
+            "messages": system_messages + conversation,
             self._output_field(connection): request.max_output_tokens,
         }
         if request.temperature is not None:
@@ -162,6 +170,26 @@ class OpenAICompatibleTransport:
         if stream:
             body["stream"] = True
         return body
+
+    @staticmethod
+    def _fold_system_into_user(body: Mapping[str, Any]) -> dict[str, Any]:
+        updated = dict(body)
+        messages = [dict(item) for item in body.get("messages", ()) if isinstance(item, Mapping)]
+        system_text = "\n\n".join(
+            str(item.get("content") or "")
+            for item in messages
+            if item.get("role") == "system"
+        ).strip()
+        conversation = [item for item in messages if item.get("role") != "system"]
+        if system_text:
+            for item in conversation:
+                if item.get("role") == "user" and isinstance(item.get("content"), str):
+                    item["content"] = f"{system_text}\n\n{item['content']}"
+                    break
+            else:
+                conversation.insert(0, {"role": "user", "content": system_text})
+        updated["messages"] = conversation
+        return updated
 
     async def _open(
         self,
@@ -207,13 +235,26 @@ class OpenAICompatibleTransport:
         request: InferenceRequest,
     ) -> InferenceResponse:
         self._require(connection, CapabilityName.CHAT_COMPLETIONS)
+        body = self._chat_body(connection, request, stream=False)
         response = await self._open(
             connection,
             url=join_openai_path(connection.endpoint, "/chat/completions"),
-            body=self._chat_body(connection, request, stream=False),
+            body=body,
         )
         try:
             raw = await self._read_bounded(response)
+            if (
+                response.status_code == 502
+                and b"System message must be at the beginning" in raw
+                and any(item.get("role") == "system" for item in body.get("messages", ()))
+            ):
+                await response.aclose()
+                response = await self._open(
+                    connection,
+                    url=join_openai_path(connection.endpoint, "/chat/completions"),
+                    body=self._fold_system_into_user(body),
+                )
+                raw = await self._read_bounded(response)
             if not 200 <= response.status_code < 300:
                 raise ModelTransportError(f"UPSTREAM_HTTP_ERROR: {response.status_code}")
             try:

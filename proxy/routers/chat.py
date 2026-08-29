@@ -45,6 +45,7 @@ from proxy.services.candidate_acceptance_service import (
     require_candidate_acceptance,
 )
 from proxy.services.model_connection_registry_service import ModelConnectionRegistry
+from proxy.services.model_connection_contracts import ConnectionRole
 from proxy.services.model_connection_resolver_service import ModelConnectionResolver
 from proxy.services.model_secret_service import EnvironmentSecretStore
 from proxy.services.openai_compatible_transport_service import (
@@ -623,9 +624,21 @@ def cloud_model_timeout() -> float:
     return _env_float("LES_CLOUD_MODEL_TIMEOUT_SEC", 45.0)
 
 
+def model_connection_timeout() -> float:
+    """One end-to-end window for an explicitly assigned answer connection."""
+    try:
+        return float(os.getenv("LES_MODEL_CONNECTION_TIMEOUT_SEC", 300.0))
+    except (TypeError, ValueError):
+        return 300.0
+
+
 def _effective_model_connection_mode() -> CanonicalRouteMode:
     resolver, _secret_store = _model_connection_resolver()
-    return resolve_promoted_route(resolver=resolver).effective
+    # A role selected by the operator is the ordinary-chat route.  Promotion
+    # receipts remain useful for isolated candidate/shadow telemetry, but must
+    # never silently replace the selected answer model with the legacy runtime.
+    resolver.resolve(ConnectionRole.ANSWER)
+    return CanonicalRouteMode.ACTIVE
 
 
 def _bound_model_chat_runner(client: httpx.AsyncClient) -> BoundModelChatRunner:
@@ -635,6 +648,7 @@ def _bound_model_chat_runner(client: httpx.AsyncClient) -> BoundModelChatRunner:
         transport=OpenAICompatibleTransport(
             client=client,
             secret_store=secret_store,
+            timeout=model_connection_timeout(),
         ),
     )
 
@@ -4010,6 +4024,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         model_connection_transport=lambda client, secret_store: OpenAICompatibleTransport(
             client=client,
             secret_store=secret_store,
+            timeout=model_connection_timeout(),
         ),
         workbook_tool_executor=_execute_chat_workbook_tool,
     )

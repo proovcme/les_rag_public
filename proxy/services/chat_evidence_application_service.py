@@ -41,6 +41,7 @@ from proxy.services.model_connection_contracts import ConnectionLocality, Connec
 from proxy.services.openai_compatible_transport_service import (
     InferenceRequest,
     InferenceResponse,
+    ModelTransportError,
 )
 from proxy.services.context_governor_service import (
     ContextCandidate,
@@ -1263,6 +1264,10 @@ async def _execute_chat_evidence_application(
         candidate_acceptance=candidate_acceptance,
         route=canonical_route,
     )
+    if not candidate_acceptance and model_connection_resolver is not None:
+        # The GUI-owned answer binding is authoritative for ordinary chat.
+        # Shadow remains an isolated telemetry/acceptance concern only.
+        canonical_execution_mode = CanonicalRouteMode.ACTIVE
     if candidate_acceptance:
         retrieval_trace["candidate_acceptance"] = {
             "enabled": True,
@@ -1397,6 +1402,15 @@ async def _execute_chat_evidence_application(
         "downgraded": llm_runtime.provider != configured_runtime.provider,
         "is_cloud": is_cloud_provider(llm_runtime.provider),
     }
+    if canonical_execution_mode is CanonicalRouteMode.ACTIVE and resolved_connection is not None:
+        retrieval_trace["routing"].update(
+            {
+                "effective_provider": "model_connection",
+                "effective_model": resolved_connection.model_id,
+                "downgraded": False,
+                "is_cloud": resolved_connection.locality is ConnectionLocality.REMOTE,
+            }
+        )
     if resolved_connection is not None:
         retrieval_trace["model_connection_candidate"] = {
             "revision_id": resolved_connection.revision_id,
@@ -2491,6 +2505,15 @@ async def _execute_chat_evidence_application(
                     sources_list = [*sources_list, "Опись файлов датасета (MetaDB documents)"]
                 source_dataset_ids = _dataset_ids_from_chunks(chunks)
                 source_dataset_names = _names_for_dataset_ids(source_dataset_ids, dataset_name_by_id)
+                source_scope = {
+                    "requested": [
+                        str(item) for item in (getattr(req, "dataset_ids", None) or _dataset_ids)
+                    ],
+                    "resolved": [str(item) for item in (_dataset_ids or [])],
+                    "used": source_dataset_ids,
+                    "used_names": source_dataset_names,
+                }
+                retrieval_trace["source_scope"] = source_scope
                 history_id = None
 
                 try:
@@ -2568,6 +2591,7 @@ async def _execute_chat_evidence_application(
                     "class_suggestions": class_suggestions,
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,
+                    "source_scope": source_scope,
                 }
                 if active_model_result is not None:
                     response["model_connection"] = active_model_result.public_connection_payload()
@@ -2661,7 +2685,10 @@ async def _execute_chat_evidence_application(
             raise
         except httpx.TimeoutException as e:
             logger.error("[CHAT] LLM TIMEOUT: %s", e)
-            raise HTTPException(504, "LLM timeout (>120s) — модель перегружена или не отвечает. Попробуй позже.")
+            raise HTTPException(504, "Истёк таймаут назначенной модели — проверь подключение или повтори запрос.")
+        except ModelTransportError as e:
+            logger.error("[CHAT] ASSIGNED MODEL ERROR: %s", e)
+            raise HTTPException(502, f"Назначенная модель не ответила: {e}")
         except httpx.HTTPStatusError as e:
             detail = f"LLM HTTP {e.response.status_code}: {e.response.text[:200]}"
             logger.error("[CHAT] LLM HTTP ERROR: %s", detail)
