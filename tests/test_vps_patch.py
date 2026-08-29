@@ -436,6 +436,8 @@ def test_patch_feed_requires_matching_base_hashes(tmp_path, monkeypatch):
 
 
 def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypatch):
+    version = update_service.LES_VERSION
+    build_number = update_service.BUILD_NUMBER
     runtime = tmp_path / "runtime"
     target = runtime / "proxy" / "x.py"
     target.parent.mkdir(parents=True)
@@ -446,8 +448,8 @@ def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypat
         "patch_id": "github-p1",
         "base_commit": "b" * 40,
         "target_commit": "c" * 40,
-        "product_version": "0.28.2",
-        "build_number": 589,
+        "product_version": version,
+        "build_number": build_number,
         "files": [
             {
                 "path": "proxy/x.py",
@@ -461,13 +463,13 @@ def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypat
         "schema": update_service.GITHUB_UPDATE_FEED_SCHEMA,
         "repository": "proovcme/les_rag_public",
         "release_class": "patch",
-        "product_version": "0.28.2",
-        "build_number": 589,
-        "tag": "v0.28.2",
+        "product_version": version,
+        "build_number": build_number,
+        "tag": f"v{version}",
         "target_commit": "c" * 40,
         "compatible_bases": ["b" * 40],
         "asset": {
-            "url": "https://github.com/proovcme/les_rag_public/releases/download/v0.28.2/les-patch.zip",
+            "url": f"https://github.com/proovcme/les_rag_public/releases/download/v{version}/les-patch.zip",
             "bytes": 123,
             "sha256": "a" * 64,
         },
@@ -477,7 +479,7 @@ def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypat
     result = update_service.validate_github_update_feed(payload)
 
     assert result["patch_id"] == "github-p1"
-    assert result["archive_url"].endswith("/v0.28.2/les-patch.zip")
+    assert result["archive_url"].endswith(f"/v{version}/les-patch.zip")
     for field, foreign in (
         ("repository", "other/repo"),
         ("tag", "v0.28.3"),
@@ -646,8 +648,8 @@ async def test_patch_check_uses_only_github_release_feed(tmp_path, monkeypatch):
         "patch_id": "p1",
         "base_commit": "b" * 40,
         "target_commit": "c" * 40,
-        "product_version": "0.28.2",
-        "build_number": 589,
+        "product_version": update_service.LES_VERSION,
+        "build_number": update_service.BUILD_NUMBER,
         "files": [{"path": "proxy/x.py", "base_sha256": hashlib.sha256(b"before").hexdigest(), "sha256": hashlib.sha256(b"after").hexdigest(), "bytes": 5}],
     }
     payload = _github_feed(patch)

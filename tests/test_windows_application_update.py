@@ -478,6 +478,45 @@ def test_windows_runtime_stop_reports_foreign_port_owner(monkeypatch, tmp_path):
         windows_runtime.stop(tmp_path / "LES", runtime=tmp_path / "runtime")
 
 
+def test_windows_backend_stop_owns_only_proxy_port(monkeypatch, tmp_path):
+    seen = []
+    monkeypatch.setattr(
+        windows_runtime,
+        "_listening_pids",
+        lambda ports: seen.append(set(ports)) or {},
+    )
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda _port: True)
+
+    result = windows_runtime.stop(
+        tmp_path / "LES",
+        runtime=tmp_path / "runtime",
+        mode="backend",
+    )
+
+    assert result["pids"] == []
+    assert seen and all(ports == {8050} for ports in seen)
+
+
+def test_windows_ui_stop_never_adopts_unrecorded_healthy_ui(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        windows_runtime,
+        "_listening_pids",
+        lambda _ports: {8051: 202},
+    )
+    monkeypatch.setattr(
+        windows_runtime,
+        "_live_runtime_matches",
+        lambda _runtime, **_kwargs: True,
+    )
+
+    with pytest.raises(RuntimeError, match="foreign_port_owner"):
+        windows_runtime.stop(
+            tmp_path / "LES",
+            runtime=tmp_path / "runtime",
+            mode="ui",
+        )
+
+
 def test_windows_runtime_identity_uses_requested_dynamic_ports(monkeypatch, tmp_path):
     runtime = tmp_path / "runtime"
     runtime.mkdir()
@@ -747,6 +786,112 @@ def test_windows_runtime_environment_keeps_ollama_embedding_contract(tmp_path):
     assert environment["RERANKER_BACKEND"] == "sentence_transformers"
     assert environment["RAG_CHAT_RERANK_CANDIDATE_K"] == "16"
     assert environment["RERANK_MAX_TEXT_CHARS"] == "1200"
+
+
+def test_windows_runtime_profiles_have_independent_ports_and_remote_ui_backend(tmp_path):
+    assert windows_runtime.runtime_ports("full") == frozenset({8050, 8051})
+    assert windows_runtime.runtime_ports("backend") == frozenset({8050})
+    assert windows_runtime.runtime_ports("ui") == frozenset({8051})
+
+    environment = windows_runtime.runtime_environment(
+        tmp_path / "runtime",
+        tmp_path / "state",
+        mode="ui",
+        backend_url="http://10.195.146.50:8050",
+    )
+
+    assert environment["LES_RUNTIME_MODE"] == "ui"
+    assert environment["PROXY_URL"] == "http://10.195.146.50:8050"
+
+
+def test_windows_ui_only_requires_explicit_backend_url(tmp_path):
+    with pytest.raises(RuntimeError, match="UI_BACKEND_URL_REQUIRED"):
+        windows_runtime.runtime_environment(
+            tmp_path / "runtime",
+            tmp_path / "state",
+            mode="ui",
+        )
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected_entrypoints"),
+    (
+        ("full", ["uvicorn", "sovushka_ng.py"]),
+        ("backend", ["uvicorn"]),
+        ("ui", ["sovushka_ng.py"]),
+    ),
+)
+def test_windows_start_spawns_only_requested_runtime_components(
+    tmp_path, monkeypatch, mode, expected_entrypoints
+):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "state"
+    runtime.mkdir()
+    state.mkdir()
+    spawned = []
+
+    class Process:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def poll(self):
+            return None
+
+    monkeypatch.setattr(windows_runtime, "stop", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda _port: True)
+    monkeypatch.setattr(windows_runtime, "_python", lambda _state: tmp_path / "pythonw.exe")
+    monkeypatch.setattr(windows_runtime, "_wait_process_url", lambda *_args, **_kwargs: None)
+
+    def spawn(_python, arguments, **_kwargs):
+        _kwargs["stdout_path"].parent.mkdir(parents=True, exist_ok=True)
+        spawned.append(arguments)
+        return Process(100 + len(spawned))
+
+    monkeypatch.setattr(windows_runtime, "_spawn", spawn)
+
+    result = windows_runtime.start(
+        runtime,
+        state,
+        mode=mode,
+        backend_url="http://10.195.146.50:8050" if mode == "ui" else None,
+    )
+
+    entrypoints = [
+        "uvicorn" if "uvicorn" in arguments else arguments[0]
+        for arguments in spawned
+    ]
+    assert entrypoints == expected_entrypoints
+    assert result["mode"] == mode
+    assert (result["proxy_pid"] is not None) is (mode != "ui")
+    assert (result["ui_pid"] is not None) is (mode != "backend")
+
+
+def test_windows_runtime_cli_passes_ui_mode_and_remote_backend(tmp_path, monkeypatch, capsys):
+    captured = {}
+
+    def start(runtime, state, **options):
+        captured.update(runtime=runtime, state=state, **options)
+        return {"status": "started", "mode": options["mode"]}
+
+    monkeypatch.setattr(windows_runtime, "start", start)
+
+    assert windows_runtime.main(
+        [
+            "start",
+            "--runtime",
+            str(tmp_path / "runtime"),
+            "--state",
+            str(tmp_path / "state"),
+            "--mode",
+            "ui",
+            "--backend-url",
+            "http://10.195.146.50:8050",
+        ]
+    ) == 0
+
+    assert captured["mode"] == "ui"
+    assert captured["backend_url"] == "http://10.195.146.50:8050"
+    assert json.loads(capsys.readouterr().out)["mode"] == "ui"
 
 
 def test_windows_runtime_rejects_oversized_env_before_reading_it(tmp_path):

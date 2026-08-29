@@ -2,7 +2,9 @@ param(
   [int]$ProxyPort = 8050,
   [int]$UiPort = 8051,
   [int]$LemonadeHostPort = 18080,
-  [string]$RuntimeRoot = ""
+  [string]$RuntimeRoot = "",
+  [ValidateSet("", "full", "backend", "ui")]
+  [string]$Mode = ""
 )
 
 # Stop only a confirmed LES windows-light stack. Foreign owners of 8050/8051 are
@@ -25,8 +27,10 @@ if ($StatePath -and (Test-Path -LiteralPath $StatePath)) {
     $runtimeState = Get-Content -LiteralPath $StatePath -Raw | ConvertFrom-Json
     if (-not $ProxyPortExplicit -and $runtimeState.proxy_port) { $ProxyPort = [int]$runtimeState.proxy_port }
     if (-not $UiPortExplicit -and $runtimeState.ui_port) { $UiPort = [int]$runtimeState.ui_port }
+    if (-not $Mode -and $runtimeState.mode) { $Mode = [string]$runtimeState.mode }
   } catch { }
 }
+if (-not $Mode) { $Mode = "full" }
 
 if (-not $RuntimeRoot) {
   $RuntimeRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot "..\.."))
@@ -49,7 +53,7 @@ if ($python -and (Test-Path -LiteralPath $helper) -and $StateRoot) {
   $previousErrorActionPreference = $ErrorActionPreference
   try {
     $ErrorActionPreference = "Continue"
-    $stopOut = @(& $python $helper stop --runtime $RuntimeRoot --state $StateRoot --proxy-port $ProxyPort --ui-port $UiPort 2>&1)
+    $stopOut = @(& $python $helper stop --runtime $RuntimeRoot --state $StateRoot --proxy-port $ProxyPort --ui-port $UiPort --mode $Mode 2>&1)
     $stopExitCode = $LASTEXITCODE
   } finally {
     $ErrorActionPreference = $previousErrorActionPreference
@@ -60,16 +64,17 @@ if ($python -and (Test-Path -LiteralPath $helper) -and $StateRoot) {
     throw "LES runtime stop failed: $detail"
   }
 } else {
-  Stop-LesConfirmedPortProcess -Port $ProxyPort -RuntimeRoot $RuntimeRoot
-  Stop-LesConfirmedPortProcess -Port $UiPort -RuntimeRoot $RuntimeRoot
+  if ($Mode -ne "ui") { Stop-LesConfirmedPortProcess -Port $ProxyPort -RuntimeRoot $RuntimeRoot }
+  if ($Mode -ne "backend") { Stop-LesConfirmedPortProcess -Port $UiPort -RuntimeRoot $RuntimeRoot }
 }
 
 # Lemonade adapter is optional. Stop it only when it is clearly LES-owned; a
 # foreign listener on 18080 must not block LES proxy/UI shutdown or startup.
 try {
+  if ($Mode -eq "ui") { throw "skip-ui-only-lemonade" }
   Stop-LesConfirmedPortProcess -Port $LemonadeHostPort -RuntimeRoot $RuntimeRoot -AllowPatterns @('lemonade_host\.py')
 } catch {
-  if ("$_" -notmatch 'foreign_port_owner') { throw }
+  if (("$_" -notmatch 'foreign_port_owner') -and ("$_" -ne "skip-ui-only-lemonade")) { throw }
 }
 
-Write-Host "LES windows-light stopped (proxy:$ProxyPort ui:$UiPort lemonade-adapter:$LemonadeHostPort)."
+Write-Host "LES windows-light stopped (mode:$Mode proxy:$ProxyPort ui:$UiPort lemonade-adapter:$LemonadeHostPort)."

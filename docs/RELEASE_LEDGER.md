@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              625
-версия Tauri/NSIS:         5.1.625
+номер сборки:              626
+версия Tauri/NSIS:         5.1.626
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
@@ -178,6 +178,22 @@ dev implementation:       private model nodes, exact promotion and split runtime
 > upstream connectivity, не branch deployment, workbook acceptance или
 > promotion evidence. **PENDING:** exact clean-branch live 9B workbook run,
 > installed Windows acceptance и публикация.
+
+> **Build 626 split runtime and exact model gate:** Windows lifecycle теперь
+> исполняет те же явные `full | backend | ui`, что и общий runtime controller.
+> UI-only требует explicit HTTP(S) backend URL, не запускает proxy/Qdrant/model
+> adapter и может остановить только собственный state-bound PID; backend не
+> владеет UI-портом, а Tauri сохраняет default `full`. Новый opt-in
+> `make test-model-connections-live` разрешает exact 9B/опциональный 35B
+> revision через registry и реальный OpenAI-compatible transport, проверяет
+> chat/SSE/client-tool/upstream model identity/preset context и сохраняет лишь
+> redacted hash receipt. Он не выполняет promotion и не заменяет workbook
+> N→N+1 acceptance. Focused closing suite: `207 passed / 1 warning`;
+> `make test`: `920 passed / 5 warnings`; `make verify`: `920 collected`;
+> updater: `127 passed`; Tauri `cargo check`, architecture/version/diff gates
+> green. **PENDING:** clean aligned
+> exact-revision run, real workbook N→N+1, installed Windows acceptance и
+> публикация.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

@@ -267,7 +267,24 @@ class ModelConnectionResolver:
             raise ModelConnectionResolutionError(
                 f"ROLE_BINDING_MISSING: {canonical_role.value}"
             )
-        revision = self.registry.get_revision(binding.connection_revision_id)
+        required = set(required_capabilities)
+        if canonical_role in {ConnectionRole.ANSWER, ConnectionRole.LOCAL_FALLBACK}:
+            required.add(CapabilityName.CHAT_COMPLETIONS)
+        elif canonical_role is ConnectionRole.EMBEDDINGS:
+            required.add(CapabilityName.EMBEDDINGS)
+        return self.resolve_revision(
+            binding.connection_revision_id,
+            required_capabilities=frozenset(required),
+        )
+
+    def resolve_revision(
+        self,
+        revision_id: str,
+        *,
+        required_capabilities: frozenset[CapabilityName] = frozenset(),
+    ) -> ResolvedModelConnection:
+        """Resolve one immutable revision without changing or requiring a role binding."""
+        revision = self.registry.get_revision(str(revision_id))
         if not self.registry.get_connection(revision.connection_id).enabled:
             raise ModelConnectionResolutionError("CONNECTION_DISABLED")
         try:
@@ -278,13 +295,8 @@ class ModelConnectionResolver:
         snapshot = self.registry.latest_capability_snapshot(revision.revision_id)
         if snapshot is None:
             raise ModelConnectionResolutionError("CAPABILITY_SNAPSHOT_MISSING")
-        required = set(required_capabilities)
-        if canonical_role in {ConnectionRole.ANSWER, ConnectionRole.LOCAL_FALLBACK}:
-            required.add(CapabilityName.CHAT_COMPLETIONS)
-        elif canonical_role is ConnectionRole.EMBEDDINGS:
-            required.add(CapabilityName.EMBEDDINGS)
         try:
-            require_capabilities(snapshot, required, now=self.clock())
+            require_capabilities(snapshot, set(required_capabilities), now=self.clock())
             endpoint = validate_endpoint(
                 revision.base_url,
                 revision.locality,

@@ -207,8 +207,10 @@ Commit: `feat(workflows): checkpoint workbook execution durably`.
 - Modify: `docs/RELEASE_LEDGER.md`
 
 **Interfaces:**
-- Consumes: canonical registry, profile snapshots and provider name.
-- Produces: two `ToolContract`s and schema-only Ollama/OpenAI-compatible/OpenAI/MCP projections.
+- Consumes: canonical registry, profile snapshots and the already resolved
+  `ResolvedModelConnection` executed only by `OpenAICompatibleTransport`.
+- Produces: two `ToolContract`s and schema-only protocol projections. New
+  FreeToken/Ollama/Lemonade/MLX branches in workbook code are forbidden.
 
 - [ ] **Step 1: Write failing canonical-name and profile immutability tests**
 

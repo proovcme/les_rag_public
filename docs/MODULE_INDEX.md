@@ -87,6 +87,18 @@
 > Make/portable gates включают registry/security/resolver/transport/chat/API/UI,
 > candidate acceptance, live workbook contract, extensions и promotion.
 
+> **0.29.0 closing runtime gates (build 626):** model-only opt-in acceptance
+> проверяет exact 9B/35B revisions через живой HTTP transport и сохраняет
+> redacted receipt без prompt/answer. Windows lifecycle поддерживает независимые
+> `full | backend | ui`: отдельная Совушка требует explicit backend URL и не
+> поднимает backend/model dependencies; backend не занимает UI-порт; Tauri
+> по-прежнему стартует `full`. Installed Windows и real workbook acceptance
+> остаются отдельными обязательными release gates. Точки входа:
+> `tools/{model_connection_live_acceptance,windows_runtime}.py`,
+> `installers/windows/{start-light,stop-light}.ps1`; тесты
+> `test_model_connection_live_acceptance.py`, `test_windows_application_update.py`,
+> `test_installer_windows.py`. Статус док↔код: ✅.
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная

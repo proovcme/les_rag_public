@@ -4,12 +4,16 @@
 > verify` collection и portable platform gate теперь постоянно включают все
 > model-connection tests: immutable registry, endpoint/DNS/peer security,
 > secrets, capability snapshots, resolver, transport, chat/embedding binding,
-> API/UI, candidate workbook acceptance, read-only extensions и append-only
-> promotion. `tests/test_canonical_promotion_service.py` доказывает, что только
+> API/UI, candidate workbook acceptance, read-only extensions, append-only
+> promotion и hermetic contract нового opt-in model-only runner.
+> `tests/test_canonical_promotion_service.py` доказывает, что только
 > exact live 9B report + текущие commit/build/preset/model дают effective
 > `active`; drift остаётся `shadow`. `test_model_engine_extension_service.py`
 > дополнительно проверяет endpoint revalidation до status HTTP request. Fresh
-> build 625 current gate: **912 passed**, `make verify`: **912 collected**.
+> Build 626 дополнительно проверяет exact revision resolution, upstream
+> response model identity, redacted chat/SSE/tools/context receipt и Windows
+> `full | backend | ui` ownership/CLI/PowerShell contracts. Fresh build 626
+> current gate: **920 passed / 5 warnings**, `make verify`: **920 collected**.
 
 > **0.29.0 model-connections API (build 611):**
 > `tests/test_model_connections_router.py` проверяет user/admin boundary,
@@ -170,7 +174,7 @@ Windows-приёмка после ручной установки — `tools/win
   IMAP/registry/cursors/dedup, mail projection/API/UI и Windows-sidecar source contract;
 - `make test-mail-release` — `test-mail` плюс Rust compile-check Tauri. Он обязателен в
   `make patch-release`, но не подменяет установленный Outlook COM/task/index/open smoke на Legion;
-- `make test-updater` — короткий hermetic behavior-профиль Mac/Windows (текущий gate: 77 тестов):
+- `make test-updater` — короткий hermetic behavior-профиль Mac/Windows (текущий gate: 127 тестов):
   hard whole-tree replace/rollback/state boundary, soft manifest/base/target/archive
   SHA, атомарная замена runtime и `les-desktop.exe`, shell attestation, release
   identity/API/UI contract и Mac updater. Никаких build/baseline/общей suite;

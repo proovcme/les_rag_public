@@ -51,6 +51,7 @@ class InferenceResponse:
     tool_calls: tuple[Mapping[str, Any], ...]
     finish_reason: str
     usage: Mapping[str, int]
+    model_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class InferenceEvent:
     text: str = ""
     tool_calls: tuple[Mapping[str, Any], ...] = ()
     finish_reason: str = ""
+    model_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,7 @@ class OpenAICompatibleTransport:
                 tool_calls=tool_calls,
                 finish_reason=str(choice.get("finish_reason") or ""),
                 usage=_usage(payload.get("usage")),
+                model_id=str(payload.get("model") or ""),
             )
         finally:
             await response.aclose()
@@ -249,6 +252,7 @@ class OpenAICompatibleTransport:
         )
         consumed = 0
         finished = False
+        observed_model_id = ""
         try:
             if not 200 <= response.status_code < 300:
                 await self._read_bounded(response)
@@ -262,7 +266,7 @@ class OpenAICompatibleTransport:
                 raw = line.removeprefix("data:").strip()
                 if raw == "[DONE]":
                     if not finished:
-                        yield InferenceEvent(kind="finish")
+                        yield InferenceEvent(kind="finish", model_id=observed_model_id)
                     break
                 try:
                     payload = json.loads(raw)
@@ -270,9 +274,14 @@ class OpenAICompatibleTransport:
                     delta = choice.get("delta") or {}
                 except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
                     raise ModelTransportError("UPSTREAM_STREAM_EVENT_INVALID") from exc
+                observed_model_id = str(payload.get("model") or observed_model_id)
                 text = assistant_delta_text(delta)
                 if text:
-                    yield InferenceEvent(kind="text_delta", text=text)
+                    yield InferenceEvent(
+                        kind="text_delta",
+                        text=text,
+                        model_id=observed_model_id,
+                    )
                 tool_calls_raw = delta.get("tool_calls") or ()
                 if tool_calls_raw:
                     if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, str):
@@ -284,11 +293,16 @@ class OpenAICompatibleTransport:
                             for item in tool_calls_raw
                             if isinstance(item, Mapping)
                         ),
+                        model_id=observed_model_id,
                     )
                 finish_reason = str(choice.get("finish_reason") or "")
                 if finish_reason:
                     finished = True
-                    yield InferenceEvent(kind="finish", finish_reason=finish_reason)
+                    yield InferenceEvent(
+                        kind="finish",
+                        finish_reason=finish_reason,
+                        model_id=observed_model_id,
+                    )
         finally:
             await response.aclose()
 

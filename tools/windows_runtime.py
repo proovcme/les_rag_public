@@ -13,6 +13,7 @@ import subprocess
 import time
 import tracemalloc
 import urllib.request
+from urllib.parse import urlsplit
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ from typing import Any
 CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 PROCESS_CONTRACT = "direct_python_no_console_v2"
+RUNTIME_MODES = ("full", "backend", "ui")
 MAX_ENV_BYTES = 1024 * 1024
 _DIAGNOSTICS_PATH = os.getenv("LES_RUNTIME_DIAGNOSTICS_PATH", "").strip()
 if _DIAGNOSTICS_PATH:
@@ -80,6 +82,40 @@ def _flags() -> int:
     return (CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
 
 
+def runtime_ports(
+    mode: str,
+    *,
+    proxy_port: int = 8050,
+    ui_port: int = 8051,
+) -> frozenset[int]:
+    normalized = str(mode or "").strip().lower()
+    if normalized not in RUNTIME_MODES:
+        raise RuntimeError("RUNTIME_MODE_INVALID")
+    if normalized == "backend":
+        return frozenset({proxy_port})
+    if normalized == "ui":
+        return frozenset({ui_port})
+    return frozenset({proxy_port, ui_port})
+
+
+def _backend_url(value: str | None) -> str:
+    rendered = str(value or "").strip().rstrip("/")
+    try:
+        parsed = urlsplit(rendered)
+    except ValueError as error:
+        raise RuntimeError("UI_BACKEND_URL_INVALID") from error
+    if (
+        parsed.scheme.lower() not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise RuntimeError("UI_BACKEND_URL_INVALID")
+    return rendered
+
+
 def _dotenv(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     if not path.is_file():
@@ -107,7 +143,18 @@ def runtime_environment(
     *,
     proxy_port: int = 8050,
     ui_port: int = 8051,
+    mode: str = "full",
+    backend_url: str | None = None,
 ) -> dict[str, str]:
+    normalized_mode = str(mode or "").strip().lower()
+    runtime_ports(normalized_mode, proxy_port=proxy_port, ui_port=ui_port)
+    if normalized_mode == "ui" and not str(backend_url or "").strip():
+        raise RuntimeError("UI_BACKEND_URL_REQUIRED")
+    effective_proxy_url = (
+        _backend_url(backend_url)
+        if normalized_mode == "ui"
+        else f"http://127.0.0.1:{proxy_port}"
+    )
     environment = dict(os.environ)
     environment.update(_dotenv(state / ".env"))
     provider = environment.get("LES_LLM_PROVIDER", "").strip() or "ollama"
@@ -131,10 +178,11 @@ def runtime_environment(
             # never from persisted cross-platform path hints.
             "LES_REPO_ROOT": str(runtime),
             "LES_RUNTIME_HOME": str(runtime),
+            "LES_RUNTIME_MODE": normalized_mode,
             "LES_LLM_PROVIDER": provider,
             "LLM_MODEL": model,
             "QDRANT_URL": "http://127.0.0.1:6333",
-            "PROXY_URL": f"http://127.0.0.1:{proxy_port}",
+            "PROXY_URL": effective_proxy_url,
             "SOVUSHKA_UI_PORT": str(ui_port),
             "CHAT_VALIDATION_ENABLED": "false",
             "RAG_OCR_ENABLED": "false",
@@ -283,23 +331,34 @@ def _live_runtime_matches(
     *,
     proxy_port: int = 8050,
     ui_port: int = 8051,
+    mode: str = "full",
 ) -> bool:
+    normalized_mode = str(mode or "").strip().lower()
+    runtime_ports(normalized_mode, proxy_port=proxy_port, ui_port=ui_port)
+    if normalized_mode == "ui":
+        # A standalone UI has no backend identity endpoint of its own. Its
+        # listener may only be stopped through the exact PID in our state file.
+        return False
     try:
         with urllib.request.urlopen(  # noqa: S310
             f"http://127.0.0.1:{proxy_port}/api/version", timeout=5
         ) as response:
             version = json.load(response)
-        with urllib.request.urlopen(  # noqa: S310
-            f"http://127.0.0.1:{ui_port}/healthz", timeout=5
-        ) as response:
-            ui = json.load(response)
         reported = Path(str(version.get("runtime_path") or "")).resolve()
+        ui: dict[str, Any] = {}
+        if normalized_mode == "full":
+            with urllib.request.urlopen(  # noqa: S310
+                f"http://127.0.0.1:{ui_port}/healthz", timeout=5
+            ) as response:
+                ui = json.load(response)
     except (OSError, ValueError, TypeError):
         return False
     return (
         str(reported).casefold() == str(Path(runtime).resolve()).casefold()
-        and ui.get("status") == "ok"
-        and ui.get("service") == "sovushka"
+        and (
+            normalized_mode == "backend"
+            or (ui.get("status") == "ok" and ui.get("service") == "sovushka")
+        )
     )
 
 
@@ -309,10 +368,11 @@ def _stop_confirmed_live_runtime(
     *,
     proxy_port: int = 8050,
     ui_port: int = 8051,
+    mode: str = "full",
 ) -> list[int]:
     listeners = _listening_pids(ports)
     if not listeners or not _live_runtime_matches(
-        runtime, proxy_port=proxy_port, ui_port=ui_port
+        runtime, proxy_port=proxy_port, ui_port=ui_port, mode=mode
     ):
         return []
     if set(listeners) != ports:
@@ -339,15 +399,38 @@ def stop(
     runtime: Path | None = None,
     proxy_port: int = 8050,
     ui_port: int = 8051,
+    mode: str = "full",
 ) -> dict[str, Any]:
+    normalized_mode = str(mode or "").strip().lower()
     state_path = state / "logs" / "windows-light-state.json"
-    ports = {proxy_port, ui_port}
+    ports = set(
+        runtime_ports(
+            normalized_mode,
+            proxy_port=proxy_port,
+            ui_port=ui_port,
+        )
+    )
+    payload: dict[str, Any] = {}
+    if state_path.is_file():
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError):
+            payload = {}
     listeners = _listening_pids(ports)
+    if normalized_mode == "ui" and listeners:
+        recorded_ui_pid = int(payload.get("ui_pid") or 0)
+        if recorded_ui_pid <= 0 or set(listeners.values()) != {recorded_ui_pid}:
+            detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
+            raise RuntimeError(f"foreign_port_owner: {detail}")
     if (
-        runtime is not None
+        normalized_mode != "ui"
+        and runtime is not None
         and listeners
         and not _live_runtime_matches(
-            runtime, proxy_port=proxy_port, ui_port=ui_port
+            runtime,
+            proxy_port=proxy_port,
+            ui_port=ui_port,
+            mode=normalized_mode,
         )
     ):
         detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
@@ -358,17 +441,19 @@ def stop(
             ports,
             proxy_port=proxy_port,
             ui_port=ui_port,
+            mode=normalized_mode,
         )
-        if runtime is not None
+        if runtime is not None and normalized_mode != "ui"
         else []
     )
     listeners = _listening_pids(ports)
-    if state_path.is_file():
-        try:
-            payload = json.loads(state_path.read_text(encoding="utf-8-sig"))
-        except (OSError, ValueError):
-            payload = {}
-        for key in ("proxy_pid", "ui_pid", "lemonade_host_pid"):
+    if payload:
+        state_keys = {
+            "full": ("proxy_pid", "ui_pid", "lemonade_host_pid"),
+            "backend": ("proxy_pid", "lemonade_host_pid"),
+            "ui": ("ui_pid",),
+        }[normalized_mode]
+        for key in state_keys:
             pid = int(payload.get(key) or 0)
             # Never kill a recycled PID from a stale state file: only terminate
             # PIDs that currently own a LES runtime port and are Python images.
@@ -467,11 +552,25 @@ def start(
     *,
     proxy_port: int = 8050,
     ui_port: int = 8051,
+    mode: str = "full",
+    backend_url: str | None = None,
 ) -> dict[str, Any]:
+    normalized_mode = str(mode or "").strip().lower()
+    ports = runtime_ports(
+        normalized_mode,
+        proxy_port=proxy_port,
+        ui_port=ui_port,
+    )
     _diagnostic("start_enter")
-    stop(state, runtime=runtime, proxy_port=proxy_port, ui_port=ui_port)
+    stop(
+        state,
+        runtime=runtime,
+        proxy_port=proxy_port,
+        ui_port=ui_port,
+        mode=normalized_mode,
+    )
     _diagnostic("after_stop")
-    if not _port_free(proxy_port) or not _port_free(ui_port):
+    if not all(_port_free(port) for port in ports):
         raise RuntimeError("LES runtime ports are occupied by an unowned process")
     python = _python(state)
     environment = runtime_environment(
@@ -479,61 +578,71 @@ def start(
         state,
         proxy_port=proxy_port,
         ui_port=ui_port,
+        mode=normalized_mode,
+        backend_url=backend_url,
     )
     _diagnostic("after_environment", environment_keys=len(environment))
     logs = state / "logs"
     processes: list[subprocess.Popen[bytes]] = []
     proxy_stderr = logs / "windows-light-proxy.err.log"
     ui_stderr = logs / "windows-light-ui.err.log"
+    proxy: subprocess.Popen[bytes] | None = None
+    ui: subprocess.Popen[bytes] | None = None
     try:
-        proxy = _spawn(
-            python,
-            ["-m", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", str(proxy_port)],
-            runtime=runtime,
-            environment=environment,
-            stdout_path=logs / "windows-light-proxy.out.log",
-            stderr_path=proxy_stderr,
-        )
-        processes.append(proxy)
-        _diagnostic("after_proxy_spawn", proxy_pid=proxy.pid)
-        ui = _spawn(
-            python,
-            ["sovushka_ng.py"],
-            runtime=runtime,
-            environment=environment,
-            stdout_path=logs / "windows-light-ui.out.log",
-            stderr_path=ui_stderr,
-        )
-        processes.append(ui)
-        _diagnostic("after_ui_spawn", ui_pid=ui.pid)
+        if normalized_mode != "ui":
+            proxy = _spawn(
+                python,
+                ["-m", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", str(proxy_port)],
+                runtime=runtime,
+                environment=environment,
+                stdout_path=logs / "windows-light-proxy.out.log",
+                stderr_path=proxy_stderr,
+            )
+            processes.append(proxy)
+            _diagnostic("after_proxy_spawn", proxy_pid=proxy.pid)
+        if normalized_mode != "backend":
+            ui = _spawn(
+                python,
+                ["sovushka_ng.py"],
+                runtime=runtime,
+                environment=environment,
+                stdout_path=logs / "windows-light-ui.out.log",
+                stderr_path=ui_stderr,
+            )
+            processes.append(ui)
+            _diagnostic("after_ui_spawn", ui_pid=ui.pid)
         # /api/health performs Qdrant/Ollama/index probes and is intentionally
         # not a process-readiness endpoint. It can exceed a short socket
         # timeout on a cold Windows start. Exact health is checked by the
         # transaction smoke after the server is reachable.
-        _wait_process_url(
-            proxy,
-            f"http://127.0.0.1:{proxy_port}/api/version",
-            120,
-            label="proxy",
-            stderr_path=proxy_stderr,
-        )
-        _wait_process_url(
-            ui,
-            f"http://127.0.0.1:{ui_port}/healthz",
-            30,
-            label="UI",
-            stderr_path=ui_stderr,
-        )
+        if proxy is not None:
+            _wait_process_url(
+                proxy,
+                f"http://127.0.0.1:{proxy_port}/api/version",
+                120,
+                label="proxy",
+                stderr_path=proxy_stderr,
+            )
+        if ui is not None:
+            _wait_process_url(
+                ui,
+                f"http://127.0.0.1:{ui_port}/healthz",
+                30,
+                label="UI",
+                stderr_path=ui_stderr,
+            )
         payload = {
             "status": "started",
+            "mode": normalized_mode,
             "provider": environment["LES_LLM_PROVIDER"],
-            "proxy_port": proxy_port,
-            "ui_port": ui_port,
-            "proxy_pid": proxy.pid,
-            "ui_pid": ui.pid,
+            "proxy_port": proxy_port if proxy is not None else None,
+            "ui_port": ui_port if ui is not None else None,
+            "proxy_url": environment["PROXY_URL"],
+            "proxy_pid": proxy.pid if proxy is not None else None,
+            "ui_pid": ui.pid if ui is not None else None,
             "lemonade_host_pid": None,
-            "proxy_alive": proxy.poll() is None,
-            "ui_alive": ui.poll() is None,
+            "proxy_alive": proxy.poll() is None if proxy is not None else None,
+            "ui_alive": ui.poll() is None if ui is not None else None,
             "state_root": str(state),
             "process_contract": PROCESS_CONTRACT,
             "python_executable": str(python),
@@ -561,6 +670,9 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument("--state", type=Path, required=True)
         command.add_argument("--proxy-port", type=int, default=8050)
         command.add_argument("--ui-port", type=int, default=8051)
+        command.add_argument("--mode", choices=RUNTIME_MODES, default="full")
+        if name == "start":
+            command.add_argument("--backend-url")
     args = parser.parse_args(argv)
     payload = (
         start(
@@ -568,6 +680,8 @@ def main(argv: list[str] | None = None) -> int:
             args.state,
             proxy_port=args.proxy_port,
             ui_port=args.ui_port,
+            mode=args.mode,
+            backend_url=args.backend_url,
         )
         if args.command == "start"
         else stop(
@@ -575,6 +689,7 @@ def main(argv: list[str] | None = None) -> int:
             runtime=args.runtime,
             proxy_port=args.proxy_port,
             ui_port=args.ui_port,
+            mode=args.mode,
         )
     )
     print(json.dumps(payload, ensure_ascii=False))

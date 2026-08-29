@@ -768,6 +768,10 @@ Run extension, router, transport and existing FreeToken cache tests. Update code
 
 ### Task 11: Closing gates, exact live acceptance command and workbook handoff
 
+**Implementation status (build 626):** command, hermetic tests, permanent
+offline gates and workbook dependency are implemented. Real exact-revision
+model run remains owner-gated evidence and is not claimed by this plan.
+
 **Build:** 617
 
 **Files:**

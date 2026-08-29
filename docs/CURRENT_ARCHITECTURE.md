@@ -103,13 +103,25 @@
   co-located Mac/Legion и split Совушка-на-VPS → LES/model-на-node используют
   один frontend/backend contract; отдельный защищённый remote control plane
   по-прежнему не объявлен реализованным.
+- Тот же `full | backend | ui` контракт реализован в Windows lifecycle:
+  `tools/windows_runtime.py` и `installers/windows/start-light.ps1`. Режим
+  `ui` требует явный HTTP(S) `backend_url`, не запускает proxy/Qdrant/model
+  adapter и владеет только UI-портом; его stop доверяет только точному PID из
+  state-файла. `backend` владеет только proxy-портом, `full` остаётся
+  совместимым Tauri default.
+- `tools/model_connection_live_acceptance.py` — отдельный opt-in HTTP gate для
+  точных immutable revision 9B и опционально 35B. Он разрешает соединение через
+  registry/secret store/resolver, проверяет chat, SSE, client-owned tool call,
+  exact response `model_id` и preset context contract. На диск попадают только
+  commit/build/revision/snapshot/preset/model, timings и SHA-256; prompt и ответ
+  не сохраняются. Защищённый proxy не обязан публиковать `/models`.
 
 ## Проверено на context checkpoint
 
 - Focused Agent Foundation suite: `181 passed`.
-- Канонический current behavior gate build 625: `912 passed` с workspace-local
-  `--basetemp` на Windows.
-- `make architecture-gate` и `make verify`: зелёные; verify собрал 912 тестов.
+- Канонический current behavior gate build 626: `920 passed / 5 warnings` с
+  workspace-local `--basetemp` на Windows; `make verify` собирает тот же набор.
+- `make architecture-gate` и version contract зелёные.
 - Governed-chat и UI checkpoints прошли независимое повторное review без
   Critical/Important.
 - Это offline structural/behavior evidence; живое качество 9B и release
@@ -124,6 +136,9 @@
 - Проверенная вручную доступность отдельного OpenAI-compatible Qwen endpoint
   доказывает только upstream connectivity/chat/SSE. Она не заменяет запуск
   exact LES branch через workbook runner и не создаёт promotion receipt.
+- Model-only receipt также остаётся **PENDING**, пока exact registry revisions
+  не запущены из чистого aligned runtime. Он дополняет, но не заменяет реальный
+  workbook N→N+1 gate, установленную Windows-приёмку и promotion receipt.
 
 `make architecture-gate` является только структурным доказательством. Он не
 доказывает качество ответа модели, корректность профессионального решения или

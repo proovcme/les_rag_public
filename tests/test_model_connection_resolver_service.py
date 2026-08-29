@@ -213,6 +213,19 @@ def test_resolver_uses_exact_answer_and_explicit_fallback_bindings(tmp_path) -> 
     assert resolver.resolve_fallback(primary.revision_id).revision_id == fallback.revision_id
 
 
+def test_live_acceptance_can_resolve_exact_unbound_revision(tmp_path) -> None:
+    registry = ModelConnectionRegistry(tmp_path / "meta.db")
+    revision = _connection(registry, name="Acceptance target")
+
+    resolved = _resolver(registry, tmp_path).resolve_revision(
+        revision.revision_id,
+        required_capabilities=frozenset({CapabilityName.CHAT_COMPLETIONS}),
+    )
+
+    assert resolved.revision_id == revision.revision_id
+    assert resolved.capability_snapshot.snapshot_id == f"cap:{revision.revision_id}"
+
+
 def test_resolver_never_scans_for_unbound_fallback(tmp_path) -> None:
     registry = ModelConnectionRegistry(tmp_path / "meta.db")
     primary = _connection(registry, name="Primary")

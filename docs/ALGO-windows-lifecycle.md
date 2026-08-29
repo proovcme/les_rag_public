@@ -89,6 +89,19 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 4. Чужой владелец порта никогда не завершается: вернуть `foreign_port_owner` с PID/port.
 5. Дождаться полной acceptance; таймаут возвращает точный failed stage.
 
+Допустимы три явных runtime mode одного и того же lifecycle:
+
+| Mode | Запускается | Владеет | Обязательное значение |
+|---|---|---|---|
+| `full` | proxy + Совушка | 8050 + 8051 | нет; default Tauri |
+| `backend` | только proxy | 8050 | нет |
+| `ui` | только Совушка | 8051 | HTTP(S) `BackendUrl` |
+
+`ui` не запускает Qdrant, model adapter или proxy. Его нельзя принять по одному
+`/healthz`: stop завершает только exact UI PID из `windows-light-state.json`.
+`backend` проверяет identity через `/api/version` и не касается UI-порта.
+Чужой listener во всех режимах остаётся `foreign_port_owner`.
+
 ## 5. Soft update
 
 Полный Windows installer обязан содержать `.les_deploy_stamp.json` с exact 40-character commit.

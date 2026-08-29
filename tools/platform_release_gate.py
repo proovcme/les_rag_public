@@ -32,6 +32,7 @@ MODEL_CONNECTION_BEHAVIOR_TESTS = (
     "tests/test_model_capability_service.py",
     "tests/test_model_connection_chat_integration.py",
     "tests/test_model_connection_embeddings_integration.py",
+    "tests/test_model_connection_live_acceptance.py",
     "tests/test_model_connection_registry_service.py",
     "tests/test_model_connection_resolver_service.py",
     "tests/test_model_connection_security_service.py",

@@ -174,3 +174,23 @@ def test_github_patch_release_target_never_calls_full_installer_builder() -> Non
     assert "tools/github_patch_release.py" in command
     assert "tools/patch_release.py" not in command
     assert "LES-Setup.exe" not in command
+
+
+def test_model_connection_live_acceptance_is_explicit_opt_in() -> None:
+    live = _dry_make_with_variable(
+        "test-model-connections-live",
+        "MODEL_CONNECTION_LIVE_ARGS",
+        "--revision-9b conn:qwen:r2 --out receipt.json",
+    )
+    ordinary = _dry_make("test")
+
+    assert "tools/model_connection_live_acceptance.py" in live
+    assert "--revision-9b conn:qwen:r2 --out receipt.json" in live
+    assert "tools/model_connection_live_acceptance.py" not in ordinary
+
+
+def test_tauri_compile_profile_uses_portable_cargo_lookup() -> None:
+    command = _dry_make("test-tauri")
+
+    assert "cargo check" in command
+    assert "/.cargo/bin/cargo" not in command

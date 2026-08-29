@@ -106,6 +106,7 @@ async def test_transport_behavior_does_not_depend_on_display_name(tmp_path, disp
         return httpx.Response(
             200,
             json={
+                "model": "observed-model-1",
                 "choices": [{"message": {"content": "Готово"}, "finish_reason": "stop"}],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 1},
             },
@@ -124,6 +125,7 @@ async def test_transport_behavior_does_not_depend_on_display_name(tmp_path, disp
         await client.aclose()
 
     assert result.text == "Готово"
+    assert result.model_id == "observed-model-1"
     assert requests[0].url.path.endswith("/v1/chat/completions")
 
 
@@ -183,8 +185,8 @@ async def test_complete_preserves_tool_calls_auth_and_output_field(tmp_path):
 @pytest.mark.asyncio
 async def test_stream_normalizes_text_deltas_and_finish(tmp_path):
     payload = (
-        'data: {"choices":[{"delta":{"reasoning":"one"}}]}\n\n'
-        'data: {"choices":[{"delta":{"content":" two"},"finish_reason":"stop"}]}\n\n'
+        'data: {"model":"observed-stream-model","choices":[{"delta":{"reasoning":"one"}}]}\n\n'
+        'data: {"model":"observed-stream-model","choices":[{"delta":{"content":" two"},"finish_reason":"stop"}]}\n\n'
         "data: [DONE]\n\n"
     )
 
@@ -209,6 +211,7 @@ async def test_stream_normalizes_text_deltas_and_finish(tmp_path):
     assert [event.text for event in events if event.kind == "text_delta"] == ["one", " two"]
     assert events[-1].kind == "finish"
     assert events[-1].finish_reason == "stop"
+    assert {event.model_id for event in events} == {"observed-stream-model"}
 
 
 @pytest.mark.asyncio

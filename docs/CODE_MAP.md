@@ -71,11 +71,23 @@
 > /api/model-connections/promotion/accept`, `GET
 > /api/model-connections/{connection_id}/extension/status`.
 
-> **Runtime profiles 0.29.0:** `tools/les_runtime_control.py` имеет явные
+> **Runtime profiles 0.29.0:** `tools/les_runtime_control.py`,
+> `tools/windows_runtime.py` и Windows `start-light.ps1` имеют явные
 > `full | backend | ui`. По умолчанию это соответственно `proxy+ui`, `proxy`
 > и `ui`; локальные Qdrant/MLX/indexer добавляются только явным
-> `--with-local-dependencies`. Так один frontend работает co-located или через
-> явно настроенный backend URL в split/VPS topology.
+> `--with-local-dependencies`. Windows `ui` требует явный `backend_url`, не
+> занимает proxy-порт и останавливается только по записанному UI PID; Tauri
+> сохраняет совместимый default `full`. Так один frontend работает co-located
+> или через явно настроенный backend URL в split/VPS topology.
+
+> **Exact model live gate 0.29.0 / build 626:**
+> `tools/model_connection_live_acceptance.py` принимает точные revision IDs,
+> разрешает их через registry/resolver и реальный OpenAI-compatible transport,
+> проверяет chat/SSE/tool-call/model identity/preset context и пишет только
+> redacted hash receipt. `resolve_revision` не меняет role binding;
+> `InferenceResponse`/`InferenceEvent` несут наблюдаемый upstream `model_id`.
+> Make entrypoint `test-model-connections-live` намеренно не входит в offline
+> `test/verify` и не выполняет promotion.
 
 > **Unified Data workspace 0.29.0 / build 616:**
 > `sovushka/pages/data_workspace.py` — единый dispatch каталога и focused

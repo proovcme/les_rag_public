@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance help
+.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance test-model-connections-live help
 
 PATCH_RELEASE_ARGS ?=
 GITHUB_PATCH_RELEASE_ARGS ?=
@@ -11,6 +11,7 @@ WINDOWS_UPDATE_ARGS ?=
 WINDOWS_SHELL_ARGS ?=
 DEPLOY_FORCE_FILES ?=
 LIVE_WORKBOOK_ACCEPTANCE_ARGS ?=
+MODEL_CONNECTION_LIVE_ARGS ?=
 PYTEST_BASETEMP ?= .test-tmp
 
 PKGS := backend proxy sovushka tools sovushka_ng.py proxy_server.py mlx_host.py
@@ -21,7 +22,7 @@ RELEASE_CRITICAL_TESTS ?= tests/test_fgis_full_update.py tests/test_smeta_releas
 UNIT_TESTS ?= tests/test_answer_contract_service.py tests/test_architecture_contract_gate.py tests/test_candidate_selection_service.py tests/test_chat_evidence_application_service.py tests/test_context_governor_service.py tests/test_evidence_contract.py tests/test_model_execution_preset_service.py tests/test_model_preset_workflow_parity.py tests/test_numeric_provenance.py tests/test_publication_check.py tests/test_query_router.py tests/test_smeta_resource_normalizer.py tests/test_typed_memory_projection_service.py
 MEMORY_TESTS ?= tests/test_memory_core.py tests/test_memory_api.py tests/test_memory_ui_contract.py tests/test_smeta_memory_isolation.py
 SMETA_DOCUMENT_TESTS ?= tests/test_smeta_chat_application_service.py tests/test_ks_forms_service.py tests/test_rim_coverage_header.py tests/test_forms_templates.py tests/test_command_service.py
-MODEL_CONNECTION_TESTS ?= tests/test_candidate_acceptance_service.py tests/test_canonical_promotion_service.py tests/test_canonical_route_service.py tests/test_les_runtime_control.py tests/test_live_workbook_acceptance_contract.py tests/test_model_capability_service.py tests/test_model_connection_chat_integration.py tests/test_model_connection_embeddings_integration.py tests/test_model_connection_registry_service.py tests/test_model_connection_resolver_service.py tests/test_model_connection_security_service.py tests/test_model_connections_router.py tests/test_model_engine_extension_service.py tests/test_model_preset_workflow_parity.py tests/test_model_secret_service.py tests/test_openai_compatible_transport_service.py tests/test_sovushka_model_connections.py
+MODEL_CONNECTION_TESTS ?= tests/test_candidate_acceptance_service.py tests/test_canonical_promotion_service.py tests/test_canonical_route_service.py tests/test_les_runtime_control.py tests/test_live_workbook_acceptance_contract.py tests/test_model_capability_service.py tests/test_model_connection_chat_integration.py tests/test_model_connection_embeddings_integration.py tests/test_model_connection_live_acceptance.py tests/test_model_connection_registry_service.py tests/test_model_connection_resolver_service.py tests/test_model_connection_security_service.py tests/test_model_connections_router.py tests/test_model_engine_extension_service.py tests/test_model_preset_workflow_parity.py tests/test_model_secret_service.py tests/test_openai_compatible_transport_service.py tests/test_sovushka_model_connections.py
 INTEGRATION_TESTS ?= tests/test_smeta_structured_base.py tests/test_smeta_norm_browser.py tests/test_smeta_rerank_ab_probe.py $(RELEASE_CRITICAL_TESTS)
 CURRENT_TESTS ?= $(sort $(UNIT_TESTS) $(INTEGRATION_TESTS) $(RAG_CORE_TESTS) $(FOCUS_TESTS) $(MEMORY_TESTS) $(SMETA_DOCUMENT_TESTS) $(MODEL_CONNECTION_TESTS) tests/test_test_profiles.py tests/test_software_versions.py)
 LEGACY_ARCHITECTURE_TESTS ?= tests/test_construction_harness.py tests/test_resource_cost_v05.py tests/test_resource_cost_v06.py tests/test_unified_adapters_v09.py tests/test_unified_async_v10.py tests/test_unified_construction_harness.py tests/test_unified_construction_v04.py tests/test_unified_filebody_v12.py tests/test_unified_live_v07.py tests/test_unified_operational_v08.py tests/test_unified_real_v11.py
@@ -79,6 +80,7 @@ help:
 	@echo "make deploy-audit-rag — совместимый псевдоним apply-mac-update; Legion намеренно отключён"
 	@echo "make version-sync — синхронизировать Cargo/Tauri/паспорт версий из config/version.json"
 	@echo "make live-workbook-acceptance — opt-in receipt ordinary workbook chat on real user-owned input"
+	@echo "make test-model-connections-live — opt-in redacted receipt for exact configured 9B/35B revisions"
 
 version-sync:
 	uv run python tools/sync_version_contract.py
@@ -88,6 +90,9 @@ architecture-gate:
 
 live-workbook-acceptance:
 	uv run python tools/live_workbook_acceptance.py $(LIVE_WORKBOOK_ACCEPTANCE_ARGS)
+
+test-model-connections-live:
+	uv run python tools/model_connection_live_acceptance.py $(MODEL_CONNECTION_LIVE_ARGS)
 
 verify:
 	uv run python tools/sync_version_contract.py --check
@@ -144,7 +149,7 @@ test-updater:
 	@echo "OK — updater behavior-гейт зелёный; build, baseline и общая LES suite не запускались."
 
 test-tauri:
-	$(HOME)/.cargo/bin/cargo check --manifest-path desktop/tauri/src-tauri/Cargo.toml
+	cargo check --manifest-path desktop/tauri/src-tauri/Cargo.toml
 
 platform-gate:
 	uv run python tools/platform_release_gate.py verify

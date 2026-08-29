@@ -7,7 +7,10 @@ param(
   [string]$Provider = "",
   [string]$Model = "",
   [switch]$StartQdrant,
-  [switch]$NoUi
+  [switch]$NoUi,
+  [ValidateSet("full", "backend", "ui")]
+  [string]$Mode = "full",
+  [string]$BackendUrl = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +20,23 @@ $env:RAG_TOKENIZER_LOCAL_FILES_ONLY = "true"
 $env:HF_HUB_OFFLINE = "1"
 $ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")
 $UiPortExplicit = $PSBoundParameters.ContainsKey("UiPort")
+if ($NoUi) {
+  if ($Mode -eq "ui") { throw "-NoUi cannot be combined with -Mode ui." }
+  $Mode = "backend"
+}
+if ($Mode -eq "backend") { $NoUi = $true }
+if ($Mode -eq "ui") {
+  if (-not $BackendUrl) { throw "UI_BACKEND_URL_REQUIRED" }
+  $backendUri = $null
+  if (-not [Uri]::TryCreate($BackendUrl, [UriKind]::Absolute, [ref]$backendUri) -or
+      $backendUri.Scheme -notin @("http", "https") -or
+      -not $backendUri.Host -or $backendUri.UserInfo -or
+      $backendUri.Query -or $backendUri.Fragment) {
+    throw "UI_BACKEND_URL_INVALID"
+  }
+  if ($StartQdrant) { throw "-StartQdrant is unavailable in UI-only mode." }
+  $BackendUrl = $BackendUrl.TrimEnd("/")
+}
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 Set-Location $Root
 $env:LES_RUNTIME_HOME = $Root.Path
@@ -131,16 +151,16 @@ function Wait-LesHttp([string]$Url, [int]$Seconds = 30) {
   return $null
 }
 
-if ($ProxyPortExplicit) {
+if (($Mode -ne "ui") -and $ProxyPortExplicit) {
   Stop-LesPortProcess -Port $ProxyPort
-} elseif (-not (Test-LesPortFree -Port $ProxyPort)) {
+} elseif (($Mode -ne "ui") -and (-not (Test-LesPortFree -Port $ProxyPort))) {
   try { Stop-LesPortProcess -Port $ProxyPort } catch {}
   if (-not (Test-LesPortFree -Port $ProxyPort)) {
     $ProxyPort = Get-LesFreePort -StartPort ($ProxyPort + 1)
   }
 }
 
-if (-not $NoUi) {
+if ($Mode -ne "backend") {
   if ($UiPortExplicit) {
     Stop-LesPortProcess -Port $UiPort
   } elseif ((-not (Test-LesPortFree -Port $UiPort)) -or ($UiPort -eq $ProxyPort)) {
@@ -180,7 +200,8 @@ if ($Model) {
 $env:CHAT_VALIDATION_ENABLED = "false"
 $env:RAG_OCR_ENABLED = "false"
 $env:SPECKLE_ENABLED = "false"
-$env:PROXY_URL = "http://127.0.0.1:$ProxyPort"
+$env:LES_RUNTIME_MODE = $Mode
+$env:PROXY_URL = if ($Mode -eq "ui") { $BackendUrl } else { "http://127.0.0.1:$ProxyPort" }
 $env:CORS_ALLOWED_ORIGINS = "http://127.0.0.1:$ProxyPort,http://127.0.0.1:$UiPort,http://localhost:$ProxyPort,http://localhost:$UiPort"
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "logs") | Out-Null
 
@@ -241,7 +262,7 @@ switch ($Provider) {
 }
 
 $lemonadeHost = $null
-if ($Provider -eq "lemonade") {
+if (($Mode -ne "ui") -and ($Provider -eq "lemonade")) {
   if ($PSBoundParameters.ContainsKey("LemonadeHostPort")) {
     Stop-LesPortProcess -Port $LemonadeHostPort
   } elseif (-not (Test-LesPortFree -Port $LemonadeHostPort)) {
@@ -259,13 +280,17 @@ if ($Provider -eq "lemonade") {
   }
 }
 
-$proxyArgs = @("-m", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", "$ProxyPort")
-$proxyOut = Join-Path $Root "logs\windows-light-proxy.out.log"
-$proxyErr = Join-Path $Root "logs\windows-light-proxy.err.log"
-$proxy = Start-LesPythonProcess -PythonArgs $proxyArgs -StdOut $proxyOut -StdErr $proxyErr
+$proxy = $null
+$proxyErr = $null
+if ($Mode -ne "ui") {
+  $proxyArgs = @("-m", "uvicorn", "proxy_server:app", "--host", "127.0.0.1", "--port", "$ProxyPort")
+  $proxyOut = Join-Path $Root "logs\windows-light-proxy.out.log"
+  $proxyErr = Join-Path $Root "logs\windows-light-proxy.err.log"
+  $proxy = Start-LesPythonProcess -PythonArgs $proxyArgs -StdOut $proxyOut -StdErr $proxyErr
+}
 
 $ui = $null
-if (-not $NoUi) {
+if ($Mode -ne "backend") {
   $env:SOVUSHKA_UI_PORT = "$UiPort"
   $uiArgs = @("sovushka_ng.py")
   $uiOut = Join-Path $Root "logs\windows-light-ui.out.log"
@@ -273,28 +298,34 @@ if (-not $NoUi) {
   $ui = Start-LesPythonProcess -PythonArgs $uiArgs -StdOut $uiOut -StdErr $uiErr
 }
 
-$health = Wait-LesHttp "http://127.0.0.1:$ProxyPort/api/health" 45
-if ($null -eq $health) {
-  $health = @{ status = "error"; detail = "proxy did not answer /api/health within startup timeout" }
+$health = $null
+if ($proxy) {
+  $health = Wait-LesHttp "http://127.0.0.1:$ProxyPort/api/health" 45
+  if ($null -eq $health) {
+    $health = @{ status = "error"; detail = "proxy did not answer /api/health within startup timeout" }
+  }
+} elseif ($ui) {
+  $health = Wait-LesHttp "http://127.0.0.1:$UiPort/healthz" 30
 }
 
 $payload = [pscustomobject]@{
   status = "started"
+  mode = $Mode
   provider = $Provider
-  proxy_port = $ProxyPort
-  ui_port = if ($NoUi) { $null } else { $UiPort }
+  proxy_port = if ($proxy) { $ProxyPort } else { $null }
+  ui_port = if ($ui) { $UiPort } else { $null }
   qdrant_url = $env:QDRANT_URL
   mlx_url = $env:MLX_URL
-  lemonade_adapter_url = if ($Provider -eq "lemonade") { "http://127.0.0.1:$LemonadeHostPort" } else { $null }
-  proxy_url = "http://127.0.0.1:$ProxyPort"
-  ui_url = if ($NoUi) { $null } else { "http://127.0.0.1:$UiPort/les" }
-  ui_health_url = if ($NoUi) { $null } else { "http://127.0.0.1:$UiPort/healthz" }
-  dynamic_ports = (-not $ProxyPortExplicit) -or ((-not $NoUi) -and (-not $UiPortExplicit))
+  lemonade_adapter_url = if ($lemonadeHost) { "http://127.0.0.1:$LemonadeHostPort" } else { $null }
+  proxy_url = $env:PROXY_URL
+  ui_url = if ($ui) { "http://127.0.0.1:$UiPort/les" } else { $null }
+  ui_health_url = if ($ui) { "http://127.0.0.1:$UiPort/healthz" } else { $null }
+  dynamic_ports = (($Mode -ne "ui") -and (-not $ProxyPortExplicit)) -or (($Mode -ne "backend") -and (-not $UiPortExplicit))
   lemonade_host_pid = if ($lemonadeHost) { $lemonadeHost.Id } else { $null }
-  proxy_pid = $proxy.Id
+  proxy_pid = if ($proxy) { $proxy.Id } else { $null }
   ui_pid = if ($ui) { $ui.Id } else { $null }
   lemonade_host_alive = if ($lemonadeHost) { -not $lemonadeHost.HasExited } else { $null }
-  proxy_alive = -not $proxy.HasExited
+  proxy_alive = if ($proxy) { -not $proxy.HasExited } else { $null }
   ui_alive = if ($ui) { -not $ui.HasExited } else { $null }
   lemonade_host_log = if ($lemonadeHost) { $lemonadeHostErr } else { $null }
   proxy_log = $proxyErr

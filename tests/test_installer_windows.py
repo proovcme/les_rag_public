@@ -263,7 +263,7 @@ def test_start_light_uses_direct_console_free_python_processes():
     assert 'process_contract = "direct_python_no_console_v1"' in text
     assert "function Get-LesFreePort" in text
     assert '$ProxyPortExplicit = $PSBoundParameters.ContainsKey("ProxyPort")' in text
-    assert '$env:PROXY_URL = "http://127.0.0.1:$ProxyPort"' in text
+    assert '$env:PROXY_URL = if ($Mode -eq "ui") { $BackendUrl } else { "http://127.0.0.1:$ProxyPort" }' in text
     assert '[int]$LemonadeHostPort = 18080' in text
     assert '@("lemonade_host.py")' in text
     assert "windows-light-lemonade-host.err.log" in text
@@ -275,6 +275,19 @@ def test_start_light_uses_direct_console_free_python_processes():
     assert "Wait-LesHttp" in text
     assert 'Start-Process -FilePath "cmd.exe"' not in text
     assert "function Start-LesUvProcess" not in text
+
+
+def test_windows_scripts_expose_independent_full_backend_and_ui_modes():
+    root = build_windows_installer.ROOT / "installers" / "windows"
+    start = (root / "start-light.ps1").read_text(encoding="utf-8")
+    stop = (root / "stop-light.ps1").read_text(encoding="utf-8")
+
+    assert '[ValidateSet("full", "backend", "ui")]' in start
+    assert '[string]$BackendUrl = ""' in start
+    assert '$env:LES_RUNTIME_MODE = $Mode' in start
+    assert '$Mode -eq "ui"' in start
+    assert 'lemonade_adapter_url = if ($lemonadeHost)' in start
+    assert '--mode $Mode' in stop
 
 
 def test_start_light_configures_external_freetoken_with_ollama_embeddings():
