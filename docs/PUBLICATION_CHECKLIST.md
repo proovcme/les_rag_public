@@ -54,9 +54,11 @@ uv run python tools/runtime_smoke.py \
   keys, private paths, or private dataset names part of required public setup.
 - If GitHub Pages is enabled, use `docs/index.md` as the curated entry point.
 
-## Current 0.28.1 public-release gate
+## Current 0.29.3 public-release gate
 
-- Public README, Windows troubleshooting and developer guide are required files.
+- Public README, release document, Windows troubleshooting and developer guide are required files.
+- README and release notes must distinguish working, preview and planned surfaces; an internal
+  module or API must not be presented as an accepted user workflow.
 - `LES-Setup.exe` must prove a clean offline first launch using only its bundled runtime.
 - Missing Ollama/FreeToken/Lemonade/Qdrant must remain visible warnings, not installer failures.
 - The exact source commit must pass `make verify`, `make test`, `make public-check`, Tauri checks,
