@@ -12,10 +12,10 @@
 версия Tauri/NSIS:         5.1.630
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.2 / build 630 (`d17bce2b`)
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
-следующий выпуск:          0.29.2 full Windows installer (prebundle-gated, stable dependency cache)
-рантайм /api/version:      isolated installed smoke 0.28.2 / build 589; services stopped after acceptance
+следующий выпуск:          0.29.x node-contract foundation; 0.29.2 остаётся непубличным candidate
+рантайм /api/version:      Legion 0.29.2 / build 630 / desktop 5.1.630, aligned, full mode, UI 200
 ```
 
 > **0.29.2 / build 628 Windows release-cycle fix:** все mutable roots направлены
@@ -38,6 +38,20 @@ dev implementation:       private model nodes, exact promotion and split runtime
 > общий Git checkout и запускает build → isolated smoke → transactional deploy.
 > Перед replace updater показывает процессы с `cwd` внутри application tree и
 > никогда не убивает внешний provider скрыто.
+
+> **Build 630 Legion deployment acceptance:** exact `LES-Setup.exe` размером
+> `501595200` bytes и SHA-256
+> `f4b3bfd8d5526552ee30955fe288fc629947d3f3674488ef3fab5e41972425b7`
+> установлен сначала в изолированный Programs-shaped root. Два bootstrap-прохода
+> дали `ready`, второй — `environment_action=skipped`; UI вернул `200`, процессы
+> — только прямые `pythonw.exe`, baseline содержит 49 818 норм и 1 576 строк
+> ФСЭМ. Затем тот же artifact транзакционно заменил Legion application tree:
+> updater завершился `ready`, `/api/version` подтвердил exact commit
+> `d17bce2b06cd451aaf6f2d71760897caa99b3f3e`, `runtime_alignment=aligned`,
+> full mode и desktop `5.1.630`. Пользовательское state не изменено; recovery
+> сохранён в `Programs\LES.recovery-20260829T102624637273Z`. Внешний Qdrant
+> недоступен, поэтому RAG/RRF честно `N/A`; core API/UI, smeta baseline и
+> reranker приняты без ложного rollback.
 
 > **0.29.1 / build 627 Windows bootstrap hotfix:** установленный runtime под
 > `%LOCALAPPDATA%\Programs` создаёт persistent каталоги через junction в
