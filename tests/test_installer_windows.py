@@ -521,7 +521,7 @@ def test_windows_uv_cache_is_extracted_by_bundled_python_not_expand_archive():
     assert "& $BundledPython -m zipfile -e $archive $temporaryRoot" in cache_block
     assert "Expand-Archive" not in cache_block
     assert "uv-cache-contract.json" in text
-    assert 'fingerprint_schema -ne "les.windows-dependency-fingerprint.v1"' in cache_block
+    assert 'fingerprint_schema -ne "les.windows-dependency-fingerprint.v2"' in cache_block
     assert '$dependencyFingerprint -notmatch "^[0-9a-f]{64}$"' in cache_block
     assert '("uv-cache\\" + $dependencyFingerprint)' in cache_block
     assert '"--offline"' in text

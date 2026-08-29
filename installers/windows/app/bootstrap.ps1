@@ -217,7 +217,7 @@ function Resolve-UvCache {
   if ($contract.schema -ne "les.windows-uv-cache.v1") {
     throw "bundled uv cache contract has an unsupported schema"
   }
-  if ($contract.fingerprint_schema -ne "les.windows-dependency-fingerprint.v1") {
+  if ($contract.fingerprint_schema -ne "les.windows-dependency-fingerprint.v2") {
     throw "bundled uv cache contract has an unsupported fingerprint schema"
   }
   $dependencyFingerprint = ([string]$contract.dependency_fingerprint).ToLowerInvariant()
