@@ -298,14 +298,70 @@ def test_windows_tauri_stage_bundles_offline_uv_cache_with_lock_identity(tmp_pat
 
     tools = tmp_path / "runtime/installers/windows/tools"
     contract = json.loads((tools / "uv-cache-contract.json").read_text(encoding="utf-8"))
+    fingerprint = build_tauri_app.windows_dependency_fingerprint(lock, tools)
     assert contract == {
         "schema": "les.windows-uv-cache.v1",
+        "fingerprint_schema": "les.windows-dependency-fingerprint.v1",
+        "dependency_fingerprint": fingerprint,
         "archive_name": "windows-uv-cache.zip",
         "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
         "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
         "extra": "windows-reranker",
     }
     assert (tools / "windows-uv-cache.zip").read_bytes() == archive.read_bytes()
+
+
+def test_windows_dependency_fingerprint_ignores_only_editable_project_version(tmp_path):
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    (tools / "python-contract.json").write_text('{"version":"3.13.7"}', encoding="utf-8")
+    (tools / "uv-contract.json").write_text('{"version":"0.8.14"}', encoding="utf-8")
+    lock = tmp_path / "uv.lock"
+
+    def write_lock(project_version: str, dependency_version: str) -> None:
+        lock.write_text(
+            'version = 1\n'
+            '[[package]]\nname = "les-v2"\nversion = "' + project_version + '"\n'
+            'source = { editable = "." }\ndependencies = [{ name = "fastapi" }]\n'
+            '[[package]]\nname = "fastapi"\nversion = "' + dependency_version + '"\n'
+            'source = { registry = "https://pypi.org/simple" }\n',
+            encoding="utf-8",
+        )
+
+    write_lock("0.29.1", "0.116.0")
+    first = build_tauri_app.windows_dependency_fingerprint(lock, tools)
+    write_lock("0.29.2", "0.116.0")
+    assert build_tauri_app.windows_dependency_fingerprint(lock, tools) == first
+    write_lock("0.29.2", "0.117.0")
+    assert build_tauri_app.windows_dependency_fingerprint(lock, tools) != first
+
+
+def test_windows_uv_cache_build_excludes_project_then_verifies_full_offline_sync(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    tools = runtime / "installers/windows/tools"
+    tools.mkdir(parents=True)
+    (tools / "uv.exe").write_bytes(b"uv")
+    (tools / "python-contract.json").write_text(
+        json.dumps({"archive_name": "python.zip", "python_relative_path": "python.exe"}),
+        encoding="utf-8",
+    )
+    with zipfile.ZipFile(tools / "python.zip", "w") as zf:
+        zf.writestr("python.exe", b"python")
+    seen = []
+
+    def fake_run(command, **kwargs):
+        seen.append(command)
+        cache = Path(kwargs["env"]["UV_CACHE_DIR"])
+        cache.mkdir(parents=True, exist_ok=True)
+        (cache / "wheel.whl").write_bytes(b"wheel")
+
+    monkeypatch.setattr(build_tauri_app.subprocess, "run", fake_run)
+    build_tauri_app._build_windows_uv_cache(runtime, tmp_path / "cache.zip")
+
+    assert "--no-install-project" in seen[0]
+    assert "--offline" not in seen[0]
+    assert "--offline" in seen[1]
+    assert "--no-install-project" not in seen[1]
 
 
 def test_windows_uv_cache_build_is_reused_for_same_lock(tmp_path, monkeypatch):
@@ -328,6 +384,33 @@ def test_windows_uv_cache_build_is_reused_for_same_lock(tmp_path, monkeypatch):
         ) == 1
 
     assert len(builds) == 1
+    assert len(list(cache_dir.glob("windows-uv-cache-*.zip"))) == 1
+
+
+def test_windows_uv_cache_migrates_legacy_key_without_rebuild(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    tools = runtime / "installers/windows/tools"
+    tools.mkdir(parents=True)
+    lock = runtime / "uv.lock"
+    lock.write_text("version = 1\n", encoding="utf-8")
+    cache_dir = tmp_path / "release-cache"
+    cache_dir.mkdir()
+    legacy = cache_dir / (
+        "windows-uv-cache-"
+        + build_tauri_app._legacy_windows_uv_cache_fingerprint(lock, tools)
+        + ".zip"
+    )
+    with zipfile.ZipFile(legacy, "w") as zf:
+        zf.writestr("archive-v0/test-wheel.whl", b"wheel-bytes")
+    monkeypatch.setattr(
+        build_tauri_app,
+        "_build_windows_uv_cache",
+        lambda *_args: pytest.fail("compatible legacy cache must be migrated, not rebuilt"),
+    )
+
+    build_tauri_app.stage_windows_uv_cache(runtime, cache_dir=cache_dir)
+
+    assert not legacy.exists()
     assert len(list(cache_dir.glob("windows-uv-cache-*.zip"))) == 1
 
 

@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import tomllib
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
@@ -26,6 +27,7 @@ WINDOWS_UV_CONTRACT_PATH = ROOT / "config" / "windows_uv.json"
 WINDOWS_PYTHON_CONTRACT_PATH = ROOT / "config" / "windows_python.json"
 DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
+WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA = "les.windows-dependency-fingerprint.v1"
 
 
 def release_contract() -> dict[str, object]:
@@ -213,10 +215,22 @@ def _build_windows_uv_cache(runtime: Path, archive: Path) -> None:
         subprocess.run(
             [
                 str(uv), "sync", "--locked", "--python", str(python),
-                "--no-python-downloads", "--extra", "windows-reranker",
+                "--no-python-downloads", "--no-install-project", "--extra", "windows-reranker",
             ],
             cwd=runtime,
             env=env,
+            check=True,
+        )
+        verify_environment = tmp / "verify-environment"
+        verify_env = dict(env)
+        verify_env["UV_PROJECT_ENVIRONMENT"] = str(verify_environment)
+        subprocess.run(
+            [
+                str(uv), "sync", "--locked", "--offline", "--python", str(python),
+                "--no-python-downloads", "--extra", "windows-reranker",
+            ],
+            cwd=runtime,
+            env=verify_env,
             check=True,
         )
         files = [path for path in cache.rglob("*") if path.is_file()]
@@ -225,6 +239,64 @@ def _build_windows_uv_cache(runtime: Path, archive: Path) -> None:
         with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
             for path in files:
                 zf.write(path, path.relative_to(cache).as_posix())
+
+
+def windows_dependency_fingerprint(
+    lock_path: str | Path,
+    tools_dir: str | Path,
+    *,
+    extra: str = "windows-reranker",
+) -> str:
+    """Hash resolved third-party dependencies without release-only project version churn."""
+
+    lock = Path(lock_path)
+    payload = tomllib.loads(lock.read_text(encoding="utf-8"))
+    packages = payload.get("package")
+    if not isinstance(packages, list):
+        packages = []
+    normalized_project = False
+    for package in packages:
+        if not isinstance(package, dict):
+            continue
+        source = package.get("source")
+        if isinstance(source, dict) and source.get("editable") == ".":
+            if normalized_project:
+                raise RuntimeError("uv.lock contains multiple editable root projects")
+            package["version"] = "<editable-project-version>"
+            normalized_project = True
+    if not normalized_project and packages:
+        raise RuntimeError("uv.lock does not contain the editable root project")
+    digest = hashlib.sha256()
+    digest.update(WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA.encode("ascii"))
+    digest.update(b"\0")
+    digest.update(json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(extra.encode("utf-8"))
+    contract_root = Path(tools_dir)
+    for contract_name in ("python-contract.json", "uv-contract.json"):
+        contract_path = contract_root / contract_name
+        digest.update(b"\0")
+        digest.update(contract_name.encode("ascii"))
+        digest.update(b"\0")
+        if contract_path.is_file():
+            contract_payload = json.loads(contract_path.read_text(encoding="utf-8"))
+            digest.update(
+                json.dumps(contract_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            )
+    return digest.hexdigest()
+
+
+def _legacy_windows_uv_cache_fingerprint(lock: Path, tools_dir: Path) -> str:
+    """Locate one cache produced by the pre-v1 dependency fingerprint builder."""
+
+    digest = hashlib.sha256()
+    digest.update(lock.read_bytes())
+    digest.update(b"\0windows-reranker\0")
+    for contract_name in ("python-contract.json", "uv-contract.json"):
+        contract_path = tools_dir / contract_name
+        if contract_path.is_file():
+            digest.update(contract_path.read_bytes())
+    return digest.hexdigest()
 
 
 def stage_windows_uv_cache(
@@ -246,21 +318,20 @@ def stage_windows_uv_cache(
             if not archive.is_file():
                 raise RuntimeError(f"Windows uv cache archive is missing: {archive}")
         else:
-            digest = hashlib.sha256()
-            digest.update(lock.read_bytes())
-            digest.update(b"\0windows-reranker\0")
             tools_dir = runtime / "installers" / "windows" / "tools"
-            for contract_name in ("python-contract.json", "uv-contract.json"):
-                contract_path = tools_dir / contract_name
-                if contract_path.is_file():
-                    digest.update(contract_path.read_bytes())
+            dependency_fingerprint = windows_dependency_fingerprint(lock, tools_dir)
             persistent_dir = Path(
                 cache_dir
                 or os.getenv("LES_WINDOWS_RELEASE_CACHE_DIR", "")
                 or ROOT / "dist" / "release-cache"
             )
             persistent_dir.mkdir(parents=True, exist_ok=True)
-            archive = persistent_dir / f"windows-uv-cache-{digest.hexdigest()}.zip"
+            archive = persistent_dir / f"windows-uv-cache-{dependency_fingerprint}.zip"
+            legacy_archive = persistent_dir / (
+                f"windows-uv-cache-{_legacy_windows_uv_cache_fingerprint(lock, tools_dir)}.zip"
+            )
+            if not archive.is_file() and legacy_archive.is_file():
+                os.replace(legacy_archive, archive)
             if not archive.is_file():
                 temporary = tempfile.TemporaryDirectory(prefix="les-windows-uv-cache-archive-")
                 candidate = Path(temporary.name) / "windows-uv-cache.zip"
@@ -286,6 +357,8 @@ def stage_windows_uv_cache(
         target.write_bytes(blob)
         contract = {
             "schema": "les.windows-uv-cache.v1",
+            "fingerprint_schema": WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA,
+            "dependency_fingerprint": windows_dependency_fingerprint(lock, target_dir),
             "archive_name": target.name,
             "archive_sha256": hashlib.sha256(blob).hexdigest(),
             "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),

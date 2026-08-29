@@ -217,6 +217,13 @@ function Resolve-UvCache {
   if ($contract.schema -ne "les.windows-uv-cache.v1") {
     throw "bundled uv cache contract has an unsupported schema"
   }
+  if ($contract.fingerprint_schema -ne "les.windows-dependency-fingerprint.v1") {
+    throw "bundled uv cache contract has an unsupported fingerprint schema"
+  }
+  $dependencyFingerprint = ([string]$contract.dependency_fingerprint).ToLowerInvariant()
+  if ($dependencyFingerprint -notmatch "^[0-9a-f]{64}$") {
+    throw "bundled uv cache contract has an invalid dependency fingerprint"
+  }
   $archive = Join-Path $tools ([string]$contract.archive_name)
   if (-not (Test-Path -LiteralPath $archive)) {
     throw "bundled uv cache archive is missing"
@@ -230,7 +237,7 @@ function Resolve-UvCache {
   if ($lockHash -ne ([string]$contract.lock_sha256).ToLowerInvariant()) {
     throw "bundled uv cache does not match uv.lock"
   }
-  $cacheRoot = Join-Path $State.state_root ("uv-cache\" + $lockHash)
+  $cacheRoot = Join-Path $State.state_root ("uv-cache\" + $dependencyFingerprint)
   $marker = Join-Path $cacheRoot ".les-cache-ready"
   if (-not (Test-Path -LiteralPath $marker)) {
     $temporaryRoot = "$cacheRoot.installing"
