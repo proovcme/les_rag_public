@@ -33,6 +33,8 @@ dev implementation:       authoritative answer binding + exact dataset scope + a
 > GUI-first runtime registry и не маскируется отсутствующим fallback. Qdrant URL
 > вынесен рядом с модельными подключениями, а «Инструменты» больше не содержат
 > конкурирующего редактора промптов: пользовательский prompt/skill задаёт профиль.
+> Bootstrap-сборщик включает build backend корневого Python-проекта в offline
+> uv-cache и проверяет полный offline sync до запуска Tauri/NSIS.
 
 > **Build 632 public-surface cleanup:** финальный release source удаляет
 > machine-specific IP и устаревший public tunnel из exporter defaults, auth/status

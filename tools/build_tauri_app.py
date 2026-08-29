@@ -27,7 +27,7 @@ WINDOWS_UV_CONTRACT_PATH = ROOT / "config" / "windows_uv.json"
 WINDOWS_PYTHON_CONTRACT_PATH = ROOT / "config" / "windows_python.json"
 DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
-WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA = "les.windows-dependency-fingerprint.v1"
+WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA = "les.windows-dependency-fingerprint.v2"
 
 
 def release_contract() -> dict[str, object]:
@@ -215,7 +215,7 @@ def _build_windows_uv_cache(runtime: Path, archive: Path) -> None:
         subprocess.run(
             [
                 str(uv), "sync", "--locked", "--python", str(python),
-                "--no-python-downloads", "--no-install-project", "--extra", "windows-reranker",
+                "--no-python-downloads", "--extra", "windows-reranker",
             ],
             cwd=runtime,
             env=env,

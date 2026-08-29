@@ -301,7 +301,7 @@ def test_windows_tauri_stage_bundles_offline_uv_cache_with_lock_identity(tmp_pat
     fingerprint = build_tauri_app.windows_dependency_fingerprint(lock, tools)
     assert contract == {
         "schema": "les.windows-uv-cache.v1",
-        "fingerprint_schema": "les.windows-dependency-fingerprint.v1",
+        "fingerprint_schema": "les.windows-dependency-fingerprint.v2",
         "dependency_fingerprint": fingerprint,
         "archive_name": "windows-uv-cache.zip",
         "archive_sha256": hashlib.sha256(archive.read_bytes()).hexdigest(),
@@ -336,7 +336,7 @@ def test_windows_dependency_fingerprint_ignores_only_editable_project_version(tm
     assert build_tauri_app.windows_dependency_fingerprint(lock, tools) != first
 
 
-def test_windows_uv_cache_build_excludes_project_then_verifies_full_offline_sync(tmp_path, monkeypatch):
+def test_windows_uv_cache_build_primes_build_backend_then_verifies_offline_sync(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     tools = runtime / "installers/windows/tools"
     tools.mkdir(parents=True)
@@ -358,7 +358,7 @@ def test_windows_uv_cache_build_excludes_project_then_verifies_full_offline_sync
     monkeypatch.setattr(build_tauri_app.subprocess, "run", fake_run)
     build_tauri_app._build_windows_uv_cache(runtime, tmp_path / "cache.zip")
 
-    assert "--no-install-project" in seen[0]
+    assert "--no-install-project" not in seen[0]
     assert "--offline" not in seen[0]
     assert "--offline" in seen[1]
     assert "--no-install-project" not in seen[1]
