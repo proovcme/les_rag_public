@@ -7,16 +7,24 @@
 ## Текущее состояние (2026-08-29)
 
 ```
-версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              626
-версия Tauri/NSIS:         5.1.626
+версия продукта (SemVer):  0.29.1 (development candidate; не опубликован)
+номер сборки:              627
+версия Tauri/NSIS:         5.1.627
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
-следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
+следующий выпуск:          0.29.1 full Windows installer (junction-safe bootstrap)
 рантайм /api/version:      isolated installed smoke 0.28.2 / build 589; services stopped after acceptance
 ```
+
+> **0.29.1 / build 627 Windows bootstrap hotfix:** установленный runtime под
+> `%LOCALAPPDATA%\Programs` создаёт persistent каталоги через junction в
+> `%LOCALAPPDATA%\LES`. Python на Windows возвращает `ERROR_ALREADY_EXISTS` при
+> создании отсутствующего дочернего каталога через такой junction. `lesctl init`
+> теперь сначала разрешает реальный target и создаёт каталог там; живой тест
+> воспроизводит именно Programs+junction boundary. Исправление потребовалось по
+> результату изолированного smoke до обновления рабочего Legion.
 
 > **0.29.0 architecture checkpoint:** чистая ветка создана от опубликованного
 > `v0.28.2` (`e8ccad2b`); неправильный 101-file candidate не является источником

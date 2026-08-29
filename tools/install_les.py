@@ -127,7 +127,10 @@ def ensure_dirs() -> list[str]:
     for relative in REQUIRED_DIRS:
         path = ROOT / relative
         if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
+            # Windows can return ERROR_ALREADY_EXISTS when Python creates a
+            # child through a junction below %LOCALAPPDATA%\Programs. Resolve
+            # the persistent-state junction first and create at its real path.
+            path.resolve().mkdir(parents=True, exist_ok=True)
             created.append(relative)
     return created
 

@@ -1,3 +1,11 @@
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+import pytest
+
 from tools import install_les
 
 
@@ -11,6 +19,43 @@ def test_ensure_dirs_creates_required_layout(tmp_path, monkeypatch):
     assert "static" in created
     assert (tmp_path / "data" / "mail_imap_checkpoints").exists()
     assert (tmp_path / "static").exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows junction behavior")
+def test_ensure_dirs_creates_nested_directory_through_windows_state_junction(
+    monkeypatch,
+):
+    programs_root = Path(os.environ["LOCALAPPDATA"]) / "Programs"
+    test_root = Path(tempfile.mkdtemp(prefix="LES-junction-test-", dir=programs_root))
+    runtime_root = test_root / "runtime"
+    state_root = test_root / "state"
+    junction = runtime_root / "artifacts"
+    try:
+        runtime_root.mkdir()
+        (state_root / "artifacts").mkdir(parents=True)
+        subprocess.run(
+            [
+                "cmd.exe",
+                "/c",
+                "mklink",
+                "/J",
+                str(junction),
+                str(state_root / "artifacts"),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        monkeypatch.setattr(install_les, "ROOT", runtime_root)
+
+        created = install_les.ensure_dirs()
+
+        assert "artifacts/backups" in created
+        assert (state_root / "artifacts" / "backups").is_dir()
+    finally:
+        if junction.is_junction():
+            junction.rmdir()
+        shutil.rmtree(test_root, ignore_errors=True)
 
 
 def test_init_env_does_not_overwrite_existing_env(tmp_path, monkeypatch):

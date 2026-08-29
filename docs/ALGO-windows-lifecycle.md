@@ -46,6 +46,8 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
    bundled Python/uv/cache, selected extra и platform. Exact marker + import probe означает
    `environment_action=skipped`; mismatch выполняет один locked/offline sync, нездоровая среда —
    один controlled rebuild. Все последующие `uv run` используют `--no-sync`.
+   Вложенные служебные каталоги создаются по разрешённому target persistent-state junction:
+   Python под `%LOCALAPPDATA%\Programs` не выполняет `mkdir` через mount point.
 2. Immutable ФСНБ baseline проверяется; его недоступность отражается degraded status, но не
    превращает отсутствие внешнего компонента в повреждение Python.
 3. Docker/Qdrant и answer/embedding providers определяются как optional capabilities.
