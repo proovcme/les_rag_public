@@ -7,16 +7,27 @@
 ## Текущее состояние (2026-08-29)
 
 ```
-версия продукта (SemVer):  0.29.2 (development candidate; не опубликован)
-номер сборки:              630
-версия Tauri/NSIS:         5.1.630
+версия продукта (SemVer):  0.29.3 (development candidate; не опубликован)
+номер сборки:              631
+версия Tauri/NSIS:         5.1.631
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.2 / build 630 (`d17bce2b`)
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
-следующий выпуск:          0.29.x node-contract foundation; 0.29.2 остаётся непубличным candidate
+следующий выпуск:          0.29.x node-contract foundation; 0.29.3 остаётся непубличным candidate
 рантайм /api/version:      Legion 0.29.2 / build 630 / desktop 5.1.630, aligned, full mode, UI 200
 ```
+
+> **0.29.3 / build 631 SSE capability-probe fix:** capability probe проверяет
+> connected peer до чтения bounded response body. Реальный ZeroTier Qwen proxy
+> корректно освобождает socket metadata после завершения SSE; прежний обратный
+> порядок давал ложный `CONNECTED_PEER_UNAVAILABLE`, хотя stream и `[DONE]`
+> были исправны. Регрессионный тест требует peer validation до первого байта.
+> Живая Legion-диагностика дополнительно выявила общий `None`-scope дефект:
+> unscoped chat одновременно выключал typed memory и tool shortlist через
+> `TypeError`. Workflow теперь один раз нормализует область до пустого tuple;
+> повторный live trace подтвердил typed-memory projection и завершённый
+> model-owned research loop без расширения shadow tool scope.
 
 > **0.29.2 / build 628 Windows release-cycle fix:** все mutable roots направлены
 > в persistent state, включая constructor defaults. До npm/NSIS staged runtime

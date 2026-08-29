@@ -619,6 +619,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
     "scenario",
     [
         "normal",
+        "normal_unscoped",
         "selector_overflow",
         "cloud_retry",
         "active",
@@ -820,7 +821,11 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             )
             executor_codes.append(envelope.code)
             if not workbook_profile:
-                assert envelope.code == "TOOL_WOULD_EXECUTE"
+                assert envelope.code == (
+                    "TOOL_SCOPE_VIOLATION"
+                    if scenario == "normal_unscoped"
+                    else "TOOL_WOULD_EXECUTE"
+                )
             raise RuntimeError("secret shadow failure")
 
         def call(self, tool, args):
@@ -1042,7 +1047,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             candidate_acceptance=candidate_acceptance,
             reranker_enabled=None,
         ),
-        dataset_ids=["selected"],
+        dataset_ids=None if scenario == "normal_unscoped" else ["selected"],
         effective_dataset_filter="",
         resolved_dataset_names=[],
         dataset_name_by_id={},
@@ -1241,7 +1246,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "mode": "rag",
             "allowed_tools": ["read_source"],
             "limit": 5,
-            "dataset_ids": ("selected",),
+            "dataset_ids": () if scenario == "normal_unscoped" else ("selected",),
             "workflow_phase": "research",
             "model_preset": "qwen-9b-restrictive",
             "runtime_available": frozenset({"read_source"}),
@@ -1250,7 +1255,9 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         }
     ]
     assert [call[1]["doc_id"] for call in shadow_calls] == ["d1"]
-    assert executor_codes == ["TOOL_WOULD_EXECUTE"]
+    assert executor_codes == [
+        "TOOL_SCOPE_VIOLATION" if scenario == "normal_unscoped" else "TOOL_WOULD_EXECUTE"
+    ]
     assert [call[1]["doc_id"] for call in legacy_calls] == ["d1", "d2"]
     assert len(history_rows) == 1
     assert history_rows[0]["answer"] == "legacy visible answer"

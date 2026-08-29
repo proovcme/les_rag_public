@@ -137,6 +137,42 @@ async def test_probe_caps_response_body_without_retaining_it() -> None:
     assert "xxxxxxxx" not in repr(snapshot)
 
 
+@pytest.mark.asyncio
+async def test_probe_validates_connected_peer_before_consuming_stream() -> None:
+    body_consumed = False
+    peer_checks: list[bool] = []
+
+    class ProbeStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            nonlocal body_consumed
+            body_consumed = True
+            yield b'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n'
+            yield b"data: [DONE]\n\n"
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, stream=ProbeStream())
+
+    def peer_before_close(response: httpx.Response, _endpoint) -> None:
+        peer_checks.append(body_consumed)
+        if body_consumed:
+            raise ValueError("peer metadata is no longer available after body consumption")
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        follow_redirects=True,
+    ) as client:
+        snapshot = await CapabilityProbe(
+            client=client,
+            resolver=lambda _host, _port: ("127.0.0.1",),
+            peer_verifier=peer_before_close,
+            clock=lambda: NOW,
+        ).probe(_connection(), requested={CapabilityName.STREAMING})
+
+    assert peer_checks == [False]
+    assert body_consumed is True
+    assert snapshot.state(CapabilityName.STREAMING) is CapabilityState.SUPPORTED
+
+
 def test_required_capability_rejects_stale_snapshot() -> None:
     snapshot = CapabilitySnapshot(
         snapshot_id="cap:stale",

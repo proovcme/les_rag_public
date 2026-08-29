@@ -99,6 +99,19 @@
 > `test_model_connection_live_acceptance.py`, `test_windows_application_update.py`,
 > `test_installer_windows.py`. Статус док↔код: ✅.
 
+> **0.29.3 capability probe fix (build 631):** connected-peer policy теперь
+> проверяет фактический upstream до чтения response body. Это сохраняет
+> ZeroTier/LAN SSRF-защиту и корректно принимает завершённый SSE, у которого
+> сетевой stream metadata освобождается после `[DONE]`. Тело по-прежнему
+> читается с жёстким лимитом и не попадает в capability evidence. Точки входа:
+> `proxy/services/model_capability_service.py`,
+> `tests/test_model_capability_service.py`. Статус док↔код: ✅.
+> Тот же build нормализует публичный unscoped `dataset_ids=None` в пустую
+> внутреннюю область до typed-memory и Broker: память больше не пропускается с
+> `TypeError`, shortlist строится, а shadow executor не получает неявный доступ
+> ко всему корпусу. Регрессия: `normal_unscoped` в
+> `tests/test_chat_evidence_application_service.py`.
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная

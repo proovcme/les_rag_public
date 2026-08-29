@@ -89,6 +89,15 @@
 > Make entrypoint `test-model-connections-live` намеренно не входит в offline
 > `test/verify` и не выполняет promotion.
 
+> **Capability probe ordering 0.29.3 / build 631:**
+> `model_capability_service.CapabilityProbe` открывает ответ как stream,
+> проверяет connected peer до потребления body и лишь затем bounded-дочитывает
+> обычный JSON или SSE. Так корректное SSE-завершение не превращается в ложный
+> `CONNECTED_PEER_UNAVAILABLE`, а redirect и body-size gates остаются fail-closed.
+> `_execute_chat_evidence_application` на входе также переводит unscoped
+> `dataset_ids=None` в пустой tuple. Эту нормализованную область получают typed
+> memory, Broker и shadow executor; пустая область не расширяет tool scope.
+
 > **Unified Data workspace 0.29.0 / build 616:**
 > `sovushka/pages/data_workspace.py` — единый dispatch каталога и focused
 > dataset detail. `sovushka_ng.py` канонизирует `documents|datasets → data` с

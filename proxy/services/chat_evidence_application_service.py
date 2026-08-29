@@ -658,6 +658,10 @@ async def _execute_chat_evidence_application(
     status=None,
     table_result=None
 ):
+    # ``None`` is the public representation of the unscoped "all corpus" mode.
+    # Internal memory and tool contracts require an iterable scope, where an
+    # empty tuple deliberately means no explicit dataset restriction.
+    _dataset_ids = tuple(str(item) for item in (_dataset_ids or ()) if str(item))
     memory_project_id = 0
     project_memory_advisory = ""
     try:
@@ -1353,6 +1357,7 @@ async def _execute_chat_evidence_application(
         "preset_id": execution_preset.preset_id,
         "calls": [],
     }
+    memory_projection_stage = "project_memory"
     try:
         typed_memory = await asyncio.to_thread(
             project_memory,
@@ -1361,7 +1366,9 @@ async def _execute_chat_evidence_application(
             dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
             limits=MemoryLimits(),
         )
+        memory_projection_stage = "context_candidates"
         memory_candidates = typed_memory.as_context_candidates()
+        memory_projection_stage = "trace_projection"
         retrieval_trace["typed_memory"] = {
             "schema": "les.typed-memory-projection.v1",
             "context_role": typed_memory.context_role,
@@ -1377,6 +1384,7 @@ async def _execute_chat_evidence_application(
             "schema": "les.typed-memory-projection.v1",
             "status": "skipped",
             "error_type": type(memory_error).__name__,
+            "error_stage": memory_projection_stage,
             "context_role": "advisory_state",
             "is_evidence": False,
         }
@@ -1688,6 +1696,7 @@ async def _execute_chat_evidence_application(
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
                 if tool_loop_enabled:
+                    tool_loop_stage = "harness"
                     try:
                         from proxy.services.tool_harness_service import harness
 
@@ -1704,6 +1713,7 @@ async def _execute_chat_evidence_application(
                             getattr(req, "attachment_id", None)
                             and {"build_lsr_workbook", "build_vor_workbook"}.intersection(profile_tools)
                         )
+                        tool_loop_stage = "shortlist"
                         shortlist = await asyncio.to_thread(
                             tool_harness.shortlist,
                             req.question,
@@ -1773,6 +1783,7 @@ async def _execute_chat_evidence_application(
                                 if candidate.kind == ContextKind.WORKING_MEMORY
                                 for item in candidate.objects
                             )
+                            tool_loop_stage = "context_governor"
                             selector_messages, selector_packet = govern_inference_messages(
                                 preset=execution_preset,
                                 profile_prefix=selector_profile,
@@ -1798,6 +1809,7 @@ async def _execute_chat_evidence_application(
                                 "max_tokens": max(128, _env_int("LES_CHAT_TOOL_SELECTOR_MAX_TOKENS", 700)),
                             }
                             t_tool_selector = time.time()
+                            tool_loop_stage = "selector_model"
                             selector_text, round_usage = await _post_llm(
                                 llm_runtime,
                                 llm_model,
@@ -1807,6 +1819,7 @@ async def _execute_chat_evidence_application(
                             )
                             t_llm += time.time() - t_tool_selector
                             selector_usage.append(round_usage)
+                            tool_loop_stage = "selector_parse"
                             proposed_calls = [
                                 _augment_model_tool_args(
                                     call,
@@ -1824,6 +1837,7 @@ async def _execute_chat_evidence_application(
                                 not canonical_shadow_recorded
                                 and canonical_execution_mode is CanonicalRouteMode.SHADOW
                             ):
+                                tool_loop_stage = "shadow_decision"
                                 shadow_trace = await safe_execute_canonical_shadow_decision(
                                         proposed_calls=proposed_calls,
                                         allowed_tools=allowed_tools,
@@ -1854,6 +1868,7 @@ async def _execute_chat_evidence_application(
                                 stop_reason = "model_stop" if not proposed_calls else "repeated_call"
                                 break
                             for call in calls:
+                                tool_loop_stage = "tool_execution"
                                 tool_name = str(call.get("tool") or "")
                                 if (
                                     tool_name in {"build_lsr_workbook", "build_vor_workbook"}
@@ -1948,6 +1963,7 @@ async def _execute_chat_evidence_application(
                             "enabled": True,
                             "status": "error",
                             "error_type": type(tool_err).__name__,
+                            "error_stage": tool_loop_stage,
                         }
                 else:
                     retrieval_trace["tool_loop"] = {

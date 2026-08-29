@@ -199,23 +199,34 @@ class CapabilityProbe:
                 continue
             method, url, body = _probe_request(capability, connection, endpoint)
             try:
-                response = await self.client.request(
+                async with self.client.stream(
                     method,
                     url,
                     headers=headers,
                     json=body,
                     follow_redirects=False,
-                )
-                if 300 <= response.status_code < 400:
-                    state = CapabilityState.UNKNOWN
-                    detail = "redirect_rejected"
-                elif len(response.content) > self.response_body_limit:
-                    state = CapabilityState.UNKNOWN
-                    detail = "response_too_large"
-                else:
-                    self.peer_verifier(response, endpoint)
-                    state = _state_for_status(response.status_code)
-                    detail = f"http_{response.status_code}"
+                ) as response:
+                    if 300 <= response.status_code < 400:
+                        state = CapabilityState.UNKNOWN
+                        detail = "redirect_rejected"
+                    else:
+                        # The connected peer is observable only while the socket is
+                        # still open. A completed SSE response may release that
+                        # metadata, so validate it before consuming the body.
+                        self.peer_verifier(response, endpoint)
+                        response_size = 0
+                        too_large = False
+                        async for chunk in response.aiter_bytes():
+                            response_size += len(chunk)
+                            if response_size > self.response_body_limit:
+                                too_large = True
+                                break
+                        if too_large:
+                            state = CapabilityState.UNKNOWN
+                            detail = "response_too_large"
+                        else:
+                            state = _state_for_status(response.status_code)
+                            detail = f"http_{response.status_code}"
             except (httpx.HTTPError, OSError, ValueError) as exc:
                 state = CapabilityState.UNKNOWN
                 detail = f"request_error:{type(exc).__name__}"
