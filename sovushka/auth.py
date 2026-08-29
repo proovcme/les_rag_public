@@ -192,7 +192,7 @@ def register_login_page():
            onkeydown="if(event.key==='Enter')volkLogin()">
     <button class="volk-btn" id="volk-btn" onclick="volkLogin()">&#9654;&nbsp;&nbsp;ВОЙТИ В СИСТЕМУ</button>
     <div class="volk-err" id="volk-err"></div>
-    <div class="volk-foot">les.ovc.me &middot; Л.Е.С. &middot; доступ только по ключу</div>
+    <div class="volk-foot">Л.Е.С. &middot; доступ только по ключу</div>
   </div>
 </div>
 <script>

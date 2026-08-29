@@ -2,7 +2,7 @@
 
 Базовый proxy URL локального runtime: `http://127.0.0.1:8050`.
 
-Публичный relay `https://les.ovc.me` может быть включен отдельно, но API-контракт ниже описывает локальный FastAPI proxy.
+`https://les.ovc.me` — отдельный симулятор леса и homepage проекта, не relay и не API endpoint ЛЕС. Сетевой backend задаётся оператором явно.
 
 ## Auth
 

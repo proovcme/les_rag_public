@@ -24,7 +24,7 @@ from tools.release_classification import classify_release
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "les.vps-patch.v2"
 FEED_SCHEMA = "les.vps-patch-feed.v1"
-DEFAULT_ORIGIN = "https://les.ovc.me/updates"
+DEFAULT_ORIGIN = "https://github.com/proovcme/les_rag_public/releases/latest/download"
 DESKTOP_MANIFEST_SCHEMA = "les.windows-update-shell.v1"
 ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
 ALLOWED_FILES = {

@@ -14,6 +14,12 @@ from tools import vps_patch
 from tools import vps_patch_apply
 
 
+def test_legacy_patch_builder_default_origin_is_public_github_release() -> None:
+    assert vps_patch.DEFAULT_ORIGIN == (
+        "https://github.com/proovcme/les_rag_public/releases/latest/download"
+    )
+
+
 def _github_feed(patch: dict, *, archive_bytes: int = 5) -> dict:
     version = patch["product_version"]
     return {

@@ -112,16 +112,15 @@ data, enter `models/demo.cad_bim_graph.json` and press `Загрузить`.
 
 ## Direct Upload
 
-`LESJSONPUSH`, Revit `Push to LES` and Navisworks `push` try these LES base URLs
-by default:
+`LESJSONPUSH`, Revit `Push to LES` and Navisworks `push` use only the local
+backend by default:
 
 ```text
-http://10.195.146.98:8050
-https://les.ovc.me
+http://127.0.0.1:8050
 ```
 
-The first URL is the Mac over ZeroTier; the second is the public tunnel. Custom
-addresses can be exact POST endpoints or base URLs; base URLs receive
+Remote/LAN/ZeroTier addresses are user configuration and are never compiled
+into the public exporter. Custom addresses can be exact POST endpoints or base URLs; base URLs receive
 `/api/cad-bim/import` automatically. If uploads fail, the exporter saves a
 fallback JSON file under `local_output_dir` or the user's Documents folder.
 Optional settings live here:
@@ -130,15 +129,14 @@ Optional settings live here:
 %APPDATA%\LES\cad_bim_exporter_settings.json
 ```
 
-Public `https://les.ovc.me` uploads need an admin API key in that settings file;
-trusted ZeroTier can work without a key when LES trusted-network auth accepts
-the Legion subnet.
+Remote uploads require the access policy of the selected backend. Do not expose
+an administrative LES endpoint directly to the public internet.
 
 Example:
 
 ```json
 {
-  "les_urls": ["http://10.195.146.98:8050", "https://les.ovc.me"],
+  "les_urls": ["http://127.0.0.1:8050"],
   "custom_urls": ["http://127.0.0.1:8050/api/cad-bim/import"],
   "local_output_dir": "%USERPROFILE%\\Documents\\LES CAD BIM",
   "api_key": "",
@@ -194,7 +192,7 @@ Seed the shared destination config during install:
 
 ```powershell
 .\LES.CadBimPluginsSetup.exe `
-  --les-url http://10.195.146.98:8050 `
+  --les-url http://127.0.0.1:8050 `
   --custom-url http://127.0.0.1:8050/api/cad-bim/import `
   --local-output-dir "%USERPROFILE%\Documents\LES CAD BIM"
 ```

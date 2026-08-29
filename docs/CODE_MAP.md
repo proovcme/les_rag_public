@@ -283,20 +283,19 @@
 
 Python **3.12**, менеджер **uv** (`uv.lock`), сборка hatchling. Локальная экспертная RAG-система: **FastAPI** (proxy + MLX-host) + **NiceGUI** (UI «Совушка») + **Qdrant** (вектора) + **llama-index** + **MLX/Core ML** (инференс и эмбеддинги на Apple Silicon). Запуск как набор сервисов (launchd-плисты / docker-compose).
 
-## Рантайм-топология (три яруса + UI)
+## Рантайм-топология
 
 ```
-Браузер / les.ovc.me (через P.A.U.K. SSH-туннель, V.O.L.K. ключи)
+Tauri / Browser / PWA
    │
    ▼
-Совушка UI  :8051  (NiceGUI)  ── /classic (чат), /les/classic (админ), /m5, /login
-   │  ├─ Qdrant-визуализатор :8066 (iframe, three.js)
+Совушка UI  :8051  (NiceGUI)  ── /classic, /pwa/*, /lite-api/*
    ▼
-Proxy       :8050  (FastAPI)  ── /api/chat, /api/datasets, /api/runtime, /api/cad-bim …
-   ├──────────────► MLX-host :8080 (FastAPI)  ── /v1/embeddings, /v1/chat/completions, /api/validate
-   └──────────────► Qdrant   :6333            ── коллекции les_rag_*, MAIL_Index
+Backend LES :8050  (FastAPI)  ── /api/chat, /api/rag, /api/runtime, /api/model-connections …
+   ├──────────────► OpenAI-compatible answer / embedding nodes (loopback, private network or HTTPS)
+   └──────────────► Qdrant HTTP (local or remote named dense + bm25_sparse collection)
 ```
-Доверенные сети (ZeroTier `10.195.146.0/24` + loopback) → доступ без ключа, роль admin. Точные порты/доступы — [SKILL.md](../SKILL.md).
+Loopback и явно настроенные доверенные сети могут получить заданную роль без ключа. Конкретные private CIDR принадлежат установке и не фиксируются в публичной карте. Точные порты/доступы — [SKILL.md](../SKILL.md).
 
 ## Точки входа
 
@@ -442,7 +441,7 @@ projection под тем же alias; при rollback старый FTS восст
 - Ядро: `config.py`, `state.py`, `auth.py`, `trust.py` (доверенные сети), `provider_setup.py` + `provider_session.py` (публичный first-run выбор локальной/BYOK-модели и ephemeral vault), `safe_markup.py` (санитайз SVG), `styles.py`.
 - **pages/**: `overview` (ОБЗОР), `samovar` (С.А.М.О.В.А.Р. — датасеты; вставка/нативный выбор локального пути, переход в `documents` с exact `dataset_id`), `prorab`, `zadachi` (задачник+заметки, W16), `instrumenty` (операторская панель служебных источников данных), `obyomy` (журнал полевых объёмов, W8), `chat` (AI ЧАТ; drawer «Задачи и объёмы» — просмотр /api/tasks+/api/field прямо в чат-шелле, ввод командами чата), `history`, `volk` (auth), `diag`. **components/**: `header`, `charts`, `logterm`.
 - Единственный UI — NiceGUI: `/classic` чат, `/les/classic` админка (W5.4/5.5). HTML-шеллы lite_chat/lite_admin удалены; `/`, `/les`, `/les/lite` редиректят в NiceGUI.
-- `lite_bridge.py` (`register_lite_bridge_routes`): мост `/lite-api/*`→proxy (контур les.ovc.me/M5/smoke 12/12/вьювер), `/lite-runtime/*` (рестарты сервисов, loopback/trusted; `/pick-folder` — loopback-only native Explorer/Finder picker для локальной Совушки), статика+страница вьювера CAD/BIM, редиректы шеллов. `m5_display.py` (экран Wokyis M5) — отдельно.
+- `lite_bridge.py` (`register_lite_bridge_routes`): мост `/lite-api/*`→явно настроенный proxy для browser/PWA/Tauri, `/lite-runtime/*` (рестарты сервисов, loopback/trusted; `/pick-folder` — loopback-only native Explorer/Finder picker для локальной Совушки), статика+внутренняя страница вьювера CAD/BIM, редиректы shell. `m5_display.py` (экран Wokyis M5) — отдельно.
 - Чат: нестриминговый `POST /api/chat` + SSE `POST /api/chat/stream` (W5.1, токены по мере генерации; UI обновляет пузырь ответа на каждом токене; tool/детерминированные ветки шлют `progress`-события до final); push-канал `GET /api/live` (W5.2, метрики/статус/индексация одним SSE). В первом слое ответа Совушка показывает операторские статусы, сценарий, табличный контракт и предупреждение `answer_contract_check`, а KOT/CTX/CACHE/contract-id/missing прячет в «Технические детали». Кнопка «Паспорт области» показывает память чата и deep-паспорта выбранных датасетов.
 - Статика: [frontend/](../frontend/) (legacy `sovushka.html`; `cad_bim_viewer/` — TS+Vite+three.js+web-ifc), [qdrant_visualizer/](../qdrant_visualizer/) (three.js + клиентский PCA), `static/fonts/`.
 

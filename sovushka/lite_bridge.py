@@ -4,8 +4,7 @@ W5.4/5.5 (решение оператора 2026-06-11): единственны�
 (`/classic` чат, `/les/classic` админка). HTML-шеллы lite_chat/lite_admin
 удалены; здесь живёт всё, что ОБЯЗАНО пережить удаление шеллов:
 
-  • `/lite-api/*`  — мост на proxy (его используют les.ovc.me, M5, внешний
-    smoke 12/12 и вьювер CAD/BIM);
+  • `/lite-api/*`  — мост на явно настроенный proxy для browser/PWA/Tauri;
   • `/lite-runtime/*` — локальные рантайм-действия (loopback/trusted only);
   • монтирование статики и страница вьювера CAD/BIM (`/les/cad-bim-viewer`);
   • редиректы `/` → `/classic`, `/les` и `/les/lite` → `/les/classic`.

@@ -52,6 +52,8 @@ uv run python tools/runtime_smoke.py \
   and `docs/public/smeta-expert-review.md`.
 - Keep internal runbooks available for developers, but do not make private hostnames,
   keys, private paths, or private dataset names part of required public setup.
+- Do not publish machine-specific IP addresses, active provider/model snapshots or an
+  unrelated homepage as a LES API/update endpoint.
 - If GitHub Pages is enabled, use `docs/index.md` as the curated entry point.
 
 ## Current 0.29.3 public-release gate

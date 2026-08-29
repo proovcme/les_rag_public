@@ -15,7 +15,7 @@
 📅 **Актуализировано:** 22.05.2026 — v3.3 runtime
 - С.О.В.У.Ш.К.А.: `/` — премиальный чат, drawer истории, правая панель артефактов; `/les` — админка.
 - С.А.М.О.В.А.Р.: Qdrant + MLX embeddings, semantic cache, Document Router, Parquet/XLSX/CSV artifacts.
-- П.А.У.К.: публичный HTTPS-контур `les.ovc.me` с Caddy routes `/api/*`, `/`, `/les`.
+- П.А.У.К.: историческое имя прежнего VPS-туннеля; не является текущим публичным endpoint ЛЕС.
 - Т.О.С.К.А.: SafeRAG validation и fallback для неподтверждённых ответов.
 
 

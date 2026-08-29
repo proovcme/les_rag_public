@@ -8,15 +8,23 @@
 
 ```
 версия продукта (SemVer):  0.29.3 (Windows release source; публичный статус — GitHub tag v0.29.3)
-номер сборки:              631
-версия Tauri/NSIS:         5.1.631
+номер сборки:              632
+версия Tauri/NSIS:         5.1.632
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.3 / build 631 (exact source/tag commit)
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.3 / build 632 (exact source/tag commit)
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
 следующий выпуск:          post-release cleanup: installer contents audit and Settings/Configuration UI consolidation
-рантайм /api/version:      Legion 0.29.3 / build 631 / desktop 5.1.631, aligned, full mode, UI 200
+рантайм /api/version:      Legion 0.29.3 / build 632 / desktop 5.1.632, aligned, full mode, UI 200
 ```
+
+> **Build 632 public-surface cleanup:** финальный release source удаляет
+> machine-specific IP и устаревший public tunnel из exporter defaults, auth/status
+> UI и текущей integration documentation. `les.ovc.me` является отдельным
+> симулятором леса и GitHub homepage, но не LES API, update origin или fallback.
+> Default patch discovery указывает на GitHub Releases. Публичные README,
+> developer guide и versioned release document разделяют accepted, preview и
+> planned surfaces; изменения защищены focused regression/publication gates.
 
 > **Build 631 Legion/public acceptance:** единый `windows_release.ps1` собрал
 > Tauri/NSIS, установил exact artifact в одноразовый Programs-shaped root и
