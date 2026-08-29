@@ -961,6 +961,11 @@ Qdrant payload-индексы создаются best-effort после гото
 **0.29.1 / build 627:** `install` создаёт вложенные каталоги через разрешённый target
 persistent-state junction; живой Windows-тест воспроизводит Programs+junction boundary.
 
+**0.29.2 / build 628:** `install` не допускает прямые mutable paths в application tree;
+Programs-shaped prebundle smoke запускается до npm/NSIS и сохраняет bounded service diagnostics.
+Offline uv cache использует dependency-only fingerprint с exact lock/archive SHA verification,
+поэтому release-only версия ЛЕС не пересобирает тяжёлый dependency archive.
+
 **✅ исправлено:** SKILL/TEST_INVENTORY → v0.23/~2063/smoke-basic done; PROXY_ARCHITECTURE → `les_meta_qwen.db`; INFRASTRUCTURE_v2.0 (мёртвое) → archive. Версии (3 оси) объяснены в [RELEASE_LEDGER.md](RELEASE_LEDGER.md); 0.23.N.P внедрено в `version_service`. В 0.23.6.2 добавлены checksum для backup/restore и сужены дефолтные trusted loopback/proxy-сети; в 0.23.6.3 скрепка чата стала реальным контекстом/payload scope; в 0.23.6.4 закреплены светлая тема по умолчанию, скрытая панель артефактов и OpenAI-compatible `gpt-4.1` fallback; в 0.23.6.5 добавлен явный GUI-контроль открытия артефактов и управляемый fail-path чтения вложений; в 0.23.6.6 source chips открывают citation drawer без fake-open; в 0.23.6.7 router-primary стал explicit opt-in, чтобы убрать 12s latency fallback; в 0.23.6.8 read-вложение стало видимым файлом следующего сообщения, plain file-reading идёт без глобального RAG, direct/router LLM без облачного ключа уходит в локальный MLX; в 0.23.6.10 `make ship` стал быстрым итерационным gate, `make ship-full` — полным release gate с retry post-smoke; в 0.23.6.11 нормоконтрольный чат отдаёт defense-report и top-level `defense`; в 0.24.0.1 служебные источники доступны из чата отдельной панелью.
 
 > **Поправка 0.24.21 / build 442:** Windows payload теперь содержит SHA-256-проверенный официальный

@@ -7,16 +7,24 @@
 ## Текущее состояние (2026-08-29)
 
 ```
-версия продукта (SemVer):  0.29.1 (development candidate; не опубликован)
-номер сборки:              627
-версия Tauri/NSIS:         5.1.627
+версия продукта (SemVer):  0.29.2 (development candidate; не опубликован)
+номер сборки:              628
+версия Tauri/NSIS:         5.1.628
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
-следующий выпуск:          0.29.1 full Windows installer (junction-safe bootstrap)
+следующий выпуск:          0.29.2 full Windows installer (prebundle-gated, stable dependency cache)
 рантайм /api/version:      isolated installed smoke 0.28.2 / build 589; services stopped after acceptance
 ```
+
+> **0.29.2 / build 628 Windows release-cycle fix:** все mutable roots направлены
+> в persistent state, включая constructor defaults. До npm/NSIS staged runtime
+> обязан пройти чистый Programs-shaped bootstrap с реальными API/UI и прямыми
+> Python PID; при сбое сохраняются bounded backend/UI tails. Offline uv cache
+> теперь keyed по сторонним зависимостям + Python/uv/extra, а версия editable
+> проекта не вызывает повторную упаковку 421 МБ. Exact `uv.lock` SHA остаётся
+> обязательной install-time проверкой.
 
 > **0.29.1 / build 627 Windows bootstrap hotfix:** установленный runtime под
 > `%LOCALAPPDATA%\Programs` создаёт persistent каталоги через junction в
