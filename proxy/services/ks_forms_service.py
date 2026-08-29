@@ -13,6 +13,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from backend.runtime_paths import mutable_path
+
 logger = logging.getLogger(__name__)
 
 KS2_KS3_FORMS = frozenset({"ks2", "ks3"})
@@ -304,10 +306,10 @@ def load_last_assembled_from_session(session_id: str) -> dict[str, Any] | None:
 
 
 def load_latest_assembled_from_disk(
-    artifact_dir: str | Path = "storage/smeta_artifacts",
+    artifact_dir: str | Path | None = None,
 ) -> dict[str, Any] | None:
     """Fallback: newest *.json sidecar next to smeta XLSX exports."""
-    root = Path(artifact_dir)
+    root = Path(artifact_dir) if artifact_dir is not None else mutable_path("storage/smeta_artifacts")
     if not root.is_dir():
         return None
     for path in sorted(root.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):

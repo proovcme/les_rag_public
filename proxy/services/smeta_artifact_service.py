@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from backend.runtime_paths import mutable_path
 from proxy.services.estimate_math_service import parse_ru_number
 
 
@@ -894,7 +895,7 @@ def build_norm_candidate_artifact_from_lookup(
 def persist_smeta_artifact_exports(
     artifact: dict[str, Any] | None,
     *,
-    output_dir: str | Path = "storage/smeta_artifacts",
+    output_dir: str | Path | None = None,
     prefix: str = "smeta_artifact",
 ) -> dict[str, Any] | None:
     """Write XLSX and CSV downloads for an already built smeta artifact.
@@ -908,7 +909,7 @@ def persist_smeta_artifact_exports(
     if not tables:
         return artifact
 
-    out_dir = Path(output_dir)
+    out_dir = Path(output_dir) if output_dir is not None else mutable_path("storage/smeta_artifacts")
     out_dir.mkdir(parents=True, exist_ok=True)
     import time
 

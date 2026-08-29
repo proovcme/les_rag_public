@@ -33,6 +33,8 @@ from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.schema import Document, TextNode
 from qdrant_client import models
 
+from backend.runtime_paths import mutable_path
+
 from .converter import convert_to_markdown_for_indexing, normalize_pdf_text
 from .document_router import DocumentRoute, route_document
 from .interface import Chunk, DatasetInfo, EmbeddingContractError, RAGBackend
@@ -1937,9 +1939,9 @@ class QdrantLlamaIndexAdapter(RAGBackend):
         qdrant_url:       str,
         mlx_url:       str,
         embed_model_name: str,
-        content_dir:      str = "./storage/datasets",
+        content_dir:      str | Path | None = None,
     ):
-        self.content_dir     = Path(content_dir)
+        self.content_dir     = Path(content_dir) if content_dir is not None else mutable_path("storage/datasets")
         self.content_dir.mkdir(parents=True, exist_ok=True)
         self.db              = MetaDB()
         self.db.ensure_system_datasets()

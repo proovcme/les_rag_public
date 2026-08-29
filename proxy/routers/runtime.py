@@ -221,17 +221,25 @@ async def health():
     backend = get_runtime_state().backend
     if not backend:
         return {"status": "starting", "backend": "none"}
-    timeout = max(0.05, min(float(os.getenv("LES_HEALTH_TIMEOUT_SEC", "6")), 15.0))
+    timeout = max(0.05, min(float(os.getenv("LES_HEALTH_TIMEOUT_SEC", "2")), 15.0))
+    health_error_code = "RAG_UNAVAILABLE"
     try:
         ok = await asyncio.wait_for(backend.health(), timeout=timeout)
     except TimeoutError:
         logger.warning("[HEALTH] backend probe timed out after %.1fs", timeout)
         ok = False
+        health_error_code = "RAG_HEALTH_TIMEOUT"
     except Exception as error:
         logger.warning("[HEALTH] backend probe failed: %s", error)
         ok = False
     response = {"status": "ok" if ok else "error", "backend": "qdrant_llama"}
-    if hasattr(backend, "health_snapshot"):
+    if not ok:
+        response["rag"] = {
+            "status": "unavailable",
+            "error_code": health_error_code,
+            "index_contract": index_contract_status(),
+        }
+    elif hasattr(backend, "health_snapshot"):
         try:
             snapshot = await asyncio.wait_for(
                 backend.health_snapshot(),

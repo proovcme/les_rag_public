@@ -27,6 +27,14 @@ def _violations() -> list[str]:
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
             for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    defaults = [*node.args.defaults, *node.args.kw_defaults]
+                    for default in defaults:
+                        if not isinstance(default, ast.Constant) or not isinstance(default.value, str):
+                            continue
+                        normalized = default.value.replace("\\", "/").lstrip("./")
+                        if normalized.startswith(MUTABLE_PREFIXES):
+                            violations.append(f"{relative}:{default.lineno}:{default.value}")
                 if not isinstance(node, ast.Call) or not node.args:
                     continue
                 if not isinstance(node.func, ast.Name) or node.func.id != "Path":

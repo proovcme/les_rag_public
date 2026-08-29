@@ -14,6 +14,7 @@ import urllib.request
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 from tools.build_release_artifacts import ROOT, iter_files
 
@@ -388,7 +389,13 @@ def set_version(version: str) -> None:
     cargo_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def build(version: str, bundles: str | None, *, build_number: int | None = None) -> Path:
+def build(
+    version: str,
+    bundles: str | None,
+    *,
+    build_number: int | None = None,
+    prebundle_runner: Callable[[Path], object] | None = None,
+) -> Path:
     desktop_version = desktop_semver(version, build_number)
     set_version(desktop_version)
     if desktop_version != version:
@@ -400,6 +407,12 @@ def build(version: str, bundles: str | None, *, build_number: int | None = None)
             raise RuntimeError("Windows release build requires LES_SMETA_BASELINE_ARCHIVE")
     count = stage_runtime(smeta_baseline_archive=smeta_baseline)
     print(f"[tauri] staged clean runtime: {count} files")
+    if os.sys.platform.startswith("win"):
+        if prebundle_runner is None:
+            from tools.windows_prebundle_smoke import run_prebundle_smoke
+
+            prebundle_runner = run_prebundle_smoke
+        prebundle_runner(RESOURCES / "runtime")
     npm = npm_executable()
     subprocess.run([npm, "install"], cwd=TAURI_ROOT, check=True)
     command = [npm, "run", "tauri", "--", "build"]

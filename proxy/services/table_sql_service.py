@@ -15,6 +15,8 @@ import re
 from pathlib import Path
 from typing import Any, Optional
 
+from backend.runtime_paths import mutable_path
+
 # По чему можно агрегировать / группировать (из STANDARD_SCHEMA).
 _NUMERIC = {"qty", "price", "amount", "amount_mat", "amount_work", "weight_total",
             "work_done", "work_volume", "work_since_start"}
@@ -142,7 +144,7 @@ def aggregate(
     op: str = "sum",
     contains: Optional[str] = None,
     group_by: Optional[str] = None,
-    storage_root: str | Path = "storage/datasets",
+    storage_root: str | Path | None = None,
     limit: int = 100,
 ) -> dict[str, Any]:
     """Агрегация по полному parquet датасетов. group_by → разбивка; contains → фильтр по name/code."""
@@ -153,7 +155,8 @@ def aggregate(
     if group_by and group_by not in _GROUPABLE:
         raise ValueError(f"group_by ∈ {sorted(_GROUPABLE)}")
 
-    paths = _parquet_paths(dataset_ids, storage_root)
+    effective_storage_root = Path(storage_root) if storage_root is not None else mutable_path("storage/datasets")
+    paths = _parquet_paths(dataset_ids, effective_storage_root)
     if not paths:
         return {"rows": [], "total": None, "note": "нет parquet у датасетов", "field": field, "op": op}
 

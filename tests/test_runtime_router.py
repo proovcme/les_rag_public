@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 from fastapi import HTTPException
@@ -23,6 +24,18 @@ class DegradedBackend(FakeBackend):
 class HangingBackend(FakeBackend):
     async def health(self):
         await asyncio.Event().wait()
+
+
+class UnavailableBackend(FakeBackend):
+    def __init__(self):
+        self.snapshot_calls = 0
+
+    async def health(self):
+        return False
+
+    async def health_snapshot(self):
+        self.snapshot_calls += 1
+        raise AssertionError("deep snapshot must not delay liveness when Qdrant is unavailable")
 
     async def health_snapshot(self):
         await asyncio.Event().wait()
@@ -83,6 +96,35 @@ async def test_health_is_bounded_when_backend_hangs(runtime_state, monkeypatch):
     assert response["status"] == "error"
     assert response["rag"]["error_code"] == "RAG_HEALTH_TIMEOUT"
     assert response["rag"]["index_contract"]["compatible"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_state", [UnavailableBackend()], indirect=True)
+async def test_health_skips_second_qdrant_probe_when_backend_is_unavailable(runtime_state):
+    backend = runtime.get_runtime_state().backend
+
+    response = await runtime.health()
+
+    assert response["status"] == "error"
+    assert response["rag"]["error_code"] == "RAG_UNAVAILABLE"
+    assert backend.snapshot_calls == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_state", [HangingBackend()], indirect=True)
+async def test_health_default_timeout_fits_windows_readiness_probe(runtime_state, monkeypatch):
+    monkeypatch.delenv("LES_HEALTH_TIMEOUT_SEC", raising=False)
+    monkeypatch.setattr(
+        runtime,
+        "index_contract_status",
+        lambda: {"status": "missing", "compatible": False},
+    )
+
+    started = time.monotonic()
+    response = await runtime.health()
+
+    assert time.monotonic() - started < 3.0
+    assert response["rag"]["error_code"] == "RAG_HEALTH_TIMEOUT"
 
 
 @pytest.mark.asyncio

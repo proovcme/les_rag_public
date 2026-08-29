@@ -5,6 +5,7 @@ from __future__ import annotations
 import subprocess
 
 from tools import build_release_artifacts
+from tools import build_tauri_app
 from tools import build_windows_installer
 
 
@@ -33,6 +34,37 @@ def test_stage_runtime_is_idempotent(tmp_path):
     first = build_windows_installer.stage_runtime(dest)
     second = build_windows_installer.stage_runtime(dest)  # rebuild over existing
     assert first == second
+
+
+def test_tauri_build_runs_prebundle_smoke_before_npm(tmp_path, monkeypatch):
+    events: list[str] = []
+    monkeypatch.setattr(build_tauri_app.os.sys, "platform", "win32")
+    monkeypatch.setenv("LES_SMETA_BASELINE_ARCHIVE", str(tmp_path / "baseline.zip"))
+    monkeypatch.setattr(build_tauri_app, "ROOT", tmp_path)
+    monkeypatch.setattr(build_tauri_app, "TAURI_ROOT", tmp_path / "tauri")
+    monkeypatch.setattr(build_tauri_app, "SRC_TAURI", tmp_path / "tauri/src-tauri")
+    monkeypatch.setattr(build_tauri_app, "RESOURCES", tmp_path / "resources")
+    monkeypatch.setattr(build_tauri_app, "set_version", lambda _version: None)
+    monkeypatch.setattr(
+        build_tauri_app,
+        "stage_runtime",
+        lambda **_kwargs: events.append("stage") or 1,
+    )
+    monkeypatch.setattr(build_tauri_app, "npm_executable", lambda: "npm")
+
+    def fake_run(command, **_kwargs):
+        events.append("npm-install" if command == ["npm", "install"] else "tauri-build")
+
+    monkeypatch.setattr(build_tauri_app.subprocess, "run", fake_run)
+
+    build_tauri_app.build(
+        "0.29.2",
+        "nsis",
+        build_number=628,
+        prebundle_runner=lambda runtime: events.append(f"smoke:{runtime.name}"),
+    )
+
+    assert events == ["stage", "smoke:runtime", "npm-install", "tauri-build"]
 
 
 def test_release_inventory_uses_only_git_tracked_files(tmp_path, monkeypatch):

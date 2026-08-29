@@ -22,6 +22,7 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+from backend.runtime_paths import mutable_path
 from proxy.services import fsem_machinist_service as fsem
 from proxy.services import stesnennost_service as st
 
@@ -368,7 +369,7 @@ def export(
     condition: str | None = None,
     k_ozp: float | None = None,
     k_em: float | None = None,
-    output_dir: str | Path = "storage/lsr",
+    output_dir: str | Path | None = None,
     fmt: str = "xlsx",
     title: str = "Локальный сметный расчёт",
 ) -> dict[str, Any]:
@@ -382,7 +383,8 @@ def export(
         k_em=k_em,
     )
     stamp = time.strftime("%Y%m%d_%H%M%S")
-    out = Path(output_dir) / f"lsr_{stamp}.{fmt.lower()}"
+    out_dir = Path(output_dir) if output_dir is not None else mutable_path("storage/lsr")
+    out = out_dir / f"lsr_{stamp}.{fmt.lower()}"
     path = export_assembled(result, out, fmt=fmt, title=title)
     return {"summary": result["summary"], "path": str(path), "rows": len(assembled_rows(result))}
 
