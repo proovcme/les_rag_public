@@ -7,16 +7,31 @@
 ## Текущее состояние (2026-08-29)
 
 ```
-версия продукта (SemVer):  0.29.3 (development candidate; не опубликован)
+версия продукта (SemVer):  0.29.3 (Windows release source; публичный статус — GitHub tag v0.29.3)
 номер сборки:              631
 версия Tauri/NSIS:         5.1.631
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.2 / build 630 (`d17bce2b`)
-последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
-следующий выпуск:          0.29.x node-contract foundation; 0.29.3 остаётся непубличным candidate
-рантайм /api/version:      Legion 0.29.2 / build 630 / desktop 5.1.630, aligned, full mode, UI 200
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.3 / build 631 (exact source/tag commit)
+последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
+следующий выпуск:          post-release cleanup: installer contents audit and Settings/Configuration UI consolidation
+рантайм /api/version:      Legion 0.29.3 / build 631 / desktop 5.1.631, aligned, full mode, UI 200
 ```
+
+> **Build 631 Legion/public acceptance:** единый `windows_release.ps1` собрал
+> Tauri/NSIS, установил exact artifact в одноразовый Programs-shaped root и
+> получил два `ready` bootstrap-прохода. Изолированный runtime подтвердил API/UI,
+> direct `pythonw.exe` без console wrappers и реальный scoped native RRF по
+> `dense + bm25_sparse + lexical`. Затем тот же artifact транзакционно заменил
+> `Programs\\LES`, не меняя `%LOCALAPPDATA%\\LES`, и сохранил recovery tree.
+> Живой production trace подтвердил alias `les_rag -> les_rag_v563`, 101 366
+> точек, `qdrant_native_hybrid+parent_card`, `qdrant_rrf+lexical_safety_rrf`,
+> typed-memory projection без ошибки и ответ с реальными источниками. Qwen 35B
+> на Mac mini прошёл отдельные probes `chat_completions`, `streaming`, `tools`
+> и `models`; его canonical route остаётся честным `shadow` до отдельной live
+> promotion acceptance. Публичный release допустим только с tag `v0.29.3` на
+> этом exact source commit, тремя checksum-verified assets и обратным download-
+> compare после успешного GitHub macOS+Windows platform gate.
 
 > **0.29.3 / build 631 SSE capability-probe fix:** capability probe проверяет
 > connected peer до чтения bounded response body. Реальный ZeroTier Qwen proxy
