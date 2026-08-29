@@ -183,6 +183,18 @@ def test_windows_patch_release_creates_missing_tracking_branch():
     assert '@("pull", "--ff-only", "origin", $Branch)' in source
 
 
+def test_windows_release_entrypoint_derives_identity_and_runs_full_pipeline():
+    source = (ROOT / "tools/windows_release.ps1").read_text(encoding="utf-8")
+
+    assert "config\\version.json" in source
+    assert 'git -C $RepoRoot rev-parse HEAD' in source
+    assert 'git -C $RepoRoot rev-parse --abbrev-ref HEAD' in source
+    assert "windows_patch_release.ps1" in source
+    assert "-Version $Contract.product_version" in source
+    assert "-BuildNumber $Contract.build_number" in source
+    assert "-BuildCommit $Commit" in source
+
+
 def test_portable_updater_gate_matches_make_profile(monkeypatch):
     calls: list[list[str]] = []
     monkeypatch.setattr(

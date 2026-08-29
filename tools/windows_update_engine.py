@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import psutil
+
 try:
     import windows_runtime
 except ImportError:
@@ -440,6 +442,30 @@ def _pid_running(pid: int) -> bool:
     return True
 
 
+def application_tree_lock_owners(install: Path) -> list[dict[str, Any]]:
+    """Return processes whose current directory keeps the application tree open."""
+    root = os.path.normcase(str(install.resolve()))
+    owners: list[dict[str, Any]] = []
+    for process in psutil.process_iter():
+        if process.pid == os.getpid():
+            continue
+        try:
+            cwd = str(process.cwd() or "")
+            if not cwd or os.path.commonpath([root, os.path.normcase(cwd)]) != root:
+                continue
+            owners.append(
+                {
+                    "pid": int(process.pid),
+                    "name": str(process.name() or "unknown"),
+                    "cwd": cwd,
+                    "exe": str(process.exe() or ""),
+                }
+            )
+        except (psutil.Error, OSError, ValueError):
+            continue
+    return sorted(owners, key=lambda item: (item["name"].casefold(), item["pid"]))
+
+
 def _ready_snapshot(
     *,
     expected_commit: str,
@@ -503,11 +529,12 @@ def _ready_snapshot(
         return None, f"rag_health={type(exc).__name__}: {exc}"
     contract = ((health.get("rag") or {}).get("index_contract") or {})
     qdrant = ((health.get("rag") or {}).get("qdrant") or {})
-    if contract.get("compatible") is not True or qdrant.get("ok") is not True:
+    if contract.get("compatible") is not True:
         return (
             None,
-            f"contract={contract.get('status')}, qdrant={qdrant.get('ok')}",
+            f"contract={contract.get('status')}",
         )
+    qdrant_ready = qdrant.get("ok") is True
     try:
         smeta_probe = _json_url(
             "http://127.0.0.1:8050/api/lsr/gesn/10-01-001-01/expand?qty=1",
@@ -548,7 +575,12 @@ def _ready_snapshot(
             "build_number": expected_build,
             "deployed_commit": actual_commit,
             "index_contract_compatible": True,
-            "qdrant_ready": True,
+            "qdrant_ready": qdrant_ready,
+            "rrf_status": (
+                "available"
+                if qdrant_ready
+                else "N/A: external Qdrant unavailable"
+            ),
             "smeta_baseline_ready": True,
             "reranker_ready": True,
             "process_contract": str(runtime_state.get("process_contract")),
@@ -687,6 +719,13 @@ def apply_hard_job(job_path: Path) -> int:
         )
         stop_runtime(old_runtime, state, log_root)
         stop_desktop()
+        lock_owners = application_tree_lock_owners(install)
+        if lock_owners:
+            summary = "; ".join(
+                f"{item['name']} pid={item['pid']} cwd={item['cwd']}"
+                for item in lock_owners
+            )
+            raise RuntimeError(f"APPLICATION_TREE_LOCKED: {summary}")
         if recovery.exists():
             raise RuntimeError(f"recovery point already exists: {recovery}")
         os.replace(install, recovery)

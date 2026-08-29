@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.29.2 (development candidate; не опубликован)
-номер сборки:              629
-версия Tauri/NSIS:         5.1.629
+номер сборки:              630
+версия Tauri/NSIS:         5.1.630
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
@@ -30,6 +30,14 @@ dev implementation:       private model nodes, exact promotion and split runtime
 > не управляет Docker. Qdrant подключается как внешний HTTP-сервис через
 > GUI-first `QDRANT_URL` (локальная машина, LAN или VPS); недоступный индекс
 > честно снижает возможности RAG, но не блокирует запуск core API/UI.
+
+> **Build 630 release automation:** production acceptance разделяет готовность
+> core и внешнюю Qdrant/RRF capability; недоступный Qdrant фиксируется как
+> `N/A`, а не вызывает откат исправного приложения. `tools/windows_release.ps1`
+> сам выводит version/build/commit/branch, находит проверенный baseline через
+> общий Git checkout и запускает build → isolated smoke → transactional deploy.
+> Перед replace updater показывает процессы с `cwd` внутри application tree и
+> никогда не убивает внешний provider скрыто.
 
 > **0.29.1 / build 627 Windows bootstrap hotfix:** установленный runtime под
 > `%LOCALAPPDATA%\Programs` создаёт persistent каталоги через junction в

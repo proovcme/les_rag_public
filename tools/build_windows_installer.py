@@ -18,7 +18,9 @@ the Sovushka GUI; no model weights are bundled.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,6 +29,31 @@ from tools.build_release_artifacts import iter_files
 ROOT = Path(__file__).resolve().parents[1]
 DIST = ROOT / "dist"
 STAGE = DIST / "windows" / "LES"
+
+
+def resolve_smeta_baseline_archive() -> Path:
+    """Find the immutable release input without requiring a shell variable."""
+    candidates: list[Path] = []
+    configured = os.getenv("LES_SMETA_BASELINE_ARCHIVE", "").strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+    candidates.append(ROOT / "dist" / "LES-smeta-baseline.zip")
+    try:
+        common_dir = Path(
+            subprocess.check_output(
+                ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                cwd=ROOT,
+                text=True,
+            ).strip()
+        )
+        candidates.append(common_dir.parent / "dist" / "LES-smeta-baseline.zip")
+    except (OSError, subprocess.SubprocessError):
+        pass
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    checked = ", ".join(str(path) for path in candidates)
+    raise RuntimeError(f"verified Windows smeta baseline archive was not found: {checked}")
 
 
 def stage_runtime(dest: Path) -> int:
@@ -48,7 +75,16 @@ def build(version: str, build_number: int | None = None) -> Path:
     if sys.platform.startswith("win"):
         from tools.build_tauri_app import build as build_tauri
 
-        build_tauri(version, "nsis", build_number=build_number)
+        baseline = resolve_smeta_baseline_archive()
+        previous = os.environ.get("LES_SMETA_BASELINE_ARCHIVE")
+        os.environ["LES_SMETA_BASELINE_ARCHIVE"] = str(baseline)
+        try:
+            build_tauri(version, "nsis", build_number=build_number)
+        finally:
+            if previous is None:
+                os.environ.pop("LES_SMETA_BASELINE_ARCHIVE", None)
+            else:
+                os.environ["LES_SMETA_BASELINE_ARCHIVE"] = previous
         target = DIST / "LES-Setup.exe"
         if not target.exists():
             raise SystemExit("Tauri NSIS build finished without LES-Setup.exe")

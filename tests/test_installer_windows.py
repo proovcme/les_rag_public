@@ -582,3 +582,22 @@ def test_windows_bootstrap_writes_machine_readable_status_for_tauri():
     assert '"bootstrap_degraded"' in text
     assert 'Fail "в установочном пакете отсутствует проверенная сметная база"' not in text
     assert 'Fail "не удалось подготовить сметную базу:' not in text
+
+
+def test_windows_builder_finds_verified_baseline_from_git_common_checkout(
+    tmp_path, monkeypatch
+):
+    worktree = tmp_path / "worktrees" / "release"
+    common_root = tmp_path / "les_rag"
+    archive = common_root / "dist" / "LES-smeta-baseline.zip"
+    archive.parent.mkdir(parents=True)
+    archive.write_bytes(b"baseline")
+    monkeypatch.delenv("LES_SMETA_BASELINE_ARCHIVE", raising=False)
+    monkeypatch.setattr(build_windows_installer, "ROOT", worktree)
+    monkeypatch.setattr(
+        build_windows_installer.subprocess,
+        "check_output",
+        lambda *_args, **_kwargs: str(common_root / ".git"),
+    )
+
+    assert build_windows_installer.resolve_smeta_baseline_archive() == archive

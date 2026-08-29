@@ -69,6 +69,17 @@ powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profi
 powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -Provider lemonade
 ```
 
+Полный внутренний выпуск и транзакционный деплой выполняются одной командой из
+чистого опубликованного commit:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\windows_release.ps1
+```
+
+Команда сама читает version contract и Git identity, находит проверенный
+baseline, собирает EXE, устанавливает его в изолированный контур, выполняет два
+bootstrap-smoke и только затем обновляет production с recovery/rollback.
+
 `windows-lite` не ставит MLX/CoreML и не требует локальную Apple Silicon
 модель. Это легкий профиль для Windows/Revit host: LES proxy + UI, а модель и
 Qdrant подключаются как внешние HTTP-сервисы.

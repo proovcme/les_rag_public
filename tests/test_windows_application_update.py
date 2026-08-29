@@ -1100,6 +1100,114 @@ def test_windows_update_ready_snapshot_checks_live_direct_pids(
     assert snapshot["reranker_ready"] is True
 
 
+def test_windows_update_ready_snapshot_accepts_core_when_external_qdrant_is_absent(
+    tmp_path, monkeypatch
+):
+    state = tmp_path / "LES"
+    logs = state / "logs"
+    logs.mkdir(parents=True)
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "process_contract": "direct_python_no_console_v2",
+                "proxy_pid": 101,
+                "ui_pid": 202,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def json_probe(url, timeout=5):
+        if url.endswith("/api/version"):
+            return {
+                "product_version": "0.29.2",
+                "build_number": 630,
+                "deployed_commit": "e" * 40,
+            }
+        if url.endswith("/api/health"):
+            return {
+                "status": "error",
+                "rag": {
+                    "index_contract": {"compatible": True, "status": "compatible"},
+                    "qdrant": {},
+                },
+            }
+        if "/api/lsr/gesn/" in url:
+            return {"resources": [{"code": "1-100-01", "quantity": 1.0}]}
+        raise AssertionError(url)
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(windows_update_engine, "_json_url", json_probe)
+    monkeypatch.setattr(
+        windows_update_engine,
+        "_post_json_url",
+        lambda *_args, **_kwargs: {"ranked": [{"rank": 1}]},
+    )
+    monkeypatch.setattr(
+        windows_update_engine.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: HealthyUi(),
+    )
+    monkeypatch.setattr(windows_update_engine, "_pid_running", lambda pid: True)
+
+    snapshot, failure = windows_update_engine._ready_snapshot(
+        expected_commit="e" * 40,
+        expected_version="0.29.2",
+        expected_build=630,
+        state=state,
+        health_timeout=15,
+    )
+
+    assert failure == ""
+    assert snapshot is not None
+    assert snapshot["qdrant_ready"] is False
+    assert snapshot["rrf_status"] == "N/A: external Qdrant unavailable"
+
+
+def test_hard_update_reports_processes_whose_cwd_locks_application_tree(
+    tmp_path, monkeypatch
+):
+    install = tmp_path / "Programs" / "LES"
+    install.mkdir(parents=True)
+
+    class Process:
+        pid = 18776
+
+        def name(self):
+            return "ollama.exe"
+
+        def cwd(self):
+            return str(install)
+
+        def exe(self):
+            return str(tmp_path / "Programs" / "Ollama" / "ollama.exe")
+
+    monkeypatch.setattr(
+        windows_update_engine.psutil,
+        "process_iter",
+        lambda: [Process()],
+    )
+
+    owners = windows_update_engine.application_tree_lock_owners(install)
+
+    assert owners == [
+        {
+            "pid": 18776,
+            "name": "ollama.exe",
+            "cwd": str(install),
+            "exe": str(tmp_path / "Programs" / "Ollama" / "ollama.exe"),
+        }
+    ]
+
+
 def test_windows_update_ready_snapshot_rejects_unreadable_smeta_baseline(
     tmp_path, monkeypatch
 ):
