@@ -7,14 +7,15 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from tools.fgis_full_update import DEFAULT_CATALOG, DEFAULT_MANIFEST, DEFAULT_STATUS
 from proxy.services.process_status import pid_running
 
 _ROOT = Path(__file__).resolve().parents[2]
-_LOG = Path("storage/jobs/fgis_full_update.log")
-_PID = Path("storage/jobs/fgis_full_update.pid")
+_LOG = mutable_path("storage/jobs/fgis_full_update.log")
+_PID = mutable_path("storage/jobs/fgis_full_update.pid")
 
 
 def _read_json(path: Path) -> dict[str, Any]:

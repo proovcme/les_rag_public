@@ -15,6 +15,7 @@ import re
 import sqlite3
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.rag_config import rag_meta_db_path
@@ -496,7 +497,7 @@ def build_dataset_profile(
     dataset_id: str,
     *,
     dataset_name: str = "",
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     force: bool = False,
     depth: str = "metadata",
 ) -> dict[str, Any]:
@@ -624,7 +625,7 @@ def set_dataset_operator_guidance(
     dataset_id: str,
     guidance: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "deep",
 ) -> dict[str, Any]:
     """Save an operator navigation note for the dataset.
@@ -709,7 +710,7 @@ def set_dataset_kind(
     dataset_id: str,
     kind: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "deep",
 ) -> dict[str, Any]:
     """Save an operator dataset type used for UI grouping/sorting.
@@ -793,7 +794,7 @@ def set_dataset_kind(
 def get_dataset_profile(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "metadata",
 ) -> dict[str, Any]:
     return build_dataset_profile(dataset_id, storage_root=storage_root, force=False, depth=depth)
@@ -809,7 +810,7 @@ def _all_dataset_ids(conn: sqlite3.Connection) -> list[str]:
 def warmup_dataset_profiles(
     *,
     dataset_ids: list[str] | None = None,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "deep",
     force: bool = False,
     limit: int = 0,
@@ -869,7 +870,7 @@ def warmup_dataset_profiles(
 def benchmark_dataset_profile_warmup(
     *,
     dataset_ids: list[str] | None = None,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "deep",
     limit: int = 0,
 ) -> dict[str, Any]:
@@ -1124,7 +1125,7 @@ def build_context_memory_block(
     session_id: str | None = None,
     dataset_ids: list[str] | None = None,
     dataset_names: list[str] | None = None,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     max_datasets: int = 5,
 ) -> str:
     """Return a compact prompt block with chat and dataset profiles."""

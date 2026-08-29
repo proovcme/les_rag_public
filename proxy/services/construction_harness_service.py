@@ -25,6 +25,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.evidence_contract import (
@@ -96,7 +97,7 @@ def retrieve_project_doc(query: str = "", *, project_id: int = 0, dataset_ids: l
         return {"status": "found", "rows": rows, "sources": srcs,
                 "trace": [{"step": "inject", "rows": len(rows)}]}
 
-    root = storage_root or Path("storage/datasets")
+    root = storage_root or mutable_path("storage/datasets")
     ds_ids = list(dataset_ids or [])
     if not ds_ids and project_id:
         try:

@@ -18,6 +18,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +201,7 @@ def findings_to_xlsx(findings: list[Finding], output_path: Path, title: str) -> 
 def run_normcontrol(
     dataset_id: str,
     files_dir: Path,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     output_dir: Path | None = None,
 ) -> dict:
     """Полный формальный прогон по комплекту. Без LLM (ADR-11)."""

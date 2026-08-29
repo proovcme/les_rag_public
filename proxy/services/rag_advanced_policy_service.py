@@ -12,6 +12,7 @@ import os
 import tempfile
 from copy import deepcopy
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 
@@ -86,12 +87,12 @@ class AdvancedPolicyError(ValueError):
 
 def policy_path() -> Path:
     configured = os.getenv("LES_RAG_ADVANCED_POLICY_PATH", "").strip()
-    return Path(configured) if configured else Path("storage/config/rag_advanced_policy.json")
+    return Path(configured) if configured else mutable_path("storage/config/rag_advanced_policy.json")
 
 
 def status_path() -> Path:
     configured = os.getenv("LES_RAG_ADVANCED_STATUS_PATH", "").strip()
-    return Path(configured) if configured else Path("storage/config/rag_advanced_status.json")
+    return Path(configured) if configured else mutable_path("storage/config/rag_advanced_status.json")
 
 
 def _read(path: Path, default: dict[str, Any]) -> dict[str, Any]:

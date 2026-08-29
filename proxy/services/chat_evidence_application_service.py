@@ -13,6 +13,7 @@ import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Callable, Sequence
 
 import httpx
@@ -863,7 +864,7 @@ async def _execute_chat_evidence_application(
             project_inventory_payload = await asyncio.to_thread(
                 build_project_summary,
                 [str(d) for d in _dataset_ids],
-                storage_root=Path("./storage/datasets"),
+                storage_root=mutable_path("./storage/datasets"),
             )
             if inventory_requested:
                 project_inventory_prompt = format_project_inventory_prompt(
@@ -1047,7 +1048,7 @@ async def _execute_chat_evidence_application(
     table_result = maybe_answer_table_query(
         req.question,
         chunks,
-        storage_root=Path("./storage/datasets"),
+        storage_root=mutable_path("./storage/datasets"),
     )
     if table_result:
         return _table_query_response(
@@ -1201,7 +1202,7 @@ async def _execute_chat_evidence_application(
     table_result = maybe_answer_table_query(
         req.question,
         expanded_table_chunks,
-        storage_root=Path("./storage/datasets"),
+        storage_root=mutable_path("./storage/datasets"),
     )
     if table_result:
         return _table_query_response(

@@ -19,6 +19,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.construction_harness_service import (
@@ -263,7 +264,7 @@ def _classify_doc(ds: str, root: Path, p: Path) -> DocumentRecord:
 
 def doc_registry(dataset_ids: list[str], *, storage_root: Path | None = None) -> dict[str, Any]:
     """Обойти storage датасетов → реестр документов с пометкой мусора (НЕ удаляя). RETRIEVED/MISSING."""
-    root = storage_root or Path("storage/datasets")
+    root = storage_root or mutable_path("storage/datasets")
     included, excluded = [], []
     for ds in dataset_ids:
         ddir = root / ds
@@ -371,7 +372,7 @@ def source_scoped_search(eq: "EntitySearchQuery", *, dataset_ids: list[str] | No
         return {"status": "no_term", "matches": [], "other_matches": [], "alias": []}
     if not dataset_ids:
         return {"status": "no_scope", "matches": [], "other_matches": [], "alias": []}
-    root = storage_root or Path("storage/datasets")
+    root = storage_root or mutable_path("storage/datasets")
     scope_types = _SCOPE_DOC_TYPES.get(eq.source_scope, set())
     in_scope, other = [], []
     for ds in dataset_ids:
@@ -753,7 +754,7 @@ def _handle_term_explain(question, *, project_id=0, dataset_ids=None, storage_ro
     ad = {"intent": "term_explain", "query_terms": eq.query_terms}
     if dataset_ids and eq.exact_terms:
         # ищем по всем проектным докам алиас-расшифровку
-        root = storage_root or Path("storage/datasets")
+        root = storage_root or mutable_path("storage/datasets")
         docs = []
         for ds in dataset_ids:
             ddir = root / ds

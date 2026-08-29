@@ -63,7 +63,7 @@ async def run_diagnostics():
     qdrant, _ = run_cmd(["curl", "-s", f"http://localhost:6333/collections/{rag_collection_name()}"])
     health, _ = run_cmd(["curl", "-s", "http://localhost:8050/api/health"])
     rag_files = _count_files(Path("./RAG_Content"))
-    sto_files = _count_files(Path("./storage/datasets"))
+    sto_files = _count_files(mutable_path("./storage/datasets"))
 
     report = {
         'timestamp': datetime.now().isoformat(),

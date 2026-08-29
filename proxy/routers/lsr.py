@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -25,7 +26,7 @@ from proxy.services import stesnennost_service as st
 
 router = APIRouter(prefix="/api/lsr", tags=["lsr"])
 
-_EXPORT_DIR = Path("storage/lsr")
+_EXPORT_DIR = mutable_path("storage/lsr")
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 

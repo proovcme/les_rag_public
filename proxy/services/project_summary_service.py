@@ -11,6 +11,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.dataset_memory_service import build_typed_dataset_memory, infer_file_typing, latest_file_cards
@@ -353,7 +354,7 @@ def inventory_from_metadb(dataset_ids: list[str], *, meta_db_path: str | None = 
 def build_project_summary(
     dataset_ids: list[str],
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     meta_db_path: str | None = None,
 ) -> dict[str, Any]:
     """Сводка по датасетам: стадия + ТЭП (Parquet) + ОПИСЬ документов (MetaDB). Без LLM.

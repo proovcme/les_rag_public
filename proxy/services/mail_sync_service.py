@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.mail_ingest import (
@@ -214,7 +215,7 @@ def settings_for_account(account: dict[str, Any], password: str) -> ImapSettings
         password=password,
         ssl=bool(config.get("ssl", True)),
         folders=list(config.get("folders") or ["*"]),
-        checkpoint_dir=Path("data/mail_imap_checkpoints") / str(account["id"]),
+        checkpoint_dir=mutable_path("data/mail_imap_checkpoints") / str(account["id"]),
         storage_root=root,
         timeout_sec=float(config.get("timeout_sec") or 45),
     )

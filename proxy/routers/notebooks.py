@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
@@ -35,7 +36,7 @@ class DatasetReaderRequest(BaseModel):
 async def warmup_notebooks(req: NotebookWarmupRequest, _admin=Depends(require_admin)):
     return warmup_dataset_notebooks(
         dataset_ids=req.dataset_ids,
-        storage_root=Path("storage/datasets"),
+        storage_root=mutable_path("storage/datasets"),
         depth=req.depth,
         force=req.force,
         limit=req.limit,
@@ -44,7 +45,7 @@ async def warmup_notebooks(req: NotebookWarmupRequest, _admin=Depends(require_ad
 
 @router.get("/{dataset_id}")
 async def dataset_notebook(dataset_id: str, depth: str = "deep", _user=Depends(require_user)):
-    return build_dataset_notebook(dataset_id, storage_root=Path("storage/datasets"), depth=depth)
+    return build_dataset_notebook(dataset_id, storage_root=mutable_path("storage/datasets"), depth=depth)
 
 
 @router.get("/{dataset_id}/memory")

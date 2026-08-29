@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response
@@ -164,7 +165,7 @@ def _resolved_document_source(document: dict) -> Path | None:
     relative = Path(file_name)
     if not file_name or relative.is_absolute() or ".." in relative.parts:
         return None
-    dataset_root = (Path("storage/datasets") / dataset_id).resolve()
+    dataset_root = (mutable_path("storage/datasets") / dataset_id).resolve()
     candidate = (dataset_root / relative).resolve()
     if not candidate.is_relative_to(dataset_root):
         return None

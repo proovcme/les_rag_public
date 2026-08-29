@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -12,7 +13,7 @@ from proxy.services.normcontrol_service import run_normcontrol
 
 router = APIRouter(prefix="/api/normcontrol", tags=["normcontrol"])
 
-_STORAGE_ROOT = Path("storage/datasets")
+_STORAGE_ROOT = mutable_path("storage/datasets")
 
 
 @router.post("/{dataset_id}/run")

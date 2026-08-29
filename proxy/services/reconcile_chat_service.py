@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.reconcile_service import doc_type_label, reconcile_datasets
@@ -106,7 +107,7 @@ def _format_answer(result: dict[str, Any]) -> str:
 def answer_reconcile_query(
     question: str,
     *,
-    storage_root: Path = Path("./storage/datasets"),
+    storage_root: Path = mutable_path("./storage/datasets"),
     dataset_ids: list[str] | None = None,
     dataset_names: dict[str, str] | None = None,
     by: str = "dataset",

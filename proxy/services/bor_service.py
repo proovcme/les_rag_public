@@ -12,6 +12,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from backend.parquet_writer import load_parquet
 
@@ -86,7 +87,7 @@ def rows_from_parquet(parquet_path: Path) -> list[dict]:
 
 def collect_spec_rows(
     dataset_id: str,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     doc_types: tuple[str, ...] = BOR_SOURCE_DOC_TYPES,
 ) -> list[dict]:
     """Все строки спецификаций/ведомостей датасета с наименованием."""
@@ -225,7 +226,7 @@ def source_rows_to_vor_xlsx(
 
 def generate_bor(
     dataset_id: str,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     output_dir: Path | None = None,
     title: str | None = None,
 ) -> dict:

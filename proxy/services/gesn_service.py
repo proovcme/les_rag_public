@@ -23,13 +23,14 @@ import os
 import sqlite3
 from functools import lru_cache
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Optional
 
 DEFAULT_PATH = Path("config/domain/gesn_seed.yaml")
-DEFAULT_BASE_PATH = Path("data/gesn_base/gesn2022.parquet")
-DEFAULT_BASE_V2_PATH = Path("data/gesn_base/gesn2022_v2.parquet")
-DEFAULT_UNIFIED_BASE_PATH = Path("data/gesn_base/gesn2022_unified.parquet")
-DEFAULT_STRUCTURED_BASE_PATH = Path("data/smeta_base/les_smeta_base.sqlite")
+DEFAULT_BASE_PATH = mutable_path("data/gesn_base/gesn2022.parquet")
+DEFAULT_BASE_V2_PATH = mutable_path("data/gesn_base/gesn2022_v2.parquet")
+DEFAULT_UNIFIED_BASE_PATH = mutable_path("data/gesn_base/gesn2022_unified.parquet")
+DEFAULT_STRUCTURED_BASE_PATH = mutable_path("data/smeta_base/les_smeta_base.sqlite")
 
 # Старые базы могли хранить труд как «Средний разряд работы N,M» без кода.
 # Выводим тарифный код 1-100-NM (эталон: разряд 2,5 → 1-100-25) как fallback; новый FGIS-парсер

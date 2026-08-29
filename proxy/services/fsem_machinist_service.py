@@ -5,10 +5,11 @@ from __future__ import annotations
 from functools import lru_cache
 import sqlite3
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 
-DEFAULT_DB = Path("data/smeta_base/fsem_2022.sqlite")
+DEFAULT_DB = mutable_path("data/smeta_base/fsem_2022.sqlite")
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:

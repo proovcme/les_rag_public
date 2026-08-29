@@ -14,12 +14,13 @@ import shutil
 import time
 import uuid
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services import forms_service
 
 
-OFFICE_WORKSPACE_DIR = Path("data/list_office")
+OFFICE_WORKSPACE_DIR = mutable_path("data/list_office")
 ARTIFACT_SCHEMA = "list.office_artifact.v1"
 _SAFE_ID = re.compile(r"^[a-f0-9]{32}$")
 

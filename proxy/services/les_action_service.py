@@ -18,9 +18,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
-PROJECTS_ROOT = Path("storage/projects")
+PROJECTS_ROOT = mutable_path("storage/projects")
 
 # Формы-документы, в которые умеем разложить собранную смету (бланк ВОР/ЛСР).
 _SMETA_FORMS = {"vor", "smeta_lsr", "ks2", "ks3"}

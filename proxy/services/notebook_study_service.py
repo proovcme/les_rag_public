@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Awaitable, Callable, Iterable
 
+from backend.runtime_paths import mutable_path
 from proxy.services.notebook_service import build_dataset_notebook
 from proxy.services.saferag_service import concentrate_sources, rank_chunks_for_question
 
@@ -420,7 +421,7 @@ def build_reading_plan(question: str, notebooks: list[dict[str, Any]], *, max_se
     return selected[:max_sections]
 
 
-def build_dataset_notebooks(dataset_ids: list[str], *, storage_root: Path = Path("storage/datasets")) -> list[dict[str, Any]]:
+def build_dataset_notebooks(dataset_ids: list[str], *, storage_root: Path = mutable_path("storage/datasets")) -> list[dict[str, Any]]:
     notebooks: list[dict[str, Any]] = []
     for dataset_id in dataset_ids[:5]:
         try:
@@ -616,7 +617,7 @@ async def build_notebook_study_pack(
     retrieve: RetrieveFn,
     retrieve_file: RetrieveFileFn | None = None,
     project_inventory: dict[str, Any] | None = None,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     max_sections: int = 4,
 ) -> StudyPack:
     notebooks = build_dataset_notebooks(dataset_ids, storage_root=storage_root)

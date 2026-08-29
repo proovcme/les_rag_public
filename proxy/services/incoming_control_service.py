@@ -15,11 +15,12 @@ import sqlite3
 import time
 from datetime import date
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.rag_config import rag_meta_db_path
 
-OUTPUT_DIR = Path("data/incoming_control_out")
+OUTPUT_DIR = mutable_path("data/incoming_control_out")
 
 ADMITTED = "допущено"
 REJECTED = "не допущено"

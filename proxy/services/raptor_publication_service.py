@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import threading
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Callable
 
 from backend.raptor_publication_worker import (
@@ -62,7 +63,7 @@ def indexed_document_refs(meta_db: Any) -> list[RaptorDocumentRef]:
 
 def checkpoint_path_for(target_collection: str) -> Path:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", target_collection)
-    return Path("storage/rag/advanced") / f"{safe}.publication.json"
+    return mutable_path("storage/rag/advanced") / f"{safe}.publication.json"
 
 
 def run_raptor_publication(

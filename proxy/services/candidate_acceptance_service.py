@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.canonical_route_service import CanonicalRouteDecision, CanonicalRouteMode
@@ -21,10 +22,10 @@ def _effective_state_paths() -> tuple[Path, ...]:
         Path(os.getenv("LES_IDEMPOTENCY_DB", "storage/request_idempotency.db")),
         # The chat evidence application still reads this legacy fixed location
         # alongside the configurable RAG metadata path.
-        Path("data/les_meta.db"),
-        Path("storage/workbook_checkpoints.db"),
-        Path("storage/artifacts/meta.db"),
-        Path("storage/artifacts/files"),
+        mutable_path("data/les_meta.db"),
+        mutable_path("storage/workbook_checkpoints.db"),
+        mutable_path("storage/artifacts/meta.db"),
+        mutable_path("storage/artifacts/files"),
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from fastapi import HTTPException, UploadFile
 
@@ -110,7 +111,7 @@ def safe_upload_name(filename: str, allowed_suffixes: set[str] | None = None) ->
     return name
 
 
-def safe_dataset_storage_dir(dataset_id: str, base: Path = Path("./storage/datasets")) -> Path:
+def safe_dataset_storage_dir(dataset_id: str, base: Path = mutable_path("./storage/datasets")) -> Path:
     if not dataset_id or not SAFE_STORAGE_ID_RE.match(dataset_id) or dataset_id in {".", ".."}:
         raise HTTPException(400, "Недопустимый dataset_id")
     ds_dir = (base / dataset_id).resolve()

@@ -18,10 +18,11 @@ import subprocess
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 API = "https://fgiscs.minstroyrf.ru/api/FullTextSearch/SearchEstimatedRates?search="
-CACHE_PARQUET = Path("storage/cache/gesn_fgis/gesn2022_fgis_raw.parquet")
+CACHE_PARQUET = mutable_path("storage/cache/gesn_fgis/gesn2022_fgis_raw.parquet")
 
 # Принцип: query-time работаем ТОЛЬКО из локальной базы; канал (ФГИС/Cloudflare режутся из
 # рантайма) — лишь для ОБНОВЛЕНИЯ базы по запросу, и ему НЕ доверяем. Короткий таймаут, чтобы

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -19,7 +20,7 @@ from proxy.services import kac_service
 
 router = APIRouter(prefix="/api/kac", tags=["kac"])
 
-_OUT_DIR = Path("data/kac_out")
+_OUT_DIR = mutable_path("data/kac_out")
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 

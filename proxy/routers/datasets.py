@@ -14,6 +14,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Annotated, Any
 
 import httpx
@@ -948,7 +949,7 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
             qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
             collection=rag_collection_name(),
             meta_db_path=rag_meta_db_path(),
-            storage_root=Path("./storage/datasets"),
+            storage_root=mutable_path("./storage/datasets"),
             lexical_index=LexicalIndex(),
         )
     except KeyError as exc:
@@ -981,7 +982,7 @@ async def delete_all_datasets(
             qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
             collection=rag_collection_name(),
             meta_db_path=rag_meta_db_path(),
-            storage_root=Path("./storage/datasets"),
+            storage_root=mutable_path("./storage/datasets"),
             lexical_index=LexicalIndex(),
         )
         result["status"] = "reset"
@@ -1285,13 +1286,13 @@ async def set_dataset_name(dataset_id: str, name: str = "", payload: DatasetName
 @router.get("/datasets/{dataset_id}/profile")
 async def dataset_context_profile(dataset_id: str, depth: str = "deep", _user=Depends(require_user)):
     """Паспорт датасета: состав, покрытие и путь к sidecar-файлу."""
-    return get_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), depth=depth)
+    return get_dataset_profile(dataset_id, storage_root=mutable_path("storage/datasets"), depth=depth)
 
 
 @router.post("/datasets/{dataset_id}/profile/refresh")
 async def refresh_dataset_context_profile(dataset_id: str, depth: str = "deep", _admin=Depends(require_admin)):
     """Пересобрать паспорт датасета и записать sidecar рядом с датасетом."""
-    return build_dataset_profile(dataset_id, storage_root=Path("storage/datasets"), force=True, depth=depth)
+    return build_dataset_profile(dataset_id, storage_root=mutable_path("storage/datasets"), force=True, depth=depth)
 
 
 @router.patch("/datasets/{dataset_id}/profile/guidance")
@@ -1304,7 +1305,7 @@ async def update_dataset_operator_guidance(
     return set_dataset_operator_guidance(
         dataset_id,
         req.guidance,
-        storage_root=Path("storage/datasets"),
+        storage_root=mutable_path("storage/datasets"),
         depth=req.depth,
     )
 
@@ -1319,7 +1320,7 @@ async def update_dataset_kind(
     return set_dataset_kind(
         dataset_id,
         req.kind,
-        storage_root=Path("storage/datasets"),
+        storage_root=mutable_path("storage/datasets"),
         depth=req.depth,
     )
 
@@ -1329,7 +1330,7 @@ async def warmup_dataset_context_profiles(req: DatasetProfileWarmupRequest, _adm
     """Прогреть паспорта датасетов. No-reindex: читает только MetaDB/lexical index."""
     return warmup_dataset_profiles(
         dataset_ids=req.dataset_ids,
-        storage_root=Path("storage/datasets"),
+        storage_root=mutable_path("storage/datasets"),
         depth=req.depth,
         force=req.force,
         limit=req.limit,
@@ -1341,14 +1342,14 @@ async def benchmark_dataset_context_profiles(req: DatasetProfileWarmupRequest, _
     """Сравнить холодную пересборку deep-паспорта и тёплое чтение кэша. No-reindex."""
     return benchmark_dataset_profile_warmup(
         dataset_ids=req.dataset_ids,
-        storage_root=Path("storage/datasets"),
+        storage_root=mutable_path("storage/datasets"),
         depth=req.depth,
         limit=req.limit,
     )
 
 
 # ── v0.16 §5: extraction body ops (status / dry-run / approved write) ─────────────────────
-_EXTRACT_STORAGE_ROOT = Path("storage/datasets")
+_EXTRACT_STORAGE_ROOT = mutable_path("storage/datasets")
 
 
 @router.get("/datasets/{dataset_id}/extraction-status")
@@ -3375,7 +3376,7 @@ async def upload_file(dataset_id: str, file: UploadFile = File(...), _admin=Depe
 
 _CHAT_ATTACH_DATASET_NAME = "Вложения чата"
 _QUICK_ATTACH_PREFIX = "attach_"
-_ATTACH_STORAGE_ROOT = Path("storage/datasets")
+_ATTACH_STORAGE_ROOT = mutable_path("storage/datasets")
 _READ_ATTACH_MAX_CHARS = int(os.getenv("RAG_ATTACH_READ_MAX_CHARS", "18000"))
 
 

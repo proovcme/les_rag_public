@@ -14,6 +14,7 @@ import re
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.lexical_index_service import stem_russian_word
@@ -34,7 +35,7 @@ _TABLE_REF_RE = re.compile(r"^(?P<path>.+)#page=(?P<page>\d+)#(?:table=(?P<table
 def build_project_table_registry(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     root = project_pdf_extract_root(dataset_id, storage_root=storage_root)
     manifests = sorted(root.glob("*/project_pdf_table_manifest.json"))
@@ -111,7 +112,7 @@ def build_project_table_registry(
 def project_table_registry_summary(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     root = project_pdf_extract_root(dataset_id, storage_root=storage_root)
     payload = _read_json(root / TABLE_REGISTRY_SUMMARY_FILE)
@@ -136,7 +137,7 @@ def search_project_tables(
     file_filter: str = "",
     include_noise: bool = False,
     limit: int = 20,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     cards = _load_registry_cards(dataset_id, storage_root=storage_root)
     query_norm = _norm(query)
@@ -179,7 +180,7 @@ def read_project_table(
     table_id: str,
     *,
     max_rows: int = 100,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     if not re.fullmatch(r"(?:[0-9a-f]{20}|[0-9a-f]{32})", str(table_id or "")):
         raise ValueError("table_id must be a 20 or 32 character lowercase hex id")

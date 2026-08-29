@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from backend.http_client_policy import trust_env_for_url
 from backend.metrics_collector import DB_PATH, heartbeats
 from backend.rag_config import index_contract_status, rag_meta_db_path, rag_runtime_config
+from backend.runtime_paths import mutable_path
 from proxy.config import docker_control_enabled, mlx_url
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.security import require_admin, require_root_admin
@@ -804,7 +805,7 @@ async def get_backup_status(_admin=Depends(require_admin)):
     
     # 1. SQLite backups
     profile = embed_profile_name()
-    backup_dir = Path("storage/backups")
+    backup_dir = mutable_path("storage/backups")
     sqlite_backups = []
     if backup_dir.exists():
         pattern = f"les_meta_{profile}_*.db"
@@ -874,7 +875,7 @@ async def delete_backup(req: BackupDeleteRequest, _admin=Depends(require_root_ad
     """
     from pathlib import Path
     if req.type == "sqlite":
-        backup_dir = Path("storage/backups")
+        backup_dir = mutable_path("storage/backups")
         target_path = (backup_dir / req.name).resolve()
         # Security check: must be inside backup_dir
         if not str(target_path).startswith(str(backup_dir.resolve())):

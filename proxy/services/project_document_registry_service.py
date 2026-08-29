@@ -14,6 +14,7 @@ import re
 import sqlite3
 from collections import Counter, defaultdict
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.rag_config import rag_meta_db_path
@@ -29,7 +30,7 @@ DOCUMENT_REGISTRY_FILE = "document_registry.json"
 def build_project_document_registry(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     meta_db_path: str | None = None,
 ) -> dict[str, Any]:
     db_path = meta_db_path or rag_meta_db_path()
@@ -88,7 +89,7 @@ def build_project_document_registry(
 def project_document_registry(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     path = project_pdf_extract_root(dataset_id, storage_root=storage_root) / DOCUMENT_REGISTRY_FILE
     payload = _read_json(path)
@@ -112,7 +113,7 @@ def assemble_virtual_volume(
     dataset_id: str,
     index_query: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     query = str(index_query or "").strip()
     if not query:

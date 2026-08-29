@@ -13,6 +13,7 @@ import sys
 import uuid
 from dataclasses import asdict, replace
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, Request, UploadFile
@@ -1177,7 +1178,7 @@ async def push_mail(payload: dict[str, Any] = Body(...), _user=Depends(require_u
         raise HTTPException(status_code=400, detail="attachments must be a list")
 
     msg_id = hashlib.sha1(f"{subject}|{sender}|{date}|{len(body)}|{len(attachments)}".encode()).hexdigest()[:12]
-    push_dir = Path("storage/mail_push") / msg_id
+    push_dir = mutable_path("storage/mail_push") / msg_id
     saved = mps.save_attachments(attachments, push_dir)
 
     state = get_dataset_state()
@@ -1286,7 +1287,7 @@ async def import_mail_archive(req: MailArchiveImportRequest, _admin=Depends(requ
     """
     state = get_dataset_state()
     archive = _validate_archive_path(req.path)
-    out_dir = Path("RAG_Content/MAIL") / archive.suffix.lstrip(".").upper() / archive.stem
+    out_dir = mutable_path("RAG_Content/MAIL") / archive.suffix.lstrip(".").upper() / archive.stem
 
     if archive.suffix.lower() == ".olm":
         from backend.olm_reader import extract_olm_to_eml

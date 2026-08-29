@@ -16,6 +16,7 @@ import json
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -28,8 +29,8 @@ from proxy.services.normcontrol_review_map_service import list_review_maps, load
 
 router = APIRouter(prefix="/api/doc-review", tags=["doc-review"])
 
-_OUT_DIR = Path("storage/doc_review")
-_STORAGE_ROOT = Path("storage/datasets")
+_OUT_DIR = mutable_path("storage/doc_review")
+_STORAGE_ROOT = mutable_path("storage/datasets")
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 

@@ -7,6 +7,7 @@ import math
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Iterable, Optional, Protocol
 
 
@@ -132,7 +133,7 @@ class TableQueryResult:
 def parquet_ref_chunks_for_datasets(
     dataset_ids: Iterable[str] | None,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     limit: int = 64,
 ) -> list[TableRefChunk]:
     chunks: list[TableRefChunk] = []
@@ -177,7 +178,7 @@ def maybe_answer_table_query(
     question: str,
     chunks: Iterable[RetrievedChunk],
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     max_rows: int = 20,
 ) -> Optional[TableQueryResult]:
     if not _looks_like_table_query(question):

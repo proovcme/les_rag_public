@@ -11,6 +11,7 @@ import re
 import time
 from functools import lru_cache
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.context_memory_service import (
@@ -265,7 +266,7 @@ def _dataset_prompt_excerpt(notebook: dict[str, Any]) -> str:
 def build_dataset_notebook(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "deep",
     force: bool = False,
 ) -> dict[str, Any]:
@@ -305,7 +306,7 @@ def dataset_memory_prompt_excerpt(dataset_ids: list[str], *, question: str = "")
 def warmup_dataset_notebooks(
     *,
     dataset_ids: list[str] | None = None,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     depth: str = "deep",
     force: bool = False,
     limit: int = 0,

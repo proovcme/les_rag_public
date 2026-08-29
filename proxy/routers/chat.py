@@ -2677,7 +2677,7 @@ def _smeta_service_rag_map_context() -> str:
         notebook_text = smeta_norm_rag_prompt_excerpt()
     except Exception as exc:  # noqa: BLE001
         logger.warning("[SMETA] smeta norm RAG notebook skipped: %s", exc)
-    overview = Path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/00_smeta_service_overview.md")
+    overview = mutable_path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/00_smeta_service_overview.md")
     if not overview.exists():
         return notebook_text
     try:
@@ -3748,7 +3748,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             session_id=req.session_id,
             dataset_ids=_dataset_ids,
             dataset_names=resolved_dataset_names,
-            storage_root=Path("./storage/datasets"),
+            storage_root=mutable_path("./storage/datasets"),
             # Typed dataset memory is added once by the evidence application.
             # Rebuilding the deep dataset profile here duplicated navigation and
             # cost 30-40 seconds on BAI before retrieval even started.  Keep only

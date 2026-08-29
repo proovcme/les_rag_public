@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from proxy.services.bor_service import (
     BorLine,
@@ -440,7 +441,7 @@ def format_spec_bor_answer(result: dict, dataset_label: str = "") -> str:
 def generate_spec_bor(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     output_dir: Path | None = None,
     decompose: bool = True,
 ) -> dict:

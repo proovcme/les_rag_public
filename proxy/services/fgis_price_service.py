@@ -37,6 +37,7 @@ import os
 import json
 from functools import lru_cache
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Iterable, Optional
 
 # Нормализованная схема одной строки ценовой базы.
@@ -347,7 +348,7 @@ class PriceBook:
         return {c: self.lookup(c) for c in codes}
 
 
-DEFAULT_PRICE_ROOT = Path("data/price_base")
+DEFAULT_PRICE_ROOT = mutable_path("data/price_base")
 PRICEBOOK_MANIFEST_PATH = Path("config/domain/pricebook_manifest.json")
 _SCRATCH_PRICEBOOK_STEMS = {"spb_refresh"}
 _DEFAULT_PRICEBOOK_STEMS = (

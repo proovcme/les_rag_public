@@ -14,11 +14,12 @@ import json
 import sqlite3
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.rag_config import rag_meta_db_path
 
-OUTPUT_DIR = Path("data/worklog_out")
+OUTPUT_DIR = mutable_path("data/worklog_out")
 
 
 def _connect() -> sqlite3.Connection:

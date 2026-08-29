@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 FORMS_DIR = Path("config/forms")
-OUTPUT_DIR = Path("data/forms_out")
+OUTPUT_DIR = mutable_path("data/forms_out")
 
 SUPPORTED_FORMATS = ("docx", "xlsx", "html")
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from proxy.services.bor_service import generate_bor, normalize_unit
@@ -152,7 +153,7 @@ def _totals(rows: list[dict]) -> dict[str, Any]:
 def generate_plan_fact(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     zahvatka: str = "",
     output_dir: Path | None = None,
 ) -> dict[str, Any]:

@@ -30,6 +30,7 @@ import json
 import threading
 import uuid
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -49,7 +50,7 @@ from proxy.services.checklist_review_service import (
 
 router = APIRouter(prefix="/api/checklist-review", tags=["checklist-review"])
 
-_OUT_DIR = Path("storage/checklist_review")
+_OUT_DIR = mutable_path("storage/checklist_review")
 
 _HUMAN_ANSWERS = {"yes", "no", "not_required", "unset"}
 

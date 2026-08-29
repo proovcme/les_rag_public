@@ -15,6 +15,7 @@ import sqlite3
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from threading import RLock
 from typing import Any, Iterable
 
@@ -341,7 +342,7 @@ def _composition_card_roots() -> list[Path]:
     raw = os.getenv("LES_SMETA_COMPOSITION_CARD_ROOTS", "").strip()
     if raw:
         return [Path(part).expanduser() for part in raw.split(os.pathsep) if part.strip()]
-    return [Path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/smetnoedelo_api")]
+    return [mutable_path("RAG_Content/TABLE_SMETA/SMETA_SERVICE/smetnoedelo_api")]
 
 
 @lru_cache(maxsize=2)

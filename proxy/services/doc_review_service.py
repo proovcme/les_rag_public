@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from proxy.services.document_set_model import DocumentSet, VedomostMatch, build_document_set, match_vedomost
 from proxy.services.normcontrol_review_map_service import ReviewMap, ReviewTarget
@@ -366,7 +367,7 @@ def _dataset_file_names(dataset_id: str) -> list[str]:
         return []
 
 
-def _vedomost_entries(dataset_id: str, storage_root: Path = Path("storage/datasets")):
+def _vedomost_entries(dataset_id: str, storage_root: Path = mutable_path("storage/datasets")):
     """Позиции ведомости (VEDOMOST в Parquet) → [{designation, name}]. None если ведомости нет."""
     try:
         from proxy.services.bor_service import rows_from_parquet

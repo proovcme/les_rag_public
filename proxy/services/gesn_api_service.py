@@ -23,11 +23,12 @@ import re
 import subprocess
 import urllib.request
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Optional
 
 API_URL = "https://api.smetnoedelo.ru/cs/"
 DEFAULT_BASE = "gesn2"   # ГЭСН-2022 строительные
-CACHE_PARQUET = Path("storage/cache/gesn_fgis/gesn2022_smetnoedelo_raw.parquet")
+CACHE_PARQUET = mutable_path("storage/cache/gesn_fgis/gesn2022_smetnoedelo_raw.parquet")
 RESOURCE_FIELDS = ["norm_code", "norm_name", "norm_unit", "work_steps", "kind", "per_unit",
                    "resource_code", "resource_name", "resource_unit", "price"]
 

@@ -24,6 +24,7 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.parquet_writer import DOC_TYPES
@@ -108,7 +109,7 @@ def _names_match(a: str, b: str) -> bool:
 
 def collect_rows_by_doc_type(
     dataset_id: str,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, list[dict]]:
     """Все строки таблиц датасета (Parquet) с наименованием, сгруппированные по doc_type."""
     parquet_root = storage_root / dataset_id / "_parquet"
@@ -269,7 +270,7 @@ def _totals(rows: list[dict]) -> dict[str, Any]:
 def reconcile_datasets(
     dataset_ids: list[str],
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     output_dir: Path | None = None,
     by: str = "doc_type",
     dataset_names: dict[str, str] | None = None,

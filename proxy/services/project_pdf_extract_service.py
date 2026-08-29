@@ -13,6 +13,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from backend.rag_config import rag_meta_db_path
@@ -50,14 +51,14 @@ _GENERIC_DISCIPLINE_CODES = frozenset({"ИОС"})
 _ELECTRICAL_DISCIPLINE_CODES = frozenset({"ЭМ", "ЭН", "ЭО", "ЭОМ", "ЭС"})
 
 
-def project_pdf_extract_root(dataset_id: str, *, storage_root: Path = Path("storage/datasets")) -> Path:
+def project_pdf_extract_root(dataset_id: str, *, storage_root: Path = mutable_path("storage/datasets")) -> Path:
     return Path(storage_root) / _validated_dataset_id(dataset_id) / PROJECT_PDF_EXTRACT_DIR
 
 
 def project_pdf_extract_status(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     meta_db_path: str | None = None,
 ) -> dict[str, Any]:
     """Return sidecar status without extracting or mutating source files."""
@@ -90,7 +91,7 @@ def project_pdf_extract_status(
 def project_pdf_extract_summary(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
 ) -> dict[str, Any]:
     """Read the latest extraction summary, or return a missing-sidecar payload."""
     path = project_pdf_extract_root(dataset_id, storage_root=storage_root) / "summary.json"
@@ -115,7 +116,7 @@ def project_pdf_extract_summary(
 def run_project_pdf_extract(
     dataset_id: str,
     *,
-    storage_root: Path = Path("storage/datasets"),
+    storage_root: Path = mutable_path("storage/datasets"),
     meta_db_path: str | None = None,
     max_files: int = DEFAULT_MAX_FILES,
     max_pages: int = DEFAULT_MAX_PAGES,

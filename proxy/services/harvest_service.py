@@ -20,13 +20,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Iterator, Optional
 
 from proxy.services import verify_service
 
 POSITIVE_VERDICTS = {"ok", "corrected"}  # rejected — не образец таблицы, в train не берём
 
-DEFAULT_OUT = Path("data/train")
+DEFAULT_OUT = mutable_path("data/train")
 
 # Часто путаемые при распознавании пары (в обе стороны): цифры↔буквы и латиница↔кириллица.
 _CONFUSABLES = {

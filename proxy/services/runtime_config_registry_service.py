@@ -11,6 +11,7 @@ import tempfile
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Mapping
 
 from proxy.services.llm_transport_profile_service import (
@@ -236,7 +237,7 @@ def _backup_env(path: Path) -> Path | None:
     if not path.is_file():
         return None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup = Path("storage/recovery/runtime-config") / f"env-{stamp}.bak"
+    backup = mutable_path("storage/recovery/runtime-config") / f"env-{stamp}.bak"
     backup.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(path, backup)
     return backup

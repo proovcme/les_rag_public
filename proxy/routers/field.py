@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -29,7 +30,7 @@ from proxy.services.field_intake_service import (
 
 router = APIRouter(prefix="/api/field", tags=["field"])
 
-_EXPORT_DIR = Path("storage/field/_exports")
+_EXPORT_DIR = mutable_path("storage/field/_exports")
 
 
 class FieldEntryCreate(BaseModel):

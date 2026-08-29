@@ -17,6 +17,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Awaitable, Callable
 
 import httpx
@@ -41,7 +42,7 @@ from proxy.smeta_core.document_workflow import run_vor_document_workflow
 
 logger = logging.getLogger(__name__)
 
-SMETA_ARTIFACT_DIR = Path("storage/smeta_artifacts")
+SMETA_ARTIFACT_DIR = mutable_path("storage/smeta_artifacts")
 SMETA_DOCUMENT_HEARTBEAT_SEC = 15.0
 
 ModelExchange = Callable[[list[dict], list[dict]], dict[str, Any]]

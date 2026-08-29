@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any
 
 from tools.build_smeta_structured_base import DEFAULT_MANIFEST as DEFAULT_STRUCTURED_MANIFEST
@@ -17,8 +18,8 @@ from tools.gesn_unify_base import DEFAULT_AUDIT, DEFAULT_OUT
 from proxy.services.process_status import pid_running
 
 _ROOT = Path(__file__).resolve().parents[2]
-_LOG = Path("storage/jobs/gesn_fgis_update.log")
-_PID = Path("storage/jobs/gesn_fgis_update.pid")
+_LOG = mutable_path("storage/jobs/gesn_fgis_update.log")
+_PID = mutable_path("storage/jobs/gesn_fgis_update.pid")
 
 
 def _read_json(path: Path) -> dict[str, Any]:

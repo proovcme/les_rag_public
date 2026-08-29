@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Callable
 
 from backend.rag_config import index_contract_path, index_contract_payload, rag_meta_db_path
@@ -72,7 +73,7 @@ def generation_plan(backend: Any, client: Any) -> dict[str, Any]:
     documents = indexed_document_refs(backend.db)
     fingerprint = source_snapshot_fingerprint(source, documents)
     target = f"{backend.collection_name}_colbert_{fingerprint[:12]}"
-    workspace = Path("storage/rag/advanced") / target
+    workspace = mutable_path("storage/rag/advanced") / target
     return {
         "source": source,
         "source_alias": backend.collection_name,

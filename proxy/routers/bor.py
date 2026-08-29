@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
@@ -15,8 +16,8 @@ from proxy.services.spec_to_bor_service import generate_spec_bor
 
 router = APIRouter(prefix="/api/bor", tags=["bor"])
 
-_STORAGE_ROOT = Path("storage/datasets")
-_RECONCILE_DIR = Path("storage/reconcile")
+_STORAGE_ROOT = mutable_path("storage/datasets")
+_RECONCILE_DIR = mutable_path("storage/reconcile")
 
 
 def _parse_datasets(datasets: str) -> list[str]:

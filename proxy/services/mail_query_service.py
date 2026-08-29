@@ -6,6 +6,7 @@ import asyncio
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from backend.runtime_paths import mutable_path
 from typing import Any, Optional
 
 from backend.mail_ingest import MAIL_DATASET_NAME
@@ -263,7 +264,7 @@ async def _mail_dataset_root(rag_backend: Any) -> Optional[Path]:
         return None
     content_dir = getattr(rag_backend, "content_dir", None)
     if content_dir is None:
-        content_dir = Path("storage/datasets")
+        content_dir = mutable_path("storage/datasets")
     content_root = Path(content_dir).resolve()
     dataset_root = (content_root / str(dataset.id)).resolve()
     if content_root != dataset_root and content_root not in dataset_root.parents:
