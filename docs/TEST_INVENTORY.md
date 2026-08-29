@@ -1,5 +1,16 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.29.0 private model/promotion closure:** canonical `make test`, `make
+> verify` collection и portable platform gate теперь постоянно включают все
+> model-connection tests: immutable registry, endpoint/DNS/peer security,
+> secrets, capability snapshots, resolver, transport, chat/embedding binding,
+> API/UI, candidate workbook acceptance, read-only extensions и append-only
+> promotion. `tests/test_canonical_promotion_service.py` доказывает, что только
+> exact live 9B report + текущие commit/build/preset/model дают effective
+> `active`; drift остаётся `shadow`. `test_model_engine_extension_service.py`
+> дополнительно проверяет endpoint revalidation до status HTTP request. Fresh
+> build 625 current gate: **912 passed**, `make verify`: **912 collected**.
+
 > **0.29.0 model-connections API (build 611):**
 > `tests/test_model_connections_router.py` проверяет user/admin boundary,
 > safe effective redaction, append-only create/revise, stale CAS 409, unsafe

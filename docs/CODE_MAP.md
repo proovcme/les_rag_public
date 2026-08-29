@@ -60,6 +60,23 @@
 > role-binding требует явного `confirm_bound_roles`. Router подключён в
 > `proxy/app.py`; тесты — `tests/test_model_connections_router.py`.
 
+> **Private model nodes, extensions and promotion 0.29.0:**
+> `model_connection_security_service.py` разрешает явный `private_network`
+> HTTP для LAN/ZeroTier только при private-only DNS и проверяет фактический
+> connected peer. `model_engine_extension_service.py` держит read-only
+> FreeToken/MLX status вне inference transport. `canonical_promotion_service.py`
+> принимает admin-confirmed live 9B workbook report, пишет append-only receipt
+> и разрешает requested `active` только при точном совпадении commit/build/
+> preset/model текущей answer connection. API: `POST
+> /api/model-connections/promotion/accept`, `GET
+> /api/model-connections/{connection_id}/extension/status`.
+
+> **Runtime profiles 0.29.0:** `tools/les_runtime_control.py` имеет явные
+> `full | backend | ui`. По умолчанию это соответственно `proxy+ui`, `proxy`
+> и `ui`; локальные Qdrant/MLX/indexer добавляются только явным
+> `--with-local-dependencies`. Так один frontend работает co-located или через
+> явно настроенный backend URL в split/VPS topology.
+
 > **Unified Data workspace 0.29.0 / build 616:**
 > `sovushka/pages/data_workspace.py` — единый dispatch каталога и focused
 > dataset detail. `sovushka_ng.py` канонизирует `documents|datasets → data` с

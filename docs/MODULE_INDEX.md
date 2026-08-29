@@ -77,6 +77,16 @@
 > create/copy/edit/test/secret/bind/disable actions; mobile contract закреплён
 > `tests/test_sovushka_model_connections.py`.
 
+> **0.29.0 private nodes / promotion closure:** LAN и ZeroTier являются одной
+> явной locality `private_network`; HTTP разрешён только после private-only DNS
+> и connected-peer проверки, тогда как remote остаётся HTTPS-only. Read-only
+> FreeToken/MLX extension status изолирован от inference; неизвестные extensions
+> возвращают `unsupported`. Admin может принять redacted live 9B workbook
+> report, но это не переключает режим: requested `active` становится effective
+> только при exact receipt для текущих commit/build/preset/model. Постоянные
+> Make/portable gates включают registry/security/resolver/transport/chat/API/UI,
+> candidate acceptance, live workbook contract, extensions и promotion.
+
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy
 > snapshot. Factory Base удалить нельзя; пользовательские редакции и активная
@@ -920,6 +930,7 @@ Qdrant payload-индексы создаются best-effort после гото
 > формирует допустимый runtime diff и выполняет локальное обновление через Limited Scheduled Task
 > без SSH, UAC и ручного списка файлов.
 | ops/windows-process | единый запрет видимых console windows: UI/runtime probes и фоновые Python jobs запускают Windows children с `CREATE_NO_WINDOW`; Чат/Студия переключаются внутри готовой `/classic` без повторного построения страницы; общий `lazy_tab_panels` создаёт только активный раздел, Quasar `keep_alive` сохраняет уже открытый UI, но periodic timers активны только у видимой вкладки. Датасеты используют дешёвый `/api/runtime/dispatcher/reindex/status` вместо полного process/service preflight. same-origin Чат↔Конфигурация получает короткий `@view-transition`; оба motion-пути соблюдают `prefers-reduced-motion`; soft allowlist разрешает exact общий process launcher и его проверенный helper | `tools/{les_runtime_control,vps_patch,vps_patch_apply}.py`; `proxy/{routers/runtime.py,services/runtime_dispatcher.py}`; `sovushka/{lite_bridge.py,components/header.py,pages/{chat,rim,samovar}.py,uikit/{components,tokens}.py}`; `sovushka_ng.py`; tests `test_{les_runtime_control,runtime_router,runtime_dispatcher,lite_bridge,sovushka_uikit,vps_patch,windows_application_update}.py` | [VPS_PATCH_CHANNEL.md](VPS_PATCH_CHANNEL.md) · [modules/sovushka-uikit.md](modules/sovushka-uikit.md) | ✅ |
+| infra/runtime-profiles | явные режимы `full` (proxy+UI), `backend` (proxy) и `ui` (Совушка); внешние model/Qdrant не стартуют скрыто, локальные qdrant/MLX/indexer добавляются только явным флагом. Поддерживает co-located и split VPS/ZeroTier topology без смены frontend/backend contract | `tools/les_runtime_control.py`; `tests/test_les_runtime_control.py` | [CURRENT_ARCHITECTURE.md](CURRENT_ARCHITECTURE.md) · [CODE_MAP.md](CODE_MAP.md) | ✅ |
 | infra/runtime | топология (proxy:8050 / sovushka:8051 / mlx:8080 / qdrant:6333) | `proxy_server.py`, `sovushka_ng.py`, `mlx_host.py` | [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md) ✅ · топология в [CODE_MAP.md](CODE_MAP.md) (INFRASTRUCTURE_v2.0 → archive) | ✅ |
 | infra/api-integrations | единая карта proxy/MLX/Lite API, локальных сервисов, внешних провайдеров, каналов доступа и безопасных имён конфигурации; внешний разовый документ идёт через пользовательский `POST /api/chat/attachments` → `attachment_id` → идемпотентный `POST /api/chat` → артефакт, а административный `/api/rag/attach` остаётся Совушке/совместимости; цены ресурсов доступны одиночно и пакетом | `proxy/app.py`, `proxy/routers/{chat,datasets,prices}.py`, `proxy/services/{chat_attachment,request_idempotency}_service.py`, `proxy/routers/settings.py`, `sovushka/lite_bridge.py`, `mlx_host.py`, `env.example` | [LES_API_AND_EXTERNAL_INTEGRATIONS.md](LES_API_AND_EXTERNAL_INTEGRATIONS.md) | ✅ |
 | infra/mlx | TTL-выгрузка, memory-guard, профили памяти и bounded KV/prefix cache на стабильной границе chat-сообщений; hard-stop локального чата отделён от операторских GREEN/YELLOW/RED границ; настоящий `mlx_lm.stream_generate` логирует TTFT/prefill/decode/peak memory, а OpenAI usage показывает `cached_tokens`; direct OpenAI benchmark различает stream/non-stream, cache и tools; изолированный OptiQ probe принудительно проверяет MTP single-path, sampler forwarding, acceptance и Metal memory без production dependency; 9B — целевой профиль M4/24 ГБ, 4B — диагностика/малопамятный режим | `backend/mlx_adapter`, `mlx_host.py`, `proxy/services/runtime_admission.py`, `tools/local_inference_benchmark.py`, `tools/optiq_mtp_probe_server.py` | [MLX_GUIDE.md](../MLX_GUIDE.md), [RUNTIME_MEMORY_PROFILES.md](../RUNTIME_MEMORY_PROFILES.md) ✅; [LOCAL_INFERENCE_OPTIQ_MTP_M4_2026-07-13.md](LOCAL_INFERENCE_OPTIQ_MTP_M4_2026-07-13.md) ✅; [TODO_LOCAL_INFERENCE_BENCHMARK.md](TODO_LOCAL_INFERENCE_BENCHMARK.md) 📋 | ✅ |

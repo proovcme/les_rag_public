@@ -34,6 +34,11 @@ from proxy.services.model_connection_security_service import (
     validate_endpoint,
 )
 from proxy.services.model_secret_service import EnvironmentSecretStore, ModelSecretError
+from proxy.services.model_engine_extension_service import EngineExtensionRegistry
+from proxy.services.canonical_promotion_service import (
+    CanonicalPromotionError,
+    accept_promotion_report,
+)
 
 
 router = APIRouter(prefix="/api/model-connections", tags=["model-connections"])
@@ -48,7 +53,15 @@ def _secret_store() -> EnvironmentSecretStore:
 
 
 def _probe(client: httpx.AsyncClient) -> CapabilityProbe:
-    return CapabilityProbe(client=client, secret_store=_secret_store())
+    return CapabilityProbe(
+        client=client,
+        secret_store=_secret_store(),
+        allow_private_http=True,
+    )
+
+
+def _extension_registry(client: httpx.AsyncClient) -> EngineExtensionRegistry:
+    return EngineExtensionRegistry.with_read_only_defaults(client)
 
 
 def _actor(user: RequestUser) -> str:
@@ -132,6 +145,13 @@ class RoleBindingRequest(BaseModel):
 
     connection_revision_id: str = Field(min_length=1)
     expected_binding_revision: int | None = Field(default=None, ge=1)
+
+
+class PromotionAcceptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report: dict[str, Any]
+    operator_confirmed: bool = False
 
 
 class CapabilityPublic(BaseModel):
@@ -280,6 +300,31 @@ async def connection_templates(_admin: RequestUser = Depends(require_admin)):
     return {"templates": [dict(item) for item in _TEMPLATES]}
 
 
+@router.post("/promotion/accept")
+async def accept_promotion(
+    req: PromotionAcceptRequest,
+    admin: RequestUser = Depends(require_admin),
+):
+    try:
+        receipt = accept_promotion_report(
+            None,
+            req.report,
+            operator_confirmed=req.operator_confirmed,
+            actor=_actor(admin),
+        )
+    except CanonicalPromotionError as error:
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, _code(error)) from error
+    return {
+        "status": "accepted",
+        "source_commit": receipt.source_commit,
+        "build_number": receipt.build_number,
+        "preset_id": receipt.preset_id,
+        "observed_model_identity": receipt.observed_model_identity,
+        "acceptance_sha256": receipt.acceptance_sha256,
+        "route_mode_changed": False,
+    }
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_connection(
     req: ConnectionCreateRequest,
@@ -289,7 +334,11 @@ async def create_connection(
     secrets = _secret_store()
     actor = _actor(admin)
     try:
-        endpoint = validate_endpoint(req.base_url, req.locality)
+        endpoint = validate_endpoint(
+            req.base_url,
+            req.locality,
+            allow_private_http=True,
+        )
         revision = registry.create_connection(
             display_name=req.display_name,
             base_url=endpoint.canonical_base_url,
@@ -331,7 +380,11 @@ async def revise_connection(
         changes = req.model_dump(exclude={"expected_revision_id"}, exclude_unset=True)
         effective_url = str(changes.get("base_url", current.base_url))
         effective_locality = ConnectionLocality(changes.get("locality", current.locality))
-        endpoint = validate_endpoint(effective_url, effective_locality)
+        endpoint = validate_endpoint(
+            effective_url,
+            effective_locality,
+            allow_private_http=True,
+        )
         if "base_url" in changes:
             changes["base_url"] = endpoint.canonical_base_url
         revision = registry.revise_connection(
@@ -438,6 +491,20 @@ async def test_connection(
         raise _registry_error(error) from error
 
 
+@router.get("/{connection_id}/extension/status")
+async def extension_status(
+    connection_id: str,
+    _admin: RequestUser = Depends(require_admin),
+):
+    registry = _registry()
+    try:
+        revision = registry.get_connection(connection_id)
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
+            return await _extension_registry(client).status(revision)
+    except ModelConnectionRegistryError as error:
+        raise _registry_error(error) from error
+
+
 @router.put("/roles/{role}")
 async def bind_role(
     role: ConnectionRole,
@@ -463,6 +530,7 @@ async def effective_connections(_user: RequestUser = Depends(require_user)):
     resolver = ModelConnectionResolver(
         registry=registry,
         secret_store=_secret_store(),
+        allow_private_http=True,
     )
     roles: dict[str, dict[str, Any] | None] = {}
     for role in ConnectionRole:

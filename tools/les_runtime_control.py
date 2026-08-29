@@ -148,6 +148,7 @@ SERVICES: dict[str, ServiceDef] = {
 
 START_ORDER = ("qdrant", "mlx", "proxy", "indexer")
 STOP_ORDER = ("indexer", "proxy", "mlx", "qdrant")
+RUNTIME_PROFILES = ("full", "backend", "ui")
 PROTECTED_PROCESS_NAMES = {
     "System",
     "Registry",
@@ -717,6 +718,60 @@ def start_core(include_ui: bool = False, include_indexer: bool = True) -> list[A
     return [start_service(key) for key in order]
 
 
+def profile_services(
+    profile: str,
+    *,
+    include_local_dependencies: bool = False,
+) -> tuple[str, ...]:
+    """Return the explicit service boundary for a product launch profile.
+
+    Provider engines and Qdrant remain user-managed by default.  The legacy
+    launchd bundle is available only through the explicit local-dependencies
+    option for existing Mac installations.
+    """
+    normalized = str(profile or "").strip().lower()
+    if normalized not in RUNTIME_PROFILES:
+        raise ValueError(f"unknown runtime profile: {profile}")
+    if normalized == "ui":
+        return ("ui",)
+    services: tuple[str, ...] = ("proxy",)
+    if include_local_dependencies:
+        services = ("qdrant", "mlx", "proxy", "indexer")
+    if normalized == "full":
+        services = (*services, "ui")
+    return services
+
+
+def start_profile(
+    profile: str,
+    *,
+    include_local_dependencies: bool = False,
+) -> list[ActionResult]:
+    return [
+        start_service(key)
+        for key in profile_services(
+            profile,
+            include_local_dependencies=include_local_dependencies,
+        )
+    ]
+
+
+def stop_profile(
+    profile: str,
+    *,
+    include_local_dependencies: bool = False,
+) -> list[ActionResult]:
+    return [
+        stop_service(key)
+        for key in reversed(
+            profile_services(
+                profile,
+                include_local_dependencies=include_local_dependencies,
+            )
+        )
+    ]
+
+
 def stop_core(include_ui: bool = False) -> list[ActionResult]:
     order = list(STOP_ORDER)
     if include_ui:
@@ -766,6 +821,11 @@ def main(argv: list[str] | None = None) -> int:
     restart.add_argument("--include-ui", action="store_true")
     restart.add_argument("--no-indexer", action="store_true")
 
+    for name in ("start-profile", "stop-profile", "restart-profile"):
+        profile_command = sub.add_parser(name)
+        profile_command.add_argument("profile", choices=RUNTIME_PROFILES)
+        profile_command.add_argument("--with-local-dependencies", action="store_true")
+
     for name in ("start", "stop", "restart"):
         p = sub.add_parser(name)
         p.add_argument("service", choices=sorted(SERVICES))
@@ -806,6 +866,32 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if all(item.ok for item in result) else 1
     if args.command == "restart-core":
         result = restart_core(include_ui=args.include_ui, include_indexer=not args.no_indexer)
+        _print_json(result)
+        return 0 if all(item.ok for item in result) else 1
+    if args.command == "start-profile":
+        result = start_profile(
+            args.profile,
+            include_local_dependencies=args.with_local_dependencies,
+        )
+        _print_json(result)
+        return 0 if all(item.ok for item in result) else 1
+    if args.command == "stop-profile":
+        result = stop_profile(
+            args.profile,
+            include_local_dependencies=args.with_local_dependencies,
+        )
+        _print_json(result)
+        return 0 if all(item.ok for item in result) else 1
+    if args.command == "restart-profile":
+        stopped = stop_profile(
+            args.profile,
+            include_local_dependencies=args.with_local_dependencies,
+        )
+        started = start_profile(
+            args.profile,
+            include_local_dependencies=args.with_local_dependencies,
+        )
+        result = [*stopped, *started]
         _print_json(result)
         return 0 if all(item.ok for item in result) else 1
     if args.command == "start":

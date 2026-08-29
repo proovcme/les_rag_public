@@ -19,6 +19,7 @@ from proxy.services.model_connection_contracts import (
 )
 from proxy.services.model_connection_registry_service import ModelConnectionRegistry
 from proxy.services.model_secret_service import EnvironmentSecretStore
+from proxy.services.canonical_route_service import PromotionReceipt
 
 
 NOW = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
@@ -225,6 +226,47 @@ def test_unsafe_endpoint_is_rejected_before_registry_write(api) -> None:
     assert registry.list_connections(include_disabled=True) == ()
 
 
+def test_admin_can_bind_http_model_on_explicit_private_network(api) -> None:
+    client, _registry, _secrets, _probe = api
+    created = client.post(
+        "/api/model-connections",
+        headers=_headers(ADMIN_ROLE),
+        json=_valid_connection(
+            display_name="Qwen 35B · Mac mini",
+            base_url="http://10.195.146.98:8080/v1",
+            locality="private_network",
+            extension_type="mlx",
+        ),
+    )
+
+    assert created.status_code == 201, created.text
+    connection = created.json()
+    tested = client.post(
+        f"/api/model-connections/{connection['connection_id']}/test",
+        headers=_headers(ADMIN_ROLE),
+        json={
+            "revision_id": connection["revision_id"],
+            "capabilities": ["chat_completions", "streaming"],
+        },
+    )
+    assert tested.status_code == 200, tested.text
+    bound = client.put(
+        "/api/model-connections/roles/answer",
+        headers=_headers(ADMIN_ROLE),
+        json={
+            "connection_revision_id": connection["revision_id"],
+            "expected_binding_revision": None,
+        },
+    )
+    assert bound.status_code == 200, bound.text
+
+    effective = client.get(
+        "/api/model-connections/effective", headers=_headers(USER_ROLE)
+    )
+    assert effective.status_code == 200
+    assert effective.json()["roles"]["answer"]["locality"] == "private_network"
+
+
 def test_secret_replacement_is_masked_and_server_owns_reference(api) -> None:
     client, registry, secret_store, _probe = api
     created = client.post(
@@ -288,6 +330,47 @@ def test_templates_are_admin_only_and_contain_no_credentials(api) -> None:
     rendered = json.dumps(response.json()).lower()
     assert "api_key" not in rendered
     assert "secret_ref" not in rendered
+
+
+def test_engine_extension_status_is_admin_only_and_unsupported_is_explicit(api) -> None:
+    client, _registry, _secrets, _probe = api
+    created = client.post(
+        "/api/model-connections",
+        headers=_headers(ADMIN_ROLE),
+        json=_valid_connection(extension_type="ollama"),
+    ).json()
+
+    path = f"/api/model-connections/{created['connection_id']}/extension/status"
+    assert client.get(path, headers=_headers(USER_ROLE)).status_code == 403
+    response = client.get(path, headers=_headers(ADMIN_ROLE))
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "unsupported", "extension_type": "ollama"}
+
+
+def test_promotion_acceptance_is_admin_only_and_never_changes_route(api, monkeypatch) -> None:
+    client, _registry, _secrets, _probe = api
+    monkeypatch.setattr(
+        routes,
+        "accept_promotion_report",
+        lambda *_args, **_kwargs: PromotionReceipt(
+            source_commit="a" * 40,
+            build_number=624,
+            preset_id="qwen-9b-restrictive",
+            observed_model_identity="qwen3.5:9b",
+            acceptance_sha256="b" * 64,
+            passed=True,
+        ),
+    )
+    payload = {"report": {"redacted": True}, "operator_confirmed": True}
+
+    path = "/api/model-connections/promotion/accept"
+    assert client.post(path, headers=_headers(USER_ROLE), json=payload).status_code == 403
+    response = client.post(path, headers=_headers(ADMIN_ROLE), json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["route_mode_changed"] is False
+    assert "report" not in response.json()
 
 
 def test_router_is_registered_in_application() -> None:

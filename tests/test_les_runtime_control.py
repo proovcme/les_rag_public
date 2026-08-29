@@ -1,6 +1,24 @@
 from tools import les_runtime_control as runtime_control
 
 
+def test_runtime_profiles_keep_frontend_and_backend_independent():
+    assert runtime_control.profile_services("full") == ("proxy", "ui")
+    assert runtime_control.profile_services("backend") == ("proxy",)
+    assert runtime_control.profile_services("ui") == ("ui",)
+
+
+def test_local_dependencies_are_explicit_for_runtime_profiles():
+    assert runtime_control.profile_services(
+        "backend", include_local_dependencies=True
+    ) == ("qdrant", "mlx", "proxy", "indexer")
+    assert runtime_control.profile_services(
+        "full", include_local_dependencies=True
+    ) == ("qdrant", "mlx", "proxy", "indexer", "ui")
+    assert runtime_control.profile_services(
+        "ui", include_local_dependencies=True
+    ) == ("ui",)
+
+
 def test_windows_runtime_probes_are_console_free():
     kwargs = runtime_control._subprocess_kwargs("nt")
 

@@ -358,6 +358,13 @@ exact confirmation. Browser никогда не вызывает model endpoint 
 secret value. На 390 px роли, connection header и actions переходят в одну
 колонку без page-level overflow.
 
+Private network означает LAN/ZeroTier execution node, а не отдельный движок:
+OpenAI-compatible URL и `model_id` задаются как обычное подключение. Служебный
+status FreeToken/MLX выполняется backend-ом через изолированное read-only
+extension API; inference от него не зависит. Принятие live 9B report является
+отдельным admin-действием и само не переключает rollout. Адрес конкретной
+машины не входит в UI defaults и хранится только в пользовательском registry.
+
 В мобильном чате полное имя `С.О.В.У.Ш.К.А.` не обрезается, отправка занимает
 одну квадратную icon-action 44×44 с доступным именем, а overflow-меню содержит
 только уникальные действия `История` и `Артефакты`. Переходы к документам и

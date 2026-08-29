@@ -23,6 +23,26 @@ PYTHON_PACKAGES = (
     "mlx_host.py",
 )
 
+MODEL_CONNECTION_BEHAVIOR_TESTS = (
+    "tests/test_candidate_acceptance_service.py",
+    "tests/test_canonical_promotion_service.py",
+    "tests/test_canonical_route_service.py",
+    "tests/test_les_runtime_control.py",
+    "tests/test_live_workbook_acceptance_contract.py",
+    "tests/test_model_capability_service.py",
+    "tests/test_model_connection_chat_integration.py",
+    "tests/test_model_connection_embeddings_integration.py",
+    "tests/test_model_connection_registry_service.py",
+    "tests/test_model_connection_resolver_service.py",
+    "tests/test_model_connection_security_service.py",
+    "tests/test_model_connections_router.py",
+    "tests/test_model_engine_extension_service.py",
+    "tests/test_model_preset_workflow_parity.py",
+    "tests/test_model_secret_service.py",
+    "tests/test_openai_compatible_transport_service.py",
+    "tests/test_sovushka_model_connections.py",
+)
+
 PORTABLE_BEHAVIOR_TESTS = (
     "tests/test_answer_contract_service.py",
     "tests/test_candidate_selection_service.py",
@@ -62,6 +82,7 @@ PORTABLE_BEHAVIOR_TESTS = (
     "tests/test_software_versions.py",
     "tests/test_test_profiles.py",
     "tests/test_tauri_desktop.py",
+    *MODEL_CONNECTION_BEHAVIOR_TESTS,
 )
 WINDOWS_BEHAVIOR_TESTS = (
     "tests/test_installer_windows.py",
@@ -96,6 +117,7 @@ UPDATER_COMPILE_TARGETS = (
 CURRENT_LES_TESTS = tuple(
     sorted(
         {
+            *MODEL_CONNECTION_BEHAVIOR_TESTS,
             "tests/test_answer_contract_service.py",
             "tests/test_build_rag_contract_sibling.py",
             "tests/test_candidate_selection_service.py",

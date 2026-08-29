@@ -37,8 +37,8 @@ from proxy.services.chat_provider_session_service import ChatProviderConfig
 from proxy.services.canonical_route_service import (
     BoundModelChatRunner,
     CanonicalRouteMode,
-    resolve_canonical_route,
 )
+from proxy.services.canonical_promotion_service import resolve_promoted_route
 from proxy.services.candidate_acceptance_service import (
     CandidateAcceptanceError,
     require_candidate_acceptance,
@@ -623,7 +623,8 @@ def cloud_model_timeout() -> float:
 
 
 def _effective_model_connection_mode() -> CanonicalRouteMode:
-    return resolve_canonical_route(receipt=None).effective
+    resolver, _secret_store = _model_connection_resolver()
+    return resolve_promoted_route(resolver=resolver).effective
 
 
 def _bound_model_chat_runner(client: httpx.AsyncClient) -> BoundModelChatRunner:
@@ -642,6 +643,7 @@ def _model_connection_resolver() -> tuple[ModelConnectionResolver, EnvironmentSe
     return ModelConnectionResolver(
         registry=ModelConnectionRegistry(),
         secret_store=secret_store,
+        allow_private_http=True,
     ), secret_store
 
 

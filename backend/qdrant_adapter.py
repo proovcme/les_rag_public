@@ -735,6 +735,7 @@ class EmbedClient:
             self.connection_resolver = ModelConnectionResolver(
                 registry=ModelConnectionRegistry(),
                 secret_store=self._connection_secret_store,
+                allow_private_http=True,
             )
         if backend is not None:
             self.backend = str(backend).strip().lower()

@@ -67,4 +67,3 @@
 After Task 2, continue Task 9 of
 `2026-08-27-universal-model-connections-implementation.md`. The Models page must
 reuse the updated shell and may not introduce a parallel visual system.
-

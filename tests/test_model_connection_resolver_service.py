@@ -181,6 +181,24 @@ def test_remote_cloud_without_key_imports_effective_mlx_answer(tmp_path) -> None
     assert registry.get_role_binding(ConnectionRole.LOCAL_FALLBACK) is None
 
 
+def test_legacy_lan_hostname_is_imported_as_private_network_without_mlx_substitution(
+    tmp_path,
+) -> None:
+    registry = ModelConnectionRegistry(tmp_path / "meta.db")
+    imported = LegacyConnectionImporter(
+        registry,
+        {
+            "LES_LLM_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://macmini.local:11434/v1",
+            "OLLAMA_MODEL": "qwen3.5:35b",
+        },
+        address_resolver=lambda _host, _port: ("10.195.146.98",),
+    ).import_effective(actor="migration")
+
+    assert imported.connection_id == "legacy:ollama"
+    assert imported.locality is ConnectionLocality.PRIVATE_NETWORK
+
+
 def test_resolver_uses_exact_answer_and_explicit_fallback_bindings(tmp_path) -> None:
     registry = ModelConnectionRegistry(tmp_path / "meta.db")
     primary = _connection(registry, name="Primary")

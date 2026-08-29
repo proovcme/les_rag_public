@@ -44,6 +44,10 @@ def test_current_les_gate_is_explicit_and_does_not_collect_the_old_full_suite() 
         assert "tests/test_rim_session.py" in command
         assert "tests/test_rag_hierarchy.py" in command
         assert "tests/test_evidence_contract.py" in command
+        assert "tests/test_model_connection_registry_service.py" in command
+        assert "tests/test_model_engine_extension_service.py" in command
+        assert "tests/test_canonical_promotion_service.py" in command
+        assert "tests/test_les_runtime_control.py" in command
         assert "testpaths" not in command
 
 
@@ -154,6 +158,9 @@ def test_windows_portable_current_gate_matches_core_make_profile() -> None:
     assert "tests/test_rag_hierarchy.py" in current
     assert "tests/test_evidence_contract.py" in current
     assert "tests/test_test_profiles.py" in current
+    assert "tests/test_model_connection_registry_service.py" in current
+    assert "tests/test_model_engine_extension_service.py" in current
+    assert "tests/test_canonical_promotion_service.py" in current
     assert not any("unified_" in test for test in current)
 
 

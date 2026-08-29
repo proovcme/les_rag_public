@@ -34,6 +34,7 @@ from proxy.services.canonical_route_service import (
     one_model_decision_from_calls,
     resolve_canonical_route,
 )
+from proxy.services.canonical_promotion_service import resolve_promoted_route
 from proxy.services.candidate_acceptance_service import execution_mode_for_candidate_acceptance
 from proxy.services.model_connection_contracts import ConnectionLocality, ConnectionRole
 from proxy.services.openai_compatible_transport_service import (
@@ -1239,7 +1240,19 @@ async def _execute_chat_evidence_application(
     t_ctx = time.time() - t_ctx_start
     validation_context = ""
 
+    connection_resolver = None
+    connection_secret_store = None
+    connection_factory_error = ""
     canonical_route = resolve_canonical_route(receipt=None)
+    try:
+        connection_resolver, connection_secret_store = model_connection_resolver()
+        if (
+            canonical_route.requested is CanonicalRouteMode.ACTIVE
+            and canonical_route.effective is CanonicalRouteMode.SHADOW
+        ):
+            canonical_route = resolve_promoted_route(resolver=connection_resolver)
+    except Exception as error:
+        connection_factory_error = type(error).__name__
     candidate_acceptance = bool(getattr(req, "candidate_acceptance", False))
     canonical_execution_mode = execution_mode_for_candidate_acceptance(
         candidate_acceptance=candidate_acceptance,
@@ -1252,13 +1265,12 @@ async def _execute_chat_evidence_application(
             "promotion_receipt": "not_used",
             "state_root": "process_cwd_isolated",
         }
-    connection_resolver = None
-    connection_secret_store = None
     resolved_connection = None
-    connection_resolution_error = ""
+    connection_resolution_error = connection_factory_error
     if canonical_execution_mode is not CanonicalRouteMode.LEGACY:
         try:
-            connection_resolver, connection_secret_store = model_connection_resolver()
+            if connection_resolver is None:
+                connection_resolver, connection_secret_store = model_connection_resolver()
             resolved_connection = connection_resolver.resolve(ConnectionRole.ANSWER)
         except Exception as error:  # shadow is diagnostic; active is fail-closed
             connection_resolution_error = type(error).__name__

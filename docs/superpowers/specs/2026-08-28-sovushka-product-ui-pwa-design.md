@@ -145,4 +145,3 @@ selects a registered LES execution node, never an arbitrary model URL.
 - Existing Tauri bootstrap and local lifecycle tests stay green.
 - UI contract tests prove that model configuration uses the API and that
   ordinary chat does not expose a provider secret or direct endpoint.
-

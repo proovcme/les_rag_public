@@ -39,6 +39,19 @@
   notebook остаётся активен в legacy path, но shadow его не перестраивает.
 - `active` без exact passing promotion receipt эффективно остаётся `shadow`;
   публикация профиля не активирует и не перепривязывает существующий session.
+- Passing 9B workbook report принимается отдельным admin-only действием и
+  сохраняется append-only receipt. Effective `active` каждый раз сверяет receipt
+  с полным commit, build, preset и точным `model_id` текущей answer-привязки;
+  любое расхождение снова даёт `shadow`.
+- Model connections поддерживают `loopback`, `private_network` (LAN/ZeroTier) и
+  `remote`. HTTP допустим только для явно выбранной private locality и только
+  когда DNS целиком разрешается в private non-loopback адреса; remote требует
+  HTTPS. Connected peer проверяется также для inference, probes и read-only
+  engine extensions.
+- FreeToken и MLX могут давать read-only служебный status через отдельный
+  `EngineExtensionRegistry`. Этот registry не доступен inference transport;
+  Ollama/Lemonade остаются явно `unsupported`, пока для них нет проверенной
+  служебной операции. Mutating extension endpoint в этом выпуске отсутствует.
 - `shadow` не исполняет draft/commit/external/destructive handlers, а overflow
   сохраняет целый результат за cursor без обрезания JSON.
 - `qwen-9b-restrictive` и `qwen-35b-extended` разрешаются из наблюдаемой
@@ -84,13 +97,19 @@
   Fixture задаёт isolated profile snapshot и empty retrieval/history ports, а
   также нижние model transport, tool shortlist и workbook executor. Это не
   доказательство качества модели.
+- `tools/les_runtime_control.py` задаёт три явных profile: `full` запускает
+  proxy+Совушку, `backend` только proxy, `ui` только Совушку. Qdrant/MLX/indexer
+  не стартуют скрыто и добавляются только флагом local dependencies. Поэтому
+  co-located Mac/Legion и split Совушка-на-VPS → LES/model-на-node используют
+  один frontend/backend contract; отдельный защищённый remote control plane
+  по-прежнему не объявлен реализованным.
 
 ## Проверено на context checkpoint
 
 - Focused Agent Foundation suite: `181 passed`.
-- Канонический current behavior gate: `717 passed` с workspace-local
+- Канонический current behavior gate build 625: `912 passed` с workspace-local
   `--basetemp` на Windows.
-- `make architecture-gate` и `make verify`: зелёные; verify собрал 717 тестов.
+- `make architecture-gate` и `make verify`: зелёные; verify собрал 912 тестов.
 - Governed-chat и UI checkpoints прошли независимое повторное review без
   Critical/Important.
 - Это offline structural/behavior evidence; живое качество 9B и release
@@ -102,6 +121,9 @@
   runner-а не являются evidence качества модели и не повышают маршрут до
   `active`. Обязателен owner-authorized запуск на реальном документе и
   configured Qwen 3.5 9B; 35B запускается дополнительно только если настроен.
+- Проверенная вручную доступность отдельного OpenAI-compatible Qwen endpoint
+  доказывает только upstream connectivity/chat/SSE. Она не заменяет запуск
+  exact LES branch через workbook runner и не создаёт promotion receipt.
 
 `make architecture-gate` является только структурным доказательством. Он не
 доказывает качество ответа модели, корректность профессионального решения или

@@ -4,14 +4,14 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-28)
+## Текущее состояние (2026-08-29)
 
 ```
 версия продукта (SemVer):  0.29.0 (development candidate; не опубликован)
-номер сборки:              624
-версия Tauri/NSIS:         5.1.624
+номер сборки:              625
+версия Tauri/NSIS:         5.1.625
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       fail-closed ordinary-chat workbook live acceptance gate
+dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.28.2
 следующий выпуск:          0.29.0 lightweight GitHub update if classifier remains patch-safe
@@ -158,6 +158,26 @@ dev implementation:       fail-closed ordinary-chat workbook live acceptance gat
 > shortlist/workbook executor; mutation, удаляющая `source` из production
 > harvest, заставляет runner fail-closed. **PENDING:** это
 > boundary contract evidence, не model-quality/live-runtime acceptance.
+
+> **Build 625 private model/promotion closure:** `private_network` теперь
+> полноценно поддерживает LAN/ZeroTier OpenAI-compatible nodes с explicit HTTP,
+> private-only DNS и connected-peer validation; remote остаётся HTTPS-only.
+> Legacy hostname import больше не подменяет LAN endpoint локальным MLX.
+> Read-only FreeToken/MLX engine status вынесен в отдельный extension registry,
+> недоступный inference transport, и повторно проверяет endpoint/peer; mutating
+> API не опубликован. Admin-only acceptance сохраняет append-only receipt
+> проверенного live 9B workbook report, но не меняет rollout: requested
+> `active` становится effective только при exact current commit/build/preset/
+> model, иначе остаётся `shadow`. `les_runtime_control.py` даёт явные `full |
+> backend | ui`; локальные Qdrant/MLX/indexer добавляются только отдельным
+> флагом. Все model-connection/candidate/workbook/promotion suites включены в
+> canonical Make и portable platform gates; `make verify` собрал 912 тестов,
+> `make test` завершил `912 passed / 5 warnings`, architecture gate и version
+> contract зелёные. Ручная проверка owner-provided
+> protected Qwen endpoint подтвердила non-streaming chat и SSE `[DONE]`; это
+> upstream connectivity, не branch deployment, workbook acceptance или
+> promotion evidence. **PENDING:** exact clean-branch live 9B workbook run,
+> installed Windows acceptance и публикация.
 
 > **0.29.0 executable-plan checkpoint (build 591):** каноническая спецификация
 > разложена на пять последовательных исполнимых планов: Agent Foundation;

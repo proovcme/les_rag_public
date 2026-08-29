@@ -53,13 +53,30 @@ def _positive_int(value: str | None) -> int | None:
     return parsed if parsed > 0 else None
 
 
-def _locality(base_url: str) -> ConnectionLocality:
+def _locality(
+    base_url: str,
+    *,
+    resolver: AddressResolver = system_resolver,
+) -> ConnectionLocality:
     host = (urlsplit(base_url).hostname or "").strip().lower()
     if host == "localhost":
         return ConnectionLocality.LOOPBACK
     try:
         address = ipaddress.ip_address(host)
     except ValueError:
+        try:
+            port = urlsplit(base_url).port or (
+                443 if urlsplit(base_url).scheme.lower() == "https" else 80
+            )
+            addresses = tuple(ipaddress.ip_address(item) for item in resolver(host, port))
+        except (ConnectionSecurityError, ValueError):
+            return ConnectionLocality.REMOTE
+        if addresses and all(
+            address.is_private and not address.is_loopback for address in addresses
+        ):
+            return ConnectionLocality.PRIVATE_NETWORK
+        if addresses and all(address.is_loopback for address in addresses):
+            return ConnectionLocality.LOOPBACK
         return ConnectionLocality.REMOTE
     if address.is_loopback:
         return ConnectionLocality.LOOPBACK
@@ -97,9 +114,16 @@ class _LegacyTemplate:
 class LegacyConnectionImporter:
     """Snapshot the old environment and import its effective runtime once."""
 
-    def __init__(self, registry: ModelConnectionRegistry, environ: Mapping[str, str]):
+    def __init__(
+        self,
+        registry: ModelConnectionRegistry,
+        environ: Mapping[str, str],
+        *,
+        address_resolver: AddressResolver = system_resolver,
+    ):
         self.registry = registry
         self.environ = dict(environ)
+        self.address_resolver = address_resolver
 
     def _value(self, name: str, default: str = "") -> str:
         return str(self.environ.get(name, default) or "").strip()
@@ -182,7 +206,11 @@ class LegacyConnectionImporter:
         else:
             raise ModelConnectionResolutionError(f"LEGACY_PROVIDER_UNSUPPORTED: {provider}")
 
-        if template.secret_ref is None and _locality(template.base_url) is ConnectionLocality.REMOTE:
+        if (
+            template.secret_ref is None
+            and _locality(template.base_url, resolver=self.address_resolver)
+            is ConnectionLocality.REMOTE
+        ):
             return self._mlx()
         return template
 
@@ -195,7 +223,7 @@ class LegacyConnectionImporter:
             display_name=f"Legacy · {template.provider}",
             base_url=template.base_url,
             model_id=template.model_id,
-            locality=_locality(template.base_url),
+            locality=_locality(template.base_url, resolver=self.address_resolver),
             requested_context_tokens=template.requested_context_tokens,
             secret_ref=template.secret_ref,
             extension_type=template.extension_type,
