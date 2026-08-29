@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import os
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from proxy.services.resource_governor import INDEXING_MODE, chat_generation_allowed, current_resource_mode, current_runtime_profile
 
@@ -93,11 +95,17 @@ def active_llm_provider() -> str:
 
 def _is_local_llm_url(url: str) -> bool:
     value = (url or "").strip().lower()
-    return (
+    if (
         value.startswith("http://127.0.0.1")
         or value.startswith("http://localhost")
         or value.startswith("http://0.0.0.0")
-    )
+    ):
+        return True
+    try:
+        address = ipaddress.ip_address(urlsplit(url).hostname or "")
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
 
 
 def cloud_provider_configured(provider: str | None = None) -> bool:

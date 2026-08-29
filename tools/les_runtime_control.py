@@ -428,7 +428,11 @@ def _render_plist_template(src: Path, home: str | None = None) -> str:
     # home не задан (1-й install) → текущий ROOT клона; читаем глобал в момент вызова.
     home = home if home is not None else str(ROOT)
     text = src.read_text(encoding="utf-8")
-    return text.replace(ROOT_PLACEHOLDER, home).replace(LEGACY_ROOT_PLACEHOLDER, home)
+    # Replace the historical literal before injecting ``home``.  A fresh clone
+    # may itself be located below that historical path (for example a
+    # workspace-local pytest temp directory); the old order then replaced the
+    # prefix inside the already inserted value and duplicated the path.
+    return text.replace(LEGACY_ROOT_PLACEHOLDER, home).replace(ROOT_PLACEHOLDER, home)
 
 
 def _plist_working_dir(path: Path) -> str | None:

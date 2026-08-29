@@ -52,8 +52,12 @@ def test_current_les_gate_is_explicit_and_does_not_collect_the_old_full_suite() 
 
 
 def test_canonical_pytest_profiles_use_workspace_local_temp() -> None:
-    for target in ("verify", "test", "test-unit", "test-integration", "test-focused"):
+    for target in (
+        "verify", "test", "test-unit", "test-integration", "test-focused",
+        "test-legacy", "test-legacy-full", "test-rag-core", "test-mail",
+    ):
         command = _dry_make(target)
+        assert "mkdir -p .test-tmp" in command
         assert "--basetemp=.test-tmp/" in command
         assert "%TEMP%" not in command
 

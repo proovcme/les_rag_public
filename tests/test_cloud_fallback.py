@@ -4,6 +4,7 @@
 import pytest
 
 from proxy.routers.chat import LlmRuntime, _llm_runtime, cloud_fallback_models, cloud_model_timeout
+from proxy.services.runtime_admission import cloud_provider_configured
 
 
 def _rt(provider: str, model: str) -> LlmRuntime:
@@ -64,3 +65,17 @@ def test_direct_llm_runtime_downgrades_cloud_without_key(monkeypatch):
 
     assert rt.provider == "mlx"
     assert rt.model == "mlx-local"
+
+
+def test_private_openai_compatible_endpoint_does_not_fall_back_to_local_mlx(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "openai-compatible")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://10.195.146.98:1919/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "andrevp/Qwen3.6-35B-A3B-3bit-MLX")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    runtime = _llm_runtime()
+
+    assert runtime.provider == "openai-compatible"
+    assert runtime.base_url == "http://10.195.146.98:1919/v1"
+    assert runtime.model == "andrevp/Qwen3.6-35B-A3B-3bit-MLX"
+    assert cloud_provider_configured() is True

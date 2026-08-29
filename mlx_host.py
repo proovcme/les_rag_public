@@ -468,10 +468,21 @@ class CoreMLEmbedder:
                 rc = self._worker.poll()
                 raise RuntimeError(f"Core ML embed worker exited without response rc={rc}")
             stripped = line.strip()
-            if stripped.startswith("{") and stripped.endswith("}"):
-                return line
-            else:
+            candidate = stripped
+            if not candidate.startswith("{"):
+                response_start = candidate.find('{"id"')
+                if response_start >= 0:
+                    candidate = candidate[response_start:]
+            try:
+                response = json.loads(candidate)
+            except json.JSONDecodeError:
                 logger.warning("[EMBED] Ignored non-JSON worker stdout line: %r", line)
+                continue
+            if isinstance(response, dict):
+                if candidate != stripped:
+                    logger.warning("[EMBED] Ignored native stdout preamble before worker response")
+                return candidate
+            logger.warning("[EMBED] Ignored non-object worker stdout line: %r", line)
 
     def _encode_worker(self, texts: List[str]) -> List[List[float]]:
         with self._worker_lock:

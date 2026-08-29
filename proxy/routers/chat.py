@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import ipaddress
 import logging
 import os
 import re
@@ -14,6 +15,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Callable, Iterable, List, Optional
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -452,12 +454,18 @@ def _join_openai_path(base_url: str, path: str) -> str:
 
 def _is_local_llm_url(base_url: str) -> bool:
     low = (base_url or "").strip().lower()
-    return (
+    if (
         low.startswith("http://127.")
         or low.startswith("http://localhost")
         or low.startswith("http://[::1]")
         or low.startswith("http://0.0.0.0")
-    )
+    ):
+        return True
+    try:
+        address = ipaddress.ip_address(urlsplit(base_url).hostname or "")
+    except ValueError:
+        return False
+    return address.is_loopback or address.is_private
 
 
 def _model_needs_completion_tokens(model: str) -> bool:

@@ -571,6 +571,36 @@ for line in sys.stdin:
         embedder.force_unload()
 
 
+def test_coreml_embedder_accepts_json_after_native_stdout_preamble(tmp_path):
+    mlx_host = importlib.import_module("mlx_host")
+    worker = tmp_path / "native_stdout_embed_worker.py"
+    worker.write_text(
+        """
+import json
+import sys
+
+for line in sys.stdin:
+    req = json.loads(line)
+    sys.stdout.write("native Core ML diagnostic without newline ")
+    print(json.dumps({"id": req["id"], "vectors": [[1.0, 0.0]], "dim": 2}), flush=True)
+""".strip()
+    )
+
+    embedder = mlx_host.CoreMLEmbedder(
+        model_id="fake-model",
+        model_path="fake.mlpackage",
+        isolate_process=True,
+        worker_timeout_sec=1,
+        worker_cmd=[sys.executable, "-u", str(worker)],
+        fallback=None,
+    )
+
+    try:
+        assert embedder.encode(["one"]) == [[1.0, 0.0]]
+    finally:
+        embedder.force_unload()
+
+
 def test_coreml_embedder_isolated_worker_falls_back_after_exit(tmp_path):
     mlx_host = importlib.import_module("mlx_host")
     worker = tmp_path / "dead_embed_worker.py"

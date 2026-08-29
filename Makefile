@@ -1,6 +1,6 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance test-model-connections-live help
+.PHONY: version-sync architecture-gate prepare-test-temp verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance test-model-connections-live help
 
 PATCH_RELEASE_ARGS ?=
 GITHUB_PATCH_RELEASE_ARGS ?=
@@ -88,22 +88,25 @@ version-sync:
 architecture-gate:
 	uv run python tools/architecture_contract_gate.py
 
+prepare-test-temp:
+	@mkdir -p $(PYTEST_BASETEMP)
+
 live-workbook-acceptance:
 	uv run python tools/live_workbook_acceptance.py $(LIVE_WORKBOOK_ACCEPTANCE_ARGS)
 
 test-model-connections-live:
 	uv run python tools/model_connection_live_acceptance.py $(MODEL_CONNECTION_LIVE_ARGS)
 
-verify:
+verify: prepare-test-temp
 	uv run python tools/sync_version_contract.py --check
 	uv run python -m compileall -q $(PKGS)
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/verify --collect-only -q $(CURRENT_TESTS)
 	@echo "OK — verify зелёный (синтаксис + импорт-смоук current gate)."
 
-test:
+test: prepare-test-temp
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/test -q --durations=20 $(CURRENT_TESTS)
 
-test-unit:
+test-unit: prepare-test-temp
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/unit -q --durations=15 $(UNIT_TESTS)
 
 test-smoke:
@@ -115,7 +118,7 @@ test-coverage:
 test-ci:
 	uv run python tools/test_runner.py ci
 
-test-integration:
+test-integration: prepare-test-temp
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/integration -q --durations=15 $(INTEGRATION_TESTS)
 
 test-release: test smoke-active-artifacts
@@ -126,19 +129,19 @@ test-release-critical: test-integration
 test-architecture:
 	$(MAKE) test
 
-test-legacy:
+test-legacy: prepare-test-temp
 	uv run python -m pytest -o addopts= --basetemp=$(PYTEST_BASETEMP)/legacy --durations=20 $(LEGACY_ARCHITECTURE_TESTS)
 
-test-legacy-full:
+test-legacy-full: prepare-test-temp
 	uv run python -m pytest -o addopts= --basetemp=$(PYTEST_BASETEMP)/legacy-full --durations=20 $(ARCHITECTURE_IGNORE_ARGS)
 
-test-focused:
+test-focused: prepare-test-temp
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/focused $(FOCUS_TESTS)
 
-test-rag-core:
+test-rag-core: prepare-test-temp
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/rag-core -q --durations=15 $(RAG_CORE_TESTS)
 
-test-mail:
+test-mail: prepare-test-temp
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/mail -q --durations=15 $(MAIL_TESTS)
 
 test-mail-release: test-mail test-tauri

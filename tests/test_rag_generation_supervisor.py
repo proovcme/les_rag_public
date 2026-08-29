@@ -58,7 +58,10 @@ def test_generation_job_carries_windows_embedding_and_legacy_handoff_profile():
 
     worker = _worker_arguments(args)
 
-    assert worker[worker.index("--scope-manifest") + 1] == "artifacts\\scope.json"
+    # The supervisor is launched by macOS launchd as well as on Windows; pass
+    # the native relative path rather than asserting a Windows separator on
+    # every platform.
+    assert worker[worker.index("--scope-manifest") + 1] == str(args.scope_manifest)
     assert worker[-11:] == [
         "--embed-backend", "ollama",
         "--embedding-model", "bge-m3",

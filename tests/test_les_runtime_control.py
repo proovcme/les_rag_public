@@ -385,6 +385,10 @@ def test_render_plist_template_rewrites_repo_root(tmp_path, monkeypatch):
 
     rendered = runtime_control._render_plist_template(template)
 
-    assert "/Users/ovc/Projects/LES_v2" not in rendered
+    # Workspace-local pytest temp roots can themselves live below the source
+    # checkout.  The invariant is that no legacy *runtime path* survives, not
+    # that the checkout prefix cannot occur inside a fresh temporary clone.
+    assert "/Users/ovc/Projects/LES_v2/.venv/bin/python3" not in rendered
+    assert "/Users/ovc/Projects/LES_v2/logs/service.log" not in rendered
     assert f"{fresh_root}/.venv/bin/python3" in rendered
     assert f"{fresh_root}/logs/service.log" in rendered

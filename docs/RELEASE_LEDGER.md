@@ -7,16 +7,28 @@
 ## Текущее состояние (2026-08-29)
 
 ```
-версия продукта (SemVer):  0.29.3 (Windows release source; публичный статус — GitHub tag v0.29.3)
-номер сборки:              632
-версия Tauri/NSIS:         5.1.632
-ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
-dev implementation:       private model nodes, exact promotion and split runtime profiles
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.29.3 / build 632 (exact source/tag commit)
+версия продукта (SemVer):  0.29.4 (public release candidate поверх GitHub tag v0.29.3; публичный статус — v0.29.3 до merge/release)
+номер сборки:              633
+версия Tauri/NSIS:         5.1.633
+ветка разработки:          codex/public-v0.29.4-mac-runtime-fixes от public v0.29.3
+dev implementation:       Core ML worker protocol fix и private-LAN Qwen route without key fallback
+задеплоено на рантайм:     Mac 0.29.4 / build 633 local hotfix; Legion Programs\LES 0.29.3 / build 632 (exact source/tag commit)
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
-следующий выпуск:          post-release cleanup: installer contents audit and Settings/Configuration UI consolidation
+следующий выпуск:          publish/review 0.29.4 only after isolated Mac acceptance; installer contents audit and Settings/Configuration UI consolidation
 рантайм /api/version:      Legion 0.29.3 / build 632 / desktop 5.1.632, aligned, full mode, UI 200
 ```
+
+> **0.29.4 / build 633 public release candidate:** fresh Mac
+> runtime получен из exact public `v0.29.3`; прежнее дерево вынесено тем же
+> томом в rollback без переноса пользовательских data/index/env. Core ML
+> embedding worker теперь извлекает JSON reply после native stdout preamble,
+> поэтому диагностическая строка Core ML без перевода строки не превращается в
+> ложный timeout. Literal private/loopback OpenAI-compatible endpoint без
+> API-key считается trusted LAN model route: Qwen на ZeroTier не подменяется
+> молча локальным MLX. Реальная Core ML embedding smoke вернула 1024 измерения,
+> fresh native RRF дал честный empty-corpus trace. Нагрузка Qwen 35B в этот
+> hotfix не выполнялась: capability/live chat требуется отдельным memory-safe
+> acceptance.
 
 > **Build 632 public-surface cleanup:** финальный release source удаляет
 > machine-specific IP и устаревший public tunnel из exporter defaults, auth/status
