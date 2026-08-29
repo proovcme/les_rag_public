@@ -79,7 +79,7 @@ def _platform_labels() -> dict[str, str]:
             "resources": "Ресурсы Windows",
             "model": "Ollama",
             "model_detail": "локальные модели · порт 11434",
-            "runtime_detail": "Docker Desktop и локальные процессы",
+            "runtime_detail": "локальные процессы и внешние сервисы",
         }
     return {
         "resources": "Ресурсы Mac",
@@ -154,7 +154,7 @@ def _build_diag_map_html(results: list) -> str:
             node("RAM", "оперативная память", st("RAM")),
             node("CPU", "текущая нагрузка", st("CPU")),
             node("Диск", "свободное место", st("Диск")),
-            node("Runtime", platform["runtime_detail"], st("Docker runtime", "Docker")),
+            node("Runtime", platform["runtime_detail"], st("Хранилище Qdrant", "Qdrant :6333")),
         ]),
     ]
 
@@ -231,7 +231,7 @@ def _build_acronym_glossary_html() -> str:
 
 
 def _normalize_diag_payload(payload: dict) -> dict:
-    """Сглаживает старый контракт /api/diag под no-Docker runtime без рестарта proxy."""
+    """Сглаживает старые диагностические состояния без сокрытия raw status."""
     normalized = dict(payload or {})
     raw_checks = list((payload or {}).get("checks", []))
     mlx_health_ok = any(
@@ -245,17 +245,7 @@ def _normalize_diag_payload(payload: dict) -> dict:
         value_msg = f"{item.get('value', '')} {item.get('message', '')}".lower()
         # БЕЗ маскировки: нормализация поясняет «not applicable / ещё нет данных», но raw_status хранит
         # исходный статус — иначе нельзя отличить «лениво грузится» от «сломан» (наблюдаемость врёт).
-        docker_missing = (
-            name == "Docker"
-            and item.get("status") == "err"
-            and ("no such file" in value_msg or "not found" in value_msg or "not running" in value_msg)
-        )
-        if docker_missing and not _is_windows():
-            item.update(
-                name="Docker runtime", status="ok", value="removed", expected="no Docker",
-                message="не используется — Qdrant/proxy/UI/MLX работают через LaunchAgents",
-            )
-        elif name == "MLX Backend" and item.get("status") == "err" and mlx_health_ok:
+        if name == "MLX Backend" and item.get("status") == "err" and mlx_health_ok:
             item.update(
                 status="warn", raw_status="err", value="main idle", expected="health OK",
                 message=f"MLX health отвечает, основная модель грузится лениво (исходно err: {item.get('message','')})".strip(),
@@ -724,7 +714,7 @@ def build_diag():
                     f"индекс ≈ {estimated_gb:.2f} ГБ · догрузить модель ≈ {remaining_gb:.2f} ГБ"
                 ).classes("sov-ui-section-detail")
                 ui.label(
-                    "Свободное место Docker: неизвестно — Qdrant API его не сообщает. "
+                    "Свободное место хранилища Qdrant: неизвестно — Qdrant API его не сообщает. "
                     "Это блокирующая ручная проверка перед тяжёлой сборкой."
                 ).classes("sov-ui-section-detail")
                 ui.label(
@@ -908,12 +898,16 @@ def build_diag():
                 "Переменные среды",
                 "Технические значения runtime; секреты показываются только как заданные или незаданные.",
             )
-            for factor in payload.get("factors") or []:
+            factors = payload.get("factors") or []
+            factors = sorted(factors, key=lambda item: (str(item.get("key")) != "QDRANT_URL", str(item.get("key"))))
+            for factor in factors:
                 key = str(factor.get("key") or "")
                 with panel(variant="inset", classes="w-full"):
                     with ui.row().classes("w-full items-center gap-2"):
                         with ui.column().classes("grow gap-0"):
-                            ui.label(key).classes("sov-ui-section-title")
+                            ui.label(str(factor.get("label") or key)).classes("sov-ui-section-title")
+                            if factor.get("help_text"):
+                                ui.label(str(factor.get("help_text"))).classes("sov-ui-section-detail")
                             detail = f"Источник: {factor.get('source', 'default')}"
                             if factor.get("restart_required"):
                                 detail += " · нужен перезапуск"
@@ -1340,17 +1334,15 @@ def build_diag():
             return "ok", "0 loaded", "0+ guarded", "Модели выгружены до запроса"
         await _chk("Загруженные модели", chk_loaded_models())
 
-        # ── На Mac Docker не нужен; на Windows он является runtime Qdrant ──
+        # ── Qdrant is an external HTTP capability on every platform ──
         async def chk_runtime():
-            if not _is_windows():
-                return "ok", "LaunchAgents", "host services", "Docker не используется"
             r = await api_get("/api/metrics")
             rag = r.get("rag", {}) if isinstance(r, dict) else {}
             qdrant_status = str(rag.get("status") or "").lower()
             if qdrant_status in {"ready", "ok", "degraded", "empty", "not_indexed"}:
-                return "ok", "Docker/Qdrant UP", "UP", ""
-            return "warn", "не подтверждено", "Docker/Qdrant UP", "Проверьте Docker Desktop и Qdrant"
-        await _chk("Docker runtime", chk_runtime())
+                return "ok", "Qdrant доступен", "доступен", ""
+            return "warn", "не подтверждено", "Qdrant доступен", "Проверьте адрес Qdrant в Конфигурации"
+        await _chk("Хранилище Qdrant", chk_runtime())
 
         # ── RAM / CPU / Диск из метрик ──
         metrics_data = state.get("metrics", {})

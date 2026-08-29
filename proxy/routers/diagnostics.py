@@ -7,7 +7,6 @@ import logging
 import os
 import socket
 import sqlite3
-import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -167,12 +166,17 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
 
     await _check("Диск", _chk_disk())
 
-    async def _chk_no_docker():
-        if sys.platform.startswith("win"):
-            return "ok", "Qdrant reachable", "reachable", "Windows production · Docker Qdrant"
-        return "ok", "removed", "no Docker", "Qdrant/proxy/UI/MLX run on host LaunchAgents"
+    async def _chk_qdrant_runtime():
+        qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                response = await client.get(f"{qdrant_url}/collections")
+                response.raise_for_status()
+            return "ok", "доступен", "доступен", qdrant_url
+        except Exception as exc:
+            return "warn", "недоступен", "доступен", f"{qdrant_url}: {str(exc)[:120]}"
 
-    await _check("Docker runtime", _chk_no_docker())
+    await _check("Хранилище Qdrant", _chk_qdrant_runtime())
 
     async def _chk_sqlite():
         def _query():

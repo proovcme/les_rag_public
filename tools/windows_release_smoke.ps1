@@ -85,6 +85,8 @@ $runtimeState = $null
 $smokeDatasetId = $null
 $smokeSeedPath = $null
 $smokeCollectionCreated = $false
+$qdrantAvailable = $false
+$qdrantBaseUrl = if ($env:QDRANT_URL) { $env:QDRANT_URL.TrimEnd("/") } else { "http://127.0.0.1:6333" }
 $fgisSmokeStarted = $false
 
 try {
@@ -92,7 +94,6 @@ try {
     throw "bootstrap not found: $Bootstrap"
   }
 
-  $env:LES_RELEASE_SMOKE_DISABLE_DOCKER = "1"
   $firstBootstrap = Invoke-BootstrapPass -PassName "first"
   $bootstrapProcess = $firstBootstrap.process
   $bootstrapStatus = $firstBootstrap.status
@@ -102,10 +103,6 @@ try {
     environment_action = $bootstrapStatus.environment_action
     warnings = @($bootstrapStatus.warnings)
   }
-  if (@($bootstrapStatus.warnings) -notcontains "docker_engine_unavailable" -or
-      @($bootstrapStatus.warnings) -notcontains "qdrant_unavailable") {
-    throw "Docker-disabled bootstrap did not report optional capability warnings"
-  }
   $firstProxyPort = [int]$runtimeState.proxy_port
   $firstUiPort = [int]$runtimeState.ui_port
   $firstCoreHealth = Invoke-RestMethod -Uri "http://127.0.0.1:$firstProxyPort/api/health" -TimeoutSec 30
@@ -114,7 +111,6 @@ try {
   $result.bootstrap_first.core_ui_status = [int]$firstCoreUi.StatusCode
   & $StopScript -ProxyPort $firstProxyPort -UiPort $firstUiPort | Out-Null
 
-  Remove-Item Env:LES_RELEASE_SMOKE_DISABLE_DOCKER -ErrorAction SilentlyContinue
   $secondBootstrap = Invoke-BootstrapPass -PassName "second"
   if ($secondBootstrap.status.environment_action -ne "skipped") {
     throw "second offline bootstrap unexpectedly rebuilt the Python environment"
@@ -189,18 +185,27 @@ try {
   $proxy = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/health" -TimeoutSec 30
   $version = Invoke-RestMethod -Uri "http://127.0.0.1:$proxyPort/api/version" -TimeoutSec 30
   $ui = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$uiPort/healthz" -TimeoutSec 30
-  $qdrant = Invoke-RestMethod -Uri "http://127.0.0.1:6333/collections" -TimeoutSec 30
   $result.proxy_status = $proxy.status
   $result.les_version = $version.les_version
   $result.app_version = $version.app_version
   $result.harness_version = $version.harness_version
   $result.git_commit = $version.git_commit
   $result.ui_status = [int]$ui.StatusCode
-  $result.qdrant_collections = @($qdrant.result.collections).Count
-  $smokeCollectionCreated = @(
-    $qdrant.result.collections | Where-Object { $_.name -eq $smokeCollection }
-  ).Count -eq 1
-  if (-not $smokeCollectionCreated) {
+  try {
+    $qdrant = Invoke-RestMethod -Uri "$qdrantBaseUrl/collections" -TimeoutSec 5
+    $qdrantAvailable = $true
+    $result.qdrant_status = "available"
+    $result.qdrant_url = $qdrantBaseUrl
+    $result.qdrant_collections = @($qdrant.result.collections).Count
+    $smokeCollectionCreated = @(
+      $qdrant.result.collections | Where-Object { $_.name -eq $smokeCollection }
+    ).Count -eq 1
+  } catch {
+    $result.qdrant_status = "unavailable"
+    $result.qdrant_url = $qdrantBaseUrl
+    $result.qdrant_note = "RRF capability gate is N/A until external Qdrant is configured"
+  }
+  if ($qdrantAvailable -and -not $smokeCollectionCreated) {
     throw "isolated Qdrant collection was not created: $smokeCollection"
   }
 
@@ -239,6 +244,24 @@ try {
     log_lines = @($fgisStatus.log_tail).Count
   }
 
+  $coreOk = (
+    $bootstrapStatus.state -eq "ready" -and
+    $secondBootstrap.status.state -eq "ready" -and
+    $result.bootstrap_first.environment_action -in @("created", "rebuilt", "repaired", "skipped") -and
+    $result.bootstrap_second.environment_action -eq "skipped" -and
+    $result.bootstrap_first.core_api_ready -and
+    [int]$result.bootstrap_first.core_ui_status -eq 200 -and
+    $version.les_version -eq $ExpectedVersion -and
+    $smetaBaseline.ok -and
+    [int]$smetaBaseline.norm_count -ge 40000 -and
+    [int]$smetaBaseline.fsem_rows -ge 1500 -and
+    [int]$ui.StatusCode -eq 200 -and
+    $result.process_hygiene.cmd_wrappers -eq 0 -and
+    $result.fgis.started -and
+    [int]$result.fgis.layers -ge 7
+  )
+
+  if ($qdrantAvailable) {
   # A clean release state has no local dataset catalog. Looking only at the
   # shared Qdrant collections would test somebody else's data and can return an
   # empty result even when indexing is healthy. Seed one isolated dataset
@@ -304,25 +327,16 @@ try {
   $result.rrf_fusion = $rrf.retrieval_trace.fusion
   $result.rrf_mode = $rrf.retrieval_trace.mode
   $result.ok = (
-    $bootstrapStatus.state -eq "ready" -and
-    $secondBootstrap.status.state -eq "ready" -and
-    $result.bootstrap_first.environment_action -in @("created", "rebuilt", "repaired", "skipped") -and
-    $result.bootstrap_second.environment_action -eq "skipped" -and
-    $result.bootstrap_first.core_api_ready -and
-    [int]$result.bootstrap_first.core_ui_status -eq 200 -and
-    $version.les_version -eq $ExpectedVersion -and
-    $smetaBaseline.ok -and
-    [int]$smetaBaseline.norm_count -ge 40000 -and
-    [int]$smetaBaseline.fsem_rows -ge 1500 -and
-    [int]$ui.StatusCode -eq 200 -and
-    $result.process_hygiene.cmd_wrappers -eq 0 -and
-    $result.fgis.started -and
-    [int]$result.fgis.layers -ge 7 -and
+    $coreOk -and
     @($rrf.chunks).Count -gt 0 -and
     $rrf.retrieval_trace.fusion -match "rrf" -and
     $channels -contains "dense" -and
     $channels -contains "qdrant_sparse"
   )
+  } else {
+    $result.rrf_status = "N/A: external Qdrant unavailable"
+    $result.ok = $coreOk
+  }
   $result.stage = "done"
 } catch {
   $result.error = $_.Exception.Message
@@ -352,7 +366,7 @@ try {
   if ($smokeCollectionCreated) {
     try {
       Invoke-RestMethod -Method Delete `
-        -Uri "http://127.0.0.1:6333/collections/$smokeCollection" `
+        -Uri "$qdrantBaseUrl/collections/$smokeCollection" `
         -TimeoutSec 30 | Out-Null
     } catch {
       $result.collection_cleanup_error = $_.Exception.Message

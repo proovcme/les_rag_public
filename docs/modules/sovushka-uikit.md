@@ -73,6 +73,10 @@ Windows setup surface использует существующее lifecycle-с
 catalogue: LES core, answer providers, embeddings и Qdrant разделены по ролям; Ollama, FreeToken,
 Lemonade и OpenAI-compatible получают status и official link, но не install/select action.
 Отсутствие внешнего компонента не блокирует основное действие.
+После установки `QDRANT_URL` выводится первым в техническом реестре как
+«Адрес Qdrant» с пояснением local/LAN/VPS. Поле принимает только HTTP(S),
+показывает effective value, источник и требование перезапуска. Диагностика
+проверяет сам HTTP-сервис и не упоминает Docker как runtime ЛЕС.
 
 Мигрированные поверхности: AppShell/Header, чат, evidence/source cards,
 единый раздел `Данные`, история диалогов, управление доступом В.О.Л.К. и

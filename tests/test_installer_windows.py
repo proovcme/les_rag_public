@@ -121,15 +121,16 @@ def test_windows_bootstrap_skips_exact_healthy_environment_and_never_implicitly_
     assert "run --no-sync lesctl init" in bootstrap
 
 
-def test_windows_bootstrap_marks_docker_and_qdrant_as_optional_capabilities():
+def test_windows_bootstrap_probes_external_qdrant_without_managing_docker():
     bootstrap = (
         build_windows_installer.ROOT / "installers" / "windows" / "app" / "bootstrap.ps1"
     ).read_text(encoding="utf-8-sig")
 
-    assert '"docker_engine_unavailable"' in bootstrap
     assert '"qdrant_unavailable"' in bootstrap
-    assert '$env:LES_RELEASE_SMOKE_DISABLE_DOCKER -eq "1"' in bootstrap
-    assert '$env:LES_RELEASE_SMOKE -eq "1"' in bootstrap
+    assert '$qdrantBaseUrl/collections' in bootstrap
+    assert "function Test-DockerEngine" not in bootstrap
+    assert "docker volume" not in bootstrap.lower()
+    assert "docker run" not in bootstrap.lower()
     ready = bootstrap[bootstrap.rindex('Write-Status -Phase "ready"') :]
     assert 'State "ready"' in ready
 
@@ -274,7 +275,9 @@ def test_windows_release_smoke_requires_two_consecutive_offline_bootstraps():
     assert '$result.bootstrap_second.environment_action' in text
     assert '$secondBootstrap.status.environment_action -ne "skipped"' in text
     assert "second offline bootstrap unexpectedly rebuilt the Python environment" in text
-    assert 'docker_engine_unavailable' in text
+    assert 'docker_engine_unavailable' not in text
+    assert 'RRF capability gate is N/A until external Qdrant is configured' in text
+    assert '$qdrantBaseUrl/collections' in text
     assert '$secondBootstrap.status.state -eq "ready"' in text
     assert '@("created", "rebuilt", "repaired", "skipped")' in text
 
@@ -409,15 +412,17 @@ def test_windows_tauri_uses_update_safe_persistent_state():
     assert 'Grant-LesWindowsStateAccess -Path (Join-Path $StateRoot "data\\smeta_base") -Recurse' in bootstrap
 
 
-def test_windows_qdrant_new_install_uses_named_volume():
+def test_windows_qdrant_is_an_external_url_and_never_started_by_les():
     root = build_windows_installer.ROOT
     bootstrap = (root / "installers" / "windows" / "app" / "bootstrap.ps1").read_text(encoding="utf-8-sig")
     start = (root / "installers" / "windows" / "start-light.ps1").read_text(encoding="utf-8")
 
-    assert "& $Docker volume create les-qdrant-data" in bootstrap
-    assert 'les-qdrant-data:/qdrant/storage' in bootstrap
-    assert "docker volume create les-qdrant-data" in start
-    assert 'les-qdrant-data:/qdrant/storage' in start
+    assert '$qdrantBaseUrl/collections' in bootstrap
+    assert 'if (-not $env:QDRANT_URL)' in start
+    assert '$env:QDRANT_URL = "http://127.0.0.1:$QdrantPort"' in start
+    assert "StartQdrant" not in start
+    assert "docker volume" not in (bootstrap + start).lower()
+    assert "docker run" not in (bootstrap + start).lower()
 
 
 def test_windows_stop_uses_persisted_dynamic_ports():
@@ -526,7 +531,7 @@ def test_windows_uv_cache_is_extracted_by_bundled_python_not_expand_archive():
     assert "function Require-Setup" not in text
     assert '"ollama_missing"' not in text
     assert '"docker_missing"' not in text
-    assert '"docker_engine_unavailable"' in text
+    assert '"docker_engine_unavailable"' not in text
     assert '"qdrant_health_failed"' not in text
     assert '"qdrant_unavailable"' in text
     assert 'Write-Status -Phase "setup" -State "setup_required"' not in text

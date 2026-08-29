@@ -126,7 +126,6 @@ def run_prebundle_smoke(
             {
                 "LES_WINDOWS_STATE_ROOT": str(state_root),
                 "LES_RELEASE_SMOKE": "1",
-                "LES_RELEASE_SMOKE_DISABLE_DOCKER": "1",
                 "LES_TAURI_SHELL": "1",
                 "LES_TAURI_ACTION": "start",
             }

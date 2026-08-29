@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.29.2 (development candidate; не опубликован)
-номер сборки:              628
-версия Tauri/NSIS:         5.1.628
+номер сборки:              629
+версия Tauri/NSIS:         5.1.629
 ветка разработки:          codex/les-0.29.0-model-connections от public v0.28.2
 dev implementation:       private model nodes, exact promotion and split runtime profiles
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion Programs\LES 0.28.2 / build 589
@@ -25,6 +25,11 @@ dev implementation:       private model nodes, exact promotion and split runtime
 > теперь keyed по сторонним зависимостям + Python/uv/extra, а версия editable
 > проекта не вызывает повторную упаковку 421 МБ. Exact `uv.lock` SHA остаётся
 > обязательной install-time проверкой.
+
+> **Build 629 external Qdrant fix:** Windows bootstrap больше не обнаруживает и
+> не управляет Docker. Qdrant подключается как внешний HTTP-сервис через
+> GUI-first `QDRANT_URL` (локальная машина, LAN или VPS); недоступный индекс
+> честно снижает возможности RAG, но не блокирует запуск core API/UI.
 
 > **0.29.1 / build 627 Windows bootstrap hotfix:** установленный runtime под
 > `%LOCALAPPDATA%\Programs` создаёт persistent каталоги через junction в

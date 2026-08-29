@@ -95,6 +95,19 @@ def test_freetoken_runtime_defaults_are_visible_and_require_restart(monkeypatch)
     assert factor["restart_required"] is True
 
 
+def test_qdrant_url_is_a_named_editable_runtime_connection(monkeypatch):
+    registry.declared_env_defaults.cache_clear()
+    monkeypatch.delenv("QDRANT_URL", raising=False)
+
+    factor = registry._factor("QDRANT_URL", {})
+
+    assert factor["effective_value"] == "http://127.0.0.1:6333"
+    assert factor["label"] == "Адрес Qdrant"
+    assert factor["help_text"] == "Хранилище индекса: локальная машина, LAN или VPS."
+    assert factor["mutable"] is True
+    assert factor["restart_required"] is True
+
+
 def test_context_factors_are_registered_with_effective_source() -> None:
     rows = registry.runtime_factor_rows(
         {
@@ -172,6 +185,17 @@ def test_registry_rejects_read_only_unknown_and_multiline(isolated_registry):
         registry.update_factors({"RAG_TOP_K": "1\nEVIL=1"})
 
 
+def test_registry_rejects_invalid_qdrant_url(isolated_registry, monkeypatch):
+    declared = registry.declared_env_keys()
+    monkeypatch.setattr(
+        registry,
+        "declared_env_keys",
+        lambda: frozenset({*declared, "QDRANT_URL"}),
+    )
+    with pytest.raises(registry.RuntimeConfigRegistryError, match="INVALID_VALUE"):
+        registry.update_factors({"QDRANT_URL": "qdrant.local:6333"})
+
+
 def test_gui_and_api_expose_registry_and_advanced_rag_controls():
     from pathlib import Path
 
@@ -183,6 +207,8 @@ def test_gui_and_api_expose_registry_and_advanced_rag_controls():
     assert "Фактический контекст модели" in diag
     assert "Запрошено:" in diag and "действует:" in diag
     assert "Только чтение" in diag
+    assert 'factor.get("label")' in diag
+    assert 'factor.get("help_text")' in diag
     assert "RAPTOR и ColBERT" in diag
     assert "/api/rag/advanced" in diag
     assert "include_router(rag_advanced_router)" in app

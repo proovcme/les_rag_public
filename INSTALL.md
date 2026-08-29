@@ -66,12 +66,17 @@ systemctl --user start les-proxy les-ui
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\installers\windows\install.ps1 -Profile windows-lite -InitEnv -Sync
-powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -Provider lemonade -StartQdrant
+powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -Provider lemonade
 ```
 
 `windows-lite` не ставит MLX/CoreML и не требует локальную Apple Silicon
-модель. Это легкий профиль для Windows/Revit host: Qdrant + LES proxy + UI,
-а генерация уходит в OpenAI-compatible provider.
+модель. Это легкий профиль для Windows/Revit host: LES proxy + UI, а модель и
+Qdrant подключаются как внешние HTTP-сервисы.
+
+После установки адрес Qdrant задаётся в Совушке: **Конфигурация → Все параметры
+среды → Адрес Qdrant**. По умолчанию используется `http://127.0.0.1:6333`; для
+сервиса в LAN, ZeroTier или на VPS укажите его `http://`/`https://` адрес.
+ЛЕС проверяет `/collections`, но не устанавливает и не запускает Qdrant или Docker.
 
 Поддерживаемые provider presets:
 
@@ -85,18 +90,18 @@ powershell -ExecutionPolicy Bypass -File .\installers\windows\start-light.ps1 -P
 
 ```powershell
 # Lemonade local server
-.\installers\windows\start-light.ps1 -Provider lemonade -Model "your-model" -StartQdrant
+.\installers\windows\start-light.ps1 -Provider lemonade -Model "your-model"
 
 # Ollama OpenAI-compatible endpoint
-.\installers\windows\start-light.ps1 -Provider ollama -Model "qwen3:8b" -StartQdrant
+.\installers\windows\start-light.ps1 -Provider ollama -Model "qwen3:8b"
 
 # OpenRouter
 $env:OPENROUTER_API_KEY = "..."
-.\installers\windows\start-light.ps1 -Provider openrouter -Model "openai/gpt-4.1-mini" -StartQdrant
+.\installers\windows\start-light.ps1 -Provider openrouter -Model "openai/gpt-4.1-mini"
 
 # OpenAI
 $env:OPENAI_API_KEY = "..."
-.\installers\windows\start-light.ps1 -Provider openai -Model "gpt-4.1-mini" -StartQdrant
+.\installers\windows\start-light.ps1 -Provider openai -Model "gpt-4.1-mini"
 ```
 
 Важно: `start-light.ps1` удобен для ручного smoke. Для постоянной эксплуатации

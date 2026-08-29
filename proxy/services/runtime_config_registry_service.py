@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import tempfile
+from urllib.parse import urlparse
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
@@ -26,6 +27,13 @@ _EFFECTIVE_FACTOR_LABELS = {
     "generation_reserve": "Резерв ответа",
     "safety_reserve": "Страховой резерв",
     "reasoning": "Рассуждение модели",
+}
+_FACTOR_PRESENTATION = {
+    "QDRANT_URL": {
+        "label": "Адрес Qdrant",
+        "help_text": "Хранилище индекса: локальная машина, LAN или VPS.",
+        "category": "storage",
+    },
 }
 _ROOT = Path(__file__).resolve().parents[2]
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
@@ -165,9 +173,12 @@ def _factor(key: str, dotenv: dict[str, str]) -> dict[str, Any]:
     source = "process" if in_process else ("dotenv" if in_dotenv else "default")
     read_only = key in _READ_ONLY_KEYS
     danger = _is_danger(key)
+    presentation = _FACTOR_PRESENTATION.get(key, {})
     return {
         "key": key,
-        "category": key.split("_", 1)[0].lower(),
+        "label": presentation.get("label", key),
+        "help_text": presentation.get("help_text", ""),
+        "category": presentation.get("category", key.split("_", 1)[0].lower()),
         "source": source,
         "declared_default": None if secret else declared_default,
         "set": bool(value),
@@ -287,6 +298,10 @@ def update_factors(
         value = str(raw_value)
         if "\n" in value or "\r" in value or "\x00" in value:
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "QDRANT_URL":
+            parsed = urlparse(value)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         normalized[key] = value
     backup = _backup_env(env_path())
     _write_dotenv(env_path(), normalized)

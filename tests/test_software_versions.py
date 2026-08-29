@@ -38,17 +38,22 @@ def test_single_product_version_contract_is_consistent():
 
 
 def test_qdrant_runtime_is_pinned_everywhere():
-    files = (
+    container_profiles = (
         "docker-compose.yml",
         "installers/windows/docker-compose.yml",
         "installers/linux/docker-compose.yml",
-        "installers/windows/start-light.ps1",
-        "installers/windows/app/bootstrap.ps1",
     )
-    for relative in files:
+    for relative in container_profiles:
         text = (ROOT / relative).read_text(encoding="utf-8-sig")
         assert "qdrant/qdrant:v1.17.1" in text
         assert "qdrant/qdrant:latest" not in text
+    for relative in (
+        "installers/windows/start-light.ps1",
+        "installers/windows/app/bootstrap.ps1",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8-sig")
+        assert "qdrant/qdrant:" not in text
+        assert "QDRANT_URL" in text
 
 
 def test_software_version_passport_records_required_runtime():

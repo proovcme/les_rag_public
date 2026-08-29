@@ -301,22 +301,6 @@ if ($Ollama) {
   Log "setup: Ollama not installed"
 }
 
-$Docker = Resolve-Executable "docker" @(
-  (Join-Path $env:ProgramFiles "Docker\Docker\resources\bin\docker.exe")
-)
-if ($env:LES_RELEASE_SMOKE -eq "1" -and $env:LES_RELEASE_SMOKE_DISABLE_DOCKER -eq "1") {
-  # Installed-release gate: prove that the core reaches API/UI readiness when
-  # Docker is unavailable, without changing ordinary bootstrap behaviour.
-  $Docker = $null
-  Log "release smoke: Docker capability intentionally disabled"
-}
-if ($Docker) {
-  Add-ExecutableDirectory $Docker
-  Log "docker: $Docker"
-} else {
-  Log "setup: Docker Desktop not installed"
-}
-
 # --- 2. Environment ---------------------------------------------------------
 # --extra desktop pulls the native shell (pywebview + tray). No mac-mlx on Windows.
 Toast "Готовлю окружение…"
@@ -480,50 +464,15 @@ if ((-not $Ollama) -and ($configuredProvider -ne "lemonade")) {
     "embedding_engine_unavailable"
 }
 
-# --- 4. Docker + Qdrant (optional external capability) ----------------------
-function Test-DockerEngine {
-  if (-not $Docker) { return $false }
-  & $Docker info *> $null
-  return ($LASTEXITCODE -eq 0)
-}
-
-$dockerEngineReady = Test-DockerEngine
-if (-not $dockerEngineReady) {
-  Warn "Docker Desktop не установлен или engine не запущен; core ЛЕС продолжает запуск" `
-    "docker_engine_unavailable"
-  Warn "локальный индекс Qdrant недоступен: Docker Desktop не установлен или не запущен" `
-    "qdrant_unavailable"
-}
-
+# --- 4. Qdrant (optional external capability) -------------------------------
+# LES consumes the configured HTTP service. It never installs, starts or
+# manages Docker/Qdrant; native, container and remote deployments are equal.
 Write-Status -Phase "qdrant" -State "running" -Message "Проверяю Qdrant"
+$qdrantBaseUrl = if ($env:QDRANT_URL) { $env:QDRANT_URL.TrimEnd("/") } else { "http://127.0.0.1:6333" }
 $qdrantUp = $false
-try { $null = Invoke-RestMethod "http://127.0.0.1:6333/collections" -TimeoutSec 2; $qdrantUp = $true } catch { }
-if ((-not $qdrantUp) -and $dockerEngineReady) {
-  Log "starting qdrant via docker"
-  & $Docker volume create les-qdrant-data | Out-Null
-  if ($LASTEXITCODE -eq 0) {
-    $existingQdrant = & $Docker ps -a --filter "name=^/les-light-qdrant$" --quiet
-    if ($existingQdrant) {
-      & $Docker start les-light-qdrant | Out-Null
-    } else {
-      $qdrantImage = if ($env:LES_QDRANT_IMAGE) { $env:LES_QDRANT_IMAGE } else { "qdrant/qdrant:v1.17.1" }
-      & $Docker run -d --name les-light-qdrant -p "6333:6333" -v "les-qdrant-data:/qdrant/storage" $qdrantImage | Out-Null
-    }
-    if ($LASTEXITCODE -eq 0) {
-      $qdrantDeadline = [DateTime]::UtcNow.AddMinutes(2)
-      do {
-        Start-Sleep -Seconds 2
-        try {
-          $null = Invoke-RestMethod "http://127.0.0.1:6333/collections" -TimeoutSec 2
-          $qdrantUp = $true
-          break
-        } catch { }
-      } while ([DateTime]::UtcNow -lt $qdrantDeadline)
-    }
-  }
-}
+try { $null = Invoke-RestMethod "$qdrantBaseUrl/collections" -TimeoutSec 2; $qdrantUp = $true } catch { }
 if (-not $qdrantUp) {
-  Warn "Qdrant не отвечает; поиск и индексация документов временно недоступны" `
+  Warn "Qdrant не отвечает по настроенному адресу; поиск и индексация документов временно недоступны" `
     "qdrant_unavailable"
 }
 

@@ -6,7 +6,6 @@ param(
   [ValidateSet("", "mlx", "openrouter", "openai", "ollama", "lemonade", "freetoken", "openai-compatible")]
   [string]$Provider = "",
   [string]$Model = "",
-  [switch]$StartQdrant,
   [switch]$NoUi,
   [ValidateSet("full", "backend", "ui")]
   [string]$Mode = "full",
@@ -34,7 +33,6 @@ if ($Mode -eq "ui") {
       $backendUri.Query -or $backendUri.Fragment) {
     throw "UI_BACKEND_URL_INVALID"
   }
-  if ($StartQdrant) { throw "-StartQdrant is unavailable in UI-only mode." }
   $BackendUrl = $BackendUrl.TrimEnd("/")
 }
 $Root = Resolve-Path (Join-Path $PSScriptRoot "..\..")
@@ -171,24 +169,9 @@ if ($Mode -ne "backend") {
   }
 }
 
-if ($StartQdrant) {
-  if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    throw "Docker is required when -StartQdrant is used."
-  }
-  $existingQdrant = docker ps -a --filter "name=les-light-qdrant" --quiet
-  $runningQdrant = docker ps --filter "name=les-light-qdrant" --quiet
-  if ($runningQdrant) {
-    Write-Host "les-light-qdrant is already running."
-  } elseif ($existingQdrant) {
-    docker start les-light-qdrant | Out-Null
-  } else {
-    $qdrantImage = if ($env:LES_QDRANT_IMAGE) { $env:LES_QDRANT_IMAGE } else { "qdrant/qdrant:v1.17.1" }
-    docker volume create les-qdrant-data | Out-Null
-    docker run -d --name les-light-qdrant -p "${QdrantPort}:6333" -v "les-qdrant-data:/qdrant/storage" $qdrantImage | Out-Null
-  }
+if (-not $env:QDRANT_URL) {
+  $env:QDRANT_URL = "http://127.0.0.1:$QdrantPort"
 }
-
-$env:QDRANT_URL = "http://127.0.0.1:$QdrantPort"
 $env:MLX_URL = "http://127.0.0.1:$LemonadeHostPort"
 $env:LES_LLM_PROVIDER = $Provider
 if ($Model) {
