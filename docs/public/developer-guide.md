@@ -7,15 +7,17 @@
 ЛЕС состоит из четырёх независимых ролей:
 
 ```text
-Tauri desktop
-  → FastAPI + NiceGUI «Совушка»
-  → document parse + dense/sparse native RRF
-  → выбранные пользователем answer/embedding providers
-  → Qdrant + typed SQLite/Parquet evidence
+Tauri / Browser / PWA
+  → NiceGUI «Совушка»
+      → FastAPI backend ЛЕС
+          → document parse + dense/sparse native RRF
+          → выбранные пользователем answer/embedding providers
+          → Qdrant + typed SQLite/Parquet evidence
 ```
 
 - Tauri владеет окном, tray, первым запуском и lifecycle.
-- FastAPI владеет прикладным API; NiceGUI — рабочим интерфейсом.
+- FastAPI владеет прикладным API; NiceGUI — рабочим интерфейсом. Они могут
+  работать вместе (`full`) или как отдельные `backend` / `ui` nodes.
 - Qdrant хранит named dense + BM25 sparse vectors; retrieval объединяет их native RRF.
 - Typed readers возвращают точные строки и карточки, но не принимают профессиональное решение вместо модели.
 - Модель формулирует и выбирает; код валидирует структуру, происхождение и выполняет вычисления.
@@ -40,6 +42,47 @@ make verify
 ```
 
 Платформенные extras и lifecycle описаны в [PLATFORMS.md](../PLATFORMS.md) и [INSTALL_RUNBOOK.md](../INSTALL_RUNBOOK.md). Не копируйте `.env` из чужой установки и не добавляйте модельные веса в репозиторий.
+
+## Работа AI-агента
+
+Репозиторий содержит публичные инструкции для Codex, Claude Code, Cursor и
+других совместимых агентов. Агент не должен начинать с широкого поиска по всему
+репозиторию или воспринимать исторический документ как текущую спецификацию.
+
+Обязательный порядок чтения:
+
+1. [`AGENTS.md`](../../AGENTS.md) — архитектурные инварианты, безопасность и Definition of Done;
+2. [`SKILL.md`](../../SKILL.md) — запуск, эксплуатация, тестирование и выпуск;
+3. [`MODULE_INDEX.md`](../MODULE_INDEX.md) — статус модулей и ссылка на их текущую документацию;
+4. [`CODE_MAP.md`](../CODE_MAP.md) — точки входа и поток данных;
+5. узкий module/algorithm document для изменяемой области;
+6. [`SOFTWARE_VERSIONS.md`](../SOFTWARE_VERSIONS.md) и
+   [`RELEASE_LEDGER.md`](../RELEASE_LEDGER.md) для версии или деплоя.
+
+### Репозиторные skills
+
+| Skill | Когда обязателен | Граница |
+|---|---|---|
+| [`SKILL.md`](../../SKILL.md) | Любая разработка, эксплуатация, сборка или диагностика ЛЕС | Общий runtime/release contract |
+| [`skills/sovushka-ui/SKILL.md`](../../skills/sovushka-ui/SKILL.md) | Любая правка Совушки, навигации, адаптивности или UI kit | Сначала общий component registry; никаких page-local дизайн-систем |
+| [`skills/rag_search/SKILL.md`](../../skills/rag_search/SKILL.md) | Поиск, retrieval и доказательства по пользовательскому корпусу | Не добавлять dataset-specific boosts и доменные ответы в query code |
+| [`skills/normcontrol/SKILL.md`](../../skills/normcontrol/SKILL.md) | Явная задача нормоконтроля | Источники и blockers важнее уверенной формулировки |
+| [`skills/smeta/SKILL.md`](../../skills/smeta/SKILL.md) | Только отдельная прямая задача по сметному модулю | Не даёт разрешения менять защищённый `proxy/smeta_core/**` без owner request и benchmark |
+
+Дополнительные agent skills среды разработки применяются по смыслу задачи:
+
+- brainstorming — до изменения поведения или проектирования новой функции;
+- systematic debugging — до исправления необъяснённой ошибки;
+- test-driven development — regression test до кода функции или bugfix;
+- writing plans — для многошаговой реализации по принятой спецификации;
+- verification before completion — перед словами «готово», commit, merge и release;
+- UI/UX review — вместе с `sovushka-ui`, а не вместо репозиторного контракта.
+
+Эти skills задают процесс, но не расширяют полномочия агента. Нельзя читать
+`.env`, секреты, пользовательские БД, runtime-логи и приватные корпуса; нельзя
+удалять state, реиндексировать весь корпус или перезапускать живые сервисы без
+необходимости и разрешения. Любая правка получает минимальный diff, regression
+test, синхронную документацию, version/ledger update при выпуске и канонический gate.
 
 ## Windows installer без Python на машине пользователя
 
