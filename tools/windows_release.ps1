@@ -19,11 +19,13 @@ $Branch = (& git -C $RepoRoot rev-parse --abbrev-ref HEAD).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $Branch -or $Branch -eq "HEAD") {
   throw "Windows release requires a named branch"
 }
+$UseLocalCheckout = $Branch.StartsWith("codex/", [System.StringComparison]::OrdinalIgnoreCase)
 
 & (Join-Path $PSScriptRoot "windows_patch_release.ps1") `
   -Version $Contract.product_version `
   -BuildNumber $Contract.build_number `
   -BuildCommit $Commit `
   -Branch $Branch `
-  -RepoRoot $RepoRoot
+  -RepoRoot $RepoRoot `
+  -UseLocalCheckout:$UseLocalCheckout
 exit $LASTEXITCODE

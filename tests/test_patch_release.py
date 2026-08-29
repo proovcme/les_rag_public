@@ -183,6 +183,17 @@ def test_windows_patch_release_creates_missing_tracking_branch():
     assert '@("pull", "--ff-only", "origin", $Branch)' in source
 
 
+def test_windows_patch_release_accepts_exact_clean_private_checkout_without_remote_ref():
+    patch = (ROOT / "tools/windows_patch_release.ps1").read_text(encoding="utf-8")
+    entrypoint = (ROOT / "tools/windows_release.ps1").read_text(encoding="utf-8")
+
+    assert "[switch]$UseLocalCheckout" in patch
+    assert "if ($UseLocalCheckout)" in patch
+    assert "Local checkout branch" in patch
+    assert '$UseLocalCheckout = $Branch.StartsWith("codex/"' in entrypoint
+    assert "-UseLocalCheckout:$UseLocalCheckout" in entrypoint
+
+
 def test_windows_release_entrypoint_derives_identity_and_runs_full_pipeline():
     source = (ROOT / "tools/windows_release.ps1").read_text(encoding="utf-8")
 

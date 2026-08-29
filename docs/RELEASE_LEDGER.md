@@ -28,6 +28,9 @@ dev implementation:       private model nodes, exact promotion and split runtime
 > `TypeError`. Workflow теперь один раз нормализует область до пустого tuple;
 > повторный live trace подтвердил typed-memory projection и завершённый
 > model-owned research loop без расширения shadow tool scope.
+> Release automation больше не требует несуществующую remote ref для приватной
+> `codex/*`: exact чистый локальный checkout разрешён отдельным fail-closed
+> флагом, тогда как публичные ветки сохраняют обязательный fetch/pull.
 
 > **0.29.2 / build 628 Windows release-cycle fix:** все mutable roots направлены
 > в persistent state, включая constructor defaults. До npm/NSIS staged runtime

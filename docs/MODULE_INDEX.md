@@ -111,6 +111,10 @@
 > `TypeError`, shortlist строится, а shadow executor не получает неявный доступ
 > ко всему корпусу. Регрессия: `normal_unscoped` в
 > `tests/test_chat_evidence_application_service.py`.
+> Windows release entrypoint теперь безопасно различает public и private
+> branches: `main/release` обязаны fetch/pull exact remote ref, а чистая
+> `codex/*` собирается из exact локального HEAD без публикации приватной ветки.
+> Оба пути проверяют branch, commit и clean worktree до сборки.
 
 > **0.28.0 chat profile studio:** четыре явных режима (`search`, `agent`,
 > `estimator`, `engineer`) разрешаются в immutable prompt+skill+tools+policy

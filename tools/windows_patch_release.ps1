@@ -9,7 +9,8 @@ param(
   [string]$RepoRoot = "C:\Users\Oleg\les_rag",
   [string]$SmetaBaselineArchive = "",
   [string]$InstallRoot = "",
-  [string]$StateRoot = ""
+  [string]$StateRoot = "",
+  [switch]$UseLocalCheckout
 )
 
 $ErrorActionPreference = "Stop"
@@ -73,16 +74,23 @@ try {
   $dirty = (& git status --porcelain) -join "`n"
   if ($dirty) { throw "Legion checkout is dirty before build:`n$dirty" }
 
-  Invoke-Checked "git" @("fetch", "origin", "${Branch}:refs/remotes/origin/${Branch}")
-  & git show-ref --verify --quiet "refs/heads/$Branch"
-  if ($LASTEXITCODE -eq 0) {
-    Invoke-Checked "git" @("checkout", $Branch)
+  if ($UseLocalCheckout) {
+    $currentBranch = (& git -C $RepoRoot rev-parse --abbrev-ref HEAD).Trim()
+    if ($currentBranch -ne $Branch) {
+      throw "Local checkout branch $currentBranch does not match requested branch $Branch"
+    }
   } else {
-    # A clean release host may still be checked out on the previous feature
-    # branch. Create the canonical local branch from the fetched remote.
-    Invoke-Checked "git" @("checkout", "-b", $Branch, "refs/remotes/origin/$Branch")
+    Invoke-Checked "git" @("fetch", "origin", "${Branch}:refs/remotes/origin/${Branch}")
+    & git show-ref --verify --quiet "refs/heads/$Branch"
+    if ($LASTEXITCODE -eq 0) {
+      Invoke-Checked "git" @("checkout", $Branch)
+    } else {
+      # A clean release host may still be checked out on the previous feature
+      # branch. Create the canonical local branch from the fetched remote.
+      Invoke-Checked "git" @("checkout", "-b", $Branch, "refs/remotes/origin/$Branch")
+    }
+    Invoke-Checked "git" @("pull", "--ff-only", "origin", $Branch)
   }
-  Invoke-Checked "git" @("pull", "--ff-only", "origin", $Branch)
   $head = (& git rev-parse HEAD).Trim()
   if ($head -ne $BuildCommit) {
     throw "Legion HEAD $head does not match requested build commit $BuildCommit"
