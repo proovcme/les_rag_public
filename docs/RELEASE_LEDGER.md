@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.7
-номер сборки:              647
-версия Tauri/NSIS:         5.1.647
+версия продукта (SemVer):  0.30.8
+номер сборки:              648
+версия Tauri/NSIS:         5.1.648
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
 dev implementation:       transactional delete bridge for cumulative Windows patches
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.7 — corrected soft-patch candidate; не задеплоен
+следующий выпуск:          0.30.8 — release acceptance orchestrator design; не задеплоен
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
+
+> **0.30.8 / build 648 release acceptance orchestrator (design):** каждый
+> будущий публичный выпуск обязан сначала установить точные candidate bytes на
+> Legion штатным updater/NSIS-путём, пройти smoke, доказать rollback, повторно
+> установить тот же кандидат и только затем публиковать draft. Общий receipt
+> связывает commit, SHA артефактов, состояние Legion и postflight GitHub.
+> Реализация ещё не выполнена; runtime Legion не менялся.
 
 > **0.30.7 / build 647 corrected soft-patch publication (release candidate):**
 > сохраняет transactional delete bridge из 0.30.6 и добавляет обязательный
