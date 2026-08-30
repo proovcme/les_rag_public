@@ -478,6 +478,49 @@ def test_windows_runtime_stop_reports_foreign_port_owner(monkeypatch, tmp_path):
         windows_runtime.stop(tmp_path / "LES", runtime=tmp_path / "runtime")
 
 
+def test_windows_runtime_recovers_hung_exact_recorded_runtime(monkeypatch, tmp_path):
+    state = tmp_path / "LES"
+    runtime = tmp_path / "runtime"
+    logs = state / "logs"
+    python = state / ".venv" / "Scripts" / "pythonw.exe"
+    logs.mkdir(parents=True)
+    python.parent.mkdir(parents=True)
+    python.write_bytes(b"fixture")
+    (logs / "windows-light-state.json").write_text(
+        json.dumps(
+            {
+                "status": "started",
+                "mode": "full",
+                "proxy_pid": 55,
+                "ui_pid": 56,
+                "state_root": str(state),
+                "process_contract": "direct_python_no_console_v2",
+                "python_executable": str(python),
+            }
+        ),
+        encoding="utf-8",
+    )
+    listeners = {8050: 55, 8051: 56}
+    terminated = []
+    monkeypatch.setattr(windows_runtime, "_listening_pids", lambda _ports: dict(listeners))
+    monkeypatch.setattr(windows_runtime, "_live_runtime_matches", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(windows_runtime, "_process_name", lambda _pid: "pythonw.exe")
+
+    def terminate(pid, *, image_confirmed=False):
+        terminated.append((pid, image_confirmed))
+        for port, owner in list(listeners.items()):
+            if owner == pid:
+                listeners.pop(port)
+
+    monkeypatch.setattr(windows_runtime, "_terminate_pid", terminate)
+    monkeypatch.setattr(windows_runtime, "_port_free", lambda port: port not in listeners)
+
+    result = windows_runtime.stop(state, runtime=runtime)
+
+    assert result["pids"] == [55, 56]
+    assert terminated == [(55, True), (56, True)]
+
+
 def test_windows_backend_stop_owns_only_proxy_port(monkeypatch, tmp_path):
     seen = []
     monkeypatch.setattr(

@@ -165,7 +165,7 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 | `baseline_unreadable` | база отсутствует/повреждена/DACL чужой | soft update fail; clean reset создаёт новый canonical state без ACL mutation |
 | `baseline_outdated` | bundled baseline новее | hard recovery; soft update не смешивает поколения файлов |
 | `foreign_port_owner` | порт занят не LES | не завершать процесс; точный PID/port в status |
-| `lost_process_state` | LES жив, state PID устарел | принять только по endpoint identity + port PID + Python image |
+| `lost_process_state` | LES endpoint завис или state требует сверки | принять только по endpoint identity либо полному exact state root/mode/process contract/Python/port→PID; иначе `foreign_port_owner` |
 | `reboot_required` | подтверждённый старый PID имеет высокий integrity | одноразовое continuation после reboot; UAC запрещён |
 | `base_checksum_mismatch` | runtime drift | отказ до stop; hard recovery, не расширение accepted hashes наугад |
 | `startup_timeout` | процесс жив, endpoint не ready | stderr tail + failed component; rollback update |

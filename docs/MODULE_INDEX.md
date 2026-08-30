@@ -1,6 +1,6 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 637):** без выбора источников
+> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 638):** без выбора источников
 > чат идёт напрямую к модели; выбранные датасеты/вложения и явный «Все
 > источники» создают точный scope. Initial и повторный model-selected поиск
 > используют один production native RRF. Evidence упаковывается раньше памяти,
@@ -16,6 +16,9 @@
 > принимает внешний Qdrant как `available`/`N/A`, а version-only `uv.lock` не
 > превращает runtime-патч в полную переустановку. Точки updater:
 > `tools/{release_classification,vps_patch,vps_patch_apply}.py`.
+> Если proxy завис, runtime recovery принимает только exact записанные PID,
+> полный набор портов, persistent Python и process contract; чужой владелец
+> порта по-прежнему получает `foreign_port_owner`. Точка: `tools/windows_runtime.py`.
 > Статус док↔код: ✅.
 
 > **0.29.4 answer binding + visible scope (build 633):** назначенная в

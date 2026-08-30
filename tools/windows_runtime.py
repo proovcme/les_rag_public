@@ -393,6 +393,38 @@ def _stop_confirmed_live_runtime(
     raise RuntimeError("confirmed LES runtime processes did not release their ports")
 
 
+def _recorded_runtime_owns_listeners(
+    payload: dict[str, Any],
+    state: Path,
+    listeners: dict[int, int],
+    ports: set[int],
+    *,
+    proxy_port: int,
+    ui_port: int,
+    mode: str,
+) -> bool:
+    """Recover a hung LES only from the exact current process-state contract."""
+    if (
+        payload.get("status") != "started"
+        or payload.get("mode") != mode
+        or payload.get("process_contract") != PROCESS_CONTRACT
+    ):
+        return False
+    try:
+        if Path(str(payload.get("state_root") or "")).resolve() != Path(state).resolve():
+            return False
+        if Path(str(payload.get("python_executable") or "")).resolve() != _python(state).resolve():
+            return False
+    except (OSError, RuntimeError):
+        return False
+    expected = {proxy_port: int(payload.get("proxy_pid") or 0)}
+    if mode == "full":
+        expected[ui_port] = int(payload.get("ui_pid") or 0)
+    if set(listeners) != ports or listeners != expected or any(pid <= 0 for pid in expected.values()):
+        return False
+    return all(_process_name(pid) in {"python.exe", "pythonw.exe"} for pid in expected.values())
+
+
 def stop(
     state: Path,
     *,
@@ -422,30 +454,44 @@ def stop(
         if recorded_ui_pid <= 0 or set(listeners.values()) != {recorded_ui_pid}:
             detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
             raise RuntimeError(f"foreign_port_owner: {detail}")
+    live_matches = False
+    recorded_matches = False
     if (
         normalized_mode != "ui"
         and runtime is not None
         and listeners
-        and not _live_runtime_matches(
+    ):
+        live_matches = _live_runtime_matches(
             runtime,
             proxy_port=proxy_port,
             ui_port=ui_port,
             mode=normalized_mode,
         )
-    ):
-        detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
-        raise RuntimeError(f"foreign_port_owner: {detail}")
-    stopped: list[int] = (
-        _stop_confirmed_live_runtime(
+        recorded_matches = _recorded_runtime_owns_listeners(
+            payload,
+            state,
+            listeners,
+            ports,
+            proxy_port=proxy_port,
+            ui_port=ui_port,
+            mode=normalized_mode,
+        )
+        if not live_matches and not recorded_matches:
+            detail = ",".join(f"{port}:{pid}" for port, pid in sorted(listeners.items()))
+            raise RuntimeError(f"foreign_port_owner: {detail}")
+    stopped: list[int] = []
+    if runtime is not None and normalized_mode != "ui" and live_matches:
+        stopped = _stop_confirmed_live_runtime(
             runtime,
             ports,
             proxy_port=proxy_port,
             ui_port=ui_port,
             mode=normalized_mode,
         )
-        if runtime is not None and normalized_mode != "ui"
-        else []
-    )
+    elif recorded_matches:
+        for pid in sorted(set(listeners.values())):
+            _terminate_pid(pid, image_confirmed=True)
+            stopped.append(pid)
     listeners = _listening_pids(ports)
     if payload:
         state_keys = {
