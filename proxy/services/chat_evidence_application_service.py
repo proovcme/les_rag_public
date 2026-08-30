@@ -293,7 +293,27 @@ def govern_inference_messages(
 
 
 def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, Any]:
-    """Expose capacity and omission structure without prompt or evidence payloads."""
+    """Expose exact model-visible evidence while keeping private prompt/memory redacted."""
+    visible_kinds = {ContextKind.EVIDENCE, ContextKind.SOURCE_MAP}
+
+    def section_trace(section) -> dict[str, Any]:
+        item = {
+            "kind": section.kind.value,
+            "items": len(section.objects),
+            "tokens": section.token_count,
+        }
+        if section.kind in visible_kinds:
+            item["objects"] = [
+                {
+                    "object_id": obj.object_id,
+                    "payload": json.loads(json.dumps(obj.payload, ensure_ascii=False, default=str)),
+                    "text": obj.render(),
+                    "sha256": hashlib.sha256(obj.render().encode("utf-8")).hexdigest(),
+                }
+                for obj in section.objects
+            ]
+        return item
+
     return {
         "purpose": purpose,
         "preset_id": packet.preset_id,
@@ -301,19 +321,13 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
         "generation_reserve_tokens": packet.generation_reserve_tokens,
         "safety_reserve_tokens": packet.safety_reserve_tokens,
         "included_tokens": packet.included_tokens,
-        "sections": [
-            {
-                "kind": section.kind.value,
-                "items": len(section.objects),
-                "tokens": section.token_count,
-            }
-            for section in packet.sections
-        ],
+        "sections": [section_trace(section) for section in packet.sections],
         "omissions": [
             {
                 "kind": omission.kind.value,
                 "total": omission.total,
                 "omitted": omission.omitted,
+                "object_ids": list(omission.object_ids),
                 "cursor": omission.cursor,
                 "reason": omission.reason,
             }
@@ -1457,6 +1471,48 @@ async def _execute_chat_evidence_application(
             "source": "metadb.documents",
             "file_count": int(project_inventory_payload.get("file_count") or 0),
         })
+
+    model_evidence_chunks = list(llm_chunks)
+
+    def _build_model_evidence(current_chunks: Sequence[Any]):
+        packet = build_retrieval_evidence_packet(
+            question=req.question,
+            chunks=current_chunks,
+            retrieval_trace=retrieval_trace,
+            navigation=evidence_navigation,
+            deterministic_evidence=deterministic_evidence,
+        )
+        rendered = render_retrieval_evidence_for_model(
+            packet,
+            max_chars=context_chars_limit,
+            include_metadata=True,
+        )
+        source_map = packet.source_map(
+            max_chars=context_chars_limit,
+            include_metadata=True,
+        )
+        return (
+            packet,
+            rendered,
+            source_map,
+            packet.to_dict(max_chars=context_chars_limit, include_metadata=True),
+        )
+
+    (
+        initial_evidence_packet,
+        context,
+        answer_source_map,
+        final_evidence_packet,
+    ) = _build_model_evidence(model_evidence_chunks)
+    retrieval_trace["evidence_packet"] = initial_evidence_packet.trace_summary(
+        max_chars=context_chars_limit,
+        include_metadata=True,
+    )
+    selector_evidence = [
+        "Материалы из найденных документов:",
+        *[item.payload for item in _text_context_objects("selector-evidence", context)],
+    ]
+    selector_source_map = answer_source_map
     async with gen_semaphore:
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
@@ -1733,20 +1789,19 @@ async def _execute_chat_evidence_application(
                         selector_headers = {}
                         if llm_runtime.api_key:
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
-                        max_rounds = profile_research_rounds(
-                            profile_snapshot,
-                            configured=min(
-                                execution_preset.max_batch_items,
-                                max(1, min(24, _env_int("LES_CHAT_RESEARCH_MAX_ROUNDS", 12))),
-                            ),
-                        )
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
-                        seen_call_signatures: set[str] = set()
                         workbook_call_attempted = False
-                        stop_reason = "round_limit"
-                        for research_round in range(1, max_rounds + 1):
+                        research_deadline_seconds = max(
+                            1.0,
+                            _env_float("LES_CHAT_RESEARCH_DEADLINE_SECONDS", 120.0),
+                        )
+                        research_deadline = time.monotonic() + research_deadline_seconds
+                        research_round = 0
+                        stop_reason = "deadline"
+                        while time.monotonic() < research_deadline:
+                            research_round += 1
                             prior_results = [
                                 _compact_tool_result_for_prompt(item, max_chars=2400)
                                 for item in tool_results_for_model[-max_calls:]
@@ -1790,6 +1845,8 @@ async def _execute_chat_evidence_application(
                                 shortlist=shortlist.get("tools") or [],
                                 checkpoint=selector_checkpoint,
                                 working_memory=selector_working_memory,
+                                evidence=selector_evidence,
+                                source_map=selector_source_map,
                                 tool_exchange=prior_results,
                             )
                             retrieval_trace["context_governor"]["calls"].append(
@@ -1845,20 +1902,12 @@ async def _execute_chat_evidence_application(
                                 )
                                 retrieval_trace["canonical_shadow"] = shadow_trace
                                 canonical_shadow_recorded = True
-                            calls: list[dict[str, Any]] = []
-                            for call in proposed_calls:
-                                signature = json.dumps(call, ensure_ascii=False, sort_keys=True, default=str)
-                                if signature in seen_call_signatures:
-                                    continue
-                                seen_call_signatures.add(signature)
-                                calls.append(call)
-                                if len(selected_calls) + len(calls) >= max_calls:
-                                    break
+                            calls = list(proposed_calls[:max_calls])
                             research_rounds.append(
                                 {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
                             )
                             if not calls:
-                                stop_reason = "model_stop" if not proposed_calls else "repeated_call"
+                                stop_reason = "model_stop"
                                 break
                             for call in calls:
                                 tool_loop_stage = "tool_execution"
@@ -1897,6 +1946,62 @@ async def _execute_chat_evidence_application(
                                 else:
                                     research_result = await model_research_tools.execute(call)
                                     payload = research_result.payload
+                                    if research_result.chunks:
+                                        known_chunk_ids = {
+                                            str((getattr(item, "meta", {}) or {}).get("chunk_id") or "")
+                                            or hashlib.sha256(
+                                                (
+                                                    str(getattr(item, "doc_name", "") or "")
+                                                    + "\x00"
+                                                    + str(getattr(item, "content", "") or "")
+                                                ).encode("utf-8")
+                                            ).hexdigest()
+                                            for item in chunks
+                                        }
+                                        for found_chunk in research_result.chunks:
+                                            found_id = str(
+                                                (getattr(found_chunk, "meta", {}) or {}).get("chunk_id") or ""
+                                            ) or hashlib.sha256(
+                                                (
+                                                    str(getattr(found_chunk, "doc_name", "") or "")
+                                                    + "\x00"
+                                                    + str(getattr(found_chunk, "content", "") or "")
+                                                ).encode("utf-8")
+                                            ).hexdigest()
+                                            if found_id not in known_chunk_ids:
+                                                chunks.append(found_chunk)
+                                                known_chunk_ids.add(found_id)
+                                        research_windows = expand_context_windows(
+                                            chunks,
+                                            collection=getattr(rag_backend, "collection_name", ""),
+                                            logger=logger,
+                                            max_chunks=context_max_chunks,
+                                            max_chars_per_chunk=context_window_chars,
+                                            radius=context_radius,
+                                        )
+                                        model_evidence_chunks = list(research_windows.chunks)
+                                        (
+                                            _research_evidence_packet,
+                                            context,
+                                            answer_source_map,
+                                            final_evidence_packet,
+                                        ) = _build_model_evidence(model_evidence_chunks)
+                                        retrieval_trace["evidence_packet"] = (
+                                            _research_evidence_packet.trace_summary(
+                                                max_chars=context_chars_limit,
+                                                include_metadata=True,
+                                            )
+                                        )
+                                        selector_evidence = [
+                                            "Материалы из найденных документов:",
+                                            *[
+                                                item.payload
+                                                for item in _text_context_objects(
+                                                    "selector-evidence", context
+                                                )
+                                            ],
+                                        ]
+                                        selector_source_map = answer_source_map
                                 selected_calls.append(call)
                                 safe_payload = safe_workbook_history_projection(payload)
                                 tool_results_for_model.append(
@@ -1911,9 +2016,6 @@ async def _execute_chat_evidence_application(
                                     stop_reason = "workbook_attempted"
                                     break
                             if workbook_chat_meta or workbook_call_attempted:
-                                break
-                            if len(selected_calls) >= max_calls:
-                                stop_reason = "call_budget"
                                 break
                         tool_context = _format_tool_results_for_model(tool_results_for_model)
                         retrieval_trace["tool_loop"] = {
@@ -1930,8 +2032,8 @@ async def _execute_chat_evidence_application(
                             "results": tool_results_for_model,
                             "rounds": research_rounds,
                             "stop_reason": stop_reason,
-                            "max_rounds": max_rounds,
-                            "max_calls": max_calls,
+                            "deadline_seconds": research_deadline_seconds,
+                            "max_calls_per_model_response": max_calls,
                         }
                     except ContextRequiredSectionOverflow as context_error:
                         retrieval_trace["context_governor"]["error"] = {
@@ -2014,27 +2116,13 @@ async def _execute_chat_evidence_application(
                         sys_msg = sys_strict
                         logger.warning("[SAFERAG] Retry #2 — строгий промпт, %s чанков", len(ctx_chunks))
                     else:
-                        ctx_chunks = llm_chunks
-                        evidence_packet = build_retrieval_evidence_packet(
-                            question=req.question,
-                            chunks=ctx_chunks,
-                            retrieval_trace=retrieval_trace,
-                            navigation=evidence_navigation,
-                            deterministic_evidence=deterministic_evidence,
-                        )
-                        context = render_retrieval_evidence_for_model(
+                        ctx_chunks = model_evidence_chunks
+                        (
                             evidence_packet,
-                            max_chars=context_chars_limit,
-                            include_metadata=True,
-                        )
-                        answer_source_map = evidence_packet.source_map(
-                            max_chars=context_chars_limit,
-                            include_metadata=True,
-                        )
-                        final_evidence_packet = evidence_packet.to_dict(
-                            max_chars=context_chars_limit,
-                            include_metadata=True,
-                        )
+                            context,
+                            answer_source_map,
+                            final_evidence_packet,
+                        ) = _build_model_evidence(ctx_chunks)
                         retrieval_trace["evidence_packet"] = evidence_packet.trace_summary(
                             max_chars=context_chars_limit,
                             include_metadata=True,

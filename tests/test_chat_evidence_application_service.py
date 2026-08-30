@@ -402,7 +402,7 @@ def _governor_preset(
     )
 
 
-def test_governed_inference_uses_typed_order_and_redacted_trace() -> None:
+def test_governed_inference_trace_exposes_exact_evidence_but_not_private_memory() -> None:
     messages, packet = service.govern_inference_messages(
         preset=_governor_preset(),
         profile_prefix="bound profile",
@@ -424,7 +424,28 @@ def test_governed_inference_uses_typed_order_and_redacted_trace() -> None:
     assert trace["purpose"] == "answer"
     assert [section["kind"] for section in trace["sections"]] == [kind.value for kind in ContextKind]
     assert "hidden" not in json.dumps(trace)
-    assert "evidence payload" not in json.dumps(trace)
+    evidence = next(section for section in trace["sections"] if section["kind"] == "evidence")
+    source_map = next(section for section in trace["sections"] if section["kind"] == "source_map")
+    assert evidence["objects"][0]["payload"] == {"source": "evidence payload"}
+    assert evidence["objects"][0]["text"] == '{"source":"evidence payload"}'
+    assert len(evidence["objects"][0]["sha256"]) == 64
+    assert source_map["objects"][0]["payload"] == {"label": "Источник 1"}
+
+
+def test_context_trace_records_exact_omitted_evidence_ids_and_cursor() -> None:
+    _messages, packet = service.govern_inference_messages(
+        preset=_governor_preset(input_tokens=90),
+        profile_prefix="p",
+        request_payload="q",
+        evidence=["x" * 200],
+        source_map=[{"label": "Источник 1"}],
+    )
+
+    trace = service.context_packet_trace(packet, purpose="tool_decision")
+    omitted = next(item for item in trace["omissions"] if item["kind"] == "evidence")
+
+    assert omitted["object_ids"] == ["evidence:0"]
+    assert omitted["cursor"].startswith("ctx:evidence:")
 
 
 def test_governed_inference_rejects_required_overflow_before_provider_call() -> None:
@@ -626,6 +647,19 @@ def test_application_routes_model_search_sources_through_canonical_research_serv
     assert "retrieve=retrieve_chat_chunks" in source
 
 
+def test_model_research_loop_is_evidence_first_and_model_stopped() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    initial_packet = source.index("initial_evidence_packet,")
+    selector_loop = source.index("while time.monotonic() < research_deadline:")
+    assert initial_packet < selector_loop
+    assert "evidence=selector_evidence" in source
+    assert "source_map=selector_source_map" in source
+    assert "research_result.chunks" in source
+    assert "seen_call_signatures" not in source
+    assert 'stop_reason = "model_stop"' in source
+
+
 @pytest.mark.asyncio
 async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> None:
     class ThrowingHarness:
@@ -743,6 +777,8 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             system_text = str(json["messages"][0]["content"])
             if "исследовательским чтением LES" in system_text:
                 model_calls.append("selector")
+                if model_calls.count("selector") > 1:
+                    return FakeResponse('{"calls":[]}')
                 return FakeResponse(
                     '{"calls":['
                     '{"tool":"read_source","args":{"doc_id":"d1"}},'
@@ -981,6 +1017,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                         usage={},
                     ),
                     InferenceResponse(
+                        text="active visible answer" if active_workbook else '{"calls":[]}',
+                        tool_calls=(),
+                        finish_reason="stop",
+                        usage={"completion_tokens": 5},
+                    ),
+                    InferenceResponse(
                         text="active visible answer",
                         tool_calls=(),
                         finish_reason="stop",
@@ -1121,7 +1163,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         dataset_sensitivities=lambda _ids: [],
         env_bool=lambda _key, default=False: default,
         env_float=lambda _key, default=0.0: default,
-        env_int=lambda key, default=0: 1 if key == "LES_CHAT_RESEARCH_MAX_ROUNDS" else default,
+        env_int=lambda _key, default=0: default,
         expand_context_windows=lambda *_args, **_kwargs: FakeWindows(),
         format_tool_results_for_model=lambda rows: json.dumps(rows, ensure_ascii=False),
         generation_token_budget=lambda **_kwargs: 128,
@@ -1137,15 +1179,10 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         notebook_study_validation_status=lambda status, **_kwargs: status,
         ollama_native_complete=lambda *_args, **_kwargs: None,
         parse_model_tool_calls=(
-            lambda raw, *_args, **_kwargs: json.loads(raw).get("calls", [])
-            if active
-            else (
+            lambda raw, *_args, **_kwargs: (
                 [{"tool": "build_vor_workbook", "args": {"attachment_id": "read_123456abcdef"}}]
-                if workbook_profile
-                else [
-                    {"tool": "read_source", "args": {"doc_id": "d1"}},
-                    {"tool": "read_source", "args": {"doc_id": "d2"}},
-                ]
+                    if workbook_profile and not active
+                    else json.loads(raw).get("calls", [])
             )
         ),
         prepare_notebook_reader_memory=lambda *_args, **_kwargs: None,
@@ -1216,7 +1253,9 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "used": [],
             "used_names": [],
         }
-        assert active_transport.revisions == ["conn:active:r3", "conn:active:r3"]
+        assert active_transport.revisions == ["conn:active:r3", "conn:active:r3"] + (
+            [] if active_workbook else ["conn:active:r3"]
+        )
         if active_workbook:
             assert len(workbook_executor_calls) == 1
             if rejected_workbook:
@@ -1257,6 +1296,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     if cloud_retry:
         assert model_calls == [
             "selector",
+            "selector",
             "cloud_final",
             "local_final",
             "local_final",
@@ -1264,11 +1304,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         calls = history_rows[0]["retrieval_trace"]["context_governor"]["calls"]
         assert [call["purpose"] for call in calls] == [
             "tool_decision",
+            "tool_decision",
             "answer",
             "answer_fallback",
             "answer",
         ]
         assert [call["preset_id"] for call in calls] == [
+            "cloud-large",
             "cloud-large",
             "cloud-large",
             "local-restrictive",
@@ -1287,7 +1329,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert history_rows[0]["retrieval_trace"]["reason"] == "scope_none"
         assert after_protected == before_protected
         return
-    assert model_calls == ["selector", "final"]
+    assert model_calls == ["selector", "selector", "final"]
     assert shortlist_policies == [
         {
             "mode": "rag",
@@ -1326,6 +1368,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     governor_trace = history_rows[0]["retrieval_trace"]["context_governor"]
     assert governor_trace["preset_id"] == "qwen-9b-restrictive"
     assert [call["purpose"] for call in governor_trace["calls"]] == [
+        "tool_decision",
         "tool_decision",
         "answer",
     ]
