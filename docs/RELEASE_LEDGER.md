@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.16
-номер сборки:              656
-версия Tauri/NSIS:         5.1.656
+версия продукта (SemVer):  0.30.17
+номер сборки:              657
+версия Tauri/NSIS:         5.1.657
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       unfinished worklog-island cleanup
+dev implementation:       unintegrated diff-island cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.16 — worklog-island cleanup; не задеплоен
+следующий выпуск:          0.30.17 — diff-island cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.17 / build 657 unintegrated diff-island cleanup (dev candidate):**
+> удалён W12.1 «Дифф CAD/BIM и текстов»: три `/api/diff/*` route,
+> `proxy/routers/diff.py`, изолированный service и его service-only tests.
+> Consumer-аудит подтвердил отсутствие UI, model tool, project dossier и
+> межсервисных вызовов; исторический план оставлял live-приёмку двух реальных
+> ревизий незавершённой. Активный `/api/cad-bim/imports`, viewer, CAD/BIM graph
+> data, документы, сметы, RAG, Qdrant и установленный Legion не менялись.
+> Generated map: 980 tracked Python-файлов, 355 product-reachable,
+> 8 runtime-support, 616 test/tool-only, 1 dormant, 396 API routes, 0 warnings.
 
 > **0.30.16 / build 656 unfinished worklog-island cleanup (dev candidate):**
 > удалён W20.3 «Общий журнал работ»: четыре `/api/worklog/*` route,

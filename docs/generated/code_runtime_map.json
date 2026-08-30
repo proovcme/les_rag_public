@@ -974,7 +974,6 @@
         "proxy/routers/datasets.py",
         "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/diff.py",
         "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
         "proxy/routers/edges.py",
@@ -1050,7 +1049,6 @@
         "proxy/services/dataset_memory_service.py",
         "proxy/services/decision_service.py",
         "proxy/services/deterministic_policy_service.py",
-        "proxy/services/diff_service.py",
         "proxy/services/doc_classifier.py",
         "proxy/services/doc_extract_service.py",
         "proxy/services/doc_review_retrieval_service.py",
@@ -1264,7 +1262,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 729,
+      "lines": 727,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1285,7 +1283,6 @@
         "proxy/routers/datasets.py",
         "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/diff.py",
         "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
         "proxy/routers/edges.py",
@@ -1549,7 +1546,6 @@
         "proxy/routers/datasets.py",
         "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/diff.py",
         "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
         "proxy/routers/edges.py",
@@ -1905,23 +1901,6 @@
         "proxy/security.py"
       ],
       "path": "proxy/routers/diagnostics.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 66,
-      "module": "proxy.routers.diff",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/cad_bim_graph.py",
-        "proxy/services/diff_service.py"
-      ],
-      "path": "proxy/routers/diff.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -2628,7 +2607,6 @@
         "proxy/routers/datasets.py",
         "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/diff.py",
         "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
         "proxy/routers/edges.py",
@@ -2726,7 +2704,6 @@
         "proxy/services/dataset_memory_service.py",
         "proxy/services/decision_service.py",
         "proxy/services/deterministic_policy_service.py",
-        "proxy/services/diff_service.py",
         "proxy/services/doc_classifier.py",
         "proxy/services/doc_extract_service.py",
         "proxy/services/doc_review_retrieval_service.py",
@@ -3100,16 +3077,13 @@
     },
     {
       "inbound": [
-        "proxy/routers/diff.py",
         "proxy/routers/speckle.py",
-        "proxy/services/diff_service.py",
         "proxy/services/ontology_service.py",
         "proxy/services/project_service.py",
         "tests/test_cad_bim_aggregate_w61.py",
         "tests/test_cad_bim_exporter_contract.py",
         "tests/test_cad_bim_highlight.py",
         "tests/test_cad_bim_import_inventory.py",
-        "tests/test_diff_service.py",
         "tests/test_ontology_service_w173.py"
       ],
       "lines": 1425,
@@ -3704,22 +3678,6 @@
         "proxy/services/smeta_ontology_service.py"
       ],
       "path": "proxy/services/deterministic_policy_service.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/routers/diff.py",
-        "tests/test_diff_service.py"
-      ],
-      "lines": 250,
-      "module": "proxy.services.diff_service",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/services/__init__.py",
-        "proxy/services/cad_bim_graph.py"
-      ],
-      "path": "proxy/services/diff_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -9517,7 +9475,7 @@
     },
     {
       "inbound": [],
-      "lines": 167,
+      "lines": 179,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -9789,18 +9747,6 @@
         "proxy/routers/diagnostics.py"
       ],
       "path": "tests/test_diagnostics_router.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 145,
-      "module": "tests.test_diff_service",
-      "outbound": [
-        "proxy/services/cad_bim_graph.py",
-        "proxy/services/diff_service.py"
-      ],
-      "path": "tests/test_diff_service.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -16798,24 +16744,6 @@
       "source": "proxy/routers/diagnostics.py"
     },
     {
-      "handler": "cad_bim_diff",
-      "method": "GET",
-      "path": "/api/diff/cad-bim",
-      "source": "proxy/routers/diff.py"
-    },
-    {
-      "handler": "cad_bim_imports",
-      "method": "GET",
-      "path": "/api/diff/cad-bim/imports",
-      "source": "proxy/routers/diff.py"
-    },
-    {
-      "handler": "text_diff",
-      "method": "POST",
-      "path": "/api/diff/text",
-      "source": "proxy/routers/diff.py"
-    },
-    {
       "handler": "doc_review_rulepacks",
       "method": "GET",
       "path": "/api/doc-review/rulepacks",
@@ -18860,12 +18788,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 357,
-    "registered_api_routes": 399,
+    "product_reachable": 355,
+    "registered_api_routes": 396,
     "runtime_support": 8,
-    "test_or_tool_only": 617,
-    "tracked_python_files": 983,
-    "tracked_python_lines": 299974
+    "test_or_tool_only": 616,
+    "tracked_python_files": 980,
+    "tracked_python_lines": 299523
   },
   "warnings": []
 }

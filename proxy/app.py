@@ -25,7 +25,6 @@ from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.artifacts import router as artifacts_router
 from proxy.routers.bor import router as bor_router
-from proxy.routers.diff import router as diff_router
 from proxy.routers.filemap import router as filemap_router
 from proxy.routers.tasks import notes_router, router as tasks_router
 from proxy.routers.projects import router as projects_router
@@ -675,7 +674,6 @@ def create_app():
     fastapi_app.include_router(auth_router)
     fastapi_app.include_router(artifacts_router)
     fastapi_app.include_router(bor_router)
-    fastapi_app.include_router(diff_router)
     fastapi_app.include_router(filemap_router)
     fastapi_app.include_router(tasks_router)
     fastapi_app.include_router(projects_router)

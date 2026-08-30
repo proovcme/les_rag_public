@@ -19,13 +19,13 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 983 |
-| Строк Python | 299974 |
-| PRODUCT_REACHABLE | 357 |
+| Python-файлов под git | 980 |
+| Строк Python | 299523 |
+| PRODUCT_REACHABLE | 355 |
 | RUNTIME_SUPPORT | 8 |
-| TEST_OR_TOOL_ONLY | 617 |
+| TEST_OR_TOOL_ONLY | 616 |
 | DORMANT_CANDIDATE | 1 |
-| Зарегистрированных API-маршрутов | 399 |
+| Зарегистрированных API-маршрутов | 396 |
 | Ошибок разбора | 0 |
 
 ## Крупнейшие продуктовые модули
@@ -51,7 +51,7 @@
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
-| proxy/services/cad_bim_graph.py | 1425 | 11 |
+| proxy/services/cad_bim_graph.py | 1425 | 8 |
 | sovushka/pages/diag.py | 1416 | 2 |
 | proxy/services/retrieval_service.py | 1348 | 10 |
 | proxy/services/tool_harness_service.py | 1325 | 12 |

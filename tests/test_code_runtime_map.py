@@ -165,3 +165,15 @@ def test_unfinished_worklog_is_retired_without_removing_field_or_glossary(
     assert "proxy/routers/worklog.py" not in modules
     assert "proxy/services/work_log_service.py" not in modules
     assert not [path for path in paths if path.startswith("/api/worklog")]
+
+
+def test_unintegrated_diff_is_retired_without_removing_cad_bim_inventory(
+    inventory: dict,
+):
+    modules = _modules_by_path(inventory)
+    paths = {item["path"] for item in inventory["routes"]}
+
+    assert "/api/cad-bim/imports" in paths
+    assert "proxy/routers/diff.py" not in modules
+    assert "proxy/services/diff_service.py" not in modules
+    assert not [path for path in paths if path.startswith("/api/diff")]

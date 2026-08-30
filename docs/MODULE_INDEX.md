@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.17 unintegrated product-island cleanup:** удалён изолированный W12.1
+> «Дифф CAD/BIM и текстов»: три `/api/diff/*` route, router, service и
+> service-only тесты. Контур не имел UI, model tool, dossier или иных
+> production-потребителей; live-приёмка двух реальных ревизий не была выполнена.
+> Активный `/api/cad-bim/imports`, viewer, CAD/BIM graph data, документы, сметы,
+> RAG и Legion не менялись. Карта: 980 tracked Python-файлов,
+> 355 product-reachable, 8 runtime-support, 616 test/tool-only, 1 dormant,
+> 396 API routes, 0 parse warnings. Точки входа: `proxy/app.py`,
+> `tests/test_code_runtime_map.py`, `docs/CODE_MAP.md`. Статус док↔код: ✅.
+
 > **0.30.16 unfinished product-island cleanup:** удалён изолированный W20.3
 > «Общий журнал работ»: четыре `/api/worklog/*` route, router, service и
 > service-only тест. Контур реализовывал только незавершённую форму разделов
