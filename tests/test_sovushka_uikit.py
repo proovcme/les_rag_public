@@ -3,7 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sovushka.styles import _DARK_THEME, _LIGHT_THEME
+from sovushka.styles import CUSTOM_CSS, _DARK_THEME, _LIGHT_THEME, theme_vars_css
 from sovushka.pages.rim import (
     _human_norm_source,
     _human_source_ref,
@@ -158,12 +158,16 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert "font-variant-numeric: tabular-nums" in UIKIT_CSS
     assert "text-wrap: balance" in UIKIT_CSS
     assert "text-wrap: pretty" in UIKIT_CSS
-    assert "grid-template-columns: 184px minmax(0, 1fr)" in UIKIT_CSS
+    assert "grid-template-columns: 200px minmax(0, 1fr)" in UIKIT_CSS
     assert "@media (max-width: 900px)" in UIKIT_CSS
     assert '--sov-ui-font-prose: "Segoe UI Variable Text", "Segoe UI"' in UIKIT_CSS
     assert "--sov-ui-font-size-body: 16px" in UIKIT_CSS
-    assert "--sov-ui-font-size-control: 14px" in UIKIT_CSS
-    assert "--sov-ui-font-size-meta: 12px" in UIKIT_CSS
+    assert "--sov-ui-font-size-control: 15px" in UIKIT_CSS
+    assert "--sov-ui-font-size-meta: 14px" in UIKIT_CSS
+    assert "--fs-xs: 14px" in CUSTOM_CSS
+    assert "--fs-sm: 15px" in CUSTOM_CSS
+    assert ".sov-ui-version-badge {" in UIKIT_CSS
+    assert "font-size: var(--sov-ui-font-size-meta) !important;" in UIKIT_CSS
     assert "font-synthesis: none" in UIKIT_CSS
     assert ".sov-nav-switch--active .q-btn__content" in UIKIT_CSS
     assert ".sov-ui-shell .sov-chat-title" in UIKIT_CSS
@@ -179,6 +183,24 @@ def test_uikit_has_accessible_motion_and_control_contract():
     assert ".sov-ui-button--primary" in UIKIT_CSS
     assert ".sov-ui-button--danger" in UIKIT_CSS
     assert ".sov-ui-panel--inset" in UIKIT_CSS
+
+
+def test_desktop_typography_uses_readable_system_sans_scale():
+    """The installed shell must not shrink rem text or inherit a terminal font."""
+    assert "html {\n  font-size: 16px;" in UIKIT_CSS
+    assert "html { font-size: 12px !important; }" not in CUSTOM_CSS
+    assert "--sov-ui-font-size-body: 16px" in UIKIT_CSS
+    assert "--sov-ui-font-size-control: 15px" in UIKIT_CSS
+    assert "--sov-ui-font-size-meta: 14px" in UIKIT_CSS
+
+    for css in (CUSTOM_CSS, theme_vars_css(True), theme_vars_css(False)):
+        compact = css.replace(" ", "")
+        assert "--font:var(--sov-ui-font-prose)" in compact
+        assert "--font-chat:var(--sov-ui-font-prose)" in compact
+        assert "ui-monospace" not in css
+
+    assert ".sov-nav-switch {" in UIKIT_CSS
+    assert "font-size: var(--sov-ui-font-size-control) !important;" in UIKIT_CSS
 
 
 def test_mobile_chat_keeps_full_identity_and_uses_compact_send_action():
@@ -379,6 +401,8 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
         assert f'"{icon}",' in header
     assert "sov-primary-nav sov-mobile-primary-nav" in header
     assert "Рабочие разделы" in header
+    assert 'tab_refs["history"]  = ui.tab("История",' in header
+    assert 'ui.tab("ИСТОРИЯ"' not in header
     assert "sov-runtime-state" in header
     assert "ЛЕС на связи" in header
     assert 'ui.button("Обновить данные", icon="o_refresh"' in header

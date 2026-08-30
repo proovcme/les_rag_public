@@ -1,6 +1,6 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
-> **0.30.1 model-owned evidence-first RAG (build 635):**
+> **0.30.1 model-owned evidence-first RAG + readable UI (build 636):**
 > `test_model_execution_preset_service.py` и
 > `test_context_governor_service.py` защищают реальную context capacity,
 > однократные reserves и приоритет evidence над памятью.
@@ -12,6 +12,9 @@
 > model-owned loop, exact packet trace, пустой retrieval к модели и неизменный
 > final. `test_rag_dataset_story_acceptance.py` проверяет открытую live-пробу
 > `Расскажи про датасет.` без expected words/pass-score.
+> `test_sovushka_uikit.py` дополнительно запрещает desktop-root `12px` и
+> terminal monospace в chrome, фиксирует системный sans, шкалу `16/15/14`,
+> rail `200px`, обе WCAG AA-палитры и видимый focus.
 
 > **0.29.0 private model/promotion closure:** canonical `make test`, `make
 > verify` collection и portable platform gate теперь постоянно включают все

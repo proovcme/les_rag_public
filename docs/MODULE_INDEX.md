@@ -1,6 +1,6 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **0.30.1 model-owned evidence-first RAG (build 635):** без выбора источников
+> **0.30.1 model-owned evidence-first RAG + readable UI (build 636):** без выбора источников
 > чат идёт напрямую к модели; выбранные датасеты/вложения и явный «Все
 > источники» создают точный scope. Initial и повторный model-selected поиск
 > используют один production native RRF. Evidence упаковывается раньше памяти,
@@ -8,7 +8,10 @@
 > переписывается валидатором. Точки входа:
 > `proxy/services/{scope,chat_evidence_application,model_research_tool,
 > context_governor,model_execution_preset}_service.py`,
-> `sovushka/pages/chat.py`, `tools/rag_dataset_story_acceptance.py`.
+> `sovushka/pages/chat.py`, `tools/rag_dataset_story_acceptance.py`. Общий
+> UI-kit убирает legacy desktop `12px`/monospace, применяет системный sans и
+> шкалу `16/15/14` с WCAG AA-контрастом; desktop rail расширен до `200px` без
+> обрезания русских действий. Точки UI: `sovushka/{styles,uikit/tokens}.py`.
 > Статус док↔код: ✅.
 
 > **0.29.4 answer binding + visible scope (build 633):** назначенная в

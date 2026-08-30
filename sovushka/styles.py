@@ -58,8 +58,8 @@ def theme_vars_css(dark: bool = True) -> str:
     lines = "\n".join(f"  {k}: {v};" for k, v in vars_.items())
     return (
         f"<style>\n:root {{\n{lines}\n"
-        f"  --font: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;\n"
-        f"  --font-chat: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;\n}}\n"
+        f"  --font: var(--sov-ui-font-prose);\n"
+        f"  --font-chat: var(--sov-ui-font-prose);\n}}\n"
         f"body {{ background:{body_bg}; color:{body_fg}; }}\n</style>"
     )
 
@@ -87,13 +87,10 @@ CUSTOM_CSS = """
   --card-bg: rgba(5,6,8,.34);
   --input-bg: rgba(5,6,8,.58);
   --shadow-strong: 0 18px 60px rgba(0,0,0,.24), inset 0 1px 0 rgba(255,255,255,.05);
-  --font:     ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
-  --font-chat: ui-monospace, 'SFMono-Regular', Menlo, Consolas, 'Courier New', monospace;
+  --font:     var(--sov-ui-font-prose);
+  --font-chat: var(--sov-ui-font-prose);
 }
 body, .nicegui-content { font-family: var(--font) !important; color: var(--text) !important; }
-@media (min-width: 1000px) {
-  html { font-size: 12px !important; }
-}
 body, .nicegui-content, .q-page, .q-layout, .q-card, .q-dialog, .q-menu,
 .q-table, .q-item, .sov-chat-md, .sov-chat-message-text, .sov-artifact-markdown,
 .card-les, .kpi-box, .diag-node, .diag-acronym-item {
@@ -1759,9 +1756,9 @@ body, .nicegui-content {
 /* Хром (шапка/табы/лейблы/чипы/действия) → чистый sans вместо моно, размеры ≥12px.            */
 /* Данные (таблицы/логи/числа/коды) остаются моноширинными. Плотные диаг-сетки не трогаем.      */
 :root {
-  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', system-ui, sans-serif;
-  --fs-xs: 12px;
-  --fs-sm: 13px;
+  --font-ui: 'Segoe UI Variable Text', 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --fs-xs: 14px;
+  --fs-sm: 15px;
 }
 .les-top-tabs .q-tab__label {
   font-family: var(--font-ui) !important;

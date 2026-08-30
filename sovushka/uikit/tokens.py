@@ -8,8 +8,8 @@ UIKIT_CSS = """
   --sov-ui-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
     "Liberation Mono", monospace;
   --sov-ui-font-size-body: 16px;
-  --sov-ui-font-size-control: 14px;
-  --sov-ui-font-size-meta: 12px;
+  --sov-ui-font-size-control: 15px;
+  --sov-ui-font-size-meta: 14px;
   --sov-ui-line-body: 1.5;
   --sov-ui-line-control: 1.25;
   --sov-ui-space-1: 4px;
@@ -28,8 +28,10 @@ UIKIT_CSS = """
 }
 
 html {
+  font-size: 16px;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-size-adjust: 100%;
 }
 
 /* Preserve spatial continuity between the two same-origin AppShell routes.
@@ -129,6 +131,15 @@ html {
   font-family: var(--sov-ui-font-prose);
 }
 
+.sov-ui-shell .q-field__native,
+.sov-ui-shell .q-field__label,
+.sov-ui-shell .q-item__label,
+.sov-ui-shell .q-chip__content,
+.sov-ui-shell .q-tooltip {
+  font-size: var(--sov-ui-font-size-control);
+  line-height: var(--sov-ui-line-control);
+}
+
 .sov-ui-shell .q-field__native::placeholder {
   color: var(--dim);
   opacity: .9;
@@ -194,13 +205,13 @@ html {
 }
 
 .sov-acronym-identity--compact .sov-acronym-expansion {
-  font-size: 11px;
+  font-size: 13px;
 }
 
 .sov-surface-heading {
   color: var(--text);
   font-family: var(--sov-ui-font-prose);
-  font-size: 13px;
+  font-size: var(--sov-ui-font-size-control);
   font-weight: 750;
   line-height: 1.3;
 }
@@ -467,7 +478,7 @@ html {
   border: 1px solid currentColor;
   border-radius: 999px;
   font-family: var(--sov-ui-font-code);
-  font-size: .68rem;
+  font-size: var(--sov-ui-font-size-meta);
   font-weight: 800;
   font-variant-numeric: tabular-nums;
 }
@@ -522,7 +533,7 @@ html {
   border: 1px solid transparent !important;
   border-radius: 7px !important;
   font-family: var(--sov-ui-font-prose) !important;
-  font-size: 13px !important;
+  font-size: var(--sov-ui-font-size-control) !important;
   font-weight: 700 !important;
   letter-spacing: 0;
   white-space: nowrap;
@@ -731,13 +742,13 @@ html {
 
 .sov-composer-prompt-label {
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--sov-ui-font-size-control);
   font-weight: 800;
 }
 
 .sov-composer-key-hint {
   color: var(--dim);
-  font-size: 11px;
+  font-size: var(--sov-ui-font-size-meta);
   font-weight: 500;
 }
 
@@ -3056,7 +3067,7 @@ html {
 @media (min-width: 901px) {
   .sov-app-shell {
     display: grid !important;
-    grid-template-columns: 184px minmax(0, 1fr);
+    grid-template-columns: 200px minmax(0, 1fr);
     grid-template-rows: 100vh;
     align-items: stretch;
     overflow: hidden;
@@ -3110,8 +3121,8 @@ html {
   .sov-brand-block .sov-acronym-expansion {
     display: -webkit-box;
     overflow: hidden;
-    font-size: 10px;
-    line-height: 1.15;
+    font-size: 12px;
+    line-height: 1.25;
     white-space: normal;
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 2;
@@ -3123,7 +3134,7 @@ html {
     margin: 0 0 5px !important;
     padding-inline: 3px !important;
     justify-content: flex-start;
-    font-size: 11px !important;
+    font-size: var(--sov-ui-font-size-meta) !important;
     font-variant-numeric: tabular-nums;
     line-height: 1.2 !important;
     color: var(--dim) !important;
@@ -3148,7 +3159,7 @@ html {
     padding: 0 9px !important;
     justify-content: flex-start !important;
     text-align: left !important;
-    font-size: 13.5px !important;
+    font-size: var(--sov-ui-font-size-control) !important;
     font-weight: 700 !important;
     line-height: 1.2 !important;
   }
@@ -3178,7 +3189,7 @@ html {
     padding-top: 10px;
     overflow: hidden;
     border-top: 1px solid color-mix(in srgb, var(--border) 76%, transparent);
-    font-size: 13px;
+    font-size: var(--sov-ui-font-size-meta);
     font-weight: 800;
     line-height: 1.25;
     letter-spacing: 0;
@@ -3253,7 +3264,7 @@ html {
   .les-top-tabs .q-tab__label {
     display: block;
     overflow: hidden;
-    font-size: 13.5px;
+    font-size: var(--sov-ui-font-size-control);
     font-weight: 650;
     line-height: 1.2;
     text-align: left;
@@ -3292,7 +3303,7 @@ html {
     border-radius: 8px;
     color: var(--text) !important;
     font-family: var(--sov-ui-font-prose) !important;
-    font-size: 13px !important;
+    font-size: var(--sov-ui-font-size-control) !important;
     font-weight: 650 !important;
     line-height: 1.25;
     justify-content: flex-start !important;
@@ -3314,7 +3325,7 @@ html {
   .sov-runtime-label {
     min-width: 0;
     color: var(--text);
-    font-size: 12px;
+    font-size: var(--sov-ui-font-size-meta);
     font-weight: 700;
     line-height: 1.25;
     white-space: nowrap;
@@ -3365,7 +3376,7 @@ html {
     min-width: 0;
     gap: var(--sov-ui-icon-gap) !important;
     overflow: hidden;
-    font-size: 12px;
+    font-size: var(--sov-ui-font-size-meta);
   }
 
   .sov-ui-header-account .q-btn__content > :not(.q-icon) {

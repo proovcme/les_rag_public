@@ -256,7 +256,7 @@ def build_header(
                     ).props('flat no-caps disable aria-label="CAD/BIM — скоро"').classes(
                         "sov-secondary-placeholder"
                     ).tooltip("Раздел готовится к выпуску")
-                tab_refs["history"]  = ui.tab("ИСТОРИЯ",        icon="o_history")
+                tab_refs["history"]  = ui.tab("История",        icon="o_history")
 
         for key, label in {
             "diag": "Состояние",

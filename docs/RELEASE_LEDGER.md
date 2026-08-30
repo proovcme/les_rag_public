@@ -8,17 +8,17 @@
 
 ```
 версия продукта (SemVer):  0.30.1
-номер сборки:              635
-версия Tauri/NSIS:         5.1.635
+номер сборки:              636
+версия Tauri/NSIS:         5.1.636
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
-dev implementation:       model-owned evidence-first RAG; source-only, не задеплоено
+dev implementation:       model-owned evidence-first RAG + readable WCAG typography; deployment candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.29.4 / build 633 runtime acceptance
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
 следующий выпуск:          0.30.0 bootstrap installer; 0.30.1 — следующий source/runtime patch после отдельной живой приёмки
 рантайм /api/version:      Legion 0.29.4 / build 633 / desktop 5.1.633; назначенная answer model и scoped native RRF приняты живым запросом
 ```
 
-> **0.30.1 / build 635 model-owned evidence-first RAG (source-only):** обычный
+> **0.30.1 / build 636 model-owned evidence-first RAG + readable UI (deployment candidate):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -29,7 +29,11 @@ dev implementation:       model-owned evidence-first RAG; source-only, не за
 > раньше памяти и сохраняются в exact model-visible packet trace. Добавлена
 > открытая live-проба `Расскажи про датасет.` без expected words/pass-score.
 > Сметное ядро, пользовательский корпус и установленный runtime не изменялись;
-> build 635 не задеплоен и требует отдельной живой приёмки на ready native RRF.
+> Совушка больше не уменьшает desktop-root до `12px` и не использует terminal
+> monospace для обычного текста: системный sans и шкала `16/15/14` проходят
+> обе WCAG AA-палитры; rail `200px` не обрезает русские действия. Build 636
+> подготовлен к транзакционному обновлению установленного Windows runtime;
+> результат живой приёмки записывается после применения exact commit.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
 > authoritative для обычного чата: вызывается любая выбранная answer model без
