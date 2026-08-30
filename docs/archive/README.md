@@ -10,6 +10,20 @@
 
 ## Что здесь
 
+### Прежние корневые документы
+
+| Прежний путь | Почему в архиве | Текущая замена |
+|---|---|---|
+| `ARTICLE_INDEXING_LESSONS.md` | статья о конкретном этапе развития индексации | `docs/ALGO-rag-best-practices.md`, `docs/unified_harness_failure_ledger.md` |
+| `ARTICLE_SAFERAG.md` | историческое объяснение отдельного safety-слоя | `docs/ALGO-rag-best-practices.md`, `ROADMAP_TO_V1.md` |
+| `DICTIONARY_LES_v2.0.md` | словарь прежней архитектуры v2 | `README.md`, `ROADMAP_TO_V1.md`, `docs/MODULE_INDEX.md` |
+| `LES_SIMPLE_OVERVIEW.md` | параллельный обзор продукта | `README.md`, `docs/index.md` |
+| `LES_SYSTEM_BUSINESS_NOVEL.md` | продуктовый нарратив, а не текущий контракт | `README.md`, `ROADMAP_TO_V1.md` |
+| `PROGRAMMA_ISPYTANIY_v2.0.md` | программа испытаний прежнего поколения | `docs/TEST_INVENTORY.md`, `Makefile` |
+| `RAG_MODERNIZATION_PLAN.md` | заменённый план нескольких поколений RAG | `docs/ALGO-rag-best-practices.md`, `ROADMAP_TO_V1.md` |
+
+Файлы сохранены в `docs/archive/root-legacy/` через `git mv`.
+
 | Файл | Что это |
 |---|---|
 | `SESSION_SUMMARY*.md` (×12) | датированные саммари сессий (06-19); хронология, не текущее состояние |

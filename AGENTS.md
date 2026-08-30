@@ -35,7 +35,7 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 [`docs/modules/sovushka-uikit.md`](docs/modules/sovushka-uikit.md). Новый
 визуальный элемент допустим только после проверки общего component registry.
 
-**Историческое (контекст, НЕ текущая правда):** датированные саммари/хендоффы/репорты и заменённые планы сведены в **[`docs/archive/`](docs/archive/)** (`SESSION_SUMMARY_*`, `ROADMAP_LES_v2.0`, `DOCS_*AUDIT*`, хендоффы — см. `docs/archive/README.md`). На месте, но тоже историческое: `README_v2.0.md`, `LES_MASTER_DOC_v2_1.md`, `INFRASTRUCTURE_v2.0.md`, `RAG_MODERNIZATION_PLAN.md`, `ARTICLE_*.md`. Полезны для «почему так», но версии/решения могут устареть — сверяй с каноном и кодом (`/api/version`).
+**Историческое (контекст, НЕ текущая правда):** датированные саммари, хендоффы, отчёты, заменённые планы и старые статьи сведены в **[`docs/archive/`](docs/archive/)**. Корневые нарративы находятся в `docs/archive/root-legacy/`. Они полезны для «почему так», но не являются инструкцией — сверяй с каноном, кодом и `/api/version`.
 
 ## Гейт проверки
 - **`make architecture-gate`** — структурный fail-closed guard канонической

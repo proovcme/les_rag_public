@@ -200,7 +200,7 @@
 
 > **Карта МОДУЛЕЙ (что есть + статус док↔код) — [MODULE_INDEX.md](MODULE_INDEX.md).** Этот файл — карта кода по файлам/связям; начинай с MODULE_INDEX, сюда приходи за деталями.
 
-Навигатор по коду для агентов и людей: где что лежит и как связано. Прокси-слой — [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), RAG-модернизация — [RAG_MODERNIZATION_PLAN.md](../RAG_MODERNIZATION_PLAN.md), MLX — [MLX_GUIDE.md](../MLX_GUIDE.md), термины — [DICTIONARY_LES_v2.0.md](../DICTIONARY_LES_v2.0.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). (Историческое `INFRASTRUCTURE_v2.0`/`LES_MASTER_DOC_v2_1` → `docs/archive/`.) Здесь — структура и связи кода.
+Навигатор по коду для агентов и людей: где что лежит и как связано. Прокси-слой — [PROXY_ARCHITECTURE.md](../PROXY_ARCHITECTURE.md), текущий RAG-контракт — [ALGO-rag-best-practices.md](ALGO-rag-best-practices.md), MLX — [MLX_GUIDE.md](../MLX_GUIDE.md), продуктовые термины определяются в [README.md](../README.md) и [ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md). Рантайм-операции и доступы — в корневом [SKILL.md](../SKILL.md). Исторические архитектуры и словари находятся в `docs/archive/`. Здесь — только текущая структура и связи кода.
 
 - **Windows setup/help:** `desktop/tauri/web/{index.html,wizard.js}` — provider-neutral catalogue;
   `desktop/tauri/src-tauri/src/lib.rs` — bounded availability probes и запуск LES core без записи
