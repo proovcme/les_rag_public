@@ -1,6 +1,6 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
-> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 638):**
+> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 639):**
 > `test_model_execution_preset_service.py` и
 > `test_context_governor_service.py` защищают реальную context capacity,
 > однократные reserves и приоритет evidence над памятью.
@@ -23,6 +23,8 @@
 > `test_windows_application_update.py` отдельно доказывает recovery зависшего
 > runtime только по exact state PID/ports/Python/process contract и сохраняет
 > fail-closed для stale state и чужого владельца порта.
+> Bootstrap-совместимость baseline проверяется exact expand с непустыми
+> ресурсами даже когда установленная 0.30.0 ещё возвращает `smeta.state=unknown`.
 
 > **0.29.0 private model/promotion closure:** canonical `make test`, `make
 > verify` collection и portable platform gate теперь постоянно включают все

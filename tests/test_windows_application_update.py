@@ -214,17 +214,7 @@ def test_soft_updater_keeps_live_ready_smeta_without_touching_baseline(
 
 def test_live_smeta_acceptance_requires_mechanical_base_but_not_external_qdrant(monkeypatch):
     responses = {
-        "readiness": {
-            "smeta": {
-                "ready": True,
-                "rrf_ready": False,
-                "mechanical_base": {
-                    "ready": True,
-                    "trusted_for_navigation": True,
-                },
-                "search_index": {"ready": False},
-            }
-        },
+        "readiness": {"smeta": {"state": "unknown", "ready": False}},
         "expand": {"resources": [{"kind": "labor", "qty": 1.0}]},
     }
     monkeypatch.setattr(

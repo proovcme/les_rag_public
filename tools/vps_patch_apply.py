@@ -334,27 +334,16 @@ def _verify_smeta_baseline(
 
 
 def _live_smeta_baseline_ready() -> bool:
-    """Accept an already-running base on mechanical and exact-expand evidence."""
+    """Accept old and new runtimes on the exact mechanical expand contract."""
     try:
-        readiness = _json_url("http://127.0.0.1:8050/api/rag/readiness", timeout=10)
         expansion = _json_url(
             "http://127.0.0.1:8050/api/lsr/gesn/10-01-001-01/expand?qty=1",
             timeout=10,
         )
     except (OSError, ValueError, TypeError):
         return False
-    smeta = readiness.get("smeta") if isinstance(readiness, dict) else None
-    if not isinstance(smeta, dict):
-        return False
-    mechanical = smeta.get("mechanical_base")
     resources = expansion.get("resources") if isinstance(expansion, dict) else None
-    return bool(
-        isinstance(mechanical, dict)
-        and mechanical.get("ready")
-        and mechanical.get("trusted_for_navigation")
-        and isinstance(resources, list)
-        and resources
-    )
+    return bool(isinstance(resources, list) and resources)
 
 
 def _wait_live_smeta_baseline_ready(*, timeout: float = 90.0) -> bool:

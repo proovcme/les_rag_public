@@ -1,6 +1,6 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 638):** без выбора источников
+> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 639):** без выбора источников
 > чат идёт напрямую к модели; выбранные датасеты/вложения и явный «Все
 > источники» создают точный scope. Initial и повторный model-selected поиск
 > используют один production native RRF. Evidence упаковывается раньше памяти,
@@ -19,6 +19,8 @@
 > Если proxy завис, runtime recovery принимает только exact записанные PID,
 > полный набор портов, persistent Python и process contract; чужой владелец
 > порта по-прежнему получает `foreign_port_owner`. Точка: `tools/windows_runtime.py`.
+> Preflight ФСНБ совместим с bootstrap 0.30.0: доказательством служит exact
+> ГЭСН expand с ресурсами, а не отсутствующие в старом readiness новые поля.
 > Статус док↔код: ✅.
 
 > **0.29.4 answer binding + visible scope (build 633):** назначенная в

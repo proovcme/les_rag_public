@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.30.1
-номер сборки:              638
-версия Tauri/NSIS:         5.1.638
+номер сборки:              639
+версия Tauri/NSIS:         5.1.639
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
 dev implementation:       model-owned evidence-first RAG + readable WCAG typography; deployment candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.0 / build 634; soft-update 0.30.1 повторяется после исправления preflight
@@ -18,7 +18,7 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 рантайм /api/version:      Legion 0.30.0 / build 634 / desktop 5.1.634; первая soft-попытка build 636 отклонена до мутации из-за legacy smeta/RRF preflight
 ```
 
-> **0.30.1 / build 638 model-owned evidence-first RAG + readable UI + corrected soft updater (deployment candidate):** обычный
+> **0.30.1 / build 639 model-owned evidence-first RAG + readable UI + corrected soft updater (deployment candidate):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -41,7 +41,10 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 > recorded PID: прежний recovery ошибочно классифицировал его как чужой порт.
 > Build 638 разрешает остановку только при полном совпадении state root, mode,
 > process contract, Python executable, port→PID; остальные владельцы остаются
-> fail-closed. Он подготовлен к повторному транзакционному обновлению;
+> fail-closed. Build 638 затем выявил bootstrap-schema gap: установленная 0.30.0
+> имеет рабочий exact ГЭСН expand (14 ресурсов), но ещё не публикует новые поля
+> `mechanical_base` в readiness. Build 639 принимает сам механический expand как
+> backward-compatible proof и не связывает его с Qdrant/RRF. Он подготовлен к повторному транзакционному обновлению;
 > результат живой приёмки записывается после применения exact commit.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
