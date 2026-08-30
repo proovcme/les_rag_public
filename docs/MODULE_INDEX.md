@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.14 API surface cleanup:** удалены четыре переходных/дублирующих route:
+> mutable `GET/PATCH/DELETE /api/prompts*`, заменённый immutable-профилями, и
+> неавторизованный generic `POST /api/extract/structured`. Внутренние
+> `prompt_registry_service` и `extract_service` сохранены для штатных workflow;
+> `/api/profiles`, `/api/rerank`, сметные API, RAG и Legion не менялись. Карта:
+> 989 tracked Python-файлов, 361 product-reachable, 8 runtime-support,
+> 619 test/tool-only, 1 dormant, 410 API routes, 0 parse warnings. Точки входа:
+> `proxy/app.py`, `tests/test_code_runtime_map.py`, `docs/CODE_MAP.md`.
+> Статус док↔код: ✅.
+
 > **0.30.13 operator-tool cleanup:** две будущие идеи визуализации разнесены в
 > backlog: лесная оболочка текущего графа не меняет RAG, а evidence-replay остаётся
 > отдельной будущей функцией наблюдаемости. После проверки импортов, документации и

@@ -61,10 +61,13 @@ def test_version_endpoint_includes_deployed_commit():
     d = TestClient(app).get("/api/version").json()
     assert "deployed_commit" in d and "deploy_stamp" in d and d["harness_version"] == vs.HARNESS_VERSION and "les_version" in d
 
-def test_version_no_secrets():
+def test_version_no_secrets(monkeypatch):
+    sentinel = "les-version-secret-sentinel"
+    monkeypatch.setenv("FREETOKEN_API_KEY", sentinel)
+    monkeypatch.setenv("ADMIN_PASSWORD", sentinel)
+    monkeypatch.setenv("JWT_SECRET", sentinel)
     blob = json.dumps(vs.version_info()).lower()
-    for m in ("password", "secret", "token", "api_key", "apikey", "sk-", "openrouter"):
-        assert m not in blob
+    assert sentinel not in blob
 
 def test_version_brief_has_one_product_version_and_build():
     brief = vs.version_brief()

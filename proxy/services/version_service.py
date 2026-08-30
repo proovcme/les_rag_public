@@ -56,7 +56,6 @@ _CRITICAL_FILES = (
     "proxy/routers/runtime.py",
     "proxy/routers/service_sources.py",
     "proxy/routers/notebooks.py",
-    "proxy/routers/prompts.py",
     "proxy/services/doc_extract_service.py",
     "proxy/services/evidence_packet_service.py",
     "proxy/services/extract_service.py",

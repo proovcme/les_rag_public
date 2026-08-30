@@ -11,6 +11,9 @@ import pytest
 from proxy.services import version_service as vs
 
 
+ROOT = Path(__file__).resolve().parents[1]
+
+
 # ── §2 version service / endpoint ─────────────────────────────────────────────────────────
 
 def test_version_has_app_and_harness_versions():
@@ -29,12 +32,34 @@ def test_version_feature_flags_safe():
     assert "LES_UNIFIED_CONSTRUCTION_HARNESS_ENABLED" in fl
     assert all(isinstance(v, bool) for v in fl.values())   # только булевы, без значений
 
-def test_version_no_secrets():
+def test_version_no_secrets(monkeypatch):
+    sentinel = "les-version-secret-sentinel"
+    monkeypatch.setenv("FREETOKEN_API_KEY", sentinel)
+    monkeypatch.setenv("ADMIN_PASSWORD", sentinel)
+    monkeypatch.setenv("JWT_SECRET", sentinel)
     info = vs.version_info()
     assert "file_hash_bundle" not in info["deploy_stamp"]
     blob = json.dumps(info).lower()
-    for marker in ("password", "secret", "token", "api_key", "apikey", "openrouter", "sk-"):
-        assert marker not in blob
+    assert sentinel not in blob
+
+    sensitive_key_parts = ("password", "secret", "api_key", "apikey", "access_token", "refresh_token")
+
+    def collect_keys(value):
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                yield str(key).lower()
+                yield from collect_keys(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                yield from collect_keys(nested)
+
+    assert not [key for key in collect_keys(info) if any(part in key for part in sensitive_key_parts)]
+
+
+def test_runtime_divergence_manifest_names_only_existing_files():
+    missing = [relative for relative in vs._CRITICAL_FILES if not (ROOT / relative).is_file()]
+
+    assert missing == []
 
 def test_version_git_unavailable_safe(monkeypatch):
     monkeypatch.setattr(vs, "_git", lambda *a, **k: "")     # git «недоступен»

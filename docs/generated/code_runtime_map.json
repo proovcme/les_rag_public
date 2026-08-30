@@ -986,7 +986,6 @@
         "proxy/routers/edges.py",
         "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/extract.py",
         "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
@@ -1006,7 +1005,6 @@
         "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
-        "proxy/routers/prompts.py",
         "proxy/routers/rag_advanced.py",
         "proxy/routers/rerank.py",
         "proxy/routers/rim.py",
@@ -1276,7 +1274,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 737,
+      "lines": 733,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1303,7 +1301,6 @@
         "proxy/routers/edges.py",
         "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/extract.py",
         "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
@@ -1323,7 +1320,6 @@
         "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
-        "proxy/routers/prompts.py",
         "proxy/routers/rag_advanced.py",
         "proxy/routers/rerank.py",
         "proxy/routers/rim.py",
@@ -1571,7 +1567,6 @@
         "proxy/routers/edges.py",
         "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/extract.py",
         "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
@@ -1591,7 +1586,6 @@
         "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
-        "proxy/routers/prompts.py",
         "proxy/routers/rag_advanced.py",
         "proxy/routers/rerank.py",
         "proxy/routers/rim.py",
@@ -2038,22 +2032,6 @@
     },
     {
       "inbound": [
-        "proxy/app.py",
-        "tests/test_extract_service.py"
-      ],
-      "lines": 44,
-      "module": "proxy.routers.extract",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/services/extract_service.py"
-      ],
-      "path": "proxy/routers/extract.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/app.py"
       ],
       "lines": 226,
@@ -2419,23 +2397,6 @@
     },
     {
       "inbound": [
-        "proxy/app.py",
-        "tests/test_notebook_api.py"
-      ],
-      "lines": 40,
-      "module": "proxy.routers.prompts",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/prompt_registry_service.py"
-      ],
-      "path": "proxy/routers/prompts.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/app.py"
       ],
       "lines": 144,
@@ -2737,7 +2698,6 @@
         "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
-        "proxy/routers/prompts.py",
         "proxy/routers/rag_advanced.py",
         "proxy/routers/rerank.py",
         "proxy/routers/rim.py",
@@ -4257,7 +4217,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/extract.py",
         "proxy/services/dataset_memory_service.py",
         "proxy/services/list_office_agent_service.py",
         "tests/test_extract_service.py"
@@ -5971,7 +5930,6 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
-        "proxy/routers/prompts.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/estimate_harness_service.py",
@@ -7448,7 +7406,7 @@
         "tools/internal_dual_deploy.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 392,
+      "lines": 391,
       "module": "proxy.services.version_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9654,7 +9612,7 @@
     },
     {
       "inbound": [],
-      "lines": 118,
+      "lines": 134,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -10240,10 +10198,9 @@
     },
     {
       "inbound": [],
-      "lines": 250,
+      "lines": 238,
       "module": "tests.test_extract_service",
       "outbound": [
-        "proxy/routers/extract.py",
         "proxy/services/extract_service.py",
         "proxy/services/structured_extract.py"
       ],
@@ -11503,12 +11460,11 @@
     },
     {
       "inbound": [],
-      "lines": 188,
+      "lines": 146,
       "module": "tests.test_notebook_api",
       "outbound": [
         "proxy/routers/datasets.py",
         "proxy/routers/notebooks.py",
-        "proxy/routers/prompts.py",
         "proxy/routers/service_sources.py"
       ],
       "path": "tests/test_notebook_api.py",
@@ -13955,7 +13911,7 @@
     },
     {
       "inbound": [],
-      "lines": 164,
+      "lines": 167,
       "module": "tests.test_v020_deploy_stamp_ui",
       "outbound": [
         "proxy/routers/chat.py",
@@ -14012,7 +13968,7 @@
     },
     {
       "inbound": [],
-      "lines": 207,
+      "lines": 232,
       "module": "tests.test_version_service_v19",
       "outbound": [
         "proxy/routers/chat.py",
@@ -17138,12 +17094,6 @@
       "source": "proxy/routers/external_radar.py"
     },
     {
-      "handler": "structured",
-      "method": "POST",
-      "path": "/api/extract/structured",
-      "source": "proxy/routers/extract.py"
-    },
-    {
       "handler": "field_list",
       "method": "GET",
       "path": "/api/field",
@@ -18036,24 +17986,6 @@
       "method": "POST",
       "path": "/api/projects/{project_id}/links",
       "source": "proxy/routers/projects.py"
-    },
-    {
-      "handler": "list_prompts",
-      "method": "GET",
-      "path": "/api/prompts",
-      "source": "proxy/routers/prompts.py"
-    },
-    {
-      "handler": "reset_prompt",
-      "method": "DELETE",
-      "path": "/api/prompts/{prompt_key:path}",
-      "source": "proxy/routers/prompts.py"
-    },
-    {
-      "handler": "update_prompt",
-      "method": "PATCH",
-      "path": "/api/prompts/{prompt_key:path}",
-      "source": "proxy/routers/prompts.py"
     },
     {
       "handler": "api_ps",
@@ -19116,12 +19048,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 363,
-    "registered_api_routes": 414,
+    "product_reachable": 361,
+    "registered_api_routes": 410,
     "runtime_support": 8,
     "test_or_tool_only": 619,
-    "tracked_python_files": 991,
-    "tracked_python_lines": 300841
+    "tracked_python_files": 989,
+    "tracked_python_lines": 300742
   },
   "warnings": []
 }

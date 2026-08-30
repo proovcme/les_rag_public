@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.13
-номер сборки:              653
-версия Tauri/NSIS:         5.1.653
+версия продукта (SemVer):  0.30.14
+номер сборки:              654
+версия Tauri/NSIS:         5.1.654
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       operator-tool cleanup + visualization backlog
+dev implementation:       duplicate API surface cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.13 — operator-tool cleanup; не задеплоен
+следующий выпуск:          0.30.14 — API surface cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.14 / build 654 duplicate API surface cleanup (dev candidate):** API-аудит
+> подтвердил два исторических параллельных контура. Переходный mutable
+> `GET/PATCH/DELETE /api/prompts*` удалён после перехода UI на immutable
+> `/api/profiles`; generic неавторизованный `POST /api/extract/structured` удалён,
+> потому что product-потребители вызывают governed `extract_service` внутри процесса.
+> Внутренние prompt/extraction services, `/api/rerank` Windows acceptance,
+> `/api/estimates`, сметное ядро, RAG, пользовательский state и установленный Legion
+> не менялись. Generated map: 989 tracked Python-файлов, 361 product-reachable,
+> 8 runtime-support, 619 test/tool-only, 1 dormant, 410 API routes, 0 warnings.
 
 > **0.30.13 / build 653 operator-tool cleanup (dev candidate):** в канонический
 > roadmap раздельно отложены две идеи: WebGL-лес как альтернативная визуальная

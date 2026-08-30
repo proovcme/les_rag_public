@@ -39,7 +39,6 @@ from proxy.routers.prices import router as prices_router
 from proxy.routers.kac import router as kac_router
 from proxy.routers.lsr import router as lsr_router
 from proxy.routers.rim import router as rim_router
-from proxy.routers.extract import router as extract_router
 from proxy.routers.external_radar import router as external_radar_router
 from proxy.routers.verify import router as verify_router
 from proxy.routers.forms import router as forms_router
@@ -48,7 +47,6 @@ from proxy.routers.field import router as field_router
 from proxy.routers.les_md import router as les_md_router
 from proxy.routers.normcontrol import router as normcontrol_router
 from proxy.routers.notebooks import router as notebooks_router
-from proxy.routers.prompts import router as prompts_router
 from proxy.routers.profiles import router as profiles_router
 from proxy.routers.model_connections import router as model_connections_router
 from proxy.routers.doc_review import router as doc_review_router
@@ -693,7 +691,6 @@ def create_app():
     fastapi_app.include_router(kac_router)
     fastapi_app.include_router(lsr_router)
     fastapi_app.include_router(rim_router)
-    fastapi_app.include_router(extract_router)
     fastapi_app.include_router(external_radar_router)
     fastapi_app.include_router(verify_router)
     fastapi_app.include_router(forms_router)
@@ -703,7 +700,6 @@ def create_app():
     fastapi_app.include_router(les_md_router)
     fastapi_app.include_router(normcontrol_router)
     fastapi_app.include_router(notebooks_router)
-    fastapi_app.include_router(prompts_router)
     fastapi_app.include_router(profiles_router)
     fastapi_app.include_router(model_connections_router)
     fastapi_app.include_router(doc_review_router)

@@ -99,9 +99,10 @@ def extract(schema, instruction, context, call_llm, max_attempts=3):
 json_schema) — тогда `call_llm` просто передаёт его в тело запроса. Локальная
 модель — через цикл «починки» выше. **Один код, оба движка.**
 
-В коде ЛЕСа это: `proxy/services/structured_extract.py` (движок),
-`proxy/services/extract_service.py` (привязка к провайдеру),
-`POST /api/extract/structured` (точка входа).
+В коде ЛЕСа это: `proxy/services/structured_extract.py` (движок) и
+`proxy/services/extract_service.py` (привязка к провайдеру). Сервис вызывается
+из governed workflow внутри ЛЕС; универсальный неавторизованный HTTP endpoint
+`POST /api/extract/structured` удалён в 0.30.14.
 
 #### Урок №1: описания полей сильнее смены модели
 

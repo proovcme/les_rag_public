@@ -1,6 +1,6 @@
 import pytest
 
-from proxy.routers import datasets, notebooks, prompts, service_sources
+from proxy.routers import datasets, notebooks, service_sources
 
 
 @pytest.mark.asyncio
@@ -144,45 +144,3 @@ async def test_service_source_notebooks_endpoint(monkeypatch):
     result = await service_sources.list_service_source_notebooks(_user=object())
 
     assert result["notebooks"][0]["id"] == "gesn"
-
-
-@pytest.mark.asyncio
-async def test_prompts_endpoint(monkeypatch):
-    monkeypatch.setattr(prompts, "prompt_registry_snapshot", lambda: {
-        "schema": "prompt_registry_v2",
-        "modes": {"rag": {"tools": ["retrieval"]}},
-    })
-
-    result = await prompts.list_prompts(_user=object())
-
-    assert result["schema"] == "prompt_registry_v2"
-    assert result["modes"]["rag"]["tools"] == ["retrieval"]
-
-
-@pytest.mark.asyncio
-async def test_prompt_update_and_reset_endpoints(monkeypatch):
-    calls = []
-
-    monkeypatch.setattr(prompts, "update_prompt_override", lambda key, value: {
-        "schema": "prompt_registry_v2",
-        "updated": key,
-        "value": value,
-    })
-    monkeypatch.setattr(prompts, "reset_prompt_override", lambda key: {
-        "schema": "prompt_registry_v2",
-        "reset": key,
-    })
-
-    result = await prompts.update_prompt(
-        "modes.rag",
-        prompts.PromptUpdateRequest(value="Новый prompt"),
-        _admin=object(),
-    )
-    calls.append(result)
-    result = await prompts.reset_prompt("modes.rag", _admin=object())
-    calls.append(result)
-
-    assert calls == [
-        {"schema": "prompt_registry_v2", "updated": "modes.rag", "value": "Новый prompt"},
-        {"schema": "prompt_registry_v2", "reset": "modes.rag"},
-    ]

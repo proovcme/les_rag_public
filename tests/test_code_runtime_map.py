@@ -116,3 +116,19 @@ def test_retired_one_off_operator_scripts_do_not_reenter_tool_inventory(
         "tools/smart_dataset_rebuild.py",
     ):
         assert retired not in modules
+
+
+def test_api_surface_keeps_profiles_and_internal_extraction_without_duplicate_public_controls(
+    inventory: dict,
+):
+    modules = _modules_by_path(inventory)
+    routes = {(item["method"], item["path"]) for item in inventory["routes"]}
+
+    assert "proxy/services/prompt_registry_service.py" in modules
+    assert "proxy/services/extract_service.py" in modules
+    assert ("GET", "/api/profiles") in routes
+
+    assert ("GET", "/api/prompts") not in routes
+    assert ("PATCH", "/api/prompts/{prompt_key:path}") not in routes
+    assert ("DELETE", "/api/prompts/{prompt_key:path}") not in routes
+    assert ("POST", "/api/extract/structured") not in routes

@@ -651,7 +651,7 @@ make verify
 
 ```
 curl -fsS http://127.0.0.1:8050/api/version | python3 -m json.tool
-curl -fsS http://127.0.0.1:8050/api/prompts | python3 -m json.tool
+curl -fsS http://127.0.0.1:8050/api/profiles | python3 -m json.tool
 ```
 
 Domain regression gate, если менялись retrieval/router/norm search gates:

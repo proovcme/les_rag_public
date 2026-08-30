@@ -236,15 +236,3 @@ def test_run_structured_extraction_blank_transport_error_is_diagnostic(monkeypat
     assert res.ok is False
     assert any("BlankError" in e for e in res.errors)
     assert all(e.strip() != "provider error:" for e in res.errors)
-
-
-def test_router_handler(monkeypatch):
-    from proxy.routers import extract as extract_router
-
-    async def fake_run(schema, instruction, context, *, max_attempts=3):
-        return se.ExtractResult(ok=True, data={"poz": 1, "qty": 3}, attempts=1, errors=[])
-
-    monkeypatch.setattr(extract_router.extract_service, "run_structured_extraction", fake_run)
-    req = extract_router.StructuredExtractRequest(schema=SCHEMA, context="doc")
-    out = asyncio.run(extract_router.structured(req))
-    assert out["ok"] is True and out["data"]["qty"] == 3 and out["attempts"] == 1
