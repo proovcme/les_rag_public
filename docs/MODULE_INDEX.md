@@ -1,13 +1,25 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.10 second proven cleanup:** удалены неиспользуемый
+> `proxy/legacy_app.py`, два корневых ручных пробника, отдельный устаревший
+> chunk-density prototype, Pikabu R&D experiment и весь tracked `legacy/`
+> backup/patch-каталог. Git history остаётся recovery-источником. Единственный
+> `DORMANT_CANDIDATE` — намеренно сохранённая будущая Mail-страница.
+> `TEST_INVENTORY.md` снова является текущей картой команд и границ; его
+> релизная хронология перенесена в архив. Карта после удаления: 997 tracked
+> Python-файлов, 363 product-reachable, 8 runtime-support, 625 test/tool-only,
+> 1 dormant, 414 API routes и 0 parse warnings. Сметы, Mail, ARTEL, runtime и
+> пользовательские данные не менялись. Точки входа: `tools/code_runtime_map.py`,
+> `tests/test_code_runtime_map.py`, `Makefile`. Статус док↔код: ✅.
+
 > **0.30.5 first proven dead-code cleanup (build 645, dev candidate):** удалены
 > 15 Python-файлов (2615 строк, включая тест удалённой Mermaid-страницы) и один
 > orphan HTML, для которых карта импортов,
 > production shell и точечный поиск не нашли продуктового пути. Число
 > product-reachable модулей осталось 363, фактических FastAPI routes — 396;
 > вместе с очисткой сохранявших их тестов общий Python-инвентарь уменьшился на
-> 2726 строк; `DORMANT_CANDIDATE` сократился с 14 до двух осознанно сохранённых файлов:
-> `proxy/legacy_app.py` и `sovushka/pages/mail.py`. RIM backend/API, активная
+> 2726 строк; на этом checkpoint `DORMANT_CANDIDATE` сократился с 14 до двух файлов:
+> `proxy/legacy_app.py` и `sovushka/pages/mail.py`; следующий cleanup удалил shim. RIM backend/API, активная
 > Qdrant-визуализация, Mail-код и `proxy/smeta_core/**` не менялись. Точки входа:
 > `tools/code_runtime_map.py`, `docs/CODE_RUNTIME_MAP.md`. Статус док↔код: ✅.
 

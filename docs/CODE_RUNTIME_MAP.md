@@ -19,12 +19,12 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1006 |
-| Строк Python | 303265 |
+| Python-файлов под git | 997 |
+| Строк Python | 301610 |
 | PRODUCT_REACHABLE | 363 |
 | RUNTIME_SUPPORT | 8 |
-| TEST_OR_TOOL_ONLY | 633 |
-| DORMANT_CANDIDATE | 2 |
+| TEST_OR_TOOL_ONLY | 625 |
+| DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 414 |
 | Ошибок разбора | 0 |
 
@@ -99,7 +99,6 @@
 
 | Файл | Строк | Почему только кандидат |
 | --- | --- | --- |
-| proxy/legacy_app.py | 7 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
 | sovushka/pages/mail.py | 626 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
 
 ## Ограничения

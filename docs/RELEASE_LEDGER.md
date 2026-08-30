@@ -7,17 +7,32 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.9
-номер сборки:              649
-версия Tauri/NSIS:         5.1.649
+версия продукта (SemVer):  0.30.10
+номер сборки:              650
+версия Tauri/NSIS:         5.1.650
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       installed release acceptance with independent external capabilities
+dev implementation:       second proven repository cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.9 — принят на Legion; публично не выпущен
+следующий выпуск:          0.30.10 — repository cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.10 / build 650 second proven repository cleanup (dev candidate):**
+> после статической карты, точечного поиска и проверки Git history удалены
+> неиспользуемый `proxy/legacy_app.py`, два корневых ручных UI/auth-пробника,
+> устаревший standalone chunk-density prototype, отдельный Pikabu R&D experiment
+> и 13 tracked backup/patch-файлов каталога `legacy/`. Единственным намеренно
+> dormant Python-файлом остаётся будущая Mail-страница; регрессионный тест
+> запрещает возврат удалённых путей и новых необъяснённых dormant-модулей.
+> Generated map: 997 tracked Python-файлов, 363 product-reachable, 8
+> runtime-support, 625 test/tool-only, 1 dormant, 414 API routes, 0 warnings.
+> Канонический `TEST_INVENTORY.md` сокращён до карты текущих gates; прежняя
+> релизная хронология сохранена в `docs/archive/`. Отдельно удалены девять
+> доказанно поглощённых remote-веток и три локальных указателя. Два старых
+> worktree с незакоммиченными файлами сохранены без изменений. Сметное ядро,
+> Mail, ARTEL, установленный Legion и пользовательский state не менялись.
 
 > **0.30.9 / build 649 independent installed-core acceptance (release candidate):**
 > первая непубличная репетиция orchestrator установила exact 0.30.8 candidate,

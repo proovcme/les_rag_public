@@ -164,8 +164,7 @@
       "inbound": [
         "sovushka/auth.py",
         "sovushka/components/header.py",
-        "sovushka/provider_setup.py",
-        "test_auth.py"
+        "sovushka/provider_setup.py"
       ],
       "lines": 300,
       "module": "backend.auth",
@@ -206,8 +205,7 @@
         "tests/test_datasets_router.py",
         "tests/test_pdf_contour_service.py",
         "tests/test_pdf_layout.py",
-        "tools/ezhik_mail_smoke.py",
-        "tools/test_chunk_density.py"
+        "tools/ezhik_mail_smoke.py"
       ],
       "lines": 841,
       "module": "backend.converter",
@@ -939,42 +937,6 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
-      "lines": 285,
-      "module": "legacy.scripts.apply_v2.1_fix",
-      "outbound": [],
-      "path": "legacy/scripts/apply_v2.1_fix.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 61,
-      "module": "legacy.scripts.fix_rag",
-      "outbound": [],
-      "path": "legacy/scripts/fix_rag.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 111,
-      "module": "legacy.scripts.patch_proxy",
-      "outbound": [],
-      "path": "legacy/scripts/patch_proxy.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 195,
-      "module": "legacy.scripts.patch_ui",
-      "outbound": [],
-      "path": "legacy/scripts/patch_ui.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
       "inbound": [
         "tests/test_lemonade_host.py"
       ],
@@ -1008,7 +970,6 @@
       "inbound": [
         "proxy/app.py",
         "proxy/config.py",
-        "proxy/legacy_app.py",
         "proxy/local_model_registry.py",
         "proxy/memory_core/__init__.py",
         "proxy/memory_core/config.py",
@@ -1317,7 +1278,6 @@
     },
     {
       "inbound": [
-        "proxy/legacy_app.py",
         "proxy/routers/datasets.py",
         "proxy/routers/mail.py",
         "proxy_server.py",
@@ -1431,18 +1391,6 @@
       ],
       "path": "proxy/config.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 7,
-      "module": "proxy.legacy_app",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/app.py"
-      ],
-      "path": "proxy/legacy_app.py",
-      "status": "DORMANT_CANDIDATE",
       "windows_runtime_explicit": false
     },
     {
@@ -8863,26 +8811,6 @@
     },
     {
       "inbound": [],
-      "lines": 6,
-      "module": "test_auth",
-      "outbound": [
-        "backend/auth.py"
-      ],
-      "path": "test_auth.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 3,
-      "module": "test_ng",
-      "outbound": [],
-      "path": "test_ng.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
       "lines": 12,
       "module": "tests.conftest",
       "outbound": [],
@@ -9735,7 +9663,7 @@
     },
     {
       "inbound": [],
-      "lines": 60,
+      "lines": 81,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -14346,7 +14274,6 @@
         "tools/patch_release.py",
         "tools/pd_rd_manifest.py",
         "tools/pdf_preprocess.py",
-        "tools/pikabu_construction_rd.py",
         "tools/platform_release_gate.py",
         "tools/priority_corpus_inventory.py",
         "tools/publication_check.py",
@@ -14404,7 +14331,6 @@
         "tools/smoke_atlas_standalone.py",
         "tools/sovushka_say.py",
         "tools/sync_version_contract.py",
-        "tools/test_chunk_density.py",
         "tools/test_runner.py",
         "tools/unpack_archives.py",
         "tools/validator_probe.py",
@@ -15791,17 +15717,6 @@
       "windows_runtime_explicit": true
     },
     {
-      "inbound": [],
-      "lines": 765,
-      "module": "tools.pikabu_construction_rd",
-      "outbound": [
-        "tools/__init__.py"
-      ],
-      "path": "tools/pikabu_construction_rd.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
       "inbound": [
         "tests/test_patch_release.py",
         "tests/test_test_profiles.py"
@@ -16607,18 +16522,6 @@
         "tools/__init__.py"
       ],
       "path": "tools/sync_version_contract.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 243,
-      "module": "tools.test_chunk_density",
-      "outbound": [
-        "backend/converter.py",
-        "tools/__init__.py"
-      ],
-      "path": "tools/test_chunk_density.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -19304,14 +19207,14 @@
   ],
   "schema": "les.code-runtime-map.v1",
   "summary": {
-    "dormant_candidates": 2,
+    "dormant_candidates": 1,
     "parse_warnings": 0,
     "product_reachable": 363,
     "registered_api_routes": 414,
     "runtime_support": 8,
-    "test_or_tool_only": 633,
-    "tracked_python_files": 1006,
-    "tracked_python_lines": 303265
+    "test_or_tool_only": 625,
+    "tracked_python_files": 997,
+    "tracked_python_lines": 301610
   },
   "warnings": []
 }

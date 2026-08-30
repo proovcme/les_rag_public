@@ -58,3 +58,24 @@ def test_runtime_map_is_conservative_and_deterministically_sorted(inventory: dic
     assert json.loads(
         (ROOT / "docs" / "generated" / "code_runtime_map.json").read_text(encoding="utf-8")
     ) == inventory
+
+
+def test_proven_cleanup_leaves_only_the_intentionally_dormant_mail_surface(
+    inventory: dict,
+):
+    modules = _modules_by_path(inventory)
+    dormant = sorted(
+        item["path"]
+        for item in inventory["modules"]
+        if item["status"] == "DORMANT_CANDIDATE"
+    )
+
+    assert dormant == ["sovushka/pages/mail.py"]
+    for retired in (
+        "proxy/legacy_app.py",
+        "test_auth.py",
+        "test_ng.py",
+        "tools/pikabu_construction_rd.py",
+        "tools/test_chunk_density.py",
+    ):
+        assert retired not in modules
