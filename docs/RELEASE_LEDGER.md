@@ -11,14 +11,14 @@
 номер сборки:              639
 версия Tauri/NSIS:         5.1.639
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
-dev implementation:       model-owned evidence-first RAG + readable WCAG typography; deployment candidate
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.0 / build 634; soft-update 0.30.1 повторяется после исправления preflight
+dev implementation:       model-owned evidence-first RAG + readable WCAG typography + accepted soft updater
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 639 / commit 38ac8466 runtime acceptance
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
-следующий выпуск:          0.30.0 bootstrap installer; 0.30.1 — следующий source/runtime patch после отдельной живой приёмки
-рантайм /api/version:      Legion 0.30.0 / build 634 / desktop 5.1.634; первая soft-попытка build 636 отклонена до мутации из-за legacy smeta/RRF preflight
+следующий выпуск:          0.30.1 lightweight GitHub patch после public-gates и публикации immutable assets
+рантайм /api/version:      Legion 0.30.1 / build 639 / desktop 5.1.639 / commit 38ac8466; soft update accepted
 ```
 
-> **0.30.1 / build 639 model-owned evidence-first RAG + readable UI + corrected soft updater (deployment candidate):** обычный
+> **0.30.1 / build 639 model-owned evidence-first RAG + readable UI + corrected soft updater (Windows accepted):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -44,8 +44,14 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 > fail-closed. Build 638 затем выявил bootstrap-schema gap: установленная 0.30.0
 > имеет рабочий exact ГЭСН expand (14 ресурсов), но ещё не публикует новые поля
 > `mechanical_base` в readiness. Build 639 принимает сам механический expand как
-> backward-compatible proof и не связывает его с Qdrant/RRF. Он подготовлен к повторному транзакционному обновлению;
-> результат живой приёмки записывается после применения exact commit.
+> backward-compatible proof и не связывает его с Qdrant/RRF. Живой переход с
+> установленной `0.30.0 / 634` завершён штатным `update-local`: content-addressed
+> ZIP `235562` байта, 15 runtime-файлов, backup
+> `%LOCALAPPDATA%\LES\artifacts\patch-backups\38ac846672e7-20260830T094135Z\20260830T094138127014Z-23688`,
+> две стабильные пробы, `direct_python_no_console_v2`, ФСНБ exact expand 14
+> ресурсов, Qdrant `N/A: external Qdrant unavailable`, user data untouched.
+> Установленная Совушка подтверждена browser-smoke: Segoe, `16/15/14`, rail
+> `200px`, `История` в sentence case, без horizontal/rail overflow.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
 > authoritative для обычного чата: вызывается любая выбранная answer model без
