@@ -618,6 +618,14 @@ def test_plain_ai_scope_removes_only_document_evidence_tools() -> None:
     ) == ["search_sources", "read_source", "calculate"]
 
 
+def test_application_routes_model_search_sources_through_canonical_research_service() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    assert "ModelResearchToolService(" in source
+    assert "model_research_tools.execute(call)" in source
+    assert "retrieve=retrieve_chat_chunks" in source
+
+
 @pytest.mark.asyncio
 async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> None:
     class ThrowingHarness:

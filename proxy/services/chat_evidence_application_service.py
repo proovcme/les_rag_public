@@ -85,6 +85,7 @@ from proxy.services.llm_transport_profile_service import (
     resolve_transport_execution_profile,
 )
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
+from proxy.services.model_research_tool_service import ModelResearchToolService
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
@@ -1667,6 +1668,32 @@ async def _execute_chat_evidence_application(
                         from proxy.services.tool_harness_service import harness
 
                         tool_harness = harness()
+
+                        async def _fallback_model_tool(tool_name: str, args: dict[str, Any]):
+                            return await asyncio.to_thread(tool_harness.call, tool_name, args)
+
+                        model_research_tools = ModelResearchToolService(
+                            retrieve=retrieve_chat_chunks,
+                            frozen_dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
+                            retrieval_kwargs={
+                                "rag_backend": rag_backend,
+                                "reranker_enabled": _reranker_on,
+                                "reranker_available": state.reranker_available,
+                                "reranker_cls": state.reranker_cls,
+                                "mlx_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                                "logger": logger,
+                                "llm_semaphore": state.llm_semaphore,
+                                "return_trace": True,
+                                "doc_filter": None,
+                                "scope_source": str(
+                                    (scope_resolution or {}).get("scope_source") or "unspecified"
+                                ),
+                                "scope_error_code": str(
+                                    (scope_resolution or {}).get("error_code") or ""
+                                ),
+                            },
+                            fallback=_fallback_model_tool,
+                        )
                         shortlist_limit = min(
                             execution_preset.max_tools,
                             max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
@@ -1868,9 +1895,8 @@ async def _execute_chat_evidence_application(
                                         workbook_progress,
                                     )
                                 else:
-                                    payload = await asyncio.to_thread(
-                                        tool_harness.call, tool_name, call.get("args") or {}
-                                    )
+                                    research_result = await model_research_tools.execute(call)
+                                    payload = research_result.payload
                                 selected_calls.append(call)
                                 safe_payload = safe_workbook_history_projection(payload)
                                 tool_results_for_model.append(
