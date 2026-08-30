@@ -7,17 +7,30 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.4
-номер сборки:              644
-версия Tauri/NSIS:         5.1.644
+версия продукта (SemVer):  0.30.5
+номер сборки:              645
+версия Tauri/NSIS:         5.1.645
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       generated code-runtime/liveness map поверх clean runtime manifest
+dev implementation:       first proven dead-code cleanup + synchronized code truth map
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          не назначен; 0.30.4 — только dev candidate, не опубликован и не задеплоен
+следующий выпуск:          не назначен; 0.30.5 — только dev candidate, не опубликован и не задеплоен
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
+
+> **0.30.5 / build 645 first proven dead-code cleanup (dev candidate, not deployed):**
+> удалены 15 Python-файлов (2615 строк, включая тест удалённой Mermaid-страницы)
+> и orphan `backend/login.html`:
+> прежние auth/diagnostics/learned-sparse реализации, пустые package scaffolds,
+> standalone Qdrant exporter, terminal footer и отдельные Overview/Prorab/Задачи/
+> Объёмы/Mermaid/RIM страницы. Production FastAPI сохранил 396 фактических routes,
+> статическая карта — 363 product-reachable модуля и 414 route decorators;
+> Вместе с очисткой сохранявших dormant UI тестов общий Python-инвентарь
+> уменьшился на 2726 строк; `DORMANT_CANDIDATE` сократился с 14 до двух осознанно оставленных файлов:
+> `proxy/legacy_app.py` и `sovushka/pages/mail.py`. Активный Qdrant visualizer,
+> RIM backend/API, Mail, RAG/model/updater, пользовательские данные и
+> `proxy/smeta_core/**` не менялись. Выпуск не опубликован и не задеплоен.
 
 > **0.30.4 / build 644 generated code-runtime map (dev candidate, not deployed):**
 > статический AST-инвентарь отделяет достижимый от боевых entrypoint Python-код,

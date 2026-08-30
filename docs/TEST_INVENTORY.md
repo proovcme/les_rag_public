@@ -1,5 +1,12 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.30.5 first proven dead-code cleanup (build 645):** observable baseline
+> сохраняет 396 FastAPI routes и живые UI/RIM/runtime контракты, не требуя
+> присутствия dormant source. Удалён только тест самостоятельной Mermaid-страницы
+> вместе с недостижимой страницей; RIM API/agent-turn, Qdrant visualizer и Mail
+> продолжают проверяться существующими продуктовыми тестами. Сгенерированная карта
+> подтверждает 363 product-reachable модуля и два осознанно сохранённых кандидата.
+
 > **0.30.4 generated code-runtime map (build 644):**
 > `tests/test_code_runtime_map.py` фиксирует продуктовые entrypoint, отдельные
 > Windows runtime helpers, test/tool-only код, зарегистрированный маршрут RIM,
@@ -326,7 +333,6 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_static_assets.py` | 10 | статический продуктовый контракт UI: рабочие «Документы»/«Студия»/`CAD/BIM`/«Почта» вне конфигуратора; документы показывают RAG-фрагменты и оригинал без старого технического экрана; Студия использует датасет/том/явные основания; admin содержит отдельную настройку почты без сообщений; chat deep-link, Qdrant visualizer и deploy shell остаются подключены |
 | `tests/test_fgis_full_update.py` | focused | публичный каталог/Сплит-формы, checkpoint/resume, автоматический перезапуск, объединение с уже идущим обновлением норм, API/UI wiring, отсутствие системного confirm при добавлении датасета и операторский progress contract: этапы, остаток, ETA, байты, скорость и журнал |
 | `tests/test_document_explorer_service.py` | 11 | no-AI список/поиск/чтение документов и additive migration старой MetaDB без `lexical_chunks[_fts]`, без reindex |
-| `tests/test_mermaid_graph.py` | 2 | live graph payload `/api/rag/graph/full` renders into Mermaid and empty graph is explicit |
 | `tests/test_proxy_security.py`, `tests/test_proxy_routers.py` | 43 focused with Sovushka | trust/auth guardrails: ZeroTier/trusted admin, API-key roles, protected `les-admin-` root-admin keys without device binding, and trusted-only mutation of protected keys |
 | `tests/test_sovushka_chat.py`, `tests/test_sovushka_uikit.py`, `tests/test_chat_stream_w51.py` | 39+ + focused | Sovushka chat/UI and SSE regressions: durable per-browser `session_id`, history restore, recovered-answer persistence, markdown rendering, progressive-disclosure topbar and secondary actions, floating mode guidance/examples, stop of the active streaming dialog, reader-position-preserving SSE autoscroll, new-chat/model-chip/table wrapping, editable prompt controls, attachment context, no project-summary final hijack, additive MetaDB inventory context, clickable file-register RAG, selected-dataset deep link Самовар→Документы/Л.И.С.Т., pasted folder path→default dataset name, compact service upload, lazy panel cache without slide-transition, scheduler-start endpoint guard, WAITING-vs-PARSING status, and file-layer labels |
 | `tests/test_memory_core.py`, `tests/test_memory_api.py`, `tests/test_memory_ui_contract.py`, `tests/test_smeta_memory_isolation.py` | 18 | Memory default-off/strict grounded predicate, project scoping, candidate/confirmation/conflict rules, queue worker, exact route identity, root-admin API, GUI danger confirmation contract и read-only smeta capture без изменений стабильного ядра |

@@ -25,7 +25,6 @@ def test_runtime_map_distinguishes_product_runtime_and_tool_only_code(inventory:
     assert modules["proxy/smeta_core/document_workflow.py"]["status"] == "PRODUCT_REACHABLE"
     assert modules["tools/windows_update_engine.py"]["status"] == "RUNTIME_SUPPORT"
     assert modules["tools/build_tauri_app.py"]["status"] == "TEST_OR_TOOL_ONLY"
-    assert modules["sovushka/pages/rim.py"]["status"] == "TEST_OR_TOOL_ONLY"
 
 
 def test_runtime_map_exposes_registered_route_and_smeta_symbol_consumers(inventory: dict):

@@ -119,17 +119,14 @@
     {
       "inbound": [
         "backend/auth.py",
-        "backend/auth_login_route.py",
         "backend/colbert_late_interaction.py",
         "backend/converter.py",
-        "backend/diagnostics.py",
         "backend/document_router.py",
         "backend/http_client_policy.py",
         "backend/inference/__init__.py",
         "backend/inference/bm25_sparse.py",
         "backend/inference/providers.py",
         "backend/inference/routing.py",
-        "backend/inference/sparse_embed.py",
         "backend/inference/validator.py",
         "backend/interface.py",
         "backend/mail_emlx.py",
@@ -181,17 +178,6 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
-      "lines": 10,
-      "module": "backend.auth_login_route",
-      "outbound": [
-        "backend/__init__.py"
-      ],
-      "path": "backend/auth_login_route.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
-    },
-    {
       "inbound": [
         "backend/qdrant_adapter.py",
         "proxy/services/retrieval_service.py",
@@ -233,19 +219,6 @@
       ],
       "path": "backend/converter.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 94,
-      "module": "backend.diagnostics",
-      "outbound": [
-        "backend/__init__.py",
-        "backend/rag_config.py",
-        "backend/runtime_paths.py"
-      ],
-      "path": "backend/diagnostics.py",
-      "status": "DORMANT_CANDIDATE",
       "windows_runtime_explicit": false
     },
     {
@@ -295,7 +268,6 @@
         "backend/inference/bm25_sparse.py",
         "backend/inference/providers.py",
         "backend/inference/routing.py",
-        "backend/inference/sparse_embed.py",
         "backend/inference/validator.py",
         "tests/test_inference_validator.py"
       ],
@@ -365,18 +337,6 @@
       ],
       "path": "backend/inference/routing.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 98,
-      "module": "backend.inference.sparse_embed",
-      "outbound": [
-        "backend/__init__.py",
-        "backend/inference/__init__.py"
-      ],
-      "path": "backend/inference/sparse_embed.py",
-      "status": "DORMANT_CANDIDATE",
       "windows_runtime_explicit": false
     },
     {
@@ -669,7 +629,6 @@
     },
     {
       "inbound": [
-        "backend/diagnostics.py",
         "backend/qdrant_adapter.py",
         "mlx_host.py",
         "proxy/app.py",
@@ -872,7 +831,6 @@
     },
     {
       "inbound": [
-        "backend/diagnostics.py",
         "backend/qdrant_adapter.py",
         "proxy/routers/artifacts.py",
         "proxy/routers/bor.py",
@@ -1049,7 +1007,6 @@
     {
       "inbound": [
         "proxy/app.py",
-        "proxy/clients/__init__.py",
         "proxy/config.py",
         "proxy/legacy_app.py",
         "proxy/local_model_registry.py",
@@ -1060,7 +1017,6 @@
         "proxy/memory_core/smeta_trace_store.py",
         "proxy/memory_core/store.py",
         "proxy/memory_core/validation.py",
-        "proxy/repositories/__init__.py",
         "proxy/routers/__init__.py",
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
@@ -1350,8 +1306,7 @@
         "proxy/smeta_core/unit_contract.py",
         "proxy/smeta_core/workflow.py",
         "proxy/storage/__init__.py",
-        "proxy/storage/file_storage.py",
-        "proxy/workers/__init__.py"
+        "proxy/storage/file_storage.py"
       ],
       "lines": 2,
       "module": "proxy",
@@ -1442,17 +1397,6 @@
       ],
       "path": "proxy/app.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 2,
-      "module": "proxy.clients",
-      "outbound": [
-        "proxy/__init__.py"
-      ],
-      "path": "proxy/clients/__init__.py",
-      "status": "DORMANT_CANDIDATE",
       "windows_runtime_explicit": false
     },
     {
@@ -1668,17 +1612,6 @@
       ],
       "path": "proxy/memory_core/validation.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 2,
-      "module": "proxy.repositories",
-      "outbound": [
-        "proxy/__init__.py"
-      ],
-      "path": "proxy/repositories/__init__.py",
-      "status": "DORMANT_CANDIDATE",
       "windows_runtime_explicit": false
     },
     {
@@ -8114,17 +8047,6 @@
     },
     {
       "inbound": [],
-      "lines": 2,
-      "module": "proxy.workers",
-      "outbound": [
-        "proxy/__init__.py"
-      ],
-      "path": "proxy/workers/__init__.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
       "lines": 5,
       "module": "proxy_server",
       "outbound": [
@@ -8133,15 +8055,6 @@
       "path": "proxy_server.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": true
-    },
-    {
-      "inbound": [],
-      "lines": 103,
-      "module": "qdrant_visualizer.export_data",
-      "outbound": [],
-      "path": "qdrant_visualizer/export_data.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
     },
     {
       "inbound": [],
@@ -8287,7 +8200,6 @@
         "sovushka/components/__init__.py",
         "sovushka/components/charts.py",
         "sovushka/components/header.py",
-        "sovushka/components/logterm.py",
         "sovushka/config.py",
         "sovushka/lite_bridge.py",
         "sovushka/m5_display.py",
@@ -8299,17 +8211,11 @@
         "sovushka/pages/history.py",
         "sovushka/pages/instrumenty.py",
         "sovushka/pages/mail.py",
-        "sovushka/pages/mermaid_page.py",
         "sovushka/pages/model_connections.py",
-        "sovushka/pages/obyomy.py",
-        "sovushka/pages/overview.py",
         "sovushka/pages/profiles.py",
-        "sovushka/pages/prorab.py",
-        "sovushka/pages/rim.py",
         "sovushka/pages/samovar.py",
         "sovushka/pages/verify.py",
         "sovushka/pages/volk.py",
-        "sovushka/pages/zadachi.py",
         "sovushka/provider_session.py",
         "sovushka/provider_setup.py",
         "sovushka/safe_markup.py",
@@ -8392,8 +8298,7 @@
     {
       "inbound": [
         "sovushka/components/charts.py",
-        "sovushka/components/header.py",
-        "sovushka/components/logterm.py"
+        "sovushka/components/header.py"
       ],
       "lines": 1,
       "module": "sovushka.components",
@@ -8408,9 +8313,7 @@
       "inbound": [
         "sovushka/components/header.py",
         "sovushka/pages/chat.py",
-        "sovushka/pages/diag.py",
-        "sovushka/pages/overview.py",
-        "sovushka/pages/prorab.py"
+        "sovushka/pages/diag.py"
       ],
       "lines": 48,
       "module": "sovushka.components.charts",
@@ -8442,19 +8345,6 @@
       ],
       "path": "sovushka/components/header.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 20,
-      "module": "sovushka.components.logterm",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/components/__init__.py",
-        "sovushka/state.py"
-      ],
-      "path": "sovushka/components/logterm.py",
-      "status": "DORMANT_CANDIDATE",
       "windows_runtime_explicit": false
     },
     {
@@ -8516,17 +8406,11 @@
         "sovushka/pages/history.py",
         "sovushka/pages/instrumenty.py",
         "sovushka/pages/mail.py",
-        "sovushka/pages/mermaid_page.py",
         "sovushka/pages/model_connections.py",
-        "sovushka/pages/obyomy.py",
-        "sovushka/pages/overview.py",
         "sovushka/pages/profiles.py",
-        "sovushka/pages/prorab.py",
-        "sovushka/pages/rim.py",
         "sovushka/pages/samovar.py",
         "sovushka/pages/verify.py",
-        "sovushka/pages/volk.py",
-        "sovushka/pages/zadachi.py"
+        "sovushka/pages/volk.py"
       ],
       "lines": 1,
       "module": "sovushka.pages",
@@ -8666,21 +8550,6 @@
     },
     {
       "inbound": [
-        "tests/test_mermaid_graph.py"
-      ],
-      "lines": 297,
-      "module": "sovushka.pages.mermaid_page",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/pages/__init__.py",
-        "sovushka/state.py"
-      ],
-      "path": "sovushka/pages/mermaid_page.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "sovushka_ng.py",
         "tests/test_sovushka_model_connections.py"
       ],
@@ -8698,33 +8567,6 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
-      "lines": 163,
-      "module": "sovushka.pages.obyomy",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/pages/__init__.py",
-        "sovushka/state.py"
-      ],
-      "path": "sovushka/pages/obyomy.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 68,
-      "module": "sovushka.pages.overview",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/components/charts.py",
-        "sovushka/pages/__init__.py",
-        "sovushka/uikit/components.py"
-      ],
-      "path": "sovushka/pages/overview.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
-    },
-    {
       "inbound": [
         "sovushka_ng.py",
         "tests/test_profiles_ui.py"
@@ -8739,38 +8581,6 @@
       ],
       "path": "sovushka/pages/profiles.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 519,
-      "module": "sovushka.pages.prorab",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/components/charts.py",
-        "sovushka/pages/__init__.py",
-        "sovushka/state.py",
-        "sovushka/uikit/components.py",
-        "tools/les_runtime_control.py"
-      ],
-      "path": "sovushka/pages/prorab.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "tests/test_sovushka_uikit.py"
-      ],
-      "lines": 1096,
-      "module": "sovushka.pages.rim",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/pages/__init__.py",
-        "sovushka/state.py",
-        "sovushka/uikit/components.py"
-      ],
-      "path": "sovushka/pages/rim.py",
-      "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
     {
@@ -8825,19 +8635,6 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
-      "lines": 115,
-      "module": "sovushka.pages.zadachi",
-      "outbound": [
-        "sovushka/__init__.py",
-        "sovushka/pages/__init__.py",
-        "sovushka/state.py"
-      ],
-      "path": "sovushka/pages/zadachi.py",
-      "status": "DORMANT_CANDIDATE",
-      "windows_runtime_explicit": false
-    },
-    {
       "inbound": [
         "backend/auth.py",
         "sovushka/auth.py",
@@ -8888,23 +8685,17 @@
       "inbound": [
         "sovushka/checklist_review_panel.py",
         "sovushka/components/header.py",
-        "sovushka/components/logterm.py",
         "sovushka/pages/chat.py",
         "sovushka/pages/diag.py",
         "sovushka/pages/documents.py",
         "sovushka/pages/history.py",
         "sovushka/pages/instrumenty.py",
         "sovushka/pages/mail.py",
-        "sovushka/pages/mermaid_page.py",
         "sovushka/pages/model_connections.py",
-        "sovushka/pages/obyomy.py",
         "sovushka/pages/profiles.py",
-        "sovushka/pages/prorab.py",
-        "sovushka/pages/rim.py",
         "sovushka/pages/samovar.py",
         "sovushka/pages/verify.py",
         "sovushka/pages/volk.py",
-        "sovushka/pages/zadachi.py",
         "sovushka_ng.py",
         "tests/test_chat_stream_w51.py",
         "tests/test_live_push_w52.py",
@@ -8989,10 +8780,7 @@
         "sovushka/pages/instrumenty.py",
         "sovushka/pages/mail.py",
         "sovushka/pages/model_connections.py",
-        "sovushka/pages/overview.py",
         "sovushka/pages/profiles.py",
-        "sovushka/pages/prorab.py",
-        "sovushka/pages/rim.py",
         "sovushka/pages/samovar.py",
         "sovushka/pages/volk.py",
         "sovushka/uikit/__init__.py",
@@ -9947,7 +9735,7 @@
     },
     {
       "inbound": [],
-      "lines": 61,
+      "lines": 60,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -11512,17 +11300,6 @@
       "module": "tests.test_memory_ui_contract",
       "outbound": [],
       "path": "tests/test_memory_ui_contract.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 26,
-      "module": "tests.test_mermaid_graph",
-      "outbound": [
-        "sovushka/pages/mermaid_page.py"
-      ],
-      "path": "tests/test_mermaid_graph.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -13766,11 +13543,10 @@
     },
     {
       "inbound": [],
-      "lines": 765,
+      "lines": 660,
       "module": "tests.test_sovushka_uikit",
       "outbound": [
         "sovushka/components/header.py",
-        "sovushka/pages/rim.py",
         "sovushka/styles.py",
         "sovushka/uikit/components.py",
         "sovushka/uikit/states.py",
@@ -13828,7 +13604,7 @@
     },
     {
       "inbound": [],
-      "lines": 184,
+      "lines": 180,
       "module": "tests.test_static_assets",
       "outbound": [
         "tools/deploy_to_runtime.py"
@@ -13839,7 +13615,7 @@
     },
     {
       "inbound": [],
-      "lines": 31,
+      "lines": 30,
       "module": "tests.test_status_page",
       "outbound": [
         "proxy/routers/status_page.py"
@@ -15690,7 +15466,6 @@
       "inbound": [
         "proxy/services/runtime_dispatcher.py",
         "sovushka/lite_bridge.py",
-        "sovushka/pages/prorab.py",
         "tests/test_les_runtime_control.py",
         "tests/test_les_shell.py",
         "tests/test_runtime_dispatcher.py",
@@ -19426,14 +19201,14 @@
   ],
   "schema": "les.code-runtime-map.v1",
   "summary": {
-    "dormant_candidates": 14,
+    "dormant_candidates": 2,
     "parse_warnings": 0,
     "product_reachable": 363,
     "registered_api_routes": 414,
     "runtime_support": 8,
-    "test_or_tool_only": 630,
-    "tracked_python_files": 1015,
-    "tracked_python_lines": 301832
+    "test_or_tool_only": 627,
+    "tracked_python_files": 1000,
+    "tracked_python_lines": 299106
   },
   "warnings": []
 }

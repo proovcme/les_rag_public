@@ -23,7 +23,6 @@ def test_status_page_does_not_present_public_forest_site_as_sovushka() -> None:
 def test_user_facing_auth_templates_do_not_claim_public_runtime() -> None:
     paths = (
         ROOT / "backend/auth.py",
-        ROOT / "backend/login.html",
         ROOT / "sovushka/auth.py",
     )
 

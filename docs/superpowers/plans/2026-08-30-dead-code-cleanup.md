@@ -20,7 +20,7 @@
 
 ---
 
-### Task 1: Lock the exact deletion boundary
+### Task 1: Lock the observable behavior baseline
 
 **Files:**
 - Modify: `tests/test_code_runtime_map.py`
@@ -29,54 +29,62 @@
 
 **Interfaces:**
 - Consumes: `build_inventory(root: Path) -> dict`.
-- Produces: one exact allowlist of paths that must disappear and shell assertions that do not require dormant source files to remain.
+- Produces: product route/import baseline and shell assertions that do not require dormant source files to remain.
 
-- [ ] **Step 1: Add a failing exact-path test**
+- [x] **Step 1: Stop tests from preserving obsolete UI files**
 
-Add `REMOVED_HISTORICAL_PATHS` containing the 14 paths from the spec and assert each path is absent from both the filesystem and generated module inventory. Assert protected Mail, legacy shim and `proxy/smeta_core/document_workflow.py` remain.
+In `test_sovushka_uikit.py`, remove `prorab.py`, `overview.py` and `rim.py`
+source-style assertions while retaining shell/navigation behavior. In
+`test_static_assets.py`, keep only the production-mounting contract; do not require
+a dormant page definition to remain.
 
-- [ ] **Step 2: Stop tests from preserving obsolete UI files**
+- [x] **Step 2: Record the real baseline**
 
-In `test_sovushka_uikit.py`, remove `prorab.py`, `overview.py` and `rim.py` source-style assertions while retaining shell/navigation assertions. In `test_static_assets.py`, rename the dormant-surface test so it protects only production mounting; do not require a deleted page definition.
+Import `proxy.app`, record its route count and run the existing shell/RIM/runtime tests.
+These are the behaviors deletion must preserve. Do not add a source-absence test: that
+would be a change detector, not a product regression test.
 
-- [ ] **Step 3: Run RED**
+- [x] **Step 3: Run the baseline gate**
 
 Run:
 
 ```powershell
-uv run python -m pytest --basetemp=.test-tmp/dead-code-red -q tests/test_code_runtime_map.py tests/test_sovushka_uikit.py tests/test_static_assets.py
+uv run python -m pytest --basetemp=.test-tmp/dead-code-baseline -q tests/test_sovushka_uikit.py tests/test_static_assets.py tests/test_sovushka_data_workspace.py tests/test_rim_api.py tests/test_runtime_router.py
 ```
 
-Expected: the exact-path test fails because reviewed files still exist.
+Expected: PASS before deletion; the same behavior gate must pass afterwards.
 
 ### Task 2: Remove backend and package scaffolding
 
 **Files:**
 - Delete: `backend/auth_login_route.py`
+- Delete: `backend/login.html`
 - Delete: `backend/diagnostics.py`
 - Delete: `backend/inference/sparse_embed.py`
 - Delete: `proxy/clients/__init__.py`
 - Delete: `proxy/repositories/__init__.py`
 - Delete: `proxy/workers/__init__.py`
 - Modify: `docs/CODE_MAP.md`
+- Modify: `pyproject.toml`
+- Modify: `tests/test_status_page.py`
 
 **Interfaces:**
 - Consumes: current login registration in `sovushka.auth`, diagnostics router and `bm25_sparse` production contract.
 - Produces: no replacement API; removes only unreachable implementations.
 
-- [ ] **Step 1: Recheck consumers immediately before deletion**
+- [x] **Step 1: Recheck consumers immediately before deletion**
 
 Run exact `rg` searches for the six module names outside generated/archive files. Stop if a product consumer appears.
 
-- [ ] **Step 2: Delete only the six listed files**
+- [x] **Step 2: Delete only the seven listed files**
 
 Use `git rm` with exact literal paths. Do not recursively delete any parent except the now-empty `proxy/clients`, `proxy/repositories` and `proxy/workers` directories represented by their tracked initializer files.
 
-- [ ] **Step 3: Correct narrow CODE_MAP claims**
+- [x] **Step 3: Correct narrow CODE_MAP claims**
 
 Remove `auth_login_route.py`, dead diagnostics and BGE-M3 learned-sparse as active/current code references. Keep the live replacements explicit.
 
-- [ ] **Step 4: Run focused import checks**
+- [x] **Step 4: Run focused import checks**
 
 ```powershell
 uv run python -m compileall -q backend proxy sovushka
@@ -96,6 +104,7 @@ Expected: PASS.
 - Delete: `sovushka/pages/zadachi.py`
 - Delete: `sovushka/pages/mermaid_page.py`
 - Delete: `sovushka/pages/rim.py`
+- Delete: `tests/test_mermaid_graph.py`
 - Modify: `docs/CODE_MAP.md`
 - Modify: `docs/MODULE_INDEX.md`
 - Modify: `docs/TEST_INVENTORY.md`
@@ -104,19 +113,19 @@ Expected: PASS.
 - Consumes: production shell `sovushka_ng.py`, active Qdrant static visualizer, RIM API/services.
 - Produces: unchanged production shell with fewer shipped source files.
 
-- [ ] **Step 1: Recheck source and string consumers**
+- [x] **Step 1: Recheck source and string consumers**
 
 Search every builder/module name across Python, PowerShell, JSON/TOML and canonical docs. Confirm only tests/docs or the file itself refer to each deleted page.
 
-- [ ] **Step 2: Delete the eight exact files**
+- [x] **Step 2: Delete the eight exact files**
 
 Use `git rm` with the paths above. Do not remove `qdrant_visualizer/index.html`, `visualizer.js`, `pca.js`, styles or any RIM backend path.
 
-- [ ] **Step 3: Correct factual documentation only**
+- [x] **Step 3: Correct factual documentation only**
 
 State that RIM works through universal-agent/API services and has no separate UI. Remove obsolete Overview/Prorab/field/tasks/Mermaid page claims. Preserve Mail UI as temporarily dormant and subject to redesign.
 
-- [ ] **Step 4: Run UI/RIM focused gates**
+- [x] **Step 4: Run UI/RIM focused gates**
 
 ```powershell
 uv run python -m pytest --basetemp=.test-tmp/dead-code-ui -q tests/test_sovushka_uikit.py tests/test_static_assets.py tests/test_sovushka_data_workspace.py tests/test_rim_api.py tests/test_rim_agent_turn.py
@@ -138,19 +147,19 @@ Expected: PASS with live RIM backend coverage intact.
 - Consumes: final tracked Python tree and `config/windows_runtime_manifest.json`.
 - Produces: synchronized `0.30.5 / build 645 / desktop 5.1.645` candidate.
 
-- [ ] **Step 1: Regenerate runtime map**
+- [x] **Step 1: Regenerate runtime map**
 
 Run `uv run python tools/code_runtime_map.py`. Confirm removed paths disappear, protected paths remain and product entrypoint counts do not drop unexpectedly.
 
-- [ ] **Step 2: Move version contract**
+- [x] **Step 2: Move version contract**
 
 Set `product_version=0.30.5`, `build_number=645`, `desktop_version=5.1.645`; run `uv run python tools/sync_version_contract.py` and `uv lock --offline`.
 
-- [ ] **Step 3: Record exact cleanup result**
+- [x] **Step 3: Record exact cleanup result**
 
 Update RELEASE_LEDGER, MODULE_INDEX and TEST_INVENTORY with deleted paths, before/after counts, no behavior change, no deploy and explicit Mail/legacy/smeta exclusions.
 
-- [ ] **Step 4: Run focused GREEN**
+- [x] **Step 4: Run focused GREEN**
 
 ```powershell
 uv run python -m pytest --basetemp=.test-tmp/dead-code-final -q tests/test_code_runtime_map.py tests/test_documentation_contract.py tests/test_software_versions.py
@@ -168,7 +177,7 @@ Expected: PASS.
 - Consumes: completed Tasks 1–4.
 - Produces: one reviewable 0.30.5 cleanup commit; no release artifact.
 
-- [ ] **Step 1: Run canonical gates**
+- [x] **Step 1: Run canonical gates**
 
 ```powershell
 make verify
@@ -178,15 +187,15 @@ make test-tauri
 
 Expected: all PASS.
 
-- [ ] **Step 2: Stage Windows runtime and import product entrypoints**
+- [x] **Step 2: Stage Windows runtime and import product entrypoints**
 
 Use the existing `build_tauri_app.stage_runtime(win32)` test/smoke path. Confirm updater helpers remain, removed files are absent and `proxy.app` imports from the staged tree.
 
-- [ ] **Step 3: Review diff and repository state**
+- [x] **Step 3: Review diff and repository state**
 
 Run `git diff --check`, `git status --short`, and confirm protected paths have no diff.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```powershell
 git add -A

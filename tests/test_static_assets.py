@@ -22,11 +22,10 @@ def test_admin_instruments_tab_is_mounted():
     assert "build_instrumenty()" in app_shell
 
 
-def test_data_is_the_only_live_corpus_surface_and_dormant_code_stays_present():
+def test_data_is_the_only_live_corpus_surface():
     header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
     app_shell = Path("sovushka_ng.py").read_text(encoding="utf-8")
     page = Path("sovushka/pages/documents.py").read_text(encoding="utf-8")
-    mail = Path("sovushka/pages/mail.py").read_text(encoding="utf-8")
 
     assert 'tab_refs["data"] = ui.tab("Данные", icon="o_database")' in header
     for label in ("Документы", "Датасеты", "Почта"):
@@ -39,9 +38,6 @@ def test_data_is_the_only_live_corpus_surface_and_dormant_code_stays_present():
     assert 'surface: str = "documents"' in page
     assert "include_data=True" in app_shell
     assert "build_data_workspace(is_admin=is_admin)" in app_shell
-    assert "def build_mail()" in mail
-    assert "def build_mail_settings()" in mail
-
     admin_shell = app_shell.split("async def classic_admin_page", 1)[1]
     assert "build_documents" not in admin_shell
     assert "build_mail()" not in admin_shell

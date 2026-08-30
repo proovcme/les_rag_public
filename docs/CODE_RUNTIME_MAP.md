@@ -19,12 +19,12 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1015 |
-| Строк Python | 301832 |
+| Python-файлов под git | 1000 |
+| Строк Python | 299106 |
 | PRODUCT_REACHABLE | 363 |
 | RUNTIME_SUPPORT | 8 |
-| TEST_OR_TOOL_ONLY | 630 |
-| DORMANT_CANDIDATE | 14 |
+| TEST_OR_TOOL_ONLY | 627 |
+| DORMANT_CANDIDATE | 2 |
 | Зарегистрированных API-маршрутов | 414 |
 | Ошибок разбора | 0 |
 
@@ -99,20 +99,8 @@
 
 | Файл | Строк | Почему только кандидат |
 | --- | --- | --- |
-| backend/auth_login_route.py | 10 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| backend/diagnostics.py | 94 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| backend/inference/sparse_embed.py | 98 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| proxy/clients/__init__.py | 2 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
 | proxy/legacy_app.py | 7 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| proxy/repositories/__init__.py | 2 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| proxy/workers/__init__.py | 2 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| qdrant_visualizer/export_data.py | 103 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| sovushka/components/logterm.py | 20 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
 | sovushka/pages/mail.py | 626 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| sovushka/pages/obyomy.py | 163 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| sovushka/pages/overview.py | 68 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| sovushka/pages/prorab.py | 519 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
-| sovushka/pages/zadachi.py | 115 | Нет доказанного статического пути; проверить dynamic/subprocess/external use |
 
 ## Ограничения
 

@@ -220,7 +220,7 @@
   через **sparse-сайдкар** `les_rag_qwen3_06b_sparse` (sparse-only коллекция, те же point id, основная коллекция
   НЕ тронута — нулевой риск, свап не нужен). `retrieve_sparse` фьюзит dense+sparse по RRF в `_hybrid_merge`
   (`mode=hybrid+sparse+rerank`), за флагом `RAG_SPARSE_ENABLED`. **Решение по модели sparse:** BGE-M3 learned-sparse
-  доказан без FlagEmbedding (`backend/inference/sparse_embed.py`), НО на 169k реальных чанков (~450 токенов) это
+  был доказан без FlagEmbedding (экспериментальный `sparse_embed.py` удалён в 0.30.5), НО на 169k реальных чанков (~450 токенов) это
   ~9 ч MPS — непрактично. Выбран **BM25/IDF** (`backend/inference/bm25_sparse.py`: токены+стем как у FTS → TF,
   IDF считает Qdrant `modifier=Idf`): реиндекс 169k за **36 с** на CPU, ноль Metal. `tools/reindex_sparse_bge_m3.py`.
   **Приёмка:** доменный гейт **16/16** на hybrid+sparse (без регрессии), sparse-сигнал активен (sparse-доминантные
@@ -437,7 +437,7 @@
   захватка, объём, ед., `doc_id` чертежа, `element_id` BIM-графа, автор, статус confirmed/pending/rejected,
   примечание) в метабазе; `proxy/services/field_intake_service.py` (CRUD + regex-команда чата + агрегации + xlsx,
   0 LLM); роутер `proxy/routers/field.py` (`/api/field` CRUD + summary + export/download). **GUI-first:** вкладка
-  **ОБЪЁМЫ** (`sovushka/pages/obyomy.py`) — ввод, свод, журнал, экспорт. Ручной ввод = `confirmed`; `pending`
+  **ОБЪЁМЫ** (историческая отдельная страница удалена в 0.30.5 как недостижимая; API сохранён) — ввод, свод, журнал, экспорт. Ручной ввод = `confirmed`; `pending`
   зарезервирован под VLM-конвейер W8.2. Приёмка: CRUD через API ✅, ссылки на чертёж/элемент ✅, `make verify` ✅.
 
 - [ ] **W8.2 Извлечение пометок (VLM-конвейер с алгоритмической предобработкой)** · L `[dep]` `[live]`

@@ -11,6 +11,7 @@
 
 - `backend/auth_login_route.py` — старый HTML login route; живой login регистрирует
   `sovushka.auth`;
+- `backend/login.html` — шаблон, который использовался только старым login route;
 - `backend/diagnostics.py` — сам помечен как мёртвый; живая диагностика находится в
   `proxy/routers/diagnostics.py` и `sovushka/pages/diag.py`;
 - `backend/inference/sparse_embed.py` — оставленный эксперимент BGE-M3 learned-sparse;

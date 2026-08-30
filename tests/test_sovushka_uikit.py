@@ -4,13 +4,6 @@ from types import SimpleNamespace
 import pytest
 
 from sovushka.styles import CUSTOM_CSS, _DARK_THEME, _LIGHT_THEME, theme_vars_css
-from sovushka.pages.rim import (
-    _human_norm_source,
-    _human_source_ref,
-    _progress_codes_display,
-    _progress_result_display,
-    _selection_status_display,
-)
 from sovushka.uikit import components as components_module
 from sovushka.uikit.components import BUTTON_VARIANTS, PANEL_VARIANTS, tab_name
 from sovushka.uikit.states import feedback_state
@@ -127,11 +120,9 @@ def test_lazy_tab_panels_builds_initial_and_each_later_panel_once(monkeypatch):
 
 def test_heavy_tab_builders_return_pauseable_timers():
     chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
-    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
     samovar = Path("sovushka/pages/samovar.py").read_text(encoding="utf-8")
 
     assert 'return {"timers": [resource_gate_timer, model_chip_timer]}' in chat
-    assert 'return {"timers": [mapping_progress_timer]}' in rim
     assert 'return {"timers": [timer for timer in (status_timer, refresh_timer) if timer is not None]}' in samovar
 
 
@@ -348,7 +339,7 @@ def test_acronym_identity_is_shared_and_user_can_hide_expansions():
     assert "sov-hide-acronym-expansions" in shell
     assert ".sov-hide-acronym-expansions .sov-acronym-expansion" in UIKIT_CSS
 
-    for page in ("diag.py", "volk.py", "prorab.py", "overview.py", "mail.py", "documents.py"):
+    for page in ("diag.py", "volk.py", "mail.py", "documents.py"):
         source = Path("sovushka/pages", page).read_text(encoding="utf-8")
         assert "acronym_identity(" in source
     samovar = Path("sovushka/pages/samovar.py").read_text(encoding="utf-8")
@@ -649,102 +640,6 @@ def test_uikit_registry_exposes_select_with_shared_control_contract():
         ".sov-tools-layer",
     ):
         assert contract in UIKIT_CSS
-
-
-def test_rim_source_locator_is_human_readable_without_losing_table_position():
-    hashed_source = (
-        "/private/tmp/les-rim/"
-        "c876eec5ef71e7a3253a88f22efe68c05956bfc2918a974d6a18c18e89a9d236.xlsx"
-        "#sheet=СКС;table=1;row=6"
-    )
-
-    assert _human_source_ref(hashed_source) == "лист «СКС» · строка 6"
-    assert (
-        _human_source_ref("/tmp/spec.xlsx#sheet=Лист1;row=17")
-        == "spec.xlsx · лист «Лист1» · строка 17"
-    )
-    assert (
-        _human_norm_source(
-            {
-                "normative_base_version": "ФСНБ-2022 изм. 14",
-                "norm_code": "ГЭСНм10-06-001-01",
-                "norm_source_ref": "fsnb.sqlite#guid=1",
-            }
-        )
-        == "ФСНБ-2022 изм. 14 · ГЭСНм10-06-001-01"
-    )
-
-
-def test_rim_ui_shows_durable_qwen_mapping_progress():
-    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
-
-    assert "/mapping/progress" in rim
-    assert "Живой прогресс подбора норм Qwen" in rim
-    assert "Сохранено по строкам:" in rim
-    assert "source_display" in rim
-    assert "Маршрут ФСНБ" in rim
-    assert "route_display" in rim
-    assert "route_timing_display" in rim
-    assert "маршрутов принято/отклонено:" in rim
-
-
-def test_rim_localizes_machine_states_and_has_no_service_anglicisms_in_labels():
-    rim = Path("sovushka/pages/rim.py").read_text(encoding="utf-8")
-
-    assert _selection_status_display({"selection_kind": "unbound"}) == "Норма не привязана"
-    assert _selection_status_display({"selection_status": "accepted"}) == "Принято"
-    for forbidden in (
-        '"Global review',
-        '"Mapping lock',
-        '"Mapping заблокирован',
-        '"Заблокировать mapping"',
-        '"XLSX принят новой immutable-',
-        '"Активного checkpoint',
-    ):
-        assert forbidden not in rim
-
-
-def test_rim_progress_table_keeps_codes_and_model_reason_compact():
-    row = {
-        "candidate_count": 8,
-        "candidates": [
-            {"norm_code": "ГЭСНм10-01-001-01"},
-            {"norm_code": "ГЭСНм10-01-001-02"},
-            {"norm_code": "ГЭСНм10-01-001-03"},
-        ],
-        "stage_label": "Нужна повторная проверка",
-        "decision": {"reason": "длинное основание " * 20},
-        "blockers": [],
-    }
-
-    assert (
-        _progress_codes_display(row, "candidates", "candidate_count")
-        == "8 · ГЭСНм10-01-001-01, ГЭСНм10-01-001-02, …"
-    )
-    result = _progress_result_display(row)
-    assert result.startswith("Нужна повторная проверка · длинное основание")
-    assert result.endswith("…")
-
-
-def test_rim_progress_table_shows_rejected_route_error_and_qwen_time():
-    result = _progress_result_display(
-        {
-            "stage_label": "Переход отклонён; сохранён предыдущий путь",
-            "route_events": [
-                {
-                    "outcome": "rejected",
-                    "error": "selected node is also present in rejected_nodes",
-                    "model_wait_seconds": 133.49,
-                }
-            ],
-        }
-    )
-
-    assert result == (
-        "Переход отклонён; сохранён предыдущий путь · "
-        "selected node is also present in rejected_nodes · Qwen: 133.49 с"
-    )
-    assert len(result) < 210
 
 
 def test_samovar_exposes_index_recovery_dispositions_and_skips():
