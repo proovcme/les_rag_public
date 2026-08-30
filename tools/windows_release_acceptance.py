@@ -84,10 +84,10 @@ def snapshot_installed(runtime: Path, state: Path) -> dict[str, Any]:
             runtime_status = _request_json(f"{PROXY}/api/runtime/status", timeout=10)
         except (OSError, ValueError, RuntimeError, urllib.error.URLError):
             runtime_status = {}
-        core = _ui_ready() and str(health.get("status") or "") in {
-            "ok",
-            "degraded",
-        }
+        # Core liveness is the installed proxy identity plus the UI.  The aggregate
+        # health status may be ``error`` solely because user-owned external Qdrant
+        # is unavailable; that is tracked independently below.
+        core = bool(live_version) and _ui_ready()
     except (OSError, ValueError, RuntimeError, urllib.error.URLError):
         live_version = {}
         health = {}

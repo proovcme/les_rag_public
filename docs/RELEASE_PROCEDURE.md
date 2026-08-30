@@ -19,7 +19,7 @@ make release RELEASE_ARGS='run --host legion --publish'
 2. Автоматически выбирает soft patch или полный NSIS-выпуск и фиксирует SHA
    устанавливаемого ZIP/EXE в immutable attempt.
 3. На Legion ставит точные candidate bytes штатным путём, проверяет identity,
-   API/UI, прежние capabilities и, если Qdrant был доступен, временный native
+   живые proxy/UI отдельно от внешних capabilities и, если Qdrant был доступен, временный native
    `dense + qdrant_sparse → RRF` dataset.
 4. Выполняет controlled rollback, проверяет восстановленную версию и повторно
    ставит те же candidate bytes.

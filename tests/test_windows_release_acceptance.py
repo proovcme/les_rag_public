@@ -111,7 +111,7 @@ def test_capability_continuity_allows_a_role_that_was_already_unavailable():
     acceptance.require_capability_continuity(STARTING, after)
 
 
-def test_snapshot_never_claims_model_capabilities_when_core_is_down(
+def test_snapshot_keeps_live_app_and_model_capabilities_when_external_qdrant_is_down(
     monkeypatch, tmp_path
 ):
     runtime = tmp_path / "Programs" / "LES" / "runtime"
@@ -132,6 +132,7 @@ def test_snapshot_never_claims_model_capabilities_when_core_is_down(
             return {
                 "status": "error",
                 "backend": "qdrant_llama",
+                "rag": {"status": "unavailable"},
                 "embedding": {"embedding_model": "configured"},
             }
         return {"proxy": {"llm_provider": {"model": "configured"}}}
@@ -142,10 +143,10 @@ def test_snapshot_never_claims_model_capabilities_when_core_is_down(
     snapshot = acceptance.snapshot_installed(runtime, state)
 
     assert snapshot["capabilities"] == {
-        "core": False,
+        "core": True,
         "qdrant": False,
-        "answer": False,
-        "embedding": False,
+        "answer": True,
+        "embedding": True,
     }
 
 
