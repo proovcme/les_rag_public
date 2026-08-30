@@ -7,17 +7,38 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.10
-номер сборки:              650
-версия Tauri/NSIS:         5.1.650
+версия продукта (SemVer):  0.30.11
+номер сборки:              651
+версия Tauri/NSIS:         5.1.651
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       second proven repository cleanup
+dev implementation:       repository refs/worktrees recovery cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.10 — repository cleanup; не задеплоен
+следующий выпуск:          0.30.11 — repository cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.11 / build 651 repository refs/worktrees recovery cleanup (dev candidate):**
+> все пять прежних linked worktree удалены из Git registry; локально остаётся
+> только основной checkout. Два worktree с незакоммиченной работой сначала
+> сохранены отдельными recovery-коммитами: release-spine `b21a0309` (122 файла,
+> RAG/provenance/formats/Windows; не интегрирован) и artifact revision tests
+> `47c80278` (старый API, не интегрирован). Ещё три чистые, но уникальные линии
+> (`0.28.3` salvage, VPS Sovushka и public smeta canonical) также доказанно
+> сохранены до удаления worktree. Десять pre-0.30 голов закреплены immutable
+> тегами `archive/2026-08-30/*` на GitHub, после чего семь не связанных с
+> открытыми PR remote-веток и одиннадцать локальных веток удалены. Локально
+> остаются ровно `main` и текущая 0.30.x ветка. Защищённые `data/storage/logs`
+> и один `.env` из удалённых worktree не читались и перенесены в локальный
+> `C:\Users\Oleg\les_rag_recovery\2026-08-30`; Qdrant 1.19.0 binary сохранён
+> отдельно с совпавшим SHA-256. Из-за Windows path/lock ограничений только
+> генерируемые `.venv/.test-tmp/target` хвосты помещены в
+> `deletable-generated`; они не зарегистрированы как worktree и не являются
+> кодом продукта. Старый открытый PR-стек #5–#18 намеренно не закрывался:
+> его branch refs остаются отдельным owner-gated GitHub cleanup, а не частью
+> 0.30.x. Product/runtime code, сметное ядро, установленный Legion и основной
+> пользовательский state не менялись.
 
 > **0.30.10 / build 650 second proven repository cleanup (dev candidate):**
 > после статической карты, точечного поиска и проверки Git history удалены
