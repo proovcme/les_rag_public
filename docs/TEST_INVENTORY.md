@@ -1,5 +1,11 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.30.8 release acceptance receipt (build 648):**
+> `tests/test_release_receipt.py` фиксирует последовательную persisted state
+> machine выпуска, content-derived release ID, exact commit/artifact binding,
+> запрет публикации failed/unaccepted attempt и детерминированный публичный
+> receipt без локальных путей и sensitive-полей.
+
 > **0.30.5 first proven dead-code cleanup (build 645):** observable baseline
 > сохраняет 396 FastAPI routes и живые UI/RIM/runtime контракты, не требуя
 > присутствия dormant source. Удалён только тест самостоятельной Mermaid-страницы
