@@ -26,12 +26,14 @@ Ollama, моделей, Python, uv и Tauri ведутся в [`SOFTWARE_VERSION
 
 ## Выпуск
 
-Из чистой отправленной ветки `main`:
+Из чистой отправленной ветки:
 
-```bash
-make patch-release PATCH_RELEASE_ARGS='--publish --notes-file dist/release-notes.md'
+```text
+make release RELEASE_ARGS='run --host legion --publish'
 ```
 
-Команда не публикует результат, пока не пройдены локальные тесты, Windows-сборка, изолированная
-установка, живой RRF-smoke и проверка SHA-256. Фактический commit и результат записываются в
+Команда не публикует результат, пока exact candidate не установлен на Legion,
+не прошёл smoke, controlled rollback и повторную установку. Фактический commit,
+SHA и стадии сохраняются в receipt. Полный канон —
+[`RELEASE_PROCEDURE.md`](RELEASE_PROCEDURE.md); состояние версии —
 [`RELEASE_LEDGER.md`](RELEASE_LEDGER.md).

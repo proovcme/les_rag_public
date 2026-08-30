@@ -96,22 +96,24 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
 только адреса GitHub по HTTPS, сверяет SHA-256 и открывает обычный установщик NSIS. Фоновая
 загрузка, downgrade и установка неполного/непроверенного выпуска запрещены.
 
-### Каноническая сборка и публикация Windows-выпуска
+### Каноническая приёмка и публикация Windows-выпуска
 
-Собирать выпуск только из чистой, отправленной ветки `main`. Версия продукта и номер сборки задаются
+Собирать выпуск только из чистой, отправленной ветки. Версия продукта и номер сборки задаются
 в `config/version.json`; версии обязательной инфраструктуры — в `docs/SOFTWARE_VERSIONS.md`.
+Единственный операторский канон — [`RELEASE_PROCEDURE.md`](RELEASE_PROCEDURE.md).
 
 1. Подготовить короткое описание выпуска и выполнить:
 
-   ```bash
-   make patch-release PATCH_RELEASE_ARGS='--publish --notes-file dist/release-notes.md'
+   ```text
+   make release RELEASE_ARGS='run --host legion --publish'
    ```
 
-2. `tools/patch_release.py` сам проверяет clean/pushed commit и запускает `make verify`, полный
-   `make test-release` без отдельного продукта ARTEL, `make public-check`, `uv lock --check` и
-   `git diff --check`.
+2. `tools/release_orchestrator.py` проверяет clean/pushed commit, обязательные gates и
+   автоматически выбирает soft/full. Подготовленные candidate bytes после этого не пересобираются.
 
-3. `tools/windows_patch_release.ps1` на Windows строго обновляет `main` до запрошенного commit,
+3. На Legion exact candidate устанавливается штатным updater/NSIS-путём, проходит smoke,
+   controlled rollback, smoke восстановленной версии и повторную установку. Внутренний full-builder
+   `tools/windows_patch_release.ps1` на Windows строго обновляет checkout до запрошенного commit,
    собирает Tauri/NSIS, устанавливает EXE в новый одноразовый каталог под
    `%LOCALAPPDATA%\LES-release-smoke` и
    запускает `windows_release_smoke.ps1`. Только после его успеха installer передаётся как
@@ -123,10 +125,10 @@ uv run python tools/build_windows_installer.py --version X.Y.Z
    Холодный импорт большого Windows runtime получает до 120 секунд до `/api/version`; управляющий
    updater ограничен 180 секундами и затем делает обычный rollback.
 
-4. Публикация начинается только после проверки версии, номера сборки, commit, изолированного
-   clean-install PDF+RRF smoke, production runtime/mail/desktop smoke и SHA-256.
-   Выпуск содержит `latest.json`, `LES-Setup.exe` и `LES-Setup.exe.sha256`; затем эти assets
-   скачиваются обратно и сверяются повторно.
+4. Публикация начинается только после stage `accepted`. Feed связывает SHA
+   `release-receipt.json`; GitHub Release сначала остаётся draft с явным target commit,
+   все assets скачиваются обратно и сверяются до publish, после чего отдельный postflight
+   проверяет public main/tag/feed/receipt/hashes.
 
    RRF-smoke не доверяет уже лежащим в Qdrant чужим коллекциям. До bootstrap он задаёт уникальную
    `RAG_COLLECTION_NAME`, через API установленного runtime создаёт временный датасет, индексирует
@@ -377,7 +379,7 @@ must remain identical.
 | Current-platform test + native build | `make platform-gate` |
 | Build Mac app + dmg | `tools/build_tauri_app.py --version X.Y.Z --bundles app,dmg` |
 | Stage/build Win installer | `tools/build_windows_installer.py --version X.Y.Z` |
-| Verified Mac + Legion Windows release | `make release-multiplatform MULTIPLATFORM_RELEASE_ARGS='--notes-file … --publish'` |
+| Public release through Legion acceptance | `make release RELEASE_ARGS='run --host legion --publish'` |
 | Set provider (first run) | `tools/onboard_provider.py [--provider …]` |
 | Pre-pull weights | `tools/onboard_models.py [--skip-if-cloud]` |
 | Logs (Mac) | `~/Library/Logs/LES/bootstrap.log` |

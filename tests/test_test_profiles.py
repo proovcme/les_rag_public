@@ -176,6 +176,18 @@ def test_github_patch_release_target_never_calls_full_installer_builder() -> Non
     assert "LES-Setup.exe" not in command
 
 
+def test_make_release_has_one_orchestrator_entrypoint() -> None:
+    command = _dry_make_with_variable(
+        "release",
+        "RELEASE_ARGS",
+        "status --attempt release-state.json",
+    )
+
+    assert "tools/release_orchestrator.py" in command
+    assert "tools/patch_release.py" not in command
+    assert "tools/github_patch_release.py" not in command
+
+
 def test_model_connection_live_acceptance_is_explicit_opt_in() -> None:
     live = _dry_make_with_variable(
         "test-model-connections-live",

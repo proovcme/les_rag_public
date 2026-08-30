@@ -6,6 +6,13 @@ from tools.documentation_contract import CANONICAL_PATHS, audit_documentation
 
 
 ROOT = Path(__file__).resolve().parents[1]
+CURRENT_RELEASE_DOCS = (
+    ROOT / "SKILL.md",
+    ROOT / "docs" / "RELEASE_PROCEDURE.md",
+    ROOT / "docs" / "VERSIONING.md",
+    ROOT / "docs" / "INSTALL_RUNBOOK.md",
+    ROOT / "docs" / "GUARDRAILS.md",
+)
 
 
 def _write_complete_canonical_fixture(root: Path) -> None:
@@ -71,3 +78,14 @@ def test_archive_has_an_indexed_manual_review_queue():
     text = (ROOT / "docs/archive/README.md").read_text(encoding="utf-8")
 
     assert "Оставлены активными до ручного решения" in text
+
+
+def test_current_docs_advertise_only_the_acceptance_orchestrator_for_public_release():
+    for path in CURRENT_RELEASE_DOCS:
+        text = path.read_text(encoding="utf-8")
+        assert "make patch-release PATCH_RELEASE_ARGS='--publish" not in text
+        assert "make release-multiplatform MULTIPLATFORM_RELEASE_ARGS=" not in text
+    procedure = (ROOT / "docs" / "RELEASE_PROCEDURE.md").read_text(encoding="utf-8")
+    assert "make release RELEASE_ARGS=" in procedure
+    assert "Legion" in procedure
+    assert "rollback" in procedure

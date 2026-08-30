@@ -70,8 +70,8 @@ Primary implementation:
 - `desktop/tauri/web/{index.html,wizard.js}` — provider-neutral setup catalogue.
 - `tools/windows_release_smoke.ps1` — installed-artifact acceptance.
 
-User recovery is documented in `docs/public/windows-troubleshooting.md`; developer release procedure
-is in `docs/INSTALL_RUNBOOK.md` and `docs/public/developer-guide.md`.
+User recovery is documented in `docs/public/windows-troubleshooting.md`; the only current public
+release procedure is `docs/RELEASE_PROCEDURE.md`.
 
 ## External providers
 
@@ -146,14 +146,17 @@ expected `/api/version`, passes API/UI/index/process checks and can be rolled ba
 `config/version.json` is the only source for product SemVer, monotonic build number and desktop
 package version. Keep `docs/SOFTWARE_VERSIONS.md` and `docs/RELEASE_LEDGER.md` synchronized.
 
-Before publishing:
+Public release has one operator entry point:
 
-1. Ensure the branch is clean and pushed.
-2. Run `make verify`, `make test` and `make public-check`.
-3. Build the exact Windows artifact from the committed tree.
-4. Run installed-artifact smoke and record the result.
-5. Publish only tracked public code/docs and the verified installer, checksum and `latest.json`.
-6. Confirm the public `main` commit and GitHub Release tag point to the same verified source.
+```text
+make release RELEASE_ARGS='run --host legion --publish'
+```
+
+It prepares immutable candidate bytes, installs them on Legion, runs smoke,
+controlled rollback and reinstall, then publishes an accepted draft and performs
+independent postflight. Do not publish through the internal patch/full adapters.
+The exact stages, resume rules and stop conditions are in
+`docs/RELEASE_PROCEDURE.md`.
 
 Never publish runtime state, `.env`, credentials, private datasets, logs, caches, local archives or
 model weights.
@@ -172,8 +175,8 @@ Current documentation follows this chain:
 - public start: `README.md`, `docs/public/overview.md`;
 - users: `docs/WINDOWS_DESKTOP.md`, `docs/public/windows-troubleshooting.md`;
 - developers: `docs/public/developer-guide.md`, `docs/MODULE_INDEX.md`, `docs/CODE_MAP.md`;
-- operators/releases: this skill, `docs/INSTALL_RUNBOOK.md`, `docs/SOFTWARE_VERSIONS.md`,
-  `docs/RELEASE_LEDGER.md`;
+- operators/releases: this skill, `docs/RELEASE_PROCEDURE.md`, `docs/INSTALL_RUNBOOK.md`,
+  `docs/SOFTWARE_VERSIONS.md`, `docs/RELEASE_LEDGER.md`;
 - future work: `ROADMAP_TO_V1.md`.
 
 Historical documents live in `docs/archive/` and are context, not instructions. When code and a

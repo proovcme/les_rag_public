@@ -35,7 +35,10 @@ dev implementation:       transactional delete bridge for cumulative Windows pat
 > receipt, связывают его SHA в feed, создают explicit-target draft, скачивают и
 > сверяют полный asset set до publish; независимый postflight проверяет public
 > main/tag/feed/receipt/hashes. Единая операторская команда и живая непубличная
-> репетиция ещё не завершены; runtime Legion не менялся.
+> граница теперь — `make release` / `tools/release_orchestrator.py`; старые
+> publishers остаются внутренними адаптерами и не рекламируются как способ
+> выпуска. Живая непубличная репетиция ещё не выполнена; runtime Legion не
+> менялся.
 
 > **0.30.7 / build 647 corrected soft-patch publication (release candidate):**
 > сохраняет transactional delete bridge из 0.30.6 и добавляет обязательный

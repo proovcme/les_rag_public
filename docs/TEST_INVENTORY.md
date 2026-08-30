@@ -21,6 +21,9 @@
 > published → postflight_verified` и не допускает публикацию с промежуточного
 > Legion-stage; сохранённый draft и опубликованный выпуск продолжаются с
 > последней подтверждённой стадии без повторного create/publish.
+> `test_test_profiles.py` фиксирует единственный Make-entrypoint `make release`,
+> а `test_documentation_contract.py` запрещает актуальным документам рекламировать
+> legacy publish-команды и включает `RELEASE_PROCEDURE.md` в каноническую цепочку.
 
 > **0.30.5 first proven dead-code cleanup (build 645):** observable baseline
 > сохраняет 396 FastAPI routes и живые UI/RIM/runtime контракты, не требуя

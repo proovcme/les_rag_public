@@ -77,6 +77,15 @@ def require_release_source(*, root: Path, branch: str, target: str) -> str:
     return commit
 
 
+def current_branch(root: Path) -> str:
+    branch = _run(
+        ("git", "branch", "--show-current"), root=Path(root), capture=True
+    ).stdout.strip()
+    if not branch:
+        raise RuntimeError("release preparation cannot run from detached HEAD")
+    return branch
+
+
 def load_contract(root: Path) -> dict[str, Any]:
     try:
         payload = json.loads((Path(root) / "config" / "version.json").read_text(encoding="utf-8-sig"))
@@ -236,10 +245,12 @@ def _classification_evidence(classification: ReleaseClassification) -> dict[str,
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     work_root = Path(args.work_root).resolve()
+    branch = str(getattr(args, "branch", "") or "") or current_branch(root)
+    args.branch = branch
     target = (
         resolve_commit(root, args.target)
         if args.skip_gates
-        else require_release_source(root=root, branch=args.branch, target=args.target)
+        else require_release_source(root=root, branch=branch, target=args.target)
     )
     contract = load_contract(root)
     base = _base_from_args(args)
@@ -767,6 +778,17 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
     return {**completed, "state_path": str(state_path)}
 
 
+def run_release(args: argparse.Namespace) -> dict[str, Any]:
+    if args.publish and args.skip_gates:
+        raise RuntimeError("public release cannot skip prepare gates")
+    prepared = prepare(args)
+    args.attempt = Path(prepared["state_path"])
+    accepted = accept(args)
+    if not args.publish:
+        return accepted
+    return publish(args)
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.set_defaults(root=ROOT, work_root=DEFAULT_WORK_ROOT)
@@ -774,7 +796,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare_cmd = sub.add_parser("prepare")
     prepare_cmd.add_argument("--root", type=Path, default=ROOT)
     prepare_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
-    prepare_cmd.add_argument("--branch", default="codex/les-0.30.0-bootstrap-updater")
+    prepare_cmd.add_argument("--branch", default="")
     prepare_cmd.add_argument("--target", default="HEAD")
     prepare_cmd.add_argument("--base", default="")
     prepare_cmd.add_argument("--host", default="legion")
@@ -797,6 +819,24 @@ def _parser() -> argparse.ArgumentParser:
     publish_cmd.add_argument("--root", type=Path, default=ROOT)
     publish_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
     publish_cmd.add_argument("--attempt", type=Path)
+    run_cmd = sub.add_parser("run")
+    run_cmd.add_argument("--root", type=Path, default=ROOT)
+    run_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
+    run_cmd.add_argument("--branch", default="")
+    run_cmd.add_argument("--target", default="HEAD")
+    run_cmd.add_argument("--base", default="")
+    run_cmd.add_argument("--host", default="legion")
+    run_cmd.add_argument("--full-feed", type=Path, default=ROOT / "dist" / "latest.json")
+    run_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
+    run_cmd.add_argument("--smeta-baseline-archive", type=Path)
+    run_cmd.add_argument("--skip-gates", action="store_true")
+    run_cmd.add_argument("--publish", action="store_true")
+    run_cmd.add_argument("--attempt", type=Path)
+    local = os.getenv("LOCALAPPDATA", "")
+    run_cmd.add_argument("--runtime", type=Path, default=Path(local) / "Programs" / "LES" / "runtime")
+    run_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
+    run_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
+    run_cmd.add_argument("--job", type=Path)
     status_cmd = sub.add_parser("status")
     status_cmd.add_argument("--attempt", type=Path, required=True)
     return parser
@@ -810,6 +850,8 @@ def main(argv: list[str] | None = None) -> int:
         result = accept(args)
     elif args.command == "publish":
         result = publish(args)
+    elif args.command == "run":
+        result = run_release(args)
     else:
         result = status(args.attempt)
     print(json.dumps(result, ensure_ascii=False, indent=2))

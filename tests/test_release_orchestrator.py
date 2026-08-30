@@ -360,6 +360,33 @@ def test_published_attempt_resumes_only_independent_postflight(monkeypatch, tmp_
     assert result["stage"] == "postflight_verified"
 
 
+def test_run_release_preserves_prepare_accept_publish_boundaries(monkeypatch, tmp_path):
+    args = _args(tmp_path, publish=True, skip_gates=False)
+    calls = []
+    state_path = tmp_path / "release-state.json"
+    monkeypatch.setattr(
+        release_orchestrator,
+        "prepare",
+        lambda _args: calls.append("prepare") or {"state_path": str(state_path)},
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "accept",
+        lambda _args: calls.append("accept") or {"stage": "accepted"},
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "publish",
+        lambda _args: calls.append("publish") or {"stage": "postflight_verified"},
+    )
+
+    result = release_orchestrator.run_release(args)
+
+    assert calls == ["prepare", "accept", "publish"]
+    assert args.attempt == state_path
+    assert result["stage"] == "postflight_verified"
+
+
 def _attempt_at_stage(tmp_path: Path, stage: str):
     args = _args(tmp_path)
     public = tmp_path / "candidate" / "public"

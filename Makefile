@@ -1,8 +1,9 @@
 # Л.Е.С. (LES_v2) — dev-гейт. Офлайн, без живых сервисов (Qdrant/MLX не нужны).
 # Требует uv. `make verify` — перед объявлением правки готовой.
-.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance test-model-connections-live help
+.PHONY: version-sync architecture-gate verify test test-unit test-smoke test-coverage test-ci test-integration test-release test-release-critical test-architecture test-legacy test-legacy-full test-focused test-rag-core test-mail test-mail-release test-updater test-tauri platform-gate smeta-base smeta-base-source smeta-base-update smoke-active-artifacts smoke-general-native-rrf smoke-smeta-rerank smoke-basic smoke-basic-release public-check ship-check ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smoke ship ship-full release patch-release github-patch-release release-multiplatform build-windows-update-shell prepare-windows-update prepare-mac-update inspect-mac-update apply-mac-update status-mac-update preflight-audit-rag-update prepare-audit-rag prepare-audit-rag-legion inspect-audit-rag-update deploy-audit-rag deploy-audit-rag-mac live-workbook-acceptance test-model-connections-live help
 
 PATCH_RELEASE_ARGS ?=
+RELEASE_ARGS ?=
 GITHUB_PATCH_RELEASE_ARGS ?=
 MULTIPLATFORM_RELEASE_ARGS ?=
 AUDIT_RAG_UPDATE_ARGS ?=
@@ -70,9 +71,7 @@ help:
 	@echo "make deploy-runtime — dev→runtime cp-деплой + restart + stamp; только проверенные divergent-файлы через DEPLOY_FORCE_FILES='path ...'"
 	@echo "make ship         — быстрый выкат: ship-check → deploy-runtime → native-RRF smoke → post-deploy-smoke"
 	@echo "make ship-full    — полный выкат версии: ship-full-check → deploy-runtime → native-RRF smoke → post-deploy-smoke"
-	@echo "make patch-release — Windows: gates → Legion build/install/RRF-smoke → artifacts; публикация только PATCH_RELEASE_ARGS='--publish --notes-file ...'"
-	@echo "make github-patch-release — собрать пять лёгких GitHub assets без installer/dependency build"
-	@echo "make release-multiplatform — macOS app/DMG + Legion Windows gates/build + одна атомарная GitHub release"
+	@echo "make release      — единственный публичный выпуск: prepare → Legion install/smoke/rollback/reinstall → accepted draft → postflight"
 	@echo "make prepare-mac-update — собрать малый пакет изменённых runtime-файлов из чистого pushed commit"
 	@echo "make inspect-mac-update — показать локальный манифест и точный размер пакета"
 	@echo "make apply-mac-update — транзакционно установить пакет на Mac, проверить и откатить при ошибке"
@@ -247,6 +246,9 @@ ship-full: ship-full-check deploy-runtime post-deploy-rag-smoke post-deploy-smok
 
 patch-release:
 	uv run python tools/patch_release.py $(PATCH_RELEASE_ARGS)
+
+release:
+	uv run python tools/release_orchestrator.py $(RELEASE_ARGS)
 
 github-patch-release:
 	uv run python tools/github_patch_release.py $(GITHUB_PATCH_RELEASE_ARGS)

@@ -18,6 +18,7 @@ CANONICAL_PATHS = (
     "docs/SOFTWARE_VERSIONS.md",
     "ROADMAP_TO_V1.md",
     "docs/RELEASE_LEDGER.md",
+    "docs/RELEASE_PROCEDURE.md",
     "docs/unified_harness_failure_ledger.md",
     "docs/TEST_INVENTORY.md",
 )
