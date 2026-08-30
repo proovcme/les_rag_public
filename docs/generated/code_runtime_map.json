@@ -12528,7 +12528,20 @@
     },
     {
       "inbound": [],
-      "lines": 144,
+      "lines": 292,
+      "module": "tests.test_release_orchestrator",
+      "outbound": [
+        "tools/release_classification.py",
+        "tools/release_orchestrator.py",
+        "tools/release_receipt.py"
+      ],
+      "path": "tests/test_release_orchestrator.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 159,
       "module": "tests.test_release_receipt",
       "outbound": [
         "tools/release_receipt.py"
@@ -14353,6 +14366,7 @@
         "tools/reindex_datasets_guarded.py",
         "tools/reindex_route_changes_guarded.py",
         "tools/release_classification.py",
+        "tools/release_orchestrator.py",
         "tools/release_receipt.py",
         "tools/reranker_live_probe.py",
         "tools/router_bench.py",
@@ -15334,7 +15348,8 @@
     },
     {
       "inbound": [
-        "tests/test_github_patch_release.py"
+        "tests/test_github_patch_release.py",
+        "tools/release_orchestrator.py"
       ],
       "lines": 443,
       "module": "tools.github_patch_release",
@@ -15730,7 +15745,8 @@
         "tools/internal_dual_deploy.py",
         "tools/internal_update.py",
         "tools/mac_update.py",
-        "tools/multiplatform_release.py"
+        "tools/multiplatform_release.py",
+        "tools/release_orchestrator.py"
       ],
       "lines": 651,
       "module": "tools.patch_release",
@@ -15786,7 +15802,7 @@
         "tests/test_patch_release.py",
         "tests/test_test_profiles.py"
       ],
-      "lines": 350,
+      "lines": 354,
       "module": "tools.platform_release_gate",
       "outbound": [
         "tools/__init__.py"
@@ -16068,7 +16084,9 @@
     {
       "inbound": [
         "tests/test_release_classification.py",
+        "tests/test_release_orchestrator.py",
         "tools/github_patch_release.py",
+        "tools/release_orchestrator.py",
         "tools/vps_patch.py"
       ],
       "lines": 283,
@@ -16082,9 +16100,29 @@
     },
     {
       "inbound": [
-        "tests/test_release_receipt.py"
+        "tests/test_release_orchestrator.py"
       ],
-      "lines": 278,
+      "lines": 577,
+      "module": "tools.release_orchestrator",
+      "outbound": [
+        "tools/__init__.py",
+        "tools/github_patch_release.py",
+        "tools/patch_release.py",
+        "tools/release_classification.py",
+        "tools/release_receipt.py",
+        "tools/windows_release_acceptance.py"
+      ],
+      "path": "tools/release_orchestrator.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "tests/test_release_orchestrator.py",
+        "tests/test_release_receipt.py",
+        "tools/release_orchestrator.py"
+      ],
+      "lines": 289,
       "module": "tools.release_receipt",
       "outbound": [
         "tools/__init__.py"
@@ -16699,7 +16737,8 @@
     },
     {
       "inbound": [
-        "tests/test_windows_release_acceptance.py"
+        "tests/test_windows_release_acceptance.py",
+        "tools/release_orchestrator.py"
       ],
       "lines": 410,
       "module": "tools.windows_release_acceptance",
@@ -19262,9 +19301,9 @@
     "product_reachable": 363,
     "registered_api_routes": 414,
     "runtime_support": 8,
-    "test_or_tool_only": 631,
-    "tracked_python_files": 1004,
-    "tracked_python_lines": 301562
+    "test_or_tool_only": 633,
+    "tracked_python_files": 1006,
+    "tracked_python_lines": 302461
   },
   "warnings": []
 }

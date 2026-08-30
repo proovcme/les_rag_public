@@ -29,8 +29,10 @@ dev implementation:       transactional delete bridge for cumulative Windows pat
 > exact identity, сохранение доступных capabilities и при доступном Qdrant —
 > реальный временный `dense + qdrant_sparse → native RRF`; затем откатывает,
 > проверяет восстановленную версию и повторно ставит те же candidate bytes.
-> Единый prepare/accept/publish orchestrator ещё не завершён; runtime Legion
-> не менялся.
+> Единый orchestrator уже выполняет clean/pushed prepare-gates, автоматическую
+> soft/full классификацию, immutable candidate build и локальную/remote Legion
+> acceptance без пересборки. Публикация по accepted receipt и postflight ещё не
+> завершены; runtime Legion не менялся.
 
 > **0.30.7 / build 647 corrected soft-patch publication (release candidate):**
 > сохраняет transactional delete bridge из 0.30.6 и добавляет обязательный

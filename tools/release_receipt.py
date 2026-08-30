@@ -215,6 +215,17 @@ def fail_attempt(
     return payload
 
 
+def mark_non_publishable(path: Path, *, reason: str) -> dict[str, Any]:
+    """Permanently mark a development attempt as ineligible for publication."""
+    payload = load_attempt(path)
+    if payload.get("stage") in {"draft_uploaded", "draft_verified", "published", "postflight_verified"}:
+        raise RuntimeError("published release attempt cannot be made non-publishable")
+    payload["publishable"] = False
+    payload["non_publishable_reason"] = str(reason)
+    _atomic_json(Path(path), payload)
+    return payload
+
+
 def verify_binding(
     attempt: dict[str, Any], *, commit: str, assets: Sequence[Path]
 ) -> None:

@@ -142,3 +142,18 @@ def test_public_receipt_is_deterministic_for_unchanged_attempt(tmp_path):
     second = release_receipt.write_public_receipt(state, tmp_path / "second.json")
 
     assert first.read_bytes() == second.read_bytes()
+
+
+def test_non_publishable_mark_is_permanent_for_development_attempt(tmp_path):
+    state = _attempt(tmp_path)
+    marked = release_receipt.mark_non_publishable(
+        state, reason="prepare gates were skipped"
+    )
+
+    assert marked["publishable"] is False
+    assert marked["non_publishable_reason"] == "prepare gates were skipped"
+    _accept(state)
+    with pytest.raises(RuntimeError, match="accepted release attempt required"):
+        release_receipt.write_public_receipt(
+            state, tmp_path / "release-receipt.json"
+        )
