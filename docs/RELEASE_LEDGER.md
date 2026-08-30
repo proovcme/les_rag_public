@@ -7,18 +7,28 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.1
-номер сборки:              641
-версия Tauri/NSIS:         5.1.641
-ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
-dev implementation:       model-owned evidence-first RAG + readable WCAG typography + accepted soft updater
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 640 / commit 46d5eeab runtime acceptance
+версия продукта (SemVer):  0.30.2
+номер сборки:              642
+версия Tauri/NSIS:         5.1.642
+ветка разработки:          codex/docs-roadmap-audit от публичной 0.30.1
+dev implementation:       documentation contract + product roadmap reset + indexed archive
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-следующий выпуск:          0.30.1 lightweight GitHub patch; exact public URL фиксируется до immutable publication
-рантайм /api/version:      Legion 0.30.1 / build 640 / desktop 5.1.640 / commit 46d5eeab; soft update accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
+следующий выпуск:          не назначен; 0.30.2 — только dev candidate, не опубликован и не задеплоен
+рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
 
-> **0.30.1 / build 641 model-owned evidence-first RAG + readable UI + corrected soft updater (release candidate):** обычный
+> **0.30.2 / build 642 documentation reset (dev candidate, not deployed):** корневой
+> roadmap сокращён с 1920 до менее 300 строк и описывает продукт для ГИП/РП,
+> четыре направления до v1 и пользовательскую приёмку. Каноническая цепочка,
+> локальные Markdown-ссылки и размер roadmap защищены
+> `tools/documentation_contract.py` в `make verify/test`. Доказанно исторические
+> обзоры, планы, аудиты и release notes перенесены через `git mv` в индексированный
+> `docs/archive/`; документы с живыми code/module backlinks оставлены в явной
+> очереди ручного решения. Runtime/product behavior не менялся.
+
+> **0.30.1 / build 641 model-owned evidence-first RAG + readable UI + corrected soft updater (published):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -60,6 +70,10 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 > `proxy/services/update_service.py`; задача завершилась один раз с result `0`,
 > `NextRunTime = null`, `/api/version` показал aligned `0.30.1 / 640`,
 > `user_data_untouched = true`.
+> Build 641 добавил совместимость publisher с реально опубликованными полями
+> `target_commit`/`build_commit`, прошёл повторный soft apply на Legion и опубликован
+> как immutable GitHub Release `v0.30.1` с пятью canonical assets. Legion сообщает
+> exact `0.30.1 / 641 / 2a02084d`, public feed — «Обновление уже установлено».
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
 > authoritative для обычного чата: вызывается любая выбранная answer model без
