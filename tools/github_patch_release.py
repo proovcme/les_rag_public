@@ -170,12 +170,20 @@ def _read_full_feed(path: Path) -> dict[str, Any]:
         payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, TypeError) as exc:
         raise ValueError(f"full release feed is unreadable: {path}") from exc
+    full_commit = next(
+        (
+            str(payload.get(field) or "")
+            for field in ("commit", "target_commit", "build_commit")
+            if re.fullmatch(r"[0-9a-f]{40}", str(payload.get(field) or ""))
+        ),
+        "",
+    )
     if (
         payload.get("schema") != "les.update.v1"
         or re.fullmatch(r"\d+\.\d+\.\d+", str(payload.get("version") or "")) is None
         or int(payload.get("build_number") or 0) <= 0
         or re.fullmatch(r"\d+\.\d+\.\d+", str(payload.get("desktop_version") or "")) is None
-        or re.fullmatch(r"[0-9a-f]{40}", str(payload.get("commit") or "")) is None
+        or not full_commit
     ):
         raise ValueError("legacy latest.json does not identify a complete full release")
     return payload

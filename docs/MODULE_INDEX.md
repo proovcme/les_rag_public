@@ -989,7 +989,7 @@ Qdrant payload-индексы создаются best-effort после гото
 
 | Суб-модуль | Назначение | Точки входа | Док | Статус |
 |---|---|---|---|---|
-| ops/github-update-channel | GitHub Releases — default для full и lightweight patch releases; immutable latest feed + tag-specific hashed asset, deterministic patch/full classifier, isolated apply/rollback (включая патчи только существующих файлов); Совушка проверяет feed при старте и раз в сутки | `tools/{release_classification,github_patch_release}.py`; `vps_patch.py`, `vps_patch_apply.py`, `update_service.py`; `sovushka/components/header.py` | [design](superpowers/specs/2026-08-25-github-release-update-channel-design.md) | ✅ |
+| ops/github-update-channel | GitHub Releases — default для full и lightweight patch releases; immutable latest feed + tag-specific hashed asset, deterministic patch/full classifier, published full-feed commit aliases, isolated apply/rollback (включая патчи только существующих файлов); Совушка проверяет feed при старте и раз в сутки | `tools/{release_classification,github_patch_release}.py`; `vps_patch.py`, `vps_patch_apply.py`, `update_service.py`; `sovushka/components/header.py` | [design](superpowers/specs/2026-08-25-github-release-update-channel-design.md) | ✅ |
 > `ops/vps-patch` (0.27.13): `tools/vps_patch.py update-local` сам читает exact deployed commit,
 > формирует допустимый runtime diff и выполняет локальное обновление через Limited Scheduled Task
 > без SSH, UAC и ручного списка файлов.

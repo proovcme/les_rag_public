@@ -16,6 +16,21 @@ def _commit(repo: Path, message: str) -> str:
     return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
 
 
+@pytest.mark.parametrize("commit_field", ["commit", "target_commit", "build_commit"])
+def test_full_installer_feed_accepts_published_commit_aliases(tmp_path, commit_field):
+    feed = tmp_path / "latest.json"
+    payload = {
+        "schema": "les.update.v1",
+        "version": "0.30.0",
+        "build_number": 634,
+        "desktop_version": "5.1.634",
+        commit_field: "a" * 40,
+    }
+    feed.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert github_patch_release._read_full_feed(feed) == payload
+
+
 def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

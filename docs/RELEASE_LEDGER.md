@@ -8,8 +8,8 @@
 
 ```
 версия продукта (SemVer):  0.30.1
-номер сборки:              640
-версия Tauri/NSIS:         5.1.640
+номер сборки:              641
+версия Tauri/NSIS:         5.1.641
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
 dev implementation:       model-owned evidence-first RAG + readable WCAG typography + accepted soft updater
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 640 / commit 46d5eeab runtime acceptance
@@ -18,7 +18,7 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 рантайм /api/version:      Legion 0.30.1 / build 640 / desktop 5.1.640 / commit 46d5eeab; soft update accepted
 ```
 
-> **0.30.1 / build 640 model-owned evidence-first RAG + readable UI + corrected soft updater (Windows accepted):** обычный
+> **0.30.1 / build 641 model-owned evidence-first RAG + readable UI + corrected soft updater (release candidate):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
