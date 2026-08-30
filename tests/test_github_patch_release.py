@@ -169,6 +169,12 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
         commands.append(list(command))
         if command[:3] == ["gh", "release", "view"]:
             return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        if command[:3] == ["gh", "api", f"repos/{github_patch_release.REPOSITORY}/git/ref/heads/main"]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"object": {"sha": "c" * 40}}),
+                stderr="",
+            )
         if command[:2] == ["gh", "api"]:
             return SimpleNamespace(returncode=0, stdout='{"enabled":true}', stderr="")
         return SimpleNamespace(returncode=0, stdout="", stderr="")
@@ -186,11 +192,61 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
     upload = next(command for command in commands if command[:3] == ["gh", "release", "upload"])
     publish = next(command for command in commands if command[:3] == ["gh", "release", "edit"])
     assert "--draft" in create
+    assert create[create.index("--target") + 1] == "c" * 40
     assert "--notes-file" in create
     assert "--clobber" not in upload
     assert {Path(value).name for value in upload if Path(value).name in github_patch_release.ASSET_NAMES} == set(github_patch_release.ASSET_NAMES)
     assert "--draft=false" in publish
     assert commands.index(create) < commands.index(upload) < commands.index(publish)
+
+
+def test_publisher_refuses_public_main_for_a_different_commit(tmp_path, monkeypatch):
+    assets = []
+    for name in github_patch_release.ASSET_NAMES:
+        path = tmp_path / name
+        path.write_bytes(b"verified")
+        assets.append(path)
+    (tmp_path / "les-update.json").write_text(
+        json.dumps({
+            "schema": github_patch_release.GITHUB_UPDATE_FEED_SCHEMA,
+            "repository": github_patch_release.REPOSITORY,
+            "tag": "v0.28.2",
+            "target_commit": "c" * 40,
+        }),
+        encoding="utf-8",
+    )
+    notes = tmp_path / "notes.md"
+    notes.write_text("notes", encoding="utf-8")
+    monkeypatch.setattr(
+        github_patch_release,
+        "_git",
+        lambda *args: {
+            ("status", "--porcelain"): "",
+            ("rev-parse", "HEAD"): "c" * 40,
+            ("rev-parse", "@{u}"): "c" * 40,
+            ("tag", "--list", "v0.28.2"): "",
+        }[args],
+    )
+    calls = []
+
+    def run(command, **_kwargs):
+        calls.append(list(command))
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps({"object": {"sha": "d" * 40}}),
+            stderr="",
+        )
+
+    monkeypatch.setattr(github_patch_release, "_run", run)
+
+    with pytest.raises(RuntimeError, match="public main does not match HEAD"):
+        github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
+    assert calls == [
+        ["gh", "release", "view", "v0.28.2", "--repo", github_patch_release.REPOSITORY],
+        ["gh", "api", f"repos/{github_patch_release.REPOSITORY}/git/ref/heads/main"],
+    ]
 
 
 def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch):

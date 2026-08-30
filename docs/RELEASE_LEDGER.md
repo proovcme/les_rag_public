@@ -7,17 +7,25 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.6
-номер сборки:              646
-версия Tauri/NSIS:         5.1.646
+версия продукта (SemVer):  0.30.7
+номер сборки:              647
+версия Tauri/NSIS:         5.1.647
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
 dev implementation:       transactional delete bridge for cumulative Windows patches
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          не назначен; 0.30.6 — только dev candidate, не опубликован и не задеплоен
+следующий выпуск:          0.30.7 — corrected soft-patch candidate; не задеплоен
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
+
+> **0.30.7 / build 647 corrected soft-patch publication (release candidate):**
+> сохраняет transactional delete bridge из 0.30.6 и добавляет обязательный
+> provenance-gate в GitHub publisher: публичный `main` должен точно совпадать с
+> локальным и upstream HEAD, а release tag создаётся с явным `--target <SHA>`.
+> Это исключает повторение рассинхронизации, обнаруженной у immutable `v0.30.6`.
+> `v0.30.6` не предназначен для установки и заменяется cumulative-патчем
+> `v0.30.7`; установленный Legion не менялся.
 
 > **0.30.6 / build 646 transactional delete bridge (dev candidate, not deployed):**
 > lightweight GitHub package остаётся обратно совместимым
@@ -35,7 +43,9 @@ dev implementation:       transactional delete bridge for cumulative Windows pat
 > Recovery после process loss восстанавливает исходное наличие удалённых файлов.
 > Isolated GitHub gate отдельно доказывает target absence и
 > byte-exact rollback. User data, RAG/model behavior, UI и
-> `proxy/smeta_core/**` не менялись. Выпуск не опубликован и не применён к Legion.
+> `proxy/smeta_core/**` не менялись. Immutable GitHub release был создан с
+> правильными assets, но тег привязался к старому public-main commit; выпуск
+> признан непригодным для установки и заменён 0.30.7. К Legion не применялся.
 
 > **0.30.5 / build 645 first proven dead-code cleanup (dev candidate, not deployed):**
 > удалены 15 Python-файлов (2615 строк, включая тест удалённой Mermaid-страницы)

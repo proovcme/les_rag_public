@@ -109,6 +109,17 @@ def publish_github_patch_release(
     existing = _run(["gh", "release", "view", tag, "--repo", REPOSITORY])
     if existing.returncode == 0:
         raise RuntimeError(f"GitHub release already exists: {tag}")
+    public_main = _run(
+        ["gh", "api", f"repos/{REPOSITORY}/git/ref/heads/main"]
+    )
+    try:
+        public_main_commit = (
+            json.loads(public_main.stdout).get("object", {}).get("sha", "")
+        )
+    except (ValueError, TypeError, AttributeError):
+        public_main_commit = ""
+    if public_main.returncode != 0 or public_main_commit != head:
+        raise RuntimeError("public main does not match HEAD")
     immutable = _run(
         ["gh", "api", f"repos/{REPOSITORY}/immutable-releases"]
     )
@@ -130,6 +141,8 @@ def publish_github_patch_release(
             "--repo",
             REPOSITORY,
             "--draft",
+            "--target",
+            head,
             "--notes-file",
             str(notes),
         ]
