@@ -831,7 +831,6 @@
         "proxy/routers/kac.py",
         "proxy/routers/lsr.py",
         "proxy/routers/mail.py",
-        "proxy/routers/normcontrol.py",
         "proxy/routers/notebooks.py",
         "proxy/routers/runtime.py",
         "proxy/services/bor_service.py",
@@ -991,7 +990,6 @@
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
-        "proxy/routers/normcontrol.py",
         "proxy/routers/notebooks.py",
         "proxy/routers/ontology.py",
         "proxy/routers/prices.py",
@@ -1262,7 +1260,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 727,
+      "lines": 725,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1300,7 +1298,6 @@
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
-        "proxy/routers/normcontrol.py",
         "proxy/routers/notebooks.py",
         "proxy/routers/ontology.py",
         "proxy/routers/prices.py",
@@ -1563,7 +1560,6 @@
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
-        "proxy/routers/normcontrol.py",
         "proxy/routers/notebooks.py",
         "proxy/routers/ontology.py",
         "proxy/routers/prices.py",
@@ -1909,7 +1905,7 @@
         "proxy/app.py",
         "tests/test_doc_review_api.py"
       ],
-      "lines": 172,
+      "lines": 173,
       "module": "proxy.routers.doc_review",
       "outbound": [
         "backend/runtime_paths.py",
@@ -2236,23 +2232,6 @@
         "proxy/services/model_secret_service.py"
       ],
       "path": "proxy/routers/model_connections.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 49,
-      "module": "proxy.routers.normcontrol",
-      "outbound": [
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/normcontrol_service.py"
-      ],
-      "path": "proxy/routers/normcontrol.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -2623,7 +2602,6 @@
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
-        "proxy/routers/normcontrol.py",
         "proxy/routers/notebooks.py",
         "proxy/routers/ontology.py",
         "proxy/routers/prices.py",
@@ -5318,7 +5296,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/normcontrol.py",
         "proxy/services/doc_review_service.py",
         "proxy/services/document_set_model.py",
         "proxy/services/drawing_manifest_service.py",
@@ -5620,6 +5597,7 @@
         "proxy/routers/chat.py",
         "tests/test_answer_contract_service.py",
         "tests/test_chat_profile_runtime.py",
+        "tests/test_code_runtime_map.py",
         "tests/test_profile_resolver.py",
         "tests/test_smoke_offline.py",
         "tests/test_unit_core_business.py"
@@ -9475,9 +9453,10 @@
     },
     {
       "inbound": [],
-      "lines": 179,
+      "lines": 197,
       "module": "tests.test_code_runtime_map",
       "outbound": [
+        "proxy/services/profile_resolver.py",
         "tools/code_runtime_map.py"
       ],
       "path": "tests/test_code_runtime_map.py",
@@ -17488,18 +17467,6 @@
       "source": "proxy/routers/model_connections.py"
     },
     {
-      "handler": "normcontrol_download",
-      "method": "GET",
-      "path": "/api/normcontrol/{dataset_id}/download",
-      "source": "proxy/routers/normcontrol.py"
-    },
-    {
-      "handler": "normcontrol_run",
-      "method": "POST",
-      "path": "/api/normcontrol/{dataset_id}/run",
-      "source": "proxy/routers/normcontrol.py"
-    },
-    {
       "handler": "warmup_notebooks",
       "method": "POST",
       "path": "/api/notebooks/warmup",
@@ -18788,12 +18755,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 355,
-    "registered_api_routes": 396,
+    "product_reachable": 354,
+    "registered_api_routes": 394,
     "runtime_support": 8,
     "test_or_tool_only": 616,
-    "tracked_python_files": 980,
-    "tracked_python_lines": 299523
+    "tracked_python_files": 979,
+    "tracked_python_lines": 299491
   },
   "warnings": []
 }

@@ -18,7 +18,8 @@
 ## Где в коде
 
 - Сервис: `proxy/services/normcontrol_service.py` (`check_cipher_consistency` и др.)
-- Роутер: `proxy/routers/normcontrol.py` (`/api/normcontrol`)
+- Публичный workflow: `proxy/routers/doc_review.py` (`/api/doc-review`); legacy
+  `/api/normcontrol` удалён в 0.30.18, отдельного параллельного API нет.
 - Тесты: `tests/test_normcontrol_service.py`
 - Переиспользуется верхним слоем: `document_set_model.py` (модель комплекта) и `doc_review_service.py`
   (NK-03/NK-04 как computed-evidence в RAG-led review).

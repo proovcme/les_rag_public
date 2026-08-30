@@ -12,6 +12,8 @@ composition, DOCX/PDF renderer, checklist importer) — план. **Первый
 перед сметами и прочими расширениями**.
 Это не замена текущему `normcontrol_service.py`, а следующий вертикальный слой поверх него.
 Архитектурно это **RAG-led SPDS review**, а не чистая экспертная система.
+Legacy-router `proxy/routers/normcontrol.py` удалён в 0.30.18; formal checker
+сохранён как внутренний evidence provider активного `/api/doc-review/*`.
 
 Дополнение по `/Users/ovc/Documents/les final build spec.pdf`:
 
@@ -63,7 +65,7 @@ NK-04 ведомость рабочих чертежей ↔ фактическ�
 
 ```text
 proxy/services/normcontrol_service.py
-proxy/routers/normcontrol.py
+proxy/routers/doc_review.py
 tests/test_normcontrol_service.py
 docs/API.md
 docs/LES3_PLAN.md W13.1

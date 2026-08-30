@@ -48,7 +48,7 @@ class Profile:
 PROFILES: dict[str, Profile] = {
     "engineer": Profile(
         id="engineer", executor="router", role="инженер",
-        tools=("run_normcontrol", "retrieval", "citation_check"), grounded=True,
+        tools=("doc_review", "retrieval", "citation_check"), grounded=True,
         validation_policy="require_citations", escalation_policy="on_tool_failure",
         failure_policy="say_no_data", output_contract="findings_table_v1",
     ),

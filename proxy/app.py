@@ -42,7 +42,6 @@ from proxy.routers.forms import router as forms_router
 from proxy.routers.files import router as files_router
 from proxy.routers.field import router as field_router
 from proxy.routers.les_md import router as les_md_router
-from proxy.routers.normcontrol import router as normcontrol_router
 from proxy.routers.notebooks import router as notebooks_router
 from proxy.routers.profiles import router as profiles_router
 from proxy.routers.model_connections import router as model_connections_router
@@ -692,7 +691,6 @@ def create_app():
     fastapi_app.include_router(notes_router)
     fastapi_app.include_router(field_router)
     fastapi_app.include_router(les_md_router)
-    fastapi_app.include_router(normcontrol_router)
     fastapi_app.include_router(notebooks_router)
     fastapi_app.include_router(profiles_router)
     fastapi_app.include_router(model_connections_router)

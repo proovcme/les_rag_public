@@ -70,7 +70,8 @@ dataset_ids?, dataset_filter?, output_directive?, validation_enabled?}`. Стр�
    дальше; иначе — детерминированный ответ сразу.
 2. **Явный режим** (`mode`, форс минуя router/RAG):
    - `smeta` → `object_estimate` напрямую (regex-парс → шаблон → формулы → ГЭСН → ЛСР). **0 LLM.**
-   - `review` → `run_normcontrol` (форматы/шифры/комплектность PDF). **0 LLM.**
+   - `review` / `doc_review` → активный model-first `doc_review`: formal NK-checks,
+     rulepack и evidence; финальный вывод формулирует модель, решение остаётся за инженером.
    - `kp` → заглушка (генерация КП — задел). **0 LLM.**
    - `rag` → форс заземлённого RAG (гейтит router+каскад).
    - `free` → прямой LLM **без** ретрива + плашка «вольно».

@@ -5,7 +5,8 @@
   GET  /api/doc-review/{dataset_id}/download — отчёт xlsx|json|html
 
 Тонкий слой над doc_review_service (вся логика и инвариант «движок не финализирует» — там).
-Контракт нормоконтроля v1 (/api/normcontrol) НЕ трогается — это следующий вертикальный слой.
+Legacy `/api/normcontrol` retired в 0.30.18; формальные NK-проверки переиспользуются
+внутри `doc_review_service`, без параллельного публичного workflow.
 Имена файлов берутся из MetaDB (работает и для in-place датасетов), ведомость — из Parquet.
 """
 

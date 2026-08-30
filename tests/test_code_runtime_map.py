@@ -177,3 +177,21 @@ def test_unintegrated_diff_is_retired_without_removing_cad_bim_inventory(
     assert "proxy/routers/diff.py" not in modules
     assert "proxy/services/diff_service.py" not in modules
     assert not [path for path in paths if path.startswith("/api/diff")]
+
+
+def test_legacy_normcontrol_api_is_retired_but_doc_review_route_stays_active(
+    inventory: dict,
+):
+    paths = {item["path"] for item in inventory["routes"]}
+
+    assert "/api/doc-review/{dataset_id}/run" in paths
+    assert not [path for path in paths if path.startswith("/api/normcontrol")]
+
+
+def test_engineer_profile_exposes_the_executable_doc_review_tool():
+    from proxy.services.profile_resolver import PROFILES
+
+    engineer_tools = set(PROFILES["engineer"].tools)
+
+    assert "doc_review" in engineer_tools
+    assert "run_normcontrol" not in engineer_tools

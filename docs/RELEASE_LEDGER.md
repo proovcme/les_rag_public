@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.17
-номер сборки:              657
-версия Tauri/NSIS:         5.1.657
+версия продукта (SemVer):  0.30.18
+номер сборки:              658
+версия Tauri/NSIS:         5.1.658
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       unintegrated diff-island cleanup
+dev implementation:       legacy normcontrol API cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.17 — diff-island cleanup; не задеплоен
+следующий выпуск:          0.30.18 — legacy normcontrol API cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.18 / build 658 legacy normcontrol API cleanup (dev candidate):**
+> удалён неиспользуемый `proxy/routers/normcontrol.py` и два
+> `/api/normcontrol/*` route. Формальный `normcontrol_service`, его 13 behavior
+> tests и активный `/api/doc-review/*` сохранены. `ProfileResolver` теперь
+> разрешает реально исполняемый `doc_review` вместо фантомного `run_normcontrol`.
+> Данные, отчёты, review decisions, сметы, RAG, Qdrant и установленный Legion не
+> менялись. Generated map: 979 tracked Python-файлов / 299491 строк, 354 product-reachable,
+> 8 runtime-support, 616 test/tool-only, 1 dormant, 394 API routes, 0 warnings.
 
 > **0.30.17 / build 657 unintegrated diff-island cleanup (dev candidate):**
 > удалён W12.1 «Дифф CAD/BIM и текстов»: три `/api/diff/*` route,
