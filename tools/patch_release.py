@@ -19,7 +19,9 @@ import time
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
+
+from tools import release_receipt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -506,13 +508,18 @@ def publish(
     contract: dict[str, Any],
     *,
     extra_assets: Iterable[Path] = (),
-) -> None:
+    attempt_path: Path,
+    stage_callback: Callable[[str, dict[str, Any]], None] | None = None,
+    dist: Path | None = None,
+    resume_stage: str = "accepted",
+) -> dict[str, Any]:
+    release_dir = Path(dist).resolve() if dist is not None else DIST
     version = str(contract["product_version"])
     tag = f"v{version}"
     assets = [
-        DIST / "LES-Setup.exe",
-        DIST / "LES-Setup.exe.sha256",
-        DIST / "latest.json",
+        release_dir / "LES-Setup.exe",
+        release_dir / "LES-Setup.exe.sha256",
+        release_dir / "latest.json",
         *(Path(path).resolve() for path in extra_assets),
     ]
     missing = [str(path) for path in assets if not path.is_file()]
@@ -521,34 +528,113 @@ def publish(
     names = [path.name for path in assets]
     if len(names) != len(set(names)):
         raise RuntimeError("release asset names must be unique")
+    attempt = release_receipt.load_attempt(Path(attempt_path))
+    if (
+        attempt.get("stage") != resume_stage
+        or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
+        or attempt.get("publishable") is not True
+    ):
+        raise RuntimeError("installed acceptance required before GitHub publication")
+    head = output(["git", "rev-parse", "HEAD"])
+    upstream = output(["git", "rev-parse", "@{u}"])
+    if head != upstream or head != attempt.get("target_commit"):
+        raise RuntimeError("accepted target, HEAD, and pushed upstream must be identical")
+    release_receipt.verify_binding(
+        attempt,
+        commit=head,
+        assets=[Path(str(item["path"])) for item in attempt.get("artifacts", [])],
+    )
+    receipt = next((path for path in assets if path.name == "release-receipt.json"), None)
+    if receipt is None:
+        raise RuntimeError("accepted release receipt asset is missing")
+    receipt_payload = json.loads(receipt.read_text(encoding="utf-8-sig"))
+    if (
+        receipt_payload.get("schema") != release_receipt.PUBLIC_SCHEMA
+        or receipt_payload.get("release_id") != attempt.get("release_id")
+        or receipt_payload.get("target_commit") != head
+    ):
+        raise RuntimeError("public release receipt does not match accepted attempt")
+    try:
+        latest = json.loads(
+            (release_dir / "latest.json").read_text(encoding="utf-8-sig")
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError("full release feed is unreadable") from exc
+    receipt_binding = latest.get("acceptance_receipt") or {}
+    if (
+        str(latest.get("target_commit") or latest.get("build_commit") or "") != head
+        or receipt_binding.get("name") != receipt.name
+        or int(receipt_binding.get("bytes") or -1) != receipt.stat().st_size
+        or str(receipt_binding.get("sha256") or "").lower() != sha256(receipt)
+    ):
+        raise RuntimeError("full release feed does not bind accepted target and receipt")
+    public_main_raw = output(
+        ["gh", "api", f"repos/{PUBLIC_REPOSITORY}/git/ref/heads/main"]
+    )
+    public_main = json.loads(public_main_raw).get("object", {}).get("sha", "")
+    if public_main != head:
+        raise RuntimeError("public main does not match accepted target")
+    immutable_raw = output(
+        ["gh", "api", f"repos/{PUBLIC_REPOSITORY}/immutable-releases"]
+    )
+    if json.loads(immutable_raw).get("enabled") is not True:
+        raise RuntimeError("github_release_immutability_required")
     probe = subprocess.run(
-        ["gh", "release", "view", tag, "--repo", PUBLIC_REPOSITORY],
+        ["gh", "release", "view", tag, "--repo", PUBLIC_REPOSITORY, "--json", "isDraft"],
         cwd=ROOT,
         text=True,
         capture_output=True,
     )
-    if probe.returncode == 0:
+    if resume_stage == "accepted" and probe.returncode == 0:
         raise RuntimeError(f"release {tag} already exists")
+    if resume_stage != "accepted":
+        try:
+            existing_draft = probe.returncode == 0 and json.loads(probe.stdout).get("isDraft") is True
+        except (ValueError, TypeError, AttributeError):
+            existing_draft = False
+        if not existing_draft:
+            raise RuntimeError("accepted draft required to resume publication")
+    if resume_stage == "accepted":
+        run(
+            [
+                "gh", "release", "create", tag,
+                "--repo", PUBLIC_REPOSITORY, "--draft", "--target", head,
+                "--title", f"ЛЕС {version}",
+                "--notes-file", str(release_dir / "release-notes.md"),
+            ]
+        )
+        run(
+            [
+                "gh", "release", "upload", tag,
+                *(str(path) for path in assets), "--repo", PUBLIC_REPOSITORY,
+            ]
+        )
+        if stage_callback:
+            stage_callback("draft_uploaded", {"tag": tag, "asset_names": sorted(names)})
+    if resume_stage in {"accepted", "draft_uploaded"}:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp)
+            run(["gh", "release", "download", tag, "--repo", PUBLIC_REPOSITORY, "--dir", str(target)])
+            if sha256(target / "LES-Setup.exe") != sha256(release_dir / "LES-Setup.exe"):
+                raise RuntimeError("published installer differs from verified local artifact")
+            published = json.loads((target / "latest.json").read_text(encoding="utf-8"))
+            if published.get("version") != version:
+                raise RuntimeError("published latest.json has the wrong product version")
+            for asset in assets:
+                if sha256(target / asset.name) != sha256(asset):
+                    raise RuntimeError(f"published {asset.name} differs from verified local artifact")
+        if stage_callback:
+            stage_callback("draft_verified", {"tag": tag, "assets_verified": True})
     run(
         [
-            "gh", "release", "create", tag,
-            *(str(path) for path in assets),
+            "gh", "release", "edit", tag,
             "--repo", PUBLIC_REPOSITORY,
-            "--title", f"ЛЕС {version}",
-            "--notes-file", str(DIST / "release-notes.md"),
+            "--draft=false",
         ]
     )
-    with tempfile.TemporaryDirectory() as tmp:
-        target = Path(tmp)
-        run(["gh", "release", "download", tag, "--repo", PUBLIC_REPOSITORY, "--dir", str(target)])
-        if sha256(target / "LES-Setup.exe") != sha256(DIST / "LES-Setup.exe"):
-            raise RuntimeError("published installer differs from verified local artifact")
-        published = json.loads((target / "latest.json").read_text(encoding="utf-8"))
-        if published.get("version") != version:
-            raise RuntimeError("published latest.json has the wrong product version")
-        for asset in assets:
-            if sha256(target / asset.name) != sha256(asset):
-                raise RuntimeError(f"published {asset.name} differs from verified local artifact")
+    if stage_callback:
+        stage_callback("published", {"tag": tag, "published": True})
+    return {"published": True, "tag": tag, "assets": [str(path) for path in assets]}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -570,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
         help="reuse an already verified LES-smeta-baseline.zip",
     )
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument("--attempt", type=Path)
     parser.add_argument(
         "--extra-asset",
         action="append",
@@ -589,6 +676,8 @@ def main(argv: list[str] | None = None) -> int:
         raise RuntimeError("choose either --smeta-baseline-root or --smeta-baseline-archive")
     if args.publish and args.skip_gates:
         raise RuntimeError("publishing cannot skip local gates")
+    if args.publish and args.attempt is None:
+        raise RuntimeError("publishing requires an accepted --attempt receipt")
     require_tools(("git", "uv", "make", "ssh", "scp", *( ("gh",) if args.publish else () )))
     contract = load_contract()
     commit = require_clean_pushed_branch(args.branch)
@@ -604,7 +693,11 @@ def main(argv: list[str] | None = None) -> int:
             "Исправительное обновление ЛЕС. Подробности зафиксированы в журнале выпуска."
         )
         create_release_files(contract, args.resume_verified_commit, notes)
-        publish(contract, extra_assets=args.extra_asset)
+        publish(
+            contract,
+            extra_assets=args.extra_asset,
+            attempt_path=args.attempt,
+        )
         print(json.dumps({"ok": True, "published": True, "resumed": True, **summary}, ensure_ascii=False, indent=2))
         return 0
     from tools.smeta_release_baseline import create_archive, verify_archive
@@ -638,7 +731,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     create_release_files(contract, commit, notes)
     if args.publish:
-        publish(contract, extra_assets=args.extra_asset)
+        publish(
+            contract,
+            extra_assets=args.extra_asset,
+            attempt_path=args.attempt,
+        )
     print(json.dumps({"ok": True, "published": args.publish, **summary}, ensure_ascii=False, indent=2))
     return 0
 

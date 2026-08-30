@@ -7,7 +7,39 @@ from types import SimpleNamespace
 
 import pytest
 
-from tools import github_patch_release, vps_patch
+from tools import github_patch_release, release_receipt, vps_patch
+
+
+def _accepted_attempt(tmp_path: Path, candidate: Path, target: str) -> tuple[Path, Path]:
+    attempt = release_receipt.create_attempt(
+        root=tmp_path / "attempts",
+        release_class="patch",
+        product_version="0.28.2",
+        build_number=589,
+        target_commit=target,
+        base_commits=["a" * 40],
+        host="legion",
+        assets=[candidate],
+    )
+    current = "planned"
+    for stage in release_receipt.STAGES[1 : release_receipt.STAGES.index("accepted") + 1]:
+        release_receipt.transition(
+            attempt, expected=current, target=stage, evidence={"ok": True}
+        )
+        current = stage
+    receipt = release_receipt.write_public_receipt(
+        attempt, tmp_path / "release-receipt.json"
+    )
+    feed_path = tmp_path / "les-update.json"
+    if feed_path.is_file():
+        feed = json.loads(feed_path.read_text(encoding="utf-8"))
+        feed["acceptance_receipt"] = {
+            "name": receipt.name,
+            "bytes": receipt.stat().st_size,
+            "sha256": vps_patch.sha256_file(receipt),
+        }
+        feed_path.write_text(json.dumps(feed), encoding="utf-8")
+    return attempt, receipt
 
 
 def _commit(repo: Path, message: str) -> str:
@@ -152,6 +184,10 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
     )
     notes = tmp_path / "notes.md"
     notes.write_text("release notes", encoding="utf-8")
+    attempt, receipt = _accepted_attempt(
+        tmp_path, tmp_path / "les-patch.zip", "c" * 40
+    )
+    assets.append(receipt)
     commands: list[list[str]] = []
 
     monkeypatch.setattr(
@@ -185,7 +221,7 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
     )
 
     github_patch_release.publish_github_patch_release(
-        "v0.28.2", assets, notes
+        "v0.28.2", assets, notes, attempt_path=attempt
     )
 
     create = next(command for command in commands if command[:3] == ["gh", "release", "create"])
@@ -195,7 +231,7 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
     assert create[create.index("--target") + 1] == "c" * 40
     assert "--notes-file" in create
     assert "--clobber" not in upload
-    assert {Path(value).name for value in upload if Path(value).name in github_patch_release.ASSET_NAMES} == set(github_patch_release.ASSET_NAMES)
+    assert {Path(value).name for value in upload if Path(value).name in github_patch_release.PUBLISHED_ASSET_NAMES} == set(github_patch_release.PUBLISHED_ASSET_NAMES)
     assert "--draft=false" in publish
     assert commands.index(create) < commands.index(upload) < commands.index(publish)
 
@@ -217,6 +253,10 @@ def test_publisher_refuses_public_main_for_a_different_commit(tmp_path, monkeypa
     )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
+    attempt, receipt = _accepted_attempt(
+        tmp_path, tmp_path / "les-patch.zip", "c" * 40
+    )
+    assets.append(receipt)
     monkeypatch.setattr(
         github_patch_release,
         "_git",
@@ -242,9 +282,14 @@ def test_publisher_refuses_public_main_for_a_different_commit(tmp_path, monkeypa
     monkeypatch.setattr(github_patch_release, "_run", run)
 
     with pytest.raises(RuntimeError, match="public main does not match HEAD"):
-        github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
+        github_patch_release.publish_github_patch_release(
+            "v0.28.2", assets, notes, attempt_path=attempt
+        )
     assert calls == [
-        ["gh", "release", "view", "v0.28.2", "--repo", github_patch_release.REPOSITORY],
+        [
+            "gh", "release", "view", "v0.28.2", "--repo",
+            github_patch_release.REPOSITORY, "--json", "isDraft",
+        ],
         ["gh", "api", f"repos/{github_patch_release.REPOSITORY}/git/ref/heads/main"],
     ]
 
@@ -266,6 +311,10 @@ def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch)
     )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
+    attempt, receipt = _accepted_attempt(
+        tmp_path, tmp_path / "les-patch.zip", "c" * 40
+    )
+    assets.append(receipt)
     monkeypatch.setattr(
         github_patch_release,
         "_git",
@@ -280,7 +329,9 @@ def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch)
     monkeypatch.setattr(github_patch_release, "_run", run)
 
     with pytest.raises(RuntimeError, match="already exists"):
-        github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
+        github_patch_release.publish_github_patch_release(
+            "v0.28.2", assets, notes, attempt_path=attempt
+        )
     assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
 
 
@@ -301,6 +352,10 @@ def test_publisher_refuses_feed_for_a_different_commit_before_github_calls(tmp_p
     )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
+    attempt, receipt = _accepted_attempt(
+        tmp_path, tmp_path / "les-patch.zip", "c" * 40
+    )
+    assets.append(receipt)
     monkeypatch.setattr(
         github_patch_release,
         "_git",
@@ -314,5 +369,84 @@ def test_publisher_refuses_feed_for_a_different_commit_before_github_calls(tmp_p
     monkeypatch.setattr(github_patch_release, "_run", lambda command, **_kwargs: calls.append(command))
 
     with pytest.raises(RuntimeError, match="feed target commit does not match HEAD"):
-        github_patch_release.publish_github_patch_release("v0.28.2", assets, notes)
+        github_patch_release.publish_github_patch_release(
+            "v0.28.2", assets, notes, attempt_path=attempt
+        )
     assert calls == []
+
+
+def test_publisher_resumes_verified_draft_without_recreating_release(tmp_path, monkeypatch):
+    assets = []
+    for name in github_patch_release.ASSET_NAMES:
+        path = tmp_path / name
+        path.write_bytes(b"verified")
+        assets.append(path)
+    (tmp_path / "les-update.json").write_text(
+        json.dumps(
+            {
+                "schema": github_patch_release.GITHUB_UPDATE_FEED_SCHEMA,
+                "repository": github_patch_release.REPOSITORY,
+                "tag": "v0.28.2",
+                "target_commit": "c" * 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+    attempt, receipt = _accepted_attempt(
+        tmp_path, tmp_path / "les-patch.zip", "c" * 40
+    )
+    assets.append(receipt)
+    release_receipt.transition(
+        attempt,
+        expected="accepted",
+        target="draft_uploaded",
+        evidence={"tag": "v0.28.2"},
+    )
+    notes = tmp_path / "notes.md"
+    notes.write_text("notes", encoding="utf-8")
+    monkeypatch.setattr(
+        github_patch_release,
+        "_git",
+        lambda *args: {
+            ("status", "--porcelain"): "",
+            ("rev-parse", "HEAD"): "c" * 40,
+            ("rev-parse", "@{u}"): "c" * 40,
+            ("tag", "--list", "v0.28.2"): "",
+        }[args],
+    )
+    calls = []
+
+    def run(command, **_kwargs):
+        calls.append(list(command))
+        if command[:3] == ["gh", "release", "view"]:
+            return SimpleNamespace(returncode=0, stdout='{"isDraft":true}', stderr="")
+        if command[:3] == [
+            "gh", "api", f"repos/{github_patch_release.REPOSITORY}/git/ref/heads/main"
+        ]:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"object": {"sha": "c" * 40}}),
+                stderr="",
+            )
+        if command[:2] == ["gh", "api"]:
+            return SimpleNamespace(returncode=0, stdout='{"enabled":true}', stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(github_patch_release, "_run", run)
+    monkeypatch.setattr(
+        github_patch_release, "verify_downloaded_release_assets", lambda *_args: None
+    )
+    stages = []
+
+    github_patch_release.publish_github_patch_release(
+        "v0.28.2",
+        assets,
+        notes,
+        attempt_path=attempt,
+        resume_stage="draft_uploaded",
+        stage_callback=lambda stage, _evidence: stages.append(stage),
+    )
+
+    assert stages == ["draft_verified", "published"]
+    assert not any(command[:3] == ["gh", "release", "create"] for command in calls)
+    assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)

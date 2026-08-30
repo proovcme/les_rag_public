@@ -92,6 +92,7 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
         (acceptance / "latest.json").write_text("{}", encoding="utf-8")
         return {
             "assets": sorted(public.iterdir()),
+            "candidate_assets": [archive],
             "acceptance_path": acceptance,
         }
 
@@ -108,6 +109,7 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
     assert result["release_class"] == "patch"
     assert result["stage"] == "prepared"
     assert Path(result["state_path"]).is_file()
+    assert [item["name"] for item in result["artifacts"]] == ["les-patch.zip"]
 
 
 def test_accept_uses_prepared_bytes_without_rebuilding(monkeypatch, tmp_path):
@@ -289,4 +291,117 @@ def _minimal_candidate(output: Path):
     asset.write_bytes(b"candidate")
     (acceptance / "les-patch.zip").write_bytes(asset.read_bytes())
     (acceptance / "latest.json").write_text("{}", encoding="utf-8")
-    return {"assets": [asset], "acceptance_path": acceptance}
+    return {
+        "assets": [asset],
+        "candidate_assets": [asset],
+        "acceptance_path": acceptance,
+    }
+
+
+@pytest.mark.parametrize(
+    "stage",
+    ["prepared", "legion_smoke_passed", "rollback_passed", "legion_reinstalled"],
+)
+def test_publish_refuses_every_preaccepted_stage(tmp_path, stage):
+    args, state_path = _attempt_at_stage(tmp_path, stage)
+    args.attempt = state_path
+
+    with pytest.raises(RuntimeError, match="installed acceptance required"):
+        release_orchestrator.publish(args)
+
+
+def test_publish_advances_only_after_draft_verification_and_postflight(
+    monkeypatch, tmp_path
+):
+    args, state_path = _attempt_at_stage(tmp_path, "accepted")
+    args.attempt = state_path
+    callbacks = []
+
+    def publish_patch(**kwargs):
+        for stage in ("draft_uploaded", "draft_verified", "published"):
+            callbacks.append(stage)
+            kwargs["stage_callback"](stage, {"ok": True})
+        return {"published": True, "assets": ["les-patch.zip"]}
+
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(release_orchestrator, "publish_patch_candidate", publish_patch)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "verify_public_provenance",
+        lambda **_kwargs: {"ok": True, "target_commit": TARGET},
+    )
+
+    result = release_orchestrator.publish(args)
+
+    assert callbacks == ["draft_uploaded", "draft_verified", "published"]
+    assert result["stage"] == "postflight_verified"
+    assert result["transitions"][-1]["evidence"]["target_commit"] == TARGET
+
+
+def test_published_attempt_resumes_only_independent_postflight(monkeypatch, tmp_path):
+    args, state_path = _attempt_at_stage(tmp_path, "published")
+    args.attempt = state_path
+    public = tmp_path / "candidate" / "public"
+    (public / "release-receipt.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "publish_patch_candidate",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("release republished")),
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "verify_public_provenance",
+        lambda **_kwargs: {"ok": True, "target_commit": TARGET},
+    )
+
+    result = release_orchestrator.publish(args)
+
+    assert result["stage"] == "postflight_verified"
+
+
+def _attempt_at_stage(tmp_path: Path, stage: str):
+    args = _args(tmp_path)
+    public = tmp_path / "candidate" / "public"
+    acceptance = tmp_path / "candidate" / "acceptance"
+    public.mkdir(parents=True)
+    acceptance.mkdir(parents=True)
+    archive = public / "les-patch.zip"
+    archive.write_bytes(b"candidate")
+    (public / "les-update.json").write_text("{}", encoding="utf-8")
+    (public / "latest.json").write_text("{}", encoding="utf-8")
+    (public / "les-patch.zip.sha256").write_text("checksum", encoding="ascii")
+    (public / "release-notes.md").write_text("notes", encoding="utf-8")
+    state_path = release_receipt.create_attempt(
+        root=args.work_root / "attempts",
+        release_class="patch",
+        product_version="0.30.8",
+        build_number=648,
+        target_commit=TARGET,
+        base_commits=[BASE],
+        host="legion",
+        assets=[archive],
+    )
+    release_receipt.transition(
+        state_path,
+        expected="planned",
+        target="prepared",
+        evidence={
+            "candidate_root": str(public.parent),
+            "acceptance_path": str(acceptance),
+        },
+    )
+    current = "prepared"
+    for target_stage in release_receipt.STAGES[
+        release_receipt.STAGES.index("legion_installed") :
+    ]:
+        if release_receipt.STAGES.index(target_stage) > release_receipt.STAGES.index(stage):
+            break
+        release_receipt.transition(
+            state_path,
+            expected=current,
+            target=target_stage,
+            evidence={"ok": True},
+        )
+        current = target_stage
+    return args, state_path

@@ -14,6 +14,13 @@
 > обязательную установку/откат/повторную установку, fail-closed состояние и
 > permanent non-publishable для dev-запуска со `--skip-gates`. Remote full job
 > связывается с точными SHA installer и target commit до любой мутации.
+> Publisher-тесты требуют stage `accepted`, exact candidate binding и SHA
+> публичного receipt в feed; обе ветви используют только draft с явным
+> `--target`, скачивают и побайтно проверяют весь asset set до publish.
+> Orchestrator переводит receipt через `draft_uploaded → draft_verified →
+> published → postflight_verified` и не допускает публикацию с промежуточного
+> Legion-stage; сохранённый draft и опубликованный выпуск продолжаются с
+> последней подтверждённой стадии без повторного create/publish.
 
 > **0.30.5 first proven dead-code cleanup (build 645):** observable baseline
 > сохраняет 396 FastAPI routes и живые UI/RIM/runtime контракты, не требуя

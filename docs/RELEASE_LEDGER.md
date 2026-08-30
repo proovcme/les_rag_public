@@ -29,10 +29,13 @@ dev implementation:       transactional delete bridge for cumulative Windows pat
 > exact identity, сохранение доступных capabilities и при доступном Qdrant —
 > реальный временный `dense + qdrant_sparse → native RRF`; затем откатывает,
 > проверяет восстановленную версию и повторно ставит те же candidate bytes.
-> Единый orchestrator уже выполняет clean/pushed prepare-gates, автоматическую
+> Единый orchestrator выполняет clean/pushed prepare-gates, автоматическую
 > soft/full классификацию, immutable candidate build и локальную/remote Legion
-> acceptance без пересборки. Публикация по accepted receipt и postflight ещё не
-> завершены; runtime Legion не менялся.
+> acceptance без пересборки. Оба publisher теперь fail-closed требуют accepted
+> receipt, связывают его SHA в feed, создают explicit-target draft, скачивают и
+> сверяют полный asset set до publish; независимый postflight проверяет public
+> main/tag/feed/receipt/hashes. Единая операторская команда и живая непубличная
+> репетиция ещё не завершены; runtime Legion не менялся.
 
 > **0.30.7 / build 647 corrected soft-patch publication (release candidate):**
 > сохраняет transactional delete bridge из 0.30.6 и добавляет обязательный

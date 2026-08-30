@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from tools import patch_release, platform_release_gate
+from tools import patch_release, platform_release_gate, release_receipt
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -381,6 +381,46 @@ def test_publish_includes_and_verifies_extra_platform_assets(monkeypatch, tmp_pa
 
     monkeypatch.setattr(patch_release, "run", fake_run)
     (dist / "release-notes.md").write_text("notes", encoding="utf-8")
+    attempt = release_receipt.create_attempt(
+        root=tmp_path / "attempts",
+        release_class="full",
+        product_version="1.2.3",
+        build_number=4,
+        target_commit="c" * 40,
+        base_commits=["a" * 40],
+        host="legion",
+        assets=[dist / "LES-Setup.exe"],
+    )
+    current = "planned"
+    for stage in release_receipt.STAGES[1 : release_receipt.STAGES.index("accepted") + 1]:
+        release_receipt.transition(
+            attempt, expected=current, target=stage, evidence={"ok": True}
+        )
+        current = stage
+    receipt = release_receipt.write_public_receipt(
+        attempt, dist / "release-receipt.json"
+    )
+    latest = json.loads((dist / "latest.json").read_text(encoding="utf-8"))
+    latest.update(
+        target_commit="c" * 40,
+        acceptance_receipt={
+            "name": receipt.name,
+            "bytes": receipt.stat().st_size,
+            "sha256": patch_release.sha256(receipt),
+        },
+    )
+    (dist / "latest.json").write_text(json.dumps(latest), encoding="utf-8")
+    monkeypatch.setattr(
+        patch_release,
+        "output",
+        lambda command, **_kwargs: (
+            "c" * 40
+            if command[:2] == ["git", "rev-parse"]
+            else json.dumps({"object": {"sha": "c" * 40}})
+            if command[-1].endswith("/git/ref/heads/main")
+            else json.dumps({"enabled": True})
+        ),
+    )
 
     patch_release.publish(
         {
@@ -388,12 +428,19 @@ def test_publish_includes_and_verifies_extra_platform_assets(monkeypatch, tmp_pa
             "build_number": 4,
             "desktop_version": "5.1.4",
         },
-        extra_assets=[dmg, checksum],
+        extra_assets=[dmg, checksum, receipt],
+        attempt_path=attempt,
     )
 
     create = next(call for call in calls if call[:3] == ["gh", "release", "create"])
-    assert str(dmg.resolve()) in create
-    assert str(checksum.resolve()) in create
+    upload = next(call for call in calls if call[:3] == ["gh", "release", "upload"])
+    published = next(call for call in calls if call[:3] == ["gh", "release", "edit"])
+    assert "--draft" in create
+    assert create[create.index("--target") + 1] == "c" * 40
+    assert str(dmg.resolve()) in upload
+    assert str(checksum.resolve()) in upload
+    assert str(receipt.resolve()) in upload
+    assert "--draft=false" in published
 
 
 def test_platform_workflows_cover_mac_windows_builds_and_atomic_release():

@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any, Sequence
@@ -142,6 +143,7 @@ def build_patch_candidate(
         raise RuntimeError("acceptance patch differs from public candidate bytes")
     return {
         "assets": sorted(path for path in public.iterdir() if path.is_file()),
+        "candidate_assets": [public_archive],
         "acceptance_path": acceptance,
         "build": feed,
     }
@@ -182,6 +184,7 @@ def build_full_candidate(
     )
     return {
         "assets": sorted(public.iterdir()),
+        "candidate_assets": [installer],
         "acceptance_path": Path(str(prepared["installer"])),
         "build": prepared,
     }
@@ -262,7 +265,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         target_commit=target,
         base_commits=[base],
         host=args.host,
-        assets=list(built["assets"]),
+        assets=list(built.get("candidate_assets") or built["assets"]),
     )
     prepared = release_receipt.transition(
         state_path,
@@ -526,6 +529,244 @@ def status(attempt_path: Path) -> dict[str, Any]:
     return release_receipt.load_attempt(Path(attempt_path))
 
 
+def _bind_public_receipt(
+    *, attempt_path: Path, public: Path, feed_name: str
+) -> tuple[Path, Path]:
+    receipt = public / "release-receipt.json"
+    if not receipt.is_file():
+        receipt = release_receipt.write_public_receipt(attempt_path, receipt)
+    else:
+        public_receipt = json.loads(receipt.read_text(encoding="utf-8-sig"))
+        attempt = release_receipt.load_attempt(attempt_path)
+        if (
+            public_receipt.get("schema") != release_receipt.PUBLIC_SCHEMA
+            or public_receipt.get("release_id") != attempt.get("release_id")
+            or public_receipt.get("target_commit") != attempt.get("target_commit")
+        ):
+            raise RuntimeError("existing public receipt differs from release attempt")
+    feed_path = public / feed_name
+    try:
+        feed = json.loads(feed_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"publication feed is unreadable: {feed_name}") from exc
+    feed["acceptance_receipt"] = {
+        "name": receipt.name,
+        "bytes": receipt.stat().st_size,
+        "sha256": _sha256(receipt),
+    }
+    feed_path.write_text(
+        json.dumps(feed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return receipt, feed_path
+
+
+def publish_patch_candidate(
+    *,
+    attempt_path: Path,
+    attempt: dict[str, Any],
+    public: Path,
+    stage_callback,
+    resume_stage: str = "accepted",
+) -> dict[str, Any]:
+    _bind_public_receipt(
+        attempt_path=attempt_path, public=public, feed_name="les-update.json"
+    )
+    assets = [public / name for name in github_patch_release.PUBLISHED_ASSET_NAMES]
+    return github_patch_release.publish_github_patch_release(
+        f"v{attempt['product_version']}",
+        assets,
+        public / "release-notes.md",
+        attempt_path=attempt_path,
+        stage_callback=stage_callback,
+        resume_stage=resume_stage,
+    )
+
+
+def publish_full_candidate(
+    *,
+    attempt_path: Path,
+    attempt: dict[str, Any],
+    public: Path,
+    stage_callback,
+    root: Path,
+    resume_stage: str = "accepted",
+) -> dict[str, Any]:
+    contract = load_contract(root)
+    latest = public / "latest.json"
+    if not latest.is_file():
+        latest.write_text(
+            json.dumps(
+                {
+                    "schema": "les.update.v1",
+                    "version": attempt["product_version"],
+                    "build_number": attempt["build_number"],
+                    "desktop_version": contract["desktop_version"],
+                    "target_commit": attempt["target_commit"],
+                    "build_commit": attempt["target_commit"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    notes = public / "release-notes.md"
+    if not notes.is_file():
+        notes.write_text(
+            f"## ЛЕС {attempt['product_version']}\n\nПринятый полный выпуск.\n",
+            encoding="utf-8",
+        )
+    receipt, _feed = _bind_public_receipt(
+        attempt_path=attempt_path, public=public, feed_name="latest.json"
+    )
+    return patch_release.publish(
+        contract,
+        extra_assets=[receipt],
+        attempt_path=attempt_path,
+        stage_callback=stage_callback,
+        dist=public,
+        resume_stage=resume_stage,
+    )
+
+
+def verify_public_provenance(
+    *, attempt: dict[str, Any], assets: Sequence[Path]
+) -> dict[str, Any]:
+    tag = f"v{attempt['product_version']}"
+    repository = github_patch_release.REPOSITORY
+    head_response = _run(
+        ("gh", "api", f"repos/{repository}/git/ref/heads/main"),
+        root=ROOT,
+        capture=True,
+    )
+    tag_response = _run(
+        ("gh", "api", f"repos/{repository}/git/ref/tags/{tag}"),
+        root=ROOT,
+        capture=True,
+    )
+    public_main = json.loads(head_response.stdout).get("object", {}).get("sha", "")
+    public_tag = json.loads(tag_response.stdout).get("object", {}).get("sha", "")
+    target = str(attempt["target_commit"])
+    if public_main != target or public_tag != target:
+        raise RuntimeError("critical immutable-release incident: public refs differ")
+    expected = {Path(path).name: _sha256(Path(path)) for path in assets}
+    with tempfile.TemporaryDirectory(prefix="les-release-postflight-") as temporary:
+        _run(
+            (
+                "gh",
+                "release",
+                "download",
+                tag,
+                "--repo",
+                repository,
+                "--dir",
+                temporary,
+            ),
+            root=ROOT,
+        )
+        downloaded = {
+            path.name: _sha256(path)
+            for path in Path(temporary).iterdir()
+            if path.is_file()
+        }
+        if downloaded != expected:
+            raise RuntimeError("critical immutable-release incident: public asset hashes differ")
+        receipt = json.loads(
+            (Path(temporary) / "release-receipt.json").read_text(encoding="utf-8-sig")
+        )
+        feed_name = "les-update.json" if attempt["release_class"] == "patch" else "latest.json"
+        feed = json.loads(
+            (Path(temporary) / feed_name).read_text(encoding="utf-8-sig")
+        )
+    feed_target = str(feed.get("target_commit") or feed.get("build_commit") or "")
+    if receipt.get("target_commit") != target or feed_target != target:
+        raise RuntimeError("critical immutable-release incident: public metadata differs")
+    return {
+        "ok": True,
+        "target_commit": target,
+        "public_main": public_main,
+        "public_tag": public_tag,
+        "asset_hashes": expected,
+    }
+
+
+def publish(args: argparse.Namespace) -> dict[str, Any]:
+    state_path = _attempt_path(args)
+    attempt = release_receipt.load_attempt(state_path)
+    current_stage = str(attempt.get("stage") or "")
+    if (
+        current_stage
+        not in {"accepted", "draft_uploaded", "draft_verified", "published"}
+        or attempt.get("publishable") is not True
+    ):
+        raise RuntimeError("installed acceptance required before publication")
+    release_receipt.verify_binding(
+        attempt,
+        commit=resolve_commit(args.root, "HEAD"),
+        assets=_artifact_paths(attempt),
+    )
+    prepared = _prepared_evidence(attempt)
+    public = Path(str(prepared["candidate_root"])) / "public"
+
+    expected_for_stage = {
+        "draft_uploaded": "accepted",
+        "draft_verified": "draft_uploaded",
+        "published": "draft_verified",
+    }
+
+    def advance(stage: str, evidence: dict[str, Any]) -> None:
+        release_receipt.transition(
+            state_path,
+            expected=expected_for_stage[stage],
+            target=stage,
+            evidence=evidence,
+        )
+
+    if current_stage == "published":
+        asset_names = (
+            github_patch_release.PUBLISHED_ASSET_NAMES
+            if attempt["release_class"] == "patch"
+            else (
+                "LES-Setup.exe",
+                "LES-Setup.exe.sha256",
+                "latest.json",
+                "release-receipt.json",
+            )
+        )
+        publication = {
+            "published": True,
+            "assets": [str(public / name) for name in asset_names],
+        }
+    else:
+        publication = (
+            publish_patch_candidate(
+                attempt_path=state_path,
+                attempt=attempt,
+                public=public,
+                stage_callback=advance,
+                resume_stage=current_stage,
+            )
+            if attempt["release_class"] == "patch"
+            else publish_full_candidate(
+                attempt_path=state_path,
+                attempt=attempt,
+                public=public,
+                stage_callback=advance,
+                root=Path(args.root),
+                resume_stage=current_stage,
+            )
+        )
+    assets = [Path(path) for path in publication["assets"]]
+    postflight = verify_public_provenance(attempt=attempt, assets=assets)
+    completed = release_receipt.transition(
+        state_path,
+        expected="published",
+        target="postflight_verified",
+        evidence=postflight,
+    )
+    return {**completed, "state_path": str(state_path)}
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.set_defaults(root=ROOT, work_root=DEFAULT_WORK_ROOT)
@@ -552,6 +793,10 @@ def _parser() -> argparse.ArgumentParser:
     accept_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
     accept_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
     accept_cmd.add_argument("--job", type=Path)
+    publish_cmd = sub.add_parser("publish")
+    publish_cmd.add_argument("--root", type=Path, default=ROOT)
+    publish_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
+    publish_cmd.add_argument("--attempt", type=Path)
     status_cmd = sub.add_parser("status")
     status_cmd.add_argument("--attempt", type=Path, required=True)
     return parser
@@ -563,6 +808,8 @@ def main(argv: list[str] | None = None) -> int:
         result = prepare(args)
     elif args.command == "accept":
         result = accept(args)
+    elif args.command == "publish":
+        result = publish(args)
     else:
         result = status(args.attempt)
     print(json.dumps(result, ensure_ascii=False, indent=2))

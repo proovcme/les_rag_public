@@ -12,9 +12,9 @@ import tempfile
 import time
 import zipfile
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
-from tools import vps_patch
+from tools import release_receipt, vps_patch
 from tools.release_classification import classify_release
 
 
@@ -28,6 +28,7 @@ ASSET_NAMES = (
     "les-patch.zip.sha256",
     "release-notes.md",
 )
+PUBLISHED_ASSET_NAMES = (*ASSET_NAMES, "release-receipt.json")
 
 
 def _commit(value: str) -> str:
@@ -73,15 +74,21 @@ def verify_downloaded_release_assets(tag: str, expected_assets: Sequence[Path]) 
 
 
 def publish_github_patch_release(
-    tag: str, assets: Sequence[Path], notes: Path
-) -> None:
+    tag: str,
+    assets: Sequence[Path],
+    notes: Path,
+    *,
+    attempt_path: Path,
+    stage_callback: Callable[[str, dict[str, Any]], None] | None = None,
+    resume_stage: str = "accepted",
+) -> dict[str, Any]:
     assets = tuple(Path(path).resolve() for path in assets)
     notes = Path(notes).resolve()
     if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
         raise RuntimeError(f"unsafe release tag: {tag}")
     names = {path.name for path in assets}
-    if names != set(ASSET_NAMES) or len(assets) != len(ASSET_NAMES):
-        raise RuntimeError("GitHub patch release requires exactly the five canonical assets")
+    if names != set(PUBLISHED_ASSET_NAMES) or len(assets) != len(PUBLISHED_ASSET_NAMES):
+        raise RuntimeError("GitHub patch release requires exactly the canonical accepted assets")
     if any(not path.is_file() for path in assets) or not notes.is_file():
         raise RuntimeError("GitHub patch release assets or notes are missing")
     if _git("status", "--porcelain"):
@@ -90,6 +97,18 @@ def publish_github_patch_release(
     upstream = _git("rev-parse", "@{u}")
     if head != upstream:
         raise RuntimeError("release commit is not the pushed upstream commit")
+    attempt = release_receipt.load_attempt(Path(attempt_path))
+    if (
+        attempt.get("stage") != resume_stage
+        or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
+        or attempt.get("publishable") is not True
+    ):
+        raise RuntimeError("installed acceptance required before GitHub publication")
+    release_receipt.verify_binding(
+        attempt,
+        commit=head,
+        assets=[Path(str(item["path"])) for item in attempt.get("artifacts", [])],
+    )
     feed_path = next(path for path in assets if path.name == "les-update.json")
     try:
         feed = json.loads(feed_path.read_text(encoding="utf-8-sig"))
@@ -103,12 +122,37 @@ def publish_github_patch_release(
         raise RuntimeError("GitHub patch feed tag does not match release tag")
     if feed.get("target_commit") != head:
         raise RuntimeError("feed target commit does not match HEAD")
+    receipt_path = next(path for path in assets if path.name == "release-receipt.json")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8-sig"))
+    if (
+        receipt.get("schema") != release_receipt.PUBLIC_SCHEMA
+        or receipt.get("release_id") != attempt.get("release_id")
+        or receipt.get("target_commit") != head
+    ):
+        raise RuntimeError("public release receipt does not match accepted attempt")
+    receipt_binding = feed.get("acceptance_receipt") or {}
+    if (
+        receipt_binding.get("name") != receipt_path.name
+        or int(receipt_binding.get("bytes") or -1) != receipt_path.stat().st_size
+        or str(receipt_binding.get("sha256") or "").lower()
+        != vps_patch.sha256_file(receipt_path)
+    ):
+        raise RuntimeError("GitHub patch feed does not bind the accepted receipt")
     if _git("tag", "--list", tag):
         raise RuntimeError(f"tag already exists: {tag}")
 
-    existing = _run(["gh", "release", "view", tag, "--repo", REPOSITORY])
-    if existing.returncode == 0:
+    existing = _run(
+        ["gh", "release", "view", tag, "--repo", REPOSITORY, "--json", "isDraft"]
+    )
+    if resume_stage == "accepted" and existing.returncode == 0:
         raise RuntimeError(f"GitHub release already exists: {tag}")
+    if resume_stage != "accepted":
+        try:
+            existing_draft = existing.returncode == 0 and json.loads(existing.stdout).get("isDraft") is True
+        except (ValueError, TypeError, AttributeError):
+            existing_draft = False
+        if not existing_draft:
+            raise RuntimeError("accepted draft required to resume publication")
     public_main = _run(
         ["gh", "api", f"repos/{REPOSITORY}/git/ref/heads/main"]
     )
@@ -132,37 +176,30 @@ def publish_github_patch_release(
     if not immutable_enabled:
         raise RuntimeError("github_release_immutability_required")
 
-    created = _run(
-        [
-            "gh",
-            "release",
-            "create",
-            tag,
-            "--repo",
-            REPOSITORY,
-            "--draft",
-            "--target",
-            head,
-            "--notes-file",
-            str(notes),
-        ]
-    )
-    if created.returncode != 0:
-        raise RuntimeError(f"failed to create GitHub draft: {created.stderr}")
-    uploaded = _run(
-        [
-            "gh",
-            "release",
-            "upload",
-            tag,
-            *(str(path) for path in assets),
-            "--repo",
-            REPOSITORY,
-        ]
-    )
-    if uploaded.returncode != 0:
-        raise RuntimeError(f"failed to upload GitHub assets: {uploaded.stderr}")
-    verify_downloaded_release_assets(tag, assets)
+    if resume_stage == "accepted":
+        created = _run(
+            [
+                "gh", "release", "create", tag, "--repo", REPOSITORY,
+                "--draft", "--target", head, "--notes-file", str(notes),
+            ]
+        )
+        if created.returncode != 0:
+            raise RuntimeError(f"failed to create GitHub draft: {created.stderr}")
+        uploaded = _run(
+            [
+                "gh", "release", "upload", tag,
+                *(str(path) for path in assets),
+                "--repo", REPOSITORY,
+            ]
+        )
+        if uploaded.returncode != 0:
+            raise RuntimeError(f"failed to upload GitHub assets: {uploaded.stderr}")
+        if stage_callback:
+            stage_callback("draft_uploaded", {"tag": tag, "asset_names": sorted(names)})
+    if resume_stage in {"accepted", "draft_uploaded"}:
+        verify_downloaded_release_assets(tag, assets)
+        if stage_callback:
+            stage_callback("draft_verified", {"tag": tag, "assets_verified": True})
     published = _run(
         [
             "gh",
@@ -176,6 +213,9 @@ def publish_github_patch_release(
     )
     if published.returncode != 0:
         raise RuntimeError(f"failed to publish verified GitHub draft: {published.stderr}")
+    if stage_callback:
+        stage_callback("published", {"tag": tag, "published": True})
+    return {"published": True, "tag": tag, "assets": [str(path) for path in assets]}
 
 
 def _read_full_feed(path: Path) -> dict[str, Any]:
@@ -427,15 +467,18 @@ def main() -> int:
     parser.add_argument("--full-feed", type=Path, required=True)
     parser.add_argument("--publish", action="store_true")
     parser.add_argument("--notes-file", type=Path)
+    parser.add_argument("--attempt", type=Path)
     args = parser.parse_args()
     feed = build_github_patch_release(
         args.base, args.target, args.output, full_feed=args.full_feed
     )
     if args.publish:
-        if args.notes_file is None:
-            parser.error("--publish requires --notes-file")
-        assets = [args.output / name for name in ASSET_NAMES]
-        publish_github_patch_release(feed["tag"], assets, args.notes_file)
+        if args.notes_file is None or args.attempt is None:
+            parser.error("--publish requires --notes-file and --attempt")
+        assets = [args.output / name for name in PUBLISHED_ASSET_NAMES]
+        publish_github_patch_release(
+            feed["tag"], assets, args.notes_file, attempt_path=args.attempt
+        )
     return 0
 
 

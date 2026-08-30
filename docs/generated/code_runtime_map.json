@@ -10651,10 +10651,11 @@
     },
     {
       "inbound": [],
-      "lines": 318,
+      "lines": 452,
       "module": "tests.test_github_patch_release",
       "outbound": [
         "tools/github_patch_release.py",
+        "tools/release_receipt.py",
         "tools/vps_patch.py"
       ],
       "path": "tests/test_github_patch_release.py",
@@ -11797,11 +11798,12 @@
     },
     {
       "inbound": [],
-      "lines": 440,
+      "lines": 487,
       "module": "tests.test_patch_release",
       "outbound": [
         "tools/patch_release.py",
-        "tools/platform_release_gate.py"
+        "tools/platform_release_gate.py",
+        "tools/release_receipt.py"
       ],
       "path": "tests/test_patch_release.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -12528,7 +12530,7 @@
     },
     {
       "inbound": [],
-      "lines": 292,
+      "lines": 407,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -15351,11 +15353,12 @@
         "tests/test_github_patch_release.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 443,
+      "lines": 486,
       "module": "tools.github_patch_release",
       "outbound": [
         "tools/__init__.py",
         "tools/release_classification.py",
+        "tools/release_receipt.py",
         "tools/vps_patch.py"
       ],
       "path": "tools/github_patch_release.py",
@@ -15748,10 +15751,11 @@
         "tools/multiplatform_release.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 651,
+      "lines": 748,
       "module": "tools.patch_release",
       "outbound": [
         "tools/__init__.py",
+        "tools/release_receipt.py",
         "tools/smeta_release_baseline.py"
       ],
       "path": "tools/patch_release.py",
@@ -16102,7 +16106,7 @@
       "inbound": [
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 577,
+      "lines": 824,
       "module": "tools.release_orchestrator",
       "outbound": [
         "tools/__init__.py",
@@ -16118,8 +16122,12 @@
     },
     {
       "inbound": [
+        "tests/test_github_patch_release.py",
+        "tests/test_patch_release.py",
         "tests/test_release_orchestrator.py",
         "tests/test_release_receipt.py",
+        "tools/github_patch_release.py",
+        "tools/patch_release.py",
         "tools/release_orchestrator.py"
       ],
       "lines": 289,
@@ -19303,7 +19311,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 633,
     "tracked_python_files": 1006,
-    "tracked_python_lines": 302461
+    "tracked_python_lines": 303144
   },
   "warnings": []
 }
