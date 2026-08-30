@@ -60,7 +60,6 @@ def test_profile_carries_declarative_policy():
     p = resolve(mode="smeta", question="x").profile
     assert p.executor == "cloud_large"            # смета = model-first tool loop
     assert p.validation_policy == "require_numeric_provenance"
-    assert "search_norm" in p.tools and "add_position" in p.tools
     free = resolve(mode="free", question="x").profile
     assert free.grounded is True                   # legacy free → Agent с evidence
     rag = resolve(mode="rag", question="x").profile
@@ -76,6 +75,7 @@ def test_as_trace_compact():
     assert t["profile_id"] == "estimator"
     assert t["route_source"] == "explicit_mode"
     assert t["executor"] == "cloud_large"
+    assert t["tool_policy_source"] == "chat_profile_snapshot"
     # без refine канал/операция не протекают в trace
     assert "channel" not in t and "operation" not in t
 

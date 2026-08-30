@@ -1,11 +1,22 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.19 profile tool-policy cleanup:** удалён неиспользуемый второй набор
+> tool allowlists из `ProfileResolver`. Единственный фактический allowlist
+> строится `chat_profile_service` из живого ToolHarness registry, фиксируется
+> immutable snapshot чата и применяется evidence application. Trace теперь
+> прямо сообщает `tool_policy_source=chat_profile_snapshot`. Эффективные tools,
+> сметы, RAG, Qdrant, данные и Legion не менялись. Карта: 979 tracked
+> Python-файлов / 299483 строки, 354 product-reachable, 8 runtime-support,
+> 616 test/tool-only, 1 dormant, 394 API routes, 0 parse warnings. Точки входа:
+> `proxy/services/{profile_resolver,chat_profile_service,chat_evidence_application_service}.py`,
+> `tests/{test_profile_resolver,test_chat_profile_runtime}.py`. Статус док↔код: ✅.
+
 > **0.30.18 legacy normcontrol API cleanup:** удалён неиспользуемый router и
 > два `/api/normcontrol/*` route. Формальный `normcontrol_service`, его 13
-> behavior-тестов и активный `/api/doc-review/*` сохранены. Engineer-profile
-> теперь разрешает реально исполняемый `doc_review` вместо фантомного
-> `run_normcontrol`. Данные, отчёты, review decisions, сметы, RAG и Legion не
-> менялись. Карта: 979 tracked Python-файлов / 299491 строк, 354 product-reachable,
+> behavior-тестов и активный `/api/doc-review/*` сохранены. Фантомный
+> `run_normcontrol` удалён из прежней декларативной карты профиля. Данные,
+> отчёты, review decisions, сметы, RAG и Legion не
+> менялись. Карта на момент 0.30.18: 979 tracked Python-файлов / 299491 строк, 354 product-reachable,
 > 8 runtime-support, 616 test/tool-only, 1 dormant, 394 API routes,
 > 0 parse warnings. Точки входа: `proxy/app.py`,
 > `proxy/services/profile_resolver.py`, `tests/test_code_runtime_map.py`.

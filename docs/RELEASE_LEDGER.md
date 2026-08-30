@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.18
-номер сборки:              658
-версия Tauri/NSIS:         5.1.658
+версия продукта (SemVer):  0.30.19
+номер сборки:              659
+версия Tauri/NSIS:         5.1.659
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       legacy normcontrol API cleanup
+dev implementation:       single-owner profile tool policy cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.18 — legacy normcontrol API cleanup; не задеплоен
+следующий выпуск:          0.30.19 — single-owner profile tool policy cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.19 / build 659 single-owner profile tool policy (dev candidate):**
+> удалён неиспользуемый второй набор tool allowlists из `ProfileResolver`.
+> Фактический набор не изменён: `chat_profile_service` по-прежнему строит его
+> из живого ToolHarness registry, immutable snapshot фиксирует для чата, а
+> evidence application применяет при shortlist/исполнении. Route trace теперь
+> явно показывает `tool_policy_source=chat_profile_snapshot`. Сметы, RAG,
+> Qdrant, пользовательские данные и установленный Legion не менялись.
+> Generated map: 979 tracked Python-файлов / 299483 строки, 354 product-reachable,
+> 8 runtime-support, 616 test/tool-only, 1 dormant, 394 API routes, 0 warnings.
 
 > **0.30.18 / build 658 legacy normcontrol API cleanup (dev candidate):**
 > удалён неиспользуемый `proxy/routers/normcontrol.py` и два

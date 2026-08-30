@@ -30,15 +30,20 @@
 ## ProfileResolver — единый контракт
 
 `proxy/services/profile_resolver.py`: `resolve()` → `Profile` (dataclass), `refine()`, `as_trace()`;
-реестр `PROFILES`, `MODE_TO_PROFILE`. Режим-чип GUI → профиль:
+реестр `PROFILES`, `MODE_TO_PROFILE`. Резолвер отвечает только за маршрут и policy/output
+contract. Он **не хранит и не применяет allowlist инструментов**: factory allowlist строит
+`chat_profile_service` из живого `ToolHarness` registry, активная редакция фиксируется в
+immutable `chat_profile_snapshot`, а `chat_evidence_application_service` применяет её при
+shortlist и исполнении. Trace явно сообщает `tool_policy_source=chat_profile_snapshot`.
+
+Режим-чип GUI → профиль:
 
 | Режим (чип) | Профиль | Контур |
 |---|---|---|
-| Сметы | `estimate_harness` | модель сама раскладывает объект; харнесс даёт `search_norm`/`add_position` и проверяет числа |
-| Нормоконтроль | `normcontrol` | модель формулирует вывод по rulepack/RAG/tool evidence |
-| Поиск (default) | `grounded_rag` | RAG с цитатами |
-| (свободный) | `free_llm` | прямой LLM |
-| КП | `grounded_rag` | модельный/RAG-контур; кодовая заглушка КП удалена |
+| Сметы | `estimator` | общий model-owned evidence/tool loop; точный набор инструментов задаёт snapshot профиля |
+| Инженер | `engineer` | модель формулирует вывод по RAG/tool evidence |
+| Поиск | `search` | RAG с цитатами и source readers |
+| Агент (default) | `agent` | универсальный model-owned loop; factory snapshot включает зарегистрированные tools |
 
 `query_route.profile` несёт честный `route_source` + `channel` в trace каждого ответа.
 

@@ -18,6 +18,11 @@ prompt/skill с режимом, allowlist инструментов, model policy
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию
 оператора.
 
+Allowlist имеет одного владельца: `chat_profile_service` строит factory-набор только из
+инструментов живого `ToolHarness` registry, а `chat_evidence_application_service` применяет
+точный список immutable snapshot. `profile_resolver.py` выбирает маршрут и output policy, но
+не содержит второго списка названий инструментов.
+
 ## Текстовые бюджеты
 
 - prompt: не более **16 000** символов после удаления пробелов по краям;
@@ -37,7 +42,7 @@ prompt/skill с режимом, allowlist инструментов, model policy
 
 - `proxy/services/chat_profile_service.py` — хранение, лимиты и публикация ревизий;
 - `proxy/routers/profiles.py` — registry и HTTP-контракт ошибок;
-- `proxy/services/profile_resolver.py` — разрешение активного snapshot;
+- `proxy/services/profile_resolver.py` — разрешение route/profile policy без tool allowlist;
 - `sovushka/pages/profiles.py` — редактор, счётчики и client-side guard;
 - `tests/test_chat_profile_service.py`, `tests/test_profiles_router.py`,
   `tests/test_profiles_ui.py` — service/API/UI contract.

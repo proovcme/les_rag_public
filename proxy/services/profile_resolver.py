@@ -10,8 +10,9 @@ fallback) приводятся к ОДНОМУ результату `ProfileReso
 Инвариант (§10.3 №4): резолвер НЕ отвечает пользователю — только выбирает профиль.
 
 Профиль — декларативная сущность (Codex §3): не «какая модель отвечает», а какой workflow
-исполняется. Поля policy сейчас в основном ДОКУМЕНТИРУЮТ намерение (не все ещё энфорсятся) —
-это контракт, по которому достраивается claim-валидация / эскалация / output-контракты.
+исполняется. Allowlist инструментов этому резолверу не принадлежит: его строит
+``chat_profile_service`` из живого ToolHarness registry, фиксирует immutable snapshot чата,
+а ``chat_evidence_application_service`` применяет при shortlist/исполнении.
 """
 
 from __future__ import annotations
@@ -31,11 +32,10 @@ Executor = Literal["deterministic", "local_small", "local_large", "cloud_large",
 
 @dataclass(frozen=True)
 class Profile:
-    """Декларативный профиль исполнения = {модель · роль · инструменты · политики · контракт}."""
+    """Декларативный профиль маршрута = {исполнитель · роль · политики · контракт}."""
     id: str
     executor: Executor
     role: str                       # роль/prompt-pack
-    tools: tuple[str, ...]          # разрешённые инструменты ("*" = любой, решает router)
     grounded: bool                  # использует ли ретрив (заземление)
     validation_policy: str          # fail_open | fail_warn | require_citations | require_numeric_provenance
     escalation_policy: str          # none | on_low_confidence | on_tool_failure
@@ -48,25 +48,25 @@ class Profile:
 PROFILES: dict[str, Profile] = {
     "engineer": Profile(
         id="engineer", executor="router", role="инженер",
-        tools=("doc_review", "retrieval", "citation_check"), grounded=True,
+        grounded=True,
         validation_policy="require_citations", escalation_policy="on_tool_failure",
         failure_policy="say_no_data", output_contract="findings_table_v1",
     ),
     "search": Profile(
         id="search", executor="router", role="исследователь",
-        tools=("retrieval", "citation_check", "table_lookup"), grounded=True,
+        grounded=True,
         validation_policy="fail_warn", escalation_policy="on_low_confidence",
         failure_policy="say_no_data", output_contract="grounded_answer_v1",
     ),
     "agent": Profile(
-        id="agent", executor="router", role="универсальный агент", tools=("*",), grounded=True,
+        id="agent", executor="router", role="универсальный агент", grounded=True,
         validation_policy="fail_warn", escalation_policy="on_tool_failure",
         failure_policy="say_no_data", output_contract="grounded_answer_v1",
     ),
     # Совместимый id старого профиля; активный route режима «Смета» отвечает model+RAG.
     "estimator": Profile(
         id="estimator", executor="cloud_large", role="сметчик",
-        tools=("rag_context", "estimate_reasoning", "search_norm", "add_position"), grounded=True,
+        grounded=True,
         validation_policy="require_numeric_provenance", escalation_policy="none",
         failure_policy="mark_preliminary", output_contract="estimate_preliminary_v1",
     ),
@@ -159,6 +159,7 @@ class ProfileResolution:
             "route_source": self.route_source,
             "confidence": round(self.confidence, 3),
             "executor": p.executor,
+            "tool_policy_source": "chat_profile_snapshot",
             "validation_policy": p.validation_policy,
             "output_contract": p.output_contract,
         }

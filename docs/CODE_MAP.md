@@ -7,6 +7,13 @@
 > [generated/code_runtime_map.json](generated/code_runtime_map.json). Генератор:
 > `tools/code_runtime_map.py`. Статическая недостижимость не означает, что файл можно удалить.
 
+> **0.30.19 single tool-policy owner:** `profile_resolver.py` больше не содержит
+> второй декларативный список инструментов. Фактический allowlist строит
+> `chat_profile_service.py` из живого ToolHarness registry, immutable snapshot
+> фиксирует его для чата, а `chat_evidence_application_service.py` применяет при
+> model-owned shortlist/исполнении. Маршрутный trace показывает владельца через
+> `tool_policy_source=chat_profile_snapshot`; эффективное поведение не изменено.
+
 > **0.30.6 transactional delete bridge:** `tools/vps_patch.py` кодирует удаление
 > runtime content как обратно совместимый v2 entry с `operation=delete` и
 > нулевым payload. `proxy/services/update_service.py` считает целевым состоянием
@@ -421,7 +428,7 @@ projection под тем же alias; при rollback старый FTS восст
 
 ### `proxy/` — API-шлюз и оркестрация
 - [proxy/app.py](../proxy/app.py) — `create_app()`, CORS, регистрация роутеров, инъекция общего состояния в роутеры на старте.
-- **Retired legacy normcontrol API (0.30.18):** неиспользуемый `/api/normcontrol/*` router удалён; `normcontrol_service` остаётся внутренним formal-check слоем активного `/api/doc-review/*`. Engineer-profile разрешает `doc_review`, а не фантомный `run_normcontrol`.
+- **Retired legacy normcontrol API (0.30.18):** неиспользуемый `/api/normcontrol/*` router удалён; `normcontrol_service` остаётся внутренним formal-check слоем активного `/api/doc-review/*`. Фантомный `run_normcontrol` удалён из прежней декларативной карты профиля; с 0.30.19 эта дублирующая карта целиком удалена.
 - **Retired W12.1 island (0.30.17):** `diff_service` и `/api/diff/*` удалены как unintegrated CAD/text diff без UI, model tool, dossier или другого runtime-потребителя. Активный `/api/cad-bim/imports`, viewer, graph data и документы не изменялись.
 - **Retired W20.3 island (0.30.16):** `work_log_service` и `/api/worklog/*` удалены как незавершённая форма ОЖР без UI, model tool, dossier или другого runtime-потребителя. `les_work_log_meta`, field journal, созданные файлы и знание термина ОЖР не удаляются.
 - **Retired W20.4 island (0.30.15):** `incoming_control_service` и `/api/incoming-control/*` удалены как незавершённый отдельный продукт без UI, model tool, dossier или другого runtime-потребителя. Существующие SQLite-таблицы не удаляются и остаются inert user state.

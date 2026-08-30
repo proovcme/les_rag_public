@@ -5597,12 +5597,11 @@
         "proxy/routers/chat.py",
         "tests/test_answer_contract_service.py",
         "tests/test_chat_profile_runtime.py",
-        "tests/test_code_runtime_map.py",
         "tests/test_profile_resolver.py",
         "tests/test_smoke_offline.py",
         "tests/test_unit_core_business.py"
       ],
-      "lines": 180,
+      "lines": 181,
       "module": "proxy.services.profile_resolver",
       "outbound": [
         "proxy/__init__.py",
@@ -9453,10 +9452,9 @@
     },
     {
       "inbound": [],
-      "lines": 197,
+      "lines": 188,
       "module": "tests.test_code_runtime_map",
       "outbound": [
-        "proxy/services/profile_resolver.py",
         "tools/code_runtime_map.py"
       ],
       "path": "tests/test_code_runtime_map.py",
@@ -18760,7 +18758,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 616,
     "tracked_python_files": 979,
-    "tracked_python_lines": 299491
+    "tracked_python_lines": 299483
   },
   "warnings": []
 }
