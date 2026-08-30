@@ -24,6 +24,32 @@
 
 Файлы сохранены в `docs/archive/root-legacy/` через `git mv`.
 
+### Завершённые планы
+
+| Прежний путь | Почему в архиве | Текущая замена |
+|---|---|---|
+| `docs/PLAN_DODELKA.md` | общий список доработок прежней эпохи | `ROADMAP_TO_V1.md`, `docs/MODULE_INDEX.md` |
+| `docs/UI_IMPROVEMENT_PLAN.md` | завершённый UI-план до единого UIKit | `docs/modules/sovushka-uikit.md`, `docs/MODULE_INDEX.md` |
+
+Файлы сохранены в `docs/archive/plans/`.
+
+### Завершённые аудиты и хендоффы
+
+| Прежний путь | Почему в архиве | Текущая замена |
+|---|---|---|
+| `docs/ACCESSIBILITY_AUDIT.md` | выводы внесены в UIKit и типографику 0.30.1 | `docs/modules/sovushka-uikit.md` |
+| `docs/MODULE_AUDIT_2026-06-26.md` | датированный снимок старой модульной карты | `docs/MODULE_INDEX.md` |
+| `docs/SMETA_MODULE_BASE_AUDIT_2026-07-09.md` | датированный аудит сметной базы | `docs/SMETA_MECHANICS.md`, `docs/MODULE_INDEX.md` |
+| `docs/SMETA_RIM_MODULE_HANDOFF_CLAUDE.md` | хендофф конкретной сессии | `docs/ALGO-smeta.md`, `docs/ALGO-fgis-price.md` |
+
+Файлы сохранены в `docs/archive/audits/`.
+
+### Старые release notes
+
+Восемь файлов `docs/RELEASE_NOTES_0.24*.md` перенесены в `docs/archive/releases/`.
+Текущая версия и хронология находятся в `docs/RELEASE_LEDGER.md`, а пользовательские документы
+выпусков — в `docs/public/releases/`.
+
 | Файл | Что это |
 |---|---|
 | `SESSION_SUMMARY*.md` (×12) | датированные саммари сессий (06-19); хронология, не текущее состояние |
