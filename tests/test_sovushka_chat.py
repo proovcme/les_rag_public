@@ -437,6 +437,12 @@ def test_router_does_not_infer_document_scope_for_plain_ai_chat():
     assert 'use_semantic_cache = False' in source
 
 
+def test_chat_ui_does_not_request_semantic_answer_validation():
+    source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+
+    assert '"validation_enabled": True' not in source
+
+
 def test_answer_shows_actual_model_connection_and_dataset_scope():
     source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
 

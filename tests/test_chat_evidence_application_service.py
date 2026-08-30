@@ -660,6 +660,16 @@ def test_model_research_loop_is_evidence_first_and_model_stopped() -> None:
     assert 'stop_reason = "model_stop"' in source
 
 
+def test_ordinary_chat_does_not_semantically_validate_or_rewrite_model_answer() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    assert "use_validation = False" in source
+    assert "_chat_model_final_answer(answer" not in source
+    assert "_notebook_study_validation_status(" not in source
+    assert 'final_evidence_packet["evidence_status"] = "partial"' not in source
+    assert 'crag_status = "UNVALIDATED"' not in source[source.index("citation_check ="):]
+
+
 @pytest.mark.asyncio
 async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> None:
     class ThrowingHarness:
@@ -962,6 +972,11 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     monkeypatch.setattr(tool_harness_service, "harness", lambda: ExecutorBackedHarness())
     monkeypatch.setattr(service.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        service,
+        "rules_pre_verdict",
+        lambda *_args, **_kwargs: pytest.fail("ordinary chat must not invoke semantic validator"),
+    )
     monkeypatch.setattr(service, "maybe_answer_table_query", lambda *_a, **_k: None)
     monkeypatch.setattr(service, "dataset_memory_prompt_excerpt", lambda *_a, **_k: "")
     active_transport = None
@@ -1156,7 +1171,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         cache_scope="",
         assistant_text=lambda message: str(message.get("content") or ""),
         augment_model_tool_args=lambda call, **_kwargs: call,
-        chat_model_final_answer=lambda answer, status: (answer, status, {}),
+        chat_model_final_answer=lambda _answer, status: ("rewritten by code", status, {}),
         cloud_body_for_model=lambda body, *_args: body,
         compact_tool_result_for_prompt=lambda item, **_kwargs: item,
         dataset_ids_from_chunks=lambda _chunks: [],

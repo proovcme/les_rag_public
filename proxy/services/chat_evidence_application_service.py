@@ -727,6 +727,9 @@ async def _execute_chat_evidence_application(
     )
     if document_grounding_enabled:
         use_semantic_cache = False
+    # Ordinary chat is model-owned: validators may not judge, retry, rewrite,
+    # suppress, or relabel the model's engineering conclusion.
+    use_validation = False
     memory_project_id = 0
     project_memory_advisory = ""
     try:
@@ -2403,124 +2406,15 @@ async def _execute_chat_evidence_application(
                         tokens,
                     )
 
-                    if use_validation:
-                        try:
-                            validation_context = build_validation_context(
-                                validation_context_windows.chunks,
-                                max_chars=_env_int("RAG_VALIDATION_CONTEXT_CHARS", 12000),
-                                include_metadata=True,
-                            )
-                            # Рабочая память видна и валидатору — иначе ответ по заметке
-                            # оператора ловил бы ложный HALLUCINATION.
-                            if memory_block:
-                                validation_context = f"{validation_context}\n\n{memory_block}"
-                            if project_inventory_prompt:
-                                validation_context = f"{validation_context}\n\n{project_inventory_prompt}"
-                            if tool_context:
-                                validation_context = f"{validation_context}\n\n{tool_context}"
-                            t_val_call = time.time()
-                            verdict_source = "coreml"
-                            if validate_via_llm:
-                                # W3.4: каскад rules→coreml. Дешёвый детерминированный отсев
-                                # (числовой guard, пустой контекст) ДО валидатора.
-                                pre = rules_pre_verdict(req.question, answer, validation_context)
-                                if pre is not None:
-                                    crag_status = pre
-                                    verdict_source = "rules"
-                                    logger.info("[TOSKA] rules short-circuit → %s (provider=%s)", pre, llm_runtime.provider)
-                                else:
-                                    # Облачный ответ валидируем ЛОКАЛЬНЫМ coreml (~0.1с),
-                                    # а не повторным промптом в облако (было 3-11с).
-                                    val_resp = await client.post(
-                                        f"{local_val_url}/api/validate",
-                                        json={"question": req.question, "answer": answer, "context": validation_context},
-                                        timeout=90.0,
-                                    )
-                                    crag_status = (
-                                        val_resp.json().get("status", "UNKNOWN")
-                                        if val_resp.status_code == 200
-                                        else "UNKNOWN"
-                                    )
-                            else:
-                                val_resp = await client.post(
-                                    f"{val_url}/api/validate",
-                                    json={"question": req.question, "answer": answer, "context": validation_context},
-                                    timeout=90.0,
-                                )
-                                crag_status = (
-                                    val_resp.json().get("status", "UNKNOWN")
-                                    if val_resp.status_code == 200
-                                    else "UNKNOWN"
-                                )
-                            t_val += time.time() - t_val_call
-                            # Fail-open: coreml-валидатор быстрый, но неточный (golden ~25%,
-                            # вживую ложно блокировал реальные ответы). Он НЕ должен прятать
-                            # ответ за заглушкой — его HALLUCINATION понижаем до UNVALIDATED
-                            # (ответ виден, но помечен «не подтверждён»). Жёсткий блок
-                            # остаётся только за детерминированными rules. Отключается
-                            # TOSKA_FAIL_OPEN=false.
-                            # АДДИТИВНЫЙ гейт (best-practice, не-хрупкий): валидатор МЕТИТ, не блокирует.
-                            # ЛЮБОЙ HALLUCINATION (rules-числовой-guard ИЛИ coreml) → UNVALIDATED:
-                            # ответ показан с меткой «не подтверждён», БЕЗ дорогого ретрая (он же
-                            # таймаутил облако → падал на медленный локальный MLX, 34с). Числовой
-                            # guard ложно рубил заземлённые ответы (контекст-валидации ≠ чанки ответа).
-                            # Жёсткий блок вернуть: TOSKA_FAIL_OPEN=false.
-                            if crag_status == "HALLUCINATION" and _env_bool("TOSKA_FAIL_OPEN", True):
-                                logger.info("[TOSKA] fail-open: %s HALLUCINATION → UNVALIDATED (показан, без ретрая)", verdict_source)
-                                crag_status = "UNVALIDATED"
-                            # coreml NO_DATA на НЕПУСТОМ контексте недостоверен (golden ~25%): данные
-                            # ЕСТЬ и ответ обоснован — не врать «нет данных». Понижаем до UNVALIDATED
-                            # (ответ виден, помечен «не подтверждён»). Истинный NO_DATA = ПУСТОЙ контекст,
-                            # его ставят детерминированные rules (verdict_source="rules"), их не трогаем.
-                            if (crag_status == "NO_DATA" and verdict_source == "coreml"
-                                    and validation_context.strip() and _env_bool("TOSKA_FAIL_OPEN", True)):
-                                logger.info("[TOSKA] fail-open: coreml NO_DATA на непустом контексте → UNVALIDATED")
-                                crag_status = "UNVALIDATED"
-                            logger.info("[TOSKA] attempt=%s → %s%s", attempt, crag_status, " (via provider)" if validate_via_llm else "")
-                        except Exception as ve:
-                            logger.warning("[TOSKA] Validate skip: %s", ve)
-                            crag_status = "UNKNOWN"
-                    else:
-                        crag_status = "UNVALIDATED"
-                        logger.info("[TOSKA] validation disabled for this request")
+                    crag_status = "MODEL_OUTPUT"
+                    logger.info("[CHAT] model answer accepted unchanged; citation check is trace-only")
+                    break
 
-                    if crag_status in ("VERIFIED", "NO_DATA", "UNVALIDATED"):
-                        break
-
-                    if answer and _env_bool("TOSKA_FAIL_OPEN", True):
-                        retrieval_trace["validation_fail_open"] = {
-                            "schema": "chat_validation_fail_open_v1",
-                            "original_status": crag_status,
-                            "final_status": "UNVALIDATED",
-                            "reason": "model_answer_exists",
-                        }
-                        crag_status = "UNVALIDATED"
-                        break
-
-                    if attempt < max_attempts:
-                        logger.warning("[SAFERAG] attempt=%s HALLUCINATION — retry...", attempt)
-
-                if notebook_study_pack is not None:
-                    crag_status = _notebook_study_validation_status(
-                        crag_status,
-                        has_context=bool(validation_context.strip() or context.strip()),
-                    )
-                answer, crag_status, final_policy = _chat_model_final_answer(answer, crag_status)
-                if final_policy:
-                    retrieval_trace["final_answer_policy"] = final_policy
                 try:
                     from proxy.services.evidence_packet_service import verify_answer_source_labels
 
                     citation_check = verify_answer_source_labels(answer, answer_source_map)
                     retrieval_trace["citation_check"] = citation_check
-                    if citation_check["status"] in {"missing_labels", "invalid_labels"}:
-                        if crag_status == "VERIFIED":
-                            crag_status = "UNVALIDATED"
-                        if final_evidence_packet:
-                            final_evidence_packet["evidence_status"] = "partial"
-                            final_evidence_packet.setdefault("missing", []).append(
-                                "Финальный ответ не содержит корректных ссылок на видимые источники"
-                            )
                 except Exception as citation_error:  # noqa: BLE001
                     retrieval_trace["citation_check"] = {
                         "schema": "les.answer-citation-check.v1",
@@ -2536,7 +2430,7 @@ async def _execute_chat_evidence_application(
                 elif crag_status == "VERIFIED":
                     state.crag_stats["verified"] += 1
                     state.chat_metrics["crag_pass"] += 1
-                elif crag_status == "UNVALIDATED":
+                elif crag_status in {"UNVALIDATED", "MODEL_OUTPUT"}:
                     state.crag_stats["unvalidated"] = state.crag_stats.get("unvalidated", 0) + 1
                     state.chat_metrics["crag_fail"] += 1
                 else:
