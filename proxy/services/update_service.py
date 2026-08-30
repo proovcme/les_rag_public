@@ -76,6 +76,7 @@ MAC_UPDATE_ALLOWED_SUFFIXES = {
 VPS_PATCH_ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
+    "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/windows_update_engine.py",
     "tools/windows_runtime.py",

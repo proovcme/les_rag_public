@@ -30,6 +30,7 @@ ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/"
 ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
+    "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
     "tools/smeta_model_quality_benchmark.py",
@@ -498,101 +499,6 @@ def _local_runtime_live(runtime: Path) -> bool:
     )
 
 
-def _qdrant_live() -> bool:
-    try:
-        with urlopen("http://127.0.0.1:6333/collections", timeout=3) as response:  # noqa: S310
-            return response.status == 200
-    except OSError:
-        return False
-
-
-def _docker_cli() -> Path:
-    discovered = shutil.which("docker.exe") or shutil.which("docker")
-    candidates = [
-        Path(discovered) if discovered else Path(),
-        Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
-        / "Docker"
-        / "Docker"
-        / "resources"
-        / "bin"
-        / "docker.exe",
-    ]
-    for candidate in candidates:
-        if candidate and candidate.is_file():
-            return candidate
-    raise RuntimeError("Docker CLI required by installed LES is missing")
-
-
-def _ensure_local_qdrant() -> bool:
-    """Start the canonical persistent Qdrant container after login/reboot."""
-    if _qdrant_live():
-        return False
-    docker = _docker_cli()
-    def docker_ready() -> bool:
-        return (
-            subprocess.run(
-                [str(docker), "info"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                creationflags=0x08000000 if os.name == "nt" else 0,
-            ).returncode
-            == 0
-        )
-
-    if not docker_ready():
-        desktop = (
-            Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
-            / "Docker"
-            / "Docker"
-            / "Docker Desktop.exe"
-        )
-        if desktop.is_file():
-            subprocess.Popen(  # noqa: S603 - exact installed GUI executable
-                [str(desktop)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                close_fds=True,
-            )
-        deadline = time.monotonic() + 180
-        while time.monotonic() < deadline and not docker_ready():
-            time.sleep(3)
-    if not docker_ready():
-        raise RuntimeError("Docker engine is not ready for the LES Qdrant container")
-    existing = subprocess.run(
-        [str(docker), "ps", "-a", "--filter", "name=^/les-light-qdrant$", "--quiet"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        creationflags=0x08000000 if os.name == "nt" else 0,
-    )
-    container = existing.stdout.strip()
-    if existing.returncode != 0 or not container:
-        raise RuntimeError("installed LES Qdrant container is missing")
-    started = subprocess.run(
-        [str(docker), "start", "les-light-qdrant"],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        creationflags=0x08000000 if os.name == "nt" else 0,
-    )
-    if started.returncode != 0:
-        detail = (started.stderr or started.stdout or "").strip()[-800:]
-        raise RuntimeError(f"LES Qdrant start failed: {detail or started.returncode}")
-    deadline = time.monotonic() + 120
-    while time.monotonic() < deadline:
-        if _qdrant_live():
-            return True
-        time.sleep(1)
-    raise RuntimeError("LES Qdrant did not become ready within 120s")
-
-
 def _ensure_local_runtime_live(runtime: Path, state: Path) -> bool:
     """Bootstrap an offline installed LES as the current user before soft-update preflight."""
     if _local_runtime_live(runtime):
@@ -632,7 +538,6 @@ def _ensure_local_runtime_live(runtime: Path, state: Path) -> bool:
 
 def update_local(*, output: Path, runtime: Path, state: Path, target: str = "HEAD") -> dict:
     base = _installed_commit(runtime)
-    qdrant_started = _ensure_local_qdrant()
     bootstrapped = _ensure_local_runtime_live(runtime, state)
     target_commit = subprocess.check_output(
         ["git", "rev-parse", target], cwd=ROOT, text=True
@@ -653,7 +558,6 @@ def update_local(*, output: Path, runtime: Path, state: Path, target: str = "HEA
     return {
         "ok": True,
         "mode": "update-local",
-        "qdrant_started": qdrant_started,
         "bootstrapped_runtime": bootstrapped,
         "files": files,
         "package": package,

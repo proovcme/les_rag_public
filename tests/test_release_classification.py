@@ -34,6 +34,10 @@ def release_repo(tmp_path: Path) -> tuple[Path, str]:
         'dependencies = ["fastapi"]\n',
         encoding="utf-8",
     )
+    (repo / "uv.lock").write_text(
+        'version = 1\nrevision = 3\n\n[[package]]\nname = "les-v2"\nversion = "0.28.1"\n',
+        encoding="utf-8",
+    )
     desktop = repo / "desktop" / "tauri"
     desktop.mkdir(parents=True)
     (desktop / "package.json").write_text(
@@ -51,12 +55,14 @@ def test_version_only_project_change_remains_a_lightweight_patch(release_repo):
     repo, base = release_repo
     project = repo / "pyproject.toml"
     project.write_text(project.read_text(encoding="utf-8").replace("0.28.1", "0.28.2"), encoding="utf-8")
+    lock = repo / "uv.lock"
+    lock.write_text(lock.read_text(encoding="utf-8").replace("0.28.1", "0.28.2"), encoding="utf-8")
 
     result = classify_release(base, _commit(repo, "version"), root=repo)
 
     assert result.kind == "patch"
     assert result.runtime_files == ()
-    assert result.ignored_version_surfaces == ("pyproject.toml",)
+    assert result.ignored_version_surfaces == ("pyproject.toml", "uv.lock")
     assert result.triggers == ()
 
 

@@ -8,17 +8,17 @@
 
 ```
 версия продукта (SemVer):  0.30.1
-номер сборки:              636
-версия Tauri/NSIS:         5.1.636
+номер сборки:              637
+версия Tauri/NSIS:         5.1.637
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
 dev implementation:       model-owned evidence-first RAG + readable WCAG typography; deployment candidate
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.29.4 / build 633 runtime acceptance
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.0 / build 634; soft-update 0.30.1 повторяется после исправления preflight
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
 следующий выпуск:          0.30.0 bootstrap installer; 0.30.1 — следующий source/runtime patch после отдельной живой приёмки
-рантайм /api/version:      Legion 0.29.4 / build 633 / desktop 5.1.633; назначенная answer model и scoped native RRF приняты живым запросом
+рантайм /api/version:      Legion 0.30.0 / build 634 / desktop 5.1.634; первая soft-попытка build 636 отклонена до мутации из-за legacy smeta/RRF preflight
 ```
 
-> **0.30.1 / build 636 model-owned evidence-first RAG + readable UI (deployment candidate):** обычный
+> **0.30.1 / build 637 model-owned evidence-first RAG + readable UI + corrected soft updater (deployment candidate):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -31,8 +31,13 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 > Сметное ядро, пользовательский корпус и установленный runtime не изменялись;
 > Совушка больше не уменьшает desktop-root до `12px` и не использует terminal
 > monospace для обычного текста: системный sans и шкала `16/15/14` проходят
-> обе WCAG AA-палитры; rail `200px` не обрезает русские действия. Build 636
-> подготовлен к транзакционному обновлению установленного Windows runtime;
+> обе WCAG AA-палитры; rail `200px` не обрезает русские действия. Первый
+> soft apply build 636 корректно завершился `rejected` до stop/replace и сохранил
+> user state, но выявил два legacy-дефекта: `update-local` пытался управлять
+> удалённым Docker-контуром, а preflight требовал RRF у внешнего Qdrant.
+> Build 637 убирает управление Docker/Qdrant, делает внешний Qdrant честным
+> `available`/`N/A`, отличает version-only `uv.lock` от изменения зависимостей и
+> self-hosted обновляет builder/helper. Он подготовлен к транзакционному обновлению;
 > результат живой приёмки записывается после применения exact commit.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала

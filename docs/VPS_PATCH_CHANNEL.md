@@ -28,9 +28,10 @@ persistent venv. `tools/windows_runtime.py` напрямую запускает 
 уходит в persistent recovery. Текущее дерево `%LOCALAPPDATA%\Programs\LES` атомарно
 переименовывается в sibling recovery point; silent NSIS создаёт новое дерево,
 `state.ps1` восстанавливает junctions на `%LOCALAPPDATA%\LES`. Успех требует
-exact commit/version/build, API/UI, доступного Qdrant, совместимого index contract и прямого
+exact commit/version/build, API/UI, совместимого index contract и прямого
 Python process contract. Проверка сначала подтверждает дешёвые identity/API/UI и
-живые exact PID, затем запрашивает глубокий RAG/Qdrant health; успех требует двух
+живые exact PID, затем запрашивает RAG health; внешний Qdrant фиксируется как
+`available` или честный `N/A` и не управляется updater. Успех требует двух
 последовательных стабильных проб. При провале новое дерево удаляется, старое возвращается
 одним rename и перезапускается.
 
@@ -50,7 +51,7 @@ PowerShell rollback закрыт.
 - Python под `backend/`, `proxy/`, `sovushka/`;
 - prompts/skills и безопасные JSON/YAML/Markdown/UI assets;
 - корневые `proxy_server.py` и `sovushka_ng.py`;
-- собственные helpers `tools/{vps_patch_apply,windows_update_engine}.py` и паспорт
+- собственные helpers `tools/{vps_patch,vps_patch_apply,windows_update_engine}.py` и паспорт
   `config/version.json`.
 - общий console-free operational launcher `tools/les_runtime_control.py`;
 - пять exact lifecycle-скриптов:
@@ -98,8 +99,8 @@ same-directory temporary file и bounded retry атомарного replace: Win
 который в этот момент читает предыдущий JSON, не является ошибкой приложения и
 не запускает rollback.
 
-Успех требует точного commit/product version/build, HTTP proxy/UI, доступного Qdrant,
-совместимого index contract, чтения persistent сметного baseline через рабочий
+Успех требует точного commit/product version/build, HTTP proxy/UI,
+совместимого index contract, механического чтения persistent сметного baseline через рабочий
 `/api/lsr/gesn/{code}/expand`, прямых `python.exe/pythonw.exe` PID и
 `direct_python_no_console_v2`.
 При любой ошибке возвращаются все существовавшие файлы, удаляются добавленные, восстанавливается
@@ -146,11 +147,13 @@ uv run python tools/vps_patch.py update-local
 ```
 
 Она читает deployed commit из установленного LES, строит bounded diff, применяет пакет и ждёт
-финальный `ready/failed`. Локальный контур никогда не вызывает `publish`, SSH или elevated task.
+финальный `ready/failed`. Локальный контур никогда не вызывает `publish`, SSH, elevated task,
+Docker и не запускает/останавливает внешний Qdrant.
 
 `--installed-runtime` при сборке аттестует только побайтовые варианты файлов, нормализованное
 содержимое которых совпадает с Git ancestry. Это закрывает смешанный Windows EOL без ослабления
-смыслового base-check. Baseline preflight завершается до остановки и изменения runtime.
+смыслового base-check. Baseline preflight завершается до остановки и изменения runtime;
+поисковый индекс и RRF не являются частью этой механической проверки.
 
 Обе prepare-команды запускают только `make test-updater`. Этот target делегирует
 единому переносимому entrypoint `uv run python tools/platform_release_gate.py updater`,

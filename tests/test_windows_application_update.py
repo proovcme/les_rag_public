@@ -212,17 +212,17 @@ def test_soft_updater_keeps_live_ready_smeta_without_touching_baseline(
     vps_patch_apply._verify_smeta_baseline(tmp_path / "runtime", tmp_path / "state")
 
 
-def test_live_smeta_acceptance_requires_mechanical_rrf_and_exact_resources(monkeypatch):
+def test_live_smeta_acceptance_requires_mechanical_base_but_not_external_qdrant(monkeypatch):
     responses = {
         "readiness": {
             "smeta": {
                 "ready": True,
-                "rrf_ready": True,
+                "rrf_ready": False,
                 "mechanical_base": {
                     "ready": True,
                     "trusted_for_navigation": True,
                 },
-                "search_index": {"ready": True},
+                "search_index": {"ready": False},
             }
         },
         "expand": {"resources": [{"kind": "labor", "qty": 1.0}]},

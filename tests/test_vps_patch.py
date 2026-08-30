@@ -66,6 +66,11 @@ def test_patch_allowlist_accepts_shared_console_free_runtime_launcher():
     assert "tools/les_runtime_control.py" in vps_patch_apply.ALLOWED_FILES
 
 
+def test_patch_allowlist_accepts_self_hosted_local_update_builder():
+    assert vps_patch.normalize_path("tools/vps_patch.py") == "tools/vps_patch.py"
+    assert "tools/vps_patch.py" in vps_patch_apply.ALLOWED_FILES
+
+
 def test_local_updater_uses_limited_task_without_elevation(tmp_path):
     helper = tmp_path / "helper.py"
     job = tmp_path / "job.json"
@@ -240,37 +245,24 @@ def test_update_local_does_not_restart_already_live_runtime(tmp_path, monkeypatc
     assert vps_patch._ensure_local_runtime_live(tmp_path / "runtime", tmp_path / "state") is False
 
 
-def test_update_local_starts_existing_qdrant_container_after_reboot(
-    tmp_path, monkeypatch
-):
-    docker = tmp_path / "docker.exe"
-    docker.write_bytes(b"fixture")
-    live = iter((False, True))
-    commands = []
+def test_update_local_never_bootstraps_or_manages_external_qdrant(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    state = tmp_path / "state"
+    runtime.mkdir()
+    state.mkdir()
+    assert not hasattr(vps_patch, "_ensure_local_qdrant")
+    monkeypatch.setattr(vps_patch, "_installed_commit", lambda _runtime: "a" * 40)
+    monkeypatch.setattr(vps_patch, "_ensure_local_runtime_live", lambda *_args: False)
+    monkeypatch.setattr(vps_patch, "_automatic_patch_files", lambda *_args: ["proxy/x.py"])
+    monkeypatch.setattr(vps_patch.subprocess, "check_output", lambda *_args, **_kwargs: "b" * 40)
+    monkeypatch.setattr(vps_patch, "build_patch", lambda **_kwargs: {"patch": "ready"})
+    monkeypatch.setattr(vps_patch, "apply_local", lambda **_kwargs: {"status": str(tmp_path / "status.json")})
+    monkeypatch.setattr(vps_patch, "wait_local_update", lambda _path: {"state": "ready"})
 
-    def run(arguments, **_kwargs):
-        commands.append(arguments)
-        if arguments[1:3] == ["ps", "-a"]:
-            return subprocess.CompletedProcess(arguments, 0, "container-id\n", "")
-        return subprocess.CompletedProcess(arguments, 0, "", "")
+    result = vps_patch.update_local(output=tmp_path / "out", runtime=runtime, state=state)
 
-    monkeypatch.setattr(vps_patch, "_qdrant_live", lambda: next(live))
-    monkeypatch.setattr(vps_patch, "_docker_cli", lambda: docker)
-    monkeypatch.setattr(vps_patch.subprocess, "run", run)
-
-    assert vps_patch._ensure_local_qdrant() is True
-    assert any(arguments[1:] == ["start", "les-light-qdrant"] for arguments in commands)
-
-
-def test_update_local_keeps_already_live_qdrant(monkeypatch):
-    monkeypatch.setattr(vps_patch, "_qdrant_live", lambda: True)
-    monkeypatch.setattr(
-        vps_patch,
-        "_docker_cli",
-        lambda: (_ for _ in ()).throw(AssertionError("Docker probed for live Qdrant")),
-    )
-
-    assert vps_patch._ensure_local_qdrant() is False
+    assert result["ok"] is True
+    assert "qdrant_started" not in result
 
 
 def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):

@@ -148,7 +148,7 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 - API `:8050` и UI `:8051` отвечают;
 - Qdrant `:6333` отвечает, aliases существуют;
 - general RAG: complete dense+sparse/fingerprint counts и native RRF;
-- smeta RAG: complete dense+sparse counts, manifest compatible, RRF ready;
+- RAG index contract совместим; внешний Qdrant отмечен `available` или `N/A`;
 - mechanical smeta SQLite trusted for navigation/calculation;
 - `GET /api/lsr/gesn/10-01-001-01/expand?qty=1` возвращает непустые ресурсы;
 - configured reranker выполняет реальный двухкандидатный probe;
@@ -159,12 +159,9 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 | Код | Причина | Автоматическое действие |
 |---|---|---|
-| `docker_engine_unavailable` | Docker не установлен или engine не готов | warning; core продолжает запуск, оператор может включить Docker позже |
-| `qdrant_unavailable` | Qdrant недоступен вследствие отсутствия Docker/engine/health | warning; RAG capability unavailable, core API/UI остаются доступны |
+| `qdrant_unavailable` | внешний Qdrant не настроен или недоступен | `N/A`; core API/UI и soft update продолжают работу, updater не управляет Qdrant |
 | `python_environment_invalid` | offline sync/rebuild не дал здоровую lock-bound среду | terminal fail с точной диагностикой; не маскировать как Docker/Qdrant |
-| `qdrant_container_missing` | нет canonical container | clean install создаёт; soft update требует hard recovery |
-| `qdrant_not_ready` | container есть, HTTP не готов | bounded wait с логом; не запускать acceptance раньше |
-| `model_missing` | нет generation/embedding model | bootstrap скачивает по manifest; partial download resumable |
+| `model_missing` | внешняя generation/embedding model недоступна | capability warning; updater не устанавливает и не выбирает модель |
 | `baseline_unreadable` | база отсутствует/повреждена/DACL чужой | soft update fail; clean reset создаёт новый canonical state без ACL mutation |
 | `baseline_outdated` | bundled baseline новее | hard recovery; soft update не смешивает поколения файлов |
 | `foreign_port_owner` | порт занят не LES | не завершать процесс; точный PID/port в status |

@@ -22,6 +22,7 @@ PATCH_ALLOWED_ROOTS = (
 PATCH_ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
+    "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
     "tools/smeta_model_quality_benchmark.py",
@@ -40,6 +41,7 @@ PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"
 
 VERSION_SURFACES = {
     "pyproject.toml": "pyproject",
+    "uv.lock": "uv_lock",
     "desktop/tauri/package.json": "package_json",
     "desktop/tauri/package-lock.json": "package_lock",
     "desktop/tauri/src-tauri/Cargo.toml": "cargo_toml",
@@ -49,6 +51,7 @@ VERSION_SURFACES = {
 
 RELEASE_ONLY_FILES = {
     "tools/github_patch_release.py",
+    "tools/rag_dataset_story_acceptance.py",
     "tools/release_classification.py",
 }
 
@@ -107,6 +110,12 @@ def _without_version(kind: str, raw: bytes) -> Any:
 
     if kind == "pyproject":
         document["project"]["version"] = "<VERSION>"
+    elif kind == "uv_lock":
+        packages = document.get("package", [])
+        les_packages = [package for package in packages if package.get("name") == "les-v2"]
+        if len(les_packages) != 1:
+            raise ValueError("uv.lock must contain exactly one les-v2 package")
+        les_packages[0]["version"] = "<VERSION>"
     elif kind == "package_json":
         document["version"] = "<VERSION>"
     elif kind == "package_lock":
@@ -156,13 +165,16 @@ def classify_release(base: str, target: str, *, root: Path) -> ReleaseClassifica
             if _is_version_only(root, base, target, path, surface_kind):
                 ignored_versions.append(path)
             else:
-                reason = "dependency graph changed" if path == "pyproject.toml" else "version surface contains runtime changes"
+                reason = (
+                    "dependency graph changed"
+                    if path == "pyproject.toml"
+                    else "locked environment changed"
+                    if path == "uv.lock"
+                    else "version surface contains runtime changes"
+                )
                 triggers.append(ReleaseTrigger(path, reason))
             continue
 
-        if path == "uv.lock":
-            triggers.append(ReleaseTrigger(path, "locked environment changed"))
-            continue
         if path.startswith("installers/windows/app/"):
             triggers.append(ReleaseTrigger(path, "Windows bootstrap changed"))
             continue

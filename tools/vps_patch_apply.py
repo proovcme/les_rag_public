@@ -31,6 +31,7 @@ ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/"
 ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
+    "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
     "tools/smeta_model_quality_benchmark.py",
@@ -322,18 +323,18 @@ def _start_runtime(runtime: Path, state: Path) -> None:
 def _verify_smeta_baseline(
     runtime: Path, state: Path, *, staged_runtime: Path | None = None
 ) -> None:
-    """Accept a live mechanical+RRF baseline; never silently repair during soft update."""
+    """Accept a readable mechanical baseline; external search availability is independent."""
     del runtime, state, staged_runtime  # identity kept for call-site compatibility
     if _wait_live_smeta_baseline_ready():
         return
     raise RuntimeError(
-        "baseline_unreadable: soft update requires a live mechanical+RRF smeta "
+        "baseline_unreadable: soft update requires a live mechanical smeta "
         "baseline; use hard recovery or clean install instead of hidden repair"
     )
 
 
 def _live_smeta_baseline_ready() -> bool:
-    """Accept an already-running base only on mechanical, RRF and exact-expand evidence."""
+    """Accept an already-running base on mechanical and exact-expand evidence."""
     try:
         readiness = _json_url("http://127.0.0.1:8050/api/rag/readiness", timeout=10)
         expansion = _json_url(
@@ -346,16 +347,11 @@ def _live_smeta_baseline_ready() -> bool:
     if not isinstance(smeta, dict):
         return False
     mechanical = smeta.get("mechanical_base")
-    search = smeta.get("search_index")
     resources = expansion.get("resources") if isinstance(expansion, dict) else None
     return bool(
-        smeta.get("ready")
-        and smeta.get("rrf_ready")
-        and isinstance(mechanical, dict)
+        isinstance(mechanical, dict)
         and mechanical.get("ready")
         and mechanical.get("trusted_for_navigation")
-        and isinstance(search, dict)
-        and search.get("ready")
         and isinstance(resources, list)
         and resources
     )

@@ -1,6 +1,6 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
-> **0.30.1 model-owned evidence-first RAG + readable UI (build 636):**
+> **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 637):**
 > `test_model_execution_preset_service.py` и
 > `test_context_governor_service.py` защищают реальную context capacity,
 > однократные reserves и приоритет evidence над памятью.
@@ -15,6 +15,11 @@
 > `test_sovushka_uikit.py` дополнительно запрещает desktop-root `12px` и
 > terminal monospace в chrome, фиксирует системный sans, шкалу `16/15/14`,
 > rail `200px`, обе WCAG AA-палитры и видимый focus.
+> `test_vps_patch.py`, `test_windows_application_update.py` и
+> `test_release_classification.py` запрещают управление Docker/Qdrant из
+> updater, разрешают механическую baseline-проверку при external Qdrant `N/A`,
+> доставляют self-hosted builder/helper и классифицируют version-only `uv.lock`
+> как лёгкий патч без ослабления проверки dependency graph.
 
 > **0.29.0 private model/promotion closure:** canonical `make test`, `make
 > verify` collection и portable platform gate теперь постоянно включают все
