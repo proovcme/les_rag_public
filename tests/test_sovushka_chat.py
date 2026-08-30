@@ -416,6 +416,27 @@ def test_selected_dataset_ids_stay_in_model_owned_scope_without_deterministic_fi
     assert 'req.dataset_ids = _scope_snap["resolved_dataset_ids"]' in source
 
 
+def test_chat_defaults_to_plain_ai_and_always_sends_explicit_scope():
+    source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
+
+    assert 'scope_state = {"scope_type": "none"' in source
+    assert '"label": "Без источников"' in source
+    assert 'scope_state["scope_type"] = "none"' in source
+    assert 'scope_state["scope_type"] = "all"' in source
+    assert 'payload["scope"] = {"scope_type": scope_state["scope_type"]' in source
+    assert 'if scope_state["scope_type"] != "all":' not in source
+
+
+def test_router_does_not_infer_document_scope_for_plain_ai_chat():
+    source = inspect.getsource(chat_router._run_chat)
+
+    assert "document_grounding_enabled(" in source
+    assert '_scope_snap["scope_type"], req.dataset_ids' in source
+    assert 'scope_source = "none"' in source
+    assert "effective_dataset_filter = explicit_dataset_filter(" in source
+    assert 'use_semantic_cache = False' in source
+
+
 def test_answer_shows_actual_model_connection_and_dataset_scope():
     source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
 

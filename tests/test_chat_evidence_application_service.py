@@ -595,6 +595,29 @@ async def test_shadow_candidate_executes_only_one_decision_and_redacts_result() 
     assert "secret_text" not in str(trace)
 
 
+def test_grounded_application_never_uses_answer_cache_or_code_no_data_final() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    assert "if document_grounding_enabled:" in source
+    assert "use_semantic_cache = False" in source
+    assert '"empty_retrieval_model_first_v1"' in source
+    assert "empty_scoped_retrieval_no_data_v1" not in source
+    assert "if not chunks and effective_dataset_filter:" not in source
+    assert "if not chunks and target_file_ref" not in source
+
+
+def test_plain_ai_scope_removes_only_document_evidence_tools() -> None:
+    tools = service.tools_for_document_scope(
+        ["search_sources", "read_source", "calculate", "send_mail"],
+        enabled=False,
+    )
+
+    assert tools == ["calculate", "send_mail"]
+    assert service.tools_for_document_scope(
+        ["search_sources", "read_source", "calculate"], enabled=True
+    ) == ["search_sources", "read_source", "calculate"]
+
+
 @pytest.mark.asyncio
 async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> None:
     class ThrowingHarness:
@@ -1244,6 +1267,16 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "local-restrictive",
         ]
         assert history_rows[0]["retrieval_trace"]["canonical_shadow"]["persisted_effects"] == 0
+        assert after_protected == before_protected
+        return
+    if scenario == "normal_unscoped":
+        assert model_calls == ["final"]
+        assert shortlist_policies == []
+        assert shadow_calls == []
+        assert executor_codes == []
+        assert legacy_calls == []
+        assert history_rows[0]["retrieval_trace"]["status"] == "skipped"
+        assert history_rows[0]["retrieval_trace"]["reason"] == "scope_none"
         assert after_protected == before_protected
         return
     assert model_calls == ["selector", "final"]

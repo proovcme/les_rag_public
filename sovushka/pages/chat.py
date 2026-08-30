@@ -797,11 +797,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ).tooltip("Открыть панель результатов и файлов")
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
-                    scope_state = {"scope_type": "all", "project_ids": [], "dataset_ids": [], "label": "Все источники"}
+                    scope_state = {"scope_type": "none", "project_ids": [], "dataset_ids": [], "label": "Без источников"}
                     scope_opts_cache: dict = {"data": None}
 
                     scope_btn = action_button(
-                        "Все источники",
+                        "Без источников",
                         icon="o_travel_explore",
                         variant="secondary",
                         compact=True,
@@ -815,6 +815,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         data = scope_opts_cache["data"] or {}
                         if st == "all":
                             return "Все источники"
+                        if st == "none":
+                            return "Без источников"
                         if st == "project" and np == 1:
                             for p in data.get("projects", []):
                                 if int(p["id"]) == scope_state["project_ids"][0]:
@@ -836,7 +838,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         scope_state["dataset_ids"] = sorted(sel_datasets)
                         np, nd = len(sel_projects), len(sel_datasets)
                         if np == 0 and nd == 0:
-                            scope_state["scope_type"] = "all"
+                            scope_state["scope_type"] = "none"
                         elif np and nd:
                             scope_state["scope_type"] = "mixed"
                         elif np == 1:
@@ -850,6 +852,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         # back-compat: одиночный проект → project_state (карта объекта и пр.)
                         project_state["id"] = scope_state["project_ids"][0] if scope_state["scope_type"] == "project" else None
                         scope_state["label"] = _scope_label()
+                        scope_btn.set_text(scope_state["label"])
+                        try:
+                            asyncio.create_task(_refresh_scope_files_panel())
+                        except NameError:
+                            pass
+
+                    def _apply_all_scope() -> None:
+                        scope_state["project_ids"] = []
+                        scope_state["dataset_ids"] = []
+                        scope_state["scope_type"] = "all"
+                        scope_state["label"] = _scope_label()
+                        project_state["id"] = None
                         scope_btn.set_text(scope_state["label"])
                         try:
                             asyncio.create_task(_refresh_scope_files_panel())
@@ -1023,7 +1037,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                         _cb(_dataset_title(d), str(d["id"]), sel_d,
                                             sub=meta, icon="o_auto_stories", disabled=not available)
                             with ui.row().classes("sov-scope-dialog-actions"):
-                                ui.button("Все источники", on_click=lambda: (_apply_scope(set(), set()), dlg.close())).props("flat no-caps")
+                                ui.button("Все источники", on_click=lambda: (_apply_all_scope(), dlg.close())).props("flat no-caps")
                                 ui.button("Очистить выбор", on_click=lambda: (sel_p.clear(), sel_d.clear(), _update_selection_note())).props("flat no-caps")
                                 ui.button("Применить выбор", icon="o_check", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("unelevated no-caps color=primary")
                         dlg.open()
@@ -1600,7 +1614,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     async def _resolve_scope_dataset_ids() -> tuple[list[str], list[str]]:
         ids = [str(x) for x in (scope_state.get("dataset_ids") or []) if str(x)]
         names: list[str] = []
-        if scope_state.get("scope_type") == "all":
+        if scope_state.get("scope_type") in {"none", "all"}:
             return ids, names
         if ids:
             data = scope_opts_cache.get("data") or {}
@@ -3941,10 +3955,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if detail_dataset.value and detail_dataset.value != "(все датасеты)":
             payload["dataset_filter"] = detail_dataset.value
         # v0.22: явная ОБЛАСТЬ ПОИСКА из ScopeSelector (приоритетнее legacy; backend сам резолвит).
-        if scope_state["scope_type"] != "all":
-            payload["scope"] = {"scope_type": scope_state["scope_type"],
-                                "project_ids": scope_state["project_ids"],
-                                "dataset_ids": scope_state["dataset_ids"]}
+        payload["scope"] = {"scope_type": scope_state["scope_type"],
+                            "project_ids": scope_state["project_ids"],
+                            "dataset_ids": scope_state["dataset_ids"]}
         if project_state["id"]:  # back-compat: одиночный проект → project_id
             payload["project_id"] = project_state["id"]
         payload.update(_attachment_chat_payload(sent_attachment))

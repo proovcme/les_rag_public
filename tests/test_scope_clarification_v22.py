@@ -74,7 +74,7 @@ def test_scope_resolution_stays_in_trace_without_code_authored_clarification():
 def test_empty_retrieval_no_generic_code_no_data_final():
     from proxy.services import chat_evidence_application_service
     src = inspect.getsource(chat_evidence_application_service._execute_chat_evidence_application)
-    assert 'if not chunks and target_file_ref and target_file_ref.get("match_status") in {"matched", "ambiguous"}' in src
+    assert 'if not chunks and target_file_ref' not in src
     assert "empty_retrieval_model_first_v1" in src
 
 
@@ -97,12 +97,13 @@ def test_scope_selector_wired_in_gui():
     src = open("sovushka/pages/chat.py", encoding="utf-8").read()
     assert "scope_state" in src and "/api/scope/options" in src
     # группы видны в селекторе
-    for grp in ("ПРОЕКТЫ", "НЕПРИВЯЗАННЫЕ ДАТАСЕТЫ", "Системные"):
+    for grp in ("ПРОЕКТЫ", "ОТДЕЛЬНЫЕ ИСТОЧНИКИ", "БАЗЫ ЛЕС"):
         assert grp in src
 
 def test_scope_payload_sent_to_chat():
     src = open("sovushka/pages/chat.py", encoding="utf-8").read()
-    assert 'payload["scope"]' in src and 'scope_state["scope_type"] != "all"' in src
+    assert 'payload["scope"]' in src
+    assert 'scope_state["scope_type"] != "all"' not in src
 
 def test_scope_selector_no_vague_dashes_label():
     # старый «— весь RAG —» с тире заменён на «Весь RAG»

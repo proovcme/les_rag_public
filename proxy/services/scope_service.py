@@ -1,7 +1,7 @@
 """scope_service (v0.21) — нормализованная ОБЛАСТЬ ПОИСКА чата (Scope).
 
 Конец путаницы «весь RAG / проект / датасет / project_id / dataset_filter». Единый Scope:
-  scope_type: all | project | projects | dataset | datasets | mixed
+  scope_type: none | all | project | projects | dataset | datasets | mixed
 Резолвится в resolved_dataset_ids. Старые поля (project_id/dataset_ids/dataset_filter) принимаются и
 приводятся к Scope (back-compat). Project = именованная группа датасетов (НЕ папка). Dataset = источник.
 
@@ -15,7 +15,7 @@ from typing import Any, Callable, Optional
 
 from proxy.services.system_dataset_service import system_dataset_spec
 
-_VALID_TYPES = ("all", "project", "projects", "dataset", "datasets", "mixed")
+_VALID_TYPES = ("none", "all", "project", "projects", "dataset", "datasets", "mixed")
 
 # роли датасета в проекте (для отображения; не влияют на ретрив)
 DATASET_ROLES = ("docs", "norms", "mail", "estimate", "vor", "asbuilt", "resource_workbook",
@@ -65,7 +65,7 @@ def resolve_scope(*, scope: dict | None = None, project_id: int | None = None,
         st = str(scope["scope_type"]).strip().lower()
         if st not in _VALID_TYPES:
             warnings.append(f"unknown_scope_type:{st}")
-            st = "all"
+            st = "none"
         pids = [int(x) for x in (scope.get("project_ids") or []) if str(x).strip()]
         dids = [str(x) for x in (scope.get("dataset_ids") or []) if str(x).strip()]
         source = "ui_scope"
@@ -85,10 +85,10 @@ def resolve_scope(*, scope: dict | None = None, project_id: int | None = None,
                 dids = [did]
                 st, source = "dataset", "legacy_dataset_filter"
             else:
-                st, source = "all", "legacy_dataset_filter"
+                st, source = "none", "legacy_dataset_filter"
                 warnings.append(f"dataset_filter_unresolved:{dataset_filter}")
         else:
-            st, source = "all", "default_all"
+            st, source = "none", "default_none"
 
     # ── резолв в dataset_ids ────────────────────────────────────────────────────────────────
     resolved: list[str] = []
@@ -105,6 +105,8 @@ def resolve_scope(*, scope: dict | None = None, project_id: int | None = None,
     # ── label ───────────────────────────────────────────────────────────────────────────────
     if label:
         lbl = label
+    elif st == "none":
+        lbl = "Без источников"
     elif st == "all":
         lbl = "Весь RAG"
     elif st == "project" and pids:
@@ -124,6 +126,19 @@ def resolve_scope(*, scope: dict | None = None, project_id: int | None = None,
         "scope_type": st, "project_ids": pids, "dataset_ids": dids,
         "resolved_dataset_ids": resolved, "label": lbl, "source": source, "warnings": warnings,
     }
+
+
+def document_grounding_enabled(scope_type: str, dataset_ids: list[str] | tuple[str, ...] | None) -> bool:
+    """True only when the request explicitly binds document evidence."""
+    return str(scope_type or "none").strip().casefold() != "none" or bool(dataset_ids)
+
+
+def explicit_dataset_filter(value: str | None, *, grounding_enabled: bool) -> str | None:
+    """Return only an operator-supplied legacy filter; never infer scope from prose."""
+    if not grounding_enabled:
+        return None
+    normalized = str(value or "").strip()
+    return normalized or None
 
 
 # ── §1 v0.22: проектный запрос при scope=all → попросить выбрать область (не искать молча) ──

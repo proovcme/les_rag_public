@@ -22,9 +22,34 @@ def _R(**kw):
 
 # ── §3 scope resolver ─────────────────────────────────────────────────────────────────────
 
-def test_resolve_scope_all():
+def test_resolve_scope_defaults_to_no_documents():
     r = _R()
-    assert r["scope_type"] == "all" and r["source"] == "default_all" and r["resolved_dataset_ids"] == []
+    assert r["scope_type"] == "none"
+    assert r["source"] == "default_none"
+    assert r["resolved_dataset_ids"] == []
+    assert r["label"] == "Без источников"
+
+
+def test_resolve_scope_explicit_all_is_preserved():
+    r = _R(scope={"scope_type": "all"})
+
+    assert r["scope_type"] == "all"
+    assert r["source"] == "ui_scope"
+    assert r["resolved_dataset_ids"] == []
+    assert r["label"] == "Весь RAG"
+
+
+def test_document_grounding_is_only_enabled_by_explicit_scope_or_bound_dataset():
+    assert s.document_grounding_enabled("none", []) is False
+    assert s.document_grounding_enabled("all", []) is True
+    assert s.document_grounding_enabled("dataset", ["d1"]) is True
+    assert s.document_grounding_enabled("none", ["attachment-1"]) is True
+
+
+def test_retrieval_filter_never_narrows_scope_from_question_inference():
+    assert s.explicit_dataset_filter(None, grounding_enabled=True) is None
+    assert s.explicit_dataset_filter("MAIL", grounding_enabled=True) == "MAIL"
+    assert s.explicit_dataset_filter("MAIL", grounding_enabled=False) is None
 
 def test_resolve_scope_project():
     r = _R(scope={"scope_type": "project", "project_ids": [1]})
@@ -57,7 +82,7 @@ def test_legacy_dataset_ids_maps_to_scope():
 def test_dataset_filter_maps_to_scope_or_warning():
     assert _R(dataset_filter="Котельная ВОР")["resolved_dataset_ids"] == ["d3"]   # резолвится по каталогу
     r = _R(dataset_filter="нет такого")
-    assert r["scope_type"] == "all" and any("unresolved" in w for w in r["warnings"])  # warning, не молча
+    assert r["scope_type"] == "none" and any("unresolved" in w for w in r["warnings"])  # warning, не молча
 
 def test_dataset_filter_uuid_maps_to_dataset_scope_without_catalog():
     did = "449190eb-050e-422f-91a6-54852469201a"

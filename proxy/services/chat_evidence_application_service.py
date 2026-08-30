@@ -89,6 +89,53 @@ from proxy.services.typed_memory_projection_service import MemoryLimits, project
 
 logger = logging.getLogger(__name__)
 
+_DOCUMENT_EVIDENCE_TOOLS = frozenset({
+    "dataset_map",
+    "search_sources",
+    "read_source",
+    "read_pdf_source",
+    "look_at_pdf_page",
+    "read_excel_source",
+    "search_project_tables",
+    "read_project_table",
+    "assemble_project_volume",
+})
+
+
+def tools_for_document_scope(tools: Sequence[str], *, enabled: bool) -> list[str]:
+    """Remove indexed-document tools when the user selected no document scope."""
+    normalized = [str(name) for name in tools if str(name).strip()]
+    if enabled:
+        return normalized
+    return [name for name in normalized if name not in _DOCUMENT_EVIDENCE_TOOLS]
+
+
+@dataclass(frozen=True)
+class _SkippedRetrievalQuality:
+    status: str = "skipped"
+    top_score: float = 0.0
+
+
+@dataclass(frozen=True)
+class _SkippedRetrievalTrace:
+    status: str = "skipped"
+    error_code: str = ""
+
+
+@dataclass(frozen=True)
+class _SkippedDocumentRetrieval:
+    chunks: tuple[Any, ...] = ()
+    trace: _SkippedRetrievalTrace = _SkippedRetrievalTrace()
+    quality: _SkippedRetrievalQuality = _SkippedRetrievalQuality()
+
+    def payload(self) -> dict[str, Any]:
+        return {
+            "schema": "retrieval_trace_v1",
+            "status": "skipped",
+            "reason": "scope_none",
+            "quality": {"status": "skipped", "top_score": 0.0},
+        }
+
 
 def safe_selected_call_trace(call: dict[str, Any]) -> dict[str, str]:
     """Expose a call's shape without retaining model-supplied argument text."""
@@ -659,10 +706,12 @@ async def _execute_chat_evidence_application(
     status=None,
     table_result=None
 ):
-    # ``None`` is the public representation of the unscoped "all corpus" mode.
-    # Internal memory and tool contracts require an iterable scope, where an
-    # empty tuple deliberately means no explicit dataset restriction.
     _dataset_ids = tuple(str(item) for item in (_dataset_ids or ()) if str(item))
+    document_grounding_enabled = bool(
+        (scope_resolution or {}).get("document_grounding_enabled", _dataset_ids)
+    )
+    if document_grounding_enabled:
+        use_semantic_cache = False
     memory_project_id = 0
     project_memory_advisory = ""
     try:
@@ -687,22 +736,25 @@ async def _execute_chat_evidence_application(
             getattr(req, "reranker_enabled", None)
         )
         topic_chunks: list[Any] = []
-        retrieval = await retrieve_chat_chunks(
-            question=req.question,
-            dataset_ids=_dataset_ids,
-            rag_backend=rag_backend,
-            reranker_enabled=_reranker_on,
-            reranker_available=state.reranker_available,
-            reranker_cls=state.reranker_cls,
-            mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
-            logger=logger,
-            llm_semaphore=state.llm_semaphore,
-            return_trace=True,
-            doc_filter=target_doc_filter or None,
-            scope_source=str((scope_resolution or {}).get("scope_source") or "unspecified"),
-            scope_error_code=str((scope_resolution or {}).get("error_code") or ""),
-        )
-        chunks = [*topic_chunks, *retrieval.chunks] if topic_chunks else retrieval.chunks
+        if document_grounding_enabled:
+            retrieval = await retrieve_chat_chunks(
+                question=req.question,
+                dataset_ids=_dataset_ids,
+                rag_backend=rag_backend,
+                reranker_enabled=_reranker_on,
+                reranker_available=state.reranker_available,
+                reranker_cls=state.reranker_cls,
+                mlx_url=os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                logger=logger,
+                llm_semaphore=state.llm_semaphore,
+                return_trace=True,
+                doc_filter=target_doc_filter or None,
+                scope_source=str((scope_resolution or {}).get("scope_source") or "unspecified"),
+                scope_error_code=str((scope_resolution or {}).get("error_code") or ""),
+            )
+        else:
+            retrieval = _SkippedDocumentRetrieval()
+        chunks = [*topic_chunks, *retrieval.chunks] if topic_chunks else list(retrieval.chunks)
     except Exception as e:
         import traceback
 
@@ -1074,110 +1126,6 @@ async def _execute_chat_evidence_application(
             use_validation=use_validation,
         )
 
-    if not chunks and target_file_ref and target_file_ref.get("match_status") in {"matched", "ambiguous"}:
-        state.crag_stats["no_data"] += 1
-        state.chat_metrics["latency_search"].append(t_search)
-        state.chat_metrics["latency_gen"].append(0.0)
-        state.chat_metrics["crag_fail"] += 1
-        for key in ("latency_search", "latency_gen", "tokens"):
-            state.chat_metrics[key] = state.chat_metrics[key][-100:]
-        no_data_answer = "Нет данных в выбранных источниках."
-        if target_file_ref and target_file_ref.get("match_status") == "matched":
-            file_name = str(target_file_ref.get("file_name") or target_file_ref.get("basename") or "файл")
-            status = str(target_file_ref.get("status") or "UNKNOWN")
-            chunk_count = int(target_file_ref.get("chunk_count") or 0)
-            no_data_answer = (
-                f"В реестре вижу файл `{file_name}`, статус индекса: `{status}`, чанков: {chunk_count}. "
-                "Содержимое этого файла сейчас не найдено в индексе, поэтому честно не пересказываю его состав. "
-                "Нужно дождаться индексации/переиндексировать файл или открыть его как вложение."
-            )
-        elif target_file_ref and target_file_ref.get("match_status") == "ambiguous":
-            options = [
-                str(item.get("file_name") or item.get("basename") or "")
-                for item in (target_file_ref.get("matches") or [])[:8]
-                if item
-            ]
-            no_data_answer = (
-                "Нашёл несколько файлов, похожих на указанное имя. Уточни один из них:\n"
-                + "\n".join(f"- `{name}`" for name in options)
-            )
-        history_id = None
-        try:
-            history_id = save_chat_history(
-                question=req.question,
-                answer=no_data_answer,
-                sources=[],
-                crag_status="NO_DATA",
-                latency_sec=t_search,
-                tokens=0,
-                session_id=req.session_id,
-                requested_dataset_filter=req.dataset_filter,
-                effective_dataset_filter=effective_dataset_filter,
-                resolved_dataset_ids=_dataset_ids,
-                resolved_dataset_names=resolved_dataset_names,
-                query_route=query_route_payload,
-                retrieval_trace=retrieval_trace,
-                cache_type=cache_marker,
-                validation_enabled=use_validation,
-                success=0,
-            )
-        except Exception as db_err:
-            logger.warning("[CHAT] History save error: %s", db_err)
-        return {
-            "answer": no_data_answer,
-            "crag_status": "NO_DATA",
-            "sources": [],
-            "effective_dataset_filter": effective_dataset_filter,
-            "query_route": query_route_payload,
-            "retrieval_trace": retrieval_trace,
-            "cache": cache_marker,
-            "history_id": history_id,
-        }
-    if not chunks and effective_dataset_filter:
-        state.crag_stats["no_data"] += 1
-        state.chat_metrics["latency_search"].append(t_search)
-        state.chat_metrics["latency_gen"].append(0.0)
-        state.chat_metrics["crag_fail"] += 1
-        for key in ("latency_search", "latency_gen", "tokens"):
-            state.chat_metrics[key] = state.chat_metrics[key][-100:]
-        retrieval_trace["empty_retrieval"] = {
-            "schema": "empty_scoped_retrieval_no_data_v1",
-            "model_final_allowed": False,
-            "note": "Explicit scoped retrieval returned no chunks and no navigation/memory context.",
-        }
-        no_data_answer = "В выбранных источниках ничего не найдено по этому вопросу."
-        history_id = None
-        try:
-            history_id = save_chat_history(
-                question=req.question,
-                answer=no_data_answer,
-                sources=[],
-                crag_status="NO_DATA",
-                latency_sec=t_search,
-                tokens=0,
-                session_id=req.session_id,
-                requested_dataset_filter=req.dataset_filter,
-                effective_dataset_filter=effective_dataset_filter,
-                resolved_dataset_ids=_dataset_ids,
-                resolved_dataset_names=resolved_dataset_names,
-                query_route=query_route_payload,
-                retrieval_trace=retrieval_trace,
-                cache_type=cache_marker,
-                validation_enabled=use_validation,
-                success=0,
-            )
-        except Exception as db_err:
-            logger.warning("[CHAT] History save error: %s", db_err)
-        return {
-            "answer": no_data_answer,
-            "crag_status": "NO_DATA",
-            "sources": [],
-            "effective_dataset_filter": effective_dataset_filter,
-            "query_route": query_route_payload,
-            "retrieval_trace": retrieval_trace,
-            "cache": cache_marker,
-            "history_id": history_id,
-        }
     if not chunks:
         retrieval_trace["empty_retrieval"] = {
             "schema": "empty_retrieval_model_first_v1",
@@ -1684,6 +1632,10 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
+                profile_tools = tools_for_document_scope(
+                    profile_tools,
+                    enabled=document_grounding_enabled,
+                )
                 if canonical_execution_mode is not CanonicalRouteMode.ACTIVE:
                     profile_tools = [
                         name

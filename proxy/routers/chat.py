@@ -3519,9 +3519,16 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     pid = req.project_id or 0
 
     # v0.21: нормализованная ОБЛАСТЬ ПОИСКА (snapshot для trace/истории; явный ui-scope управляет ретривом).
-    from proxy.services.scope_service import resolve_scope
+    from proxy.services.scope_service import (
+        document_grounding_enabled,
+        explicit_dataset_filter,
+        resolve_scope,
+    )
     _scope_snap = resolve_scope(scope=req.scope, project_id=req.project_id,
                                 dataset_ids=req.dataset_ids, dataset_filter=req.dataset_filter)
+    grounding_enabled = document_grounding_enabled(
+        _scope_snap["scope_type"], req.dataset_ids
+    )
     if isinstance(req.scope, dict) and req.scope.get("scope_type"):
         # явный scope из ScopeSelector приоритетнее legacy: проставляем resolved в поля, которые
         # понимает существующий конвейер (без молчаливого fallback на «весь RAG»).
@@ -3698,7 +3705,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         dataset_ids=effective_dataset_ids,
     )
     kot_decision = analyze_question(req.question)
-    effective_dataset_filter = req.dataset_filter or query_intent.dataset_filter or kot_decision.dataset_filter
+    effective_dataset_filter = explicit_dataset_filter(
+        req.dataset_filter,
+        grounding_enabled=grounding_enabled,
+    )
     logger.info(
         "[QUERY_ROUTER] channel=%s reason=%s filter=%s",
         query_intent.channel,
@@ -3709,7 +3719,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # (retrieval_trace тут ещё не инициализирован — пишем класс-метки в трейс ниже, после retrieve.)
     class_suggestions = build_class_suggestions(req.question, primary_filter=effective_dataset_filter)
 
-    if req.dataset_ids:
+    if not grounding_enabled:
+        scope_source = "none"
+    elif req.dataset_ids:
         scope_source = "explicit_dataset_ids"
     elif req.dataset_filter:
         scope_source = "explicit_dataset_filter"
@@ -3720,16 +3732,28 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     else:
         scope_source = "all_corpus"
     scope_resolution: dict[str, Any] = {}
-    _dataset_ids = await resolve_dataset_ids(
-        rag_backend,
-        effective_dataset_ids,
-        effective_dataset_filter,
-        logger,
-        question=req.question,
-        resolution_trace=scope_resolution,
-        scope_source=scope_source,
-    )
-    dataset_name_by_id = await _dataset_name_map(rag_backend)
+    if grounding_enabled:
+        _dataset_ids = await resolve_dataset_ids(
+            rag_backend,
+            effective_dataset_ids,
+            effective_dataset_filter,
+            logger,
+            question=req.question,
+            resolution_trace=scope_resolution,
+            scope_source=scope_source,
+        )
+        dataset_name_by_id = await _dataset_name_map(rag_backend)
+    else:
+        _dataset_ids = []
+        dataset_name_by_id = {}
+        scope_resolution.update({
+            "scope_source": "none",
+            "scope_type": "none",
+            "document_grounding_enabled": False,
+            "status": "skipped",
+        })
+    scope_resolution.setdefault("scope_type", _scope_snap["scope_type"])
+    scope_resolution.setdefault("document_grounding_enabled", grounding_enabled)
     resolved_dataset_names = _names_for_dataset_ids(_dataset_ids, dataset_name_by_id)
     target_file_ref: dict[str, Any] | None = None
     target_file_refs: list[dict[str, Any]] = []
@@ -3856,6 +3880,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         if req.semantic_cache_enabled is not None
         else semantic_cache_enabled()
     )
+    if grounding_enabled:
+        use_semantic_cache = False
     if study_requested or inventory_requested or target_doc_filter or topic_doc_filter:
         # Broad project/object questions must re-read the selected area. A cached short RAG table
         # turns "расскажи про объект" into a stale narrow answer and hides the broad reading layer.
