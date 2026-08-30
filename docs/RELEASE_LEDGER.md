@@ -12,13 +12,13 @@
 версия Tauri/NSIS:         5.1.640
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
 dev implementation:       model-owned evidence-first RAG + readable WCAG typography + accepted soft updater
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 639 / commit 26a650b5 runtime acceptance; build 640 task cleanup candidate
-последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
-следующий выпуск:          0.30.1 lightweight GitHub patch после public-gates и публикации immutable assets
-рантайм /api/version:      Legion 0.30.1 / build 639 / desktop 5.1.639 / commit 26a650b5; soft update accepted
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 640 / commit 46d5eeab runtime acceptance
+последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
+следующий выпуск:          0.30.1 lightweight GitHub patch; exact public URL фиксируется до immutable publication
+рантайм /api/version:      Legion 0.30.1 / build 640 / desktop 5.1.640 / commit 46d5eeab; soft update accepted
 ```
 
-> **0.30.1 / build 640 model-owned evidence-first RAG + readable UI + corrected soft updater (deployment candidate):** обычный
+> **0.30.1 / build 640 model-owned evidence-first RAG + readable UI + corrected soft updater (Windows accepted):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -56,6 +56,10 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 > вручную и имела trigger через минуту: второй запуск сталкивался с `apply.lock`,
 > а завершённые tasks оставались в Scheduler. Build 640 использует один trigger
 > через 2 секунды с EndBoundary/auto-expiry и без `Start-ScheduledTask`.
+> Живой patch `26a650b5 -> 46d5eeab` изменил только `config/version.json` и
+> `proxy/services/update_service.py`; задача завершилась один раз с result `0`,
+> `NextRunTime = null`, `/api/version` показал aligned `0.30.1 / 640`,
+> `user_data_untouched = true`.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
 > authoritative для обычного чата: вызывается любая выбранная answer model без
