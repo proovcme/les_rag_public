@@ -23,7 +23,7 @@ domain-prose в query и dataset/case-specific boosts запрещены.
 3. **[docs/MODULE_INDEX.md](docs/MODULE_INDEX.md)** — карта МОДУЛЕЙ: что есть, точки входа, **статус док↔код** (✅/🟡/🗄/📋), ссылка на док модуля. Начинай отсюда: модуль → его док/код.
 4. **[docs/CODE_MAP.md](docs/CODE_MAP.md)** — карта кода по файлам: поток чата/индексации, «где искать что».
 5. **[docs/SOFTWARE_VERSIONS.md](docs/SOFTWARE_VERSIONS.md)** — паспорт версий ЛЕС, Qdrant, Ollama, моделей и сборочного контура.
-6. **[ROADMAP_TO_V1.md](ROADMAP_TO_V1.md)** — что считается v1, этапы, блокеры (актуальный план).
+6. **[ROADMAP_TO_V1.md](ROADMAP_TO_V1.md)** — короткий продуктовый путь до v1; история прежних планов и релизов находится в archive/ledger.
 7. **[docs/RELEASE_LEDGER.md](docs/RELEASE_LEDGER.md)** — **где мы сейчас**: версия продукта, номер сборки, dev↔рантайм commit, что задеплоено.
 8. **[docs/unified_harness_failure_ledger.md](docs/unified_harness_failure_ledger.md)** — журнал реальных провалов и как закрыты.
 9. **[docs/TEST_INVENTORY.md](docs/TEST_INVENTORY.md)** — карта тестов (что и где покрыто).
