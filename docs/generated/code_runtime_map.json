@@ -14156,6 +14156,17 @@
     },
     {
       "inbound": [],
+      "lines": 195,
+      "module": "tests.test_windows_release_acceptance",
+      "outbound": [
+        "tools/windows_release_acceptance.py"
+      ],
+      "path": "tests/test_windows_release_acceptance.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 72,
       "module": "tests.test_windows_update_shell",
       "outbound": [
@@ -14387,6 +14398,7 @@
         "tools/windows_clean_install.py",
         "tools/windows_env_doctor.py",
         "tools/windows_prebundle_smoke.py",
+        "tools/windows_release_acceptance.py",
         "tools/windows_runtime.py",
         "tools/windows_update_engine.py",
         "tools/windows_update_shell.py",
@@ -15774,7 +15786,7 @@
         "tests/test_patch_release.py",
         "tests/test_test_profiles.py"
       ],
-      "lines": 348,
+      "lines": 350,
       "module": "tools.platform_release_gate",
       "outbound": [
         "tools/__init__.py"
@@ -16615,7 +16627,8 @@
       "inbound": [
         "tests/test_github_patch_release.py",
         "tests/test_vps_patch.py",
-        "tools/github_patch_release.py"
+        "tools/github_patch_release.py",
+        "tools/windows_release_acceptance.py"
       ],
       "lines": 679,
       "module": "tools.vps_patch",
@@ -16631,7 +16644,8 @@
     {
       "inbound": [
         "tests/test_vps_patch.py",
-        "tests/test_windows_application_update.py"
+        "tests/test_windows_application_update.py",
+        "tools/windows_release_acceptance.py"
       ],
       "lines": 958,
       "module": "tools.vps_patch_apply",
@@ -16685,6 +16699,22 @@
     },
     {
       "inbound": [
+        "tests/test_windows_release_acceptance.py"
+      ],
+      "lines": 410,
+      "module": "tools.windows_release_acceptance",
+      "outbound": [
+        "tools/__init__.py",
+        "tools/vps_patch.py",
+        "tools/vps_patch_apply.py",
+        "tools/windows_update_engine.py"
+      ],
+      "path": "tools/windows_release_acceptance.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "tests/test_windows_application_update.py",
         "tools/windows_clean_install.py",
         "tools/windows_update_engine.py"
@@ -16701,7 +16731,8 @@
     {
       "inbound": [
         "tests/test_windows_application_update.py",
-        "tools/vps_patch_apply.py"
+        "tools/vps_patch_apply.py",
+        "tools/windows_release_acceptance.py"
       ],
       "lines": 1056,
       "module": "tools.windows_update_engine",
@@ -19231,9 +19262,9 @@
     "product_reachable": 363,
     "registered_api_routes": 414,
     "runtime_support": 8,
-    "test_or_tool_only": 629,
-    "tracked_python_files": 1002,
-    "tracked_python_lines": 300955
+    "test_or_tool_only": 631,
+    "tracked_python_files": 1004,
+    "tracked_python_lines": 301562
   },
   "warnings": []
 }

@@ -96,6 +96,7 @@ UPDATER_BEHAVIOR_TESTS = (
     "tests/test_patch_release.py",
     "tests/test_vps_patch.py",
     "tests/test_windows_application_update.py",
+    "tests/test_windows_release_acceptance.py",
     "tests/test_windows_update_shell.py",
     "tests/test_update_service.py",
     "tests/test_manual_update_ui.py",
@@ -104,6 +105,7 @@ UPDATER_BEHAVIOR_TESTS = (
 UPDATER_COMPILE_TARGETS = (
     "tools/windows_runtime.py",
     "tools/windows_update_engine.py",
+    "tools/windows_release_acceptance.py",
     "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/windows_update_shell.py",

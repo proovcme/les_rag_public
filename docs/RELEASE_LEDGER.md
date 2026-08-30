@@ -19,12 +19,18 @@ dev implementation:       transactional delete bridge for cumulative Windows pat
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
 
-> **0.30.8 / build 648 release acceptance orchestrator (design):** каждый
+> **0.30.8 / build 648 release acceptance orchestrator (implementation):** каждый
 > будущий публичный выпуск обязан сначала установить точные candidate bytes на
 > Legion штатным updater/NSIS-путём, пройти smoke, доказать rollback, повторно
 > установить тот же кандидат и только затем публиковать draft. Общий receipt
 > связывает commit, SHA артефактов, состояние Legion и postflight GitHub.
-> Реализация ещё не выполнена; runtime Legion не менялся.
+> Immutable receipt/state machine, controlled rollback успешного soft/hard
+> кандидата и Windows installed-acceptance runner реализованы. Runner требует
+> exact identity, сохранение доступных capabilities и при доступном Qdrant —
+> реальный временный `dense + qdrant_sparse → native RRF`; затем откатывает,
+> проверяет восстановленную версию и повторно ставит те же candidate bytes.
+> Единый prepare/accept/publish orchestrator ещё не завершён; runtime Legion
+> не менялся.
 
 > **0.30.7 / build 647 corrected soft-patch publication (release candidate):**
 > сохраняет transactional delete bridge из 0.30.6 и добавляет обязательный

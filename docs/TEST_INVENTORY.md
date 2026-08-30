@@ -39,7 +39,8 @@
 > `test_sovushka_uikit.py` дополнительно запрещает desktop-root `12px` и
 > terminal monospace в chrome, фиксирует системный sans, шкалу `16/15/14`,
 > rail `200px`, обе WCAG AA-палитры и видимый focus.
-> `test_vps_patch.py`, `test_windows_application_update.py` и
+> `test_vps_patch.py`, `test_windows_application_update.py`,
+> `test_windows_release_acceptance.py` и
 > `test_release_classification.py` запрещают управление Docker/Qdrant из
 > updater, разрешают механическую baseline-проверку при external Qdrant `N/A`,
 > доставляют self-hosted builder/helper и классифицируют version-only `uv.lock`
@@ -51,6 +52,12 @@
 > ресурсами даже когда установленная 0.30.0 ещё возвращает `smeta.state=unknown`.
 > Task-launch contract запрещает одновременные manual start + future trigger,
 > требует delayed single trigger, EndBoundary и automatic expiration.
+> Установочная release-приёмка отдельно доказывает обязательную последовательность
+> `install exact bytes → smoke → rollback → smoke старой версии → reinstall тех же
+> bytes → final smoke`, непрерывность ранее доступных capabilities и невозможность
+> объявить model-capability доступной при неработающем core. При доступном до
+> обновления Qdrant она создаёт временный dataset и требует настоящий
+> `dense + qdrant_sparse → native RRF`; временные данные обязательно удаляются.
 
 > **0.29.0 private model/promotion closure:** canonical `make test`, `make
 > verify` collection и portable platform gate теперь постоянно включают все
@@ -253,7 +260,7 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_tauri_desktop.py` (Windows startup additions), `tests/test_windows_prebundle_smoke.py`, `tests/test_mutable_path_architecture.py` | focused + live prebundle | provider-neutral role catalogue, external-engine warnings that do not block core, setup-button bootstrap lock, offline tokenizer startup, dependency-only cache fingerprint with full offline sync proof, Programs-shaped pre-NSIS API/UI/process smoke, isolated state/cleanup and architecture ban on application-tree mutable writes |
 | `tests/test_installer_windows.py::test_qdrant_payload_indexes_do_not_block_api_startup` | focused | Qdrant filter indexes remain `wait=false` and run outside `_ensure_collection()` startup await path |
 | `tests/test_dataset_integrity.py`, integrity cases in `tests/test_datasets_router.py` | focused + live dataset | Полная связность одного датасета: исходные файлы/fingerprint, MetaDB status, exact Qdrant point ids, named dense+sparse, lexical rows/FTS, PDF page coverage и index contract; repair переочередит только повреждённые документы и не трогает здоровые |
-| `tests/test_release_classification.py`, `tests/test_github_patch_release.py`, `tests/test_vps_patch.py`, `tests/test_windows_application_update.py`, `tests/test_windows_update_shell.py`, `tests/test_update_service.py`, `tests/test_manual_update_ui.py` | `make test-updater` | GitHub lightweight/full classification, valid runtime manifest на обеих границах с pinned legacy-base 0.30.0, bounded Hatch normalization, published full-feed commit aliases, exact immutable five-asset release, clean pushed commit/tag/feed binding, isolated replace/add/delete apply, strict empty delete-marker, skipped-version и byte-exact rollback; Windows hard + soft updater: full app-tree rollback, exact identity/SHA, runtime allowlist, self-bridging delete, drift rejection после preflight/backup и перед mutation, process-loss resume с восстановлением удалённого файла, unknown-bytes rejection до stop, already-absent idempotency, transient lock retry, bounded console-free processes и отдельные UI/API пути |
+| `tests/test_release_classification.py`, `tests/test_github_patch_release.py`, `tests/test_vps_patch.py`, `tests/test_windows_application_update.py`, `tests/test_windows_release_acceptance.py`, `tests/test_windows_update_shell.py`, `tests/test_update_service.py`, `tests/test_manual_update_ui.py` | `make test-updater` | GitHub lightweight/full classification, valid runtime manifest на обеих границах с pinned legacy-base 0.30.0, bounded Hatch normalization, published full-feed commit aliases, exact immutable five-asset release, clean pushed commit/tag/feed binding, isolated replace/add/delete apply, strict empty delete-marker, skipped-version и byte-exact rollback; Windows hard + soft updater: full app-tree rollback, exact identity/SHA, runtime allowlist, self-bridging delete, drift rejection после preflight/backup и перед mutation, process-loss resume с восстановлением удалённого файла, unknown-bytes rejection до stop, already-absent idempotency, transient lock retry, bounded console-free processes и отдельные UI/API пути; Legion installed acceptance: install/smoke/rollback/restored-smoke/reinstall/final-smoke, capability continuity и native RRF либо честный Qdrant `N/A` |
 | `tests/test_documentation_contract.py` | `make verify`, `make test` | существование короткой канонической цепочки, разрешимость её локальных Markdown-ссылок и запрет roadmap длиннее 300 строк |
 | `tests/test_installer_windows.py`, `tests/test_tauri_desktop.py`, `tests/test_install_les.py`, `tests/test_software_versions.py`, `tests/test_patch_release.py`; `.github/workflows/{verify,release}.yml`; live `tools/windows_{release_smoke,production_deploy}.ps1` | portable + Windows live | проверяет SHA-256 portable Python/uv, `requires-python >=3.12,<3.14`, exact lock/cache, lock-bound venv marker и отсутствие повторного sync. Installed smoke делает два запуска одного state: внешний Qdrant не стартует и не управляется ЛЕС, core API/UI поднимаются с честным capability warning, второй запуск даёт `environment_action=skipped`; index/native-RRF проверяется только при доступном настроенном Qdrant без изменения пользовательского RAG |
 | `tests/test_chat_mail_query.py`, `tests/test_converter_email.py`, `tests/test_ezhik_imap_smoke.py`, `tests/test_mail_*.py`, `tests/test_outlook_mail_poller.py` | `make test-mail`: 66 | Е.Ж.И.К.: один IMAP/Outlook ящик = отдельный dataset; secret-vault boundary; Message-ID/native/SHA dedup; multiple locations и snapshot retention; UIDVALIDITY reset; read-only `BODY.PEEK[]`; cursor после каждого registered UID; failure mid-batch; inline CID exclusion; attachment SHA-256/20-MB MISSING; account API, legacy compatibility, UI и Windows packaging contract |
