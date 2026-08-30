@@ -8,17 +8,17 @@
 
 ```
 версия продукта (SemVer):  0.30.1
-номер сборки:              639
-версия Tauri/NSIS:         5.1.639
+номер сборки:              640
+версия Tauri/NSIS:         5.1.640
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
 dev implementation:       model-owned evidence-first RAG + readable WCAG typography + accepted soft updater
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 639 / commit 38ac8466 runtime acceptance
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 639 / commit 26a650b5 runtime acceptance; build 640 task cleanup candidate
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
 следующий выпуск:          0.30.1 lightweight GitHub patch после public-gates и публикации immutable assets
-рантайм /api/version:      Legion 0.30.1 / build 639 / desktop 5.1.639 / commit 38ac8466; soft update accepted
+рантайм /api/version:      Legion 0.30.1 / build 639 / desktop 5.1.639 / commit 26a650b5; soft update accepted
 ```
 
-> **0.30.1 / build 639 model-owned evidence-first RAG + readable UI + corrected soft updater (Windows accepted):** обычный
+> **0.30.1 / build 640 model-owned evidence-first RAG + readable UI + corrected soft updater (deployment candidate):** обычный
 > чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
 > вопроса больше не расширяют document scope. Grounded semantic answer cache
 > выключен. До первого model call собирается production native-RRF evidence,
@@ -52,6 +52,10 @@ dev implementation:       model-owned evidence-first RAG + readable WCAG typogra
 > ресурсов, Qdrant `N/A: external Qdrant unavailable`, user data untouched.
 > Установленная Совушка подтверждена browser-smoke: Segoe, `16/15/14`, rail
 > `200px`, `История` в sentence case, без horizontal/rail overflow.
+> Финальный ledger-only alignment выявил, что task одновременно запускалась
+> вручную и имела trigger через минуту: второй запуск сталкивался с `apply.lock`,
+> а завершённые tasks оставались в Scheduler. Build 640 использует один trigger
+> через 2 секунды с EndBoundary/auto-expiry и без `Start-ScheduledTask`.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
 > authoritative для обычного чата: вызывается любая выбранная answer model без

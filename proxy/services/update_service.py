@@ -412,10 +412,11 @@ def _detached_task_command(
         "Unregister-ScheduledTask -TaskName $name -Confirm:$false -ErrorAction SilentlyContinue; "
         f"$action=New-ScheduledTaskAction -Execute {_ps_literal(str(python_executable))} "
         f"-Argument {_ps_literal(arguments)}; "
-        "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1); "
+        "$trigger=New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(2); "
+        "$trigger.EndBoundary=(Get-Date).AddMinutes(10).ToString('s'); "
         "$principal=New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited; "
-        "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null; "
-        "Start-ScheduledTask -TaskName $name"
+        "$settings=New-ScheduledTaskSettingsSet -DeleteExpiredTaskAfter (New-TimeSpan -Minutes 5); "
+        "Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null"
     )
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     return task_name, encoded

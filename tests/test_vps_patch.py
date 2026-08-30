@@ -614,6 +614,10 @@ def test_patch_helper_is_launched_as_independent_interactive_task(tmp_path):
     assert task_name == "LES-Patch-patch-one"
     assert "New-ScheduledTaskPrincipal" in command
     assert "-LogonType Interactive" in command
+    assert "Start-ScheduledTask" not in command
+    assert "AddSeconds(2)" in command
+    assert "DeleteExpiredTaskAfter" in command
+    assert "EndBoundary" in command
     assert str(helper) in command
     assert str(job) in command
 
