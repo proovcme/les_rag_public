@@ -7,17 +7,33 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.11
-номер сборки:              651
-версия Tauri/NSIS:         5.1.651
+версия продукта (SemVer):  0.30.12
+номер сборки:              652
+версия Tauri/NSIS:         5.1.652
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       repository refs/worktrees recovery cleanup
+dev implementation:       GitHub PR/branch archive cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.11 — repository cleanup; не задеплоен
+следующий выпуск:          0.30.12 — repository cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.12 / build 652 GitHub PR/branch archive cleanup (dev candidate):**
+> исторический stacked PR-контур #5–#18 закрыт как superseded текущей
+> консолидированной линией 0.30.x / PR #20. Перед закрытием exact HEAD каждого
+> из 14 PR сохранён и проверен на GitHub отдельным immutable тегом
+> `archive/2026-08-30/pr-05` … `pr-18`; затем все 14 head/base-веток удалены.
+> Ещё пять remote-веток без открытых PR (`fix-parse-stale-swap`, private
+> integration PR17/18, smeta RAG/ETM, unified native-Qdrant harness и Glorax
+> normcontrol) также получили exact archive tags и удалены. В private GitHub
+> остаются только три активные ветки: `main`, текущая
+> `codex/les-0.30.0-bootstrap-updater` и `agent/extract-artel-submodule`.
+> Открыты только текущий PR #20 и отдельно оставленный ARTEL draft PR #3.
+> Всего pre-0.30 recovery зафиксирован 29 тегами
+> `archive/2026-08-30/*`; теги являются историей, не активными компонентами
+> продукта. Product/runtime code, сметное ядро, установленный Legion и
+> пользовательский state не менялись.
 
 > **0.30.11 / build 651 repository refs/worktrees recovery cleanup (dev candidate):**
 > все пять прежних linked worktree удалены из Git registry; локально остаётся
