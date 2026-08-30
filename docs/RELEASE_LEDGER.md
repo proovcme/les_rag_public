@@ -12,11 +12,11 @@
 версия Tauri/NSIS:         5.1.649
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
 dev implementation:       installed release acceptance with independent external capabilities
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.9 — исправленная Legion acceptance; не задеплоен
-рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
+следующий выпуск:          0.30.9 — принят на Legion; публично не выпущен
+рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
 
 > **0.30.9 / build 649 independent installed-core acceptance (release candidate):**
@@ -29,8 +29,13 @@ dev implementation:       installed release acceptance with independent external
 > Исправленный runner считает core по живым exact proxy identity + UI, а Qdrant,
 > answer provider и embeddings сохраняет отдельными capabilities. Доступный до
 > обновления Qdrant всё так же обязан пройти native RRF smoke; исходно недоступный
-> остаётся честным `N/A`. Кандидат 0.30.8 не переиспользуется; требуется новый
-> полный непубличный install→smoke→rollback→smoke→reinstall проход 0.30.9.
+> остаётся честным `N/A`. Кандидат 0.30.8 не переиспользовался. Новый exact
+> candidate `878fbd4176730a435983b880a2363e7ae9b8b4be`, ZIP SHA-256
+> `7b7f96cb92c48bab3ddf2b4a5f14f98c4d6930842e9881b64b48dc2e20ff9b9f`,
+> прошёл на Legion полный непубличный install→smoke→rollback→smoke→reinstall.
+> Receipt `7530477b7eb196a19c33183f` имеет stage `accepted`; финальный runtime —
+> `0.30.9 / build 649`, core и embeddings сохранены, Qdrant/RRF честно `N/A`,
+> пользовательский state не входил в транзакцию. Публичная публикация не запускалась.
 
 > **0.30.8 / build 648 release acceptance orchestrator (implementation):** каждый
 > будущий публичный выпуск обязан сначала установить точные candidate bytes на
