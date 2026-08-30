@@ -1,5 +1,27 @@
 # ALGO-tool-harness — controlled tools for LES
 
+## Model-owned research loop (0.30.1 / build 635)
+
+Обычный чат имеет три явных document scope: `none` («Без источников»), конкретно
+выбранные датасеты/вложения и явный `all` («Все источники»). Router не выводит
+scope из слов вопроса. При `none` документальные tools не выдаются и модель
+общается как обычный ИИ в harness; вложение создаёт явную доказательную область.
+
+При выбранных источниках код до первого model call выполняет канонический
+production retrieval и даёт модели начальный evidence packet. Модель может
+повторять `search_sources` с собственными формулировками и открывать точные
+источники. Внутри chat research `search_sources` использует тот же named
+`dense + bm25_sparse` native RRF, общий rerank и context expansion, а не
+параллельный FTS-поиск. Разрешённые dataset IDs заморожены операторским scope;
+модель не может расширить их аргументами tool call.
+
+Цикл заканчивается, когда модель возвращает `calls: []`, либо по техническому
+monotonic deadline. Семантического дедупликатора запросов, лимита «три попытки»
+и кодовой оценки достаточности нет. Код механически удаляет только точные
+дубликаты одного chunk ID/hash, исполняет tools и собирает следующий packet.
+Финальный текст возвращается без validation/rewrite; citation check пишется
+только в trace.
+
 ## Canonical workbook execution (0.29.0 / build 620)
 
 Реестр содержит ровно `build_lsr_workbook` и `build_vor_workbook` версии
@@ -102,7 +124,9 @@ Dataset/source:
 
 - `dataset_map` — typed карта датасета: `topic_map`, `section_map`, source layers,
   маршруты и operator guidance. Это navigation, not evidence.
-- `search_sources` — FTS/LIKE поиск по `lexical_chunks` через `DocumentExplorer`.
+- `search_sources` — в самостоятельном compatibility API это bounded
+  `DocumentExplorer`; в model research loop — канонический production native
+  RRF через `ModelResearchToolService`.
 - `read_source` — ordered chunks одного документа.
 - `read_pdf_source` — PDF-aware оболочка над indexed chunks. Raw page/table parser
   пока честно отмечается как отсутствующий.

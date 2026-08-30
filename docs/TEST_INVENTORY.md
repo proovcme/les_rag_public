@@ -1,5 +1,18 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.30.1 model-owned evidence-first RAG (build 635):**
+> `test_model_execution_preset_service.py` и
+> `test_context_governor_service.py` защищают реальную context capacity,
+> однократные reserves и приоритет evidence над памятью.
+> `test_scope_model_v21.py`, `test_scope_clarification_v22.py` и
+> `test_sovushka_chat.py` фиксируют явные none/selected/all scope, отсутствие
+> вопросного auto-scope и grounded cache. `test_model_research_tool_service.py`
+> доказывает повторное использование native RRF с замороженными dataset IDs;
+> `test_chat_evidence_application_service.py` — initial evidence, повторяемый
+> model-owned loop, exact packet trace, пустой retrieval к модели и неизменный
+> final. `test_rag_dataset_story_acceptance.py` проверяет открытую live-пробу
+> `Расскажи про датасет.` без expected words/pass-score.
+
 > **0.29.0 private model/promotion closure:** canonical `make test`, `make
 > verify` collection и portable platform gate теперь постоянно включают все
 > model-connection tests: immutable registry, endpoint/DNS/peer security,
@@ -215,12 +228,14 @@ RAG-ядро имеет отдельный обязательный профил
 | `tests/test_deterministic_policy_v18.py` | 27 | DeterministicFinalPolicy: glossary-final только при литеральном термине, registry только глобальный, source-scoped/descriptive→reject; professional-domain candidates (`smeta/asbuilt/doc_registry/field`) не становятся final-ответом кода |
 | `tests/test_version_service_v19.py` | 22 | `/api/version` 200, no-secrets, git-unavailable-safe, runtime_alignment (aligned/divergent/missing/dev-only/unknown), version_info в trace, route-регрессия |
 | `tests/test_v020_deploy_stamp_ui.py` | 23 | deploy stamp (missing/ok/stale/hash-mismatch), `deployed_commit` в endpoint, copy plain/markdown/with-sources/no-trace, prompt-chips→меню «Примеры» |
-| `tests/test_scope_model_v21.py` | 34 | Scope-резолвер (all/project/projects/dataset/datasets/mixed/legacy/filter-warning/scope>legacy); scope_options (админ-датасет/unassigned/system-reason/counts, human display name и chunk count системной базы); scope в trace; document-prep labels |
-| `tests/test_scope_clarification_v22.py` | 19 | §1 needs_project_scope and scope UI helpers remain, but chat no longer returns final `scope_clarification` for project questions at scope=all; `scope_all_for_project_query` is trace warning only, generic empty retrieval continues to model instead of code `NO_DATA` final |
+| `tests/test_scope_model_v21.py` | focused | Scope-резолвер поддерживает явный `none`, selected dataset(s)/attachments и явный `all`; default — `none`, а question-derived dataset filter запрещён |
+| `tests/test_scope_clarification_v22.py` | focused | scope UI helpers не превращаются в auto-route; пустой grounded retrieval продолжает к модели вместо кодового `NO_DATA` final |
 | `tests/test_prompt_registry_service.py` | focused | prompt registry: common/tone/mode prompts, smeta role-pack, editable prompt overrides, plus live native-smеta loading of the GESN/typed-storage reference |
 | `tests/test_chat_profile_service.py`, `tests/test_profiles_router.py`, `tests/test_chat_profile_runtime.py`, `tests/test_profiles_ui.py` | focused | immutable Factory Base/user revisions, active/per-chat snapshot, prompt 16 000 + skill 8 000 authoritative server limits/schema, readable legacy oversized revisions, UI counters/disabled over-limit save, tool allowlist и model/RAG policies |
 | `tests/test_module_router.py`, `tests/test_active_state.py`, `tests/test_scoped_rag.py`, `tests/test_skill_snippet_registry.py`, `tests/test_tool_trace_policy.py` | 23 | лёгкий LES core: module routing, active state as working memory, typed scoped evidence packet, short skill snippets instead of full skill injection, and transparent tool trace policy |
 | `tests/test_tool_harness_service.py`, `tests/test_web_search_service.py` | focused | controlled tool-harness: typed read-only registry, indexed source search/read, PDF/Excel reader warnings, filesystem whitelist read/list/search/hash, bounded public web titles/snippets/direct URLs, Agent shortlist and `/api/tools/call` dry-run |
+| `tests/test_model_research_tool_service.py`, `tests/test_chat_evidence_application_service.py` | focused | initial evidence-first call; model-selected `search_sources` использует canonical native RRF с frozen scope; exact chunk dedupe; stop по `calls: []`/deadline без semantic cap; точные evidence/source-map packet traces; пустой retrieval и финальный ответ принадлежат модели |
+| `tests/test_rag_dataset_story_acceptance.py`, `tools/rag_dataset_story_acceptance.py` | hermetic CLI + opt-in live | exact вопрос `Расскажи про датасет.` с явным dataset scope; readiness fail пишет `N/A`, ready run сохраняет answer, sources, evidence packet и model-call traces без golden words или model-quality score |
 | `tests/test_service_source_registry.py` | 4 | service-source registry and Play contract: required files/folders, canonical smeta/normcontrol sources, `SMETA_SERVICE` required-documents manifest, non-mutating operator messages, and normative base quarantine when semantic integrity report is absent |
 | `tests/test_doc_review_retrieval.py` | 14 | doc-review retrieval-подфаза: факты project dataset отдельно от текста требования, явный нормативный SPDS RAG для ГОСТ Р 21.101-2026, запрет project fallback при настроенном нормативном источнике, legacy fallback только без найденного NTD |
 | `tests/test_datasets_router.py` | focused | RAG dataset router/API plus retrieve-debug integrity: debug fields are exact projections of chunks and cannot inject FIRE/HVAC expected terms |

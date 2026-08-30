@@ -1,5 +1,19 @@
 # ALGO-context-memory — память чата и паспорт датасета
 
+## Model-owned evidence-first context (0.30.1 / build 635)
+
+Обычный чат использует фактическую наблюдаемую или явно заданную ёмкость
+подключённой модели. Фабричные значения 9B/35B являются только fallback, а не
+скрытым потолком. Generation и safety reserves вычитаются ровно один раз.
+
+После обязательных profile/request Governor упаковывает evidence и source map
+раньше tool exchange, checkpoint, working memory и dialogue. Память и notebook
+остаются advisory/navigation и при дефиците окна не вытесняют документы.
+Каждый selector и финальный model call получает собственный packet trace с
+точным текстом и SHA-256 блоков `EVIDENCE`/`SOURCE_MAP`, а также устойчивыми
+ID/cursor не вошедших объектов. Это операторская проверка того, что реально
+видела модель; trace не оценивает и не переписывает её ответ.
+
 ## Durable workflow checkpoints (0.29.0 / build 618)
 
 `workflow_checkpoint_service` хранит только bounded рабочее состояние: identity
@@ -23,8 +37,8 @@ Prompt dumps не сохраняются. `dataset_ids=None` и `[]` имеют 
 
 Канонический кандидат больше не обрезает prompt независимыми строковыми лимитами.
 Все производители отдают типизированные объекты девяти видов: profile prefix,
-tool shortlist, request, checkpoint, working memory, evidence, source map,
-tool exchange и dialogue. `ContextGovernor` сначала резервирует generation и
+tool shortlist, request, evidence, source map, tool exchange, checkpoint,
+working memory и dialogue. `ContextGovernor` сначала резервирует generation и
 safety budget, затем сохраняет обязательные объекты и упаковывает остальные в
 этом фиксированном порядке.
 
@@ -66,8 +80,10 @@ Notebook и паспорта памяти не заменены и не пере
 Фактами ответа остаются только evidence/source rows. В `shadow` selector-выдача
 повторно используется для проверки максимум одного canonical call; нового
 model call и записи эффектов нет, пользователь получает прежний legacy answer.
-Trace содержит route, preset, reserves, token/item counts и omission cursors,
-но не prompt, вопрос, evidence, tool result или ответ.
+Trace содержит route, preset, reserves, token/item counts и omission cursors.
+Для доказательного слоя он дополнительно хранит точные model-visible
+`EVIDENCE`/`SOURCE_MAP` и их SHA-256; profile, память и полный prompt остаются
+редактированными, ответ модели не модифицируется.
 Если облачный provider падает и маршрут деградирует на локальный MLX, preset
 разрешается заново, packet перепаковывается до локального вызова, а все
 последующие retry сохраняют уже локальный budget. Selector и fallback required

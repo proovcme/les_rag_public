@@ -4,19 +4,32 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-29)
+## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.0
-номер сборки:              634
-версия Tauri/NSIS:         5.1.634
+версия продукта (SemVer):  0.30.1
+номер сборки:              635
+версия Tauri/NSIS:         5.1.635
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от 0.29.3
-dev implementation:       authoritative answer binding + exact dataset scope + automatic GitHub updater discovery
+dev implementation:       model-owned evidence-first RAG; source-only, не задеплоено
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.29.4 / build 633 runtime acceptance
 последний Windows-выпуск:  https://github.com/proovcme/les_rag_public/releases/tag/v0.29.3
-следующий выпуск:          0.30.0 bootstrap installer; после него штатный канал — lightweight runtime patches
+следующий выпуск:          0.30.0 bootstrap installer; 0.30.1 — следующий source/runtime patch после отдельной живой приёмки
 рантайм /api/version:      Legion 0.29.4 / build 633 / desktop 5.1.633; назначенная answer model и scoped native RRF приняты живым запросом
 ```
+
+> **0.30.1 / build 635 model-owned evidence-first RAG (source-only):** обычный
+> чат различает явные `none`, выбранные датасеты/вложения и явный `all`; слова
+> вопроса больше не расширяют document scope. Grounded semantic answer cache
+> выключен. До первого model call собирается production native-RRF evidence,
+> а повторные model-selected `search_sources` используют тот же retrieval и
+> замороженные dataset IDs. Пустой retrieval передаётся модели; финальный текст
+> не проходит semantic validation/rewrite. Фактическая context capacity не
+> ограничивается фабричным 9B/35B потолком, evidence/source map упаковываются
+> раньше памяти и сохраняются в exact model-visible packet trace. Добавлена
+> открытая live-проба `Расскажи про датасет.` без expected words/pass-score.
+> Сметное ядро, пользовательский корпус и установленный runtime не изменялись;
+> build 635 не задеплоен и требует отдельной живой приёмки на ready native RRF.
 
 > **0.30.0 / build 634 bootstrap updater release:** явная роль `answer` стала
 > authoritative для обычного чата: вызывается любая выбранная answer model без

@@ -1,5 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.1 model-owned evidence-first RAG:** `scope_service.py` задаёт только
+> явные `none | selected | all`; `chat.py` отключает semantic answer cache для
+> grounded chat и не расширяет scope по тексту вопроса.
+> `chat_evidence_application_service.py` сначала получает production RRF
+> evidence, затем даёт модели повторять поиск до `calls: []`/deadline и
+> возвращает финальный текст без semantic validation/rewrite.
+> `model_research_tool_service.py` связывает model tool `search_sources` с тем
+> же `retrieval_service.retrieve_chat_chunks()` и замороженными dataset IDs.
+> `context_governor_service.py` ставит evidence/source map раньше памяти, а
+> `context_packet_trace` сохраняет точные model-visible доказательные блоки.
+> Открытая live-приёмка: `tools/rag_dataset_story_acceptance.py` с вопросом
+> `Расскажи про датасет.`; тест не выставляет ожидаемые термины или pass-score.
+
 > **0.30.0 ordinary answer route:** binding `answer` напрямую определяет любую модель
 > видимого free/evidence chat. Promotion/shadow не может заменить её legacy-
 > моделью. Evidence application сохраняет `source_scope`
