@@ -380,6 +380,12 @@ def _remote_json(output: str) -> dict[str, Any]:
 def run_remote_acceptance(
     *, attempt: dict[str, Any], acceptance_path: Path, args: argparse.Namespace
 ) -> dict[str, Any]:
+    patch_release._prepare_remote_update_checkout(
+        host=args.host,
+        repo_root=args.repo_root,
+        branch=args.branch,
+        commit=str(attempt["target_commit"]),
+    )
     release_id = str(attempt["release_id"])
     remote_dir = f"{args.repo_root.rstrip(chr(92))}\\dist\\release-work\\incoming\\{release_id}"
     prepare_script = (

@@ -24,6 +24,8 @@
 > `test_test_profiles.py` фиксирует единственный Make-entrypoint `make release`,
 > а `test_documentation_contract.py` запрещает актуальным документам рекламировать
 > legacy publish-команды и включает `RELEASE_PROCEDURE.md` в каноническую цепочку.
+> Remote acceptance до передачи job требует чистый Legion checkout exact target
+> branch/commit; несовпадение останавливает процедуру до установки.
 
 > **0.30.5 first proven dead-code cleanup (build 645):** observable baseline
 > сохраняет 396 FastAPI routes и живые UI/RIM/runtime контракты, не требуя

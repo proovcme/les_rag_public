@@ -259,6 +259,7 @@ def test_remote_full_acceptance_binds_installer_and_exact_target(monkeypatch, tm
     )
     attempt = release_receipt.load_attempt(attempt_path)
     commands = []
+    prepared = []
 
     def fake_run(command, **_kwargs):
         commands.append(tuple(command))
@@ -266,6 +267,11 @@ def test_remote_full_acceptance_binds_installer_and_exact_target(monkeypatch, tm
         return subprocess.CompletedProcess(command, 0, stdout=output, stderr="")
 
     monkeypatch.setattr(release_orchestrator, "_run", fake_run)
+    monkeypatch.setattr(
+        release_orchestrator.patch_release,
+        "_prepare_remote_update_checkout",
+        lambda **kwargs: prepared.append(kwargs),
+    )
 
     result = release_orchestrator.run_remote_acceptance(
         attempt=attempt,
@@ -274,6 +280,14 @@ def test_remote_full_acceptance_binds_installer_and_exact_target(monkeypatch, tm
     )
 
     assert result["accepted"] is True
+    assert prepared == [
+        {
+            "host": "legion",
+            "repo_root": args.repo_root,
+            "branch": args.branch,
+            "commit": TARGET,
+        }
+    ]
     execution = commands[-1]
     encoded = execution[execution.index("-EncodedCommand") + 1]
     script = base64.b64decode(encoded).decode("utf-16le")
