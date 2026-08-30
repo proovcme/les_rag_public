@@ -938,6 +938,99 @@ def resume_hard_job(job_path: Path) -> int:
     return 0
 
 
+def _deploy_stamp(runtime: Path, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(
+            (runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8-sig")
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"{label} deploy stamp is unreadable") from exc
+    if not re.fullmatch(r"[0-9a-f]{40}", str(payload.get("deployed_commit") or "")):
+        raise RuntimeError(f"{label} deploy stamp has no exact commit")
+    return payload
+
+
+def rollback_accepted_hard_update(
+    *,
+    install: Path,
+    state: Path,
+    recovery_root: Path,
+    expected_target_commit: str,
+) -> dict[str, Any]:
+    """Restore a successful hard update's previous tree, reverting on smoke failure."""
+    install, state = validate_boundary(Path(install), Path(state))
+    recovery = Path(recovery_root).resolve()
+    if re.fullmatch(r"[0-9a-f]{40}", expected_target_commit) is None:
+        raise RuntimeError("hard rollback target identity is invalid")
+    current_runtime = runtime_root(install)
+    current_stamp = _deploy_stamp(current_runtime, "hard rollback target identity")
+    if current_stamp.get("deployed_commit") != expected_target_commit:
+        raise RuntimeError("hard rollback target identity does not match installed release")
+    if (
+        recovery.parent != install.parent
+        or not recovery.name.startswith(f"{install.name}.recovery-")
+        or not recovery.is_dir()
+    ):
+        raise RuntimeError("hard rollback recovery root is not the accepted sibling")
+    previous_runtime = runtime_root(recovery)
+    previous_stamp = _deploy_stamp(previous_runtime, "previous recovery")
+    previous_commit = str(previous_stamp["deployed_commit"])
+    previous_version = str(previous_stamp.get("product_version") or "")
+    previous_build = int(previous_stamp.get("build_number") or 0)
+    if not previous_version or previous_build <= 0:
+        raise RuntimeError("previous recovery identity is incomplete")
+
+    candidate = install.with_name(
+        f"{install.name}.candidate-rollback-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')}"
+    )
+    log_root = state / "logs" / "updates" / "accepted-hard-rollback"
+    desktop_task = ""
+    swapped = False
+    try:
+        stop_runtime(current_runtime, state, log_root)
+        stop_desktop()
+        _detach_state_junctions(current_runtime)
+        os.replace(install, candidate)
+        os.replace(recovery, install)
+        swapped = True
+        restored_runtime = runtime_root(install)
+        start_runtime(restored_runtime, state, log_root)
+        desktop_task = start_desktop(install, "accepted-hard-rollback", log_root)
+        smoke = wait_ready(
+            expected_commit=previous_commit,
+            expected_version=previous_version,
+            expected_build=previous_build,
+            state=state,
+            timeout=120,
+        )
+        remove_task(desktop_task, install, log_root)
+        desktop_task = ""
+        shutil.rmtree(candidate)
+        return {
+            "state": "rolled_back",
+            "restored_commit": previous_commit,
+            "target_commit": expected_target_commit,
+            "smoke": smoke,
+            "user_data_untouched": True,
+        }
+    except Exception:
+        if swapped:
+            try:
+                if desktop_task:
+                    remove_task(desktop_task, install, log_root)
+                stop_runtime(runtime_root(install), state, log_root)
+                stop_desktop()
+                _detach_state_junctions(runtime_root(install))
+                os.replace(install, recovery)
+                os.replace(candidate, install)
+                restored_target = runtime_root(install)
+                start_runtime(restored_target, state, log_root)
+                start_desktop(install, "accepted-hard-rollback-recovery", log_root)
+            except Exception:
+                pass
+        raise
+
+
 def _pid_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)

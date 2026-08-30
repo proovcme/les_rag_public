@@ -427,6 +427,141 @@ def _start_runtime(runtime: Path, state: Path) -> None:
     )
 
 
+def _wait_restored_ready(previous_stamp: dict[str, Any], state: Path) -> dict[str, Any]:
+    commit = str(previous_stamp.get("deployed_commit") or "")
+    version = str(previous_stamp.get("product_version") or "")
+    build = int(previous_stamp.get("build_number") or 0)
+    if not re.fullmatch(r"[0-9a-f]{40}", commit) or not version or build <= 0:
+        raise RuntimeError("previous deploy stamp cannot prove restored identity")
+    return windows_update_engine.wait_ready(
+        expected_commit=commit,
+        expected_version=version,
+        expected_build=build,
+        state=state,
+        timeout=120,
+    )
+
+
+def _restore_file_set(
+    manifest: dict[str, Any], runtime: Path, source_root: Path
+) -> None:
+    for entry in manifest["files"]:
+        target, _, backup_rel = entry_paths(entry, runtime)
+        saved = source_root / "files" / backup_rel
+        if saved.is_file():
+            _atomic_copy(saved, target)
+        else:
+            _unlink_with_retry(target)
+
+
+def rollback_accepted_patch(
+    *,
+    runtime: Path,
+    state: Path,
+    backup_root: Path,
+    expected_target_commit: str,
+) -> dict[str, Any]:
+    """Rollback a successful soft patch, preserving the accepted target on failure."""
+    runtime = Path(runtime).resolve()
+    state = Path(state).resolve()
+    backup = Path(backup_root).resolve()
+    allowed = (state / "artifacts" / "patch-backups").resolve()
+    if backup == allowed or allowed not in backup.parents:
+        raise RuntimeError("soft rollback backup is outside the persistent recovery root")
+    if re.fullmatch(r"[0-9a-f]{40}", expected_target_commit) is None:
+        raise RuntimeError("soft rollback target identity is invalid")
+    try:
+        manifest = json.loads((backup / "manifest.json").read_text(encoding="utf-8-sig"))
+        current_stamp = json.loads(
+            (runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8-sig")
+        )
+        previous_stamp_bytes = (backup / "previous_deploy_stamp.json").read_bytes()
+        previous_stamp = json.loads(previous_stamp_bytes.decode("utf-8-sig"))
+    except (OSError, ValueError, TypeError, UnicodeError) as exc:
+        raise RuntimeError("soft rollback recovery metadata is unreadable") from exc
+    if (
+        manifest.get("schema") != SCHEMA
+        or manifest.get("target_commit") != expected_target_commit
+        or current_stamp.get("deployed_commit") != expected_target_commit
+    ):
+        raise RuntimeError("soft rollback target identity does not match accepted update")
+
+    for entry in manifest.get("files") or []:
+        target, _, backup_rel = entry_paths(entry, runtime)
+        operation = patch_entry_operation(entry)
+        current = sha(target) if target.is_file() else None
+        target_ok = current is None if operation == "delete" else current == entry.get("sha256")
+        if not target_ok:
+            raise RuntimeError(f"soft rollback target state changed: {_entry_identity(entry)}")
+        saved = backup / "files" / backup_rel
+        if saved.is_file():
+            accepted = {
+                str(value).lower()
+                for value in (
+                    entry.get("base_sha256"),
+                    *(entry.get("accepted_sha256") or []),
+                )
+                if value
+            }
+            if sha(saved) not in accepted:
+                raise RuntimeError(f"soft rollback backup checksum changed: {_entry_identity(entry)}")
+        elif entry.get("accepted_missing") is not True:
+            raise RuntimeError(f"soft rollback backup is incomplete: {_entry_identity(entry)}")
+
+    candidate = backup / "accepted-rollback-candidate"
+    if candidate.exists():
+        raise RuntimeError("soft rollback candidate recovery already exists")
+    (candidate / "files").mkdir(parents=True)
+    for entry in manifest["files"]:
+        target, _, backup_rel = entry_paths(entry, runtime)
+        if target.is_file():
+            saved = candidate / "files" / backup_rel
+            saved.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target, saved)
+    (candidate / "target_deploy_stamp.json").write_bytes(
+        (runtime / ".les_deploy_stamp.json").read_bytes()
+    )
+
+    stopped = False
+    desktop_task = ""
+    try:
+        _stop_runtime(runtime, state)
+        _stop_desktop()
+        stopped = True
+        _restore_file_set(manifest, runtime, backup)
+        (runtime / ".les_deploy_stamp.json").write_bytes(previous_stamp_bytes)
+        _start_runtime(runtime, state)
+        desktop_task = start_desktop(runtime, f"{manifest['patch_id']}-accepted-rollback")
+        smoke = _wait_restored_ready(previous_stamp, state)
+        remove_task(desktop_task)
+        desktop_task = ""
+        shutil.rmtree(candidate)
+        return {
+            "state": "rolled_back",
+            "restored_commit": previous_stamp["deployed_commit"],
+            "target_commit": expected_target_commit,
+            "smoke": smoke,
+            "user_data_untouched": True,
+        }
+    except Exception:
+        if stopped:
+            try:
+                if desktop_task:
+                    remove_task(desktop_task)
+                _stop_runtime(runtime, state)
+                _stop_desktop()
+                _restore_file_set(manifest, runtime, candidate)
+                (runtime / ".les_deploy_stamp.json").write_bytes(
+                    (candidate / "target_deploy_stamp.json").read_bytes()
+                )
+                _start_runtime(runtime, state)
+                retry_task = start_desktop(runtime, f"{manifest['patch_id']}-rollback-recovery")
+                remove_task(retry_task)
+            except Exception:
+                pass
+        raise
+
+
 def _verify_smeta_baseline(
     runtime: Path, state: Path, *, staged_runtime: Path | None = None
 ) -> None:

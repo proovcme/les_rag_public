@@ -1041,6 +1041,193 @@ def test_hard_update_restores_whole_previous_tree_when_smoke_fails(tmp_path, mon
     assert "identity smoke failed" in status["error"]
 
 
+def test_accepted_soft_patch_can_be_rolled_back_byte_exact(tmp_path, monkeypatch):
+    runtime, state, job = _prepared_job(tmp_path, delete_file=True)
+    previous_stamp = {
+        "deployed_commit": "a" * 40,
+        "product_version": "0.25.17",
+        "build_number": 490,
+    }
+    (runtime / ".les_deploy_stamp.json").write_text(
+        json.dumps(previous_stamp), encoding="utf-8"
+    )
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(vps_patch_apply, "_wait_ready", _ready_process_contract)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_wait_restored_ready",
+        lambda _stamp, _state: {"identity": "restored"},
+        raising=False,
+    )
+
+    assert vps_patch_apply.apply_job(job) == 0
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    result = vps_patch_apply.rollback_accepted_patch(
+        runtime=runtime,
+        state=state,
+        backup_root=Path(status["backup_root"]),
+        expected_target_commit="b" * 40,
+    )
+
+    assert result["state"] == "rolled_back"
+    assert (runtime / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
+    assert (runtime / "proxy" / "old_agent.py").read_bytes() == b"obsolete runtime\n"
+    assert not (runtime / "sovushka" / "new-state.js").exists()
+    assert json.loads((runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8")) == previous_stamp
+    assert (state / "data" / "user-owned.db").read_bytes() == b"never replace me"
+
+
+def test_accepted_soft_rollback_rejects_foreign_target_before_stop(tmp_path, monkeypatch):
+    runtime, state, job = _prepared_job(tmp_path)
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(vps_patch_apply, "_wait_ready", _ready_process_contract)
+    assert vps_patch_apply.apply_job(job) == 0
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(encoding="utf-8")
+    )
+    stopped = []
+    monkeypatch.setattr(
+        vps_patch_apply, "_stop_runtime", lambda *_args: stopped.append(True)
+    )
+    (runtime / "proxy" / "example.py").write_bytes(b"foreign local bytes")
+
+    with pytest.raises(RuntimeError, match="target state"):
+        vps_patch_apply.rollback_accepted_patch(
+            runtime=runtime,
+            state=state,
+            backup_root=Path(status["backup_root"]),
+            expected_target_commit="b" * 40,
+        )
+    assert stopped == []
+
+
+def test_failed_soft_rollback_restores_the_accepted_candidate(tmp_path, monkeypatch):
+    runtime, state, job = _prepared_job(tmp_path)
+    previous_stamp = {
+        "deployed_commit": "a" * 40,
+        "product_version": "0.25.17",
+        "build_number": 490,
+    }
+    (runtime / ".les_deploy_stamp.json").write_text(
+        json.dumps(previous_stamp), encoding="utf-8"
+    )
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(vps_patch_apply, "_wait_ready", _ready_process_contract)
+    assert vps_patch_apply.apply_job(job) == 0
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(encoding="utf-8")
+    )
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_wait_restored_ready",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("restored smoke failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="restored smoke failed"):
+        vps_patch_apply.rollback_accepted_patch(
+            runtime=runtime,
+            state=state,
+            backup_root=Path(status["backup_root"]),
+            expected_target_commit="b" * 40,
+        )
+
+    assert (runtime / "proxy" / "example.py").read_bytes() == b"NEW = True\n"
+    assert json.loads(
+        (runtime / ".les_deploy_stamp.json").read_text(encoding="utf-8")
+    )["deployed_commit"] == "b" * 40
+
+
+def test_accepted_hard_update_can_be_rolled_back_to_previous_tree(tmp_path, monkeypatch):
+    install, state, job = _hard_job(tmp_path)
+    previous_stamp = {
+        "deployed_commit": "a" * 40,
+        "product_version": "0.25.19",
+        "build_number": 492,
+    }
+    (install / "runtime" / ".les_deploy_stamp.json").write_text(
+        json.dumps(previous_stamp), encoding="utf-8"
+    )
+    _mock_hard_lifecycle(monkeypatch)
+    assert windows_update_engine.apply_hard_job(job) == 0
+    status = json.loads(
+        (state / "artifacts" / "updates" / "hard-status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    result = windows_update_engine.rollback_accepted_hard_update(
+        install=install,
+        state=state,
+        recovery_root=Path(status["recovery_root"]),
+        expected_target_commit="b" * 40,
+    )
+
+    assert result["state"] == "rolled_back"
+    assert (install / "runtime" / "old-code.txt").read_text(encoding="utf-8") == "old"
+    assert not (install / "runtime" / "new-code.txt").exists()
+    assert json.loads(
+        (install / "runtime" / ".les_deploy_stamp.json").read_text(encoding="utf-8")
+    ) == previous_stamp
+    assert (state / "data" / "user.db").read_bytes() == b"user-owned"
+
+
+def test_accepted_hard_rollback_refuses_recovery_for_another_target(tmp_path):
+    install, state, _job = _hard_job(tmp_path)
+    recovery = install.with_name("LES.recovery-accepted")
+    recovery.mkdir(parents=True)
+
+    with pytest.raises(RuntimeError, match="target identity"):
+        windows_update_engine.rollback_accepted_hard_update(
+            install=install,
+            state=state,
+            recovery_root=recovery,
+            expected_target_commit="c" * 40,
+        )
+
+
+def test_failed_hard_rollback_restores_the_accepted_candidate(tmp_path, monkeypatch):
+    install, state, job = _hard_job(tmp_path)
+    (install / "runtime" / ".les_deploy_stamp.json").write_text(
+        json.dumps(
+            {
+                "deployed_commit": "a" * 40,
+                "product_version": "0.25.19",
+                "build_number": 492,
+            }
+        ),
+        encoding="utf-8",
+    )
+    _mock_hard_lifecycle(monkeypatch)
+    assert windows_update_engine.apply_hard_job(job) == 0
+    status = json.loads(
+        (state / "artifacts" / "updates" / "hard-status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    monkeypatch.setattr(
+        windows_update_engine,
+        "wait_ready",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("restored smoke failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="restored smoke failed"):
+        windows_update_engine.rollback_accepted_hard_update(
+            install=install,
+            state=state,
+            recovery_root=Path(status["recovery_root"]),
+            expected_target_commit="b" * 40,
+        )
+
+    assert (install / "runtime" / "new-code.txt").read_text(encoding="utf-8") == "new"
+    assert json.loads(
+        (install / "runtime" / ".les_deploy_stamp.json").read_text(encoding="utf-8")
+    )["deployed_commit"] == "b" * 40
+
+
 def test_hard_update_rejects_install_root_containing_user_state(tmp_path):
     install = tmp_path / "Programs" / "LES"
     state = install / "data" / "LES"

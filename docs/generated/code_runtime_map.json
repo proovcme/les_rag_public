@@ -14121,7 +14121,7 @@
     },
     {
       "inbound": [],
-      "lines": 1580,
+      "lines": 1767,
       "module": "tests.test_windows_application_update",
       "outbound": [
         "tools/vps_patch_apply.py",
@@ -16633,7 +16633,7 @@
         "tests/test_vps_patch.py",
         "tests/test_windows_application_update.py"
       ],
-      "lines": 823,
+      "lines": 958,
       "module": "tools.vps_patch_apply",
       "outbound": [
         "tools/__init__.py",
@@ -16703,7 +16703,7 @@
         "tests/test_windows_application_update.py",
         "tools/vps_patch_apply.py"
       ],
-      "lines": 963,
+      "lines": 1056,
       "module": "tools.windows_update_engine",
       "outbound": [
         "tools/__init__.py",
@@ -19233,7 +19233,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 629,
     "tracked_python_files": 1002,
-    "tracked_python_lines": 300540
+    "tracked_python_lines": 300955
   },
   "warnings": []
 }

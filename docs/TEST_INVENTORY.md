@@ -5,6 +5,10 @@
 > machine выпуска, content-derived release ID, exact commit/artifact binding,
 > запрет публикации failed/unaccepted attempt и детерминированный публичный
 > receipt без локальных путей и sensitive-полей.
+> `tests/test_windows_application_update.py` дополнительно доказывает
+> controlled rollback уже успешно установленного soft/hard candidate, exact
+> восстановление файлов/stamp/дерева и возврат accepted candidate при провале
+> smoke откатанной версии.
 
 > **0.30.5 first proven dead-code cleanup (build 645):** observable baseline
 > сохраняет 396 FastAPI routes и живые UI/RIM/runtime контракты, не требуя
