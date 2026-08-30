@@ -15,6 +15,7 @@ from typing import Any, Literal
 PATCH_ALLOWED_ROOTS = (
     "backend/",
     "proxy/",
+    "qdrant_visualizer/",
     "sovushka/",
     "config/prompts/",
     "skills/",
@@ -38,6 +39,9 @@ PATCH_ALLOWED_FILES = {
 }
 PATCH_DENIED_PARTS = {"__pycache__", ".git", "migrations", "baseline", "desktop"}
 PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html", ".ps1"}
+LEGACY_RUNTIME_MANIFEST_BASES = {
+    "9cddee74b4818bf03d9f3e8b75ac920c85c19692",
+}
 
 VERSION_SURFACES = {
     "pyproject.toml": "pyproject",
@@ -50,6 +54,7 @@ VERSION_SURFACES = {
 }
 
 RELEASE_ONLY_FILES = {
+    "config/windows_runtime_manifest.json",
     "tools/github_patch_release.py",
     "tools/rag_dataset_story_acceptance.py",
     "tools/release_classification.py",
@@ -110,6 +115,23 @@ def _without_version(kind: str, raw: bytes) -> Any:
 
     if kind == "pyproject":
         document["project"]["version"] = "<VERSION>"
+        tool = document.get("tool")
+        hatch = tool.get("hatch") if isinstance(tool, dict) else None
+        build = hatch.get("build") if isinstance(hatch, dict) else None
+        targets = build.get("targets") if isinstance(build, dict) else None
+        wheel = targets.get("wheel") if isinstance(targets, dict) else None
+        if isinstance(wheel, dict):
+            wheel.pop("packages", None)
+            if not wheel:
+                targets.pop("wheel", None)
+        if isinstance(targets, dict) and not targets:
+            build.pop("targets", None)
+        if isinstance(build, dict) and not build:
+            hatch.pop("build", None)
+        if isinstance(hatch, dict) and not hatch:
+            tool.pop("hatch", None)
+        if isinstance(tool, dict) and not tool:
+            document.pop("tool", None)
     elif kind == "uv_lock":
         packages = document.get("package", [])
         les_packages = [package for package in packages if package.get("name") == "les-v2"]
@@ -136,6 +158,33 @@ def _without_version(kind: str, raw: bytes) -> Any:
     return document
 
 
+def _windows_runtime_manifest(root: Path, commit: str) -> dict[str, Any] | None:
+    raw = _git_bytes(root, commit, "config/windows_runtime_manifest.json")
+    if raw is None:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise ValueError("runtime manifest is not valid JSON") from exc
+    if payload.get("schema") != "les.windows-runtime-manifest.v1":
+        raise ValueError("runtime manifest schema is invalid")
+    prefixes = payload.get("include_prefixes")
+    files = payload.get("include_files")
+    if not isinstance(prefixes, list) or not isinstance(files, list):
+        raise ValueError("runtime manifest include lists are invalid")
+    if not all(isinstance(value, str) for value in [*prefixes, *files]):
+        raise ValueError("runtime manifest paths are invalid")
+    return payload
+
+
+def _is_declared_runtime_path(path: str, manifests: tuple[dict[str, Any], ...]) -> bool:
+    return any(
+        path in manifest["include_files"]
+        or path.startswith(tuple(manifest["include_prefixes"]))
+        for manifest in manifests
+    )
+
+
 def _is_version_only(root: Path, base: str, target: str, path: str, kind: str) -> bool:
     before = _git_bytes(root, base, path)
     after = _git_bytes(root, target, path)
@@ -152,6 +201,42 @@ def classify_release(base: str, target: str, *, root: Path) -> ReleaseClassifica
     runtime_files: list[str] = []
     triggers: list[ReleaseTrigger] = []
     ignored_versions: list[str] = []
+    manifests: list[dict[str, Any] | None] = []
+    for label, commit in (("base", base), ("target", target)):
+        try:
+            manifests.append(_windows_runtime_manifest(root, commit))
+        except ValueError as exc:
+            manifests.append(None)
+            triggers.append(
+                ReleaseTrigger(
+                    "config/windows_runtime_manifest.json",
+                    f"{label} runtime manifest is invalid: {exc}",
+                )
+            )
+    legacy_manifest_introduction = (
+        manifests[0] is None
+        and manifests[1] is not None
+        and subprocess.check_output(
+            ["git", "rev-parse", base], cwd=root, text=True
+        ).strip()
+        in LEGACY_RUNTIME_MANIFEST_BASES
+    )
+    if (
+        not triggers
+        and (manifests[0] is None) != (manifests[1] is None)
+        and not legacy_manifest_introduction
+    ):
+        triggers.append(
+            ReleaseTrigger(
+                "config/windows_runtime_manifest.json",
+                "runtime manifest must exist at both release endpoints",
+            )
+        )
+    runtime_manifests = (
+        tuple(manifest for manifest in manifests if manifest is not None)
+        if not triggers
+        else ()
+    )
 
     for path in _changed_paths(root, base, target):
         parts = PurePosixPath(path).parts
@@ -180,6 +265,9 @@ def classify_release(base: str, target: str, *, root: Path) -> ReleaseClassifica
             continue
         if path.startswith("desktop/"):
             triggers.append(ReleaseTrigger(path, "desktop runtime changed"))
+            continue
+
+        if runtime_manifests and not _is_declared_runtime_path(path, runtime_manifests):
             continue
 
         try:

@@ -48,7 +48,7 @@ PowerShell rollback закрыт.
 
 ## Что разрешено
 
-- Python под `backend/`, `proxy/`, `sovushka/`;
+- Python под `backend/`, `proxy/`, `sovushka/`, `qdrant_visualizer/`;
 - prompts/skills и безопасные JSON/YAML/Markdown/UI assets;
 - корневые `proxy_server.py` и `sovushka_ng.py`;
 - собственные helpers `tools/{vps_patch,vps_patch_apply,windows_update_engine}.py` и паспорт
@@ -78,9 +78,38 @@ scope и список файлов, допустимые и новый SHA-256 �
 собственные base-хэши до загрузки и повторно перед заменой, сверяет архив с внешним и внутренним
 manifest и отвергает лишние файлы/path traversal.
 
+### Транзакционное удаление runtime-файлов
+
+Начиная с `0.30.6`, v2-манифест имеет обратно совместимое поле `operation`:
+отсутствующее значение означает `replace`, явное `delete` — удаление одного
+allowlisted content-файла. Схема намеренно остаётся `les.vps-patch.v2`, потому
+что публичная `0.30.0` должна проверить пакет и извлечь новый helper до остановки
+ЛЕС. Поэтому delete-entry несёт нулевой compatibility payload с SHA-256 и
+размером `0`: старый клиент видит привычный payload, а checksum-declared target
+`tools/vps_patch_apply.py` выполняет именно удаление.
+
+Каждый удаляющий пакет обязан одновременно заменять `tools/vps_patch_apply.py`.
+Удалять можно только content-файлы под `backend/`, `proxy/`, `sovushka/`,
+`qdrant_visualizer/`, `config/prompts/`, `skills/` и `docs/`; app shell, version/lifecycle/bootstrap,
+state и данные не входят в delete allowlist. До stop helper принимает только
+точный historical SHA и повторно сверяет snapshot после preflight, после backup
+и перед каждой мутацией; локальная правка в любом из этих окон не удаляется и
+не заменяется. Delete-marker обязан быть строго пустым payload с SHA-256 пустой
+строки. Уже отсутствующий файл является достигнутым идемпотентным target state.
+Существующий файл сначала сохраняется в recovery snapshot, а forced rollback
+возвращает его побайтово вместе с предыдущим deploy stamp. При возобновлении
+после обрыва исходное наличие файла берётся из recovery snapshot, а не из уже
+частично изменённого runtime.
+
 Каждый новый `latest.json` собирается кумулятивно от commit базового полного релиза, а не от
 предыдущего патча. Для каждого файла builder вычисляет точные SHA-256 полного base, текущего target
 и каждого commit-состояния файла на ancestry `base..target` в LF/Windows-CRLF представлении.
+Классификатор использует валидный `config/windows_runtime_manifest.json` с обеих
+границ diff; единственное исключение — pinned public base `0.30.0`, созданное до
+этого контракта. На остальных границах отсутствие или повреждение manifest
+требует полного выпуска.
+Из Hatch metadata игнорируется только `tool.hatch.build.targets.wheel.packages`;
+hooks и остальные build settings остаются full-release trigger.
 Поэтому машина может пропустить патчи или уже иметь любой опубликованный промежуточный патч и затем
 сразу перейти в последнее состояние; чужая локальная правка остаётся fail-closed и требует полного
 выпуска.

@@ -40,6 +40,41 @@ def _github_feed(patch: dict, *, archive_bytes: int = 5) -> dict:
     }
 
 
+def _delete_github_feed(*, path: str = "proxy/old_agent.py", scope: str = "runtime") -> dict:
+    version = update_service.LES_VERSION
+    build_number = update_service.BUILD_NUMBER
+    patch = {
+        "schema": update_service.VPS_PATCH_SCHEMA,
+        "patch_id": "delete-p1",
+        "base_commit": "b" * 40,
+        "target_commit": "c" * 40,
+        "product_version": version,
+        "build_number": build_number,
+        "files": [
+            {
+                "operation": "replace",
+                "path": "tools/vps_patch_apply.py",
+                "base_sha256": hashlib.sha256(b"old helper").hexdigest(),
+                "accepted_sha256": [hashlib.sha256(b"old helper").hexdigest()],
+                "accepted_missing": False,
+                "sha256": hashlib.sha256(b"new helper").hexdigest(),
+                "bytes": len(b"new helper"),
+            },
+            {
+                "operation": "delete",
+                "scope": scope,
+                "path": path,
+                "base_sha256": hashlib.sha256(b"known old").hexdigest(),
+                "accepted_sha256": [hashlib.sha256(b"known old").hexdigest()],
+                "accepted_missing": True,
+                "sha256": hashlib.sha256(b"").hexdigest(),
+                "bytes": 0,
+            },
+        ],
+    }
+    return _github_feed(patch)
+
+
 def test_patch_allowlist_rejects_runtime_boundaries():
     assert vps_patch.normalize_path("proxy/services/example.py") == "proxy/services/example.py"
     assert (
@@ -69,6 +104,13 @@ def test_patch_allowlist_accepts_shared_console_free_runtime_launcher():
 def test_patch_allowlist_accepts_self_hosted_local_update_builder():
     assert vps_patch.normalize_path("tools/vps_patch.py") == "tools/vps_patch.py"
     assert "tools/vps_patch.py" in vps_patch_apply.ALLOWED_FILES
+
+
+def test_patch_allowlist_accepts_qdrant_visualizer_content():
+    path = "qdrant_visualizer/export_data.py"
+    assert vps_patch.normalize_path(path) == path
+    assert vps_patch_apply.safe_relative_path(path).as_posix() == path
+    assert path.startswith(update_service.VPS_PATCH_DELETE_ALLOWED_ROOTS)
 
 
 def test_local_updater_uses_limited_task_without_elevation(tmp_path):
@@ -312,6 +354,85 @@ def test_build_patch_contains_only_manifest_and_declared_payload(tmp_path):
     assert result["archive_sha256"] == vps_patch.sha256_file(result["archive"])
 
 
+def test_builder_packages_delete_as_v2_self_bridge(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    obsolete = repo / "proxy" / "old_agent.py"
+    obsolete.parent.mkdir(parents=True)
+    obsolete.write_text("OLD = True\n", encoding="utf-8")
+    helper = repo / "tools" / "vps_patch_apply.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("BRIDGE = 1\n", encoding="utf-8")
+    version = repo / "config" / "version.json"
+    version.parent.mkdir(parents=True)
+    version.write_text(
+        json.dumps(
+            {
+                "schema": "les.version.v1",
+                "product_version": "0.30.6",
+                "build_number": 646,
+                "desktop_version": "5.1.646",
+            }
+        ),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    obsolete.unlink()
+    helper.write_text("BRIDGE = 2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "delete with bridge"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    original = vps_patch.ROOT
+    vps_patch.ROOT = repo
+    try:
+        built = vps_patch.build_patch(
+            base=base,
+            target=target,
+            files=["proxy/old_agent.py", "tools/vps_patch_apply.py"],
+            output=tmp_path / "out",
+            origin="https://github.com/proovcme/les_rag_public/releases/latest/download",
+        )
+    finally:
+        vps_patch.ROOT = original
+
+    with zipfile.ZipFile(built["archive"]) as bundle:
+        manifest = json.loads(bundle.read("manifest.json"))
+        deleted = next(
+            entry for entry in manifest["files"]
+            if entry["path"] == "proxy/old_agent.py"
+        )
+        assert manifest["schema"] == "les.vps-patch.v2"
+        assert deleted["operation"] == "delete"
+        assert deleted["bytes"] == 0
+        assert deleted["sha256"] == hashlib.sha256(b"").hexdigest()
+        assert bundle.read("payload/proxy/old_agent.py") == b""
+        assert "payload/tools/vps_patch_apply.py" in bundle.namelist()
+
+    original = vps_patch.ROOT
+    vps_patch.ROOT = repo
+    try:
+        with pytest.raises(
+            ValueError,
+            match="delete patch must replace tools/vps_patch_apply.py",
+        ):
+            vps_patch.build_patch(
+                base=base,
+                target=target,
+                files=["proxy/old_agent.py"],
+                output=tmp_path / "unsafe",
+                origin="https://example.invalid",
+            )
+    finally:
+        vps_patch.ROOT = original
+
+
 def test_builder_packages_one_exact_desktop_shell_with_known_base(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -431,6 +552,77 @@ def test_patch_feed_requires_matching_base_hashes(tmp_path, monkeypatch):
     payload["patch"]["patch_id"] = "p1"
     target.write_bytes(b"foreign")
     assert update_service._validate_patch_feed(payload)["compatible"] is False
+
+
+def test_patch_feed_treats_delete_target_as_absence(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    old = runtime / "proxy" / "old_agent.py"
+    helper = runtime / "tools" / "vps_patch_apply.py"
+    old.parent.mkdir(parents=True)
+    helper.parent.mkdir(parents=True)
+    old.write_bytes(b"known old")
+    helper.write_bytes(b"new helper")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    feed = _delete_github_feed()
+
+    known = update_service.validate_github_update_feed(feed)
+    assert known["available"] is True
+    assert known["compatible"] is True
+
+    old.unlink()
+    absent = update_service.validate_github_update_feed(feed)
+    assert absent["available"] is False
+    assert absent["compatible"] is True
+
+    old.write_bytes(b"local user edit")
+    unknown = update_service.validate_github_update_feed(feed)
+    assert unknown["available"] is True
+    assert unknown["compatible"] is False
+
+
+def test_patch_feed_rejects_nonempty_delete_marker(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    helper = runtime / "tools" / "vps_patch_apply.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_bytes(b"new helper")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    feed = _delete_github_feed()
+    delete_entry = next(
+        entry
+        for entry in feed["patch"]["files"]
+        if entry.get("operation") == "delete"
+    )
+    delete_entry["bytes"] = 1
+    delete_entry["sha256"] = hashlib.sha256(b"x").hexdigest()
+
+    with pytest.raises(update_service.UpdateError, match="маркер удаления"):
+        update_service.validate_github_update_feed(feed)
+
+
+@pytest.mark.parametrize(
+    ("scope", "path"),
+    [
+        ("app", "les-desktop.exe"),
+        ("runtime", "config/version.json"),
+        ("runtime", "tools/windows_update_engine.py"),
+    ],
+)
+def test_patch_feed_rejects_delete_outside_content_roots(
+    tmp_path, monkeypatch, scope, path
+):
+    runtime = tmp_path / "runtime"
+    helper = runtime / "tools" / "vps_patch_apply.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_bytes(b"new helper")
+    target = runtime.parent / path if scope == "app" else runtime / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"known old")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+
+    with pytest.raises(update_service.UpdateError, match="удал|операц"):
+        update_service.validate_github_update_feed(
+            _delete_github_feed(path=path, scope=scope)
+        )
 
 
 def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypatch):

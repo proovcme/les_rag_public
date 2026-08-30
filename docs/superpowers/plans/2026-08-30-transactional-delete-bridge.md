@@ -15,7 +15,7 @@
 - Public compatibility base: `9cddee74b4818bf03d9f3e8b75ac920c85c19692` (`0.30.0 / build 634`).
 - Keep schema `les.vps-patch.v2`; installed `0.30.0` rejects another schema before staging the target helper.
 - Any patch with a delete entry must also replace `tools/vps_patch_apply.py`.
-- Deletion is allowed only below `backend/`, `proxy/`, `sovushka/`, `config/prompts/`, `skills/`, or `docs/`. App-shell and exact lifecycle/bootstrap files cannot be deleted.
+- Deletion is allowed only below `backend/`, `proxy/`, `sovushka/`, `qdrant_visualizer/`, `config/prompts/`, `skills/`, or `docs/`. App-shell and exact lifecycle/bootstrap files cannot be deleted.
 - Unknown installed bytes fail before runtime stop or mutation.
 - User state, datasets, SQLite, Qdrant, memory, settings and secrets never enter the transaction.
 - Do not modify `proxy/smeta_core/**`; do not add dependencies.
@@ -314,7 +314,7 @@ Expected: current helper compiles/replaces every payload and does not delete.
 In `tools/vps_patch_apply.py`:
 
 1. Parse operation with legacy default `replace`.
-2. Restrict delete to the six directory roots and forbid app deletion.
+2. Restrict delete to the seven directory roots and forbid app deletion.
 3. Require a replacement helper in every delete manifest.
 4. Continue hashing the marker, but skip `py_compile` for delete.
 5. Add bounded `_unlink_with_retry()`.

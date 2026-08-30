@@ -34,10 +34,20 @@ GITHUB_PATCH_MANIFEST_URL = os.getenv(
 ).strip()
 GITHUB_UPDATE_FEED_SCHEMA = "les.github-update-feed.v1"
 VPS_PATCH_SCHEMA = "les.vps-patch.v2"
+VPS_PATCH_EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 # Backward-compatible symbols for callers; discovery no longer uses the VPS.
 VPS_PATCH_MANIFEST_URL = GITHUB_PATCH_MANIFEST_URL
 VPS_PATCH_FEED_SCHEMA = "les.vps-patch-feed.v1"
-VPS_PATCH_ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
+VPS_PATCH_ALLOWED_ROOTS = (
+    "backend/",
+    "proxy/",
+    "qdrant_visualizer/",
+    "sovushka/",
+    "config/prompts/",
+    "skills/",
+    "docs/",
+)
+VPS_PATCH_DELETE_ALLOWED_ROOTS = VPS_PATCH_ALLOWED_ROOTS
 MAC_UPDATE_FEED_SCHEMA = "les.mac-update-feed.v1"
 MAC_UPDATE_SCHEMA = "les.mac-update.v1"
 MAC_UPDATE_DENIED_PARTS = {
@@ -95,6 +105,13 @@ _SHA256 = re.compile(r"\b([0-9a-fA-F]{64})\b")
 
 class UpdateError(RuntimeError):
     pass
+
+
+def patch_entry_operation(entry: dict) -> str:
+    operation = str(entry.get("operation") or "replace")
+    if operation not in {"replace", "delete"}:
+        raise UpdateError("Обновление содержит неизвестную файловую операцию")
+    return operation
 
 
 def version_tuple(value: str) -> tuple[int, ...]:
@@ -469,9 +486,12 @@ def _validate_patch_feed(payload: dict) -> dict:
     compatible_files = 0
     total_bytes = 0
     seen: set[str] = set()
+    delete_present = False
+    helper_bridge_present = False
     for entry in files:
         if not isinstance(entry, dict):
             raise UpdateError("Некорректная запись файла в обновлении")
+        operation = patch_entry_operation(entry)
         scope = str(entry.get("scope") or "runtime")
         rel = PurePosixPath(str(entry.get("path") or ""))
         if rel.is_absolute() or ".." in rel.parts or not rel.parts:
@@ -481,6 +501,14 @@ def _validate_patch_feed(payload: dict) -> dict:
         if identity in seen:
             raise UpdateError("Обновление содержит повторяющийся файл")
         seen.add(identity)
+        if operation == "delete":
+            delete_present = True
+            if scope != "runtime" or not normalized.startswith(
+                VPS_PATCH_DELETE_ALLOWED_ROOTS
+            ):
+                raise UpdateError("Обновление пытается удалить защищённый файл приложения")
+        elif normalized == "tools/vps_patch_apply.py" and scope == "runtime":
+            helper_bridge_present = True
         if scope == "app":
             if normalized != "les-desktop.exe":
                 raise UpdateError("Обновление пытается заменить неизвестный файл оболочки")
@@ -517,6 +545,10 @@ def _validate_patch_feed(payload: dict) -> dict:
             or size < 0
         ):
             raise UpdateError("Обновление содержит некорректный SHA-256 или размер файла")
+        if operation == "delete" and (
+            size != 0 or target_hash != VPS_PATCH_EMPTY_SHA256
+        ):
+            raise UpdateError("Обновление содержит некорректный маркер удаления")
         total_bytes += size
         if total_bytes > 128 * 1024 * 1024:
             raise UpdateError("Распакованный размер обновления превышает допустимый")
@@ -526,16 +558,21 @@ def _validate_patch_feed(payload: dict) -> dict:
         }
         accepted_hashes.update(
             str(value).lower()
-            for value in (entry.get("base_sha256"), target_hash)
+            for value in (
+                entry.get("base_sha256"),
+                target_hash if operation == "replace" else None,
+            )
             if value
         )
-        if current == target_hash:
+        if current is None if operation == "delete" else current == target_hash:
             target_matches += 1
         if current in accepted_hashes or (
             current is None
             and (entry.get("base_sha256") is None or bool(entry.get("accepted_missing")))
         ):
             compatible_files += 1
+    if delete_present and not helper_bridge_present:
+        raise UpdateError("Удаляющий патч не содержит новый безопасный helper")
     available = target_matches != len(files)
     compatible = compatible_files == len(files)
     return {

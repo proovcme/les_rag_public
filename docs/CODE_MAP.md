@@ -7,6 +7,15 @@
 > [generated/code_runtime_map.json](generated/code_runtime_map.json). Генератор:
 > `tools/code_runtime_map.py`. Статическая недостижимость не означает, что файл можно удалить.
 
+> **0.30.6 transactional delete bridge:** `tools/vps_patch.py` кодирует удаление
+> runtime content как обратно совместимый v2 entry с `operation=delete` и
+> нулевым payload. `proxy/services/update_service.py` считает целевым состоянием
+> отсутствие файла, отклоняет unknown bytes и требует replacement
+> `tools/vps_patch_apply.py`. Публичная `0.30.0` извлекает этот target helper до
+> stop; detached helper делает backup→delete→restart/smoke и восстанавливает
+> удалённые файлы/deploy stamp при провале. `tools/github_patch_release.py`
+> отдельно доказывает target absence и byte-exact rollback без публикации.
+
 > **0.30.1 model-owned evidence-first RAG:** `scope_service.py` задаёт только
 > явные `none | selected | all`; `chat.py` отключает semantic answer cache для
 > grounded chat и не расширяет scope по тексту вопроса.

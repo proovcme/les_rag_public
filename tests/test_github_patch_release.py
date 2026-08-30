@@ -52,9 +52,16 @@ def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypat
     runtime = repo / "proxy" / "new_tool.py"
     runtime.parent.mkdir()
     runtime.write_text("VALUE = 1\n", encoding="utf-8")
+    obsolete = repo / "proxy" / "obsolete.py"
+    obsolete.write_text("OBSOLETE = True\n", encoding="utf-8")
+    helper = repo / "tools" / "vps_patch_apply.py"
+    helper.parent.mkdir(parents=True)
+    helper.write_text("BRIDGE = 1\n", encoding="utf-8")
     base = _commit(repo, "base")
     runtime.write_text("VALUE = 2\n", encoding="utf-8")
     (repo / "proxy" / "target_only.py").write_text("ADDED = True\n", encoding="utf-8")
+    obsolete.unlink()
+    helper.write_text("BRIDGE = 2\n", encoding="utf-8")
     version = repo / "config" / "version.json"
     contract = json.loads(version.read_text(encoding="utf-8"))
     contract.update(product_version="0.28.2", build_number=589, desktop_version="5.1.589")
@@ -100,6 +107,8 @@ def test_patch_release_builds_exact_assets_without_installer(tmp_path, monkeypat
     assert published["evidence"]["rollback_ok"] is True
     assert published["evidence"]["new_file_removed_on_rollback"] is True
     assert published["evidence"]["skipped_version_ok"] is True
+    assert published["evidence"]["deleted_files_absent_after_apply"] is True
+    assert published["evidence"]["deleted_files_restored_on_rollback"] is True
     assert set(published["evidence"]["durations_ms"]) == {"apply", "rollback", "skipped_version"}
 
     runtime.write_text("VALUE = 3\n", encoding="utf-8")

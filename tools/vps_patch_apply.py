@@ -27,7 +27,18 @@ except ImportError:  # project import during tests and direct repo execution
 
 
 SCHEMA = "les.vps-patch.v2"
-ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
+ALLOWED_ROOTS = (
+    "backend/",
+    "proxy/",
+    "qdrant_visualizer/",
+    "sovushka/",
+    "config/prompts/",
+    "skills/",
+    "docs/",
+)
+DELETE_ALLOWED_ROOTS = ALLOWED_ROOTS
+DELETE_BRIDGE_HELPER = "tools/vps_patch_apply.py"
+EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
@@ -59,7 +70,15 @@ def sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def patch_entry_operation(entry: dict[str, Any]) -> str:
+    operation = str(entry.get("operation") or "replace")
+    if operation not in {"replace", "delete"}:
+        raise RuntimeError("unknown Windows update file operation")
+    return operation
+
+
 def entry_accepts_current(entry: dict[str, Any], current: str | None) -> bool:
+    operation = patch_entry_operation(entry)
     expected = entry.get("base_sha256")
     accepted = {
         str(value).lower()
@@ -68,7 +87,10 @@ def entry_accepts_current(entry: dict[str, Any], current: str | None) -> bool:
     }
     accepted.update(
         str(value).lower()
-        for value in (expected, entry.get("sha256"))
+        for value in (
+            expected,
+            entry.get("sha256") if operation == "replace" else None,
+        )
         if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value)
     )
     return current in accepted or (
@@ -144,7 +166,9 @@ def entry_paths(
     )
 
 
-def _validate_manifest(bundle: zipfile.ZipFile, runtime: Path) -> dict[str, Any]:
+def _validate_manifest(
+    bundle: zipfile.ZipFile, runtime: Path
+) -> tuple[dict[str, Any], dict[str, str | None]]:
     try:
         manifest = json.loads(bundle.read("manifest.json"))
     except (KeyError, ValueError, TypeError) as exc:
@@ -164,20 +188,34 @@ def _validate_manifest(bundle: zipfile.ZipFile, runtime: Path) -> dict[str, Any]
     expected_names = {"manifest.json"}
     seen: set[str] = set()
     total_bytes = 0
+    delete_present = False
+    helper_bridge_present = False
+    validated_targets: dict[str, str | None] = {}
     for entry in files:
         if not isinstance(entry, dict):
             raise RuntimeError("Windows update contains an invalid file entry")
+        operation = patch_entry_operation(entry)
         target, archive_name, _ = entry_paths(entry, runtime)
         identity = f"{entry.get('scope') or 'runtime'}:{entry.get('path')}"
         if identity in seen:
             raise RuntimeError(f"duplicate file in Windows update: {identity}")
         seen.add(identity)
+        normalized = str(entry.get("path") or "").replace("\\", "/")
+        scope = str(entry.get("scope") or "runtime")
+        if operation == "delete":
+            delete_present = True
+            if scope != "runtime" or not normalized.startswith(DELETE_ALLOWED_ROOTS):
+                raise RuntimeError(f"delete targets a protected Windows file: {identity}")
+        elif scope == "runtime" and normalized == DELETE_BRIDGE_HELPER:
+            helper_bridge_present = True
         target_hash = str(entry.get("sha256") or "").lower()
         if not re.fullmatch(r"[0-9a-f]{64}", target_hash):
             raise RuntimeError(f"target checksum is invalid: {identity}")
         size = entry.get("bytes")
         if not isinstance(size, int) or isinstance(size, bool) or size < 0:
             raise RuntimeError(f"target size is invalid: {identity}")
+        if operation == "delete" and (size != 0 or target_hash != EMPTY_SHA256):
+            raise RuntimeError(f"delete marker is invalid: {identity}")
         total_bytes += size
         if total_bytes > 128 * 1024 * 1024:
             raise RuntimeError("unpacked Windows update exceeds the size limit")
@@ -190,9 +228,65 @@ def _validate_manifest(bundle: zipfile.ZipFile, runtime: Path) -> dict[str, Any]
         current = sha(target) if target.is_file() else None
         if not entry_accepts_current(entry, current):
             raise RuntimeError(f"base checksum mismatch: {identity}")
+        validated_targets[identity] = current
+    if delete_present and not helper_bridge_present:
+        raise RuntimeError("delete update is missing the target helper bridge")
     if set(bundle.namelist()) != expected_names:
         raise RuntimeError("Windows update archive has undeclared or missing files")
-    return manifest
+    return manifest, validated_targets
+
+
+def _entry_identity(entry: dict[str, Any]) -> str:
+    return f"{entry.get('scope') or 'runtime'}:{entry.get('path')}"
+
+
+def _assert_targets_unchanged(
+    manifest: dict[str, Any],
+    runtime: Path,
+    validated_targets: dict[str, str | None],
+) -> None:
+    for entry in manifest["files"]:
+        target, _, _ = entry_paths(entry, runtime)
+        identity = _entry_identity(entry)
+        current = sha(target) if target.is_file() else None
+        if current != validated_targets[identity]:
+            raise RuntimeError(f"runtime target changed during update: {identity}")
+
+
+def _reusable_backup_matches(
+    backup: Path,
+    manifest: dict[str, Any],
+    runtime: Path,
+    validated_targets: dict[str, str | None],
+) -> bool:
+    """A resumed recovery point must cover every entry not already at target state."""
+    for entry in manifest["files"]:
+        identity = _entry_identity(entry)
+        current = validated_targets[identity]
+        operation = patch_entry_operation(entry)
+        target_matches = current is None if operation == "delete" else current == entry["sha256"]
+        _, _, backup_rel = entry_paths(entry, runtime)
+        saved = backup / "files" / backup_rel
+        if target_matches:
+            accepted_original = {
+                str(value).lower()
+                for value in (
+                    entry.get("base_sha256"),
+                    *(entry.get("accepted_sha256") or []),
+                )
+                if value
+            }
+            if saved.exists() and (
+                not saved.is_file() or sha(saved) not in accepted_original
+            ):
+                return False
+            continue
+        if current is None:
+            if saved.exists():
+                return False
+        elif not saved.is_file() or sha(saved) != current:
+            return False
+    return True
 
 
 def _stage_payload(
@@ -209,7 +303,7 @@ def _stage_payload(
             shutil.copyfileobj(source, output)
         if target.stat().st_size != int(entry["bytes"]) or sha(target) != entry["sha256"]:
             raise RuntimeError(f"payload checksum mismatch: {entry.get('scope')}:{entry['path']}")
-        if target.suffix.lower() == ".py":
+        if patch_entry_operation(entry) == "replace" and target.suffix.lower() == ".py":
             py_compile.compile(str(target), doraise=True)
 
 
@@ -244,6 +338,19 @@ def _replace_with_retry(source: Path, target: Path, *, timeout: float = 20.0) ->
     while True:
         try:
             os.replace(source, target)
+            return
+        except PermissionError:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.25)
+
+
+def _unlink_with_retry(path: Path, *, timeout: float = 15.0) -> None:
+    """Wait out a transient Windows reader lock before deleting one exact file."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            path.unlink(missing_ok=True)
             return
         except PermissionError:
             if time.monotonic() >= deadline:
@@ -478,6 +585,8 @@ def apply_job(job_path: Path) -> int:
     previous_stamp: bytes | None = None
     runtime_stopped = False
     stamp_touched = False
+    replaced_files = 0
+    deleted_files = 0
     lock_path = status.with_name("apply.lock")
     lock_fd: int | None = None
     try:
@@ -490,7 +599,7 @@ def apply_job(job_path: Path) -> int:
         with zipfile.ZipFile(archive) as bundle, tempfile.TemporaryDirectory(
             prefix="les-windows-update-"
         ) as stage_dir:
-            manifest = _validate_manifest(bundle, runtime)
+            manifest, validated_targets = _validate_manifest(bundle, runtime)
             if str(manifest.get("patch_id") or "") != patch_id:
                 raise RuntimeError("job and archive update ids differ")
             stage = Path(stage_dir)
@@ -504,9 +613,14 @@ def apply_job(job_path: Path) -> int:
                 message="Проверяю и подключаю базу ФСНБ до изменения версии LES",
             )
             _verify_smeta_baseline(runtime, state, staged_runtime=stage / "runtime")
+            _assert_targets_unchanged(manifest, runtime, validated_targets)
 
             stamp_path = runtime / ".les_deploy_stamp.json"
             backup = _reusable_backup(backup_root, manifest)
+            if backup is not None and not _reusable_backup_matches(
+                backup, manifest, runtime, validated_targets
+            ):
+                backup = None
             if backup is None:
                 attempt = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
                 backup = backup_root / f"{attempt}-{os.getpid()}"
@@ -524,11 +638,17 @@ def apply_job(job_path: Path) -> int:
                         saved = backup / "files" / backup_rel
                         saved.parent.mkdir(parents=True, exist_ok=True)
                         shutil.copy2(target, saved)
+                        identity = _entry_identity(entry)
+                        if sha(saved) != validated_targets[identity]:
+                            raise RuntimeError(
+                                f"runtime target changed while backing up: {identity}"
+                            )
             else:
                 saved_stamp = backup / "previous_deploy_stamp.json"
                 if saved_stamp.is_file():
                     previous_stamp = saved_stamp.read_bytes()
 
+            _assert_targets_unchanged(manifest, runtime, validated_targets)
             _stop_runtime(runtime, state)
             _stop_desktop()
             runtime_stopped = True
@@ -541,12 +661,26 @@ def apply_job(job_path: Path) -> int:
             )
             for entry in manifest["files"]:
                 target, _, backup_rel = entry_paths(entry, runtime)
-                existed = target.is_file()
-                target.parent.mkdir(parents=True, exist_ok=True)
-                temporary = target.with_name(target.name + ".les-update.tmp")
-                shutil.copy2(stage / backup_rel, temporary)
-                _replace_with_retry(temporary, target)
-                changed.append((target, existed, backup_rel))
+                identity = _entry_identity(entry)
+                current = sha(target) if target.is_file() else None
+                if current != validated_targets[identity]:
+                    raise RuntimeError(
+                        f"runtime target changed before mutation: {identity}"
+                    )
+                operation = patch_entry_operation(entry)
+                original_existed = (backup / "files" / backup_rel).is_file()
+                if operation == "delete":
+                    changed.append((target, original_existed, backup_rel))
+                    if target.is_file():
+                        _unlink_with_retry(target)
+                    deleted_files += 1
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    temporary = target.with_name(target.name + ".les-update.tmp")
+                    shutil.copy2(stage / backup_rel, temporary)
+                    _replace_with_retry(temporary, target)
+                    changed.append((target, original_existed, backup_rel))
+                    replaced_files += 1
 
         stamp_path = runtime / ".les_deploy_stamp.json"
         write_status(
@@ -592,6 +726,8 @@ def apply_job(job_path: Path) -> int:
             product_version=manifest["product_version"],
             build_number=manifest["build_number"],
             changed_files=len(manifest["files"]),
+            replaced_files=replaced_files,
+            deleted_files=deleted_files,
             backup_root=str(backup),
             process_hygiene=process_hygiene,
             user_data_untouched=True,

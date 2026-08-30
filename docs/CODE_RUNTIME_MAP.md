@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 1000 |
-| Строк Python | 299106 |
+| Строк Python | 300049 |
 | PRODUCT_REACHABLE | 363 |
 | RUNTIME_SUPPORT | 8 |
 | TEST_OR_TOOL_ONLY | 627 |
@@ -61,7 +61,7 @@
 | backend/document_router.py | 1124 | 9 |
 | proxy/routers/rim.py | 1122 | 2 |
 | tools/build_rag_contract_sibling.py | 1114 | 4 |
-| backend/parquet_writer.py | 1016 | 12 |
+| proxy/services/update_service.py | 1052 | 7 |
 
 ## Сметный монолит: фактические потребители
 

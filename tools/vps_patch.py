@@ -26,7 +26,19 @@ SCHEMA = "les.vps-patch.v2"
 FEED_SCHEMA = "les.vps-patch-feed.v1"
 DEFAULT_ORIGIN = "https://github.com/proovcme/les_rag_public/releases/latest/download"
 DESKTOP_MANIFEST_SCHEMA = "les.windows-update-shell.v1"
-ALLOWED_ROOTS = ("backend/", "proxy/", "sovushka/", "config/prompts/", "skills/", "docs/")
+PATCH_OPERATION_REPLACE = "replace"
+PATCH_OPERATION_DELETE = "delete"
+DELETE_BRIDGE_HELPER = "tools/vps_patch_apply.py"
+DELETE_MARKER = b""
+ALLOWED_ROOTS = (
+    "backend/",
+    "proxy/",
+    "qdrant_visualizer/",
+    "sovushka/",
+    "config/prompts/",
+    "skills/",
+    "docs/",
+)
 ALLOWED_FILES = {
     "sovushka_ng.py",
     "proxy_server.py",
@@ -216,19 +228,35 @@ def build_patch(
     for path in normalized:
         before = git_bytes(base_commit, path)
         after = git_bytes(target_commit, path)
-        if after is None:
-            raise ValueError(f"deletions are not supported in fast patches: {path}")
         if before == after:
             continue
-        payload[path] = after
         accepted_hashes, accepted_missing = accepted_file_hashes(
             base_commit,
             target_commit,
             path,
             installed_runtime=installed_runtime,
         )
+        if after is None:
+            if before is None:
+                continue
+            payload[path] = DELETE_MARKER
+            entries.append(
+                {
+                    "operation": PATCH_OPERATION_DELETE,
+                    "scope": "runtime",
+                    "path": path,
+                    "base_sha256": sha256_bytes(windows_runtime_bytes(before)),
+                    "accepted_sha256": accepted_hashes,
+                    "accepted_missing": True,
+                    "sha256": sha256_bytes(DELETE_MARKER),
+                    "bytes": 0,
+                }
+            )
+            continue
+        payload[path] = after
         entries.append(
             {
+                "operation": PATCH_OPERATION_REPLACE,
                 "scope": "runtime",
                 "path": path,
                 "base_sha256": sha256_bytes(windows_runtime_bytes(before)) if before is not None else None,
@@ -245,7 +273,15 @@ def build_patch(
             contract=contract,
         )
         payload["@app/les-desktop.exe"] = binary
+        desktop_entry["operation"] = PATCH_OPERATION_REPLACE
         entries.append(desktop_entry)
+    if any(entry["operation"] == PATCH_OPERATION_DELETE for entry in entries):
+        helper = next(
+            (entry for entry in entries if entry["path"] == DELETE_BRIDGE_HELPER),
+            None,
+        )
+        if helper is None or helper["operation"] != PATCH_OPERATION_REPLACE:
+            raise ValueError("delete patch must replace tools/vps_patch_apply.py")
     if not entries:
         raise ValueError("selected files have no changes")
     patch_id = f"{target_commit[:12]}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"

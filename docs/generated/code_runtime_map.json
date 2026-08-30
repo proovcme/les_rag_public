@@ -7460,7 +7460,7 @@
         "tools/vps_patch.py",
         "tools/windows_clean_install.py"
       ],
-      "lines": 1015,
+      "lines": 1052,
       "module": "proxy.services.update_service",
       "outbound": [
         "proxy/__init__.py",
@@ -10651,7 +10651,7 @@
     },
     {
       "inbound": [],
-      "lines": 253,
+      "lines": 262,
       "module": "tests.test_github_patch_release",
       "outbound": [
         "tools/github_patch_release.py",
@@ -12517,7 +12517,7 @@
     },
     {
       "inbound": [],
-      "lines": 148,
+      "lines": 296,
       "module": "tests.test_release_classification",
       "outbound": [
         "tools/release_classification.py"
@@ -14085,7 +14085,7 @@
     },
     {
       "inbound": [],
-      "lines": 734,
+      "lines": 926,
       "module": "tests.test_vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -14110,7 +14110,7 @@
     },
     {
       "inbound": [],
-      "lines": 1303,
+      "lines": 1580,
       "module": "tests.test_windows_application_update",
       "outbound": [
         "tools/vps_patch_apply.py",
@@ -15312,7 +15312,7 @@
       "inbound": [
         "tests/test_github_patch_release.py"
       ],
-      "lines": 410,
+      "lines": 430,
       "module": "tools.github_patch_release",
       "outbound": [
         "tools/__init__.py",
@@ -16047,7 +16047,7 @@
         "tools/github_patch_release.py",
         "tools/vps_patch.py"
       ],
-      "lines": 195,
+      "lines": 283,
       "module": "tools.release_classification",
       "outbound": [
         "tools/__init__.py"
@@ -16592,7 +16592,7 @@
         "tests/test_vps_patch.py",
         "tools/github_patch_release.py"
       ],
-      "lines": 643,
+      "lines": 679,
       "module": "tools.vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -16608,7 +16608,7 @@
         "tests/test_vps_patch.py",
         "tests/test_windows_application_update.py"
       ],
-      "lines": 687,
+      "lines": 823,
       "module": "tools.vps_patch_apply",
       "outbound": [
         "tools/__init__.py",
@@ -19208,7 +19208,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 627,
     "tracked_python_files": 1000,
-    "tracked_python_lines": 299106
+    "tracked_python_lines": 300049
   },
   "warnings": []
 }

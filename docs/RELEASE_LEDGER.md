@@ -7,17 +7,35 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.5
-номер сборки:              645
-версия Tauri/NSIS:         5.1.645
+версия продукта (SemVer):  0.30.6
+номер сборки:              646
+версия Tauri/NSIS:         5.1.646
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       first proven dead-code cleanup + synchronized code truth map
+dev implementation:       transactional delete bridge for cumulative Windows patches
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          не назначен; 0.30.5 — только dev candidate, не опубликован и не задеплоен
+следующий выпуск:          не назначен; 0.30.6 — только dev candidate, не опубликован и не задеплоен
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
+
+> **0.30.6 / build 646 transactional delete bridge (dev candidate, not deployed):**
+> lightweight GitHub package остаётся обратно совместимым
+> `les.vps-patch.v2`. Delete-entry несёт `operation=delete` и нулевой
+> compatibility payload, поэтому установленная `0.30.0 / build 634` может
+> проверить один cumulative ZIP, извлечь checksum-declared target
+> `tools/vps_patch_apply.py` и запустить уже новый helper. Builder и обе
+> клиентские проверки требуют этот self-bridge; app/lifecycle/bootstrap/state
+> удалять запрещено. Exact historical bytes сохраняются в recovery snapshot,
+> unknown local bytes отклоняются до stop, already-absent является
+> идемпотентной целью, forced smoke failure возвращает удалённый файл и прежний
+> deploy stamp. Snapshot повторно проверяется после preflight/backup и перед
+> мутацией; повреждённый runtime manifest и материальные Hatch build settings
+> fail closed, кроме явно закреплённого legacy-перехода с public `0.30.0`.
+> Recovery после process loss восстанавливает исходное наличие удалённых файлов.
+> Isolated GitHub gate отдельно доказывает target absence и
+> byte-exact rollback. User data, RAG/model behavior, UI и
+> `proxy/smeta_core/**` не менялись. Выпуск не опубликован и не применён к Legion.
 
 > **0.30.5 / build 645 first proven dead-code cleanup (dev candidate, not deployed):**
 > удалены 15 Python-файлов (2615 строк, включая тест удалённой Mermaid-страницы)

@@ -22,6 +22,7 @@ def _prepared_job(
     tmp_path: Path,
     *,
     extra_archive_entry: bool = False,
+    delete_file: bool = False,
 ) -> tuple[Path, Path, Path]:
     runtime = tmp_path / "app" / "runtime"
     state = tmp_path / "state"
@@ -64,6 +65,34 @@ def _prepared_job(
             "bytes": len(b"new desktop"),
         },
     ]
+    if delete_file:
+        obsolete = runtime / "proxy" / "old_agent.py"
+        obsolete.write_bytes(b"obsolete runtime\n")
+        helper = runtime / "tools" / "vps_patch_apply.py"
+        helper.parent.mkdir(parents=True)
+        helper.write_bytes(b"BRIDGE = 1\n")
+        files.extend(
+            [
+                {
+                    "operation": "replace",
+                    "path": "tools/vps_patch_apply.py",
+                    "base_sha256": _sha(b"BRIDGE = 1\n"),
+                    "accepted_sha256": [_sha(b"BRIDGE = 1\n")],
+                    "accepted_missing": False,
+                    "sha256": _sha(b"BRIDGE = 2\n"),
+                    "bytes": len(b"BRIDGE = 2\n"),
+                },
+                {
+                    "operation": "delete",
+                    "path": "proxy/old_agent.py",
+                    "base_sha256": _sha(b"obsolete runtime\n"),
+                    "accepted_sha256": [_sha(b"obsolete runtime\n")],
+                    "accepted_missing": True,
+                    "sha256": _sha(b""),
+                    "bytes": 0,
+                },
+            ]
+        )
     manifest = {
         "schema": "les.vps-patch.v2",
         "patch_id": "behavior-update",
@@ -80,6 +109,9 @@ def _prepared_job(
         bundle.writestr("payload/proxy/example.py", b"NEW = True\n")
         bundle.writestr("payload/sovushka/new-state.js", b"export const READY = true;\n")
         bundle.writestr("payload/@app/les-desktop.exe", b"new desktop")
+        if delete_file:
+            bundle.writestr("payload/tools/vps_patch_apply.py", b"BRIDGE = 2\n")
+            bundle.writestr("payload/proxy/old_agent.py", b"")
         if extra_archive_entry:
             bundle.writestr("payload/undeclared.txt", b"surprise")
     job = tmp_path / "job.json"
@@ -113,6 +145,14 @@ def _patch_windows_actions(monkeypatch: pytest.MonkeyPatch) -> None:
         vps_patch_apply, "start_desktop", lambda _runtime, patch_id: f"task-{patch_id}"
     )
     monkeypatch.setattr(vps_patch_apply, "remove_task", lambda _name: None)
+
+
+def _ready_process_contract(*_args) -> dict:
+    return {
+        "contract": "direct_python_no_console_v1",
+        "runtime_processes": ["pythonw.exe", "pythonw.exe"],
+        "cmd_wrappers": 0,
+    }
 
 
 def test_windows_updater_applies_atomically_without_build_or_test(tmp_path, monkeypatch):
@@ -153,6 +193,140 @@ def test_windows_updater_applies_atomically_without_build_or_test(tmp_path, monk
     backup = Path(status["backup_root"])
     assert (backup / "files" / "runtime" / "proxy" / "example.py").read_bytes() == b"OLD = True\n"
     assert (backup / "files" / "app" / "les-desktop.exe").read_bytes() == b"old desktop"
+
+
+def test_windows_updater_deletes_known_runtime_file_and_backs_it_up(
+    tmp_path, monkeypatch
+):
+    runtime, state, job = _prepared_job(tmp_path, delete_file=True)
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(vps_patch_apply, "_wait_ready", _ready_process_contract)
+
+    assert vps_patch_apply.apply_job(job) == 0
+    assert not (runtime / "proxy" / "old_agent.py").exists()
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    backup = Path(status["backup_root"])
+    assert (
+        backup / "files" / "runtime" / "proxy" / "old_agent.py"
+    ).read_bytes() == b"obsolete runtime\n"
+    assert status["deleted_files"] == 1
+
+
+def test_windows_updater_accepts_already_absent_delete_target(tmp_path, monkeypatch):
+    runtime, _state, job = _prepared_job(tmp_path, delete_file=True)
+    (runtime / "proxy" / "old_agent.py").unlink()
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(vps_patch_apply, "_wait_ready", _ready_process_contract)
+
+    assert vps_patch_apply.apply_job(job) == 0
+    assert not (runtime / "proxy" / "old_agent.py").exists()
+
+
+def test_windows_updater_rejects_unknown_delete_bytes_before_stop(
+    tmp_path, monkeypatch
+):
+    runtime, state, job = _prepared_job(tmp_path, delete_file=True)
+    target = runtime / "proxy" / "old_agent.py"
+    target.write_bytes(b"local user edit\n")
+    stopped = []
+    monkeypatch.setattr(
+        vps_patch_apply, "_stop_runtime", lambda *_args: stopped.append(True)
+    )
+    monkeypatch.setattr(vps_patch_apply, "remove_task", lambda _name: None)
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert stopped == []
+    assert target.read_bytes() == b"local user edit\n"
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status["stage"] == "rejected"
+
+
+def test_windows_updater_rejects_delete_target_changed_during_preflight(
+    tmp_path, monkeypatch
+):
+    runtime, state, job = _prepared_job(tmp_path, delete_file=True)
+    target = runtime / "proxy" / "old_agent.py"
+    stopped = []
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_verify_smeta_baseline",
+        lambda *_args, **_kwargs: target.write_bytes(b"edit during preflight\n"),
+    )
+    monkeypatch.setattr(
+        vps_patch_apply, "_stop_runtime", lambda *_args: stopped.append(True)
+    )
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert stopped == []
+    assert target.read_bytes() == b"edit during preflight\n"
+    status = json.loads(
+        (state / "artifacts" / "updates" / "status.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert status["stage"] == "rejected"
+
+
+def test_windows_updater_preserves_delete_target_changed_while_stopping(
+    tmp_path, monkeypatch
+):
+    runtime, _state, job = _prepared_job(tmp_path, delete_file=True)
+    target = runtime / "proxy" / "old_agent.py"
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_stop_runtime",
+        lambda *_args: target.write_bytes(b"edit while stopping\n"),
+    )
+    monkeypatch.setattr(
+        vps_patch_apply.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("not running")),
+    )
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert target.read_bytes() == b"edit while stopping\n"
+
+
+def test_windows_updater_rejects_nonempty_delete_marker_before_stop(
+    tmp_path, monkeypatch
+):
+    runtime, _state, job = _prepared_job(tmp_path, delete_file=True)
+    job_payload = json.loads(job.read_text(encoding="utf-8"))
+    archive = Path(job_payload["archive"])
+    with zipfile.ZipFile(archive) as source:
+        members = {name: source.read(name) for name in source.namelist()}
+    manifest = json.loads(members["manifest.json"])
+    delete_entry = next(
+        entry for entry in manifest["files"] if entry.get("operation") == "delete"
+    )
+    delete_entry["bytes"] = 1
+    delete_entry["sha256"] = _sha(b"x")
+    members["manifest.json"] = json.dumps(manifest).encode()
+    members["payload/proxy/old_agent.py"] = b"x"
+    with zipfile.ZipFile(archive, "w") as target_bundle:
+        for name, payload in members.items():
+            target_bundle.writestr(name, payload)
+    job_payload["archive_sha256"] = vps_patch_apply.sha(archive)
+    job.write_text(json.dumps(job_payload), encoding="utf-8")
+    stopped = []
+    monkeypatch.setattr(
+        vps_patch_apply, "_stop_runtime", lambda *_args: stopped.append(True)
+    )
+    monkeypatch.setattr(vps_patch_apply, "remove_task", lambda _name: None)
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert stopped == []
+    assert (runtime / "proxy" / "old_agent.py").read_bytes() == b"obsolete runtime\n"
 
 
 def test_soft_updater_rejects_failed_baseline_preflight_before_runtime_mutation(
@@ -381,6 +555,109 @@ def test_windows_updater_rolls_back_all_files_when_smoke_fails(tmp_path, monkeyp
     assert status["state"] == "failed"
     assert status["stage"] == "rolled_back"
     assert "identity smoke failed" in status["error"]
+
+
+def test_windows_updater_restores_deleted_file_when_smoke_fails(tmp_path, monkeypatch):
+    runtime, state, job = _prepared_job(tmp_path, delete_file=True)
+    previous_stamp = (runtime / ".les_deploy_stamp.json").read_bytes()
+    _patch_windows_actions(monkeypatch)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_wait_ready",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("identity smoke failed")),
+    )
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        vps_patch_apply.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: HealthyUi(),
+    )
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert (
+        runtime / "proxy" / "old_agent.py"
+    ).read_bytes() == b"obsolete runtime\n"
+    assert (runtime / ".les_deploy_stamp.json").read_bytes() == previous_stamp
+    assert (state / "data" / "user-owned.db").read_bytes() == b"never replace me"
+
+
+def test_windows_delete_retries_transient_permission_error(tmp_path, monkeypatch):
+    target = tmp_path / "delete-me.py"
+    sibling = tmp_path / "keep-me.py"
+    target.write_bytes(b"delete")
+    sibling.write_bytes(b"keep")
+    actual_unlink = Path.unlink
+    attempts = 0
+
+    def flaky_unlink(path, *args, **kwargs):
+        nonlocal attempts
+        if path == target:
+            attempts += 1
+            if attempts == 1:
+                raise PermissionError("transient reader lock")
+        return actual_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+    vps_patch_apply._unlink_with_retry(target, timeout=1)
+
+    assert attempts == 2
+    assert not target.exists()
+    assert sibling.read_bytes() == b"keep"
+
+
+def test_windows_updater_retry_restores_deleted_file_after_process_crash(
+    tmp_path, monkeypatch
+):
+    runtime, _state, job = _prepared_job(tmp_path, delete_file=True)
+    target = runtime / "proxy" / "old_agent.py"
+    previous_stamp = (runtime / ".les_deploy_stamp.json").read_bytes()
+    _patch_windows_actions(monkeypatch)
+    actual_unlink = vps_patch_apply._unlink_with_retry
+
+    def crash_after_delete(path, **kwargs):
+        actual_unlink(path, **kwargs)
+        raise KeyboardInterrupt("simulated process loss")
+
+    monkeypatch.setattr(vps_patch_apply, "_unlink_with_retry", crash_after_delete)
+    with pytest.raises(KeyboardInterrupt, match="simulated process loss"):
+        vps_patch_apply.apply_job(job)
+    assert not target.exists()
+
+    monkeypatch.setattr(vps_patch_apply, "_unlink_with_retry", actual_unlink)
+    monkeypatch.setattr(
+        vps_patch_apply,
+        "_wait_ready",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("forced retry failure")),
+    )
+
+    class HealthyUi:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        vps_patch_apply.urllib.request,
+        "urlopen",
+        lambda *_args, **_kwargs: HealthyUi(),
+    )
+
+    assert vps_patch_apply.apply_job(job) == 1
+    assert target.read_bytes() == b"obsolete runtime\n"
+    assert (runtime / ".les_deploy_stamp.json").read_bytes() == previous_stamp
 
 
 def test_windows_updater_retry_reuses_original_recovery_point(tmp_path, monkeypatch):

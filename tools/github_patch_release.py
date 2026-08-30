@@ -197,6 +197,7 @@ def run_isolated_update_gate(
     original: dict[str, bytes | None] = {}
     current: dict[str, bytes] = {}
     target_only: list[str] = []
+    deleted_paths: list[str] = []
     old_stamp = b'{"deployed_commit":"base"}'
     stamp = old_stamp
 
@@ -211,6 +212,8 @@ def run_isolated_update_gate(
             target_only.append(path)
         else:
             current[path] = installed
+            if str(entry.get("operation") or "replace") == "delete":
+                deleted_paths.append(path)
 
     apply_started = time.perf_counter()
     with zipfile.ZipFile(archive) as bundle:
@@ -224,13 +227,14 @@ def run_isolated_update_gate(
             raise RuntimeError("isolated gate found a manifest mismatch")
         for entry in patch_manifest["files"]:
             path = str(entry["path"])
+            operation = str(entry.get("operation") or "replace")
             installed = current.get(path)
             installed_sha = vps_patch.sha256_bytes(installed) if installed is not None else None
             accepted = {
                 str(value).lower()
                 for value in (
                     entry.get("base_sha256"),
-                    entry.get("sha256"),
+                    entry.get("sha256") if operation == "replace" else None,
                     *(entry.get("accepted_sha256") or []),
                 )
                 if value
@@ -245,27 +249,36 @@ def run_isolated_update_gate(
                 or vps_patch.sha256_bytes(payload) != entry["sha256"]
             ):
                 raise RuntimeError(f"isolated gate rejected target bytes for {path}")
-            current[path] = payload
+            if operation == "delete":
+                if payload != b"" or entry["sha256"] != vps_patch.sha256_bytes(b""):
+                    raise RuntimeError(f"isolated gate rejected delete marker for {path}")
+                current.pop(path, None)
+            else:
+                current[path] = payload
     stamp = json.dumps(
         {"deployed_commit": patch_manifest["target_commit"]}, separators=(",", ":")
     ).encode()
     apply_ok = all(
-        vps_patch.sha256_bytes(current[str(entry["path"])]) == entry["sha256"]
+        str(entry["path"]) not in current
+        if str(entry.get("operation") or "replace") == "delete"
+        else vps_patch.sha256_bytes(current[str(entry["path"])]) == entry["sha256"]
         for entry in patch_manifest["files"]
     ) and patch_manifest["target_commit"].encode() in stamp
+    deleted_files_absent = all(path not in current for path in deleted_paths)
     durations["apply"] = round((time.perf_counter() - apply_started) * 1000)
 
     skipped_started = time.perf_counter()
     skipped_version_ok = True
     for index, entry in enumerate(patch_manifest["files"]):
         path = str(entry["path"])
+        operation = str(entry.get("operation") or "replace")
         candidate = current.get(path) if index == 0 else original[path]
         candidate_sha = vps_patch.sha256_bytes(candidate) if candidate is not None else None
         accepted = {
             str(value).lower()
             for value in (
                 entry.get("base_sha256"),
-                entry.get("sha256"),
+                entry.get("sha256") if operation == "replace" else None,
                 *(entry.get("accepted_sha256") or []),
             )
             if value
@@ -288,6 +301,9 @@ def run_isolated_update_gate(
     rollback_ok = all(
         current.get(path) == before for path, before in original.items() if before is not None
     ) and stamp == old_stamp
+    deleted_files_restored = all(
+        current.get(path) == original[path] for path in deleted_paths
+    )
     new_file_removed = not target_only or all(path not in current for path in target_only)
     durations["rollback"] = round((time.perf_counter() - rollback_started) * 1000)
 
@@ -295,6 +311,8 @@ def run_isolated_update_gate(
         "apply_ok": apply_ok,
         "rollback_ok": rollback_ok,
         "new_file_removed_on_rollback": new_file_removed,
+        "deleted_files_absent_after_apply": deleted_files_absent,
+        "deleted_files_restored_on_rollback": deleted_files_restored,
         "skipped_version_ok": skipped_version_ok,
         "durations_ms": durations,
     }
@@ -302,6 +320,8 @@ def run_isolated_update_gate(
         "apply_ok",
         "rollback_ok",
         "new_file_removed_on_rollback",
+        "deleted_files_absent_after_apply",
+        "deleted_files_restored_on_rollback",
         "skipped_version_ok",
     )
     if not all(evidence[name] is True for name in required):

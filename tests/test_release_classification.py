@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from tools import release_classification
 from tools.release_classification import classify_release
 
 
@@ -133,6 +134,153 @@ def test_allowed_runtime_file_is_packaged_and_unknown_runtime_path_blocks_patch(
     assert full_result.kind == "full"
     assert full_result.triggers[0].path == "unexpected_runtime.bin"
     assert "not allowed in a lightweight patch" in full_result.triggers[0].reason
+
+
+def test_allowed_runtime_deletion_remains_lightweight_patch(release_repo):
+    repo, base = release_repo
+    (repo / "proxy" / "existing.py").unlink()
+
+    result = classify_release(base, _commit(repo, "delete runtime file"), root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ("proxy/existing.py",)
+    assert result.triggers == ()
+
+
+def test_runtime_manifest_ignores_repo_only_files_and_keeps_visualizer_content(
+    release_repo,
+):
+    repo, _base = release_repo
+    manifest = repo / "config" / "windows_runtime_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/", "qdrant_visualizer/"],
+                "include_files": ["pyproject.toml", "uv.lock"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    visualizer = repo / "qdrant_visualizer" / "export_data.py"
+    visualizer.parent.mkdir(parents=True)
+    visualizer.write_text("VALUE = 1\n", encoding="utf-8")
+    readme = repo / "README.md"
+    readme.write_text("base\n", encoding="utf-8")
+    base = _commit(repo, "runtime manifest base")
+
+    visualizer.unlink()
+    readme.write_text("docs only\n", encoding="utf-8")
+    target = _commit(repo, "runtime and docs")
+
+    result = classify_release(base, target, root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ("qdrant_visualizer/export_data.py",)
+    assert result.triggers == ()
+
+
+def test_wheel_package_metadata_does_not_require_dependency_rebuild(release_repo):
+    repo, base = release_repo
+    project = repo / "pyproject.toml"
+    project.write_text(
+        project.read_text(encoding="utf-8")
+        + '\n[tool.hatch.build.targets.wheel]\npackages = ["proxy"]\n',
+        encoding="utf-8",
+    )
+
+    result = classify_release(base, _commit(repo, "wheel metadata"), root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ()
+    assert result.triggers == ()
+
+
+@pytest.mark.parametrize(
+    "hatch_metadata",
+    [
+        '\n[tool.hatch.build.targets.sdist]\ninclude = ["proxy"]\n',
+        '\n[tool.hatch.build.hooks.custom]\npath = "build_hook.py"\n',
+    ],
+)
+def test_non_wheel_hatch_build_changes_require_full_release(
+    release_repo, hatch_metadata
+):
+    repo, base = release_repo
+    project = repo / "pyproject.toml"
+    project.write_text(
+        project.read_text(encoding="utf-8") + hatch_metadata,
+        encoding="utf-8",
+    )
+
+    result = classify_release(base, _commit(repo, "material hatch metadata"), root=repo)
+
+    assert result.kind == "full"
+    assert result.triggers[0].path == "pyproject.toml"
+    assert "dependency graph changed" in result.triggers[0].reason
+
+
+@pytest.mark.parametrize("target_state", ["missing", "malformed"])
+def test_runtime_manifest_must_be_valid_at_both_release_endpoints(
+    release_repo, target_state
+):
+    repo, _base = release_repo
+    manifest = repo / "config" / "windows_runtime_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/"],
+                "include_files": ["pyproject.toml", "uv.lock"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    base = _commit(repo, "runtime manifest base")
+    (repo / "proxy" / "new_tool.py").write_text("VALUE = 2\n", encoding="utf-8")
+    if target_state == "missing":
+        manifest.unlink()
+    else:
+        manifest.write_text("{broken", encoding="utf-8")
+
+    result = classify_release(base, _commit(repo, "invalid runtime manifest"), root=repo)
+
+    assert result.kind == "full"
+    assert any(
+        trigger.path == "config/windows_runtime_manifest.json"
+        for trigger in result.triggers
+    )
+
+
+def test_pinned_legacy_public_base_may_introduce_runtime_manifest(
+    release_repo, monkeypatch
+):
+    repo, base = release_repo
+    manifest = repo / "config" / "windows_runtime_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/"],
+                "include_files": ["pyproject.toml", "uv.lock"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (repo / "proxy" / "new_tool.py").write_text("VALUE = 2\n", encoding="utf-8")
+    target = _commit(repo, "introduce runtime manifest")
+    monkeypatch.setattr(
+        release_classification, "LEGACY_RUNTIME_MANIFEST_BASES", {base}
+    )
+
+    result = classify_release(base, target, root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ("proxy/new_tool.py",)
+    assert result.triggers == ()
 
 
 def test_release_only_tooling_does_not_force_full_runtime_release(release_repo):
