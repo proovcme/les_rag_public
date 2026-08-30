@@ -647,7 +647,6 @@
         "proxy/services/external_radar_service.py",
         "proxy/services/field_intake_service.py",
         "proxy/services/graph_edges_service.py",
-        "proxy/services/incoming_control_service.py",
         "proxy/services/ks_forms_service.py",
         "proxy/services/les_md_service.py",
         "proxy/services/lexical_index_service.py",
@@ -674,7 +673,6 @@
         "tests/test_edge_service_w172.py",
         "tests/test_estimate_service_w201.py",
         "tests/test_forms_service_w113.py",
-        "tests/test_incoming_control_service_w204.py",
         "tests/test_ontology_service_w173.py",
         "tests/test_project_partition_q3.py",
         "tests/test_project_service_w171.py",
@@ -854,7 +852,6 @@
         "proxy/services/gesn_service.py",
         "proxy/services/gesn_update_service.py",
         "proxy/services/harvest_service.py",
-        "proxy/services/incoming_control_service.py",
         "proxy/services/ks_forms_service.py",
         "proxy/services/les_action_service.py",
         "proxy/services/list_office_service.py",
@@ -990,7 +987,6 @@
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
-        "proxy/routers/incoming_control.py",
         "proxy/routers/jobs.py",
         "proxy/routers/kac.py",
         "proxy/routers/les_md.py",
@@ -1099,7 +1095,6 @@
         "proxy/services/graph_edges_service.py",
         "proxy/services/harvest_service.py",
         "proxy/services/help_chat_service.py",
-        "proxy/services/incoming_control_service.py",
         "proxy/services/job_service.py",
         "proxy/services/kac_pdf_service.py",
         "proxy/services/kac_service.py",
@@ -1274,7 +1269,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 733,
+      "lines": 731,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1305,7 +1300,6 @@
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
-        "proxy/routers/incoming_control.py",
         "proxy/routers/jobs.py",
         "proxy/routers/kac.py",
         "proxy/routers/les_md.py",
@@ -1571,7 +1565,6 @@
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
-        "proxy/routers/incoming_control.py",
         "proxy/routers/jobs.py",
         "proxy/routers/kac.py",
         "proxy/routers/les_md.py",
@@ -2105,22 +2098,6 @@
         "proxy/services/list_office_service.py"
       ],
       "path": "proxy/routers/forms.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 88,
-      "module": "proxy.routers.incoming_control",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/incoming_control_service.py"
-      ],
-      "path": "proxy/routers/incoming_control.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -2684,7 +2661,6 @@
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
-        "proxy/routers/incoming_control.py",
         "proxy/routers/jobs.py",
         "proxy/routers/kac.py",
         "proxy/routers/les_md.py",
@@ -2815,7 +2791,6 @@
         "proxy/services/graph_edges_service.py",
         "proxy/services/harvest_service.py",
         "proxy/services/help_chat_service.py",
-        "proxy/services/incoming_control_service.py",
         "proxy/services/job_service.py",
         "proxy/services/kac_pdf_service.py",
         "proxy/services/kac_service.py",
@@ -3988,7 +3963,6 @@
         "proxy/routers/edges.py",
         "proxy/services/decision_service.py",
         "proxy/services/forms_service.py",
-        "proxy/services/incoming_control_service.py",
         "proxy/services/memory_service.py",
         "proxy/services/ontology_service.py",
         "proxy/services/project_service.py",
@@ -4598,25 +4572,6 @@
       ],
       "path": "proxy/services/help_chat_service.py",
       "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/routers/incoming_control.py",
-        "tests/test_incoming_control_service_w204.py"
-      ],
-      "lines": 300,
-      "module": "proxy.services.incoming_control_service",
-      "outbound": [
-        "backend/rag_config.py",
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/services/__init__.py",
-        "proxy/services/edge_service.py",
-        "proxy/services/project_service.py"
-      ],
-      "path": "proxy/services/incoming_control_service.py",
-      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
@@ -5847,7 +5802,6 @@
         "proxy/services/construction_harness_service.py",
         "proxy/services/forms_service.py",
         "proxy/services/graph_edges_service.py",
-        "proxy/services/incoming_control_service.py",
         "proxy/services/les_action_service.py",
         "proxy/services/les_md_service.py",
         "proxy/services/project_registry_chat_service.py",
@@ -5857,7 +5811,6 @@
         "scripts/smoke_unified_v11.py",
         "scripts/smoke_unified_v12.py",
         "tests/test_forms_service_w113.py",
-        "tests/test_incoming_control_service_w204.py",
         "tests/test_les_action_service.py",
         "tests/test_project_service_w171.py",
         "tests/test_work_log_service_w203.py"
@@ -9612,7 +9565,7 @@
     },
     {
       "inbound": [],
-      "lines": 134,
+      "lines": 154,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -10591,19 +10544,6 @@
         "backend/http_client_policy.py"
       ],
       "path": "tests/test_http_client_policy.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 107,
-      "module": "tests.test_incoming_control_service_w204",
-      "outbound": [
-        "backend/rag_config.py",
-        "proxy/services/incoming_control_service.py",
-        "proxy/services/project_service.py"
-      ],
-      "path": "tests/test_incoming_control_service_w204.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -17256,48 +17196,6 @@
       "source": "mlx_host.py"
     },
     {
-      "handler": "act",
-      "method": "GET",
-      "path": "/api/incoming-control/{project_id}/act/{control_id}",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
-      "handler": "download",
-      "method": "GET",
-      "path": "/api/incoming-control/{project_id}/download",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
-      "handler": "export",
-      "method": "POST",
-      "path": "/api/incoming-control/{project_id}/export",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
-      "handler": "journal",
-      "method": "GET",
-      "path": "/api/incoming-control/{project_id}/journal",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
-      "handler": "quality_docs",
-      "method": "GET",
-      "path": "/api/incoming-control/{project_id}/quality-docs",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
-      "handler": "add_quality_doc",
-      "method": "POST",
-      "path": "/api/incoming-control/{project_id}/quality-docs",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
-      "handler": "add_record",
-      "method": "POST",
-      "path": "/api/incoming-control/{project_id}/records",
-      "source": "proxy/routers/incoming_control.py"
-    },
-    {
       "handler": "get_indexing_mode",
       "method": "GET",
       "path": "/api/indexing-mode",
@@ -19048,12 +18946,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 361,
-    "registered_api_routes": 410,
+    "product_reachable": 359,
+    "registered_api_routes": 403,
     "runtime_support": 8,
-    "test_or_tool_only": 619,
-    "tracked_python_files": 989,
-    "tracked_python_lines": 300742
+    "test_or_tool_only": 618,
+    "tracked_python_files": 986,
+    "tracked_python_lines": 300265
   },
   "warnings": []
 }

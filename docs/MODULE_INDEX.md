@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.15 unfinished product-island cleanup:** удалён изолированный W20.4
+> «Входной контроль»: семь `/api/incoming-control/*` routes, router, service и
+> service-only тест. Контур не имел UI, model tool, project dossier или иных
+> production-потребителей; заявленная W20.5-интеграция так и не была сделана.
+> SQLite/user state не удалялись и не мигрировались. Активные `/api/field`,
+> `/api/tasks`, `/api/notes`, `/api/filemap`, `/api/decisions`, сметы, RAG и Legion
+> не менялись. Карта: 986 tracked Python-файлов, 359 product-reachable,
+> 8 runtime-support, 618 test/tool-only, 1 dormant, 403 API routes, 0 parse warnings.
+> Точки входа: `proxy/app.py`, `tests/test_code_runtime_map.py`,
+> `docs/CODE_MAP.md`. Статус док↔код: ✅.
+
 > **0.30.14 API surface cleanup:** удалены четыре переходных/дублирующих route:
 > mutable `GET/PATCH/DELETE /api/prompts*`, заменённый immutable-профилями, и
 > неавторизованный generic `POST /api/extract/structured`. Внутренние

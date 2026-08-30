@@ -132,3 +132,23 @@ def test_api_surface_keeps_profiles_and_internal_extraction_without_duplicate_pu
     assert ("PATCH", "/api/prompts/{prompt_key:path}") not in routes
     assert ("DELETE", "/api/prompts/{prompt_key:path}") not in routes
     assert ("POST", "/api/extract/structured") not in routes
+
+
+def test_unfinished_incoming_control_is_retired_without_removing_active_workflows(
+    inventory: dict,
+):
+    modules = _modules_by_path(inventory)
+    paths = {item["path"] for item in inventory["routes"]}
+
+    for active_prefix in (
+        "/api/field",
+        "/api/tasks",
+        "/api/notes",
+        "/api/filemap",
+        "/api/decisions",
+    ):
+        assert any(path == active_prefix or path.startswith(f"{active_prefix}/") for path in paths)
+
+    assert "proxy/routers/incoming_control.py" not in modules
+    assert "proxy/services/incoming_control_service.py" not in modules
+    assert not [path for path in paths if path.startswith("/api/incoming-control")]

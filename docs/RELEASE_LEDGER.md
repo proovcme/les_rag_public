@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.14
-номер сборки:              654
-версия Tauri/NSIS:         5.1.654
+версия продукта (SemVer):  0.30.15
+номер сборки:              655
+версия Tauri/NSIS:         5.1.655
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       duplicate API surface cleanup
+dev implementation:       unfinished product-island cleanup
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.14 — API surface cleanup; не задеплоен
+следующий выпуск:          0.30.15 — product-island cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.15 / build 655 unfinished product-island cleanup (dev candidate):**
+> удалён W20.4 «Входной контроль»: семь `/api/incoming-control/*` routes,
+> `proxy/routers/incoming_control.py`, изолированный service и его service-only tests.
+> Статический consumer-аудит подтвердил отсутствие UI, model tool, project dossier
+> и межсервисных вызовов; исторический план сам фиксировал незавершённую W20.5 GUI-интеграцию.
+> SQLite и пользовательский state не удалялись и не мигрировались. Активные field/tasks/notes,
+> filemap, decisions, сметы, RAG, Qdrant и установленный Legion не менялись.
+> Generated map: 986 tracked Python-файлов, 359 product-reachable,
+> 8 runtime-support, 618 test/tool-only, 1 dormant, 403 API routes, 0 warnings.
 
 > **0.30.14 / build 654 duplicate API surface cleanup (dev candidate):** API-аудит
 > подтвердил два исторических параллельных контура. Переходный mutable
