@@ -50,6 +50,28 @@
 Текущая версия и хронология находятся в `docs/RELEASE_LEDGER.md`, а пользовательские документы
 выпусков — в `docs/public/releases/`.
 
+## Оставлены активными до ручного решения
+
+Эти документы выглядят историческими, но имеют действующие backlinks или содержат незакрытый
+контракт. Их нельзя переносить только по названию.
+
+| Активный файл | Почему пока остаётся |
+|---|---|
+| `docs/BASIC_FUNCTIONS_AUTOTEST_PLAN.md` | на него ссылается `tools/basic_function_smoke.py` |
+| `docs/DOC_REVIEW_GOST_R_21_101_2026_PLAN.md` | ссылки из сервисов нормоконтроля, config, CODE_MAP и MODULE_INDEX |
+| `docs/LES3_PLAN.md` | содержит ADR-ссылки и используется `INSTALLERS_MULTIPLATFORM_PLAN.md` |
+| `docs/PLAN_EVIDENCE_CORE.md`, `docs/TODO_EVIDENCE_CORE.md` | связаны с corpus-inventory и RAG quality backlog в MODULE_INDEX |
+| `docs/RAG_TEST_PROGRAM_AUDIT.md` | указан как действующая quality-ссылка в MODULE_INDEX и TEST_INVENTORY |
+| `docs/TODO_SMETA_CORE.md`, `docs/SMETA_REQUIRED_SOURCE_AUDIT_2026-07-11.md` | описывают защищённый сметный долг; перенос требует отдельного benchmark-аудита |
+| `docs/TODO_LOCAL_INFERENCE_BENCHMARK.md`, `docs/LOCAL_INFERENCE_OPTIQ_MTP_M4_2026-07-13.md` | используются текущим MLX-контрактом и MODULE_INDEX |
+| `docs/MAC_REINSTALL_STRESS.md` | на него ссылаются installer docs и живой тест установщика |
+| `docs/ANSWER_LIMIT_AUDIT.md` | MODULE_INDEX использует его как источник текущих лимитов |
+| `docs/TEST_ARCHITECTURE_AUDIT_2026-07-14.md` | ссылки из TEST_INVENTORY и исторического release ledger требуют отдельного сведения |
+| `docs/TODO_WINDOWS_PRODUCTION.md` | содержит оставшийся production/signing долг; статус надо проверить вручную |
+
+Следующий аудит должен либо заменить каждый backlink текущим module/algorithm contract и перенести
+файл, либо явно подтвердить его как рабочий документ. До этого они не считаются каноном.
+
 | Файл | Что это |
 |---|---|
 | `SESSION_SUMMARY*.md` (×12) | датированные саммари сессий (06-19); хронология, не текущее состояние |

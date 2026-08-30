@@ -59,3 +59,15 @@ def test_real_roadmap_has_product_contract_and_four_workstreams():
     assert "## 3. Агент" in text
     assert "## 4. Надёжность" in text
     assert "## v0.19" not in text
+
+
+def test_active_root_has_no_superseded_narratives():
+    forbidden = {"RAG_MODERNIZATION_PLAN.md", "LES_SIMPLE_OVERVIEW.md"}
+
+    assert forbidden.isdisjoint(path.name for path in ROOT.glob("*.md"))
+
+
+def test_archive_has_an_indexed_manual_review_queue():
+    text = (ROOT / "docs/archive/README.md").read_text(encoding="utf-8")
+
+    assert "Оставлены активными до ручного решения" in text
