@@ -7,17 +7,34 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.12
-номер сборки:              652
-версия Tauri/NSIS:         5.1.652
+версия продукта (SemVer):  0.30.13
+номер сборки:              653
+версия Tauri/NSIS:         5.1.653
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       GitHub PR/branch archive cleanup
+dev implementation:       operator-tool cleanup + visualization backlog
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.12 — repository cleanup; не задеплоен
+следующий выпуск:          0.30.13 — operator-tool cleanup; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.13 / build 653 operator-tool cleanup (dev candidate):** в канонический
+> roadmap раздельно отложены две идеи: WebGL-лес как альтернативная визуальная
+> оболочка существующего графа без изменения retrieval и будущий evidence-replay
+> фактически переданных модели фрагментов. После ручной проверки потребителей,
+> replacement-path и Git history удалены шесть неиспользуемых одноразовых CLI:
+> checklist smoke с историческим UUID, pre-IMAP EML/MSG smoke, ручной batch-parser
+> до `rag_parse_drain`/scheduler, мигратор старого `NTD_OTHER_Index` и прежняя пара
+> `smart_dataset_plan/rebuild`. Smart-plan уже является штатным API, а старый rebuild
+> напрямую удалял MetaDB, storage и `les_rag` по hardcoded Qdrant URL; его заменяют
+> Folder Watcher/sync и guarded reindex с dry-run, backup, pause/resume и журналом. Активные
+> checklist API, Самовар, IMAP/test-mail, guarded reindex, RAG, Qdrant visualizer,
+> сметное ядро, пользовательский state и установленный Legion не менялись.
+> Runtime-map научился исключать tracked worktree-deletions до коммита; отдельный
+> real-Git regression test воспроизводит этот cleanup seam. Generated map: 991
+> tracked Python-файл, 363 product-reachable, 8 runtime-support, 619
+> test/tool-only, 1 dormant, 414 API routes, 0 warnings.
 
 > **0.30.12 / build 652 GitHub PR/branch archive cleanup (dev candidate):**
 > исторический stacked PR-контур #5–#18 закрыт как superseded текущей

@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 997 |
-| Строк Python | 301610 |
+| Python-файлов под git | 991 |
+| Строк Python | 300841 |
 | PRODUCT_REACHABLE | 363 |
 | RUNTIME_SUPPORT | 8 |
-| TEST_OR_TOOL_ONLY | 625 |
+| TEST_OR_TOOL_ONLY | 619 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 414 |
 | Ошибок разбора | 0 |
@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 4688 | 5 |
-| backend/qdrant_adapter.py | 4512 | 28 |
+| backend/qdrant_adapter.py | 4512 | 27 |
 | sovushka/uikit/tokens.py | 4197 | 2 |
 | proxy/routers/chat.py | 4066 | 40 |
 | sovushka/pages/documents.py | 3895 | 2 |
@@ -49,7 +49,7 @@
 | proxy/smeta_core/norm_browser.py | 1655 | 12 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
-| proxy/services/checklist_review_service.py | 1518 | 3 |
+| proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 11 |
 | sovushka/pages/diag.py | 1416 | 2 |
@@ -58,7 +58,7 @@
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
-| backend/document_router.py | 1124 | 9 |
+| backend/document_router.py | 1124 | 6 |
 | proxy/routers/rim.py | 1122 | 2 |
 | tools/build_rag_contract_sibling.py | 1114 | 4 |
 | proxy/services/update_service.py | 1052 | 7 |

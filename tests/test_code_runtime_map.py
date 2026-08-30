@@ -1,12 +1,25 @@
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
 
-from tools.code_runtime_map import build_inventory, render_markdown
+from tools.code_runtime_map import _tracked_python_files, build_inventory, render_markdown
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_tracked_python_files_ignore_worktree_deletions(tmp_path: Path):
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    keep = tmp_path / "keep.py"
+    retired = tmp_path / "retired.py"
+    keep.write_text("VALUE = 1\n", encoding="utf-8")
+    retired.write_text("VALUE = 2\n", encoding="utf-8")
+    subprocess.run(["git", "add", "keep.py", "retired.py"], cwd=tmp_path, check=True)
+    retired.unlink()
+
+    assert _tracked_python_files(tmp_path) == ["keep.py"]
 
 
 def _modules_by_path(inventory: dict) -> dict[str, dict]:
@@ -77,5 +90,29 @@ def test_proven_cleanup_leaves_only_the_intentionally_dormant_mail_surface(
         "test_ng.py",
         "tools/pikabu_construction_rd.py",
         "tools/test_chunk_density.py",
+    ):
+        assert retired not in modules
+
+
+def test_retired_one_off_operator_scripts_do_not_reenter_tool_inventory(
+    inventory: dict,
+):
+    modules = _modules_by_path(inventory)
+
+    for supported in (
+        "proxy/routers/checklist_review.py",
+        "sovushka/pages/samovar.py",
+        "tools/ezhik_imap_smoke.py",
+        "tools/reindex_route_changes_guarded.py",
+    ):
+        assert supported in modules
+
+    for retired in (
+        "tools/checklist_review_smoke.py",
+        "tools/ezhik_mail_smoke.py",
+        "tools/rag_batch_parse.py",
+        "tools/rebucket_ntd_other.py",
+        "tools/smart_dataset_plan.py",
+        "tools/smart_dataset_rebuild.py",
     ):
         assert retired not in modules

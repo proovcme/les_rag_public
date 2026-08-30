@@ -204,8 +204,7 @@
         "tests/test_converter_process_isolation.py",
         "tests/test_datasets_router.py",
         "tests/test_pdf_contour_service.py",
-        "tests/test_pdf_layout.py",
-        "tools/ezhik_mail_smoke.py"
+        "tests/test_pdf_layout.py"
       ],
       "lines": 841,
       "module": "backend.converter",
@@ -226,10 +225,7 @@
         "proxy/routers/datasets.py",
         "tests/test_document_router.py",
         "tests/test_mail_registry_service.py",
-        "tests/test_qdrant_adapter_parse.py",
-        "tools/ezhik_mail_smoke.py",
-        "tools/rebucket_ntd_other.py",
-        "tools/smart_dataset_plan.py"
+        "tests/test_qdrant_adapter_parse.py"
       ],
       "lines": 1124,
       "module": "backend.document_router",
@@ -588,7 +584,6 @@
         "tools/publish_smeta_norm_dataset.py",
         "tools/rag_index_contract_audit.py",
         "tools/rag_rrf_readiness.py",
-        "tools/smart_dataset_rebuild.py",
         "tools/smeta_embedding_parity.py",
         "tools/smeta_rag_quality_probe.py"
       ],
@@ -697,7 +692,6 @@
         "tools/publish_smeta_norm_dataset.py",
         "tools/rag_index_contract_audit.py",
         "tools/rag_rrf_readiness.py",
-        "tools/rebucket_ntd_other.py",
         "tools/recover_orphan_rag_catalog.py",
         "tools/reindex_datasets_guarded.py",
         "tools/reindex_route_changes_guarded.py",
@@ -906,9 +900,7 @@
         "proxy/routers/datasets.py",
         "proxy/routers/filemap.py",
         "tests/test_smart_index.py",
-        "tools/ezhik_mail_smoke.py",
         "tools/reindex_route_changes_guarded.py",
-        "tools/smart_dataset_plan.py",
         "tools/smeta_ru_norm_rag_ingest.py"
       ],
       "lines": 165,
@@ -3480,8 +3472,7 @@
     {
       "inbound": [
         "proxy/routers/checklist_review.py",
-        "tests/test_checklist_review_service.py",
-        "tools/checklist_review_smoke.py"
+        "tests/test_checklist_review_service.py"
       ],
       "lines": 1518,
       "module": "proxy.services.checklist_review_service",
@@ -9663,7 +9654,7 @@
     },
     {
       "inbound": [],
-      "lines": 81,
+      "lines": 118,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -14216,7 +14207,6 @@
         "tools/cad_bim_extract_ifc.py",
         "tools/chat_format_smoke.py",
         "tools/check_atlas_bundle_budget.py",
-        "tools/checklist_review_smoke.py",
         "tools/checklist_snapshot_spike.py",
         "tools/clean_install_smoke.py",
         "tools/code_runtime_map.py",
@@ -14233,7 +14223,6 @@
         "tools/embedding_profile_benchmark.py",
         "tools/extract_bench.py",
         "tools/ezhik_imap_smoke.py",
-        "tools/ezhik_mail_smoke.py",
         "tools/fgis_full_update.py",
         "tools/fgis_price_bulk_import.py",
         "tools/fgis_update_supervisor.py",
@@ -14281,7 +14270,6 @@
         "tools/qwen_baseline.py",
         "tools/qwen_index_until_done.py",
         "tools/rag_advanced_synthetic_benchmark.py",
-        "tools/rag_batch_parse.py",
         "tools/rag_dataset_story_acceptance.py",
         "tools/rag_eval_report.py",
         "tools/rag_generation_supervisor.py",
@@ -14290,7 +14278,6 @@
         "tools/rag_rrf_readiness.py",
         "tools/rag_safe_parse_loop.py",
         "tools/rag_scope_manifest.py",
-        "tools/rebucket_ntd_other.py",
         "tools/recover_orphan_rag_catalog.py",
         "tools/reindex_datasets_guarded.py",
         "tools/reindex_route_changes_guarded.py",
@@ -14308,8 +14295,6 @@
         "tools/seed_artel_learning_cases.py",
         "tools/seed_artel_revit_api_reference.py",
         "tools/seed_artel_revit_factory_sources.py",
-        "tools/smart_dataset_plan.py",
-        "tools/smart_dataset_rebuild.py",
         "tools/smeta_agent_benchmark.py",
         "tools/smeta_document_live_smoke.py",
         "tools/smeta_document_local_run.py",
@@ -14852,18 +14837,6 @@
     },
     {
       "inbound": [],
-      "lines": 150,
-      "module": "tools.checklist_review_smoke",
-      "outbound": [
-        "proxy/services/checklist_review_service.py",
-        "tools/__init__.py"
-      ],
-      "path": "tools/checklist_review_smoke.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
       "lines": 482,
       "module": "tools.checklist_snapshot_spike",
       "outbound": [
@@ -14890,7 +14863,7 @@
       "inbound": [
         "tests/test_code_runtime_map.py"
       ],
-      "lines": 421,
+      "lines": 422,
       "module": "tools.code_runtime_map",
       "outbound": [
         "tools/__init__.py"
@@ -15068,20 +15041,6 @@
         "tools/__init__.py"
       ],
       "path": "tools/ezhik_imap_smoke.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 83,
-      "module": "tools.ezhik_mail_smoke",
-      "outbound": [
-        "backend/converter.py",
-        "backend/document_router.py",
-        "backend/smart_index.py",
-        "tools/__init__.py"
-      ],
-      "path": "tools/ezhik_mail_smoke.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -15818,17 +15777,6 @@
       "windows_runtime_explicit": false
     },
     {
-      "inbound": [],
-      "lines": 150,
-      "module": "tools.rag_batch_parse",
-      "outbound": [
-        "tools/__init__.py"
-      ],
-      "path": "tools/rag_batch_parse.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
       "inbound": [
         "tests/test_rag_dataset_story_acceptance.py"
       ],
@@ -15938,19 +15886,6 @@
         "tools/build_rag_contract_sibling.py"
       ],
       "path": "tools/rag_scope_manifest.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 224,
-      "module": "tools.rebucket_ntd_other",
-      "outbound": [
-        "backend/document_router.py",
-        "backend/rag_config.py",
-        "tools/__init__.py"
-      ],
-      "path": "tools/rebucket_ntd_other.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -16193,34 +16128,6 @@
         "tools/__init__.py"
       ],
       "path": "tools/seed_artel_revit_factory_sources.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "tools/smart_dataset_rebuild.py"
-      ],
-      "lines": 61,
-      "module": "tools.smart_dataset_plan",
-      "outbound": [
-        "backend/document_router.py",
-        "backend/smart_index.py",
-        "tools/__init__.py"
-      ],
-      "path": "tools/smart_dataset_plan.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 139,
-      "module": "tools.smart_dataset_rebuild",
-      "outbound": [
-        "backend/qdrant_adapter.py",
-        "tools/__init__.py",
-        "tools/smart_dataset_plan.py"
-      ],
-      "path": "tools/smart_dataset_rebuild.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -19212,9 +19119,9 @@
     "product_reachable": 363,
     "registered_api_routes": 414,
     "runtime_support": 8,
-    "test_or_tool_only": 625,
-    "tracked_python_files": 997,
-    "tracked_python_lines": 301610
+    "test_or_tool_only": 619,
+    "tracked_python_files": 991,
+    "tracked_python_lines": 300841
   },
   "warnings": []
 }

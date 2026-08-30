@@ -1,5 +1,21 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.13 operator-tool cleanup:** две будущие идеи визуализации разнесены в
+> backlog: лесная оболочка текущего графа не меняет RAG, а evidence-replay остаётся
+> отдельной будущей функцией наблюдаемости. После проверки импортов, документации и
+> Git history удалены шесть неиспользуемых одноразовых CLI: исторический checklist
+> smoke с UUID прежнего корпуса, pre-IMAP mail smoke, ручной batch-parser до job/scheduler
+> и мигратор старой корзины `NTD_OTHER_Index`, а также старые `smart_dataset_plan/rebuild`:
+> их read-only план уже доступен через API, а rebuild напрямую удалял БД, storage и
+> коллекцию по жёстко заданному старому адресу вместо guarded reindex. Активные checklist API, Самовар,
+> `test-mail`/IMAP, guarded reindex, RAG, Qdrant visualizer, сметы и установленный
+> Legion не менялись. Runtime-map теперь игнорирует уже удалённые tracked-файлы в
+> незакоммиченном дереве и поэтому может проверять сам cleanup. Карта: 991 tracked
+> Python-файл, 363 product-reachable, 8 runtime-support, 619 test/tool-only,
+> 1 dormant, 414 API routes, 0 parse warnings. Точки входа:
+> `tools/code_runtime_map.py`, `tests/test_code_runtime_map.py`,
+> `ROADMAP_TO_V1.md`. Статус док↔код: ✅.
+
 > **0.30.10 second proven cleanup:** удалены неиспользуемый
 > `proxy/legacy_app.py`, два корневых ручных пробника, отдельный устаревший
 > chunk-density prototype, Pikabu R&D experiment и весь tracked `legacy/`

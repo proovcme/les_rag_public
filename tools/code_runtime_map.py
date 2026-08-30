@@ -36,7 +36,8 @@ def _tracked_python_files(root: Path) -> list[str]:
         text=True,
         encoding="utf-8",
     )
-    return sorted(line.strip().replace("\\", "/") for line in completed.stdout.splitlines() if line.strip())
+    tracked = (line.strip().replace("\\", "/") for line in completed.stdout.splitlines() if line.strip())
+    return sorted(path for path in tracked if (root / path).is_file())
 
 
 def _module_name(path: str) -> str:
