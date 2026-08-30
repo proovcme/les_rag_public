@@ -19,13 +19,13 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 986 |
-| Строк Python | 300265 |
-| PRODUCT_REACHABLE | 359 |
+| Python-файлов под git | 983 |
+| Строк Python | 299974 |
+| PRODUCT_REACHABLE | 357 |
 | RUNTIME_SUPPORT | 8 |
-| TEST_OR_TOOL_ONLY | 618 |
+| TEST_OR_TOOL_ONLY | 617 |
 | DORMANT_CANDIDATE | 1 |
-| Зарегистрированных API-маршрутов | 403 |
+| Зарегистрированных API-маршрутов | 399 |
 | Ошибок разбора | 0 |
 
 ## Крупнейшие продуктовые модули

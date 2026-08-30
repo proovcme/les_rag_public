@@ -665,7 +665,6 @@
         "proxy/services/source_adapters.py",
         "proxy/services/system_dataset_service.py",
         "proxy/services/task_service.py",
-        "proxy/services/work_log_service.py",
         "proxy/smeta_core/norm_browser.py",
         "tests/test_activate_qdrant_generation.py",
         "tests/test_chunking_w2.py",
@@ -678,7 +677,6 @@
         "tests/test_project_service_w171.py",
         "tests/test_rag_config.py",
         "tests/test_smoke_offline.py",
-        "tests/test_work_log_service_w203.py",
         "tools/backup_suharik.py",
         "tools/build_lexical_index.py",
         "tools/build_rag_contract_sibling.py",
@@ -878,7 +876,6 @@
         "proxy/services/table_query_service.py",
         "proxy/services/table_sql_service.py",
         "proxy/services/unified_construction_harness_service.py",
-        "proxy/services/work_log_service.py",
         "proxy/storage/file_storage.py",
         "sovushka/state.py",
         "tests/test_runtime_paths.py"
@@ -1013,7 +1010,6 @@
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
         "proxy/routers/verify.py",
-        "proxy/routers/worklog.py",
         "proxy/security.py",
         "proxy/services/__init__.py",
         "proxy/services/active_state_service.py",
@@ -1230,7 +1226,6 @@
         "proxy/services/verify_service.py",
         "proxy/services/version_service.py",
         "proxy/services/web_search_service.py",
-        "proxy/services/work_log_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/services/workflow_plan_service.py",
@@ -1269,7 +1264,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 731,
+      "lines": 729,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1326,7 +1321,6 @@
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
         "proxy/routers/verify.py",
-        "proxy/routers/worklog.py",
         "proxy/services/colbert_generation_service.py",
         "proxy/services/job_service.py",
         "proxy/services/mail_registry_service.py",
@@ -1590,8 +1584,7 @@
         "proxy/routers/tasks.py",
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
-        "proxy/routers/verify.py",
-        "proxy/routers/worklog.py"
+        "proxy/routers/verify.py"
       ],
       "lines": 2,
       "module": "proxy.routers",
@@ -2626,22 +2619,6 @@
     },
     {
       "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 55,
-      "module": "proxy.routers.worklog",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/work_log_service.py"
-      ],
-      "path": "proxy/routers/worklog.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
         "proxy/routers/bor.py",
@@ -2685,7 +2662,6 @@
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
         "proxy/routers/verify.py",
-        "proxy/routers/worklog.py",
         "tests/test_artifacts_router.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_checklist_review_api.py",
@@ -2926,7 +2902,6 @@
         "proxy/services/verify_service.py",
         "proxy/services/version_service.py",
         "proxy/services/web_search_service.py",
-        "proxy/services/work_log_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
         "proxy/services/workflow_plan_service.py"
@@ -4287,13 +4262,11 @@
         "proxy/services/les_action_service.py",
         "proxy/services/plan_fact_service.py",
         "proxy/services/project_service.py",
-        "proxy/services/work_log_service.py",
         "tests/test_field_intake_service.py",
         "tests/test_forms_service_w113.py",
         "tests/test_ks_forms_service.py",
         "tests/test_les_action_service.py",
-        "tests/test_ontology_service_w173.py",
-        "tests/test_work_log_service_w203.py"
+        "tests/test_ontology_service_w173.py"
       ],
       "lines": 411,
       "module": "proxy.services.field_intake_service",
@@ -5807,13 +5780,11 @@
         "proxy/services/project_registry_chat_service.py",
         "proxy/services/scope_service.py",
         "proxy/services/smeta_chat_application_service.py",
-        "proxy/services/work_log_service.py",
         "scripts/smoke_unified_v11.py",
         "scripts/smoke_unified_v12.py",
         "tests/test_forms_service_w113.py",
         "tests/test_les_action_service.py",
-        "tests/test_project_service_w171.py",
-        "tests/test_work_log_service_w203.py"
+        "tests/test_project_service_w171.py"
       ],
       "lines": 323,
       "module": "proxy.services.project_service",
@@ -7384,25 +7355,6 @@
         "proxy/services/__init__.py"
       ],
       "path": "proxy/services/web_search_service.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/routers/worklog.py",
-        "tests/test_work_log_service_w203.py"
-      ],
-      "lines": 175,
-      "module": "proxy.services.work_log_service",
-      "outbound": [
-        "backend/rag_config.py",
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/services/__init__.py",
-        "proxy/services/field_intake_service.py",
-        "proxy/services/project_service.py"
-      ],
-      "path": "proxy/services/work_log_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -9565,7 +9517,7 @@
     },
     {
       "inbound": [],
-      "lines": 154,
+      "lines": 167,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -14012,20 +13964,6 @@
       "module": "tests.test_windows_venv_contract",
       "outbound": [],
       "path": "tests/test_windows_venv_contract.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 72,
-      "module": "tests.test_work_log_service_w203",
-      "outbound": [
-        "backend/rag_config.py",
-        "proxy/services/field_intake_service.py",
-        "proxy/services/project_service.py",
-        "proxy/services/work_log_service.py"
-      ],
-      "path": "tests/test_work_log_service_w203.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -18876,30 +18814,6 @@
       "source": "proxy/routers/runtime.py"
     },
     {
-      "handler": "worklog_get",
-      "method": "GET",
-      "path": "/api/worklog/{project_id}",
-      "source": "proxy/routers/worklog.py"
-    },
-    {
-      "handler": "worklog_download",
-      "method": "GET",
-      "path": "/api/worklog/{project_id}/download",
-      "source": "proxy/routers/worklog.py"
-    },
-    {
-      "handler": "worklog_export",
-      "method": "POST",
-      "path": "/api/worklog/{project_id}/export",
-      "source": "proxy/routers/worklog.py"
-    },
-    {
-      "handler": "worklog_set_meta",
-      "method": "PATCH",
-      "path": "/api/worklog/{project_id}/meta",
-      "source": "proxy/routers/worklog.py"
-    },
-    {
       "handler": "chat_completions",
       "method": "POST",
       "path": "/v1/chat/completions",
@@ -18946,12 +18860,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 359,
-    "registered_api_routes": 403,
+    "product_reachable": 357,
+    "registered_api_routes": 399,
     "runtime_support": 8,
-    "test_or_tool_only": 618,
-    "tracked_python_files": 986,
-    "tracked_python_lines": 300265
+    "test_or_tool_only": 617,
+    "tracked_python_files": 983,
+    "tracked_python_lines": 299974
   },
   "warnings": []
 }

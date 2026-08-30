@@ -152,3 +152,16 @@ def test_unfinished_incoming_control_is_retired_without_removing_active_workflow
     assert "proxy/routers/incoming_control.py" not in modules
     assert "proxy/services/incoming_control_service.py" not in modules
     assert not [path for path in paths if path.startswith("/api/incoming-control")]
+
+
+def test_unfinished_worklog_is_retired_without_removing_field_or_glossary(
+    inventory: dict,
+):
+    modules = _modules_by_path(inventory)
+    paths = {item["path"] for item in inventory["routes"]}
+
+    assert any(path == "/api/field" or path.startswith("/api/field/") for path in paths)
+    assert "proxy/services/glossary_chat_service.py" in modules
+    assert "proxy/routers/worklog.py" not in modules
+    assert "proxy/services/work_log_service.py" not in modules
+    assert not [path for path in paths if path.startswith("/api/worklog")]

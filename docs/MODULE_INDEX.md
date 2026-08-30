@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.16 unfinished product-island cleanup:** удалён изолированный W20.3
+> «Общий журнал работ»: четыре `/api/worklog/*` route, router, service и
+> service-only тест. Контур реализовывал только незавершённую форму разделов
+> 1–3 и не имел UI, model tool, project dossier или иных production-потребителей.
+> Таблица `les_work_log_meta`, пользовательские БД и сформированные файлы не
+> удалялись и не мигрировались. Активный `/api/field`, проекты, словарь ОЖР,
+> сметы, RAG и Legion не менялись. Карта: 983 tracked Python-файла,
+> 357 product-reachable, 8 runtime-support, 617 test/tool-only, 1 dormant,
+> 399 API routes, 0 parse warnings. Точки входа: `proxy/app.py`,
+> `tests/test_code_runtime_map.py`, `docs/CODE_MAP.md`. Статус док↔код: ✅.
+
 > **0.30.15 unfinished product-island cleanup:** удалён изолированный W20.4
 > «Входной контроль»: семь `/api/incoming-control/*` routes, router, service и
 > service-only тест. Контур не имел UI, model tool, project dossier или иных
