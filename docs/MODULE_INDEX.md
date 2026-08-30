@@ -1,5 +1,16 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.4 generated code-runtime map (build 644, dev candidate):**
+> `tools/code_runtime_map.py` строит из tracked Python, AST-imports, боевых entrypoint,
+> Windows runtime manifest и FastAPI decorators воспроизводимую карту
+> `docs/CODE_RUNTIME_MAP.md` + `docs/generated/code_runtime_map.json`. Статусы разделяют
+> `PRODUCT_REACHABLE`, отдельные `RUNTIME_SUPPORT`, тесты/инструменты и только
+> `DORMANT_CANDIDATE` — без автоматического объявления кода мёртвым. Отдельный focus
+> показывает реальные импорты символов 9530-строчного
+> `proxy/smeta_core/document_workflow.py`; сметное поведение не менялось.
+> Точки входа: `tools/code_runtime_map.py`, `tests/test_code_runtime_map.py`.
+> Статус док↔код: ✅.
+
 > **0.30.3 clean Windows runtime manifest (build 643, dev candidate):** Tauri больше не
 > копирует почти весь tracked repository в установленный runtime. Явный
 > `config/windows_runtime_manifest.json` оставляет продуктовые пакеты, Windows bootstrap,

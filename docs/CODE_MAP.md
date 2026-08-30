@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **Как читать карту:** этот файл объясняет архитектурные потоки вручную. Фактическая
+> статическая достижимость Python-модулей, зарегистрированные API-маршруты,
+> крупнейшие файлы и осторожные кандидаты на разбор генерируются в
+> [CODE_RUNTIME_MAP.md](CODE_RUNTIME_MAP.md); полный machine-readable inventory —
+> [generated/code_runtime_map.json](generated/code_runtime_map.json). Генератор:
+> `tools/code_runtime_map.py`. Статическая недостижимость не означает, что файл можно удалить.
+
 > **0.30.1 model-owned evidence-first RAG:** `scope_service.py` задаёт только
 > явные `none | selected | all`; `chat.py` отключает semantic answer cache для
 > grounded chat и не расширяет scope по тексту вопроса.

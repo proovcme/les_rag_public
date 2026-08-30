@@ -7,17 +7,28 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.3
-номер сборки:              643
-версия Tauri/NSIS:         5.1.643
-ветка разработки:          codex/docs-roadmap-audit от публичной 0.30.1
-dev implementation:       documentation reset + explicit Windows runtime manifest
+версия продукта (SemVer):  0.30.4
+номер сборки:              644
+версия Tauri/NSIS:         5.1.644
+ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
+dev implementation:       generated code-runtime/liveness map поверх clean runtime manifest
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          не назначен; 0.30.3 — только dev candidate, не опубликован и не задеплоен
+следующий выпуск:          не назначен; 0.30.4 — только dev candidate, не опубликован и не задеплоен
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
+
+> **0.30.4 / build 644 generated code-runtime map (dev candidate, not deployed):**
+> статический AST-инвентарь отделяет достижимый от боевых entrypoint Python-код,
+> отдельные helpers установленного Windows runtime, тесты/инструменты и осторожные
+> `DORMANT_CANDIDATE`. Генерируются краткая человеческая
+> `docs/CODE_RUNTIME_MAP.md` и полный JSON с импортами, потребителями и 414
+> зарегистрированными API-маршрутами. На текущем дереве карта насчитывает 1015
+> Python-файлов: 363 product-reachable, 8 runtime-support, 630 test/tool-only и
+> 14 кандидатов на ручную проверку. Сметный `document_workflow.py` (9530 строк)
+> доказанно product-reachable; карта перечисляет конкретных потребителей его
+> импортируемых символов. Сметный код, runtime и пользовательские данные не менялись.
 
 > **0.30.3 / build 643 clean Windows runtime manifest (dev candidate, not deployed):**
 > `build_tauri_app.stage_runtime(win32)` применяет явный

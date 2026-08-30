@@ -1,5 +1,12 @@
 # TEST_INVENTORY — карта тестов Л.Е.С.
 
+> **0.30.4 generated code-runtime map (build 644):**
+> `tests/test_code_runtime_map.py` фиксирует продуктовые entrypoint, отдельные
+> Windows runtime helpers, test/tool-only код, зарегистрированный маршрут RIM,
+> фактических потребителей ключевых символов сметного монолита, консервативную
+> семантику `DORMANT_CANDIDATE` и совпадение сгенерированных Markdown/JSON-артефактов.
+> Тест включён в `CURRENT_TESTS`.
+
 > **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 640):**
 > `test_model_execution_preset_service.py` и
 > `test_context_governor_service.py` защищают реальную context capacity,
