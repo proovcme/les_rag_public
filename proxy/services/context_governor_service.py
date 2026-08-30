@@ -16,11 +16,11 @@ class ContextKind(str, Enum):
     PROFILE_PREFIX = "profile_prefix"
     TOOL_SHORTLIST = "tool_shortlist"
     REQUEST = "request"
-    CHECKPOINT = "checkpoint"
-    WORKING_MEMORY = "working_memory"
     EVIDENCE = "evidence"
     SOURCE_MAP = "source_map"
     TOOL_EXCHANGE = "tool_exchange"
+    CHECKPOINT = "checkpoint"
+    WORKING_MEMORY = "working_memory"
     DIALOGUE = "dialogue"
 
 

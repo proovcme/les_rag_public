@@ -784,11 +784,11 @@ def test_chat_prompt_uses_canonical_typed_context_order():
         "profile_prefix",
         "tool_shortlist",
         "request",
-        "checkpoint",
-        "working_memory",
         "evidence",
         "source_map",
         "tool_exchange",
+        "checkpoint",
+        "working_memory",
         "dialogue",
     ]
     assert "working_memory=answer_working_memory" in source

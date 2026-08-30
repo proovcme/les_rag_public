@@ -43,7 +43,7 @@ def test_observed_capacity_caps_operator_request():
         operator={"input_tokens": 35000},
     )
 
-    assert resolved.input_token_limit < 8192
+    assert resolved.input_token_limit == 8192
     assert resolved.source_chain[0] == "workflow_invariants"
     assert "observed_backend_capacity" in resolved.source_chain
 
@@ -57,9 +57,33 @@ def test_35b_requires_both_matching_identity_and_observed_capacity():
     )
 
     assert observed.preset_id == "qwen-35b-extended"
-    assert observed.input_token_limit == 35000
+    assert observed.input_token_limit == 65536
     assert observed.parallel_read_limit > 1
     assert unobserved.preset_id == "qwen-9b-restrictive"
+
+
+def test_requested_context_is_not_silently_capped_by_factory_when_unobserved():
+    resolved = resolve_execution_preset(
+        _capacity(tokens=None, observed=False),
+        operator={"input_tokens": 32768},
+    )
+
+    assert resolved.input_token_limit == 32768
+
+
+def test_observed_context_narrows_larger_requested_context():
+    resolved = resolve_execution_preset(
+        _capacity(tokens=16384),
+        operator={"input_tokens": 32768},
+    )
+
+    assert resolved.input_token_limit == 16384
+
+
+def test_observed_context_is_used_when_request_has_no_context_override():
+    resolved = resolve_execution_preset(_capacity(tokens=32768))
+
+    assert resolved.input_token_limit == 32768
 
 
 def test_35b_with_small_observed_kv_stays_on_restrictive_limits():

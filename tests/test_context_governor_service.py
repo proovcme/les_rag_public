@@ -67,11 +67,11 @@ def test_packing_priority_matches_canonical_spec():
         ContextKind.PROFILE_PREFIX,
         ContextKind.TOOL_SHORTLIST,
         ContextKind.REQUEST,
-        ContextKind.CHECKPOINT,
-        ContextKind.WORKING_MEMORY,
         ContextKind.EVIDENCE,
         ContextKind.SOURCE_MAP,
         ContextKind.TOOL_EXCHANGE,
+        ContextKind.CHECKPOINT,
+        ContextKind.WORKING_MEMORY,
         ContextKind.DIALOGUE,
     ]
     shuffled = [
@@ -84,6 +84,27 @@ def test_packing_priority_matches_canonical_spec():
     ).pack(shuffled)
 
     assert [section.kind for section in packet.sections] == order
+
+
+def test_evidence_is_kept_before_working_memory_when_budget_is_tight():
+    governor = ContextGovernor(
+        _preset(limit=23, generation=5, safety=3), estimate_tokens=len
+    )
+
+    packet = governor.pack(
+        [
+            _candidate(ContextKind.REQUEST, "request", "ask", required=True),
+            _candidate(ContextKind.WORKING_MEMORY, "memory", "remember"),
+            _candidate(ContextKind.EVIDENCE, "evidence", "document"),
+        ]
+    )
+
+    assert [section.kind for section in packet.sections] == [
+        ContextKind.REQUEST,
+        ContextKind.EVIDENCE,
+    ]
+    assert packet.input_budget_tokens == 15
+    assert packet.omissions[0].object_ids == ("memory",)
 
 
 def test_required_overflow_is_typed_and_happens_before_partial_packet():

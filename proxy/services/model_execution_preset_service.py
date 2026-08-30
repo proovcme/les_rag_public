@@ -163,20 +163,26 @@ def resolve_execution_preset(
     factory = _FACTORY_35B if extended_35b_available else _FACTORY_9B
     source_chain: list[str] = ["workflow_invariants"]
 
+    requested_context = None
+    if operator:
+        requested_context = _positive_int(
+            operator.get("input_tokens", operator.get("input_token_limit"))
+        )
+
     resolved = factory
     if has_observed_capacity:
         source_chain.append("observed_backend_capacity")
         observed_context = int(capacity.context_tokens or 0)
-        observed_input = max(
-            1,
-            observed_context
-            - factory.generation_reserve_tokens
-            - factory.safety_reserve_tokens,
-        )
         resolved = replace(
             resolved,
-            input_token_limit=min(factory.input_token_limit, observed_input),
+            input_token_limit=(
+                min(observed_context, requested_context)
+                if requested_context is not None
+                else observed_context
+            ),
         )
+    elif requested_context is not None:
+        resolved = replace(resolved, input_token_limit=requested_context)
 
     source_chain.append("factory_preset")
     if operator:
