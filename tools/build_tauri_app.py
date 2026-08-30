@@ -14,6 +14,7 @@ import tomllib
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable
 
@@ -25,9 +26,36 @@ SRC_TAURI = TAURI_ROOT / "src-tauri"
 RESOURCES = SRC_TAURI / "resources"
 WINDOWS_UV_CONTRACT_PATH = ROOT / "config" / "windows_uv.json"
 WINDOWS_PYTHON_CONTRACT_PATH = ROOT / "config" / "windows_python.json"
+WINDOWS_RUNTIME_MANIFEST_PATH = ROOT / "config" / "windows_runtime_manifest.json"
 DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
 WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA = "les.windows-dependency-fingerprint.v2"
+
+
+@lru_cache(maxsize=1)
+def windows_runtime_manifest() -> tuple[frozenset[str], tuple[str, ...]]:
+    payload = json.loads(WINDOWS_RUNTIME_MANIFEST_PATH.read_text(encoding="utf-8"))
+    if payload.get("schema") != "les.windows-runtime-manifest.v1":
+        raise RuntimeError("invalid Windows runtime manifest schema")
+    files = tuple(str(item).replace("\\", "/") for item in payload.get("include_files") or ())
+    prefixes = tuple(str(item).replace("\\", "/") for item in payload.get("include_prefixes") or ())
+    if not files or not prefixes:
+        raise RuntimeError("Windows runtime manifest must declare files and prefixes")
+    invalid = [
+        item
+        for item in (*files, *prefixes)
+        if not item or item.startswith(("/", "../")) or "/../" in item
+    ]
+    if invalid or any(not prefix.endswith("/") for prefix in prefixes):
+        raise RuntimeError(f"invalid Windows runtime manifest paths: {invalid}")
+    return frozenset(files), prefixes
+
+
+def windows_runtime_manifest_allows(path: Path) -> bool:
+    """Return whether a tracked repository file belongs in installed Windows LES."""
+    relative = path.relative_to(ROOT).as_posix()
+    files, prefixes = windows_runtime_manifest()
+    return relative in files or relative.startswith(prefixes)
 
 
 def release_contract() -> dict[str, object]:
@@ -411,6 +439,8 @@ def stage_runtime(
     count = 0
     for source in iter_files():
         relative = source.relative_to(ROOT)
+        if target_platform.startswith("win") and not windows_runtime_manifest_allows(source):
+            continue
         if relative.parts[:2] == ("desktop", "tauri"):
             continue
         if target_platform.startswith("win") and relative.parts[:2] == ("installers", "macos"):

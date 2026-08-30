@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.3 clean Windows runtime manifest (build 643, dev candidate):** Tauri больше не
+> копирует почти весь tracked repository в установленный runtime. Явный
+> `config/windows_runtime_manifest.json` оставляет продуктовые пакеты, Windows bootstrap,
+> runtime assets и 24 необходимых runtime/updater tools; tests/docs/legacy/dev/golden,
+> build/publish tools и исходники отдельных продуктов не устанавливаются. Контракт проверяет
+> allowlist и транзитивные Python imports из `tools`. Точки входа:
+> `tools/build_tauri_app.py`, `tests/test_tauri_desktop.py`. Статус док↔код: ✅.
+
 > **0.30.1 model-owned evidence-first RAG + readable UI + soft updater (build 640):** без выбора источников
 > чат идёт напрямую к модели; выбранные датасеты/вложения и явный «Все
 > источники» создают точный scope. Initial и повторный model-selected поиск

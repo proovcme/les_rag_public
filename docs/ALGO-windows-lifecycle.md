@@ -54,6 +54,13 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
    `docker_engine_unavailable` и `qdrant_unavailable` остаются warnings; core proxy/UI запускается.
 4. Direct `pythonw.exe` proxy/UI стартуют и API health подтверждает готовность core.
 
+Исходный архив для сборочной машины и установленный runtime — разные поверхности. Windows runtime
+формируется только по `config/windows_runtime_manifest.json`: продуктовые Python-пакеты, необходимые
+конфигурация/skill/assets, Windows bootstrap и точный список runtime/updater tools. `tests/`, `docs/`,
+`legacy/`, `dev/`, golden-наборы, исходники других продуктов и build/publish tools в установленное
+дерево не входят. Любой новый runtime import из `tools` обязан сначала попасть в manifest и пройти
+контрактный тест; это не разрешение расширять manifest целым каталогом.
+
 Полный RAG/smeta acceptance по-прежнему требует доступных Qdrant, корпуса и providers, но это
 отдельный capability gate, а не условие запуска базового LES.
 

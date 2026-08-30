@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import zipfile
@@ -129,6 +130,96 @@ def test_tauri_runtime_stage_excludes_recursive_shell_and_local_ui_state(tmp_pat
     assert build_release_artifacts.should_exclude(nicegui_file)
 
 
+def test_windows_runtime_manifest_keeps_product_and_excludes_repository_only_files():
+    included = [
+        ROOT / "pyproject.toml",
+        ROOT / "uv.lock",
+        ROOT / "env.example",
+        ROOT / "backend" / "qdrant_adapter.py",
+        ROOT / "proxy" / "app.py",
+        ROOT / "sovushka" / "pages" / "chat.py",
+        ROOT / "sovushka_ng.py",
+        ROOT / "qdrant_visualizer" / "index.html",
+        ROOT / "config" / "version.json",
+        ROOT / "schema" / "smeta_agent_trace.schema.json",
+        ROOT / "skills" / "smeta" / "SKILL.md",
+        ROOT / "installers" / "windows" / "app" / "bootstrap.ps1",
+        ROOT / "tools" / "windows_runtime.py",
+        ROOT / "tools" / "windows_update_engine.py",
+        ROOT / "tools" / "windows_env_doctor.py",
+        ROOT / "tools" / "vps_patch_apply.py",
+        ROOT / "tools" / "smeta_release_baseline.py",
+        ROOT / "tools" / "live_workbook_acceptance.py",
+    ]
+    excluded = [
+        ROOT / "tests" / "test_chat_evidence_application_service.py",
+        ROOT / "docs" / "CODE_MAP.md",
+        ROOT / "legacy" / "backend" / "old.py",
+        ROOT / "dev" / "README.md",
+        ROOT / "golden" / "domain_fire_hvac_set.json",
+        ROOT / "schema" / "artel_family_learning_case.schema.json",
+        ROOT / "tools" / "build_tauri_app.py",
+        ROOT / "tools" / "vps_patch.py",
+        ROOT / "desktop" / "tauri" / "package.json",
+        ROOT / "installers" / "macos" / "app" / "bootstrap.sh",
+        ROOT / "clients" / "outlook_addin" / "manifest.xml",
+        ROOT / "exporters" / "revit" / "LesExporter.cs",
+        ROOT / "frontend" / "cad_bim_viewer" / "package.json",
+        ROOT / "standalone" / "cad_bim_viewer" / "index.html",
+    ]
+
+    for path in included:
+        assert build_tauri_app.windows_runtime_manifest_allows(path), path
+    for path in excluded:
+        assert not build_tauri_app.windows_runtime_manifest_allows(path), path
+
+
+def test_windows_tauri_stage_applies_runtime_manifest(tmp_path, monkeypatch):
+    resources = tmp_path / "resources"
+    app_file = ROOT / "proxy" / "app.py"
+    test_file = ROOT / "tests" / "test_tauri_desktop.py"
+    monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
+    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [app_file, test_file])
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_uv_cache", lambda _runtime, **_kwargs: 0)
+    monkeypatch.setattr(build_tauri_app, "stage_windows_deploy_stamp", lambda _runtime: 0)
+
+    assert build_tauri_app.stage_runtime("win32") == 1
+    assert (resources / "runtime/proxy/app.py").is_file()
+    assert not (resources / "runtime/tests/test_tauri_desktop.py").exists()
+
+
+def test_windows_runtime_manifest_covers_python_tool_dependencies():
+    runtime_files = [
+        path
+        for path in build_release_artifacts.iter_files()
+        if build_tauri_app.windows_runtime_manifest_allows(path)
+    ]
+    assert len(runtime_files) < 600
+
+    missing: set[str] = set()
+    for source in runtime_files:
+        if source.suffix != ".py":
+            continue
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        modules: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                if node.module == "tools":
+                    modules.update(f"tools.{name.name}" for name in node.names)
+                elif node.module.startswith("tools."):
+                    modules.add(node.module)
+            elif isinstance(node, ast.Import):
+                modules.update(name.name for name in node.names if name.name.startswith("tools."))
+        for module in modules:
+            candidate = ROOT.joinpath(*module.split(".")).with_suffix(".py")
+            if candidate.is_file() and not build_tauri_app.windows_runtime_manifest_allows(candidate):
+                missing.add(candidate.relative_to(ROOT).as_posix())
+
+    assert not missing, f"runtime tools missing from manifest: {sorted(missing)}"
+
+
 def test_tauri_runtime_stage_is_platform_specific(tmp_path, monkeypatch):
     mac_bootstrap = ROOT / "installers/macos/app/bootstrap.sh"
     windows_bootstrap = ROOT / "installers/windows/app/bootstrap.ps1"
@@ -193,7 +284,7 @@ def test_windows_tauri_stage_bundles_verified_smeta_baseline(tmp_path, monkeypat
     archive = tmp_path / "LES-smeta-baseline.zip"
     archive.write_bytes(b"verified-baseline")
     monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
-    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
+    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "pyproject.toml"])
     monkeypatch.setattr(smeta_release_baseline, "verify_archive", lambda path: {"ok": True})
     monkeypatch.setattr(build_tauri_app, "stage_windows_uv", lambda _runtime, **_kwargs: 0)
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
@@ -222,7 +313,7 @@ def test_windows_tauri_stage_bundles_verified_uv(tmp_path, monkeypatch):
     resources = tmp_path / "resources"
     monkeypatch.setattr(build_tauri_app, "RESOURCES", resources)
     monkeypatch.setattr(build_tauri_app, "WINDOWS_UV_CONTRACT_PATH", contract)
-    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "README.md"])
+    monkeypatch.setattr(build_tauri_app, "iter_files", lambda: [ROOT / "pyproject.toml"])
     monkeypatch.setattr(build_tauri_app, "stage_windows_python", lambda _runtime, **_kwargs: 0)
     monkeypatch.setattr(build_tauri_app, "stage_windows_uv_cache", lambda _runtime, **_kwargs: 0)
 

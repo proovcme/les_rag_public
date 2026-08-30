@@ -7,17 +7,29 @@
 ## Текущее состояние (2026-08-30)
 
 ```
-версия продукта (SemVer):  0.30.2
-номер сборки:              642
-версия Tauri/NSIS:         5.1.642
+версия продукта (SemVer):  0.30.3
+номер сборки:              643
+версия Tauri/NSIS:         5.1.643
 ветка разработки:          codex/docs-roadmap-audit от публичной 0.30.1
-dev implementation:       documentation contract + product roadmap reset + indexed archive
+dev implementation:       documentation reset + explicit Windows runtime manifest
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.1 / build 641 / commit 2a02084d
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          не назначен; 0.30.2 — только dev candidate, не опубликован и не задеплоен
+следующий выпуск:          не назначен; 0.30.3 — только dev candidate, не опубликован и не задеплоен
 рантайм /api/version:      Legion 0.30.1 / build 641 / desktop 5.1.641 / commit 2a02084d; aligned
 ```
+
+> **0.30.3 / build 643 clean Windows runtime manifest (dev candidate, not deployed):**
+> `build_tauri_app.stage_runtime(win32)` применяет явный
+> `config/windows_runtime_manifest.json` и уменьшает tracked application surface с 1497 до
+> 489 файлов. В runtime остаются продуктовые пакеты, конфигурация, Qdrant-визуализация,
+> smeta skill, Windows bootstrap и 24 точных runtime/updater tools. Тесты, активные и
+> архивные документы, `legacy`, `dev`, golden-наборы, build/publish tools и исходники
+> отдельных продуктов больше не входят в установленное дерево. Контрактный тест отдельно
+> доказывает, что каждый статический Python import из `tools` разрешён manifest, поэтому
+> очистка не отрезает следующий soft update. Пользовательский state и установленный Legion
+> не изменялись. Сметный `document_workflow.py` не менялся; его смешанная активная/dormant
+> граница зафиксирована отдельным обязательным этапом roadmap с benchmark до удаления.
 
 > **0.30.2 / build 642 documentation reset (dev candidate, not deployed):** корневой
 > roadmap сокращён с 1920 до менее 300 строк и описывает продукт для ГИП/РП,
