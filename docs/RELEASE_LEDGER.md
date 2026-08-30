@@ -30,8 +30,10 @@ dev implementation:       second proven repository cleanup
 > runtime-support, 625 test/tool-only, 1 dormant, 414 API routes, 0 warnings.
 > Канонический `TEST_INVENTORY.md` сокращён до карты текущих gates; прежняя
 > релизная хронология сохранена в `docs/archive/`. Отдельно удалены девять
-> доказанно поглощённых remote-веток и три локальных указателя. Два старых
-> worktree с незакоммиченными файлами сохранены без изменений. Сметное ядро,
+> доказанно поглощённых remote-веток и пять локальных указателей. Два public
+> worktree, содержавшие только 7383 файлов `.test-tmp` и принадлежавшие merged
+> PR #11/#12, удалены штатным `git worktree remove`; два старых worktree с
+> настоящими незакоммиченными файлами сохранены без изменений. Сметное ядро,
 > Mail, ARTEL, установленный Legion и пользовательский state не менялись.
 
 > **0.30.9 / build 649 independent installed-core acceptance (release candidate):**
