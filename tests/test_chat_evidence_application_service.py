@@ -14,6 +14,39 @@ import pytest
 from proxy.routers import chat
 from proxy.services import chat_evidence_application_service as service
 from proxy.services.chat_attachment_service import preserve_read_attachment
+from proxy.services.tool_harness_service import ToolHarness
+
+
+def test_attachment_workbook_tools_survive_restrictive_model_shortlist():
+    tools = [
+        "dataset_map",
+        "search_sources",
+        "read_source",
+        "read_excel_source",
+        "search_project_tables",
+        "read_project_table",
+        "build_lsr_workbook",
+        "build_vor_workbook",
+    ]
+
+    ordered = service.prioritize_workbook_tools(tools, workbook_phase=True)
+    shortlist = ToolHarness().shortlist(
+        "Собери ЛСР",
+        allowed_tools=ordered,
+        limit=5,
+        dataset_ids=("selected",),
+        workflow_phase="draft",
+        model_preset="qwen-9b-restrictive",
+        runtime_available=frozenset(tools),
+        attachment_ids=("read_123456abcdef",),
+    )
+
+    assert ordered[:2] == ["build_lsr_workbook", "build_vor_workbook"]
+    assert set(ordered) == set(tools)
+    assert [item["name"] for item in shortlist["tools"][:2]] == [
+        "build_lsr_workbook",
+        "build_vor_workbook",
+    ]
 
 
 async def _async_append(target, value):

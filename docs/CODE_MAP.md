@@ -128,6 +128,9 @@
 > `/api/chat` с `think=false` и сохраняет выбранный протокол в snapshot.
 > `OpenAICompatibleTransport` исполняет этот provider-specific профиль только
 > по зафиксированной capability, не по имени модели или эвристике.
+> В attachment-bound estimator draft workbook-инструменты ставятся в начало
+> model-visible shortlist, чтобы лимит малого preset не вырезал их; это только
+> доступность инструмента, а выбор и аргументы по-прежнему принадлежат модели.
 
 > **Private model nodes, extensions and promotion 0.29.0:**
 > `model_connection_security_service.py` разрешает явный `private_network`

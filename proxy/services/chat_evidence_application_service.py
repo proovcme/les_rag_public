@@ -84,6 +84,27 @@ from proxy.services.llm_transport_profile_service import (
     assistant_delta_text,
     resolve_transport_execution_profile,
 )
+
+
+_WORKBOOK_TOOL_NAMES = frozenset({"build_lsr_workbook", "build_vor_workbook"})
+
+
+def prioritize_workbook_tools(
+    profile_tools: Sequence[str],
+    *,
+    workbook_phase: bool,
+) -> list[str]:
+    """Keep attachment-bound workbook choices inside a small-model shortlist.
+
+    Ordering only controls what the model can see. It never selects or executes
+    a tool on the model's behalf.
+    """
+    tools = [str(name) for name in profile_tools if str(name).strip()]
+    if not workbook_phase:
+        return tools
+    workbook = [name for name in tools if name in _WORKBOOK_TOOL_NAMES]
+    other = [name for name in tools if name not in _WORKBOOK_TOOL_NAMES]
+    return workbook + other
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
 from proxy.services.model_research_tool_service import ModelResearchToolService
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
@@ -1764,6 +1785,10 @@ async def _execute_chat_evidence_application(
                         workbook_phase = bool(
                             getattr(req, "attachment_id", None)
                             and {"build_lsr_workbook", "build_vor_workbook"}.intersection(profile_tools)
+                        )
+                        profile_tools = prioritize_workbook_tools(
+                            profile_tools,
+                            workbook_phase=workbook_phase,
                         )
                         tool_loop_stage = "shortlist"
                         from proxy.services.workbook_tool_service import (

@@ -25,7 +25,9 @@ dev implementation:       0.30.27 model connection repair; candidate до live a
 > помеченного Ollama live probe может выбрать нативный `/api/chat`; transport
 > тогда передаёт `think=false`, сохраняя решения модели и не вводя эвристику по
 > её имени. UI предлагает уникальные названия из шаблона/копии и переводит
-> `DISPLAY_NAME_IN_USE` в понятное действие. Regression gate: 73 focused tests;
+> `DISPLAY_NAME_IN_USE` в понятное действие. Attachment-bound «Сметчик» теперь
+> сохраняет оба workbook-tool внутри shortlist малого preset: модель видит их,
+> но код не выбирает и не вызывает их вместо неё. Regression gate: 73 focused tests;
 > публичный статус и Legion acceptance должны быть записаны только после
 > полного release-run.
 

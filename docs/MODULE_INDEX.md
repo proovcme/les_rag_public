@@ -280,7 +280,9 @@
 > ревизию и требует подтверждённый `chat_completions` либо `embeddings`.
 > Ollama-native chat выбирается только live capability snapshot и отключает
 > reasoning через официальный `think=false`; шаблоны UI предлагают уникальные
-> имена и объясняют конфликт названия по-русски. Статус док↔код: ✅.
+> имена и объясняют конфликт названия по-русски. При приложенной ВОР оба
+> workbook-tool входят даже в ограниченный shortlist 9B; код их не вызывает
+> автоматически. Статус док↔код: ✅.
 
 > **0.29.0 private nodes / promotion closure:** LAN и ZeroTier являются одной
 > явной locality `private_network`; HTTP разрешён только после private-only DNS
