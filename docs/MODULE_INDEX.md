@@ -10,7 +10,7 @@
 > workbook contracts больше не считаются обычным ToolHarness исполняемыми:
 > чат показывает модели VOR и тонкий LSR adapter; LSR принимает model-owned
 > `decisions`, считает и рендерит без скрытого model loop. Карта: 960 tracked Python-файлов /
-> 297224 строки, 337 product-reachable, 8 runtime-support, 614 test/tool-only,
+> 297229 строк, 337 product-reachable, 8 runtime-support, 614 test/tool-only,
 > 1 dormant, 330 API routes, 0 parse warnings. Точки входа: `proxy/app.py`,
 > `proxy/services/{tool_harness_service,workbook_tool_service,
 > chat_evidence_application_service}.py`, `tests/{test_code_runtime_map,

@@ -33,7 +33,7 @@ dev implementation:       experimental API cleanup + executable-tool/update-feed
 > меньшим build как `available=false / Установлена более новая сборка`, сохраняя
 > строгую проверку repository/tag/commit/asset. Это закрывает ложную ошибку на
 > Legion 0.30.9/build 649 при публичном latest 0.30.7/build 647. Generated map:
-> 960 tracked Python-файлов / 297224 строки, 337 product-reachable,
+> 960 tracked Python-файлов / 297229 строк, 337 product-reachable,
 > 8 runtime-support, 614 test/tool-only, 1 dormant, 330 API routes, 0 warnings.
 > Release orchestrator берёт cumulative patch base только из attested
 > `dist/release-work/full-base/latest.json`; stale `dist/latest.json` больше не
