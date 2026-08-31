@@ -7,19 +7,35 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.29
-номер сборки:              669
-версия Tauri/NSIS:         5.1.669
-ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
-dev implementation:       0.30.29 workbook attachment handoff repair; candidate до live acceptance
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.28 / build 668 / commit 80231a61
+версия продукта (SemVer):  0.30.30
+номер сборки:              670
+версия Tauri/NSIS:         5.1.670
+ветка разработки:          codex/model-rag-result от a297872f (локальный 0.30.29)
+dev implementation:       0.30.30 model-authored RAG → model-owned workbook result; candidate до live acceptance
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.29 / build 669 / commit a297872f
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.29 cumulative patch после Legion acceptance
-рантайм /api/version:      Legion 0.30.28 / build 668 / desktop 5.1.668 / commit 80231a61; accepted
+следующий выпуск:          0.30.30 cumulative patch после Legion acceptance
+рантайм /api/version:      Legion 0.30.29 / build 669 / desktop 5.1.669 / commit a297872f; aligned
 ```
 
-> **0.30.29 / build 669 workbook attachment handoff repair (release candidate):**
+> **0.30.30 / build 670 model → RAG → result (release candidate):** профиль
+> «Сметчик» явно подключает только typed system datasets модуля `smeta` и
+> показывает модели четыре инструмента: `search_sources`, `read_source`,
+> `build_lsr_workbook`, `build_vor_workbook`. Код больше не запускает первичный
+> поиск по команде «Собери ЛСР» и не подставляет её вместо отсутствующего
+> модельного `q`. В active route модель получает native function schemas, сама
+> формулирует все RAG-запросы, видит текст вложения до первого запроса, получает
+> exact native-RRF evidence и передаёт собственные `decisions` тонкому XLSX-
+> adapter без предметного исправления кодом. Все tool calls одного ответа
+> сохраняются; лимит числа видимых tool definitions больше не обрезает пакет
+> поисковых запросов. Сквозная offline-приёмка доказывает два exact model-authored
+> query, отсутствие исходной команды в retrieval и неизменные workbook decisions.
+> Установленный Legion и публичные refs этой веткой не менялись; live Qwen 9B acceptance ещё
+> обязательна перед выпуском.
+
+> **0.30.29 / build 669 workbook attachment handoff repair (локально на Legion,
+> публично не выпущен):**
 > после восстановления workbook-tools Qwen 9B всё ещё выбирала `calls: []`,
 > потому что обязательный selector request не сообщал о server-owned attachment,
 > а большой извлечённый XLSX-текст мог быть отброшен как низкоприоритетная память.

@@ -51,6 +51,35 @@ def canonical_profile_mode(mode: str | None) -> str:
     return MODE_ALIASES.get(str(mode or "").strip().casefold(), "agent")
 
 
+def resolve_profile_system_dataset_ids(
+    profile_snapshot: dict[str, Any] | None,
+    *,
+    current_dataset_ids: list[str] | tuple[str, ...] | None = None,
+    module_resolver=None,
+) -> list[str]:
+    """Add only datasets explicitly bound by the selected profile revision.
+
+    The profile names a system module (for example ``smeta``); it never infers
+    one from the user's wording.  Dataset lookup is deterministic plumbing and
+    the model remains responsible for every retrieval query.
+    """
+
+    if module_resolver is None:
+        from proxy.services.system_dataset_service import module_dataset_ids
+
+        module_resolver = module_dataset_ids
+    result = [str(item) for item in (current_dataset_ids or ()) if str(item)]
+    modules = ((profile_snapshot or {}).get("rag_policy") or {}).get(
+        "system_datasets", []
+    )
+    for module_id in modules if isinstance(modules, list) else []:
+        for dataset_id in module_resolver(str(module_id)):
+            value = str(dataset_id)
+            if value and value not in result:
+                result.append(value)
+    return result
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -188,12 +217,8 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
     estimator_tools = [
         name
         for name in (
-            "dataset_map",
             "search_sources",
             "read_source",
-            "read_excel_source",
-            "search_project_tables",
-            "read_project_table",
             "build_lsr_workbook",
             "build_vor_workbook",
         )
@@ -262,7 +287,11 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
             ),
             "tools": estimator_tools,
             "model_policy": {"temperature": 0.0},
-            "rag_policy": {"grounded": True, "system_datasets": ["smeta"]},
+            "rag_policy": {
+                "grounded": True,
+                "system_datasets": ["smeta"],
+                "model_authored_initial_query": True,
+            },
         },
         "engineer": {
             "prompt": build_factory_mode_system_prompt("review"),

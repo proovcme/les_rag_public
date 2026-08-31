@@ -159,6 +159,30 @@ def tools_for_document_scope(tools: Sequence[str], *, enabled: bool) -> list[str
     return [name for name in normalized if name not in _DOCUMENT_EVIDENCE_TOOLS]
 
 
+def native_model_tool_schemas(
+    tool_contracts: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Convert registry contracts to provider-native function definitions."""
+
+    schemas: list[dict[str, Any]] = []
+    for contract in tool_contracts:
+        name = str(contract.get("name") or "").strip()
+        parameters = contract.get("input_schema")
+        if not name or not isinstance(parameters, dict):
+            continue
+        schemas.append(
+            {
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "description": str(contract.get("summary") or name),
+                    "parameters": parameters,
+                },
+            }
+        )
+    return schemas
+
+
 @dataclass(frozen=True)
 class _SkippedRetrievalQuality:
     status: str = "skipped"
@@ -459,6 +483,17 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 
     iterative = bool(((profile_snapshot or {}).get("rag_policy") or {}).get("iterative", True))
     return max(1, configured) if iterative else 1
+
+
+def profile_uses_model_driven_retrieval(
+    profile_snapshot: dict[str, Any] | None,
+) -> bool:
+    """True when the profile explicitly gives the first RAG query to the model."""
+
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    return bool(
+        (snapshot.get("rag_policy") or {}).get("model_authored_initial_query", False)
+    )
 
 
 def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
@@ -802,7 +837,9 @@ async def _execute_chat_evidence_application(
             getattr(req, "reranker_enabled", None)
         )
         topic_chunks: list[Any] = []
-        if document_grounding_enabled:
+        if document_grounding_enabled and not profile_uses_model_driven_retrieval(
+            profile_snapshot
+        ):
             retrieval = await retrieve_chat_chunks(
                 question=req.question,
                 dataset_ids=_dataset_ids,
@@ -829,6 +866,13 @@ async def _execute_chat_evidence_application(
         raise HTTPException(500, f"Поиск по датасету не удался: {type(e).__name__}: {e}")
     t_search = time.time() - t_search_start
     retrieval_trace = retrieval.payload()
+    if document_grounding_enabled and profile_uses_model_driven_retrieval(profile_snapshot):
+        retrieval_trace.update(
+            {
+                "status": "model_driven",
+                "reason": "awaiting_model_authored_query",
+            }
+        )
     retrieval_trace["scope_resolution"] = dict(scope_resolution or {})
     retrieval_trace["reranker_policy"] = retrieval_trace_policy
     retrieval_trace_object = getattr(retrieval, "trace", None)
@@ -1559,10 +1603,31 @@ async def _execute_chat_evidence_application(
         max_chars=context_chars_limit,
         include_metadata=True,
     )
-    selector_evidence = [
-        "Материалы из найденных документов:",
-        *[item.payload for item in _text_context_objects("selector-evidence", context)],
-    ]
+    attachment_context = str(getattr(req, "attachment_context", "") or "").strip()
+
+    def _selector_evidence_payload(rendered_context: str) -> list[Any]:
+        payload: list[Any] = []
+        if attachment_context:
+            payload.extend(
+                [
+                    "Текст явно прикреплённого пользователем файла:",
+                    attachment_context,
+                ]
+            )
+        payload.extend(
+            [
+                "Материалы из найденных документов:",
+                *[
+                    item.payload
+                    for item in _text_context_objects(
+                        "selector-evidence", rendered_context
+                    )
+                ],
+            ]
+        )
+        return payload
+
+    selector_evidence = _selector_evidence_payload(context)
     selector_source_map = answer_source_map
     async with gen_semaphore:
         try:
@@ -1806,13 +1871,24 @@ async def _execute_chat_evidence_application(
                             },
                             fallback=_fallback_model_tool,
                         )
-                        shortlist_limit = min(
-                            execution_preset.max_tools,
-                            max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
+                        model_driven_retrieval = profile_uses_model_driven_retrieval(
+                            profile_snapshot
                         )
-                        max_calls = min(
-                            execution_preset.max_batch_items,
-                            max(1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)),
+                        shortlist_limit = (
+                            len(profile_tools)
+                            if model_driven_retrieval
+                            else min(
+                                execution_preset.max_tools,
+                                max(1, _env_int("LES_CHAT_TOOL_SHORTLIST_LIMIT", 64)),
+                            )
+                        )
+                        configured_call_limit = max(
+                            1, _env_int("LES_CHAT_TOOL_MAX_CALLS", 48)
+                        )
+                        max_calls = (
+                            configured_call_limit
+                            if model_driven_retrieval
+                            else min(execution_preset.max_batch_items, configured_call_limit)
                         )
                         workbook_phase = bool(
                             getattr(req, "attachment_id", None)
@@ -1859,6 +1935,9 @@ async def _execute_chat_evidence_application(
                             for tool in shortlist.get("tools", [])
                             if isinstance(tool, dict) and tool.get("name")
                         }
+                        native_tools = native_model_tool_schemas(
+                            shortlist.get("tools") or []
+                        )
                         selector_headers = {}
                         if llm_runtime.api_key:
                             selector_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
@@ -1879,18 +1958,25 @@ async def _execute_chat_evidence_application(
                                 _compact_tool_result_for_prompt(item, max_chars=2400)
                                 for item in tool_results_for_model[-max_calls:]
                             ]
-                            selector_profile = (
-                                profile_system_prompt(profile_snapshot, strict=False)
-                                + "\n\nТы управляешь коротким исследовательским чтением LES. "
-                                "Выбирай read-only инструменты, чтобы закрыть конкретный пробел evidence. "
-                                "Если оператор просит собрать XLSX и доступен workbook-инструмент, выбери ровно один такой draft-вызов. "
-                                "Если оператор явно просит посмотреть глазами страницу или лист PDF, "
-                                "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; "
-                                "текстовый read_pdf_source не заменяет просмотр пикселей. "
-                                "Инструменты не отвечают за тебя и не заменяют источники. "
-                                "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
-                                "Если evidence достаточно или новый вызов повторит прошлый, верни {\"calls\":[]}. "
-                                "Не выбирай инструмент вне списка и не выходи за выбранные dataset/file scope."
+                            tool_call_instruction = (
+                                "Вызывай предоставленные инструменты напрямую. "
+                                if canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                                else "Верни только JSON {\"calls\":[{\"tool\":\"...\",\"args\":{...}}]}. "
+                            )
+                            selector_profile = "".join(
+                                (
+                                    profile_system_prompt(profile_snapshot, strict=False),
+                                    "\n\nТы управляешь коротким исследовательским чтением LES. ",
+                                    "Выбирай read-only инструменты, чтобы закрыть конкретный пробел evidence. ",
+                                    "Если оператор просит собрать XLSX и доступен workbook-инструмент, выбери ровно один такой draft-вызов. ",
+                                    "Если оператор явно просит посмотреть глазами страницу или лист PDF, ",
+                                    "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; ",
+                                    "текстовый read_pdf_source не заменяет просмотр пикселей. ",
+                                    "Инструменты не отвечают за тебя и не заменяют источники. ",
+                                    tool_call_instruction,
+                                    "Если evidence достаточно, заверши исследование без нового вызова. ",
+                                    "Не выбирай инструмент вне списка и не выходи за выбранные dataset/file scope.",
+                                )
                             )
                             selector_checkpoint = tuple(
                                 item
@@ -1904,6 +1990,11 @@ async def _execute_chat_evidence_application(
                                 if candidate.kind == ContextKind.WORKING_MEMORY
                                 for item in candidate.objects
                             )
+                            if model_driven_retrieval:
+                                # The estimator's first job is to read the
+                                # attachment and author RAG queries. Advisory
+                                # memory must not displace that evidence.
+                                selector_working_memory = ()
                             tool_loop_stage = "context_governor"
                             selector_messages, selector_packet = govern_inference_messages(
                                 preset=execution_preset,
@@ -1932,6 +2023,8 @@ async def _execute_chat_evidence_application(
                                 "temperature": 0,
                                 "max_tokens": max(128, _env_int("LES_CHAT_TOOL_SELECTOR_MAX_TOKENS", 700)),
                             }
+                            if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
+                                selector_body["tools"] = native_tools
                             t_tool_selector = time.time()
                             tool_loop_stage = "selector_model"
                             selector_text, round_usage = await _post_llm(
@@ -2066,15 +2159,9 @@ async def _execute_chat_evidence_application(
                                                 include_metadata=True,
                                             )
                                         )
-                                        selector_evidence = [
-                                            "Материалы из найденных документов:",
-                                            *[
-                                                item.payload
-                                                for item in _text_context_objects(
-                                                    "selector-evidence", context
-                                                )
-                                            ],
-                                        ]
+                                        selector_evidence = _selector_evidence_payload(
+                                            context
+                                        )
                                         selector_source_map = answer_source_map
                                 selected_calls.append(call)
                                 safe_payload = safe_workbook_history_projection(payload)
@@ -2108,6 +2195,7 @@ async def _execute_chat_evidence_application(
                             "stop_reason": stop_reason,
                             "deadline_seconds": research_deadline_seconds,
                             "max_calls_per_model_response": max_calls,
+                            "native_tool_schemas": bool(native_tools),
                         }
                     except ContextRequiredSectionOverflow as context_error:
                         retrieval_trace["context_governor"]["error"] = {
@@ -2125,7 +2213,10 @@ async def _execute_chat_evidence_application(
                             },
                         ) from context_error
                     except Exception as tool_err:  # noqa: BLE001 - tool loop must degrade into trace, not block chat
-                        logger.warning("[TOOLS] model tool loop skipped: %s", type(tool_err).__name__)
+                        logger.exception(
+                            "[TOOLS] model tool loop skipped: %s",
+                            type(tool_err).__name__,
+                        )
                         retrieval_trace["tool_loop"] = {
                             "schema": "les_model_tool_loop_v1",
                             "enabled": True,

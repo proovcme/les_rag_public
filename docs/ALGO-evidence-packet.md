@@ -1,6 +1,6 @@
 # Evidence packet в общем RAG-контуре
 
-Статус: **✅ реализован для обычного model-first RAG**. Dev-версия: `0.24.0.351`.
+Статус: **✅ реализован для обычного model-first RAG**. Dev-версия: `0.30.30`.
 
 ## Зачем
 
@@ -32,6 +32,12 @@ retrieval + context windows
         └─ model renderer с теми же «Источник N», что в source_map UI
     → model/tools → answer + answer_status/calculation_status отдельно
 ```
+
+Для role-bound estimator первый retrieval также model-owned: текст явного
+вложения входит в evidence первого model call, после чего модель формулирует
+один или несколько `search_sources.q`. Код только исполняет каждый запрос через
+тот же `retrieve_chat_chunks()` и возвращает найденные карточки; исходная
+команда «Собери ЛСР» не используется как запасной поисковый запрос.
 
 ## Контракт
 
@@ -82,7 +88,8 @@ trace ошибочно называл `good`; `retrieval_quality_service` теп
 ## Границы текущего шага
 
 - Индексы, embedding и chunking не мигрируются.
-- Сметы, normcontrol и CAD/BIM пока не переписаны на этот пакет: они остаются доменными
-  потребителями следующего этапа.
+- Старое сметное ядро, normcontrol и CAD/BIM не переписаны этим пакетом; тонкий
+  ordinary-chat workbook adapter уже использует общий model-owned RAG и exact
+  решения модели.
 - `available` не означает `VERIFIED`; проверка ответа, расчёта и source conflict остаётся
   отдельной задачей.

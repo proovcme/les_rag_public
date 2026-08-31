@@ -345,6 +345,18 @@ def test_model_tool_args_are_scoped_to_selected_dataset_and_target_file():
     assert call["args"]["doc_name"] == "ВОР.pdf"
 
 
+def test_search_sources_never_substitutes_user_command_for_model_query():
+    call = _augment_model_tool_args(
+        {"tool": "search_sources", "args": {}},
+        question="сделай ЛСР",
+        dataset_ids=["ds1"],
+        target_file_ref=None,
+    )
+
+    assert "q" not in call["args"]
+    assert call["args"]["dataset_ids"] == ["ds1"]
+
+
 def test_tool_results_prompt_block_is_material_not_final_answer():
     text = _format_tool_results_for_model([
         {

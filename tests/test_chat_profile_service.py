@@ -15,6 +15,7 @@ from proxy.services.chat_profile_service import (
     publish_profile_revision,
     publish_text_revision,
     registry_snapshot,
+    resolve_profile_system_dataset_ids,
     resolve_chat_profile,
 )
 
@@ -37,6 +38,36 @@ def test_factory_seed_is_idempotent_and_activates_four_base_profiles(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM les_profile_revisions").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM les_prompt_revisions").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM les_skill_revisions").fetchone()[0] == 4
+
+
+def test_estimator_profile_system_dataset_is_added_to_frozen_scope():
+    resolved = resolve_profile_system_dataset_ids(
+        {
+            "mode": "estimator",
+            "rag_policy": {
+                "system_datasets": ["smeta"],
+                "model_authored_initial_query": True,
+            },
+        },
+        current_dataset_ids=["project-dataset"],
+        module_resolver=lambda module_id: (
+            ["fsnb-dataset", "project-dataset"] if module_id == "smeta" else []
+        ),
+    )
+
+    assert resolved == ["project-dataset", "fsnb-dataset"]
+
+
+def test_estimator_factory_exposes_only_model_rag_and_result_tools(tmp_path):
+    snapshot = registry_snapshot(db_path=tmp_path / "meta.db")
+    estimator = next(item for item in snapshot["profiles"] if item["mode"] == "estimator")
+
+    assert estimator["active"]["tools"] == [
+        "search_sources",
+        "read_source",
+        "build_lsr_workbook",
+        "build_vor_workbook",
+    ]
 
 
 def test_factory_seed_refreshes_stale_factory_contract_and_bound_session(tmp_path):

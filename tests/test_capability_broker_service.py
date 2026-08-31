@@ -102,6 +102,15 @@ def test_broker_fails_closed_without_dataset_scope_or_budget() -> None:
     assert no_budget.omitted_by_reason["calls_budget"] == ("read_source",)
 
 
+def test_call_budget_is_not_confused_with_small_model_tool_definition_limit() -> None:
+    result = CapabilityBroker(_registry()).shortlist(
+        _request(profile_tools=("read_source",), calls_remaining=48)
+    )
+
+    assert result.names == ("read_source",)
+    assert result.call_limit == 48
+
+
 def test_workbook_scope_accepts_server_attachment_without_dataset() -> None:
     registry = ToolRegistry([
         _registration(

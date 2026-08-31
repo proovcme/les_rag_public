@@ -212,7 +212,7 @@ def test_ordinary_chat_uses_bound_answer_without_promotion_receipt(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_active_exposes_one_tool_decision_and_keeps_the_rest_pending() -> None:
+async def test_active_preserves_every_model_tool_call() -> None:
     primary = _connection("conn:primary:r1")
     runner = BoundModelChatRunner(
         resolver=Resolver(primary),
@@ -225,8 +225,11 @@ async def test_active_exposes_one_tool_decision_and_keeps_the_rest_pending() -> 
         legacy_complete=lambda _request: pytest.fail("legacy path must not run"),
     )
 
-    assert [call["function"]["name"] for call in result.response.tool_calls] == ["read_source"]
-    assert result.pending_tool_calls == 1
+    assert [call["function"]["name"] for call in result.response.tool_calls] == [
+        "read_source",
+        "read_table",
+    ]
+    assert result.pending_tool_calls == 0
 
 
 @pytest.mark.asyncio

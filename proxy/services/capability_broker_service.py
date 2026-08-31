@@ -60,7 +60,10 @@ class CapabilityBroker:
 
     def shortlist(self, request: BrokerRequest) -> CapabilityShortlist:
         preset_limit = 12 if request.model_preset in _EXTENDED_PRESETS else 5
-        call_limit = max(0, min(int(request.calls_remaining), preset_limit))
+        # The preset bounds how many different tool definitions a small model
+        # sees.  It must not also truncate a batch of calls authored by that
+        # model (ten estimate rows may legitimately require ten searches).
+        call_limit = max(0, int(request.calls_remaining))
         result_chars_limit = max(0, int(request.result_chars_remaining))
         allowed_effects = _PHASE_EFFECTS.get(request.workflow_phase, frozenset())
         omitted: dict[str, list[str]] = {}

@@ -66,12 +66,66 @@ def test_tool_selector_request_declares_bound_attachment_without_copying_its_tex
     assert "attachment_context" not in payload
 
 
+def test_native_model_tool_schemas_preserve_registered_contract():
+    schemas = service.native_model_tool_schemas(
+        [
+            {
+                "name": "search_sources",
+                "summary": "Search selected sources",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
+
+    assert schemas == [
+        {
+            "type": "function",
+            "function": {
+                "name": "search_sources",
+                "description": "Search selected sources",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+    ]
+
+
+def test_model_authored_search_batch_is_not_cut_to_five_calls():
+    raw = json.dumps(
+        {
+            "calls": [
+                {"tool": "search_sources", "args": {"q": f"work item {index}"}}
+                for index in range(10)
+            ]
+        }
+    )
+
+    calls = chat._parse_model_tool_calls(
+        raw,
+        allowed_tools={"search_sources"},
+        max_calls=48,
+    )
+
+    assert [call["args"]["q"] for call in calls] == [
+        f"work item {index}" for index in range(10)
+    ]
+
+
 async def _async_append(target, value):
     target.append(value)
 
 
 async def _fake_workbook_execution(call, context, progress, _events):
-    assert call["tool"] == "build_vor_workbook"
+    assert call["tool"] in {"build_lsr_workbook", "build_vor_workbook"}
     assert context["attachment_id"] == "read_123456abcdef"
     await progress({
         "call_id": call.get("call_id") or "workbook-call-1",
@@ -83,7 +137,7 @@ async def _fake_workbook_execution(call, context, progress, _events):
     })
     return {
         "schema": "les.workbook_tool_result.v1",
-        "tool": "build_vor_workbook",
+        "tool": call["tool"],
         "status": "complete",
         "artifact": {
             "revision_id": "rev-2",
@@ -767,6 +821,30 @@ def test_plain_ai_scope_removes_only_document_evidence_tools() -> None:
     ) == ["search_sources", "read_source", "calculate"]
 
 
+def test_estimator_role_uses_model_authored_initial_rag_query() -> None:
+    assert service.profile_uses_model_driven_retrieval(
+        {
+            "mode": "estimator",
+            "rag_policy": {
+                "system_datasets": ["smeta"],
+                "model_authored_initial_query": True,
+            },
+        }
+    ) is True
+    assert service.profile_uses_model_driven_retrieval(
+        {
+            "mode": "estimator",
+            "rag_policy": {"system_datasets": ["smeta"]},
+        }
+    ) is False
+    assert service.profile_uses_model_driven_retrieval(
+        {
+            "mode": "search",
+            "rag_policy": {"model_authored_initial_query": True},
+        }
+    ) is True
+
+
 def test_application_routes_model_search_sources_through_canonical_research_service() -> None:
     source = inspect.getsource(service._execute_chat_evidence_application)
 
@@ -829,6 +907,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "active_model_rag_result",
         "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
@@ -845,6 +924,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "active_model_rag_result",
         "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
@@ -853,15 +933,18 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "active_model_rag_result",
         "candidate_workbook",
     }
     candidate_acceptance = scenario == "candidate_workbook"
     rejected_workbook = scenario == "active_workbook_rejected"
+    model_rag_result = scenario == "active_model_rag_result"
     active = scenario in {
         "active",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
+        "active_model_rag_result",
         "candidate_workbook",
     }
     inactive_workbook = workbook_profile and not active
@@ -873,6 +956,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     history_rows = []
     progress_events = []
     workbook_executor_calls = []
+    rag_queries = []
+    exact_decisions = [
+        {
+            "row_id": "row-1",
+            "status": "bind",
+            "norm_code": "ГЭСНм08-02-401-01",
+            "reason": "Монтаж оборудования по найденной карточке нормы",
+        }
+    ]
     protected_db = tmp_path / "protected.db"
     with sqlite3.connect(protected_db) as conn:
         conn.execute("CREATE TABLE protected_events (value TEXT NOT NULL)")
@@ -1001,6 +1093,35 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     class ExecutorBackedHarness:
         def shortlist(self, *_args, **kwargs):
             shortlist_policies.append(dict(kwargs))
+            if model_rag_result:
+                return {
+                    "schema": "les_tool_shortlist_v1",
+                    "tools": [
+                        {
+                            "name": "search_sources",
+                            "summary": "Search frozen datasets with native RRF",
+                            "input_schema": {
+                                "type": "object",
+                                "properties": {"q": {"type": "string"}},
+                                "required": ["q"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        {
+                            "name": "build_lsr_workbook",
+                            "summary": "Render model decisions as XLSX",
+                            "input_schema": {
+                                "type": "object",
+                                "properties": {
+                                    "attachment_id": {"type": "string"},
+                                    "decisions": {"type": "array"},
+                                },
+                                "required": ["attachment_id", "decisions"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    ],
+                }
             return {
                 "schema": "les_tool_shortlist_v1",
                 "tools": [{"name": "build_vor_workbook" if workbook_profile else "read_source"}],
@@ -1050,15 +1171,18 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             }
 
     class FakeRetrieval:
-        chunks = []
         trace = SimpleNamespace(status="ok", error_code="")
         quality = SimpleNamespace(status="weak", top_score=0.0)
+
+        def __init__(self, chunks=()):
+            self.chunks = list(chunks)
 
         def payload(self):
             return {"schema": "retrieval_trace_v1", "status": "ok"}
 
     class FakeWindows:
-        chunks = []
+        def __init__(self, chunks=()):
+            self.chunks = list(chunks)
 
         def payload(self):
             return {"schema": "context_windows_v1", "count": 0}
@@ -1142,39 +1266,68 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         class ActiveTransport:
             def __init__(self):
                 self.revisions = []
-                self.responses = [
-                    InferenceResponse(
-                        text="",
-                        tool_calls=(
-                            (
-                                {"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
-                                {"id": "workbook-call-2", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
-                            )
-                            if rejected_workbook
-                                else ({"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": ('{"attachment_id":"read_123456abcdef","question":"C:/private/les/SECRET_TRACE_TOKEN"}' if scenario == "active_workbook_private_arg" else '{"attachment_id":"read_123456abcdef"}')} },)
-                        ) if active_workbook else (
-                            {"id": "c1", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d1"}'}},
-                            {"id": "c2", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d2"}'}},
+                self.requests = []
+                if model_rag_result:
+                    self.responses = [
+                        InferenceResponse(
+                            text="",
+                            tool_calls=(
+                                {"id": "search-1", "type": "function", "function": {"name": "search_sources", "arguments": '{"q":"монтаж шкафа управления"}'}},
+                                {"id": "search-2", "type": "function", "function": {"name": "search_sources", "arguments": '{"q":"прокладка контрольного кабеля"}'}},
+                            ),
+                            finish_reason="tool_calls",
+                            usage={},
                         ),
-                        finish_reason="tool_calls",
-                        usage={},
-                    ),
-                    InferenceResponse(
-                        text="active visible answer" if active_workbook else '{"calls":[]}',
-                        tool_calls=(),
-                        finish_reason="stop",
-                        usage={"completion_tokens": 5},
-                    ),
-                    InferenceResponse(
-                        text="active visible answer",
-                        tool_calls=(),
-                        finish_reason="stop",
-                        usage={"completion_tokens": 5},
-                    ),
-                ]
+                        InferenceResponse(
+                            text="",
+                            tool_calls=(
+                                {"id": "workbook-1", "type": "function", "function": {"name": "build_lsr_workbook", "arguments": json.dumps({"attachment_id": "read_123456abcdef", "decisions": exact_decisions}, ensure_ascii=False)}},
+                            ),
+                            finish_reason="tool_calls",
+                            usage={},
+                        ),
+                        InferenceResponse(
+                            text="active visible answer",
+                            tool_calls=(),
+                            finish_reason="stop",
+                            usage={"completion_tokens": 5},
+                        ),
+                    ]
+                else:
+                    self.responses = [
+                        InferenceResponse(
+                            text="",
+                            tool_calls=(
+                                (
+                                    {"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
+                                    {"id": "workbook-call-2", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'} },
+                                )
+                                if rejected_workbook
+                                    else ({"id": "workbook-call-1", "type": "function", "function": {"name": "build_vor_workbook", "arguments": ('{"attachment_id":"read_123456abcdef","question":"C:/private/les/SECRET_TRACE_TOKEN"}' if scenario == "active_workbook_private_arg" else '{"attachment_id":"read_123456abcdef"}')} },)
+                            ) if active_workbook else (
+                                {"id": "c1", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d1"}'}},
+                                {"id": "c2", "type": "function", "function": {"name": "read_source", "arguments": '{"doc_id":"d2"}'}},
+                            ),
+                            finish_reason="tool_calls",
+                            usage={},
+                        ),
+                        InferenceResponse(
+                            text="active visible answer" if active_workbook else '{"calls":[]}',
+                            tool_calls=(),
+                            finish_reason="stop",
+                            usage={"completion_tokens": 5},
+                        ),
+                        InferenceResponse(
+                            text="active visible answer",
+                            tool_calls=(),
+                            finish_reason="stop",
+                            usage={"completion_tokens": 5},
+                        ),
+                    ]
 
             async def complete(self, connection, _request):
                 self.revisions.append(connection.revision_id)
+                self.requests.append(_request)
                 return self.responses.pop(0)
 
         active_transport = ActiveTransport()
@@ -1252,14 +1405,19 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     request = service.EvidenceRequestContext(
         req=SimpleNamespace(
-            question="Проверь документы",
-            mode="rag",
+            question="Собери ЛСР" if model_rag_result else "Проверь документы",
+            mode="estimator" if model_rag_result else "rag",
             response_length="short",
             output_directive="",
             session_id="session-1",
             dataset_filter=None,
-            project_id=0,
-            attachment_id="read_123456abcdef" if workbook_profile else None,
+                project_id=0,
+                attachment_id="read_123456abcdef" if workbook_profile else None,
+                attachment_context=(
+                    "Строка 1: монтаж шкафа управления — 2 шт."
+                    if model_rag_result
+                    else ""
+                ),
             candidate_acceptance=candidate_acceptance,
             reranker_enabled=None,
         ),
@@ -1285,11 +1443,46 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         request_started_at=1.0,
         profile_snapshot={
             "revision_id": "fixture-profile:1",
-            "tools": ["build_vor_workbook" if workbook_profile else "read_source"],
-            "rag_policy": {"iterative": False},
+            "mode": "estimator" if model_rag_result else "rag",
+            "tools": (
+                ["search_sources", "build_lsr_workbook"]
+                if model_rag_result
+                else ["build_vor_workbook" if workbook_profile else "read_source"]
+            ),
+            "rag_policy": (
+                {
+                    "iterative": True,
+                    "system_datasets": ["smeta"],
+                    "model_authored_initial_query": True,
+                }
+                if model_rag_result
+                else {"iterative": False}
+            ),
             "prompt_text": "Answer only from evidence.",
         },
     )
+
+    def retrieve_fixture(**kwargs):
+        if not model_rag_result:
+            return _async_value(FakeRetrieval())
+        rag_queries.append(kwargs["question"])
+        return _async_value(
+            FakeRetrieval(
+                [
+                        SimpleNamespace(
+                            content=f"Карточка нормы для {kwargs['question']}",
+                            doc_id="doc-fsnb",
+                            doc_name="ФСНБ",
+                        score=0.9,
+                        meta={
+                            "dataset_id": "selected",
+                            "chunk_id": f"chunk-{len(rag_queries)}",
+                        },
+                    )
+                ]
+            )
+        )
+
     runtime = service.EvidenceRuntimeDeps(
         state=state,
         rag_backend=SimpleNamespace(collection_name="fixture"),
@@ -1307,7 +1500,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         env_bool=lambda _key, default=False: default,
         env_float=lambda _key, default=0.0: default,
         env_int=lambda _key, default=0: default,
-        expand_context_windows=lambda *_args, **_kwargs: FakeWindows(),
+        expand_context_windows=lambda chunks, *_args, **_kwargs: FakeWindows(chunks),
         format_tool_results_for_model=lambda rows: json.dumps(rows, ensure_ascii=False),
         generation_token_budget=lambda **_kwargs: 128,
         llm_runtime=lambda: runtime_config,
@@ -1330,7 +1523,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         ),
         prepare_notebook_reader_memory=lambda *_args, **_kwargs: None,
         record_cloud_cost=lambda *_args, **_kwargs: None,
-        retrieve_chat_chunks=lambda **_kwargs: _async_value(FakeRetrieval()),
+        retrieve_chat_chunks=retrieve_fixture,
         source_excerpts=lambda *_args, **_kwargs: [],
         table_query_response=lambda **_kwargs: None,
         cloud_fallback_models=lambda runtime: [runtime.model] if cloud_retry else [],
@@ -1371,6 +1564,29 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
     after_protected = protected_hash()
+    if model_rag_result:
+        assert result["answer"] == "active visible answer"
+        assert rag_queries == [
+            "монтаж шкафа управления",
+            "прокладка контрольного кабеля",
+        ]
+        assert "Собери ЛСР" not in rag_queries
+        assert workbook_executor_calls[0]["args"]["decisions"] == exact_decisions
+        assert active_transport.revisions == ["conn:active:r3"] * 3
+        assert {
+            item["function"]["name"] for item in active_transport.requests[0].tools
+        } == {"search_sources", "build_lsr_workbook"}
+        assert "Строка 1: монтаж шкафа управления — 2 шт." in str(
+            active_transport.requests[0].messages
+        )
+        assert history_rows[0]["retrieval_trace"]["status"] == "model_driven"
+        assert history_rows[0]["retrieval_trace"]["reason"] == (
+            "awaiting_model_authored_query"
+        )
+        tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
+        assert "stop_reason" in tool_loop, tool_loop
+        assert tool_loop["stop_reason"] == "workbook_complete"
+        return
     if inactive_workbook:
         assert result["answer"] == "legacy visible answer"
         assert shortlist_policies == []
@@ -1388,7 +1604,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "model_id": "active-model",
                 "locality": "loopback",
                 "fallback_used": False,
-                "pending_tool_calls": 0 if active_workbook and not rejected_workbook else 1,
+                "pending_tool_calls": 0,
         }
         assert result["source_scope"] == {
             "requested": ["selected"],
@@ -1431,7 +1647,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 assert trace["route_comparison"]["candidate_acceptance"] is True
                 assert trace["route_comparison"]["legacy_output_authoritative"] is False
         else:
-            assert [call[1]["doc_id"] for call in legacy_calls] == ["d1"]
+            assert [call[1]["doc_id"] for call in legacy_calls] == ["d1", "d2"]
         assert history_rows[0]["retrieval_trace"]["context_governor"]["preset_id"] == "active-preset"
         assert after_protected == before_protected
         return

@@ -51,6 +51,19 @@
 > model-owned shortlist/исполнении. Маршрутный trace показывает владельца через
 > `tool_policy_source=chat_profile_snapshot`; эффективное поведение не изменено.
 
+> **0.30.30 model → RAG → result:** estimator Factory Base связывает роль с
+> typed system datasets `smeta`, но не создаёт поисковые фразы. Для профиля с
+> `rag_policy.model_authored_initial_query=true`
+> `chat_evidence_application_service.py` не делает initial retrieval по исходной
+> команде; attachment text входит в первый evidence packet, active answer model
+> получает native schemas `search_sources/read_source/build_*_workbook`, сама
+> вызывает общий `ModelResearchToolService → retrieve_chat_chunks` и передаёт
+> exact `decisions` workbook adapter. `BoundModelChatRunner` сохраняет все calls
+> одного ответа; `CapabilityBroker` разделяет число видимых tool definitions и
+> бюджет вызовов. `_augment_model_tool_args` добавляет frozen scope, но никогда
+> не подставляет user command вместо model-authored `search_sources.q`. Имя
+> режима в application-коде не проверяется.
+
 > **0.30.6 transactional delete bridge:** `tools/vps_patch.py` кодирует удаление
 > runtime content как обратно совместимый v2 entry с `operation=delete` и
 > нулевым payload. `proxy/services/update_service.py` считает целевым состоянием
@@ -63,8 +76,9 @@
 > **0.30.1 model-owned evidence-first RAG:** `scope_service.py` задаёт только
 > явные `none | selected | all`; `chat.py` отключает semantic answer cache для
 > grounded chat и не расширяет scope по тексту вопроса.
-> `chat_evidence_application_service.py` сначала получает production RRF
-> evidence, затем даёт модели повторять поиск до `calls: []`/deadline и
+> Для обычного явно выбранного document scope application сначала получает
+> production RRF evidence; для role-bound estimator первый query делает модель.
+> Затем application даёт модели повторять поиск до model stop/deadline и
 > возвращает финальный текст без semantic validation/rewrite.
 > `model_research_tool_service.py` связывает model tool `search_sources` с тем
 > же `retrieval_service.retrieve_chat_chunks()` и замороженными dataset IDs.

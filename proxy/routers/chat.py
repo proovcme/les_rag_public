@@ -758,7 +758,11 @@ def _augment_model_tool_args(
     if tool == "dataset_map" and dataset_ids and not args.get("dataset_id"):
         args["dataset_id"] = dataset_ids[0]
     if tool in {"search_sources", "read_source", "read_pdf_source", "read_excel_source", "look_at_pdf_page"}:
-        if question and not (args.get("q") or args.get("question")):
+        if (
+            tool != "search_sources"
+            and question
+            and not (args.get("q") or args.get("question"))
+        ):
             args["question" if tool == "look_at_pdf_page" else "q"] = question
         if dataset_ids:
             if tool == "search_sources" and not args.get("dataset_ids") and not args.get("dataset_id"):
@@ -3543,7 +3547,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             pid = req.project_id
 
     # Resolve one persistent profile snapshot before any professional route.
-    from proxy.services.chat_profile_service import resolve_chat_profile
+    from proxy.services.chat_profile_service import (
+        resolve_chat_profile,
+        resolve_profile_system_dataset_ids,
+    )
 
     try:
         _profile_snapshot = resolve_chat_profile(
@@ -3703,6 +3710,22 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         except Exception as proj_err:
             logger.warning("[PROJECT] scope resolve failed: %s", proj_err)
 
+    profile_dataset_ids = resolve_profile_system_dataset_ids(
+        _profile_snapshot,
+        current_dataset_ids=effective_dataset_ids,
+    )
+    profile_bound_system_datasets = profile_dataset_ids != list(
+        effective_dataset_ids or []
+    )
+    if profile_bound_system_datasets:
+        effective_dataset_ids = profile_dataset_ids
+        grounding_enabled = True
+        logger.info(
+            "[PROFILE] revision %s bound system datasets %s",
+            _profile_snapshot.get("revision_id"),
+            profile_dataset_ids,
+        )
+
     query_intent = route_query(
         req.question,
         dataset_filter=req.dataset_filter,
@@ -3731,6 +3754,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         scope_source = "explicit_dataset_filter"
     elif req.project_id:
         scope_source = "explicit_project"
+    elif profile_bound_system_datasets:
+        scope_source = "profile_system_datasets"
     elif effective_dataset_filter:
         scope_source = "inferred_filter"
     else:

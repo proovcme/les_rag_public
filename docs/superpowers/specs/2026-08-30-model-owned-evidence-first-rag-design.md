@@ -13,6 +13,11 @@ The ordinary grounded-chat path must prove two things:
 1. the initial retrieval is the common contract-clean native `dense + bm25_sparse` RRF inside the exact explicit scope;
 2. the model sees that initial evidence before it decides whether and how to search or read again.
 
+For an explicitly selected role dataset whose query must be derived from an
+attachment (the estimator case), the same rule is specialized deliberately:
+the attachment is the initial evidence and the model authors the first native
+RRF query. Code must not use the workflow command itself as that query.
+
 ## Product scope
 
 Document scope has three explicit states:

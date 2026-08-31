@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 961 |
-| Строк Python | 298596 |
+| Строк Python | 299032 |
 | PRODUCT_REACHABLE | 337 |
 | RUNTIME_SUPPORT | 8 |
 | TEST_OR_TOOL_ONLY | 615 |
@@ -36,12 +36,12 @@
 | sovushka/pages/chat.py | 4688 | 5 |
 | backend/qdrant_adapter.py | 4539 | 28 |
 | sovushka/uikit/tokens.py | 4197 | 2 |
-| proxy/routers/chat.py | 4070 | 40 |
+| proxy/routers/chat.py | 4095 | 40 |
 | sovushka/pages/documents.py | 3895 | 2 |
 | proxy/routers/datasets.py | 3776 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
-| proxy/services/chat_evidence_application_service.py | 2734 | 7 |
+| proxy/services/chat_evidence_application_service.py | 2825 | 7 |
 | proxy/services/smeta_chat_adapter_service.py | 2437 | 14 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |

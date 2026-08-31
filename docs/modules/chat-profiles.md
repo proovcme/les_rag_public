@@ -23,6 +23,16 @@ server-owned attachment и его временном ID. Поэтому мало
 вместить весь извлечённый XLSX-текст только для понимания, что workbook-tool
 можно применить. Выбор инструмента и его предметные аргументы остаются за моделью.
 
+**Build 670:** Factory Base «Сметчик» сводит capability к
+`search_sources`, `read_source`, `build_lsr_workbook`, `build_vor_workbook` и
+явно привязывает typed system datasets модуля `smeta`. Профиль не формирует
+запросы и не выбирает нормы. Модель видит attachment evidence в первом active
+call, сама делает native tool calls общего RAG и передаёт свои решения
+workbook adapter. Ограничение количества tool definitions малого preset не
+обрезает число поисков в одном model response. Передача первого запроса модели
+задаётся общей политикой `rag_policy.model_authored_initial_query`, а не
+зашитым в application-код именем режима.
+
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию
@@ -50,7 +60,7 @@ Allowlist имеет одного владельца: `chat_profile_service` с�
 
 ## Точки входа
 
-- `proxy/services/chat_profile_service.py` — хранение, лимиты и публикация ревизий;
+- `proxy/services/chat_profile_service.py` — хранение, лимиты, system-dataset binding и публикация ревизий;
 - `proxy/routers/profiles.py` — registry и HTTP-контракт ошибок;
 - `proxy/services/profile_resolver.py` — разрешение route/profile policy без tool allowlist;
 - `sovushka/pages/profiles.py` — редактор, счётчики и client-side guard;

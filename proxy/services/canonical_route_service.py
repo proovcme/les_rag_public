@@ -124,11 +124,13 @@ class BoundModelChatRunner:
         *,
         connection: ResolvedModelConnection | Any | None,
         fallback_used: bool,
+        preserve_all_tool_calls: bool = False,
     ) -> ModelChatResult:
         calls = tuple(response.tool_calls)
+        visible_calls = calls if preserve_all_tool_calls else calls[:1]
         bounded = InferenceResponse(
             text=response.text,
-            tool_calls=calls[:1],
+            tool_calls=visible_calls,
             finish_reason=response.finish_reason,
             usage=response.usage,
         )
@@ -136,7 +138,7 @@ class BoundModelChatRunner:
             response=bounded,
             connection=connection,
             fallback_used=fallback_used,
-            pending_tool_calls=max(0, len(calls) - 1),
+            pending_tool_calls=max(0, len(calls) - len(visible_calls)),
         )
 
     @staticmethod
@@ -179,17 +181,32 @@ class BoundModelChatRunner:
         if primary.locality is ConnectionLocality.REMOTE and not remote_allowed:
             fallback = self.resolver.resolve_fallback(primary.revision_id)
             response = await self.transport.complete(fallback, request)
-            return self._bounded_result(response, connection=fallback, fallback_used=True)
+            return self._bounded_result(
+                response,
+                connection=fallback,
+                fallback_used=True,
+                preserve_all_tool_calls=True,
+            )
         try:
             response = await self.transport.complete(primary, request)
-            return self._bounded_result(response, connection=primary, fallback_used=False)
+            return self._bounded_result(
+                response,
+                connection=primary,
+                fallback_used=False,
+                preserve_all_tool_calls=True,
+            )
         except ModelTransportError as primary_error:
             try:
                 fallback = self.resolver.resolve_fallback(primary.revision_id)
             except ModelConnectionResolutionError:
                 raise primary_error
             response = await self.transport.complete(fallback, request)
-            return self._bounded_result(response, connection=fallback, fallback_used=True)
+            return self._bounded_result(
+                response,
+                connection=fallback,
+                fallback_used=True,
+                preserve_all_tool_calls=True,
+            )
 
 
 def resolve_canonical_route(
