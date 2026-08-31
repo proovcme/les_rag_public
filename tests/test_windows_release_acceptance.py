@@ -20,6 +20,22 @@ STARTING = {
 }
 
 
+def test_native_rrf_fixture_is_large_enough_to_produce_evidence_chunk():
+    marker = "les acceptance native rrf " + "a" * 32
+
+    payload = acceptance._native_rrf_fixture(marker)
+
+    assert len(payload.decode("utf-8")) >= 300
+    assert marker in payload.decode("utf-8")
+
+
+def test_native_rrf_cleanup_requests_guarded_ephemeral_policy():
+    assert acceptance._native_rrf_cleanup_url("ds-1") == (
+        f"{acceptance.PROXY}/api/rag/datasets/ds-1"
+        "?recovery_policy=release_acceptance_ephemeral"
+    )
+
+
 def _patch_dependencies(monkeypatch, calls):
     installs = iter(
         [

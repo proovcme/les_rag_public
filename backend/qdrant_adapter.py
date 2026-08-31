@@ -399,6 +399,40 @@ EMBED_BATCH  = int(os.getenv("RAG_EMBED_BATCH", "16"))      # чанков за 
 EMBED_TIMEOUT = float(os.getenv("RAG_EMBED_TIMEOUT_SEC", "300"))
 MIN_CHUNK    = int(os.getenv("RAG_MIN_CHUNK_CHARS", "100"))  # W2.5: <100 симв — шум («Приложение», «А»), не индексируем
 FINAL_MIN_CHUNK = int(os.getenv("RAG_FINAL_MIN_CHUNK_CHARS", "20"))
+
+
+def _apply_collection_count_health(
+    snapshot: Dict[str, Any], *, physical_points: int
+) -> None:
+    """Compare one physical collection only with catalog rows owned by it.
+
+    Module-owned system datasets can use typed stores or dedicated indexes.  They
+    remain visible in global MetaDB totals but are not evidence that the active
+    general collection is incomplete.
+    """
+    datasets = snapshot.get("datasets") or []
+    comparable = sum(
+        int(item.get("chunks") or 0)
+        for item in datasets
+        if str(item.get("dataset_scope") or "user").casefold() != "system"
+    )
+    excluded = sum(
+        int(item.get("chunks") or 0)
+        for item in datasets
+        if str(item.get("dataset_scope") or "user").casefold() == "system"
+    )
+    qdrant = snapshot.setdefault("qdrant", {})
+    matches = int(physical_points) == comparable
+    qdrant["count_comparison_scope"] = "active_user_catalog"
+    qdrant["catalog_comparable_chunks"] = comparable
+    qdrant["catalog_excluded_system_chunks"] = excluded
+    qdrant["points_match_sqlite_chunks"] = matches
+    if not matches:
+        qdrant["mismatch"] = {
+            "catalog_comparable_chunks": comparable,
+            "qdrant_points": int(physical_points),
+        }
+        snapshot["status"] = "degraded"
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant
 TABLE_ROW_INDEX_MAX_CHUNKS = int(os.getenv("RAG_TABLE_ROW_INDEX_MAX_CHUNKS", "600"))
 VERIFY_POINTS_EVERY = max(1, int(os.getenv("RAG_VERIFY_POINTS_EVERY", "1")))  # P0: exact-count каждый файл by default
@@ -2254,14 +2288,7 @@ class QdrantLlamaIndexAdapter(RAGBackend):
                 )
                 if not fingerprint_ready:
                     snapshot["status"] = "degraded"
-                expected_chunks = snapshot.get("totals", {}).get("chunks") or 0
-                snapshot["qdrant"]["points_match_sqlite_chunks"] = points == expected_chunks
-                if points != expected_chunks:
-                    snapshot["qdrant"]["mismatch"] = {
-                        "sqlite_chunks": expected_chunks,
-                        "qdrant_points": points,
-                    }
-                    snapshot["status"] = "degraded"
+                _apply_collection_count_health(snapshot, physical_points=int(points))
                 guard_status = str((snapshot.get("catalog_guard") or {}).get("status") or "")
                 if guard_status in {"degraded", "blocked"}:
                     snapshot["status"] = "degraded"

@@ -940,7 +940,14 @@ async def run_parse_scheduler(
 
 
 @router.delete("/datasets/{dataset_id}")
-async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
+async def delete_dataset(
+    dataset_id: str,
+    recovery_policy: str = Query(
+        default="required",
+        pattern="^(required|release_acceptance_ephemeral)$",
+    ),
+    _admin=Depends(require_root_admin),
+):
     try:
         from proxy.services.dataset_deletion_service import delete_datasets_safely
         from proxy.services.lexical_index_service import LexicalIndex
@@ -951,6 +958,7 @@ async def delete_dataset(dataset_id: str, _admin=Depends(require_root_admin)):
             meta_db_path=rag_meta_db_path(),
             storage_root=mutable_path("./storage/datasets"),
             lexical_index=LexicalIndex(),
+            recovery_policy=recovery_policy,
         )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

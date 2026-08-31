@@ -26,7 +26,10 @@ make release RELEASE_ARGS='run --host local --publish'
 3. На текущем Legion (`--host local`) ставит точные candidate bytes штатным
    путём, проверяет identity,
    живые proxy/UI отдельно от внешних capabilities и, если Qdrant был доступен, временный native
-   `dense + qdrant_sparse → RRF` dataset.
+   `dense + qdrant_sparse → RRF` dataset. Контрольный текст гарантированно длиннее
+   фильтра коротких чанков; recovery-free cleanup разрешён только exact-набору
+   `LES acceptance <uuid>` с единственным `release-acceptance.txt`, поэтому smoke
+   не делает полный snapshot пользовательской коллекции.
 4. Выполняет controlled rollback, проверяет восстановленную версию и повторно
    ставит те же candidate bytes.
 5. Только после stage `accepted` проверяет, что публичный `main` является
@@ -73,6 +76,9 @@ alias (например, `legion`) указывается только при д
 - Исчезновение ранее доступной capability прекращает приёмку.
 - Недоступный до обновления внешний Qdrant получает честный `N/A`; ЛЕС его не
   устанавливает и не запускает.
+- На Windows способ запуска внешнего Qdrant остаётся ответственностью оператора;
+  release-процедура проверяет доступность и continuity, но не создаёт и не
+  переписывает Scheduled Task.
 - `%LOCALAPPDATA%\LES` не входит в application transaction.
 - `--skip-gates` создаёт навсегда непубликуемый dev-attempt.
 - Ошибка после публикации — критический immutable-release incident; stage

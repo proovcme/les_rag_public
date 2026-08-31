@@ -575,6 +575,7 @@
         "tests/test_pdf_contour_service.py",
         "tests/test_qdrant_adapter_parse.py",
         "tests/test_qdrant_collection_layout.py",
+        "tests/test_qdrant_health_count_contract.py",
         "tests/test_raptor_retrieval.py",
         "tests/test_system_dataset_service.py",
         "tools/activate_qdrant_generation.py",
@@ -587,7 +588,7 @@
         "tools/smeta_embedding_parity.py",
         "tools/smeta_rag_quality_probe.py"
       ],
-      "lines": 4512,
+      "lines": 4539,
       "module": "backend.qdrant_adapter",
       "outbound": [
         "backend/__init__.py",
@@ -1753,7 +1754,7 @@
         "tests/test_scope_model_v21.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3768,
+      "lines": 3776,
       "module": "proxy.routers.datasets",
       "outbound": [
         "backend/converter.py",
@@ -3332,7 +3333,7 @@
         "proxy/routers/datasets.py",
         "tests/test_dataset_deletion_service.py"
       ],
-      "lines": 235,
+      "lines": 286,
       "module": "proxy.services.dataset_deletion_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9317,7 +9318,7 @@
     },
     {
       "inbound": [],
-      "lines": 131,
+      "lines": 188,
       "module": "tests.test_dataset_deletion_service",
       "outbound": [
         "proxy/services/dataset_deletion_service.py"
@@ -11499,6 +11500,17 @@
     },
     {
       "inbound": [],
+      "lines": 41,
+      "module": "tests.test_qdrant_health_count_contract",
+      "outbound": [
+        "backend/qdrant_adapter.py"
+      ],
+      "path": "tests/test_qdrant_health_count_contract.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 69,
       "module": "tests.test_query_router",
       "outbound": [
@@ -13497,7 +13509,7 @@
     },
     {
       "inbound": [],
-      "lines": 196,
+      "lines": 212,
       "module": "tests.test_windows_release_acceptance",
       "outbound": [
         "tools/windows_release_acceptance.py"
@@ -15952,7 +15964,7 @@
         "tests/test_windows_release_acceptance.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 410,
+      "lines": 430,
       "module": "tools.windows_release_acceptance",
       "outbound": [
         "tools/__init__.py",
@@ -18009,9 +18021,9 @@
     "product_reachable": 337,
     "registered_api_routes": 330,
     "runtime_support": 8,
-    "test_or_tool_only": 614,
-    "tracked_python_files": 960,
-    "tracked_python_lines": 297684
+    "test_or_tool_only": 615,
+    "tracked_python_files": 961,
+    "tracked_python_lines": 297904
   },
   "warnings": []
 }

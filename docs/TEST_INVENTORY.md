@@ -33,7 +33,9 @@
 - UI: общий UIKit, WCAG AA, документы, чат, источники, model connections и
   отсутствие скрытого автоматического scope.
 - Runtime/release: Windows process ownership, persistent-state boundary,
-  lightweight/full update, immutable receipt, installed acceptance и rollback.
+  lightweight/full update, immutable receipt, installed acceptance и rollback;
+  native-RRF fixture не может схлопнуться в zero-chunk, а его exact временный
+  dataset удаляется без snapshot всей пользовательской коллекции.
 - Профессиональные модули: только их действующие contract-тесты. Сметный
   benchmark запускается отдельно и не заменяется общим pytest.
 

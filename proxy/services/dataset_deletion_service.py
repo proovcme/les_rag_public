@@ -1,14 +1,16 @@
-"""Fail-closed, recoverable deletion of RAG datasets.
+"""Fail-closed deletion of RAG datasets.
 
 Cross-store deletion cannot be made truly atomic across Qdrant, SQLite and the
 filesystem.  This coordinator therefore creates recovery evidence first,
 verifies every remote mutation, and only then commits the catalog deletion.
 If Qdrant or lexical cleanup fails, MetaDB and project links remain intact.
+The sole recovery-free path is a strictly identified release-acceptance fixture.
 """
 
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 import sqlite3
 import time
@@ -24,6 +26,7 @@ class DatasetDeletionError(RuntimeError):
 
 
 _DELETE_LOCK = asyncio.Lock()
+_RELEASE_ACCEPTANCE_NAME = re.compile(r"LES acceptance [0-9a-f]{32}")
 
 
 def _recovery_root(meta_db_path: Path) -> Path:
@@ -56,6 +59,22 @@ def _dataset_exists(meta_db_path: Path, dataset_id: str) -> bool:
     with sqlite3.connect(meta_db_path) as conn:
         row = conn.execute("SELECT 1 FROM datasets WHERE id=?", (dataset_id,)).fetchone()
     return bool(row)
+
+
+def _is_release_acceptance_fixture(meta_db_path: Path, dataset_id: str) -> bool:
+    with sqlite3.connect(meta_db_path) as conn:
+        dataset = conn.execute(
+            "SELECT name FROM datasets WHERE id=?", (dataset_id,)
+        ).fetchone()
+        documents = conn.execute(
+            "SELECT file_name FROM documents WHERE dataset_id=? ORDER BY file_name",
+            (dataset_id,),
+        ).fetchall()
+    return bool(
+        dataset
+        and _RELEASE_ACCEPTANCE_NAME.fullmatch(str(dataset[0] or ""))
+        and [str(row[0] or "") for row in documents] == ["release-acceptance.txt"]
+    )
 
 
 def _delete_catalog_rows(meta_db_path: Path, dataset_ids: list[str]) -> None:
@@ -147,8 +166,9 @@ async def delete_datasets_safely(
     meta_db_path: str | Path,
     storage_root: str | Path,
     lexical_index: Any,
+    recovery_policy: str = "required",
 ) -> dict[str, Any]:
-    """Delete selected datasets only after recoverable, verified preparation."""
+    """Delete datasets with required recovery or the exact acceptance exception."""
     unique_ids = list(dict.fromkeys(str(value).strip() for value in dataset_ids if str(value).strip()))
     if not unique_ids:
         raise KeyError("no datasets selected")
@@ -156,19 +176,34 @@ async def delete_datasets_safely(
     missing = [dataset_id for dataset_id in unique_ids if not _dataset_exists(db_path, dataset_id)]
     if missing:
         raise KeyError(f"datasets not found: {', '.join(missing)}")
+    if recovery_policy not in {"required", "release_acceptance_ephemeral"}:
+        raise DatasetDeletionError(f"unsupported recovery policy: {recovery_policy}")
+    ephemeral = recovery_policy == "release_acceptance_ephemeral"
+    if ephemeral and not (
+        len(unique_ids) == 1
+        and _is_release_acceptance_fixture(db_path, unique_ids[0])
+    ):
+        raise DatasetDeletionError(
+            "recovery-free deletion is limited to the exact release acceptance fixture"
+        )
 
     async with _DELETE_LOCK:
-        recovery_dir = _new_recovery_dir(db_path, "datasets")
-        db_backup = recovery_dir / db_path.name
-        _backup_sqlite(db_path, db_backup)
+        recovery_dir = None if ephemeral else _new_recovery_dir(db_path, "datasets")
+        db_backup = None if recovery_dir is None else recovery_dir / db_path.name
+        if db_backup is not None:
+            _backup_sqlite(db_path, db_backup)
 
         qdrant_base = qdrant_url.rstrip("/")
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
-                snapshot = await _qdrant_snapshot(
-                    client,
-                    qdrant_url=qdrant_base,
-                    collection=collection,
+                snapshot = (
+                    None
+                    if ephemeral
+                    else await _qdrant_snapshot(
+                        client,
+                        qdrant_url=qdrant_base,
+                        collection=collection,
+                    )
                 )
                 points_before = await _qdrant_count(
                     client,
@@ -208,8 +243,13 @@ async def delete_datasets_safely(
                     lexical_index.delete_dataset(collection, dataset_id=dataset_id) or 0
                 )
         except Exception as exc:
+            recovery_note = (
+                "ephemeral acceptance cleanup"
+                if ephemeral
+                else "the recoverable Qdrant snapshot"
+            )
             raise DatasetDeletionError(
-                f"lexical deletion failed after the recoverable Qdrant snapshot; MetaDB was preserved: {exc}"
+                f"lexical deletion failed after {recovery_note}; MetaDB was preserved: {exc}"
             ) from exc
 
         _delete_catalog_rows(db_path, unique_ids)
@@ -218,7 +258,14 @@ async def delete_datasets_safely(
         for path in storage_dirs:
             if storage_base not in path.parents:
                 raise DatasetDeletionError(f"unsafe dataset storage path: {path}")
-        quarantined = _quarantine_storage(storage_dirs, recovery_dir)
+        if ephemeral:
+            for path in storage_dirs:
+                if path.exists():
+                    shutil.rmtree(path)
+            quarantined: list[str] = []
+        else:
+            assert recovery_dir is not None
+            quarantined = _quarantine_storage(storage_dirs, recovery_dir)
 
         return {
             "status": "deleted",
@@ -226,10 +273,14 @@ async def delete_datasets_safely(
             "points_before": points_before,
             "points_after": points_after,
             "lexical_deleted": lexical_deleted,
-            "recovery": {
-                "directory": str(recovery_dir),
-                "meta_db": str(db_backup),
-                "qdrant_snapshot": snapshot,
-                "storage": quarantined,
-            },
+            "recovery": (
+                {"policy": "release_acceptance_ephemeral"}
+                if ephemeral
+                else {
+                    "directory": str(recovery_dir),
+                    "meta_db": str(db_backup),
+                    "qdrant_snapshot": snapshot,
+                    "storage": quarantined,
+                }
+            ),
         }

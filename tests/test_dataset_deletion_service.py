@@ -31,6 +31,7 @@ class _Client:
     def __init__(self, *, fail_delete: bool = False):
         self.fail_delete = fail_delete
         self.count_calls = 0
+        self.snapshot_calls = 0
 
     async def __aenter__(self):
         return self
@@ -40,6 +41,7 @@ class _Client:
 
     async def post(self, url: str, **_kwargs):
         if url.endswith("/snapshots"):
+            self.snapshot_calls += 1
             return _Response({"status": "ok", "result": {"name": "before.snapshot"}})
         if url.endswith("/points/count"):
             self.count_calls += 1
@@ -129,3 +131,58 @@ async def test_safe_delete_snapshots_verifies_and_quarantines_storage(tmp_path, 
     assert not storage.exists()
     quarantined = Path(result["recovery"]["storage"][0])
     assert (quarantined / "a.pdf").read_text(encoding="utf-8") == "source"
+
+
+@pytest.mark.asyncio
+async def test_release_acceptance_delete_skips_full_snapshot_only_for_exact_fixture(
+    tmp_path, monkeypatch
+):
+    db_path = tmp_path / "data" / "meta.db"
+    db_path.parent.mkdir()
+    _db(db_path)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute(
+            "UPDATE datasets SET name=? WHERE id='ds-1'",
+            ("LES acceptance " + "a" * 32,),
+        )
+        conn.execute(
+            "UPDATE documents SET file_name='release-acceptance.txt' WHERE id='doc-1'"
+        )
+    storage = tmp_path / "storage" / "ds-1"
+    storage.mkdir(parents=True)
+    (storage / "release-acceptance.txt").write_text("fixture", encoding="utf-8")
+    client = _Client()
+    monkeypatch.setattr(service.httpx, "AsyncClient", lambda **_kwargs: client)
+
+    result = await service.delete_datasets_safely(
+        dataset_ids=["ds-1"],
+        qdrant_url="http://qdrant.test",
+        collection="les_rag",
+        meta_db_path=db_path,
+        storage_root=tmp_path / "storage",
+        lexical_index=_Lexical(),
+        recovery_policy="release_acceptance_ephemeral",
+    )
+
+    assert client.snapshot_calls == 0
+    assert result["recovery"] == {"policy": "release_acceptance_ephemeral"}
+    assert not storage.exists()
+
+
+@pytest.mark.asyncio
+async def test_release_acceptance_delete_rejects_a_normal_dataset(tmp_path, monkeypatch):
+    db_path = tmp_path / "data" / "meta.db"
+    db_path.parent.mkdir()
+    _db(db_path)
+    monkeypatch.setattr(service.httpx, "AsyncClient", lambda **_kwargs: _Client())
+
+    with pytest.raises(service.DatasetDeletionError, match="release acceptance fixture"):
+        await service.delete_datasets_safely(
+            dataset_ids=["ds-1"],
+            qdrant_url="http://qdrant.test",
+            collection="les_rag",
+            meta_db_path=db_path,
+            storage_root=tmp_path / "storage",
+            lexical_index=_Lexical(),
+            recovery_policy="release_acceptance_ephemeral",
+        )

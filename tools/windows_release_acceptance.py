@@ -149,6 +149,26 @@ def _multipart_file(field: str, filename: str, data: bytes) -> tuple[bytes, str]
     return body, f"multipart/form-data; boundary={boundary}"
 
 
+def _native_rrf_fixture(marker: str) -> bytes:
+    """Return one substantive paragraph that cannot be filtered as a tiny chunk."""
+    text = (
+        f"{marker}. Это контрольный документ установленного ЛЕС для проверки поиска. "
+        "Он намеренно содержит достаточно связного текста, чтобы штатный индексатор создал "
+        "evidence-чанк, а не отбросил короткую диагностическую строку как шум. Проверка обязана "
+        "найти именно этот уникальный маркер через плотный и разреженный каналы Qdrant, объединить "
+        "результаты native RRF и вернуть источник из временного датасета."
+    )
+    return text.encode("utf-8")
+
+
+def _native_rrf_cleanup_url(dataset_id: str) -> str:
+    encoded = urllib.parse.quote(str(dataset_id), safe="")
+    return (
+        f"{PROXY}/api/rag/datasets/{encoded}"
+        "?recovery_policy=release_acceptance_ephemeral"
+    )
+
+
 def native_rrf_smoke(*, timeout: float = 180) -> dict[str, Any]:
     marker = f"les acceptance native rrf {uuid.uuid4().hex}"
     name = f"LES acceptance {uuid.uuid4().hex}"
@@ -164,7 +184,7 @@ def native_rrf_smoke(*, timeout: float = 180) -> dict[str, Any]:
         body, content_type = _multipart_file(
             "file",
             "release-acceptance.txt",
-            f"{marker}. Проверка установленного native RRF.".encode("utf-8"),
+            _native_rrf_fixture(marker),
         )
         uploaded = _request_json(
             f"{PROXY}/api/rag/upload/{dataset_id}",
@@ -212,7 +232,7 @@ def native_rrf_smoke(*, timeout: float = 180) -> dict[str, Any]:
     finally:
         try:
             _request_json(
-                f"{PROXY}/api/rag/datasets/{dataset_id}", method="DELETE", timeout=30
+                _native_rrf_cleanup_url(dataset_id), method="DELETE", timeout=30
             )
         except Exception as exc:  # noqa: BLE001
             cleanup_error = str(exc)

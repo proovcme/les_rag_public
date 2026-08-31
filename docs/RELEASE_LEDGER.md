@@ -7,17 +7,31 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.25
-номер сборки:              665
-версия Tauri/NSIS:         5.1.665
+версия продукта (SemVer):  0.30.26
+номер сборки:              666
+версия Tauri/NSIS:         5.1.666
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
-dev implementation:       release path accepted; следующий выпуск не запланирован
+dev implementation:       RRF acceptance/health/Qdrant lifecycle stabilization candidate
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.25 / build 665 / commit a23a277f
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.25 (immutable)
-следующий выпуск:          не запланирован
+следующий выпуск:          0.30.26 candidate; не опубликован
 рантайм /api/version:      Legion 0.30.25 / build 665 / desktop 5.1.665 / commit a23a277f; accepted
 ```
+
+> **0.30.26 / build 666 RAG acceptance truthfulness (dev candidate):**
+> Windows native-RRF acceptance больше не загружает 82-байтную строку ниже
+> `RAG_MIN_CHUNK_CHARS`: substantive fixture гарантирует реальный evidence chunk.
+> Его recovery-free удаление разрешено только exact dataset
+> `LES acceptance <uuid>` с единственным `release-acceptance.txt`; обычное
+> удаление пользователя по-прежнему делает MetaDB backup, Qdrant snapshot и
+> quarantine. RAG health сравнивает 101366 points активной общей коллекции с
+> 101366 чанками `user`-каталога, а 49818 module-owned `system`-чанков показывает
+> отдельно, поэтому прежний `degraded` не возникает от сравнения разных множеств.
+> На текущем Legion существующая внешняя задача `LES External Qdrant` сохранена
+> как operator-owned: запуск `C:\qdrant\qdrant.exe` не изменён, battery-stop
+> отключён, retry увеличен с 3 до 20. Публичный выпуск и installed acceptance
+> ещё не выполнялись; Legion остаётся на 0.30.25/build 665.
 
 > **0.30.25 / build 665 UTF-8 operator output (public patch):** release CLI
 > явно переводит stdout/stderr в UTF-8 до progress и итогового JSON. Это
