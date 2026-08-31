@@ -25,7 +25,9 @@
 - Evidence/chat: scope `none | selected | all`, evidence packet, context governor,
   citations/source navigation, research tools и отсутствие кодового final вместо модели.
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
-  hierarchy/parent expansion, readiness и dataset integrity.
+  hierarchy/parent expansion, readiness и dataset integrity; отдельный boundary-test
+  подтверждает, что живые source adapters используют самостоятельный document classifier,
+  а не выключенный Unified Harness.
 - Models: connection registry, secrets boundary, capability resolution,
   OpenAI-compatible transport и одинаковый governed path для 9B/35B.
 - UI: общий UIKit, WCAG AA, документы, чат, источники, model connections и

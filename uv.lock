@@ -1711,7 +1711,7 @@ wheels = [
 
 [[package]]
 name = "les-v2"
-version = "0.30.19"
+version = "0.30.20"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

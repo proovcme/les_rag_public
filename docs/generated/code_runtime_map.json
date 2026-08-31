@@ -3513,7 +3513,7 @@
         "proxy/smeta_core/unit_contract.py"
       ],
       "path": "proxy/services/construction_harness_service.py",
-      "status": "PRODUCT_REACHABLE",
+      "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
     {
@@ -3768,6 +3768,7 @@
       "inbound": [
         "proxy/services/project_document_registry_service.py",
         "proxy/services/sidecar_ops_service.py",
+        "proxy/services/source_adapters.py",
         "proxy/services/unified_construction_harness_service.py"
       ],
       "lines": 61,
@@ -6061,7 +6062,7 @@
         "proxy/services/nr_sp_service.py"
       ],
       "path": "proxy/services/resource_cost_service.py",
-      "status": "PRODUCT_REACHABLE",
+      "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
     {
@@ -6761,7 +6762,7 @@
         "tests/test_unified_filebody_v12.py",
         "tests/test_unified_real_v11.py"
       ],
-      "lines": 598,
+      "lines": 595,
       "module": "proxy.services.source_adapters",
       "outbound": [
         "backend/rag_config.py",
@@ -6769,8 +6770,8 @@
         "proxy/routers/chat.py",
         "proxy/services/__init__.py",
         "proxy/services/doc_extract_service.py",
-        "proxy/services/lexical_index_service.py",
-        "proxy/services/unified_construction_harness_service.py"
+        "proxy/services/doc_type_classifier.py",
+        "proxy/services/lexical_index_service.py"
       ],
       "path": "proxy/services/source_adapters.py",
       "status": "PRODUCT_REACHABLE",
@@ -7170,7 +7171,6 @@
     },
     {
       "inbound": [
-        "proxy/services/source_adapters.py",
         "scripts/smoke_unified_v08.py",
         "scripts/smoke_unified_v09.py",
         "scripts/smoke_unified_v10.py",
@@ -7203,7 +7203,7 @@
         "proxy/services/source_adapters.py"
       ],
       "path": "proxy/services/unified_construction_harness_service.py",
-      "status": "PRODUCT_REACHABLE",
+      "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
     {
@@ -7727,7 +7727,7 @@
         "proxy/smeta_core/norm_validator.py"
       ],
       "path": "proxy/smeta_core/unit_contract.py",
-      "status": "PRODUCT_REACHABLE",
+      "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
     {
@@ -18753,12 +18753,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 354,
+    "product_reachable": 350,
     "registered_api_routes": 394,
     "runtime_support": 8,
-    "test_or_tool_only": 616,
+    "test_or_tool_only": 620,
     "tracked_python_files": 979,
-    "tracked_python_lines": 299483
+    "tracked_python_lines": 299480
   },
   "warnings": []
 }

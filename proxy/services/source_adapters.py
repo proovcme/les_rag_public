@@ -16,6 +16,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
+from proxy.services.doc_type_classifier import classify_doc_type
+
 # статусы и source_kind
 FOUND, NOT_FOUND, NO_SCOPE, UNAVAILABLE, ERROR = "found", "not_found", "no_scope", "unavailable", "error"
 TIMEOUT, NO_SOURCE, WEAK_RELATED = "timeout", "no_source", "weak_related"
@@ -95,7 +97,6 @@ def search_lexical_chunks(query_terms: list[str], *, dataset_ids: list[str] | No
         text = getattr(c, "text", "") or getattr(c, "content", "") or ""
         doc = str(getattr(c, "doc_name", "") or "")
         if doc_type_filter:
-            from proxy.services.unified_construction_harness_service import classify_doc_type
             if classify_doc_type(doc) not in doc_type_filter:
                 continue
         tnorm = _norm(text)
@@ -200,7 +201,6 @@ async def search_vector_chunks_async(question: str, *, dataset_ids: list[str] | 
         if not ref:
             continue                                   # нет source_ref → не RETRIEVED (не фейк)
         if doc_type_filter and doc:
-            from proxy.services.unified_construction_harness_service import classify_doc_type
             if classify_doc_type(doc) not in doc_type_filter:
                 continue
         is_exact = (not terms_norm) or any(t in _norm(text) for t in terms_norm)
@@ -248,7 +248,6 @@ def inspect_dataset_index_health(dataset_ids: list[str], *, storage_root: Any = 
         parquet = files = mail = md = txt = eml = md_tables = pdf = docx = xlsx = 0
         doc_types: Counter = Counter()
         if ddir.exists():
-            from proxy.services.unified_construction_harness_service import classify_doc_type
             for p in ddir.rglob("*"):
                 if not p.is_file() or p.name.startswith(".") or f"/{SIDECAR_DIRNAME}/" in p.as_posix():
                     continue
@@ -372,7 +371,6 @@ def search_file_body(query_terms: list[str], *, dataset_ids: list[str] | None = 
         return SourceAdapterResult(NO_SCOPE, KIND_FILE_BODY, warnings=["нет dataset-scope"])
     root = _P(storage_root) if storage_root else _P("storage/datasets")
     terms_norm = [(_norm(t), t) for t in query_terms if _norm(t)]
-    from proxy.services.unified_construction_harness_service import classify_doc_type
     matches: list[AdapterMatch] = []
     scanned = 0
     for ds in dataset_ids:
@@ -570,7 +568,6 @@ def search_extracted_body(query_terms: list[str], *, dataset_ids: list[str] | No
         if items:
             seen_any = True
         if doc_type_filter:
-            from proxy.services.unified_construction_harness_service import classify_doc_type
             items = [it for it in items if classify_doc_type(str(it.get("original_file_name", ""))) in doc_type_filter]
         for it in items:
             txt = str(it.get("text", ""))
