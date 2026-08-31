@@ -6,11 +6,11 @@
 
 ## Полный проход
 
-Из чистой ветки, отправленной в `origin`, сначала принять кандидата на текущем
-Legion:
+Из чистой ветки, отправленной в `origin`, принять кандидата на текущем Legion и
+опубликовать тот же immutable attempt одной командой:
 
 ```text
-make release RELEASE_ARGS='run --host local'
+make release RELEASE_ARGS='run --host local --publish'
 ```
 
 Команда последовательно и с сохранением state выполняет:
@@ -29,25 +29,23 @@ make release RELEASE_ARGS='run --host local'
    `dense + qdrant_sparse → RRF` dataset.
 4. Выполняет controlled rollback, проверяет восстановленную версию и повторно
    ставит те же candidate bytes.
-5. Только после stage `accepted` разрешает GitHub draft с явным target commit,
-   добавляет `release-receipt.json`, скачивает все assets обратно и сверяет SHA.
-6. Публикует draft и независимо сверяет public main, tag, feed, receipt и assets.
+5. Только после stage `accepted` проверяет, что публичный `main` является
+   предком принятого commit, и выполняет обычный non-force fast-forward до
+   exact target. Divergence останавливает выпуск до создания draft; force push
+   запрещён. До проверки ancestry публичный репозиторий не изменяется.
+6. Создаёт GitHub draft с явным target commit, добавляет
+   `release-receipt.json`, скачивает все assets обратно и сверяет SHA.
+7. Публикует draft и независимо сверяет public main, tag, feed, receipt и assets.
 
-После `accepted` публичный `main` должен быть обычным fast-forward до точного
-принятого commit. Сначала доказать отсутствие расхождения, затем продолжить тот
-же immutable attempt:
+Построитель cumulative patch читает Git history пакетно и печатает
+ограниченный прогресс по ancestry и manifest-файлам. Результат автоматического
+public-main sync (`before`, `after`, `fast_forwarded`) записывается в persisted
+attempt. Если последующий шаг упал, повторный `publish` продолжает тот же
+attempt; уже выполненный exact sync становится безопасным no-op.
 
-```text
-git fetch public main
-git merge-base --is-ancestor public/main HEAD
-git push public HEAD:main
-make release RELEASE_ARGS='publish --attempt <state_path из результата run>'
-```
-
-Force push запрещён. `run --host local --publish` допустим только когда public
-`main` уже указывает на exact `HEAD`; иначе публикационный предохранитель
-остановит команду после приёмки, не создав release. Принятый attempt при этом не
-пересобирается и продолжается отдельной командой `publish`.
+Ручной fast-forward нужен только как диагностическое восстановление после
+осознанного устранения divergence. Обычная процедура не требует отдельного
+`git push public` между приёмкой и публикацией.
 
 ## Раздельное выполнение и продолжение
 

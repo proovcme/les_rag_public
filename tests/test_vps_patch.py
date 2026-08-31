@@ -5,13 +5,85 @@ import hashlib
 import json
 import subprocess
 import zipfile
-
 import httpx
 import pytest
 
 from proxy.services import update_service
 from tools import vps_patch
 from tools import vps_patch_apply
+
+
+def test_patch_builder_batches_history_reads_and_reports_progress(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "proxy").mkdir()
+    (repo / "config").mkdir()
+    (repo / "proxy" / "a.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "proxy" / "b.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (repo / "config" / "version.json").write_text(
+        json.dumps({
+            "schema": "les.version.v1",
+            "product_version": "0.30.23",
+            "build_number": 663,
+            "desktop_version": "5.1.663",
+        }),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    base = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    (repo / "proxy" / "a.py").write_text("VALUE = 2\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "middle"], cwd=repo, check=True)
+    (repo / "proxy" / "b.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (repo / "config" / "version.json").write_text(
+        json.dumps({
+            "schema": "les.version.v1",
+            "product_version": "0.30.24",
+            "build_number": 664,
+            "desktop_version": "5.1.664",
+        }),
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    original_root = vps_patch.ROOT
+    original_run = subprocess.run
+    git_show_calls = []
+
+    def counted_run(command, *args, **kwargs):
+        if list(command)[:2] == ["git", "show"]:
+            git_show_calls.append(list(command))
+        return original_run(command, *args, **kwargs)
+
+    events = []
+    monkeypatch.setattr(subprocess, "run", counted_run)
+    vps_patch.ROOT = repo
+    try:
+        result = vps_patch.build_patch(
+            base=base,
+            target=target,
+            files=["proxy/a.py", "proxy/b.py"],
+            output=tmp_path / "out",
+            origin="https://example.invalid/release",
+            progress=events.append,
+        )
+    finally:
+        vps_patch.ROOT = original_root
+
+    entries = {entry["path"]: entry for entry in result["patch"]["files"]}
+    assert hashlib.sha256(b"VALUE = 1\n").hexdigest() in entries["proxy/a.py"]["accepted_sha256"]
+    assert hashlib.sha256(b"VALUE = 2\n").hexdigest() in entries["proxy/a.py"]["accepted_sha256"]
+    assert len(git_show_calls) <= 5
+    assert events[-1] == {
+        "stage": "files",
+        "current": 2,
+        "total": 2,
+        "path": "proxy/b.py",
+    }
 
 
 def test_legacy_patch_builder_default_origin_is_public_github_release() -> None:

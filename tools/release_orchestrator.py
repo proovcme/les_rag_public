@@ -77,6 +77,38 @@ def require_release_source(*, root: Path, branch: str, target: str) -> str:
     return commit
 
 
+def sync_public_main(*, root: Path, target: str) -> dict[str, Any]:
+    """Fast-forward the public mirror to an already accepted release commit."""
+    root = Path(root).resolve()
+    target_commit = resolve_commit(root, target)
+    _run(("git", "fetch", "public", "main"), root=root)
+    before = resolve_commit(root, "refs/remotes/public/main")
+    if before == target_commit:
+        return {"before": before, "after": target_commit, "fast_forwarded": False}
+    ancestry = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", before, target_commit],
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if ancestry.returncode != 0:
+        raise RuntimeError(
+            "public main is not a fast-forward ancestor of the accepted release"
+        )
+    _run(
+        ("git", "push", "public", f"{target_commit}:refs/heads/main"),
+        root=root,
+    )
+    _run(("git", "fetch", "public", "main"), root=root)
+    after = resolve_commit(root, "refs/remotes/public/main")
+    if after != target_commit:
+        raise RuntimeError("public main fast-forward verification failed")
+    return {"before": before, "after": after, "fast_forwarded": True}
+
+
 def current_branch(root: Path) -> str:
     branch = _run(
         ("git", "branch", "--show-current"), root=Path(root), capture=True
@@ -132,7 +164,11 @@ def build_patch_candidate(
     public.mkdir(parents=True)
     acceptance.mkdir(parents=True)
     feed = github_patch_release.build_github_patch_release(
-        base, target, public, full_feed=Path(full_feed)
+        base,
+        target,
+        public,
+        full_feed=Path(full_feed),
+        progress=_print_patch_progress,
     )
     public_archive = public / "les-patch.zip"
     acceptance_archive = acceptance / public_archive.name
@@ -156,6 +192,22 @@ def build_patch_candidate(
         "acceptance_path": acceptance,
         "build": feed,
     }
+
+
+def _print_patch_progress(event: dict[str, Any]) -> None:
+    stage = str(event.get("stage") or "")
+    current = int(event.get("current") or 0)
+    total = int(event.get("total") or 0)
+    if current not in {1, total} and current % 10 != 0:
+        return
+    if stage == "history":
+        message = f"История патча: {current}/{total}"
+    elif stage == "files":
+        path = str(event.get("path") or "")
+        message = f"Файлы патча: {current}/{total} — {path}"
+    else:
+        message = f"Патч: {current}/{total}"
+    print(message, flush=True)
 
 
 def build_full_candidate(
@@ -737,6 +789,18 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
         commit=resolve_commit(args.root, "HEAD"),
         assets=_artifact_paths(attempt),
     )
+    public_main_sync: dict[str, Any] | None = None
+    if current_stage == "accepted":
+        public_main_sync = sync_public_main(
+            root=Path(args.root),
+            target=str(attempt["target_commit"]),
+        )
+        attempt = release_receipt.record_checkpoint(
+            state_path,
+            expected="accepted",
+            name="public_main_sync",
+            evidence=public_main_sync,
+        )
     prepared = _prepared_evidence(attempt)
     public = Path(str(prepared["candidate_root"])) / "public"
 

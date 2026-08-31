@@ -134,6 +134,7 @@ def create_attempt(
         "stage": "planned",
         "publishable": True,
         "artifacts": artifacts,
+        "checkpoints": {},
         "transitions": [
             {"stage": "planned", "at": _now(), "evidence": {"created": True}}
         ],
@@ -184,6 +185,33 @@ def transition(
     payload["transitions"].append(
         {"stage": target, "at": _now(), "evidence": evidence}
     )
+    _atomic_json(Path(path), payload)
+    return payload
+
+
+def record_checkpoint(
+    path: Path,
+    *,
+    expected: str,
+    name: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """Persist idempotent evidence without advancing the release stage."""
+    payload = load_attempt(path)
+    current = str(payload.get("stage") or "")
+    if current != expected or expected not in STAGES:
+        raise RuntimeError(
+            f"invalid release checkpoint: current={current}, expected={expected}"
+        )
+    checkpoint = str(name or "")
+    if re.fullmatch(r"[a-z][a-z0-9_]{1,63}", checkpoint) is None:
+        raise ValueError("release checkpoint name is invalid")
+    json.dumps(evidence, ensure_ascii=False)
+    checkpoints = payload.setdefault("checkpoints", {})
+    existing = checkpoints.get(checkpoint)
+    if existing is not None:
+        return payload
+    checkpoints[checkpoint] = evidence
     _atomic_json(Path(path), payload)
     return payload
 
@@ -282,6 +310,7 @@ def write_public_receipt(attempt_path: Path, destination: Path) -> Path:
             {key: item[key] for key in ("name", "bytes", "sha256")}
             for item in attempt["artifacts"]
         ],
+        "checkpoints": _sanitize(attempt.get("checkpoints", {})),
         "transitions": _sanitize(attempt["transitions"]),
     }
     destination = Path(destination).resolve()

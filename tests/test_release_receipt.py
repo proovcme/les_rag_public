@@ -144,6 +144,32 @@ def test_public_receipt_is_deterministic_for_unchanged_attempt(tmp_path):
     assert first.read_bytes() == second.read_bytes()
 
 
+def test_checkpoint_is_persisted_without_advancing_stage_and_is_idempotent(tmp_path):
+    state = _attempt(tmp_path)
+    _accept(state)
+    evidence = {"before": BASE, "after": TARGET, "fast_forwarded": True}
+
+    recorded = release_receipt.record_checkpoint(
+        state,
+        expected="accepted",
+        name="public_main_sync",
+        evidence=evidence,
+    )
+    repeated = release_receipt.record_checkpoint(
+        state,
+        expected="accepted",
+        name="public_main_sync",
+        evidence={"before": TARGET, "after": TARGET, "fast_forwarded": False},
+    )
+
+    assert recorded["stage"] == "accepted"
+    assert repeated["checkpoints"]["public_main_sync"] == evidence
+    public = release_receipt.write_public_receipt(state, tmp_path / "receipt.json")
+    assert json.loads(public.read_text(encoding="utf-8"))["checkpoints"] == {
+        "public_main_sync": evidence
+    }
+
+
 def test_non_publishable_mark_is_permanent_for_development_attempt(tmp_path):
     state = _attempt(tmp_path)
     marked = release_receipt.mark_non_publishable(

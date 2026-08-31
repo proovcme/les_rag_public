@@ -131,6 +131,99 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
     assert [item["name"] for item in result["artifacts"]] == ["les-patch.zip"]
 
 
+def test_patch_candidate_prints_builder_progress(monkeypatch, tmp_path, capsys):
+    output = tmp_path / "candidate"
+
+    def build(_base, _target, public, *, full_feed, progress):
+        del full_feed
+        (public / "les-patch.zip").write_bytes(b"candidate")
+        progress({"stage": "history", "current": 3, "total": 7})
+        progress({"stage": "history", "current": 7, "total": 7})
+        progress({"stage": "files", "current": 2, "total": 2, "path": "proxy/b.py"})
+        return {"patch": {"schema": "les.vps-patch.v2"}}
+
+    monkeypatch.setattr(
+        release_orchestrator.github_patch_release,
+        "build_github_patch_release",
+        build,
+    )
+
+    release_orchestrator.build_patch_candidate(
+        base=BASE,
+        target=TARGET,
+        output=output,
+        full_feed=tmp_path / "full.json",
+    )
+
+    visible = capsys.readouterr().out
+    assert "История патча: 3/7" not in visible
+    assert "История патча: 7/7" in visible
+    assert "Файлы патча: 2/2 — proxy/b.py" in visible
+
+
+def test_sync_public_main_fast_forwards_real_remote(tmp_path):
+    repo = tmp_path / "repo"
+    public = tmp_path / "public.git"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--bare", str(public)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "release.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "public", str(public)], cwd=repo, check=True)
+    subprocess.run(["git", "push", "-q", "public", "main"], cwd=repo, check=True)
+    before = subprocess.check_output(
+        ["git", "--git-dir", str(public), "rev-parse", "refs/heads/main"],
+        text=True,
+    ).strip()
+    (repo / "release.txt").write_text("target\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "target"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+
+    evidence = release_orchestrator.sync_public_main(root=repo, target=target)
+
+    public_main = subprocess.check_output(
+        ["git", "--git-dir", str(public), "rev-parse", "refs/heads/main"],
+        text=True,
+    ).strip()
+    assert public_main == target
+    assert evidence == {"before": before, "after": target, "fast_forwarded": True}
+
+
+def test_sync_public_main_refuses_divergent_remote_without_force(tmp_path):
+    repo = tmp_path / "repo"
+    other = tmp_path / "other"
+    public = tmp_path / "public.git"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "--bare", str(public)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    (repo / "release.txt").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+    subprocess.run(["git", "remote", "add", "public", str(public)], cwd=repo, check=True)
+    subprocess.run(["git", "push", "-q", "public", "main"], cwd=repo, check=True)
+    (repo / "release.txt").write_text("local\n", encoding="utf-8")
+    subprocess.run(["git", "commit", "-qam", "local"], cwd=repo, check=True)
+    target = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip()
+    subprocess.run(
+        ["git", "clone", "-q", "--branch", "main", str(public), str(other)],
+        check=True,
+    )
+    subprocess.run(["git", "config", "user.email", "test@example.invalid"], cwd=other, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=other, check=True)
+    (other / "remote.txt").write_text("diverged\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=other, check=True)
+    subprocess.run(["git", "commit", "-qm", "remote"], cwd=other, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "HEAD:main"], cwd=other, check=True)
+
+    with pytest.raises(RuntimeError, match="not a fast-forward"):
+        release_orchestrator.sync_public_main(root=repo, target=target)
+
+
 def test_accept_uses_prepared_bytes_without_rebuilding(monkeypatch, tmp_path):
     args = _args(tmp_path)
     public = tmp_path / "candidate" / "public"
@@ -349,6 +442,7 @@ def test_publish_advances_only_after_draft_verification_and_postflight(
     args, state_path = _attempt_at_stage(tmp_path, "accepted")
     args.attempt = state_path
     callbacks = []
+    synced = []
 
     def publish_patch(**kwargs):
         for stage in ("draft_uploaded", "draft_verified", "published"):
@@ -357,6 +451,12 @@ def test_publish_advances_only_after_draft_verification_and_postflight(
         return {"published": True, "assets": ["les-patch.zip"]}
 
     monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "sync_public_main",
+        lambda **kwargs: synced.append(kwargs) or {"after": TARGET},
+        raising=False,
+    )
     monkeypatch.setattr(release_orchestrator, "publish_patch_candidate", publish_patch)
     monkeypatch.setattr(
         release_orchestrator,
@@ -367,7 +467,9 @@ def test_publish_advances_only_after_draft_verification_and_postflight(
     result = release_orchestrator.publish(args)
 
     assert callbacks == ["draft_uploaded", "draft_verified", "published"]
+    assert synced == [{"root": args.root, "target": TARGET}]
     assert result["stage"] == "postflight_verified"
+    assert result["checkpoints"]["public_main_sync"] == {"after": TARGET}
     assert result["transitions"][-1]["evidence"]["target_commit"] == TARGET
 
 

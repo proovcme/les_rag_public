@@ -15,6 +15,7 @@ import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
+from typing import Any, Callable
 from urllib.parse import urlparse
 from urllib.request import urlopen
 
@@ -178,16 +179,119 @@ def accepted_file_hashes(
     newest target strands that user.  The ancestry is trusted release history, not arbitrary local
     content, so every exact intermediate state is safe to advance from.
     """
-    commits = subprocess.check_output(
-        ["git", "rev-list", "--reverse", "--ancestry-path", f"{base_commit}..{target_commit}"],
+    states = committed_file_states(base_commit, target_commit, [path])[path]
+    return accepted_hashes_from_states(
+        states,
+        path=path,
+        installed_runtime=installed_runtime,
+    )
+
+
+def _batch_blob_bytes(blob_ids: set[str]) -> dict[str, bytes]:
+    if not blob_ids:
+        return {}
+    ordered = sorted(blob_ids)
+    process = subprocess.Popen(
+        ["git", "cat-file", "--batch"],
         cwd=ROOT,
-        text=True,
-    ).split()
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    output, error = process.communicate(
+        b"".join(blob_id.encode("ascii") + b"\n" for blob_id in ordered)
+    )
+    if process.returncode != 0:
+        raise RuntimeError(
+            f"git cat-file batch failed: {error.decode('utf-8', errors='replace').strip()}"
+        )
+    result: dict[str, bytes] = {}
+    offset = 0
+    for expected in ordered:
+        header_end = output.find(b"\n", offset)
+        if header_end < 0:
+            raise RuntimeError("git cat-file batch returned a truncated header")
+        parts = output[offset:header_end].decode("ascii", errors="strict").split()
+        if len(parts) != 3 or parts[0] != expected or parts[1] != "blob":
+            raise RuntimeError(f"git cat-file returned an unexpected object: {parts}")
+        size = int(parts[2])
+        start = header_end + 1
+        end = start + size
+        if end >= len(output) or output[end : end + 1] != b"\n":
+            raise RuntimeError("git cat-file batch returned truncated blob bytes")
+        result[expected] = output[start:end]
+        offset = end + 1
+    if offset != len(output):
+        raise RuntimeError("git cat-file batch returned trailing bytes")
+    return result
+
+
+def committed_file_states(
+    base_commit: str,
+    target_commit: str,
+    paths: list[str],
+    *,
+    progress: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, list[bytes | None]]:
+    commits = [
+        base_commit,
+        *subprocess.check_output(
+            [
+                "git",
+                "rev-list",
+                "--reverse",
+                "--ancestry-path",
+                f"{base_commit}..{target_commit}",
+            ],
+            cwd=ROOT,
+            text=True,
+        ).split(),
+    ]
+    blob_history: dict[str, list[str | None]] = {path: [] for path in paths}
+    blob_ids: set[str] = set()
+    for index, commit in enumerate(commits, start=1):
+        raw = subprocess.check_output(
+            ["git", "ls-tree", "-rz", "--full-tree", commit, "--", *paths],
+            cwd=ROOT,
+        )
+        tree: dict[str, str] = {}
+        for record in raw.split(b"\0"):
+            if not record:
+                continue
+            metadata, raw_path = record.split(b"\t", 1)
+            mode, kind, blob_id = metadata.decode("ascii").split()
+            if kind != "blob" or not mode:
+                continue
+            path = raw_path.decode("utf-8", errors="surrogateescape")
+            tree[path] = blob_id
+            blob_ids.add(blob_id)
+        for path in paths:
+            blob_history[path].append(tree.get(path))
+        if progress is not None:
+            progress(
+                {
+                    "stage": "history",
+                    "current": index,
+                    "total": len(commits),
+                }
+            )
+    blobs = _batch_blob_bytes(blob_ids)
+    return {
+        path: [blobs[blob_id] if blob_id is not None else None for blob_id in history]
+        for path, history in blob_history.items()
+    }
+
+
+def accepted_hashes_from_states(
+    states: list[bytes | None],
+    *,
+    path: str,
+    installed_runtime: Path | None = None,
+) -> tuple[list[str], bool]:
     hashes: set[str] = set()
     committed_states: list[bytes] = []
     missing = False
-    for commit in [base_commit, *commits]:
-        data = git_bytes(commit, path)
+    for data in states:
         if data is None:
             missing = True
             continue
@@ -216,6 +320,7 @@ def build_patch(
     origin: str,
     desktop_manifest: Path | None = None,
     installed_runtime: Path | None = None,
+    progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict:
     base_commit = subprocess.check_output(["git", "rev-parse", base], cwd=ROOT, text=True).strip()
     target_commit = subprocess.check_output(["git", "rev-parse", target], cwd=ROOT, text=True).strip()
@@ -223,17 +328,25 @@ def build_patch(
     normalized = sorted({normalize_path(path) for path in files})
     if not normalized:
         raise ValueError("patch file list is empty")
+    committed_states = committed_file_states(
+        base_commit,
+        target_commit,
+        normalized,
+        progress=progress,
+    )
     entries: list[dict] = []
     payload: dict[str, bytes] = {}
-    for path in normalized:
-        before = git_bytes(base_commit, path)
-        after = git_bytes(target_commit, path)
+    for index, path in enumerate(normalized, start=1):
+        states = committed_states[path]
+        before = states[0]
+        after = states[-1]
         if before == after:
+            if progress is not None:
+                progress({"stage": "files", "current": index, "total": len(normalized), "path": path})
             continue
-        accepted_hashes, accepted_missing = accepted_file_hashes(
-            base_commit,
-            target_commit,
-            path,
+        accepted_hashes, accepted_missing = accepted_hashes_from_states(
+            states,
+            path=path,
             installed_runtime=installed_runtime,
         )
         if after is None:
@@ -252,6 +365,8 @@ def build_patch(
                     "bytes": 0,
                 }
             )
+            if progress is not None:
+                progress({"stage": "files", "current": index, "total": len(normalized), "path": path})
             continue
         payload[path] = after
         entries.append(
@@ -266,6 +381,8 @@ def build_patch(
                 "bytes": len(after),
             }
         )
+        if progress is not None:
+            progress({"stage": "files", "current": index, "total": len(normalized), "path": path})
     if desktop_manifest is not None:
         desktop_entry, binary = desktop_payload(
             desktop_manifest,
