@@ -15,6 +15,7 @@ from proxy.services.workbook_tool_service import (
     build_lsr_workbook,
     build_vor_workbook,
 )
+from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
 
 
 def _source_workbook(path: Path) -> Path:
@@ -100,6 +101,57 @@ async def test_lsr_handler_requires_an_explicit_application_adapter(tmp_path):
 
     assert result["status"] == "failed"
     assert result["code"] == "WORKBOOK_ADAPTER_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monkeypatch):
+    decisions = [{
+        "source_row": 1,
+        "section": "ОВ",
+        "title": "Монтаж воздуховода",
+        "unit": "м",
+        "quantity": 12.5,
+        "norm_code": "ГЭСН20-01-001-01",
+    }]
+    captured = {}
+
+    def calculate(rows, **kwargs):
+        captured["rows"] = rows
+        captured["kwargs"] = kwargs
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
+            "row_bindings": [{"row": 1, "status": "bound"}],
+        }
+
+    def render(trace, output_path, **_kwargs):
+        captured["trace"] = trace
+        _source_workbook(output_path)
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+
+    result = await build_lsr_workbook_from_decisions(
+        tmp_path / "source.xlsx",
+        {"decisions": decisions, "question": "Собери ЛСР"},
+        tmp_path / "result.xlsx",
+        lambda *_args: None,
+    )
+
+    assert captured["rows"] == decisions
+    assert captured["kwargs"]["name"] == "Собери ЛСР"
+    assert result["source_rows"] == 1
+    assert result["missing"] == []
+    assert result["blockers"] == []
+    assert result["file_path"].exists()
 
 
 def test_workbook_boundary_does_not_import_old_document_workflow():

@@ -6,6 +6,7 @@ import inspect
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
 
 from proxy.services.artifact_revision_service import (
@@ -24,30 +25,73 @@ from proxy.services.workflow_checkpoint_service import (
 )
 
 
-_INPUT_SCHEMA = {
+_BASE_INPUT_PROPERTIES = {
+    "attachment_id": {"type": "string", "minLength": 1},
+    "question": {"type": "string"},
+    "project_id": {"type": ["integer", "null"]},
+    "parent_revision_id": {"type": ["string", "null"]},
+    "dataset_ids": {"type": ["array", "null"], "items": {"type": "string"}},
+}
+
+_VOR_INPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["attachment_id"],
+    "properties": _BASE_INPUT_PROPERTIES,
+}
+
+_LSR_DECISION_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["title", "unit", "quantity", "norm_code"],
     "properties": {
-        "attachment_id": {"type": "string", "minLength": 1},
-        "question": {"type": "string"},
-        "project_id": {"type": ["integer", "null"]},
-        "parent_revision_id": {"type": ["string", "null"]},
-        "dataset_ids": {"type": ["array", "null"], "items": {"type": "string"}},
+        "source_row": {"type": ["integer", "null"], "minimum": 1},
+        "section": {"type": "string"},
+        "title": {"type": "string", "minLength": 1},
+        "unit": {"type": "string", "minLength": 1},
+        "quantity": {"type": "number"},
+        "norm_code": {"type": "string", "minLength": 1},
+        "analogue": {"type": ["string", "null"]},
+        "coverage": {"type": ["string", "null"]},
+        "coefficient": {"type": ["number", "null"]},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    },
+}
+
+_LSR_INPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["attachment_id", "decisions"],
+    "properties": {
+        **_BASE_INPUT_PROPERTIES,
+        "decisions": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 500,
+            "items": _LSR_DECISION_SCHEMA,
+        },
     },
 }
 
 
-def _contract(name: str, title: str, summary: str, model_owned_fields: tuple[str, ...]) -> ToolContract:
+def _contract(
+    name: str,
+    title: str,
+    summary: str,
+    model_owned_fields: tuple[str, ...],
+    *,
+    input_schema: Mapping[str, Any],
+) -> ToolContract:
     return ToolContract(
         name=name, version="1.0.0", title=title, category="workbook", summary=summary,
-        input_schema=_INPUT_SCHEMA, result_schema="les.workbook_tool_result.v1",
+        input_schema=input_schema, result_schema="les.workbook_tool_result.v1",
         effect=EffectClass.DRAFT, scopes=("chat_attachment", "dataset"),
         timeout_seconds=900, retry=RetryPolicy.IDEMPOTENCY_KEY,
         idempotency=IdempotencyPolicy.REQUIRED,
         result_budget=ResultBudget(max_chars=12_000, max_items=200),
         model_owned_fields=model_owned_fields,
-        provenance="artifact_revision_required", tags=("workbook", "immutable_revision"),
+        provenance="artifact_revision_required",
+        tags=("workbook", "immutable_revision", "execution_context_required"),
     )
 
 
@@ -55,10 +99,12 @@ BUILD_LSR_WORKBOOK = _contract(
     "build_lsr_workbook", "Build LSR workbook",
     "Build an immutable priced LSR draft from a server-owned attachment.",
     ("norm_code", "analogue", "coverage", "coefficient"),
+    input_schema=_LSR_INPUT_SCHEMA,
 )
 BUILD_VOR_WORKBOOK = _contract(
     "build_vor_workbook", "Build VOR workbook",
     "Build an immutable VOR draft preserving source rows and quantities.", (),
+    input_schema=_VOR_INPUT_SCHEMA,
 )
 
 
@@ -66,6 +112,27 @@ WorkbookAdapter = Callable[
     [Path, Mapping[str, Any], Path, Callable[[str, int, int | None], None]],
     Mapping[str, Any] | Awaitable[Mapping[str, Any]],
 ]
+
+
+def chat_workbook_adapters() -> Mapping[str, WorkbookAdapter]:
+    """Single manifest for workbook capabilities executable by ordinary chat."""
+    from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
+
+    return MappingProxyType({
+        BUILD_LSR_WORKBOOK.name: build_lsr_workbook_from_decisions,
+        BUILD_VOR_WORKBOOK.name: _default_vor_adapter,
+    })
+
+
+def available_chat_workbook_tools(*, executor_configured: bool) -> frozenset[str]:
+    """Return workbook tools the current chat executor can actually run.
+
+    Both workbook tools have in-process adapters. Registering their contracts
+    alone still must not advertise them without the chat executor boundary.
+    """
+    if not executor_configured:
+        return frozenset()
+    return frozenset(chat_workbook_adapters())
 
 
 @dataclass(frozen=True)
@@ -85,7 +152,6 @@ class WorkbookExecutionContext:
     progress_sink: Callable[[Mapping[str, Any]], None] | None = None
 
 
-_ALLOWED_ARGS = set(_INPUT_SCHEMA["properties"])
 _MODEL_COMPUTED_FIELDS = {
     "rows", "prices", "price", "unit_prices", "totals", "total", "amounts", "calculated_rows",
 }
@@ -102,8 +168,8 @@ def _rejected(code: str, message: str) -> dict[str, Any]:
     }
 
 
-def _normalized_args(args: Mapping[str, Any]) -> dict[str, Any]:
-    normalized = {key: args.get(key) for key in _ALLOWED_ARGS if key in args}
+def _normalized_args(args: Mapping[str, Any], *, allowed_args: set[str]) -> dict[str, Any]:
+    normalized = {key: args.get(key) for key in allowed_args if key in args}
     normalized["attachment_id"] = str(normalized.get("attachment_id") or "").strip()
     normalized["question"] = str(normalized.get("question") or "").strip()
     normalized["project_id"] = normalized.get("project_id")
@@ -111,6 +177,8 @@ def _normalized_args(args: Mapping[str, Any]) -> dict[str, Any]:
     normalized["dataset_ids"] = list(dict.fromkeys(
         str(item).strip() for item in (normalized.get("dataset_ids") or []) if str(item).strip()
     ))
+    if "decisions" in allowed_args:
+        normalized["decisions"] = [dict(item) for item in (normalized.get("decisions") or [])]
     return normalized
 
 
@@ -202,10 +270,12 @@ async def _build_workbook(
             "MODEL_DECISION_FIELD_NOT_ALLOWED",
             f"computed workbook fields are not accepted: {', '.join(forbidden)}",
         ), "tool": tool_name}
-    unknown = sorted(set(args) - _ALLOWED_ARGS)
+    input_schema = BUILD_LSR_WORKBOOK.input_schema if artifact_kind == "lsr_workbook" else BUILD_VOR_WORKBOOK.input_schema
+    allowed_args = set(input_schema["properties"])
+    unknown = sorted(set(args) - allowed_args)
     if unknown:
         return {**_rejected("INVALID_TOOL_ARGUMENTS", f"unknown arguments: {', '.join(unknown)}"), "tool": tool_name}
-    normalized = _normalized_args(args)
+    normalized = _normalized_args(args, allowed_args=allowed_args)
     if not normalized["attachment_id"]:
         return {**_rejected("INVALID_TOOL_ARGUMENTS", "attachment_id is required"), "tool": tool_name}
     try:

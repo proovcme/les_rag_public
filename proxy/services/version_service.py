@@ -51,7 +51,6 @@ _CRITICAL_FILES = (
     "proxy/routers/lsr.py",
     "proxy/routers/chat.py",
     "proxy/routers/speckle.py",
-    "proxy/routers/doc_review.py",
     "proxy/routers/tools.py",
     "proxy/routers/runtime.py",
     "proxy/routers/service_sources.py",

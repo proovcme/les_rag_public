@@ -625,7 +625,6 @@
         "backend/qdrant_adapter.py",
         "mlx_host.py",
         "proxy/app.py",
-        "proxy/routers/bor.py",
         "proxy/routers/chat.py",
         "proxy/routers/chat_history.py",
         "proxy/routers/datasets.py",
@@ -643,7 +642,6 @@
         "proxy/services/doc_review_service.py",
         "proxy/services/document_explorer_service.py",
         "proxy/services/edge_service.py",
-        "proxy/services/estimate_service.py",
         "proxy/services/external_radar_service.py",
         "proxy/services/field_intake_service.py",
         "proxy/services/graph_edges_service.py",
@@ -670,7 +668,6 @@
         "tests/test_chunking_w2.py",
         "tests/test_decision_service_w174.py",
         "tests/test_edge_service_w172.py",
-        "tests/test_estimate_service_w201.py",
         "tests/test_forms_service_w113.py",
         "tests/test_ontology_service_w173.py",
         "tests/test_project_partition_q3.py",
@@ -821,14 +818,10 @@
       "inbound": [
         "backend/qdrant_adapter.py",
         "proxy/routers/artifacts.py",
-        "proxy/routers/bor.py",
         "proxy/routers/chat.py",
         "proxy/routers/checklist_review.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
-        "proxy/routers/field.py",
-        "proxy/routers/kac.py",
         "proxy/routers/lsr.py",
         "proxy/routers/mail.py",
         "proxy/routers/notebooks.py",
@@ -858,7 +851,6 @@
         "proxy/services/normcontrol_service.py",
         "proxy/services/notebook_service.py",
         "proxy/services/notebook_study_service.py",
-        "proxy/services/plan_fact_service.py",
         "proxy/services/project_document_registry_service.py",
         "proxy/services/project_pdf_extract_service.py",
         "proxy/services/project_summary_service.py",
@@ -966,33 +958,23 @@
         "proxy/routers/__init__.py",
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
-        "proxy/routers/bor.py",
         "proxy/routers/chat.py",
         "proxy/routers/chat_history.py",
         "proxy/routers/checklist_review.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
-        "proxy/routers/edges.py",
-        "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
         "proxy/routers/jobs.py",
-        "proxy/routers/kac.py",
-        "proxy/routers/les_md.py",
         "proxy/routers/logs.py",
         "proxy/routers/lsr.py",
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
         "proxy/routers/notebooks.py",
-        "proxy/routers/ontology.py",
-        "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
         "proxy/routers/rag_advanced.py",
@@ -1002,7 +984,6 @@
         "proxy/routers/service_sources.py",
         "proxy/routers/settings.py",
         "proxy/routers/speckle.py",
-        "proxy/routers/status_page.py",
         "proxy/routers/tasks.py",
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
@@ -1064,8 +1045,6 @@
         "proxy/services/electrical_schematic_service.py",
         "proxy/services/estimate_harness_service.py",
         "proxy/services/estimate_math_service.py",
-        "proxy/services/estimate_service.py",
-        "proxy/services/etm_price_service.py",
         "proxy/services/evidence_contract.py",
         "proxy/services/evidence_packet_service.py",
         "proxy/services/external_radar_service.py",
@@ -1104,6 +1083,7 @@
         "proxy/services/list_office_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/lsr_assembly_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/mail_push_service.py",
         "proxy/services/mail_query_service.py",
         "proxy/services/mail_registry_service.py",
@@ -1136,7 +1116,6 @@
         "proxy/services/pd_rd_manifest_service.py",
         "proxy/services/pdf_contour_service.py",
         "proxy/services/pdf_viewer_service.py",
-        "proxy/services/plan_fact_service.py",
         "proxy/services/pp87_composition_service.py",
         "proxy/services/preset_chat_service.py",
         "proxy/services/preset_service.py",
@@ -1260,7 +1239,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 725,
+      "lines": 702,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1274,33 +1253,23 @@
         "proxy/local_model_registry.py",
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
-        "proxy/routers/bor.py",
         "proxy/routers/chat.py",
         "proxy/routers/chat_history.py",
         "proxy/routers/checklist_review.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
-        "proxy/routers/edges.py",
-        "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
         "proxy/routers/jobs.py",
-        "proxy/routers/kac.py",
-        "proxy/routers/les_md.py",
         "proxy/routers/logs.py",
         "proxy/routers/lsr.py",
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
         "proxy/routers/notebooks.py",
-        "proxy/routers/ontology.py",
-        "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
         "proxy/routers/rag_advanced.py",
@@ -1310,7 +1279,6 @@
         "proxy/routers/service_sources.py",
         "proxy/routers/settings.py",
         "proxy/routers/speckle.py",
-        "proxy/routers/status_page.py",
         "proxy/routers/tasks.py",
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
@@ -1337,8 +1305,6 @@
         "proxy/routers/auth.py",
         "proxy/routers/chat.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/field.py",
-        "proxy/routers/les_md.py",
         "proxy/routers/mail.py",
         "proxy/routers/model_connections.py",
         "proxy/routers/runtime.py",
@@ -1536,33 +1502,23 @@
       "inbound": [
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
-        "proxy/routers/bor.py",
         "proxy/routers/chat.py",
         "proxy/routers/chat_history.py",
         "proxy/routers/checklist_review.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
-        "proxy/routers/edges.py",
-        "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
         "proxy/routers/jobs.py",
-        "proxy/routers/kac.py",
-        "proxy/routers/les_md.py",
         "proxy/routers/logs.py",
         "proxy/routers/lsr.py",
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
         "proxy/routers/notebooks.py",
-        "proxy/routers/ontology.py",
-        "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
         "proxy/routers/rag_advanced.py",
@@ -1572,7 +1528,6 @@
         "proxy/routers/service_sources.py",
         "proxy/routers/settings.py",
         "proxy/routers/speckle.py",
-        "proxy/routers/status_page.py",
         "proxy/routers/tasks.py",
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
@@ -1625,27 +1580,6 @@
     },
     {
       "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 205,
-      "module": "proxy.routers.bor",
-      "outbound": [
-        "backend/rag_config.py",
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/bor_service.py",
-        "proxy/services/plan_fact_service.py",
-        "proxy/services/reconcile_service.py",
-        "proxy/services/spec_to_bor_service.py"
-      ],
-      "path": "proxy/routers/bor.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/app.py",
         "proxy/routers/chat_history.py",
         "proxy/routers/settings.py",
@@ -1687,7 +1621,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4066,
+      "lines": 4070,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -1867,22 +1801,6 @@
     },
     {
       "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 78,
-      "module": "proxy.routers.decisions",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/decision_service.py"
-      ],
-      "path": "proxy/routers/decisions.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/app.py",
         "tests/test_diagnostics_router.py",
         "tests/test_smoke_offline.py"
@@ -1897,25 +1815,6 @@
         "proxy/security.py"
       ],
       "path": "proxy/routers/diagnostics.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py",
-        "tests/test_doc_review_api.py"
-      ],
-      "lines": 173,
-      "module": "proxy.routers.doc_review",
-      "outbound": [
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/doc_review_service.py",
-        "proxy/services/normcontrol_review_map_service.py"
-      ],
-      "path": "proxy/routers/doc_review.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -1945,40 +1844,6 @@
       "inbound": [
         "proxy/app.py"
       ],
-      "lines": 50,
-      "module": "proxy.routers.edges",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/edge_service.py",
-        "proxy/services/memory_service.py",
-        "proxy/services/task_service.py"
-      ],
-      "path": "proxy/routers/edges.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 41,
-      "module": "proxy.routers.estimates",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/estimate_service.py"
-      ],
-      "path": "proxy/routers/estimates.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
       "lines": 19,
       "module": "proxy.routers.external_radar",
       "outbound": [
@@ -1988,25 +1853,6 @@
         "proxy/services/external_radar_service.py"
       ],
       "path": "proxy/routers/external_radar.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 226,
-      "module": "proxy.routers.field",
-      "outbound": [
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/config.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/asbuilt_intake_service.py",
-        "proxy/services/field_intake_service.py"
-      ],
-      "path": "proxy/routers/field.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -2084,40 +1930,6 @@
         "proxy/services/runtime_dispatcher.py"
       ],
       "path": "proxy/routers/jobs.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 83,
-      "module": "proxy.routers.kac",
-      "outbound": [
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/kac_service.py"
-      ],
-      "path": "proxy/routers/kac.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 58,
-      "module": "proxy.routers.les_md",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/config.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/les_md_service.py"
-      ],
-      "path": "proxy/routers/les_md.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -2251,42 +2063,6 @@
         "proxy/services/notebook_service.py"
       ],
       "path": "proxy/routers/notebooks.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py"
-      ],
-      "lines": 111,
-      "module": "proxy.routers.ontology",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/ontology_service.py"
-      ],
-      "path": "proxy/routers/ontology.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/app.py",
-        "tests/test_prices_etm_router.py",
-        "tests/test_prices_router_batch.py"
-      ],
-      "lines": 290,
-      "module": "proxy.routers.prices",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py",
-        "proxy/security.py",
-        "proxy/services/etm_price_service.py",
-        "proxy/services/fgis_price_fetch_service.py",
-        "proxy/services/fgis_price_service.py"
-      ],
-      "path": "proxy/routers/prices.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -2491,21 +2267,6 @@
     },
     {
       "inbound": [
-        "proxy/app.py",
-        "tests/test_status_page.py"
-      ],
-      "lines": 76,
-      "module": "proxy.routers.status_page",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/routers/__init__.py"
-      ],
-      "path": "proxy/routers/status_page.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/app.py"
       ],
       "lines": 74,
@@ -2579,32 +2340,22 @@
       "inbound": [
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
-        "proxy/routers/bor.py",
         "proxy/routers/chat.py",
         "proxy/routers/chat_history.py",
         "proxy/routers/checklist_review.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/decisions.py",
         "proxy/routers/diagnostics.py",
-        "proxy/routers/doc_review.py",
         "proxy/routers/documents.py",
-        "proxy/routers/edges.py",
-        "proxy/routers/estimates.py",
         "proxy/routers/external_radar.py",
-        "proxy/routers/field.py",
         "proxy/routers/filemap.py",
         "proxy/routers/files.py",
         "proxy/routers/forms.py",
         "proxy/routers/jobs.py",
-        "proxy/routers/kac.py",
-        "proxy/routers/les_md.py",
         "proxy/routers/lsr.py",
         "proxy/routers/mail.py",
         "proxy/routers/memory.py",
         "proxy/routers/model_connections.py",
         "proxy/routers/notebooks.py",
-        "proxy/routers/ontology.py",
-        "proxy/routers/prices.py",
         "proxy/routers/profiles.py",
         "proxy/routers/projects.py",
         "proxy/routers/rag_advanced.py",
@@ -2699,8 +2450,6 @@
         "proxy/services/electrical_schematic_service.py",
         "proxy/services/estimate_harness_service.py",
         "proxy/services/estimate_math_service.py",
-        "proxy/services/estimate_service.py",
-        "proxy/services/etm_price_service.py",
         "proxy/services/evidence_contract.py",
         "proxy/services/evidence_packet_service.py",
         "proxy/services/external_radar_service.py",
@@ -2739,6 +2488,7 @@
         "proxy/services/list_office_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/lsr_assembly_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/mail_push_service.py",
         "proxy/services/mail_query_service.py",
         "proxy/services/mail_registry_service.py",
@@ -2771,7 +2521,6 @@
         "proxy/services/pd_rd_manifest_service.py",
         "proxy/services/pdf_contour_service.py",
         "proxy/services/pdf_viewer_service.py",
-        "proxy/services/plan_fact_service.py",
         "proxy/services/pp87_composition_service.py",
         "proxy/services/preset_chat_service.py",
         "proxy/services/preset_service.py",
@@ -2991,7 +2740,6 @@
     {
       "inbound": [
         "proxy/routers/datasets.py",
-        "proxy/routers/field.py",
         "proxy/services/asbuilt_chat_service.py",
         "tests/test_asbuilt_intake.py",
         "tools/asbuilt_extract.py",
@@ -3030,11 +2778,8 @@
     },
     {
       "inbound": [
-        "proxy/routers/bor.py",
         "proxy/services/doc_review_service.py",
-        "proxy/services/estimate_service.py",
         "proxy/services/normcontrol_service.py",
-        "proxy/services/plan_fact_service.py",
         "proxy/services/reconcile_service.py",
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/workbook_tool_service.py",
@@ -3225,7 +2970,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 2663,
+      "lines": 2676,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3258,7 +3003,8 @@
         "proxy/services/saferag_service.py",
         "proxy/services/table_query_service.py",
         "proxy/services/tool_harness_service.py",
-        "proxy/services/typed_memory_projection_service.py"
+        "proxy/services/typed_memory_projection_service.py",
+        "proxy/services/workbook_tool_service.py"
       ],
       "path": "proxy/services/chat_evidence_application_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -3623,7 +3369,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/decisions.py",
         "proxy/services/agent_router_service.py",
         "proxy/services/project_service.py",
         "tests/test_decision_service_w174.py"
@@ -3723,7 +3468,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/doc_review.py",
         "proxy/services/checklist_review_service.py",
         "tests/test_doc_review_chat_tool.py",
         "tests/test_doc_review_gost_21_101_2026.py",
@@ -3872,7 +3616,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/edges.py",
         "proxy/services/decision_service.py",
         "proxy/services/forms_service.py",
         "proxy/services/memory_service.py",
@@ -4001,38 +3744,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/estimates.py",
-        "tests/test_estimate_service_w201.py"
-      ],
-      "lines": 271,
-      "module": "proxy.services.estimate_service",
-      "outbound": [
-        "backend/rag_config.py",
-        "proxy/__init__.py",
-        "proxy/services/__init__.py",
-        "proxy/services/bor_service.py"
-      ],
-      "path": "proxy/services/estimate_service.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/routers/prices.py",
-        "tests/test_etm_price_service.py"
-      ],
-      "lines": 325,
-      "module": "proxy.services.etm_price_service",
-      "outbound": [
-        "proxy/__init__.py",
-        "proxy/services/__init__.py"
-      ],
-      "path": "proxy/services/etm_price_service.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
         "proxy/services/checklist_review_service.py",
         "proxy/services/construction_harness_service.py",
         "proxy/services/doc_review_service.py",
@@ -4120,7 +3831,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/prices.py",
         "tests/test_fgis_full_update.py",
         "tests/test_fgis_price_fetch_service.py",
         "tools/fgis_full_update.py",
@@ -4140,7 +3850,6 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
-        "proxy/routers/prices.py",
         "proxy/services/estimate_harness_service.py",
         "proxy/services/fgis_price_fetch_service.py",
         "proxy/services/kac_service.py",
@@ -4191,13 +3900,11 @@
     },
     {
       "inbound": [
-        "proxy/routers/field.py",
         "proxy/services/agent_router_service.py",
         "proxy/services/asbuilt_intake_service.py",
         "proxy/services/forms_service.py",
         "proxy/services/ks_forms_service.py",
         "proxy/services/les_action_service.py",
-        "proxy/services/plan_fact_service.py",
         "proxy/services/project_service.py",
         "tests/test_field_intake_service.py",
         "tests/test_forms_service_w113.py",
@@ -4519,7 +4226,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/kac.py",
         "proxy/services/kac_pdf_service.py",
         "proxy/services/kac_web_service.py",
         "proxy/services/smeta_chat_service.py",
@@ -4675,7 +4381,6 @@
       "inbound": [
         "proxy/routers/chat.py",
         "proxy/routers/datasets.py",
-        "proxy/routers/les_md.py",
         "proxy/services/les_md_chat_service.py",
         "tests/test_datasets_router.py",
         "tests/test_les_md.py"
@@ -4851,6 +4556,23 @@
     },
     {
       "inbound": [
+        "proxy/services/workbook_tool_service.py",
+        "tests/test_workbook_tool_service.py"
+      ],
+      "lines": 52,
+      "module": "proxy.services.lsr_workbook_adapter_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/rim_lsr_trace_service.py",
+        "proxy/services/rim_trace_xlsx_service.py"
+      ],
+      "path": "proxy/services/lsr_workbook_adapter_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/routers/mail.py",
         "tests/test_mail_push_service.py"
       ],
@@ -4992,7 +4714,6 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
-        "proxy/routers/edges.py",
         "proxy/routers/tasks.py",
         "proxy/services/project_service.py",
         "proxy/services/typed_memory_projection_service.py",
@@ -5276,7 +4997,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/doc_review.py",
         "proxy/services/doc_review_service.py",
         "proxy/services/service_source_registry.py",
         "tests/test_doc_review_chat_tool.py",
@@ -5396,7 +5116,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/ontology.py",
         "proxy/services/cad_bim_graph.py",
         "proxy/services/project_service.py",
         "tests/test_ontology_service_w173.py"
@@ -5508,24 +5227,6 @@
         "proxy/services/__init__.py"
       ],
       "path": "proxy/services/pdf_viewer_service.py",
-      "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [
-        "proxy/routers/bor.py",
-        "tests/test_plan_fact_service.py"
-      ],
-      "lines": 220,
-      "module": "proxy.services.plan_fact_service",
-      "outbound": [
-        "backend/runtime_paths.py",
-        "proxy/__init__.py",
-        "proxy/services/__init__.py",
-        "proxy/services/bor_service.py",
-        "proxy/services/field_intake_service.py"
-      ],
-      "path": "proxy/services/plan_fact_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -6001,7 +5702,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/bor.py",
         "proxy/services/project_summary_service.py",
         "proxy/services/reconcile_chat_service.py",
         "tests/test_reconcile_service.py",
@@ -6197,6 +5897,7 @@
     {
       "inbound": [
         "proxy/routers/lsr.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/smeta_core/calculator.py",
         "tests/test_fsem_machinist_service.py",
         "tests/test_rim_golden_gesnm38.py",
@@ -6318,6 +6019,7 @@
     {
       "inbound": [
         "proxy/routers/lsr.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/rim_session_xlsx_service.py",
         "proxy/smeta_core/document_workflow.py",
         "proxy/smeta_core/lsr_renderer.py",
@@ -6757,6 +6459,7 @@
         "tests/test_doc_review_retrieval.py",
         "tests/test_extracted_smoke_v15.py",
         "tests/test_sidecar_policy_v14.py",
+        "tests/test_source_adapter_classifier_boundary.py",
         "tests/test_unified_adapters_v09.py",
         "tests/test_unified_async_v10.py",
         "tests/test_unified_filebody_v12.py",
@@ -6795,7 +6498,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/bor.py",
         "proxy/services/construction_harness_service.py",
         "proxy/services/project_summary_service.py",
         "proxy/services/workbook_tool_service.py",
@@ -6954,7 +6656,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/edges.py",
         "proxy/routers/tasks.py",
         "proxy/services/agent_router_service.py",
         "proxy/services/project_service.py",
@@ -7044,7 +6745,7 @@
         "tests/test_web_search_service.py",
         "tools/les_tool_harness.py"
       ],
-      "lines": 1325,
+      "lines": 1333,
       "module": "proxy.services.tool_harness_service",
       "outbound": [
         "backend/converter.py",
@@ -7216,7 +6917,7 @@
         "tools/vps_patch.py",
         "tools/windows_clean_install.py"
       ],
-      "lines": 1052,
+      "lines": 1058,
       "module": "proxy.services.update_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7265,7 +6966,7 @@
         "tools/internal_dual_deploy.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 391,
+      "lines": 390,
       "module": "proxy.services.version_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7296,11 +6997,12 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
         "proxy/services/tool_harness_service.py",
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 348,
+      "lines": 418,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7308,6 +7010,7 @@
         "proxy/services/artifact_revision_service.py",
         "proxy/services/bor_service.py",
         "proxy/services/chat_attachment_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/tool_contract_service.py",
         "proxy/services/tool_registry_service.py",
@@ -9167,7 +8870,7 @@
     },
     {
       "inbound": [],
-      "lines": 1397,
+      "lines": 1475,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9452,7 +9155,7 @@
     },
     {
       "inbound": [],
-      "lines": 188,
+      "lines": 219,
       "module": "tests.test_code_runtime_map",
       "outbound": [
         "tools/code_runtime_map.py"
@@ -9754,17 +9457,6 @@
     },
     {
       "inbound": [],
-      "lines": 60,
-      "module": "tests.test_doc_review_api",
-      "outbound": [
-        "proxy/routers/doc_review.py"
-      ],
-      "path": "tests/test_doc_review_api.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
       "lines": 41,
       "module": "tests.test_doc_review_chat_tool",
       "outbound": [
@@ -9941,29 +9633,6 @@
         "proxy/smeta_core/norm_browser.py"
       ],
       "path": "tests/test_estimate_harness.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 89,
-      "module": "tests.test_estimate_service_w201",
-      "outbound": [
-        "backend/rag_config.py",
-        "proxy/services/estimate_service.py"
-      ],
-      "path": "tests/test_estimate_service_w201.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 103,
-      "module": "tests.test_etm_price_service",
-      "outbound": [
-        "proxy/services/etm_price_service.py"
-      ],
-      "path": "tests/test_etm_price_service.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -11549,17 +11218,6 @@
     },
     {
       "inbound": [],
-      "lines": 126,
-      "module": "tests.test_plan_fact_service",
-      "outbound": [
-        "proxy/services/plan_fact_service.py"
-      ],
-      "path": "tests/test_plan_fact_service.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
       "lines": 231,
       "module": "tests.test_pp87_composition",
       "outbound": [
@@ -11578,28 +11236,6 @@
         "proxy/services/preset_service.py"
       ],
       "path": "tests/test_presets.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 46,
-      "module": "tests.test_prices_etm_router",
-      "outbound": [
-        "proxy/routers/prices.py"
-      ],
-      "path": "tests/test_prices_etm_router.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
-      "lines": 52,
-      "module": "tests.test_prices_router_batch",
-      "outbound": [
-        "proxy/routers/prices.py"
-      ],
-      "path": "tests/test_prices_router_batch.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -13140,6 +12776,17 @@
     },
     {
       "inbound": [],
+      "lines": 35,
+      "module": "tests.test_source_adapter_classifier_boundary",
+      "outbound": [
+        "proxy/services/source_adapters.py"
+      ],
+      "path": "tests/test_source_adapter_classifier_boundary.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 110,
       "module": "tests.test_source_excerpts",
       "outbound": [
@@ -13331,17 +12978,6 @@
     },
     {
       "inbound": [],
-      "lines": 30,
-      "module": "tests.test_status_page",
-      "outbound": [
-        "proxy/routers/status_page.py"
-      ],
-      "path": "tests/test_status_page.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
-    },
-    {
-      "inbound": [],
       "lines": 58,
       "module": "tests.test_stesnennost_service",
       "outbound": [
@@ -13492,7 +13128,7 @@
     },
     {
       "inbound": [],
-      "lines": 286,
+      "lines": 303,
       "module": "tests.test_tool_harness_service",
       "outbound": [
         "proxy/routers/tools.py",
@@ -13801,7 +13437,7 @@
     },
     {
       "inbound": [],
-      "lines": 926,
+      "lines": 959,
       "module": "tests.test_vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -13892,7 +13528,7 @@
     },
     {
       "inbound": [],
-      "lines": 34,
+      "lines": 87,
       "module": "tests.test_workbook_tool_contracts",
       "outbound": [
         "proxy/services/chat_profile_service.py",
@@ -13905,11 +13541,12 @@
     },
     {
       "inbound": [],
-      "lines": 233,
+      "lines": 285,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
         "proxy/services/chat_attachment_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py"
       ],
@@ -16385,12 +16022,6 @@
   ],
   "routes": [
     {
-      "handler": "status_page",
-      "method": "GET",
-      "path": "/",
-      "source": "proxy/routers/status_page.py"
-    },
-    {
       "handler": "artifact_revisions",
       "method": "GET",
       "path": "/api/artifacts/{artifact_id}/revisions",
@@ -16485,78 +16116,6 @@
       "method": "GET",
       "path": "/api/backup/status",
       "source": "proxy/routers/runtime.py"
-    },
-    {
-      "handler": "reconcile_preview",
-      "method": "GET",
-      "path": "/api/bor/reconcile",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "reconcile_download",
-      "method": "GET",
-      "path": "/api/bor/reconcile/download",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "reconcile_generate",
-      "method": "POST",
-      "path": "/api/bor/reconcile/generate",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "bor_download",
-      "method": "GET",
-      "path": "/api/bor/{dataset_id}/download",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "spec_bor_preview",
-      "method": "GET",
-      "path": "/api/bor/{dataset_id}/from-spec",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "spec_bor_download",
-      "method": "GET",
-      "path": "/api/bor/{dataset_id}/from-spec/download",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "spec_bor_generate",
-      "method": "POST",
-      "path": "/api/bor/{dataset_id}/from-spec/generate",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "bor_generate",
-      "method": "POST",
-      "path": "/api/bor/{dataset_id}/generate",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "plan_fact_preview",
-      "method": "GET",
-      "path": "/api/bor/{dataset_id}/plan-fact",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "plan_fact_download",
-      "method": "GET",
-      "path": "/api/bor/{dataset_id}/plan-fact/download",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "plan_fact_generate",
-      "method": "POST",
-      "path": "/api/bor/{dataset_id}/plan-fact/generate",
-      "source": "proxy/routers/bor.py"
-    },
-    {
-      "handler": "bor_preview",
-      "method": "GET",
-      "path": "/api/bor/{dataset_id}/preview",
-      "source": "proxy/routers/bor.py"
     },
     {
       "handler": "cad_bim_element_context",
@@ -16685,70 +16244,10 @@
       "source": "proxy/routers/chat.py"
     },
     {
-      "handler": "decisions_list",
-      "method": "GET",
-      "path": "/api/decisions",
-      "source": "proxy/routers/decisions.py"
-    },
-    {
-      "handler": "decisions_create",
-      "method": "POST",
-      "path": "/api/decisions",
-      "source": "proxy/routers/decisions.py"
-    },
-    {
-      "handler": "decisions_get",
-      "method": "GET",
-      "path": "/api/decisions/{decision_id}",
-      "source": "proxy/routers/decisions.py"
-    },
-    {
-      "handler": "decisions_status",
-      "method": "PATCH",
-      "path": "/api/decisions/{decision_id}",
-      "source": "proxy/routers/decisions.py"
-    },
-    {
-      "handler": "decisions_supersede",
-      "method": "POST",
-      "path": "/api/decisions/{new_id}/supersedes/{old_id}",
-      "source": "proxy/routers/decisions.py"
-    },
-    {
       "handler": "run_diagnostics",
       "method": "GET",
       "path": "/api/diag",
       "source": "proxy/routers/diagnostics.py"
-    },
-    {
-      "handler": "doc_review_rulepacks",
-      "method": "GET",
-      "path": "/api/doc-review/rulepacks",
-      "source": "proxy/routers/doc_review.py"
-    },
-    {
-      "handler": "doc_review_set_decision",
-      "method": "POST",
-      "path": "/api/doc-review/{dataset_id}/decision",
-      "source": "proxy/routers/doc_review.py"
-    },
-    {
-      "handler": "doc_review_decisions",
-      "method": "GET",
-      "path": "/api/doc-review/{dataset_id}/decisions",
-      "source": "proxy/routers/doc_review.py"
-    },
-    {
-      "handler": "doc_review_download",
-      "method": "GET",
-      "path": "/api/doc-review/{dataset_id}/download",
-      "source": "proxy/routers/doc_review.py"
-    },
-    {
-      "handler": "doc_review_run",
-      "method": "POST",
-      "path": "/api/doc-review/{dataset_id}/run",
-      "source": "proxy/routers/doc_review.py"
     },
     {
       "handler": "document_by_id",
@@ -16829,100 +16328,16 @@
       "source": "proxy/routers/documents.py"
     },
     {
-      "handler": "edges_list",
-      "method": "GET",
-      "path": "/api/edges",
-      "source": "proxy/routers/edges.py"
-    },
-    {
-      "handler": "edges_backfill",
-      "method": "POST",
-      "path": "/api/edges/backfill",
-      "source": "proxy/routers/edges.py"
-    },
-    {
-      "handler": "edges_for",
-      "method": "GET",
-      "path": "/api/edges/for",
-      "source": "proxy/routers/edges.py"
-    },
-    {
       "handler": "embeddings_ollama",
       "method": "POST",
       "path": "/api/embeddings",
       "source": "mlx_host.py"
     },
     {
-      "handler": "estimate_get",
-      "method": "GET",
-      "path": "/api/estimates/item/{estimate_id}",
-      "source": "proxy/routers/estimates.py"
-    },
-    {
-      "handler": "estimates_list",
-      "method": "GET",
-      "path": "/api/estimates/{project_id}",
-      "source": "proxy/routers/estimates.py"
-    },
-    {
-      "handler": "estimate_import",
-      "method": "POST",
-      "path": "/api/estimates/{project_id}/import",
-      "source": "proxy/routers/estimates.py"
-    },
-    {
       "handler": "external_radar_summary",
       "method": "GET",
       "path": "/api/external-radar/summary",
       "source": "proxy/routers/external_radar.py"
-    },
-    {
-      "handler": "field_list",
-      "method": "GET",
-      "path": "/api/field",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_create",
-      "method": "POST",
-      "path": "/api/field",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_download",
-      "method": "GET",
-      "path": "/api/field/download",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_export",
-      "method": "POST",
-      "path": "/api/field/export",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_extract_asbuilt",
-      "method": "POST",
-      "path": "/api/field/extract-asbuilt",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_summary",
-      "method": "GET",
-      "path": "/api/field/summary",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_delete",
-      "method": "DELETE",
-      "path": "/api/field/{entry_id}",
-      "source": "proxy/routers/field.py"
-    },
-    {
-      "handler": "field_patch",
-      "method": "PATCH",
-      "path": "/api/field/{entry_id}",
-      "source": "proxy/routers/field.py"
     },
     {
       "handler": "filemap_candidates",
@@ -17061,54 +16476,6 @@
       "method": "GET",
       "path": "/api/jobs/summary",
       "source": "proxy/routers/jobs.py"
-    },
-    {
-      "handler": "kac_analyze",
-      "method": "POST",
-      "path": "/api/kac/analyze",
-      "source": "proxy/routers/kac.py"
-    },
-    {
-      "handler": "kac_download",
-      "method": "GET",
-      "path": "/api/kac/download",
-      "source": "proxy/routers/kac.py"
-    },
-    {
-      "handler": "kac_generate",
-      "method": "POST",
-      "path": "/api/kac/generate",
-      "source": "proxy/routers/kac.py"
-    },
-    {
-      "handler": "kac_lsr_lines",
-      "method": "POST",
-      "path": "/api/kac/lsr-lines",
-      "source": "proxy/routers/kac.py"
-    },
-    {
-      "handler": "kac_needs",
-      "method": "GET",
-      "path": "/api/kac/needs",
-      "source": "proxy/routers/kac.py"
-    },
-    {
-      "handler": "les_md_context",
-      "method": "GET",
-      "path": "/api/les-md/context/{project_id}",
-      "source": "proxy/routers/les_md.py"
-    },
-    {
-      "handler": "les_md_draft",
-      "method": "POST",
-      "path": "/api/les-md/draft",
-      "source": "proxy/routers/les_md.py"
-    },
-    {
-      "handler": "les_md_read",
-      "method": "POST",
-      "path": "/api/les-md/read",
-      "source": "proxy/routers/les_md.py"
     },
     {
       "handler": "live_stream",
@@ -17511,120 +16878,6 @@
       "method": "DELETE",
       "path": "/api/notes/{note_id}",
       "source": "proxy/routers/tasks.py"
-    },
-    {
-      "handler": "ontology_backbone",
-      "method": "GET",
-      "path": "/api/ontology/backbone",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "containers_cde_summary",
-      "method": "GET",
-      "path": "/api/ontology/cde-summary",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "containers_list",
-      "method": "GET",
-      "path": "/api/ontology/containers",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "containers_register",
-      "method": "POST",
-      "path": "/api/ontology/containers",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "containers_set_state",
-      "method": "POST",
-      "path": "/api/ontology/containers/state",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "containers_supersede",
-      "method": "POST",
-      "path": "/api/ontology/containers/supersede",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "ontology_elements",
-      "method": "GET",
-      "path": "/api/ontology/elements",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "ontology_lbs",
-      "method": "GET",
-      "path": "/api/ontology/lbs",
-      "source": "proxy/routers/ontology.py"
-    },
-    {
-      "handler": "prices_books",
-      "method": "GET",
-      "path": "/api/prices/books",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_etm_lookup_batch",
-      "method": "POST",
-      "path": "/api/prices/etm/lookup-batch",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_etm_status",
-      "method": "GET",
-      "path": "/api/prices/etm/status",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_import",
-      "method": "POST",
-      "path": "/api/prices/import",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_lookup",
-      "method": "GET",
-      "path": "/api/prices/lookup",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_lookup_batch",
-      "method": "POST",
-      "path": "/api/prices/lookup-batch",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_needs",
-      "method": "GET",
-      "path": "/api/prices/needs",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_search",
-      "method": "GET",
-      "path": "/api/prices/search",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_sources_periods",
-      "method": "GET",
-      "path": "/api/prices/sources/periods",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_sources_subjects",
-      "method": "GET",
-      "path": "/api/prices/sources/subjects",
-      "source": "proxy/routers/prices.py"
-    },
-    {
-      "handler": "prices_update",
-      "method": "POST",
-      "path": "/api/prices/update",
-      "source": "proxy/routers/prices.py"
     },
     {
       "handler": "list_profiles",
@@ -18753,12 +18006,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 350,
-    "registered_api_routes": 394,
+    "product_reachable": 337,
+    "registered_api_routes": 330,
     "runtime_support": 8,
-    "test_or_tool_only": 620,
-    "tracked_python_files": 979,
-    "tracked_python_lines": 299480
+    "test_or_tool_only": 614,
+    "tracked_python_files": 960,
+    "tracked_python_lines": 297195
   },
   "warnings": []
 }

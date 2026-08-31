@@ -434,7 +434,7 @@ def format_spec_bor_answer(result: dict, dataset_label: str = "") -> str:
         tail = "\nПолная таблица — в Excel-вложении. Количества только из исходника, без цен и без LLM."
     else:
         tail = ("\nПолная таблица: Инструменты → ВОР (режим «работы из спецификации») "
-                "или POST /api/bor/{id}/from-spec/generate. Числа — из исходника, 0 LLM.")
+                "или используй build_vor_workbook. Числа — из исходника, 0 LLM.")
     return head + ("\n" + "\n".join(sample) if sample else "") + tail
 
 

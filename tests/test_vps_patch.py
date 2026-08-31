@@ -681,6 +681,39 @@ def test_github_feed_binds_repository_tag_identity_and_asset(tmp_path, monkeypat
             update_service.validate_github_update_feed(bad)
 
 
+def test_older_valid_github_feed_means_no_update_for_newer_installed_build(
+    tmp_path, monkeypatch
+):
+    runtime = tmp_path / "runtime"
+    target = runtime / "proxy" / "x.py"
+    target.parent.mkdir(parents=True)
+    target.write_bytes(b"newer-installed-content")
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    monkeypatch.setattr(update_service, "BUILD_NUMBER", 649)
+    patch = {
+        "schema": update_service.VPS_PATCH_SCHEMA,
+        "patch_id": "older-public-patch",
+        "base_commit": "b" * 40,
+        "target_commit": "c" * 40,
+        "product_version": "0.30.7",
+        "build_number": 647,
+        "files": [
+            {
+                "path": "proxy/x.py",
+                "base_sha256": hashlib.sha256(b"older-base").hexdigest(),
+                "sha256": hashlib.sha256(b"older-target").hexdigest(),
+                "bytes": len(b"older-target"),
+            }
+        ],
+    }
+
+    result = update_service.validate_github_update_feed(_github_feed(patch))
+
+    assert result["available"] is False
+    assert result["compatible"] is True
+    assert result["message"] == "Установлена более новая сборка"
+
+
 def test_cumulative_patch_accepts_mixed_base_and_already_updated_files(tmp_path, monkeypatch):
     runtime = tmp_path / "runtime"
     first = runtime / "proxy" / "first.py"

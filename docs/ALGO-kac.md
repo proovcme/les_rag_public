@@ -28,9 +28,8 @@
 ## Где в коде
 
 - Сервис: `proxy/services/kac_service.py` (без LLM).
-- API: `POST /api/kac/analyze` · `/lsr-lines` · `/generate`, `GET /api/kac/needs` · `/download`
-  (`proxy/routers/kac.py`).
-- GUI: «Инструменты» → карточка «КАЦ» (редактируемая сетка котировок → анализ → выбор + xlsx).
+- Самостоятельный `/api/kac` удалён в 0.30.21 как неиспользуемый; сервис
+  вызывают сметные компоненты и MCP.
 - MCP: `les_kac`. Классификатор: тип `коммерческое_предложение` (КП → вход КАЦ).
 - Тест: `tests/test_kac_service.py`.
 

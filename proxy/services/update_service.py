@@ -612,10 +612,12 @@ def validate_github_update_feed(payload: dict) -> dict:
     if (
         re.fullmatch(r"\d+\.\d+\.\d+", product_version) is None
         or payload.get("tag") != f"v{product_version}"
-        or build_number < BUILD_NUMBER
+        or build_number <= 0
         or re.fullmatch(r"[0-9a-f]{40}", target_commit) is None
     ):
         raise UpdateError("Версия, тег, сборка или commit обновления не совпадают")
+    if build_number == BUILD_NUMBER and product_version != LES_VERSION:
+        raise UpdateError("Версия и установленная сборка обновления не совпадают")
 
     compatible_bases = payload.get("compatible_bases")
     if (
@@ -669,6 +671,10 @@ def validate_github_update_feed(payload: dict) -> dict:
     result["tag"] = f"v{product_version}"
     result["release_class"] = "patch"
     result["compatible_bases"] = tuple(str(value) for value in compatible_bases)
+    if build_number < BUILD_NUMBER:
+        result["available"] = False
+        result["compatible"] = True
+        result["message"] = "Установлена более новая сборка"
     return result
 
 

@@ -134,33 +134,64 @@ def test_api_surface_keeps_profiles_and_internal_extraction_without_duplicate_pu
     assert ("POST", "/api/extract/structured") not in routes
 
 
-def test_unfinished_incoming_control_is_retired_without_removing_active_workflows(
+def test_unconsumed_experimental_api_is_retired_without_removing_active_workflows(
     inventory: dict,
 ):
     modules = _modules_by_path(inventory)
     paths = {item["path"] for item in inventory["routes"]}
 
     for active_prefix in (
-        "/api/field",
         "/api/tasks",
         "/api/notes",
         "/api/filemap",
-        "/api/decisions",
     ):
         assert any(path == active_prefix or path.startswith(f"{active_prefix}/") for path in paths)
+
+    for retired_prefix in (
+        "/api/bor",
+        "/api/decisions",
+        "/api/doc-review",
+        "/api/edges",
+        "/api/estimates",
+        "/api/field",
+        "/api/kac",
+        "/api/les-md",
+        "/api/ontology",
+        "/api/prices",
+    ):
+        assert not [
+            path
+            for path in paths
+            if path == retired_prefix or path.startswith(f"{retired_prefix}/")
+        ]
+
+    for retired_module in (
+        "proxy/routers/bor.py",
+        "proxy/routers/decisions.py",
+        "proxy/routers/doc_review.py",
+        "proxy/routers/edges.py",
+        "proxy/routers/estimates.py",
+        "proxy/routers/field.py",
+        "proxy/routers/kac.py",
+        "proxy/routers/les_md.py",
+        "proxy/routers/ontology.py",
+        "proxy/routers/prices.py",
+        "proxy/routers/status_page.py",
+    ):
+        assert retired_module not in modules
 
     assert "proxy/routers/incoming_control.py" not in modules
     assert "proxy/services/incoming_control_service.py" not in modules
     assert not [path for path in paths if path.startswith("/api/incoming-control")]
 
 
-def test_unfinished_worklog_is_retired_without_removing_field_or_glossary(
+def test_unfinished_worklog_and_field_api_are_retired_without_removing_glossary(
     inventory: dict,
 ):
     modules = _modules_by_path(inventory)
     paths = {item["path"] for item in inventory["routes"]}
 
-    assert any(path == "/api/field" or path.startswith("/api/field/") for path in paths)
+    assert not [path for path in paths if path == "/api/field" or path.startswith("/api/field/")]
     assert "proxy/services/glossary_chat_service.py" in modules
     assert "proxy/routers/worklog.py" not in modules
     assert "proxy/services/work_log_service.py" not in modules
@@ -179,10 +210,10 @@ def test_unintegrated_diff_is_retired_without_removing_cad_bim_inventory(
     assert not [path for path in paths if path.startswith("/api/diff")]
 
 
-def test_legacy_normcontrol_api_is_retired_but_doc_review_route_stays_active(
+def test_legacy_normcontrol_and_unconsumed_doc_review_apis_are_retired(
     inventory: dict,
 ):
     paths = {item["path"] for item in inventory["routes"]}
 
-    assert "/api/doc-review/{dataset_id}/run" in paths
+    assert "/api/doc-review/{dataset_id}/run" not in paths
     assert not [path for path in paths if path.startswith("/api/normcontrol")]

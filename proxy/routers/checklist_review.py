@@ -7,7 +7,7 @@
                                                                     checklist_report_service)
   POST /api/checklist-review/{dataset_id}/runs/{run_id}/items/{item_id}/decision — human decision
 
-Паттерн — зеркало ``proxy/routers/doc_review.py`` (см. ``_safe_dataset_dir``/persist decisions):
+Паттерн хранит собственный безопасный dataset boundary и persist decisions:
 вся логика движка — в ``checklist_review_service`` (T2.1-T3.2), роутер только оркестрирует +
 персистит на диск. Синхронный run (T4.1 scope): background job для items>50 — TODO, отдельная
 подзадача (T4.x), см. implementation_plan.md §5 "Run на 500+ пунктов — background job через

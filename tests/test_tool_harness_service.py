@@ -119,6 +119,23 @@ def test_tool_shortlist_delegates_policy_without_domain_word_routing():
     assert first["budget"]["calls"] == 5
 
 
+def test_context_bound_workbook_tools_are_not_shortlisted_without_runtime_executor():
+    result = ToolHarness().shortlist(
+        "Собери ведомость и локальную смету",
+        allowed_tools=["build_lsr_workbook", "build_vor_workbook"],
+        limit=5,
+        dataset_ids=("selected",),
+        workflow_phase="draft",
+        attachment_ids=("read_123456abcdef",),
+    )
+
+    assert result["tools"] == []
+    assert result["omitted_by_reason"]["runtime"] == (
+        "build_lsr_workbook",
+        "build_vor_workbook",
+    )
+
+
 def test_tool_search_sources_returns_evidence_packet(monkeypatch, explorer):
     monkeypatch.setattr(tool_harness_service, "explorer", lambda: explorer)
 

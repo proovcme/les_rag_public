@@ -2,16 +2,16 @@
 
 ## Workbook tools in new factory seeds (0.29.0 / build 619)
 
-Новый Factory Base профиля `estimator` включает два канонических workbook tool
-contract. Уже созданные active revisions и session bindings не изменяются:
-оператор должен явно создать/опубликовать/активировать новую редакцию.
+Factory Base профиля `estimator` хранит два канонических workbook tool contract,
+но profile allowlist — только намерение, а не доказательство исполнимости.
+CapabilityBroker выдаёт модели лишь tools, доступные в текущем runtime context.
 
-**Build 621:** после явной активации подходящей profile revision ordinary chat
-показывает workbook contracts модели только в `draft` phase и только при
-server-owned read-вложении. Один model call проходит Trusted Executor; SSE
-публикует checkpoint progress, а complete result сохраняет immutable artifact
-revision в ответе и истории. UI не повторяет дорогой запрос после первого
-`tool_progress` и сохраняет вложение для безопасного resume/correction.
+**Build 661:** context-bound workbook contracts не попадают в обычный ToolHarness
+shortlist. При server-owned read-вложении чат добавляет реально исполняемые
+`build_vor_workbook` и `build_lsr_workbook`. Тонкий LSR adapter принимает явные
+`decisions` той же модели и только рассчитывает/рендерит их, не запуская скрытый
+второй model loop. Это действует и для старых immutable profile snapshots,
+поэтому обновление не переписывает пользовательские ревизии.
 
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия

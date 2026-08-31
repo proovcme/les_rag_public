@@ -19,13 +19,13 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 979 |
-| Строк Python | 299480 |
-| PRODUCT_REACHABLE | 350 |
+| Python-файлов под git | 960 |
+| Строк Python | 297195 |
+| PRODUCT_REACHABLE | 337 |
 | RUNTIME_SUPPORT | 8 |
-| TEST_OR_TOOL_ONLY | 620 |
+| TEST_OR_TOOL_ONLY | 614 |
 | DORMANT_CANDIDATE | 1 |
-| Зарегистрированных API-маршрутов | 394 |
+| Зарегистрированных API-маршрутов | 330 |
 | Ошибок разбора | 0 |
 
 ## Крупнейшие продуктовые модули
@@ -36,12 +36,12 @@
 | sovushka/pages/chat.py | 4688 | 5 |
 | backend/qdrant_adapter.py | 4512 | 27 |
 | sovushka/uikit/tokens.py | 4197 | 2 |
-| proxy/routers/chat.py | 4066 | 40 |
+| proxy/routers/chat.py | 4070 | 40 |
 | sovushka/pages/documents.py | 3895 | 2 |
 | proxy/routers/datasets.py | 3768 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
-| proxy/services/chat_evidence_application_service.py | 2663 | 7 |
+| proxy/services/chat_evidence_application_service.py | 2676 | 7 |
 | proxy/services/smeta_chat_adapter_service.py | 2437 | 14 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
@@ -54,14 +54,14 @@
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | sovushka/pages/diag.py | 1416 | 2 |
 | proxy/services/retrieval_service.py | 1348 | 10 |
-| proxy/services/tool_harness_service.py | 1325 | 12 |
+| proxy/services/tool_harness_service.py | 1333 | 12 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
 | backend/document_router.py | 1124 | 6 |
 | proxy/routers/rim.py | 1122 | 2 |
 | tools/build_rag_contract_sibling.py | 1114 | 4 |
-| proxy/services/update_service.py | 1052 | 7 |
+| proxy/services/update_service.py | 1058 | 7 |
 
 ## Сметный монолит: фактические потребители
 

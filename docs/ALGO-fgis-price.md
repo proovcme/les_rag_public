@@ -33,8 +33,8 @@
 ## Где в коде
 
 - Сервис: `proxy/services/fgis_price_service.py` (без LLM).
-- API: `GET /api/prices/lookup` · `/search` · `/books`, `POST /api/prices/import` (`proxy/routers/prices.py`).
-- GUI: «Инструменты» → карточка «ФГИС ЦС — цена по коду ресурса».
+- Операторское обновление: `/api/service-sources/fgis/update[/status]` и GUI
+  «Инструменты». Старый общий `/api/prices` удалён в 0.30.21.
 - MCP: `les_price_lookup`.
 - Тест: `tests/test_fgis_price_service.py`.
 

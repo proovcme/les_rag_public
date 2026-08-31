@@ -37,7 +37,7 @@ PDF-скан
   │  to_journal() → field_intake_service.create_entry()
   │     zahvatka = floor/system/line (напр. L5/АУПС/ОП), status=pending, doc_id=PDF
   ▼
-журнал объёмов  → /api/field/summary (SUM кодом) → xlsx
+журнал объёмов  → field_intake_service (SUM кодом) → xlsx/forms/dossier
 ```
 
 ## Почему locate-then-read, а не сплошной OCR / слепой тайлинг
@@ -73,8 +73,8 @@ OCR ячеек не идеален: ключевые объёмы (метраж 
 ## Точки входа
 
 - CLI: `tools/asbuilt_extract.py "<pdf|папка>" --engine local|cloud --rotate auto|90 --preview|--write [--xlsx out]`
-- API: `POST /api/field/extract-asbuilt` (admin; path внутри `LES_EXTERNAL_SOURCE_ROOTS`),
-  `write=false` → превью.
+- Dataset intake вызывает `process_path`; path ограничен
+  `LES_EXTERNAL_SOURCE_ROOTS`. Старый `/api/field` удалён в 0.30.21.
 - Чат (Совушка вызывает сама, канал `asbuilt`): `proxy/services/asbuilt_chat_service.py` —
   интент «вытащи смонтированный объём из «<путь>»» (+«облаком») → фоновый прогон (`process_path`
   write=pending) + мгновенный ack; результат читается каналом журнала («свод по L5»). Подключён в

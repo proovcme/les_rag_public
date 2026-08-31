@@ -424,7 +424,7 @@ LLM-рассуждение о составе работ над корпусом 
 | **Навигация ФСНБ/ГЭСН/ресурсов для RAG** | Smetnoedelo API v2.0 (`api.smetnoedelo.ru/cs`) | токен оператора, квота; секрет только в env `LES_SMETNOE_TOKEN` | `tools/smetnoedelo_rag_import.py` → `RAG_Content/TABLE_SMETA/SMETA_SERVICE/smetnoedelo_api`, затем `POST /api/rag/sync-smart` |
 | **Публичные ZIP-архивы ФСНБ/ГЭСН** | `https://smeta.ru/download/norm` → прямые `obs.smeta.ru/*.zip` | без токена; крупные архивы | `tools/smeta_ru_norm_rag_ingest.py` → download/extract/provenance → `RAG_Content/TABLE_SMETA/SMETA_RU_NORM` → `sync-smart` после каждого нового архива |
 | **PDF-корпус ГЭСН/ГЭСНм/ГЭСНр/ГЭСНп** | внешняя папка оператора | evidence/RAG-корпус, не замена parquet-базы расчёта | `POST /api/rag/index-external` by-reference; классификация `NORMATIVE/NTD_CONSTRUCTION` |
-| **Цены ресурсов** | «Сплит-форма» ФГИС ЦС (файл, регион×квартал) | файл-выгрузка (большой, не в репо) | Инструменты → ФГИС ЦС / `POST /api/prices/import` → `data/price_base/*.parquet` |
+| **Цены ресурсов** | «Сплит-форма» ФГИС ЦС (файл, регион×квартал) | файл-выгрузка (большой, не в репо) | Инструменты → ФГИС ЦС / service-source updater → `data/price_base/*.parquet` |
 | Цены **неучтённых** материалов | коммерческие предложения поставщиков | КАЦ ≥3 КП | [[ALGO-kac]] |
 
 С 0.24.0.352 generated `SMETA_SERVICE/**` индексируется не в пользовательский

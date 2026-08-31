@@ -24,28 +24,18 @@ from proxy.config import CORS_ALLOWED_ORIGIN_REGEX, CORS_ALLOWED_ORIGINS
 from proxy.local_model_registry import DEFAULT_LOCAL_MLX_MODEL
 from proxy.routers.auth import router as auth_router, seed_admin_key
 from proxy.routers.artifacts import router as artifacts_router
-from proxy.routers.bor import router as bor_router
 from proxy.routers.filemap import router as filemap_router
 from proxy.routers.tasks import notes_router, router as tasks_router
 from proxy.routers.projects import router as projects_router
-from proxy.routers.edges import router as edges_router
-from proxy.routers.ontology import router as ontology_router
-from proxy.routers.decisions import router as decisions_router
-from proxy.routers.estimates import router as estimates_router
-from proxy.routers.prices import router as prices_router
-from proxy.routers.kac import router as kac_router
 from proxy.routers.lsr import router as lsr_router
 from proxy.routers.rim import router as rim_router
 from proxy.routers.external_radar import router as external_radar_router
 from proxy.routers.verify import router as verify_router
 from proxy.routers.forms import router as forms_router
 from proxy.routers.files import router as files_router
-from proxy.routers.field import router as field_router
-from proxy.routers.les_md import router as les_md_router
 from proxy.routers.notebooks import router as notebooks_router
 from proxy.routers.profiles import router as profiles_router
 from proxy.routers.model_connections import router as model_connections_router
-from proxy.routers.doc_review import router as doc_review_router
 from proxy.routers.checklist_review import router as checklist_review_router
 from proxy.routers.documents import router as documents_router
 from proxy.routers.tools import router as tools_router
@@ -81,7 +71,6 @@ from proxy.routers.rag_advanced import router as rag_advanced_router
 from proxy.routers.updates import router as updates_router
 from proxy.routers.service_sources import router as service_sources_router
 from proxy.routers.speckle import cad_bim_router
-from proxy.routers.status_page import StatusPageState, router as status_page_router, set_status_page_state
 from proxy.routers.memory import router as memory_router
 from proxy.services.job_service import JobService
 from proxy.services.resource_governor import CHAT_MODE, PROFILE_CHAT
@@ -634,7 +623,6 @@ def configure_router_state() -> None:
     set_diagnostics_state(DiagnosticsRouterState(crag_stats=crag_stats, proxy_start=proxy_start))
     set_jobs_state(JobsRouterState(job_service=job_service, job_tracker=job_tracker))
     set_logs_state(LogsRouterState(log_history=log_history))
-    set_status_page_state(StatusPageState(crag_stats=crag_stats, proxy_start=proxy_start))
     set_chat_state(
         ChatRouterState(
             rag_backend=lambda: rag_backend,
@@ -672,16 +660,9 @@ def create_app():
     )
     fastapi_app.include_router(auth_router)
     fastapi_app.include_router(artifacts_router)
-    fastapi_app.include_router(bor_router)
     fastapi_app.include_router(filemap_router)
     fastapi_app.include_router(tasks_router)
     fastapi_app.include_router(projects_router)
-    fastapi_app.include_router(edges_router)
-    fastapi_app.include_router(ontology_router)
-    fastapi_app.include_router(decisions_router)
-    fastapi_app.include_router(estimates_router)
-    fastapi_app.include_router(prices_router)
-    fastapi_app.include_router(kac_router)
     fastapi_app.include_router(lsr_router)
     fastapi_app.include_router(rim_router)
     fastapi_app.include_router(external_radar_router)
@@ -689,12 +670,9 @@ def create_app():
     fastapi_app.include_router(forms_router)
     fastapi_app.include_router(files_router)
     fastapi_app.include_router(notes_router)
-    fastapi_app.include_router(field_router)
-    fastapi_app.include_router(les_md_router)
     fastapi_app.include_router(notebooks_router)
     fastapi_app.include_router(profiles_router)
     fastapi_app.include_router(model_connections_router)
-    fastapi_app.include_router(doc_review_router)
     fastapi_app.include_router(checklist_review_router)
     fastapi_app.include_router(documents_router)
     fastapi_app.include_router(tools_router)
@@ -712,7 +690,6 @@ def create_app():
     fastapi_app.include_router(logs_router)
     fastapi_app.include_router(mail_router)
     fastapi_app.include_router(rerank_router)
-    fastapi_app.include_router(status_page_router)
     fastapi_app.include_router(chat_router)
     fastapi_app.include_router(memory_router)
     fastapi_app.on_event("startup")(startup)

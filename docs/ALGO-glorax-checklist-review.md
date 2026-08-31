@@ -119,7 +119,7 @@ Historical note: до решения оператора ПД давал 337 кр
 - **`defense_contract_v1`** (`proxy/services/evidence_contract.py`) — `EvidenceItem`
   (RETRIEVED/COMPUTED/ASSUMED/MISSING/BLOCKED), `DefenseClaim`, `DefensePack`. Инвариант уже
   в коде: RETRIEVED обязан иметь `source_ref`.
-- **Persist-паттерн `human_decisions.json`** — `proxy/routers/doc_review.py:59-76` →
+- **Persist-паттерн `human_decisions.json`** — внутренний `doc_review_service` →
   `storage/doc_review/{dataset_id}/human_decisions.json`
   (`doc_review_human_decisions_v1`). Checklist-review копирует sidecar-паттерн в
   `storage/checklist_review/{dataset_id}/{run_id}/…`.

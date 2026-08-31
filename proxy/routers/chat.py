@@ -792,6 +792,7 @@ async def _execute_chat_workbook_tool(
         WorkbookExecutionContext,
         build_lsr_workbook,
         build_vor_workbook,
+        chat_workbook_adapters,
     )
 
     tool_name = str(call.get("tool") or "")
@@ -889,6 +890,7 @@ async def _execute_chat_workbook_tool(
         })))
 
     configured_attachment_root = os.getenv("LES_CHAT_ATTACHMENT_ROOT", "").strip()
+    workbook_adapters = chat_workbook_adapters()
     context = WorkbookExecutionContext(
         session_id=str(request_context.get("session_id") or "anonymous"),
         idempotency_key=f"workbook:{identity}",
@@ -909,6 +911,8 @@ async def _execute_chat_workbook_tool(
             mutable_path("storage/artifacts/meta.db"),
             mutable_path("storage/artifacts/files"),
         ),
+        lsr_adapter=workbook_adapters.get("build_lsr_workbook"),
+        vor_adapter=workbook_adapters.get("build_vor_workbook"),
         progress_sink=emit_progress,
     )
     contract, builder = contracts[tool_name]

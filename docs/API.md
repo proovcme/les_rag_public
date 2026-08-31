@@ -36,19 +36,9 @@
 
 ## Doc Review / Normcontrol
 
-| Метод | Путь | Назначение |
-|---|---|---|
-| `GET` | `/api/doc-review/rulepacks` | Доступные review-map/rulepack профили |
-| `POST` | `/api/doc-review/{dataset_id}/run` | RAG-led СПДС-review комплекта по ГОСТ Р 21.101-2026 |
-| `GET` | `/api/doc-review/{dataset_id}/decisions` | Сохранённые решения инженера по замечаниям |
-| `POST` | `/api/doc-review/{dataset_id}/decision` | Подтвердить/отклонить/запросить данные по пункту review |
-| `GET` | `/api/doc-review/{dataset_id}/download?fmt=xlsx\|json\|html` | Детерминированный отчёт |
-
-`run` возвращает `items`, `defense` (`defense_contract_v1`) и `normalized_remarks`.
-`normalized_remarks` — общий машинный контракт для checklist/DOCX/PDF renderers; это proposed
-remarks, финальное решение по каждому пункту остаётся за инженером. `decision` принимает
-`rule_id`, `decision=confirmed|rejected|needs_more_evidence|unset` и опциональный `comment`;
-решения сохраняются в sidecar и попадают в JSON/XLSX/HTML.
+Самостоятельные `/api/normcontrol` и `/api/doc-review` удалены в
+0.30.18/0.30.21. Живой операторский workflow — `/api/checklist-review`; он
+переиспользует внутренние `normcontrol_service` и `doc_review_service`.
 
 ## Search
 
@@ -170,13 +160,9 @@ curl -X POST http://127.0.0.1:8050/api/chat \
 
 ## ВОР (ведомости объёмов работ)
 
-| Метод | Путь | Назначение |
-|---|---|---|
-| `GET` | `/api/bor/{dataset_id}/preview` | Свод ВОР в JSON (`?limit=50`) |
-| `POST` | `/api/bor/{dataset_id}/generate` | Генерация xlsx в `storage/datasets/{id}/_bor/` |
-| `GET` | `/api/bor/{dataset_id}/download` | Последний сгенерированный xlsx |
-
-ВОР строится детерминированно (ADR-11, без LLM) из Parquet-строк спецификаций/ведомостей (`_parquet/`): группировка «раздел × наименование × код × марка × ед.изм.», суммирование количеств, нормализация единиц.
+Старый `/api/bor` удалён в 0.30.21. Живые входы — чатовый
+`build_vor_workbook` и MCP `les_bor`/`les_spec_to_bor`; расчётные сервисы
+сохранены.
 
 ## Дифф (исторический W12.1)
 
@@ -186,8 +172,8 @@ runtime-потребителя и не прошёл live-приёмку. Акт�
 
 ## Нормоконтроль (формальный)
 
-Legacy `/api/normcontrol/*` удалён в 0.30.18. Формальные NK-01…NK-04 остаются
-внутренним слоем активного `/api/doc-review/*`; отдельного параллельного API больше нет.
+Legacy `/api/normcontrol/*` и `/api/doc-review/*` удалены. Формальные NK-01…NK-04
+остаются внутренним слоем checklist review.
 
 Проверки v1 (детерминированные, без LLM): NK-01 форматы листов по ГОСТ 2.301 (вкл. кратные), NK-02 текстовый слой (сканы), NK-03 согласованность шифра комплекта, NK-04 ведомость чертежей ↔ фактический состав. v2 (графы основной надписи/подписи) — требует layout-анализа штампа, см. LES3_PLAN W13.1.
 

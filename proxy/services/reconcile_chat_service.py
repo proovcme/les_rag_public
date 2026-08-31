@@ -100,7 +100,7 @@ def _format_answer(result: dict[str, Any]) -> str:
         lines.append("\nРасхождений и пробелов не найдено — объёмы сходятся.")
 
     lines.append("\nПолную таблицу выгрузить: Инструменты → Сверка → «Скачать xlsx» "
-                 "(или POST /api/bor/reconcile/generate).")
+                 "(исходные таблицы и расчёт сохранены в evidence).")
     return "\n".join(lines)
 
 

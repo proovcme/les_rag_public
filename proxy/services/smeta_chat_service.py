@@ -51,7 +51,7 @@ def _answer_price(code: str) -> dict[str, Any]:
     book_path = fps.resolve_pricebook_path()
     if not book_path:
         return {"answer": f"Код {code}: нет книги цен ФГИС ЦС — импортируйте «Сплит-форму» "
-                          f"(Инструменты → ФГИС ЦС или POST /api/prices/import).",
+                          f"(Инструменты → ФГИС ЦС).",
                 "operation": "price"}
     pb = fps.get_pricebook(book_path)
     rec = pb.lookup(code)

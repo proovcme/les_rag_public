@@ -216,6 +216,84 @@ async def test_chat_workbook_executor_builds_revision_and_streams_checkpoint(tmp
 
 
 @pytest.mark.asyncio
+async def test_chat_lsr_executor_runs_thin_model_decision_adapter(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    attachment_root = tmp_path / "attachments"
+    monkeypatch.setenv("LES_CHAT_ATTACHMENT_ROOT", str(attachment_root))
+    source = tmp_path / "source.xlsx"
+    workbook = openpyxl.Workbook()
+    workbook.active.append(["Наименование", "Ед. изм.", "Количество"])
+    workbook.active.append(["Воздуховод", "м", 12.5])
+    workbook.save(source)
+    workbook.close()
+    attachment = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.xlsx",
+        root=attachment_root,
+    )
+    decisions = [{
+        "source_row": 1,
+        "section": "ОВ",
+        "title": "Монтаж воздуховода",
+        "unit": "м",
+        "quantity": 12.5,
+        "norm_code": "ГЭСН20-01-001-01",
+        "evidence_refs": ["dataset:fsnb:card:20-01-001-01"],
+    }]
+
+    def calculate(rows, **_kwargs):
+        assert rows == decisions
+        return {
+            "schema": "rim_lsr_v1",
+            "sections": [],
+            "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
+            "row_bindings": [{"row": 1, "status": "bound"}],
+        }
+
+    def render(_trace, output_path, **_kwargs):
+        workbook = openpyxl.Workbook()
+        workbook.active.append(["ЛСР"])
+        workbook.save(output_path)
+        workbook.close()
+        return output_path
+
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.build_lsr_trace_from_visible_rows",
+        calculate,
+    )
+    monkeypatch.setattr(
+        "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
+        render,
+    )
+
+    result = await chat._execute_chat_workbook_tool(
+        {
+            "call_id": "call-lsr-1",
+            "tool": "build_lsr_workbook",
+            "args": {"attachment_id": attachment["attachment_id"], "decisions": decisions},
+        },
+        {
+            "session_id": "session-1",
+            "question": "Собери ЛСР",
+            "attachment_id": attachment["attachment_id"],
+            "dataset_ids": ["fsnb"],
+            "project_id": None,
+            "profile_revision_id": "profile-1",
+            "model_identity": "qwen-local",
+            "model_preset": "qwen-9b",
+        },
+        lambda _event: asyncio.sleep(0),
+    )
+
+    assert result["status"] == "complete"
+    assert result["tool"] == "build_lsr_workbook"
+    assert result["source"]["rows"] == 1
+    assert "dataset:fsnb" in result["artifact"]["source_scope"]
+    assert result["blockers"] == []
+
+
+@pytest.mark.asyncio
 async def test_chat_workbook_executor_rejects_model_dataset_outside_chat_scope(
     tmp_path, monkeypatch
 ):

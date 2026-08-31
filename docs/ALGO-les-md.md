@@ -1,7 +1,8 @@
 # ALGO — LES.md: файл-контекст папки (CLAUDE.md для ЛЕС)
 
-Канон сервиса `proxy/services/les_md_service.py` (+ чат `les_md_chat_service.py`, роутер
-`proxy/routers/les_md.py`). 0 LLM на разбор (YAML + regex, ADR-11).
+Канон сервиса `proxy/services/les_md_service.py` (+ чат
+`les_md_chat_service.py` и dataset binding). Отдельный HTTP router удалён в
+0.30.21 как неиспользуемый. 0 LLM на разбор (YAML + regex, ADR-11).
 
 ## Зачем
 
@@ -69,8 +70,8 @@ ignore:                  # что не индексировать (glob)
 
 - Чат (Совушка сама): «пойми/разбери папку «<путь>»» (авто-init+привязка), «разберись внимательно …»
   (+LLM-обогащение) — канал `les_md` (`les_md_chat_service`).
-- API: `POST /api/les-md/read {path, write_draft}` · `POST /api/les-md/draft {path}` (превью) ·
-  `GET /api/les-md/context/{project_id}`. path — внутри `LES_EXTERNAL_SOURCE_ROOTS`.
+- Dataset binding: `datasets.py` вызывает `read_and_bind`; path остаётся внутри
+  `LES_EXTERNAL_SOURCE_ROOTS`.
 - Тесты: `tests/test_les_md.py`.
 
 ## Состояние / задел

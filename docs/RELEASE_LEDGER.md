@@ -7,17 +7,34 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.20
-номер сборки:              660
-версия Tauri/NSIS:         5.1.660
+версия продукта (SemVer):  0.30.21
+номер сборки:              661
+версия Tauri/NSIS:         5.1.661
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
-dev implementation:       source-adapter classifier boundary cleanup
+dev implementation:       experimental API cleanup + executable-tool/update-feed guards
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.1 (immutable)
-следующий выпуск:          0.30.20 — source-adapter classifier boundary cleanup; не задеплоен
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.7 (immutable)
+следующий выпуск:          0.30.21 — cumulative GitHub patch; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
+
+> **0.30.21 / build 661 experimental API/tool/update cleanup (dev candidate):**
+> production app больше не регистрирует 64 route без Совушки, ToolHarness или
+> внутренних HTTP-потребителей: BOR, decisions, doc-review, edges, estimates,
+> field, KAC, LES MD, ontology, prices и старую proxy status page. Общие
+> сервисы чата, MCP, dossier, checklist review, dataset intake и расчёта
+> сохранены; пользовательские БД/документы/артефакты не менялись.
+> Context-bound workbook contracts больше не считаются обычным ToolHarness
+> исполняемыми: единый capability manifest показывает модели VOR и тонкий LSR
+> adapter и содержит те же callable, которые использует executor. LSR принимает
+> model-owned `decisions`, рассчитывает trace и рендерит XLSX без второго model
+> loop. GitHub updater теперь принимает валидный feed с
+> меньшим build как `available=false / Установлена более новая сборка`, сохраняя
+> строгую проверку repository/tag/commit/asset. Это закрывает ложную ошибку на
+> Legion 0.30.9/build 649 при публичном latest 0.30.7/build 647. Generated map:
+> 960 tracked Python-файлов / 297195 строк, 337 product-reachable,
+> 8 runtime-support, 614 test/tool-only, 1 dormant, 330 API routes, 0 warnings.
 
 > **0.30.20 / build 660 source-adapter boundary cleanup (dev candidate):**
 > пять живых путей `source_adapters` больше не импортируют выключенный Unified

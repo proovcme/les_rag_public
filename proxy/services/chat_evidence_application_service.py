@@ -1766,6 +1766,19 @@ async def _execute_chat_evidence_application(
                             and {"build_lsr_workbook", "build_vor_workbook"}.intersection(profile_tools)
                         )
                         tool_loop_stage = "shortlist"
+                        from proxy.services.workbook_tool_service import (
+                            available_chat_workbook_tools,
+                        )
+
+                        runtime_available_tools = set(profile_tools).difference(
+                            {"build_lsr_workbook", "build_vor_workbook"}
+                        )
+                        runtime_available_tools.update(
+                            available_chat_workbook_tools(
+                                executor_configured=workbook_tool_executor is not None
+                            )
+                        )
+                        runtime_available_tools.intersection_update(profile_tools)
                         shortlist = await asyncio.to_thread(
                             tool_harness.shortlist,
                             req.question,
@@ -1775,7 +1788,7 @@ async def _execute_chat_evidence_application(
                             dataset_ids=tuple(str(item) for item in _dataset_ids if str(item)),
                             workflow_phase="draft" if workbook_phase else "research",
                             model_preset=execution_preset.preset_id,
-                            runtime_available=frozenset(profile_tools),
+                            runtime_available=frozenset(runtime_available_tools),
                             calls_remaining=max_calls,
                             result_chars_remaining=35_000,
                             **(

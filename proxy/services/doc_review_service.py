@@ -350,7 +350,7 @@ def review_defense_pack(items: list[ReviewItem], review_map: ReviewMap) -> dict:
 
 
 # ── оркестратор: dataset_id → review (файлы из MetaDB, ведомость из Parquet) ──
-# Используется и роутером /api/doc-review, и чат-инструментом doc_review (агент-роутер).
+# Используется внутренним checklist review; самостоятельный doc-review API удалён.
 
 def _dataset_file_names(dataset_id: str) -> list[str]:
     import sqlite3

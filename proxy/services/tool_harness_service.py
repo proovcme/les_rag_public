@@ -191,6 +191,14 @@ class ToolHarness:
             },
         }
 
+    def directly_executable_tool_names(self) -> frozenset[str]:
+        """Tools callable by this harness without a caller-owned runtime context."""
+        return frozenset(
+            item.contract.name
+            for item in self._registry.registrations()
+            if "execution_context_required" not in item.contract.tags
+        )
+
     def shortlist(
         self,
         question: str,
@@ -232,7 +240,7 @@ class ToolHarness:
             profile_tools = tuple(dict.fromkeys(str(name).strip() for name in raw_tools if str(name).strip()))
         available = runtime_available
         if available is None:
-            available = frozenset(item.contract.name for item in self._registry.registrations())
+            available = self.directly_executable_tool_names()
         requested_limit = max(1, int(limit))
         result = CapabilityBroker(self._registry).shortlist(
             BrokerRequest(

@@ -378,9 +378,9 @@ Conflict-only global review возвращает полный terminal mapping �
   выбранные моделью `table_codes` возвращаются полным официальным меню без ranking.
 - `proxy.smeta_core.calculator.calculate_visible_rows_revision` — один расчёт решения модели.
 - `proxy.services.smeta_user_message_service` — человеческое сообщение из готовой summary.
-- `proxy.services.etm_price_service` и `/api/prices/etm/*` — read-only источник текущих
-  поставщицких цен для КАЦ: session reuse, пакеты до 50 кодов, rate limit и provenance.
-  Код товара/материал выбирает модель или пользователь; ETM adapter только читает заданные коды.
+- Прежние `etm_price_service` и `/api/prices/etm/*` удалены в 0.30.21 как
+  неиспользуемый альтернативный price island. Живой точный источник —
+  `fgis_price_service`; КАЦ остаётся model-owned через свои evidence sources.
 - `proxy.routers.chat` — request context, вызов application flow и общий history/response contract.
 
 `estimate_harness_service` временно исполняет старый tool-loop только за

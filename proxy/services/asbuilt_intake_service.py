@@ -6,7 +6,7 @@
 
 Контекст (этаж/система/линия) детерминированно выводится из имени файла; строки падают в
 журнал объёмов (`field_intake_service.create_entry`) c тегом ``zahvatka = floor/system/line`` —
-чтобы существующий свод `/api/field/summary` и `table_query` резали по этаж×система.
+чтобы свод `field_intake_service` и `table_query` резали по этаж×система.
 
 Канон логики — `docs/ALGO-asbuilt-intake.md`. См. также CODE_MAP / SKILL.
 """

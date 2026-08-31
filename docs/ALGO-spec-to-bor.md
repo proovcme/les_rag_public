@@ -40,13 +40,9 @@
 - Канонический workbook tool использует `bor_service.source_rows_to_vor_xlsx`:
   это отдельный lossless-экспорт без свода — порядок, единицы, количества и
   `source_file#position` переносятся 1:1, пустые значения остаются пустыми.
-- API: `GET /api/bor/{dataset_id}/from-spec` (превью), `POST …/from-spec/generate` (xlsx),
-  `GET …/from-spec/download`.
-- GUI: вкладка «Инструменты» → карта ВОР, переключатель «Свод / Работы из спецификации (Ф9)».
-- Чат: «сделай ВОР из спецификации» / «собери ВОР…» + read-вложение XLSX/XLSM → тот же
-  0-LLM контур (`rows_from_spec_xlsx` → `generate_spec_bor_from_rows`) **до** свободного
-  `attachment_context` LLM. Канал ответа: `spec_to_bor` / `DETERMINISTIC`, Excel без цен.
-  Датасетный Parquet-путь по-прежнему через `/api/bor/{id}/from-spec*`.
+- Чатовый `build_vor_workbook` использует 0-LLM контур
+  `rows_from_spec_xlsx` → `source_rows_to_vor_xlsx`; MCP сохраняет отдельные
+  `les_bor`/`les_spec_to_bor`. Старый `/api/bor` удалён в 0.30.21.
 
 ## v2 — декомпозиция (методика ГОСТ 21.111, дефолт)
 

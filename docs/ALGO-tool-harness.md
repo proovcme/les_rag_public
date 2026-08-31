@@ -30,6 +30,11 @@ scope и результатом `les.workbook_tool_result.v1`. Модель са
 regex forcing и автоматическая активация профиля отсутствуют. OpenAI,
 OpenAI-compatible, Ollama и MCP получают schema-only проекцию одной записи.
 
+Для context-bound workbook tools действует fail-closed capability manifest:
+одна таблица `tool name → callable adapter` одновременно определяет model schema
+и executor. Имя без callable не может попасть в shortlist; callable вне manifest
+не обещается модели. Контракт проверяется сквозным тестом реального chat executor.
+
 `WorkbookExecutionContext` связывает вызов с session/idempotency key,
 model-decision revision, профилем, моделью и preset. Перед генерацией сервер
 повторно проверяет ID, SHA-256 и тип вложения. Один idempotency key продолжает
@@ -39,9 +44,11 @@ revision и не запускает адаптер второй раз. Испр
 
 VOR-адаптер переносит исходные строки, единицы, количества и locator в XLSX
 без группировки и подстановки нулей; пустые unit/quantity выходят как `missing`.
-LSR запускается только через явно переданный application-adapter: этот boundary
-не импортирует старый document workflow. Аргументы модели не могут передать
-готовые цены, суммы или рассчитанные строки. Публичный результат содержит
+LSR запускается через явно переданный тонкий application-adapter: модель сама
+выбирает строки и шифры по RAG/tool evidence и передаёт их как `decisions`.
+Adapter связывает решения с exact-карточками, считает trace и рендерит XLSX;
+он не импортирует старый document workflow и не создаёт второй model loop.
+Аргументы модели не могут передать готовые цены, суммы или рассчитанные строки. Публичный результат содержит
 artifact/revision metadata, SHA, progress, missing/blockers и download URL, но
 не filesystem path.
 
