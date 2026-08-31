@@ -10,16 +10,16 @@
 версия продукта (SemVer):  0.30.25
 номер сборки:              665
 версия Tauri/NSIS:         5.1.665
-ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.24
-dev implementation:       UTF-8 operator output contract
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.24 / build 664 / commit 9636a730
+ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
+dev implementation:       release path accepted; следующий выпуск не запланирован
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.25 / build 665 / commit a23a277f
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.24 (immutable)
-следующий выпуск:          0.30.25 / build 665 — UTF-8 operator-output patch candidate
-рантайм /api/version:      Legion 0.30.24 / build 664 / desktop 5.1.664 / commit 9636a730; accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.25 (immutable)
+следующий выпуск:          не запланирован
+рантайм /api/version:      Legion 0.30.25 / build 665 / desktop 5.1.665 / commit a23a277f; accepted
 ```
 
-> **0.30.25 / build 665 UTF-8 operator output (dev candidate):** release CLI
+> **0.30.25 / build 665 UTF-8 operator output (public patch):** release CLI
 > явно переводит stdout/stderr в UTF-8 до progress и итогового JSON. Это
 > исправляет нечитаемый русский текст в Windows pipe/терминале при системной
 > `cp1251`; status/receipt на диске и в 0.30.24 уже были корректным UTF-8.
@@ -27,7 +27,11 @@ dev implementation:       UTF-8 operator output contract
 > и требует byte-valid UTF-8. Продуктовый runtime, RAG, сметы и данные не менялись.
 > Generated map: 960 tracked Python-файлов / 297684 строки, 337
 > product-reachable, 8 runtime-support, 614 test/tool-only, 1 dormant,
-> 330 API routes, 0 warnings.
+> 330 API routes, 0 warnings. Выпуск принят на Legion циклом install → smoke →
+> rollback к 0.30.24 → smoke → reinstall; `user_data_untouched=true`.
+> Читаемый UTF-8 progress подтверждён самим release-run. Final `/api/version`,
+> public main/tag/feed, receipt и шесть assets совпали с commit
+> `a23a277f5cc3445241fe7296025dab78a87c588d`.
 
 > **0.30.24 / build 664 release-path repair (public patch):** построитель
 > cumulative Windows patch больше не запускает отдельные `git rev-list` и
