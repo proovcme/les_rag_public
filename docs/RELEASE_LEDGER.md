@@ -11,15 +11,15 @@
 номер сборки:              666
 версия Tauri/NSIS:         5.1.666
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
-dev implementation:       RRF acceptance/health/Qdrant lifecycle stabilization candidate
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.25 / build 665 / commit a23a277f
+dev implementation:       release path accepted; следующий выпуск не запланирован
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.26 / build 666 / commit 9abcbb59
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.25 (immutable)
-следующий выпуск:          0.30.26 candidate; не опубликован
-рантайм /api/version:      Legion 0.30.25 / build 665 / desktop 5.1.665 / commit a23a277f; accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.26 (immutable)
+следующий выпуск:          не запланирован
+рантайм /api/version:      Legion 0.30.26 / build 666 / desktop 5.1.666 / commit 9abcbb59; accepted
 ```
 
-> **0.30.26 / build 666 RAG acceptance truthfulness (dev candidate):**
+> **0.30.26 / build 666 RAG acceptance truthfulness (public patch):**
 > Windows native-RRF acceptance больше не загружает 82-байтную строку ниже
 > `RAG_MIN_CHUNK_CHARS`: substantive fixture гарантирует реальный evidence chunk.
 > Его recovery-free удаление разрешено только exact dataset
@@ -30,8 +30,17 @@ dev implementation:       RRF acceptance/health/Qdrant lifecycle stabilization c
 > отдельно, поэтому прежний `degraded` не возникает от сравнения разных множеств.
 > На текущем Legion существующая внешняя задача `LES External Qdrant` сохранена
 > как operator-owned: запуск `C:\qdrant\qdrant.exe` не изменён, battery-stop
-> отключён, retry увеличен с 3 до 20. Публичный выпуск и installed acceptance
-> ещё не выполнялись; Legion остаётся на 0.30.25/build 665.
+> отключён, retry увеличен с 3 до 20. Выпуск принят на Legion полным циклом
+> install → native RRF smoke → rollback к 0.30.25 → native RRF smoke → reinstall.
+> Все три smoke получили один реальный chunk через `dense`, `qdrant_sparse` и
+> `lexical`, fusion `qdrant_rrf+lexical_safety_rrf`; `user_data_untouched=true`.
+> Final health: `ready`, physical/user catalog `101366=101366`, catalog guard
+> `ready`; временная legacy recovery-копия rollback удалена, прежний независимый
+> snapshot от 24 августа сохранён. На postflight public main/tag/feed и шесть
+> assets совпали с commit `9abcbb59970a145559c22f4dfdcf58850e7b40db`; release attempt
+> `24567fbdac88a97b5cf144fd`, stage `postflight_verified`. Generated map:
+> 961 tracked Python-файл / 297904 строки, 337 product-reachable,
+> 8 runtime-support, 615 test/tool-only, 1 dormant, 330 API routes, 0 warnings.
 
 > **0.30.25 / build 665 UTF-8 operator output (public patch):** release CLI
 > явно переводит stdout/stderr в UTF-8 до progress и итогового JSON. Это
