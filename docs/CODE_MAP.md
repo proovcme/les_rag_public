@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.28 installed profile repair:** `chat_profile_service._seed_factory()`
+> больше не считает само наличие четырёх строк доказательством актуальности.
+> Текущий code contract синхронизирует только `factory:*:base` и привязанные к
+> ним chat snapshots; пользовательские ревизии не меняются. Route trace обычного
+> чата показывает фактически исполненный `active` при назначенной answer model,
+> а не rollout-default `shadow`.
+
 > **0.30.27 Windows patch EOL repair:** release orchestrator передаёт builder
 > exact установленный runtime; `vps_patch` добавляет его raw SHA только после
 > совпадения LF-нормализованного текста с доверенной ancestry. Новый

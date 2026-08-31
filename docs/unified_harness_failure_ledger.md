@@ -1,5 +1,20 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-08-31 — Патч добавил workbook-tools в код, но не в установленный профиль
+
+- **Симптом:** новый чат в режиме «Сметчик» с XLSX-вложением отвечал текстом;
+  trace показывал `tool_loop.enabled=false`, XLSX не создавался.
+- **Причина:** `_seed_factory()` завершался, если в MetaDB уже было четыре
+  factory-профиля. Установленный `factory:profile:estimator:base` от 24 августа
+  поэтому сохранил allowlist без `build_lsr_workbook` и `build_vor_workbook`.
+- **Исправление:** startup синхронизирует stable factory Base с текущим code
+  contract и обновляет только bindings на factory revision ID. Пользовательские
+  ревизии и их bindings остаются immutable.
+- **Дополнительно:** route trace обычного bound-чата теперь показывает
+  фактическое исполнение `active`, а не rollout-default `shadow`.
+- **Регрессия:** тест начинает со stale factory snapshot и stale chat binding,
+  затем требует оба workbook-tools после повторного открытия registry.
+
 ## 2026-08-31 — Cumulative patch отвергал доверенный mixed-EOL runtime
 
 - **Симптом:** 0.30.27 остановился до установки с `base checksum mismatch` на

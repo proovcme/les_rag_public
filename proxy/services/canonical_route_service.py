@@ -57,6 +57,20 @@ class CanonicalRouteDecision:
         }
 
 
+def canonical_route_trace_payload(
+    decision: CanonicalRouteDecision,
+    *,
+    execution_mode: CanonicalRouteMode,
+    candidate_acceptance: bool,
+) -> dict[str, Any]:
+    """Expose the route that ordinary chat actually executed."""
+    payload = decision.public_payload()
+    if not candidate_acceptance and execution_mode is CanonicalRouteMode.ACTIVE:
+        payload["effective"] = CanonicalRouteMode.ACTIVE.value
+        payload["reason"] = "answer_binding_active"
+    return payload
+
+
 @dataclass(frozen=True)
 class CanonicalModelDecision:
     call: Mapping[str, Any] | None

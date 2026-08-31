@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -36,6 +37,53 @@ def test_factory_seed_is_idempotent_and_activates_four_base_profiles(tmp_path):
         assert conn.execute("SELECT COUNT(*) FROM les_profile_revisions").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM les_prompt_revisions").fetchone()[0] == 4
         assert conn.execute("SELECT COUNT(*) FROM les_skill_revisions").fetchone()[0] == 4
+
+
+def test_factory_seed_refreshes_stale_factory_contract_and_bound_session(tmp_path):
+    db = tmp_path / "meta.db"
+    registry_snapshot(db_path=db)
+    stale_tools = ["dataset_map", "search_sources", "read_source"]
+    with sqlite3.connect(db) as conn:
+        raw = conn.execute(
+            "SELECT snapshot_json FROM les_profile_revisions WHERE revision_id=?",
+            ("factory:profile:estimator:base",),
+        ).fetchone()[0]
+        stale_snapshot = json.loads(raw)
+        stale_snapshot["tools"] = stale_tools
+        stale_json = json.dumps(stale_snapshot, ensure_ascii=False)
+        conn.execute(
+            "UPDATE les_profile_revisions SET tools_json=?,snapshot_json=? WHERE revision_id=?",
+            (
+                json.dumps(stale_tools, ensure_ascii=False),
+                stale_json,
+                "factory:profile:estimator:base",
+            ),
+        )
+        conn.execute(
+            """INSERT INTO les_chat_profile_bindings
+               (session_id,mode,profile_revision_id,snapshot_json,bound_at,updated_at)
+               VALUES(?,?,?,?,?,?)""",
+            (
+                "stale-estimator-chat",
+                "estimator",
+                "factory:profile:estimator:base",
+                stale_json,
+                "2026-08-24T00:00:00+00:00",
+                "2026-08-24T00:00:00+00:00",
+            ),
+        )
+        conn.commit()
+
+    refreshed = registry_snapshot(db_path=db)
+    estimator = next(item for item in refreshed["profiles"] if item["mode"] == "estimator")
+    assert {"build_lsr_workbook", "build_vor_workbook"} <= set(estimator["active"]["tools"])
+
+    rebound = resolve_chat_profile(
+        session_id="stale-estimator-chat",
+        requested_mode="estimator",
+        db_path=db,
+    )
+    assert {"build_lsr_workbook", "build_vor_workbook"} <= set(rebound["tools"])
 
 
 @pytest.mark.parametrize(

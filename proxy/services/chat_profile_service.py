@@ -277,13 +277,8 @@ def _factory_contracts() -> dict[str, dict[str, Any]]:
 
 
 def _seed_factory(conn: sqlite3.Connection) -> None:
-    existing = conn.execute(
-        "SELECT COUNT(*) FROM les_profile_revisions WHERE is_factory=1"
-    ).fetchone()[0]
-    if existing == len(PROFILE_MODES):
-        return
     contracts = _factory_contracts()
-    created = _now()
+    seeded_at = _now()
     for mode in PROFILE_MODES:
         contract = contracts[mode]
         prompt_id = f"factory:prompt:{mode}:base"
@@ -291,6 +286,17 @@ def _seed_factory(conn: sqlite3.Connection) -> None:
         profile_id = f"factory:profile:{mode}:base"
         prompt_text = str(contract["prompt"]).strip()
         skill_text = str(contract["skill"]).strip()
+        existing_profile = conn.execute(
+            "SELECT created_at,is_factory FROM les_profile_revisions WHERE revision_id=?",
+            (profile_id,),
+        ).fetchone()
+        if existing_profile is not None and not bool(existing_profile["is_factory"]):
+            raise ValueError(f"Зарезервированный factory profile ID занят: {profile_id}")
+        created = (
+            str(existing_profile["created_at"])
+            if existing_profile is not None
+            else seeded_at
+        )
         conn.execute(
             """INSERT OR IGNORE INTO les_prompt_revisions
                (revision_id,name,revision_no,text_value,sha256,is_factory,created_at)
@@ -298,10 +304,22 @@ def _seed_factory(conn: sqlite3.Connection) -> None:
             (prompt_id, f"{MODE_LABELS[mode]} · Base", 1, prompt_text, _sha(prompt_text), created),
         )
         conn.execute(
+            """UPDATE les_prompt_revisions SET name=?,revision_no=1,text_value=?,sha256=?,
+                      deleted_at=NULL
+               WHERE revision_id=? AND is_factory=1""",
+            (f"{MODE_LABELS[mode]} · Base", prompt_text, _sha(prompt_text), prompt_id),
+        )
+        conn.execute(
             """INSERT OR IGNORE INTO les_skill_revisions
                (revision_id,name,revision_no,text_value,sha256,is_factory,created_at)
                VALUES(?,?,?,?,?,1,?)""",
             (skill_id, f"{MODE_LABELS[mode]} · Base", 1, skill_text, _sha(skill_text), created),
+        )
+        conn.execute(
+            """UPDATE les_skill_revisions SET name=?,revision_no=1,text_value=?,sha256=?,
+                      deleted_at=NULL
+               WHERE revision_id=? AND is_factory=1""",
+            (f"{MODE_LABELS[mode]} · Base", skill_text, _sha(skill_text), skill_id),
         )
         snapshot = _make_snapshot(
             revision_id=profile_id,
@@ -336,6 +354,29 @@ def _seed_factory(conn: sqlite3.Connection) -> None:
                 _json(snapshot),
                 created,
             ),
+        )
+        snapshot_json = _json(snapshot)
+        conn.execute(
+            """UPDATE les_profile_revisions SET mode=?,name=?,revision_no=1,
+                      prompt_revision_id=?,skill_revision_id=?,tools_json=?,
+                      model_policy_json=?,rag_policy_json=?,snapshot_json=?,deleted_at=NULL
+               WHERE revision_id=? AND is_factory=1""",
+            (
+                mode,
+                snapshot["name"],
+                prompt_id,
+                skill_id,
+                _json(snapshot["tools"]),
+                _json(snapshot["model_policy"]),
+                _json(snapshot["rag_policy"]),
+                snapshot_json,
+                profile_id,
+            ),
+        )
+        conn.execute(
+            """UPDATE les_chat_profile_bindings SET snapshot_json=?,updated_at=?
+               WHERE profile_revision_id=? AND snapshot_json<>?""",
+            (snapshot_json, seeded_at, profile_id, snapshot_json),
         )
         conn.execute(
             """INSERT OR IGNORE INTO les_active_profiles(mode,profile_revision_id,updated_at)

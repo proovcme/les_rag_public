@@ -1,6 +1,7 @@
 from proxy.services.canonical_route_service import (
     CanonicalRouteMode,
     PromotionReceipt,
+    canonical_route_trace_payload,
     one_model_decision_from_calls,
     resolve_canonical_route,
 )
@@ -13,6 +14,21 @@ def test_missing_route_setting_defaults_to_shadow_without_promotion(monkeypatch)
 
     assert decision.requested is CanonicalRouteMode.SHADOW
     assert decision.effective is CanonicalRouteMode.SHADOW
+
+
+def test_trace_reports_actual_active_execution_for_ordinary_bound_chat(monkeypatch) -> None:
+    monkeypatch.delenv("LES_CANONICAL_AGENT_ROUTE_MODE", raising=False)
+    decision = resolve_canonical_route(receipt=None)
+
+    payload = canonical_route_trace_payload(
+        decision,
+        execution_mode=CanonicalRouteMode.ACTIVE,
+        candidate_acceptance=False,
+    )
+
+    assert payload["requested"] == "shadow"
+    assert payload["effective"] == "active"
+    assert payload["reason"] == "answer_binding_active"
 
 
 def test_active_without_exact_receipt_fails_closed_to_shadow(monkeypatch) -> None:

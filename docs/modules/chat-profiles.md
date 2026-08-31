@@ -1,6 +1,6 @@
 # Chat profiles
 
-## Workbook tools in new factory seeds (0.29.0 / build 619)
+## Workbook tools in installed factory profiles (0.30.28 / build 668)
 
 Factory Base профиля `estimator` хранит два канонических workbook tool contract,
 но profile allowlist — только намерение, а не доказательство исполнимости.
@@ -10,13 +10,18 @@ CapabilityBroker выдаёт модели лишь tools, доступные в
 shortlist. При server-owned read-вложении чат добавляет реально исполняемые
 `build_vor_workbook` и `build_lsr_workbook`. Тонкий LSR adapter принимает явные
 `decisions` той же модели и только рассчитывает/рендерит их, не запуская скрытый
-второй model loop. Это действует и для старых immutable profile snapshots,
-поэтому обновление не переписывает пользовательские ревизии.
+второй model loop.
+
+**Build 668:** startup-синхронизация обновляет стабильные `factory:*:base`
+snapshot-ы по текущему code contract и обновляет только chat bindings на эти
+заводские revision ID. Это закрывает upgrade со старой MetaDB, где профиль
+«Сметчик» был создан до появления workbook-tools. Пользовательские profile,
+prompt и skill revisions, а также их активные bindings не изменяются.
 
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию
-оператора.
+оператора, кроме синхронизации стабильного заводского Base-контракта при обновлении приложения.
 
 Allowlist имеет одного владельца: `chat_profile_service` строит factory-набор только из
 инструментов живого `ToolHarness` registry, а `chat_evidence_application_service` применяет

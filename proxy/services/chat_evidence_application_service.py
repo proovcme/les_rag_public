@@ -32,6 +32,7 @@ from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.canonical_route_service import (
     BoundModelChatRunner,
     CanonicalRouteMode,
+    canonical_route_trace_payload,
     one_model_decision_from_calls,
     resolve_canonical_route,
 )
@@ -1723,11 +1724,16 @@ async def _execute_chat_evidence_application(
                         for name in profile_tools
                         if name not in {"build_lsr_workbook", "build_vor_workbook"}
                     ]
-                retrieval_trace["canonical_route"] = canonical_route.public_payload()
+                route_trace = canonical_route_trace_payload(
+                    canonical_route,
+                    execution_mode=canonical_execution_mode,
+                    candidate_acceptance=candidate_acceptance,
+                )
+                retrieval_trace["canonical_route"] = route_trace
                 retrieval_trace["route_comparison"] = {
                     "schema": "les.canonical-route-comparison.v1",
-                    "requested": canonical_route.requested.value,
-                    "effective": canonical_route.effective.value,
+                    "requested": route_trace["requested"],
+                    "effective": route_trace["effective"],
                     "legacy_output_authoritative": (
                         canonical_execution_mode is not CanonicalRouteMode.ACTIVE
                     ),

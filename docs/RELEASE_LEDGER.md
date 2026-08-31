@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.27
-номер сборки:              667
-версия Tauri/NSIS:         5.1.667
+версия продукта (SemVer):  0.30.28
+номер сборки:              668
+версия Tauri/NSIS:         5.1.668
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
-dev implementation:       0.30.27 model connection repair; candidate до live acceptance
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.26 / build 666 / commit 9abcbb59
+dev implementation:       0.30.28 installed factory-profile repair; candidate до live acceptance
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.27 / build 667 / commit a56dcc0a
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.26 (immutable)
-следующий выпуск:          0.30.27 cumulative patch после Legion acceptance
-рантайм /api/version:      Legion 0.30.26 / build 666 / desktop 5.1.666 / commit 9abcbb59; accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.27 (immutable)
+следующий выпуск:          0.30.28 cumulative patch после Legion acceptance
+рантайм /api/version:      Legion 0.30.27 / build 667 / desktop 5.1.667 / commit a56dcc0a; accepted
 ```
+
+> **0.30.28 / build 668 installed factory-profile repair (release candidate):**
+> upgrade старой MetaDB больше не оставляет `factory:profile:estimator:base`
+> без workbook-tools. Startup синхронизирует только стабильные factory Base и
+> bindings на них с текущим code contract; пользовательские profile/prompt/skill
+> revisions и bindings не меняются. Ordinary-chat trace показывает фактически
+> исполненный `active` при назначенной answer model. Live acceptance обязана
+> пройти в порядке: обычный вопрос Qwen 9B → режим «Сметчик» с вложением →
+> model-visible `build_lsr_workbook` / `build_vor_workbook` → XLSX artifact.
 
 > **0.30.27 / build 667 model connection repair (release candidate):** назначение
 > роли автоматически получает capability snapshot точной ревизии, поэтому
