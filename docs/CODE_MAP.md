@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.27 Windows patch EOL repair:** release orchestrator передаёт builder
+> exact установленный runtime; `vps_patch` добавляет его raw SHA только после
+> совпадения LF-нормализованного текста с доверенной ancestry. Новый
+> `update_service` и target `vps_patch_apply` принимают exact content при
+> смешанных LF/CRLF, но не произвольный локальный drift.
+
 > **0.30.25 operator-output repair:** `tools/release_orchestrator.py` до первого
 > progress/JSON принудительно устанавливает UTF-8 stdout/stderr, независимо от
 > Windows codepage.

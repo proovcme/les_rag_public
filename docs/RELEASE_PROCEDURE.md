@@ -23,6 +23,11 @@ make release RELEASE_ARGS='run --host local --publish'
    этого attested full-base.
 2. Автоматически выбирает soft patch или полный NSIS-выпуск и фиксирует SHA
    устанавливаемого ZIP/EXE в immutable attempt.
+   Для текстового Windows runtime manifest дополнительно фиксирует exact SHA
+   фактически установленного файла, только если его LF-нормализованное
+   содержимое совпадает с доверенным состоянием Git ancestry. Новый клиент и
+   helper также принимают доверенный текст независимо от смешения LF/CRLF;
+   любое другое содержимое по-прежнему отклоняется checksum guard.
 3. На текущем Legion (`--host local`) ставит точные candidate bytes штатным
    путём, проверяет identity,
    живые proxy/UI отдельно от внешних capabilities и, если Qdrant был доступен, временный native

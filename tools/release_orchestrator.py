@@ -163,12 +163,19 @@ def build_patch_candidate(
     acceptance = output / "acceptance"
     public.mkdir(parents=True)
     acceptance.mkdir(parents=True)
+    args = _kwargs.get("args")
+    installed_runtime = (
+        Path(args.runtime).resolve()
+        if args is not None and getattr(args, "runtime", None)
+        else None
+    )
     feed = github_patch_release.build_github_patch_release(
         base,
         target,
         public,
         full_feed=Path(full_feed),
         progress=_print_patch_progress,
+        installed_runtime=installed_runtime,
     )
     public_archive = public / "les-patch.zip"
     acceptance_archive = acceptance / public_archive.name

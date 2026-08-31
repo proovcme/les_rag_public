@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -135,9 +136,12 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
 
 def test_patch_candidate_prints_builder_progress(monkeypatch, tmp_path, capsys):
     output = tmp_path / "candidate"
+    runtime = tmp_path / "installed-runtime"
+    captured = {}
 
-    def build(_base, _target, public, *, full_feed, progress):
+    def build(_base, _target, public, *, full_feed, progress, installed_runtime):
         del full_feed
+        captured["installed_runtime"] = installed_runtime
         (public / "les-patch.zip").write_bytes(b"candidate")
         progress({"stage": "history", "current": 3, "total": 7})
         progress({"stage": "history", "current": 7, "total": 7})
@@ -155,12 +159,14 @@ def test_patch_candidate_prints_builder_progress(monkeypatch, tmp_path, capsys):
         target=TARGET,
         output=output,
         full_feed=tmp_path / "full.json",
+        args=SimpleNamespace(runtime=runtime),
     )
 
     visible = capsys.readouterr().out
     assert "История патча: 3/7" not in visible
     assert "История патча: 7/7" in visible
     assert "Файлы патча: 2/2 — proxy/b.py" in visible
+    assert captured["installed_runtime"] == runtime
 
 
 def test_cli_forces_utf8_for_windows_operator_output(tmp_path):

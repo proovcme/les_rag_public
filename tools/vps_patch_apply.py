@@ -77,7 +77,12 @@ def patch_entry_operation(entry: dict[str, Any]) -> str:
     return operation
 
 
-def entry_accepts_current(entry: dict[str, Any], current: str | None) -> bool:
+def entry_accepts_current(
+    entry: dict[str, Any],
+    current: str | None,
+    *,
+    normalized_current: str | None = None,
+) -> bool:
     operation = patch_entry_operation(entry)
     expected = entry.get("base_sha256")
     accepted = {
@@ -93,9 +98,16 @@ def entry_accepts_current(entry: dict[str, Any], current: str | None) -> bool:
         )
         if isinstance(value, str) and re.fullmatch(r"[0-9a-fA-F]{64}", value)
     )
-    return current in accepted or (
+    return current in accepted or normalized_current in accepted or (
         current is None and (expected is None or bool(entry.get("accepted_missing")))
     )
+
+
+def normalized_text_sha(path: Path) -> str | None:
+    """Hash exact text content while treating Windows CRLF as canonical LF."""
+    if path.suffix.lower() not in ALLOWED_SUFFIXES or not path.is_file():
+        return None
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def write_status(path: Path, **values: Any) -> None:
@@ -226,7 +238,14 @@ def _validate_manifest(
         except KeyError as exc:
             raise RuntimeError(f"Windows update payload is missing: {identity}") from exc
         current = sha(target) if target.is_file() else None
-        if not entry_accepts_current(entry, current):
+        normalized_current = (
+            normalized_text_sha(target) if scope == "runtime" else None
+        )
+        if not entry_accepts_current(
+            entry,
+            current,
+            normalized_current=normalized_current,
+        ):
             raise RuntimeError(f"base checksum mismatch: {identity}")
         validated_targets[identity] = current
     if delete_present and not helper_bridge_present:

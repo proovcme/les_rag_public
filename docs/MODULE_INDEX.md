@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.27 Windows patch EOL repair:** cumulative builder получает путь exact
+> установленного Legion runtime и включает его raw SHA лишь после
+> content-equivalence с доверенной Git ancestry при LF-нормализации. Клиент и
+> target helper канонизируют только CRLF→LF для разрешённых текстовых файлов;
+> checksum guard остаётся fail-closed для любого иного изменения. Точки входа:
+> `tools/{release_orchestrator,github_patch_release,vps_patch,vps_patch_apply}.py`,
+> `proxy/services/update_service.py`, `tests/{test_release_orchestrator,test_vps_patch}.py`.
+> Статус док↔код: ✅.
+
 > **0.30.25 operator-output repair:** release CLI принудительно использует UTF-8
 > stdout/stderr до progress и итогового JSON. Subprocess-регрессия с
 > `PYTHONIOENCODING=cp1251` доказывает byte-valid русский вывод. Продуктовый

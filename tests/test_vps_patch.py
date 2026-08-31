@@ -13,6 +13,61 @@ from tools import vps_patch
 from tools import vps_patch_apply
 
 
+def test_windows_patch_accepts_trusted_text_with_mixed_line_endings(tmp_path, monkeypatch):
+    runtime = tmp_path / "runtime"
+    target = runtime / "proxy" / "x.py"
+    target.parent.mkdir(parents=True)
+    mixed = b"ONE = 1\r\nTWO = 2\nTHREE = 3\r\n"
+    canonical = mixed.replace(b"\r\n", b"\n")
+    target.write_bytes(mixed)
+    monkeypatch.setattr(update_service, "runtime_root", lambda: runtime)
+    accepted = hashlib.sha256(canonical).hexdigest()
+    entry = {
+        "path": "proxy/x.py",
+        "base_sha256": accepted,
+        "accepted_sha256": [accepted],
+        "sha256": hashlib.sha256(b"AFTER = 1\n").hexdigest(),
+        "bytes": len(b"AFTER = 1\n"),
+    }
+    payload = {
+        "schema": update_service.VPS_PATCH_FEED_SCHEMA,
+        "archive_url": "https://github.com/proovcme/les_rag_public/releases/download/v0.30.27/les-patch.zip",
+        "archive_sha256": "a" * 64,
+        "patch": {
+            "schema": update_service.VPS_PATCH_SCHEMA,
+            "patch_id": "mixed-eol",
+            "base_commit": "b" * 40,
+            "target_commit": "c" * 40,
+            "product_version": "0.30.27",
+            "build_number": 667,
+            "files": [entry],
+        },
+    }
+
+    assert update_service._validate_patch_feed(payload)["compatible"] is True
+    assert vps_patch_apply.entry_accepts_current(
+        entry,
+        hashlib.sha256(mixed).hexdigest(),
+        normalized_current=accepted,
+    ) is True
+
+
+def test_patch_manifest_records_exact_installed_mixed_eol_state(tmp_path):
+    runtime = tmp_path / "runtime"
+    installed = runtime / "proxy" / "x.py"
+    installed.parent.mkdir(parents=True)
+    mixed = b"ONE = 1\r\nTWO = 2\nTHREE = 3\r\n"
+    installed.write_bytes(mixed)
+
+    accepted, _missing = vps_patch.accepted_hashes_from_states(
+        [mixed.replace(b"\r\n", b"\n")],
+        path="proxy/x.py",
+        installed_runtime=runtime,
+    )
+
+    assert hashlib.sha256(mixed).hexdigest() in accepted
+
+
 def test_patch_builder_batches_history_reads_and_reports_progress(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     repo.mkdir()

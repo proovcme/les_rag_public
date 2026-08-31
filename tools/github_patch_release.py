@@ -389,6 +389,7 @@ def build_github_patch_release(
     *,
     full_feed: Path,
     progress: Callable[[dict[str, Any]], None] | None = None,
+    installed_runtime: Path | None = None,
 ) -> dict[str, Any]:
     base_commit = _commit(base)
     target_commit = _commit(target)
@@ -418,6 +419,7 @@ def build_github_patch_release(
             output=Path(temporary),
             origin=f"https://github.com/{REPOSITORY}/releases/download/{tag}",
             progress=progress,
+            installed_runtime=installed_runtime,
         )
         archive = output / "les-patch.zip"
         shutil.copy2(Path(built["archive"]), archive)

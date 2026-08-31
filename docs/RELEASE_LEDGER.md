@@ -28,6 +28,9 @@ dev implementation:       0.30.27 model connection repair; candidate до live a
 > `DISPLAY_NAME_IN_USE` в понятное действие. Attachment-bound «Сметчик» теперь
 > сохраняет оба workbook-tool внутри shortlist малого preset: модель видит их,
 > но код не выбирает и не вызывает их вместо неё. Regression gate: 73 focused tests;
+> Patch-builder также принимает доверенный mixed-LF/CRLF Windows runtime:
+> exact установленный SHA добавляется только после нормализованного совпадения
+> с Git ancestry, а новый updater сохраняет тот же fail-closed контракт.
 > публичный статус и Legion acceptance должны быть записаны только после
 > полного release-run.
 

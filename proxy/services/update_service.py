@@ -235,6 +235,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def normalized_text_sha256(path: Path) -> str | None:
+    """Hash exact text content while treating Windows CRLF as canonical LF."""
+    if Path(path).suffix.lower() not in VPS_PATCH_SUFFIXES or not Path(path).is_file():
+        return None
+    return hashlib.sha256(Path(path).read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
 async def _download(
     client: httpx.AsyncClient,
     url: str,
@@ -524,6 +531,9 @@ def _validate_patch_feed(payload: dict) -> dict:
         else:
             raise UpdateError("Обновление содержит неизвестную область назначения")
         current = sha256_file(target) if target.is_file() else None
+        normalized_current = (
+            normalized_text_sha256(target) if scope == "runtime" else None
+        )
         target_hash = str(entry.get("sha256") or "").lower()
         base_hash_value = entry.get("base_sha256")
         accepted_values = entry.get("accepted_sha256") or []
@@ -566,7 +576,7 @@ def _validate_patch_feed(payload: dict) -> dict:
         )
         if current is None if operation == "delete" else current == target_hash:
             target_matches += 1
-        if current in accepted_hashes or (
+        if current in accepted_hashes or normalized_current in accepted_hashes or (
             current is None
             and (entry.get("base_sha256") is None or bool(entry.get("accepted_missing")))
         ):

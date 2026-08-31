@@ -6918,7 +6918,7 @@
         "tools/vps_patch.py",
         "tools/windows_clean_install.py"
       ],
-      "lines": 1058,
+      "lines": 1068,
       "module": "proxy.services.update_service",
       "outbound": [
         "proxy/__init__.py",
@@ -11868,7 +11868,7 @@
     },
     {
       "inbound": [],
-      "lines": 608,
+      "lines": 614,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -13449,7 +13449,7 @@
     },
     {
       "inbound": [],
-      "lines": 1031,
+      "lines": 1086,
       "module": "tests.test_vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -14644,7 +14644,7 @@
         "tests/test_github_patch_release.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 488,
+      "lines": 490,
       "module": "tools.github_patch_release",
       "outbound": [
         "tools/__init__.py",
@@ -15362,7 +15362,7 @@
       "inbound": [
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 955,
+      "lines": 962,
       "module": "tools.release_orchestrator",
       "outbound": [
         "tools/__init__.py",
@@ -15909,7 +15909,7 @@
         "tests/test_windows_application_update.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 958,
+      "lines": 977,
       "module": "tools.vps_patch_apply",
       "outbound": [
         "tools/__init__.py",
@@ -18023,7 +18023,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 298328
+    "tracked_python_lines": 298427
   },
   "warnings": []
 }
