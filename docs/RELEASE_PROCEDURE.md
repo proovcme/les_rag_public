@@ -6,10 +6,11 @@
 
 ## Полный проход
 
-Из чистой ветки, отправленной в `origin`:
+Из чистой ветки, отправленной в `origin`, сначала принять кандидата на текущем
+Legion:
 
 ```text
-make release RELEASE_ARGS='run --host local --publish'
+make release RELEASE_ARGS='run --host local'
 ```
 
 Команда последовательно и с сохранением state выполняет:
@@ -28,16 +29,25 @@ make release RELEASE_ARGS='run --host local --publish'
    `dense + qdrant_sparse → RRF` dataset.
 4. Выполняет controlled rollback, проверяет восстановленную версию и повторно
    ставит те же candidate bytes.
-5. Только после stage `accepted` создаёт GitHub draft с явным target commit,
+5. Только после stage `accepted` разрешает GitHub draft с явным target commit,
    добавляет `release-receipt.json`, скачивает все assets обратно и сверяет SHA.
 6. Публикует draft и независимо сверяет public main, tag, feed, receipt и assets.
 
-Без `--publish` команда останавливается на принятом кандидате. Это каноническая
-непубличная репетиция:
+После `accepted` публичный `main` должен быть обычным fast-forward до точного
+принятого commit. Сначала доказать отсутствие расхождения, затем продолжить тот
+же immutable attempt:
 
 ```text
-make release RELEASE_ARGS='run --host local'
+git fetch public main
+git merge-base --is-ancestor public/main HEAD
+git push public HEAD:main
+make release RELEASE_ARGS='publish --attempt <state_path из результата run>'
 ```
+
+Force push запрещён. `run --host local --publish` допустим только когда public
+`main` уже указывает на exact `HEAD`; иначе публикационный предохранитель
+остановит команду после приёмки, не создав release. Принятый attempt при этом не
+пересобирается и продолжается отдельной командой `publish`.
 
 ## Раздельное выполнение и продолжение
 

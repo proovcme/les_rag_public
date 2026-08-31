@@ -10,16 +10,16 @@
 версия продукта (SemVer):  0.30.23
 номер сборки:              663
 версия Tauri/NSIS:         5.1.663
-ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
+ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.23
 dev implementation:       experimental API cleanup + executable-tool/update-feed guards
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.23 / build 663 / commit e773428b
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.7 (immutable)
-следующий выпуск:          0.30.23 — cumulative GitHub patch; не задеплоен
-рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.23 (immutable)
+следующий выпуск:          не запланирован
+рантайм /api/version:      Legion 0.30.23 / build 663 / desktop 5.1.663 / commit e773428b; accepted
 ```
 
-> **0.30.23 / build 663 experimental API/tool/update/release cleanup (dev candidate):**
+> **0.30.23 / build 663 experimental API/tool/update/release cleanup (public patch):**
 > production app больше не регистрирует 64 route без Совушки, ToolHarness или
 > внутренних HTTP-потребителей: BOR, decisions, doc-review, edges, estimates,
 > field, KAC, LES MD, ontology, prices и старую proxy status page. Общие
@@ -41,6 +41,11 @@ dev implementation:       experimental API cleanup + executable-tool/update-feed
 > live-прогона локальный Legion закреплён явным `--host local`: SSH alias
 > используется только для действительно удалённой приёмки, поэтому выпуск на
 > текущем Windows-ПК не зависит от установленного SSH-сервера.
+> Выпуск `v0.30.23` принят на Legion полным циклом install → smoke → rollback к
+> 0.30.9 → smoke → reinstall; final `/api/version` совпал с commit
+> `e773428b4f3ad94c2bba22d2501fc8feda824717`, proxy/UI вернули HTTP 200,
+> `user_data_untouched=true`. Публичные main/tag/feed/receipt и шесть asset
+> проверены postflight; cumulative base — точный commit 0.30.0 `9cddee74…`.
 
 > **0.30.20 / build 660 source-adapter boundary cleanup (dev candidate):**
 > пять живых путей `source_adapters` больше не импортируют выключенный Unified
