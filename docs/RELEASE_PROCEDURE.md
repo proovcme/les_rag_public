@@ -16,6 +16,10 @@ make release RELEASE_ARGS='run --host legion --publish'
 
 1. Сверяет `HEAD`, upstream, версию и generated maps; запускает `make verify`,
    `make test`, `make test-updater` и `make public-check`.
+   Базу накопительного patch берёт только из проверенного
+   `dist/release-work/full-base/latest.json`; исторический `dist/latest.json`
+   не участвует в классификации. `--full-feed` нужен только для явной замены
+   этого attested full-base.
 2. Автоматически выбирает soft patch или полный NSIS-выпуск и фиксирует SHA
    устанавливаемого ZIP/EXE в immutable attempt.
 3. На Legion ставит точные candidate bytes штатным путём, проверяет identity,

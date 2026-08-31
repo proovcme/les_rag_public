@@ -1,6 +1,6 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **0.30.21 experimental API and tool-availability cleanup:** из production app
+> **0.30.22 experimental API, tool-availability and release-base cleanup:** из production app
 > удалены 64 route без Совушки, ToolHarness или внутренних HTTP-потребителей:
 > BOR, decisions, doc-review, edges, estimates, field, KAC, LES MD, ontology,
 > prices и старая proxy status page. Общие сервисы, используемые чатом, MCP,
@@ -10,7 +10,7 @@
 > workbook contracts больше не считаются обычным ToolHarness исполняемыми:
 > чат показывает модели VOR и тонкий LSR adapter; LSR принимает model-owned
 > `decisions`, считает и рендерит без скрытого model loop. Карта: 960 tracked Python-файлов /
-> 297195 строк, 337 product-reachable, 8 runtime-support, 614 test/tool-only,
+> 297224 строки, 337 product-reachable, 8 runtime-support, 614 test/tool-only,
 > 1 dormant, 330 API routes, 0 parse warnings. Точки входа: `proxy/app.py`,
 > `proxy/services/{tool_harness_service,workbook_tool_service,
 > chat_evidence_application_service}.py`, `tests/{test_code_runtime_map,

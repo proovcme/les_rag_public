@@ -46,6 +46,21 @@ def _patch_classification():
     )
 
 
+def test_default_full_feed_uses_canonical_release_work_base_not_stale_dist_file(tmp_path):
+    work_root = tmp_path / "release-work"
+    canonical = work_root / "full-base" / "latest.json"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text(json.dumps({"target_commit": BASE}), encoding="utf-8")
+    stale = tmp_path / "dist" / "latest.json"
+    stale.parent.mkdir(parents=True)
+    stale.write_text(json.dumps({"target_commit": "c" * 40}), encoding="utf-8")
+    args = argparse.Namespace(work_root=work_root, full_feed=None)
+
+    resolved = release_orchestrator.resolve_full_feed(args)
+
+    assert resolved == canonical.resolve()
+
+
 def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_path):
     args = _args(tmp_path)
     args.full_feed.write_text(

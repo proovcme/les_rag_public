@@ -219,9 +219,23 @@ def _write_latest(work_root: Path, state_path: Path, release_id: str) -> None:
     os.replace(temporary, target)
 
 
+def resolve_full_feed(args: argparse.Namespace) -> Path:
+    """Resolve the attested full-release feed used as the cumulative patch base."""
+    configured = getattr(args, "full_feed", None)
+    candidate = (
+        Path(configured)
+        if configured is not None
+        else Path(args.work_root) / "full-base" / "latest.json"
+    ).resolve()
+    if not candidate.is_file():
+        raise RuntimeError(f"attested full-release feed is missing: {candidate}")
+    return candidate
+
+
 def _base_from_args(args: argparse.Namespace) -> str:
     if str(getattr(args, "base", "") or ""):
         return resolve_commit(args.root, args.base)
+    args.full_feed = resolve_full_feed(args)
     try:
         feed = json.loads(Path(args.full_feed).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, TypeError) as exc:
@@ -806,7 +820,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare_cmd.add_argument("--target", default="HEAD")
     prepare_cmd.add_argument("--base", default="")
     prepare_cmd.add_argument("--host", default="legion")
-    prepare_cmd.add_argument("--full-feed", type=Path, default=ROOT / "dist" / "latest.json")
+    prepare_cmd.add_argument("--full-feed", type=Path)
     prepare_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     prepare_cmd.add_argument("--smeta-baseline-archive", type=Path)
     prepare_cmd.add_argument("--skip-gates", action="store_true")
@@ -832,7 +846,7 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--target", default="HEAD")
     run_cmd.add_argument("--base", default="")
     run_cmd.add_argument("--host", default="legion")
-    run_cmd.add_argument("--full-feed", type=Path, default=ROOT / "dist" / "latest.json")
+    run_cmd.add_argument("--full-feed", type=Path)
     run_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     run_cmd.add_argument("--smeta-baseline-archive", type=Path)
     run_cmd.add_argument("--skip-gates", action="store_true")
