@@ -9,7 +9,7 @@
 Из чистой ветки, отправленной в `origin`:
 
 ```text
-make release RELEASE_ARGS='run --host legion --publish'
+make release RELEASE_ARGS='run --host local --publish'
 ```
 
 Команда последовательно и с сохранением state выполняет:
@@ -22,7 +22,8 @@ make release RELEASE_ARGS='run --host legion --publish'
    этого attested full-base.
 2. Автоматически выбирает soft patch или полный NSIS-выпуск и фиксирует SHA
    устанавливаемого ZIP/EXE в immutable attempt.
-3. На Legion ставит точные candidate bytes штатным путём, проверяет identity,
+3. На текущем Legion (`--host local`) ставит точные candidate bytes штатным
+   путём, проверяет identity,
    живые proxy/UI отдельно от внешних capabilities и, если Qdrant был доступен, временный native
    `dense + qdrant_sparse → RRF` dataset.
 4. Выполняет controlled rollback, проверяет восстановленную версию и повторно
@@ -35,14 +36,14 @@ make release RELEASE_ARGS='run --host legion --publish'
 непубличная репетиция:
 
 ```text
-make release RELEASE_ARGS='run --host legion'
+make release RELEASE_ARGS='run --host local'
 ```
 
 ## Раздельное выполнение и продолжение
 
 ```text
-make release RELEASE_ARGS='prepare --host legion'
-make release RELEASE_ARGS='accept --host legion'
+make release RELEASE_ARGS='prepare --host local'
+make release RELEASE_ARGS='accept --host local'
 make release RELEASE_ARGS='status --attempt dist/release-work/<id>/release-state.json'
 make release RELEASE_ARGS='publish'
 ```
@@ -51,6 +52,10 @@ make release RELEASE_ARGS='publish'
 prepare не пересобирается. Сохранённый draft продолжается с последней
 подтверждённой стадии; опубликованный выпуск повторно не публикуется, а только
 повторяет postflight.
+
+`local` — явный псевдоним машины, на которой запущен оркестратор. Имя или SSH
+alias (например, `legion`) указывается только при действительно удалённой
+приёмке; оно никогда не подменяется неявно.
 
 ## Стоп-условия
 

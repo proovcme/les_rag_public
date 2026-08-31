@@ -6,7 +6,7 @@ Factory Base профиля `estimator` хранит два каноническ
 но profile allowlist — только намерение, а не доказательство исполнимости.
 CapabilityBroker выдаёт модели лишь tools, доступные в текущем runtime context.
 
-**Build 662:** context-bound workbook contracts не попадают в обычный ToolHarness
+**Build 663:** context-bound workbook contracts не попадают в обычный ToolHarness
 shortlist. При server-owned read-вложении чат добавляет реально исполняемые
 `build_vor_workbook` и `build_lsr_workbook`. Тонкий LSR adapter принимает явные
 `decisions` той же модели и только рассчитывает/рендерит их, не запуская скрытый

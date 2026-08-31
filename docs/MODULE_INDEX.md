@@ -1,6 +1,6 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **0.30.22 experimental API, tool-availability and release-base cleanup:** из production app
+> **0.30.23 experimental API, tool-availability and release-procedure cleanup:** из production app
 > удалены 64 route без Совушки, ToolHarness или внутренних HTTP-потребителей:
 > BOR, decisions, doc-review, edges, estimates, field, KAC, LES MD, ontology,
 > prices и старая proxy status page. Общие сервисы, используемые чатом, MCP,

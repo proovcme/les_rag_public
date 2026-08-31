@@ -9,6 +9,10 @@ from pathlib import Path
 import pytest
 
 from tools import release_orchestrator, release_receipt
+
+
+def test_local_host_alias_selects_on_machine_acceptance():
+    assert release_orchestrator.is_local_host("local") is True
 from tools.release_classification import ReleaseClassification
 
 

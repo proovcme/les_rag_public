@@ -344,6 +344,7 @@ def _verify_patch_install_bytes(attempt: dict[str, Any], acceptance_path: Path) 
 def is_local_host(host: str) -> bool:
     label = str(host).split("@")[-1].split(".")[0].casefold()
     names = {
+        "local",
         "localhost",
         "127",
         platform.node().split(".")[0].casefold(),
@@ -819,7 +820,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare_cmd.add_argument("--branch", default="")
     prepare_cmd.add_argument("--target", default="HEAD")
     prepare_cmd.add_argument("--base", default="")
-    prepare_cmd.add_argument("--host", default="legion")
+    prepare_cmd.add_argument("--host", default="local")
     prepare_cmd.add_argument("--full-feed", type=Path)
     prepare_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     prepare_cmd.add_argument("--smeta-baseline-archive", type=Path)
@@ -828,7 +829,7 @@ def _parser() -> argparse.ArgumentParser:
     accept_cmd.add_argument("--root", type=Path, default=ROOT)
     accept_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
     accept_cmd.add_argument("--attempt", type=Path)
-    accept_cmd.add_argument("--host", default="legion")
+    accept_cmd.add_argument("--host", default="local")
     accept_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     local = os.getenv("LOCALAPPDATA", "")
     accept_cmd.add_argument("--runtime", type=Path, default=Path(local) / "Programs" / "LES" / "runtime")
@@ -845,7 +846,7 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--branch", default="")
     run_cmd.add_argument("--target", default="HEAD")
     run_cmd.add_argument("--base", default="")
-    run_cmd.add_argument("--host", default="legion")
+    run_cmd.add_argument("--host", default="local")
     run_cmd.add_argument("--full-feed", type=Path)
     run_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     run_cmd.add_argument("--smeta-baseline-archive", type=Path)

@@ -1,6 +1,6 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **0.30.22 API/tool/release cleanup:** production app больше не регистрирует
+> **0.30.23 API/tool/release cleanup:** production app больше не регистрирует
 > самостоятельные BOR, decisions, doc-review, edges, estimates, field, KAC,
 > LES MD, ontology, prices и proxy-root status routers. Общие сервисы сохранены
 > там, где их вызывают чат, dataset intake, MCP, dossier, LSR или checklist

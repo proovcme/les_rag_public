@@ -7,19 +7,19 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.22
-номер сборки:              662
-версия Tauri/NSIS:         5.1.662
+версия продукта (SemVer):  0.30.23
+номер сборки:              663
+версия Tauri/NSIS:         5.1.663
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.1
 dev implementation:       experimental API cleanup + executable-tool/update-feed guards
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.9 / build 649 / commit 878fbd41
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.7 (immutable)
-следующий выпуск:          0.30.22 — cumulative GitHub patch; не задеплоен
+следующий выпуск:          0.30.23 — cumulative GitHub patch; не задеплоен
 рантайм /api/version:      Legion 0.30.9 / build 649 / desktop 5.1.649 / commit 878fbd41; accepted
 ```
 
-> **0.30.22 / build 662 experimental API/tool/update/release cleanup (dev candidate):**
+> **0.30.23 / build 663 experimental API/tool/update/release cleanup (dev candidate):**
 > production app больше не регистрирует 64 route без Совушки, ToolHarness или
 > внутренних HTTP-потребителей: BOR, decisions, doc-review, edges, estimates,
 > field, KAC, LES MD, ontology, prices и старую proxy status page. Общие
@@ -37,7 +37,10 @@ dev implementation:       experimental API cleanup + executable-tool/update-feed
 > 8 runtime-support, 614 test/tool-only, 1 dormant, 330 API routes, 0 warnings.
 > Release orchestrator берёт cumulative patch base только из attested
 > `dist/release-work/full-base/latest.json`; stale `dist/latest.json` больше не
-> может ошибочно переключить patch 0.30.x в полный NSIS-выпуск.
+> может ошибочно переключить patch 0.30.x в полный NSIS-выпуск. После первого
+> live-прогона локальный Legion закреплён явным `--host local`: SSH alias
+> используется только для действительно удалённой приёмки, поэтому выпуск на
+> текущем Windows-ПК не зависит от установленного SSH-сервера.
 
 > **0.30.20 / build 660 source-adapter boundary cleanup (dev candidate):**
 > пять живых путей `source_adapters` больше не импортируют выключенный Unified
