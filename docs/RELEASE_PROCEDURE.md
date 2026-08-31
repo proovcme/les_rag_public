@@ -42,6 +42,8 @@ make release RELEASE_ARGS='run --host local --publish'
 public-main sync (`before`, `after`, `fast_forwarded`) записывается в persisted
 attempt. Если последующий шаг упал, повторный `publish` продолжает тот же
 attempt; уже выполненный exact sync становится безопасным no-op.
+Release CLI до первого вывода принудительно устанавливает UTF-8 для stdout и
+stderr, поэтому русский progress и итоговый JSON не зависят от Windows codepage.
 
 Ручной fast-forward нужен только как диагностическое восстановление после
 осознанного устранения divergence. Обычная процедура не требует отдельного

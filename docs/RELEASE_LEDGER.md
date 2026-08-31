@@ -7,19 +7,29 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.24
-номер сборки:              664
-версия Tauri/NSIS:         5.1.664
-ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.23
-dev implementation:       fast patch builder + fail-closed public-main sync
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.23 / build 663 / commit e773428b
+версия продукта (SemVer):  0.30.25
+номер сборки:              665
+версия Tauri/NSIS:         5.1.665
+ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.24
+dev implementation:       UTF-8 operator output contract
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.24 / build 664 / commit 9636a730
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.23 (immutable)
-следующий выпуск:          0.30.24 / build 664 — dev candidate, не опубликован и не установлен
-рантайм /api/version:      Legion 0.30.23 / build 663 / desktop 5.1.663 / commit e773428b; accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.24 (immutable)
+следующий выпуск:          0.30.25 / build 665 — UTF-8 operator-output patch candidate
+рантайм /api/version:      Legion 0.30.24 / build 664 / desktop 5.1.664 / commit 9636a730; accepted
 ```
 
-> **0.30.24 / build 664 release-path repair (dev candidate):** построитель
+> **0.30.25 / build 665 UTF-8 operator output (dev candidate):** release CLI
+> явно переводит stdout/stderr в UTF-8 до progress и итогового JSON. Это
+> исправляет нечитаемый русский текст в Windows pipe/терминале при системной
+> `cp1251`; status/receipt на диске и в 0.30.24 уже были корректным UTF-8.
+> Регрессионный subprocess-test принудительно задаёт `PYTHONIOENCODING=cp1251`
+> и требует byte-valid UTF-8. Продуктовый runtime, RAG, сметы и данные не менялись.
+> Generated map: 960 tracked Python-файлов / 297684 строки, 337
+> product-reachable, 8 runtime-support, 614 test/tool-only, 1 dormant,
+> 330 API routes, 0 warnings.
+
+> **0.30.24 / build 664 release-path repair (public patch):** построитель
 > cumulative Windows patch больше не запускает отдельные `git rev-list` и
 > `git show` для каждого файла: ancestry и tree читаются пакетно, уникальные
 > blobs — одним `git cat-file --batch`. На реальной истории 0.30.0→HEAD
@@ -29,7 +39,10 @@ dev implementation:       fast patch builder + fail-closed public-main sync
 > commit, выполняет только обычный non-force fast-forward и повторно проверяет
 > exact ref до создания draft; divergence прекращает выпуск. Результат sync
 > сохраняется в immutable receipt. Пользовательский updater, RAG, сметное ядро,
-> данные и установленный Legion 0.30.23 не менялись. Generated map: 960 tracked
+> данные не менялись. Выпуск принят на Legion циклом install → smoke → rollback
+> к 0.30.23 → smoke → reinstall; final `/api/version`, public main/tag/feed и
+> шесть assets совпали с commit `9636a730a3a9ea24c45a09e83b3244b9320b612c`.
+> Generated map: 960 tracked
 > Python-файлов / 297641 строка, 337 product-reachable, 8 runtime-support,
 > 614 test/tool-only, 1 dormant, 330 API routes, 0 warnings.
 

@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -159,6 +161,43 @@ def test_patch_candidate_prints_builder_progress(monkeypatch, tmp_path, capsys):
     assert "История патча: 3/7" not in visible
     assert "История патча: 7/7" in visible
     assert "Файлы патча: 2/2 — proxy/b.py" in visible
+
+
+def test_cli_forces_utf8_for_windows_operator_output(tmp_path):
+    state = release_receipt.create_attempt(
+        root=tmp_path / "attempts",
+        release_class="patch",
+        product_version="0.30.25",
+        build_number=665,
+        target_commit=TARGET,
+        base_commits=[BASE],
+        host="local",
+        assets=[],
+    )
+    release_receipt.transition(
+        state,
+        expected="planned",
+        target="prepared",
+        evidence={"message": "Обновление установлено"},
+    )
+    environment = {**os.environ, "PYTHONIOENCODING": "cp1251"}
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(release_orchestrator.ROOT / "tools" / "release_orchestrator.py"),
+            "status",
+            "--attempt",
+            str(state),
+        ],
+        cwd=release_orchestrator.ROOT,
+        env=environment,
+        capture_output=True,
+        check=True,
+    )
+
+    decoded = completed.stdout.decode("utf-8")
+    assert "Обновление установлено" in decoded
 
 
 def test_sync_public_main_fast_forwards_real_remote(tmp_path):

@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.25 operator-output repair:** release CLI принудительно использует UTF-8
+> stdout/stderr до progress и итогового JSON. Subprocess-регрессия с
+> `PYTHONIOENCODING=cp1251` доказывает byte-valid русский вывод. Продуктовый
+> runtime, RAG, сметы и данные не менялись. Точки входа:
+> `tools/release_orchestrator.py`, `tests/test_release_orchestrator.py`.
+> Карта: 960 tracked Python-файлов / 297684 строки, 337 product-reachable,
+> 8 runtime-support, 614 test/tool-only, 1 dormant, 330 API routes, 0 warnings.
+> Статус док↔код: ✅.
+>
 > **0.30.24 release-path repair:** cumulative patch строится пакетным чтением
 > ancestry/tree/blob вместо тысяч отдельных Git-процессов и показывает
 > ограниченный progress. После живой acceptance оркестратор сам выполняет

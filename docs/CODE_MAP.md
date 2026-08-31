@@ -1,5 +1,9 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.25 operator-output repair:** `tools/release_orchestrator.py` до первого
+> progress/JSON принудительно устанавливает UTF-8 stdout/stderr, независимо от
+> Windows codepage.
+>
 > **0.30.24 release-path repair:** `tools/vps_patch.py` пакетно читает ancestry,
 > trees и blobs при построении cumulative patch; `tools/release_orchestrator.py`
 > показывает ограниченный progress и после живой acceptance выполняет
