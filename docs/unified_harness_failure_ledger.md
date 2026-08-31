@@ -1,5 +1,19 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-08-31 — После включения tools selector не видел само вложение
+
+- **Симптом:** установленный профиль показывал оба workbook-tools, но Qwen 9B
+  возвращала `calls: []` и просила повторно загрузить уже прикреплённый XLSX.
+- **Причина:** переход рабочего PR `dbd4123a` на общий ContextGovernor сохранил
+  tools и trusted execution, но потерял `attachment_id` в обязательном
+  selector-request. Большой извлечённый текст оставался низкоприоритетной памятью
+  и не помещался в restrictive-контекст 9B.
+- **Исправление:** обязательный request содержит bounded-факт `attachment.bound`
+  и exact временный ID; полный текст не дублируется. Модель сама выбирает tool,
+  executor по-прежнему fail-closed привязывает exact server-owned файл.
+- **Регрессия:** selector payload обязан объявлять attachment без копирования
+  `attachment_context`.
+
 ## 2026-08-31 — Патч добавил workbook-tools в код, но не в установленный профиль
 
 - **Симптом:** новый чат в режиме «Сметчик» с XLSX-вложением отвечал текстом;

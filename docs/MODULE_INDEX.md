@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.29 workbook attachment handoff repair:** model selector получает в
+> обязательном request-блоке факт привязанного server-owned attachment и exact
+> временный ID. Это восстанавливает рабочую границу PR `dbd4123a` после перехода
+> на ContextGovernor: модель выбирает `build_lsr_workbook` / `build_vor_workbook`,
+> код не выбирает за неё и не копирует полный текст файла в control payload.
+> Точки входа: `proxy/services/chat_evidence_application_service.py`,
+> `tests/test_chat_evidence_application_service.py`. Статус док↔код: ✅.
+
 > **0.30.28 factory profile upgrade repair:** startup синхронизирует стабильные
 > `factory:*:base` prompt/skill/profile snapshots с текущим code contract и
 > обновляет только bindings на эти заводские revision ID. Поэтому установленная

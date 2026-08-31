@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.28
-номер сборки:              668
-версия Tauri/NSIS:         5.1.668
+версия продукта (SemVer):  0.30.29
+номер сборки:              669
+версия Tauri/NSIS:         5.1.669
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
-dev implementation:       0.30.28 installed factory-profile repair; candidate до live acceptance
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.27 / build 667 / commit a56dcc0a
+dev implementation:       0.30.29 workbook attachment handoff repair; candidate до live acceptance
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.28 / build 668 / commit 80231a61
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.27 (immutable)
-следующий выпуск:          0.30.28 cumulative patch после Legion acceptance
-рантайм /api/version:      Legion 0.30.27 / build 667 / desktop 5.1.667 / commit a56dcc0a; accepted
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
+следующий выпуск:          0.30.29 cumulative patch после Legion acceptance
+рантайм /api/version:      Legion 0.30.28 / build 668 / desktop 5.1.668 / commit 80231a61; accepted
 ```
+
+> **0.30.29 / build 669 workbook attachment handoff repair (release candidate):**
+> после восстановления workbook-tools Qwen 9B всё ещё выбирала `calls: []`,
+> потому что обязательный selector request не сообщал о server-owned attachment,
+> а большой извлечённый XLSX-текст мог быть отброшен как низкоприоритетная память.
+> Новый bounded request возвращает рабочий контракт PR `dbd4123a`: факт bound
+> attachment и exact временный ID видимы модели, полный текст остаётся evidence,
+> выбор tool остаётся model-owned. Live acceptance: обычный вопрос, затем
+> estimator + XLSX, фактический selected workbook call и artifact.
 
 > **0.30.28 / build 668 installed factory-profile repair (release candidate):**
 > upgrade старой MetaDB больше не оставляет `factory:profile:estimator:base`

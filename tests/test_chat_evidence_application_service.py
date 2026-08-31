@@ -49,6 +49,23 @@ def test_attachment_workbook_tools_survive_restrictive_model_shortlist():
     ]
 
 
+def test_tool_selector_request_declares_bound_attachment_without_copying_its_text():
+    payload = service.tool_selector_request_payload(
+        question="build workbook",
+        mode="estimator",
+        dataset_ids=[],
+        target_file_ref={},
+        round_no=1,
+        attachment_id="read_123456abcdef",
+    )
+
+    assert payload["attachment"] == {
+        "bound": True,
+        "attachment_id": "read_123456abcdef",
+    }
+    assert "attachment_context" not in payload
+
+
 async def _async_append(target, value):
     target.append(value)
 

@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.29 workbook attachment handoff repair:** обязательный selector request
+> снова содержит факт server-owned attachment и его временный ID. Это переносит
+> рабочий контракт PR `dbd4123a` в новый ContextGovernor/tool-loop: модель сама
+> выбирает workbook-tool, а код лишь привязывает выбранный вызов к exact файлу.
+> Полный текст вложения не дублируется в обязательный блок и остаётся evidence.
+
 > **0.30.28 installed profile repair:** `chat_profile_service._seed_factory()`
 > больше не считает само наличие четырёх строк доказательством актуальности.
 > Текущий code contract синхронизирует только `factory:*:base` и привязанные к

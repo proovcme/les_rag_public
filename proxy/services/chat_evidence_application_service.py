@@ -106,6 +106,32 @@ def prioritize_workbook_tools(
     workbook = [name for name in tools if name in _WORKBOOK_TOOL_NAMES]
     other = [name for name in tools if name not in _WORKBOOK_TOOL_NAMES]
     return workbook + other
+
+
+def tool_selector_request_payload(
+    *,
+    question: str,
+    mode: str,
+    dataset_ids: Sequence[str],
+    target_file_ref: dict[str, Any] | None,
+    round_no: int,
+    attachment_id: str | None,
+) -> dict[str, Any]:
+    """Describe the exact operator-bound inputs required for model tool choice."""
+    payload: dict[str, Any] = {
+        "question": question,
+        "mode": mode,
+        "dataset_ids": list(dataset_ids),
+        "target_file": target_file_ref if target_file_ref else {},
+        "round": round_no,
+    }
+    bound_attachment = str(attachment_id or "").strip()
+    if bound_attachment:
+        payload["attachment"] = {
+            "bound": True,
+            "attachment_id": bound_attachment,
+        }
+    return payload
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
 from proxy.services.model_research_tool_service import ModelResearchToolService
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
@@ -1882,13 +1908,14 @@ async def _execute_chat_evidence_application(
                             selector_messages, selector_packet = govern_inference_messages(
                                 preset=execution_preset,
                                 profile_prefix=selector_profile,
-                                request_payload={
-                                    "question": req.question,
-                                    "mode": req.mode or route.intent or "",
-                                    "dataset_ids": _dataset_ids,
-                                    "target_file": target_file_ref if target_file_ref else {},
-                                    "round": research_round,
-                                },
+                                request_payload=tool_selector_request_payload(
+                                    question=req.question,
+                                    mode=req.mode or route.intent or "",
+                                    dataset_ids=_dataset_ids,
+                                    target_file_ref=target_file_ref,
+                                    round_no=research_round,
+                                    attachment_id=getattr(req, "attachment_id", None),
+                                ),
                                 shortlist=shortlist.get("tools") or [],
                                 checkpoint=selector_checkpoint,
                                 working_memory=selector_working_memory,
