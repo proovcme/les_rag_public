@@ -121,6 +121,13 @@
 > до записи, secret reference генерируется сервером, а отключение текущей
 > role-binding требует явного `confirm_bound_roles`. Router подключён в
 > `proxy/app.py`; тесты — `tests/test_model_connections_router.py`.
+> С 0.30.27 назначение роли само получает свежий capability snapshot точной
+> ревизии, если его ещё нет или обязательная capability не подтверждена;
+> отдельный предварительный клик «Проверить» не является частью контракта.
+> Capability probe явно помеченного Ollama дополнительно проверяет нативный
+> `/api/chat` с `think=false` и сохраняет выбранный протокол в snapshot.
+> `OpenAICompatibleTransport` исполняет этот provider-specific профиль только
+> по зафиксированной capability, не по имени модели или эвристике.
 
 > **Private model nodes, extensions and promotion 0.29.0:**
 > `model_connection_security_service.py` разрешает явный `private_network`

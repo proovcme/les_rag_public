@@ -36,6 +36,7 @@ def _resolved(
     display_name: str = "Connection",
     secret_ref: str | None = None,
     max_output_field: str = "max_tokens",
+    chat_protocol: str | None = None,
 ) -> ResolvedModelConnection:
     observations = tuple(
         CapabilityObservation(
@@ -53,13 +54,16 @@ def _resolved(
             CapabilityName.EMBEDDINGS,
         )
     )
+    transport_options = {"max_output_field": max_output_field}
+    if chat_protocol is not None:
+        transport_options["chat_protocol"] = chat_protocol
     snapshot = CapabilitySnapshot(
         snapshot_id="cap:c1:r1",
         connection_revision_id="conn:c1:r1",
         observations=observations,
         observed_at=NOW,
         expires_at=NOW + timedelta(days=1),
-        transport_options={"max_output_field": max_output_field},
+        transport_options=transport_options,
     )
     endpoint = ValidatedEndpoint(
         canonical_base_url="http://127.0.0.1:1919/v1",
@@ -216,6 +220,45 @@ async def test_complete_places_system_messages_before_conversation(tmp_path):
         "assistant",
     ]
     assert captured["body"]["messages"][0]["content"] == "policy\n\nevidence rules"
+
+
+@pytest.mark.asyncio
+async def test_complete_uses_capability_selected_native_chat_without_reasoning(tmp_path):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "model": "observed-model-1",
+                "message": {"content": "ЛЕС", "thinking": ""},
+                "done_reason": "stop",
+                "prompt_eval_count": 10,
+                "eval_count": 1,
+            },
+        )
+
+    transport, client = _transport(tmp_path, handler)
+    try:
+        result = await transport.complete(
+            _resolved(chat_protocol="native_chat_v1"),
+            InferenceRequest(
+                messages=({"role": "user", "content": "Ответь одним словом"},),
+                max_output_tokens=64,
+                temperature=0.0,
+            ),
+        )
+    finally:
+        await client.aclose()
+
+    assert captured["path"] == "/api/chat"
+    assert captured["body"]["think"] is False
+    assert captured["body"]["options"] == {"num_predict": 64, "temperature": 0.0}
+    assert result.text == "ЛЕС"
+    assert result.finish_reason == "stop"
+    assert result.usage == {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}
 
 
 @pytest.mark.asyncio

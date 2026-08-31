@@ -2028,7 +2028,7 @@
         "proxy/app.py",
         "tests/test_model_connections_router.py"
       ],
-      "lines": 563,
+      "lines": 627,
       "module": "proxy.routers.model_connections",
       "outbound": [
         "proxy/__init__.py",
@@ -4776,7 +4776,7 @@
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py"
       ],
-      "lines": 281,
+      "lines": 333,
       "module": "proxy.services.model_capability_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4816,7 +4816,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 171,
+      "lines": 175,
       "module": "proxy.services.model_connection_contracts",
       "outbound": [
         "proxy/__init__.py",
@@ -5149,7 +5149,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 384,
+      "lines": 474,
       "module": "proxy.services.openai_compatible_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7994,7 +7994,7 @@
         "sovushka_ng.py",
         "tests/test_sovushka_model_connections.py"
       ],
-      "lines": 221,
+      "lines": 255,
       "module": "sovushka.pages.model_connections",
       "outbound": [
         "sovushka/__init__.py",
@@ -10709,7 +10709,7 @@
     },
     {
       "inbound": [],
-      "lines": 281,
+      "lines": 315,
       "module": "tests.test_model_capability_service",
       "outbound": [
         "proxy/services/model_capability_service.py",
@@ -10802,7 +10802,7 @@
     },
     {
       "inbound": [],
-      "lines": 381,
+      "lines": 406,
       "module": "tests.test_model_connections_router",
       "outbound": [
         "proxy/config.py",
@@ -11075,7 +11075,7 @@
     },
     {
       "inbound": [],
-      "lines": 359,
+      "lines": 402,
       "module": "tests.test_openai_compatible_transport_service",
       "outbound": [
         "proxy/services/model_connection_contracts.py",
@@ -12863,7 +12863,7 @@
     },
     {
       "inbound": [],
-      "lines": 78,
+      "lines": 98,
       "module": "tests.test_sovushka_model_connections",
       "outbound": [
         "sovushka/pages/model_connections.py"
@@ -18023,7 +18023,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 297904
+    "tracked_python_lines": 298270
   },
   "warnings": []
 }

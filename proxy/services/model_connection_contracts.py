@@ -45,6 +45,7 @@ class CapabilityState(str, Enum):
 
 _EVIDENCE_SOURCES = frozenset({"probe", "operator_declaration", "template_default", "unavailable"})
 _MAX_OUTPUT_FIELDS = frozenset({"max_tokens", "max_completion_tokens"})
+_CHAT_PROTOCOLS = frozenset({"openai_chat_v1", "native_chat_v1"})
 
 
 def _required_text(value: str, field_name: str) -> str:
@@ -138,6 +139,9 @@ class CapabilitySnapshot:
         max_output_field = options.get("max_output_field")
         if max_output_field is not None and max_output_field not in _MAX_OUTPUT_FIELDS:
             raise ValueError("unsupported max_output_field")
+        chat_protocol = options.get("chat_protocol")
+        if chat_protocol is not None and chat_protocol not in _CHAT_PROTOCOLS:
+            raise ValueError("unsupported chat_protocol")
         object.__setattr__(self, "transport_options", MappingProxyType(options))
 
     def observation(self, capability: CapabilityName) -> CapabilityObservation:

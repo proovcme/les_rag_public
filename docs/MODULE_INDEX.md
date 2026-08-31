@@ -276,6 +276,11 @@
 > role bindings, requested→effective context, capability evidence и guarded
 > create/copy/edit/test/secret/bind/disable actions; mobile contract закреплён
 > `tests/test_sovushka_model_connections.py`.
+> С 0.30.27 bind роли автоматически probe-ит непроверенную/непригодную точную
+> ревизию и требует подтверждённый `chat_completions` либо `embeddings`.
+> Ollama-native chat выбирается только live capability snapshot и отключает
+> reasoning через официальный `think=false`; шаблоны UI предлагают уникальные
+> имена и объясняют конфликт названия по-русски. Статус док↔код: ✅.
 
 > **0.29.0 private nodes / promotion closure:** LAN и ZeroTier являются одной
 > явной locality `private_network`; HTTP разрешён только после private-only DNS

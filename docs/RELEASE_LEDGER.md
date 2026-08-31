@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-08-31)
 
 ```
-версия продукта (SemVer):  0.30.26
-номер сборки:              666
-версия Tauri/NSIS:         5.1.666
+версия продукта (SemVer):  0.30.27
+номер сборки:              667
+версия Tauri/NSIS:         5.1.667
 ветка разработки:          codex/les-0.30.0-bootstrap-updater от публичной 0.30.25
-dev implementation:       release path accepted; следующий выпуск не запланирован
+dev implementation:       0.30.27 model connection repair; candidate до live acceptance
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.26 / build 666 / commit 9abcbb59
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.26 (immutable)
-следующий выпуск:          не запланирован
+следующий выпуск:          0.30.27 cumulative patch после Legion acceptance
 рантайм /api/version:      Legion 0.30.26 / build 666 / desktop 5.1.666 / commit 9abcbb59; accepted
 ```
+
+> **0.30.27 / build 667 model connection repair (release candidate):** назначение
+> роли автоматически получает capability snapshot точной ревизии, поэтому
+> предварительный ручной клик «Проверить» больше не обязателен. Для явно
+> помеченного Ollama live probe может выбрать нативный `/api/chat`; transport
+> тогда передаёт `think=false`, сохраняя решения модели и не вводя эвристику по
+> её имени. UI предлагает уникальные названия из шаблона/копии и переводит
+> `DISPLAY_NAME_IN_USE` в понятное действие. Regression gate: 73 focused tests;
+> публичный статус и Legion acceptance должны быть записаны только после
+> полного release-run.
 
 > **0.30.26 / build 666 RAG acceptance truthfulness (public patch):**
 > Windows native-RRF acceptance больше не загружает 82-байтную строку ниже

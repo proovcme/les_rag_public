@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping
+from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 import httpx
@@ -132,6 +133,16 @@ def _state_for_status(status_code: int) -> CapabilityState:
     return CapabilityState.UNKNOWN
 
 
+def _native_chat_url(endpoint: ValidatedEndpoint) -> str:
+    parsed = urlsplit(endpoint.canonical_base_url)
+    path = parsed.path.rstrip("/")
+    for suffix in ("/api/v1", "/v1"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    return urlunsplit((parsed.scheme, parsed.netloc, f"{path}/api/chat", "", ""))
+
+
 class CapabilityProbe:
     def __init__(
         self,
@@ -240,13 +251,54 @@ class CapabilityProbe:
                 )
             )
 
+        transport_options = {"max_output_field": "max_tokens"}
+        chat_observation = next(
+            (
+                item
+                for item in observations
+                if item.capability is CapabilityName.CHAT_COMPLETIONS
+            ),
+            None,
+        )
+        if (
+            str(connection.extension_type or "").strip().casefold() == "ollama"
+            and CapabilityName.CHAT_COMPLETIONS in requested_set
+            and chat_observation is not None
+            and chat_observation.state is CapabilityState.SUPPORTED
+        ):
+            native_body = {
+                "model": connection.model_id,
+                "messages": [{"role": "user", "content": "capability probe"}],
+                "think": False,
+                "stream": False,
+                "options": {"num_predict": 1, "temperature": 0},
+            }
+            try:
+                async with self.client.stream(
+                    "POST",
+                    _native_chat_url(endpoint),
+                    headers=headers,
+                    json=native_body,
+                    follow_redirects=False,
+                ) as response:
+                    self.peer_verifier(response, endpoint)
+                    response_size = 0
+                    async for chunk in response.aiter_bytes():
+                        response_size += len(chunk)
+                        if response_size > self.response_body_limit:
+                            break
+                    if 200 <= response.status_code < 300 and response_size <= self.response_body_limit:
+                        transport_options["chat_protocol"] = "native_chat_v1"
+            except (httpx.HTTPError, OSError, ValueError):
+                pass
+
         return CapabilitySnapshot(
             snapshot_id=f"cap:{uuid4().hex}",
             connection_revision_id=connection.revision_id,
             observations=tuple(observations),
             observed_at=observed_at,
             expires_at=observed_at + self.freshness,
-            transport_options={"max_output_field": "max_tokens"},
+            transport_options=transport_options,
         )
 
     async def probe_and_store(

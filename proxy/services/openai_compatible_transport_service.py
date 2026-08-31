@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import json
 from types import MappingProxyType
 from typing import Any, Callable
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 
@@ -172,6 +173,90 @@ class OpenAICompatibleTransport:
         return body
 
     @staticmethod
+    def _native_chat_url(connection: ResolvedModelConnection) -> str:
+        parsed = urlsplit(connection.endpoint.canonical_base_url)
+        path = parsed.path.rstrip("/")
+        for suffix in ("/api/v1", "/v1"):
+            if path.endswith(suffix):
+                path = path[: -len(suffix)]
+                break
+        return urlunsplit((parsed.scheme, parsed.netloc, f"{path}/api/chat", "", ""))
+
+    @staticmethod
+    def _native_chat_body(
+        connection: ResolvedModelConnection,
+        request: InferenceRequest,
+    ) -> dict[str, Any]:
+        options: dict[str, Any] = {"num_predict": request.max_output_tokens}
+        if request.temperature is not None:
+            options["temperature"] = request.temperature
+        body: dict[str, Any] = {
+            "model": connection.model_id,
+            "messages": [dict(item) for item in request.messages],
+            "think": False,
+            "stream": False,
+            "options": options,
+        }
+        if request.tools:
+            body["tools"] = [dict(item) for item in request.tools]
+        if request.response_format is not None:
+            response_format = dict(request.response_format)
+            if response_format.get("type") == "json_schema":
+                json_schema = response_format.get("json_schema") or {}
+                body["format"] = dict(json_schema.get("schema") or {})
+            elif response_format.get("type") == "json_object":
+                body["format"] = "json"
+        return body
+
+    async def _complete_native_chat(
+        self,
+        connection: ResolvedModelConnection,
+        request: InferenceRequest,
+    ) -> InferenceResponse:
+        if request.tools:
+            self._require(connection, CapabilityName.TOOLS)
+        if request.response_format is not None:
+            self._require(connection, CapabilityName.STRUCTURED_OUTPUT)
+        response = await self._open(
+            connection,
+            url=self._native_chat_url(connection),
+            body=self._native_chat_body(connection, request),
+        )
+        try:
+            raw = await self._read_bounded(response)
+            if not 200 <= response.status_code < 300:
+                raise ModelTransportError(f"UPSTREAM_HTTP_ERROR: {response.status_code}")
+            try:
+                payload = json.loads(raw)
+                message = payload["message"]
+            except (KeyError, TypeError, json.JSONDecodeError) as exc:
+                raise ModelTransportError("UPSTREAM_RESPONSE_INVALID") from exc
+            tool_calls_raw = message.get("tool_calls") or ()
+            if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, str):
+                raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+            prompt_tokens = int(payload.get("prompt_eval_count") or 0)
+            completion_tokens = int(payload.get("eval_count") or 0)
+            return InferenceResponse(
+                text=str(message.get("content") or ""),
+                tool_calls=tuple(
+                    MappingProxyType(dict(item))
+                    for item in tool_calls_raw
+                    if isinstance(item, Mapping)
+                ),
+                finish_reason=str(payload.get("done_reason") or ""),
+                usage=MappingProxyType(
+                    {
+                        "prompt_tokens": prompt_tokens,
+                        "completion_tokens": completion_tokens,
+                        "total_tokens": prompt_tokens + completion_tokens,
+                    }
+                ),
+                model_id=str(payload.get("model") or connection.model_id),
+            )
+        finally:
+            await response.aclose()
+
+    @staticmethod
     def _fold_system_into_user(body: Mapping[str, Any]) -> dict[str, Any]:
         updated = dict(body)
         messages = [dict(item) for item in body.get("messages", ()) if isinstance(item, Mapping)]
@@ -235,6 +320,11 @@ class OpenAICompatibleTransport:
         request: InferenceRequest,
     ) -> InferenceResponse:
         self._require(connection, CapabilityName.CHAT_COMPLETIONS)
+        if (
+            connection.capability_snapshot.transport_options.get("chat_protocol")
+            == "native_chat_v1"
+        ):
+            return await self._complete_native_chat(connection, request)
         body = self._chat_body(connection, request, stream=False)
         response = await self._open(
             connection,

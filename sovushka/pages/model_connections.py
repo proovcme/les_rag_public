@@ -20,6 +20,26 @@ _ROLES = {"answer": "Ответы", "embeddings": "Эмбеддинги", "local
 _CAPS = {"models": "Список моделей", "chat_completions": "Чат", "streaming": "Поток", "embeddings": "Эмбеддинги", "tools": "Инструменты клиента", "responses": "Responses API"}
 
 
+def suggested_connection_name(base_name: str, connections: list[dict[str, Any]]) -> str:
+    base = str(base_name or "").strip() or "Подключение"
+    occupied = {
+        str(item.get("display_name") or "").strip().casefold()
+        for item in connections
+    }
+    if base.casefold() not in occupied:
+        return base
+    suffix = 2
+    while f"{base} {suffix}".casefold() in occupied:
+        suffix += 1
+    return f"{base} {suffix}"
+
+
+def connection_save_error(raw_error: str) -> str:
+    if "DISPLAY_NAME_IN_USE" in str(raw_error or ""):
+        return "Такое название уже используется. Укажите другое название подключения."
+    return str(raw_error or "Не удалось сохранить подключение")
+
+
 def build_model_connections():
     data: dict[str, Any] = {
         "connections": [], "bindings": {}, "templates": [], "effective": {}, "qdrant": {},
@@ -105,7 +125,13 @@ def build_model_connections():
             section_heading("Изменить подключение" if editing else "Новое подключение", "Секрет вводится вслепую и не возвращается из Л.Е.С.")
             template_options = {item["template_id"]: item["display_name"] for item in data["templates"]}
             template = select_field(template_options, label="Шаблон", clearable=True, classes="w-full")
-            name = text_field(label="Название", value=(f"{current.get('display_name', '')} — копия" if copy else current.get("display_name", "")), classes="w-full")
+            initial_name = current.get("display_name", "")
+            if copy:
+                initial_name = suggested_connection_name(
+                    f"{initial_name} — копия",
+                    data["connections"],
+                )
+            name = text_field(label="Название", value=initial_name, classes="w-full")
             endpoint = text_field(label="OpenAI-compatible URL", value=current.get("base_url", ""), classes="w-full")
             model = text_field(label="Модель", value=current.get("model_id", ""), classes="w-full")
             locality = select_field(_LOCALITY, value=current.get("locality", "loopback"), label="Расположение", classes="w-full")
@@ -116,7 +142,12 @@ def build_model_connections():
                 row = next((x for x in data["templates"] if x.get("template_id") == event.value), None)
                 if row:
                     selected_extension["value"] = row.get("extension_type")
-                    name.set_value(row.get("display_name", "")); endpoint.set_value(row.get("base_url", "")); locality.set_value(row.get("locality", "loopback"))
+                    name.set_value(
+                        suggested_connection_name(
+                            row.get("display_name", ""),
+                            data["connections"],
+                        )
+                    ); endpoint.set_value(row.get("base_url", "")); locality.set_value(row.get("locality", "loopback"))
             template.on_value_change(_template_changed)
 
             async def _save() -> None:
@@ -133,7 +164,10 @@ def build_model_connections():
                 if result:
                     dialog.close(); ui.notify("Подключение сохранено", type="positive"); await _reload()
                 else:
-                    ui.notify(last_api_error_text("Не удалось сохранить подключение"), type="negative")
+                    raw_error = last_api_error_text("Не удалось сохранить подключение")
+                    if "DISPLAY_NAME_IN_USE" in raw_error:
+                        name.run_method("focus")
+                    ui.notify(connection_save_error(raw_error), type="negative")
             with ui.row().classes("justify-end w-full"):
                 action_button("Отмена", on_click=dialog.close, variant="quiet")
                 action_button("Сохранить", on_click=_save, variant="primary")

@@ -22,7 +22,7 @@ from proxy.services.model_secret_service import EnvironmentSecretStore
 from proxy.services.canonical_route_service import PromotionReceipt
 
 
-NOW = datetime(2026, 8, 28, 12, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc)
 
 
 class FakeProbe:
@@ -33,7 +33,7 @@ class FakeProbe:
         requested_capabilities = tuple(sorted(map(CapabilityName, requested), key=lambda item: item.value))
         self.requests.append((connection.revision_id, requested_capabilities))
         snapshot = CapabilitySnapshot(
-            snapshot_id=f"cap:{connection.revision_id}",
+            snapshot_id=f"cap:{connection.revision_id}:{len(self.requests)}",
             connection_revision_id=connection.revision_id,
             observations=tuple(
                 CapabilityObservation(
@@ -176,6 +176,31 @@ def test_admin_create_test_bind_and_confirm_bound_disable(api) -> None:
     assert disabled.status_code == 200
     assert disabled.json()["enabled"] is False
     assert registry.get_connection(connection["connection_id"]).enabled is False
+
+
+def test_role_assignment_automatically_probes_unchecked_connection(api) -> None:
+    client, registry, _secrets, probe = api
+    created = client.post(
+        "/api/model-connections",
+        headers=_headers(ADMIN_ROLE),
+        json=_valid_connection(extension_type="ollama"),
+    ).json()
+
+    response = client.put(
+        "/api/model-connections/roles/answer",
+        headers=_headers(ADMIN_ROLE),
+        json={
+            "connection_revision_id": created["revision_id"],
+            "expected_binding_revision": None,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    requested = probe.requests[-1]
+    assert requested[0] == created["revision_id"]
+    assert CapabilityName.CHAT_COMPLETIONS in requested[1]
+    assert CapabilityName.TOOLS in requested[1]
+    assert registry.latest_capability_snapshot(created["revision_id"]) is not None
 
 
 def test_stale_revision_and_role_binding_return_conflict(api) -> None:

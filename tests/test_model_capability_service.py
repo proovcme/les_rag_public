@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 
 import httpx
 import pytest
@@ -25,7 +26,11 @@ from proxy.services.model_connection_registry_service import ModelConnectionRegi
 NOW = datetime(2026, 8, 28, 9, 0, tzinfo=timezone.utc)
 
 
-def _connection(*, secret_ref: str | None = None) -> ModelConnectionRevision:
+def _connection(
+    *,
+    secret_ref: str | None = None,
+    extension_type: str | None = None,
+) -> ModelConnectionRevision:
     return ModelConnectionRevision(
         connection_id="conn:test",
         revision_id="conn:test:r1",
@@ -37,7 +42,7 @@ def _connection(*, secret_ref: str | None = None) -> ModelConnectionRevision:
         locality=ConnectionLocality.LOOPBACK,
         requested_context_tokens=8192,
         secret_ref=secret_ref,
-        extension_type=None,
+        extension_type=extension_type,
         enabled=True,
         created_at=NOW.isoformat(),
         created_by="admin:test",
@@ -93,6 +98,35 @@ async def test_probe_records_supported_unsupported_unknown_without_model_text() 
     assert snapshot.observation(CapabilityName.CHAT_COMPLETIONS).evidence_source == "probe"
     assert "sensitive-output" not in repr(snapshot)
     assert snapshot.transport_options == {"max_output_field": "max_tokens"}
+
+
+@pytest.mark.asyncio
+async def test_probe_records_native_chat_profile_only_after_live_probe() -> None:
+    requests: list[tuple[str, str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, body))
+        if request.url.path == "/v1/chat/completions":
+            return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
+        if request.url.path == "/api/chat":
+            return httpx.Response(200, json={"message": {"content": "ok"}, "done": True})
+        return httpx.Response(404, json={"error": "missing"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        snapshot = await CapabilityProbe(
+            client=client,
+            resolver=lambda _host, _port: ("127.0.0.1",),
+            peer_verifier=_peer_ok,
+            clock=lambda: NOW,
+        ).probe(
+            _connection(extension_type="ollama"),
+            requested={CapabilityName.CHAT_COMPLETIONS},
+        )
+
+    assert snapshot.transport_options["chat_protocol"] == "native_chat_v1"
+    native = next(item for item in requests if item[1] == "/api/chat")
+    assert native[2]["think"] is False
 
 
 @pytest.mark.asyncio

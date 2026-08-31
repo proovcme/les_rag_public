@@ -1,5 +1,24 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-08-31 — Назначенная Ollama-модель не отвечала без ручной проверки
+
+- **Симптом:** новая ревизия сохранялась и назначалась в UI, но обычный чат
+  возвращал `MODEL_CONNECTION_RESOLUTION_FAILED: CAPABILITY_SNAPSHOT_MISSING`;
+  оператору приходилось догадаться отдельно нажать «Проверить». После проверки
+  Qwen 3.5 9B через OpenAI-compatible endpoint могла исчерпать ответ внутренним
+  reasoning вместо финального текста.
+- **Причина:** bind API не замыкал обязательный capability lifecycle, а общий
+  transport всегда выбирал `/v1/chat/completions`. Нативный профиль Ollama,
+  уже доказанный старым контуром, не был перенесён в immutable model connection.
+- **Исправление:** bind автоматически probe-ит точную ревизию и fail-closed
+  проверяет capability роли. Явно помеченный Ollama получает дополнительный
+  live probe `/api/chat`; только подтверждённый snapshot включает нативный
+  transport с `think=false`. Выбор не делается по имени модели.
+- **Регрессия:** router test начинает с ревизии без snapshot; capability и
+  transport tests требуют live-derived protocol и нативное тело запроса.
+- **Scope:** модель, prompt, RAG, tool policy, сметы и пользовательские данные
+  не менялись.
+
 ## 2026-08-25 — Release smoke omitted its isolation environment
 
 - **Symptom:** NSIS returned exit code 0, but the requested isolated `app` directory stayed empty;

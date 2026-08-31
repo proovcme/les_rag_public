@@ -2,6 +2,25 @@ import inspect
 from pathlib import Path
 
 
+def test_model_connection_names_are_unique_before_submit():
+    from sovushka.pages.model_connections import (
+        connection_save_error,
+        suggested_connection_name,
+    )
+
+    connections = [
+        {"display_name": "Ollama"},
+        {"display_name": "Ollama 2"},
+        {"display_name": "Ответы 14B"},
+    ]
+
+    assert suggested_connection_name("MLX", connections) == "MLX"
+    assert suggested_connection_name("Ollama", connections) == "Ollama 3"
+    assert connection_save_error("409: {'code': 'DISPLAY_NAME_IN_USE'}") == (
+        "Такое название уже используется. Укажите другое название подключения."
+    )
+
+
 def test_model_connections_page_uses_safe_registry_actions():
     from sovushka.pages.model_connections import build_model_connections
 
@@ -23,6 +42,7 @@ def test_model_connections_page_uses_safe_registry_actions():
     assert "panel(" in source
     assert "status_badge(" in source
     assert 'classes("sov-model-connections-page")' in source
+    assert 'name.run_method("focus")' in source
 
 
 def test_model_page_explains_locality_context_source_and_restart():

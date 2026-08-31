@@ -11,10 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from proxy.config import ENV_PATH
 from proxy.security import RequestUser, require_admin, require_user
-from proxy.services.model_capability_service import CapabilityProbe, CapabilityProbeError
+from proxy.services.model_capability_service import (
+    CapabilityProbe,
+    CapabilityProbeError,
+    CapabilityRequirementError,
+    require_capabilities,
+)
 from proxy.services.model_connection_contracts import (
     CapabilityName,
     CapabilitySnapshot,
+    CapabilityState,
     ConnectionLocality,
     ConnectionRole,
     ModelConnectionRevision,
@@ -42,6 +48,36 @@ from proxy.services.canonical_promotion_service import (
 
 
 router = APIRouter(prefix="/api/model-connections", tags=["model-connections"])
+
+
+_ROLE_REQUIRED_CAPABILITIES = {
+    ConnectionRole.ANSWER: frozenset({CapabilityName.CHAT_COMPLETIONS}),
+    ConnectionRole.EMBEDDINGS: frozenset({CapabilityName.EMBEDDINGS}),
+    ConnectionRole.LOCAL_FALLBACK: frozenset({CapabilityName.CHAT_COMPLETIONS}),
+}
+_ROLE_PROBE_CAPABILITIES = {
+    ConnectionRole.ANSWER: frozenset(
+        {
+            CapabilityName.MODELS,
+            CapabilityName.CHAT_COMPLETIONS,
+            CapabilityName.STREAMING,
+            CapabilityName.TOOLS,
+            CapabilityName.STRUCTURED_OUTPUT,
+        }
+    ),
+    ConnectionRole.EMBEDDINGS: frozenset(
+        {CapabilityName.MODELS, CapabilityName.EMBEDDINGS}
+    ),
+    ConnectionRole.LOCAL_FALLBACK: frozenset(
+        {
+            CapabilityName.MODELS,
+            CapabilityName.CHAT_COMPLETIONS,
+            CapabilityName.STREAMING,
+            CapabilityName.TOOLS,
+            CapabilityName.STRUCTURED_OUTPUT,
+        }
+    ),
+}
 
 
 def _registry() -> ModelConnectionRegistry:
@@ -513,6 +549,32 @@ async def bind_role(
 ):
     registry = _registry()
     try:
+        revision = registry.get_revision(req.connection_revision_id)
+        required = _ROLE_REQUIRED_CAPABILITIES[role]
+        snapshot = registry.latest_capability_snapshot(revision.revision_id)
+        needs_probe = snapshot is None
+        if snapshot is not None:
+            try:
+                require_capabilities(snapshot, required)
+            except CapabilityRequirementError:
+                needs_probe = True
+        if needs_probe:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as client:
+                snapshot = await _probe(client).probe_and_store(
+                    revision,
+                    requested=_ROLE_PROBE_CAPABILITIES[role],
+                    registry=registry,
+                    actor=_actor(admin),
+                )
+            for capability in required:
+                observation = snapshot.observation(capability)
+                if (
+                    observation.state is not CapabilityState.SUPPORTED
+                    or observation.evidence_source != "probe"
+                ):
+                    raise CapabilityRequirementError(
+                        f"CAPABILITY_REQUIRED: {capability.value}"
+                    )
         binding = registry.bind_role(
             role,
             req.connection_revision_id,
@@ -520,6 +582,8 @@ async def bind_role(
             actor=_actor(admin),
         )
         return _binding_projection(binding)
+    except (CapabilityProbeError, CapabilityRequirementError) as error:
+        raise _error(status.HTTP_422_UNPROCESSABLE_CONTENT, _code(error)) from error
     except ModelConnectionRegistryError as error:
         raise _registry_error(error) from error
 
