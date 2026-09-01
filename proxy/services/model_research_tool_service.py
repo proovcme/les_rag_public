@@ -180,7 +180,7 @@ class ModelResearchToolService:
             dataset_ids=list(self._dataset_ids),
             **self._retrieval_kwargs,
         )
-        chunks = tuple(retrieval.chunks)
+        chunks = tuple(retrieval.chunks)[:6]
         trace = dict(retrieval.payload())
         hits = [_chunk_payload(chunk) for chunk in chunks]
         sources = [

@@ -811,7 +811,72 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if refs:
             row["evidence_refs"] = refs
         prose_rows.append(row)
-    return (str(raw or ""), prose_rows) if prose_rows else None
+    if prose_rows:
+        return str(raw or ""), prose_rows
+
+    labelled_rows: list[dict[str, Any]] = []
+    labelled_header = re.compile(
+        r"^\s*Строка\s+(\d+)\s*(?:[—–-]|:)\s*([^;]+)(?:;|$)",
+        re.IGNORECASE,
+    )
+    labelled_fields = {
+        "раздел": "section",
+        "ед. изм.": "unit",
+        "ед. изм": "unit",
+        "единица": "unit",
+        "unit": "unit",
+        "количество": "quantity",
+        "кол-во": "quantity",
+        "quantity": "quantity",
+        "norm_code": "norm_code",
+        "шифр нормы": "norm_code",
+        "норма": "norm_code",
+        "аналог": "analogue",
+        "обоснование": "coverage",
+        "coverage": "coverage",
+        "коэффициент": "coefficient",
+        "coefficient": "coefficient",
+        "evidence": "evidence_refs",
+        "evidence_refs": "evidence_refs",
+    }
+    for line in lines:
+        match = labelled_header.match(line)
+        if match is None:
+            continue
+        row: dict[str, Any] = {
+            "source_row": int(match.group(1)),
+            "title": match.group(2).strip(),
+        }
+        for segment in line[match.end() :].split(";"):
+            if ":" not in segment:
+                continue
+            label, value = segment.split(":", 1)
+            key = labelled_fields.get(
+                re.sub(r"\s+", " ", label.strip()).casefold()
+            )
+            clean = value.strip()
+            if not key or not clean:
+                continue
+            if key in {"quantity", "coefficient"}:
+                parsed_number = number(clean)
+                if parsed_number is not None:
+                    row[key] = parsed_number
+            elif key == "norm_code":
+                code_match = re.search(
+                    r"[А-ЯA-ZЁа-яa-zё]+\d{2}-\d{2}-\d{3}-\d{2}", clean
+                )
+                row[key] = code_match.group(0) if code_match else clean
+            elif key == "evidence_refs":
+                refs = list(
+                    dict.fromkeys(re.findall(r"Q\d+\.H\d+", clean, re.IGNORECASE))
+                )
+                if refs:
+                    row[key] = refs
+            else:
+                row[key] = clean
+        if {"title", "unit", "quantity", "norm_code"}.issubset(row):
+            labelled_rows.append(row)
+    return (str(raw or ""), labelled_rows) if labelled_rows else None
 
 
 @dataclass(frozen=True)

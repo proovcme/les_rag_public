@@ -588,7 +588,7 @@
         "tools/smeta_embedding_parity.py",
         "tools/smeta_rag_quality_probe.py"
       ],
-      "lines": 4539,
+      "lines": 4542,
       "module": "backend.qdrant_adapter",
       "outbound": [
         "backend/__init__.py",
@@ -2971,7 +2971,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3680,
+      "lines": 3745,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3020,7 +3020,7 @@
         "tests/test_profiles_router.py",
         "tests/test_workbook_tool_contracts.py"
       ],
-      "lines": 858,
+      "lines": 869,
       "module": "proxy.services.chat_profile_service",
       "outbound": [
         "backend/rag_config.py",
@@ -8879,7 +8879,7 @@
     },
     {
       "inbound": [],
-      "lines": 2109,
+      "lines": 2145,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -8951,7 +8951,7 @@
     },
     {
       "inbound": [],
-      "lines": 355,
+      "lines": 390,
       "module": "tests.test_chat_profile_service",
       "outbound": [
         "proxy/services/chat_profile_service.py"
@@ -10877,7 +10877,7 @@
     },
     {
       "inbound": [],
-      "lines": 194,
+      "lines": 230,
       "module": "tests.test_model_research_tool_service",
       "outbound": [
         "proxy/services/model_research_tool_service.py"
@@ -11508,7 +11508,7 @@
     },
     {
       "inbound": [],
-      "lines": 41,
+      "lines": 60,
       "module": "tests.test_qdrant_health_count_contract",
       "outbound": [
         "backend/qdrant_adapter.py"
@@ -18039,7 +18039,7 @@
     "runtime_support": 9,
     "test_or_tool_only": 614,
     "tracked_python_files": 961,
-    "tracked_python_lines": 301093
+    "tracked_python_lines": 301298
   },
   "warnings": []
 }

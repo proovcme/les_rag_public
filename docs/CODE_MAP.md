@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.41 installed compatibility:** `chat_profile_service` накладывает
+> estimator workflow policy на effective snapshot старой user revision, не
+> меняя её в SQLite. `ModelResearchToolService` отдаёт модели максимум 6 hits.
+> `qdrant_adapter` отделяет полную legacy system-примесь от user-count health.
+> `parse_model_rag_result` принимает также обычные строки с подписями полей,
+> поэтому XLSX не зависит от Markdown-таблицы.
+
 > **0.30.40 estimate RAG routing:** model-authored estimator queries проходят
 > через `retrieve_smeta_norm_cards → norm_browser.browse_norms`, который читает
 > effective collection из активной настройки сметной базы. Общий `state.backend`

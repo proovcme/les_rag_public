@@ -39,3 +39,22 @@ def test_collection_health_degrades_on_real_user_catalog_mismatch():
         "catalog_comparable_chunks": 101_366,
         "qdrant_points": 101_365,
     }
+
+
+def test_collection_health_recognizes_complete_legacy_system_corpus_without_marking_user_rag_red():
+    snapshot = {
+        "status": "ready",
+        "totals": {"chunks": 151_184},
+        "datasets": [
+            {"dataset_scope": "user", "chunks": 101_366},
+            {"dataset_scope": "system", "module_id": "smeta", "chunks": 49_818},
+        ],
+        "qdrant": {},
+    }
+
+    _apply_collection_count_health(snapshot, physical_points=151_184)
+
+    assert snapshot["status"] == "ready"
+    assert snapshot["qdrant"]["points_match_sqlite_chunks"] is True
+    assert snapshot["qdrant"]["legacy_system_points"] == 49_818
+    assert snapshot["qdrant"]["catalog_comparable_chunks"] == 101_366

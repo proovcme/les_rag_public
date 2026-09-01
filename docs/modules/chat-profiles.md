@@ -45,6 +45,12 @@ workbook adapter. Ограничение количества tool definitions �
 не переписываются. Поиск норм использует effective dedicated collection,
 настроенную active base/runtime, и не делает fallback в общий `les_rag`.
 
+**Build 681:** runtime effective snapshot старого пользовательского estimator-
+профиля явно содержит `model_authored_initial_query=true`, хотя его immutable
+revision остаётся нетронутой. Любой ответ `search_sources`, видимый модели,
+ограничен шестью верхними hits. Итоговый XLSX собирается как из обычной таблицы,
+так и из простых подписанных строк модели без требования Markdown-разметки.
+
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию

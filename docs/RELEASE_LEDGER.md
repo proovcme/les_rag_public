@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.40
-номер сборки:              680
-версия Tauri/NSIS:         5.1.680
+версия продукта (SemVer):  0.30.41
+номер сборки:              681
+версия Tauri/NSIS:         5.1.681
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.40 dedicated configurable estimate RAG hotfix
+dev implementation:       0.30.41 installed estimate contour compatibility hotfix
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.40 soft hotfix поверх опубликованного 0.30.39
+следующий выпуск:          0.30.41 soft hotfix поверх опубликованного 0.30.40
 рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
 ```
+
+> **0.30.41 / build 681 installed contour compatibility hotfix:** effective
+> snapshot старого пользовательского estimator-профиля получает обязательный
+> `model_authored_initial_query=true` без изменения immutable revision,
+> `search_sources` никогда не показывает модели больше 6 hits, а legacy
+> физическая смесь полного system-корпуса ФСНБ с user-каталогом больше не делает
+> исправный user RAG красным: health отдельно показывает `legacy_system_points`.
+> Автоупаковщик принимает не только Markdown-таблицу, но и обычные подписанные
+> строки модели; видимый ответ модели при этом сохраняется дословно.
 
 > **0.30.40 / build 680 dedicated estimate RAG hotfix:** внешний чистый контур
 > обнаружил, что 0.30.39 добавлял smeta dataset IDs, но физически выполнял

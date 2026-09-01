@@ -87,6 +87,42 @@ async def test_search_sources_preserves_rrf_provenance_in_tool_payload():
 
 
 @pytest.mark.asyncio
+async def test_search_sources_never_exposes_more_than_six_hits_to_the_model():
+    class LargeRetrieval:
+        chunks = [
+            SimpleNamespace(
+                content=f"Фрагмент {index}",
+                doc_name="Большой корпус.pdf",
+                score=1.0 / index,
+                meta={"chunk_id": f"chunk-{index}"},
+            )
+            for index in range(1, 513)
+        ]
+
+        @staticmethod
+        def payload():
+            return {"schema": "retrieval_trace_v1", "fusion": "native_rrf"}
+
+    async def retrieve(**_kwargs):
+        return LargeRetrieval()
+
+    service = ModelResearchToolService(
+        retrieve=retrieve,
+        frozen_dataset_ids=("selected-a",),
+        retrieval_kwargs={},
+        fallback=lambda *_args: pytest.fail("fallback must not run"),
+    )
+
+    result = await service.execute(
+        {"tool": "search_sources", "args": {"q": "точный запрос"}}
+    )
+
+    assert len(result.chunks) == 6
+    assert result.payload["result"]["count"] == 6
+    assert len(result.payload["result"]["hits"]) == 6
+
+
+@pytest.mark.asyncio
 async def test_estimator_search_uses_dedicated_smeta_rrf_and_returns_six_cards():
     general_calls = []
     smeta_calls = []

@@ -58,6 +58,41 @@ def test_estimator_profile_system_dataset_is_added_to_frozen_scope():
     assert resolved == ["project-dataset", "fsnb-dataset"]
 
 
+def test_legacy_user_estimator_profile_gets_effective_model_authored_query_policy(tmp_path):
+    db = tmp_path / "meta.db"
+    snapshot = registry_snapshot(db_path=db)
+    estimator = next(
+        item for item in snapshot["profiles"] if item["mode"] == "estimator"
+    )["active"]
+    revision = publish_profile_revision(
+        mode="estimator",
+        name="Старый пользовательский профиль",
+        prompt_revision_id=estimator["prompt_revision_id"],
+        skill_revision_id=estimator["skill_revision_id"],
+        tools=estimator["tools"],
+        model_policy=estimator["model_policy"],
+        rag_policy={"grounded": True, "system_datasets": ["smeta"]},
+        db_path=db,
+    )
+    activate_profile_revision("estimator", revision["revision_id"], db_path=db)
+
+    resolved = resolve_chat_profile(
+        session_id="legacy-estimator-chat",
+        requested_mode="estimator",
+        db_path=db,
+    )
+
+    assert resolved["rag_policy"]["model_authored_initial_query"] is True
+    with sqlite3.connect(db) as conn:
+        stored = json.loads(
+            conn.execute(
+                "SELECT snapshot_json FROM les_profile_revisions WHERE revision_id=?",
+                (revision["revision_id"],),
+            ).fetchone()[0]
+        )
+    assert "model_authored_initial_query" not in stored["rag_policy"]
+
+
 def test_estimator_factory_exposes_only_model_rag_and_result_tools(tmp_path):
     snapshot = registry_snapshot(db_path=tmp_path / "meta.db")
     estimator = next(item for item in snapshot["profiles"] if item["mode"] == "estimator")

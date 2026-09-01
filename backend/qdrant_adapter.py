@@ -422,15 +422,18 @@ def _apply_collection_count_health(
         if str(item.get("dataset_scope") or "user").casefold() == "system"
     )
     qdrant = snapshot.setdefault("qdrant", {})
-    matches = int(physical_points) == comparable
+    physical = int(physical_points)
+    legacy_system_points = excluded if excluded and physical == comparable + excluded else 0
+    matches = physical == comparable or legacy_system_points > 0
     qdrant["count_comparison_scope"] = "active_user_catalog"
     qdrant["catalog_comparable_chunks"] = comparable
     qdrant["catalog_excluded_system_chunks"] = excluded
+    qdrant["legacy_system_points"] = legacy_system_points
     qdrant["points_match_sqlite_chunks"] = matches
     if not matches:
         qdrant["mismatch"] = {
             "catalog_comparable_chunks": comparable,
-            "qdrant_points": int(physical_points),
+            "qdrant_points": physical,
         }
         snapshot["status"] = "degraded"
 UPSERT_BATCH = int(os.getenv("RAG_UPSERT_BATCH", "100"))    # точек за один upsert в Qdrant

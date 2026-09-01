@@ -251,6 +251,42 @@ def test_model_rag_result_reads_the_models_ordinary_sectioned_answer():
     )
 
 
+def test_model_rag_result_packages_plain_labelled_lines_without_a_markdown_table():
+    answer = """Строка 1 — Прокладка контрольного кабеля; раздел: Монтаж; ед. изм.: м; количество: 120; norm_code: ГЭСНм08-02-146-01; аналог: Кабель контрольный; обоснование: прямое соответствие составу; коэффициент: 1; evidence: Q1.H2.
+Строка 2 — Монтаж шкафа управления; раздел: Автоматика; ед. изм.: шт.; количество: 2; norm_code: ГЭСНм11-03-001-01; аналог: Шкаф управления; обоснование: совпадают измеритель и операции; evidence_refs: Q2.H1, Q2.H3."""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed == (
+        answer,
+        [
+            {
+                "source_row": 1,
+                "section": "Монтаж",
+                "title": "Прокладка контрольного кабеля",
+                "unit": "м",
+                "quantity": 120,
+                "norm_code": "ГЭСНм08-02-146-01",
+                "analogue": "Кабель контрольный",
+                "coverage": "прямое соответствие составу",
+                "coefficient": 1,
+                "evidence_refs": ["Q1.H2"],
+            },
+            {
+                "source_row": 2,
+                "section": "Автоматика",
+                "title": "Монтаж шкафа управления",
+                "unit": "шт.",
+                "quantity": 2,
+                "norm_code": "ГЭСНм11-03-001-01",
+                "analogue": "Шкаф управления",
+                "coverage": "совпадают измеритель и операции",
+                "evidence_refs": ["Q2.H1", "Q2.H3"],
+            },
+        ],
+    )
+
+
 def test_model_rag_queries_ignore_only_plain_text_presentation_wrappers():
     raw = (
         "Вот список поисковых запросов.\n"

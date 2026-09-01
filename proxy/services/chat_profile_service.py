@@ -117,6 +117,17 @@ def _loads(value: str | None, fallback: Any) -> Any:
         return fallback
 
 
+def effective_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Apply runtime workflow invariants without mutating immutable revisions."""
+
+    effective = dict(snapshot)
+    if canonical_profile_mode(effective.get("mode")) == "estimator":
+        rag_policy = dict(effective.get("rag_policy") or {})
+        rag_policy["model_authored_initial_query"] = True
+        effective["rag_policy"] = rag_policy
+    return effective
+
+
 def _db_path(db_path: str | Path | None) -> Path:
     path = Path(db_path) if db_path is not None else Path(rag_meta_db_path())
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -628,7 +639,7 @@ def _profile_snapshot(conn: sqlite3.Connection, revision_id: str) -> dict[str, A
     snapshot = _loads(row["snapshot_json"], {})
     if not isinstance(snapshot, dict) or not snapshot.get("prompt_text") or not snapshot.get("skill_text"):
         raise ValueError("Snapshot профиля повреждён")
-    return snapshot
+    return effective_profile_snapshot(snapshot)
 
 
 def resolve_chat_profile(
@@ -652,7 +663,7 @@ def resolve_chat_profile(
         if existing is not None and existing["mode"] == canonical and not apply_revision:
             snapshot = _loads(existing["snapshot_json"], {})
             if isinstance(snapshot, dict) and snapshot.get("prompt_text") and snapshot.get("skill_text"):
-                return snapshot
+                return effective_profile_snapshot(snapshot)
         revision_id = str(requested_revision_id or "").strip()
         if not revision_id:
             active = conn.execute(
@@ -675,7 +686,7 @@ def resolve_chat_profile(
                 (sid, canonical, revision_id, _json(snapshot), now, now),
             )
             conn.commit()
-        return snapshot
+        return effective_profile_snapshot(snapshot)
 
 
 def delete_revision(
@@ -740,7 +751,7 @@ def registry_snapshot(*, db_path: str | Path | None = None) -> dict[str, Any]:
         profiles: list[dict[str, Any]] = []
         for mode in PROFILE_MODES:
             revisions = [
-                _loads(row["snapshot_json"], {})
+                effective_profile_snapshot(_loads(row["snapshot_json"], {}))
                 for row in conn.execute(
                     """SELECT snapshot_json FROM les_profile_revisions
                        WHERE mode=? AND deleted_at IS NULL
