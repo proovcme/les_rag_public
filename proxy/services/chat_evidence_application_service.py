@@ -134,7 +134,10 @@ def tool_selector_request_payload(
         }
     return payload
 from proxy.services.model_execution_preset_service import ModelExecutionPreset
-from proxy.services.model_research_tool_service import ModelResearchToolService
+from proxy.services.model_research_tool_service import (
+    ModelResearchToolService,
+    retrieve_smeta_norm_cards,
+)
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
@@ -2429,6 +2432,7 @@ async def _execute_chat_evidence_application(
                             ),
                         },
                         fallback=_no_model_rag_fallback,
+                        smeta_norm_retrieve=retrieve_smeta_norm_cards,
                     )
                     for query in model_queries:
                         research_result = await model_research_tools.execute(

@@ -87,6 +87,91 @@ async def test_search_sources_preserves_rrf_provenance_in_tool_payload():
 
 
 @pytest.mark.asyncio
+async def test_estimator_search_uses_dedicated_smeta_rrf_and_returns_six_cards():
+    general_calls = []
+    smeta_calls = []
+
+    async def general_retrieve(**kwargs):
+        general_calls.append(kwargs)
+        pytest.fail("estimator search must not read the general les_rag collection")
+
+    def smeta_retrieve(query, *, limit):
+        smeta_calls.append((query, limit))
+        return {
+            "backend": "typed_sqlite_fts+smeta_norm_qdrant_hybrid",
+            "cards": [
+                {
+                    "norm_code": f"ГЭСНм08-02-001-{index:02d}",
+                    "title": f"Карточка {index}",
+                    "measure_unit": "100 м",
+                    "work_steps": ["Монтаж", "Проверка"],
+                    "source_ref": f"fsnb#norm={index}",
+                }
+                for index in range(1, 9)
+            ],
+            "retrieval_trace": {
+                "rag": {
+                    "status": "ok",
+                    "collection": "customer_configured_smeta_cards",
+                    "retrieval_channels": ["dense", "bm25_sparse"],
+                    "fusion": "rrf",
+                }
+            },
+        }
+
+    service = ModelResearchToolService(
+        retrieve=general_retrieve,
+        frozen_dataset_ids=("smeta-system-dataset",),
+        retrieval_kwargs={"rag_backend": "les_rag"},
+        fallback=lambda *_args: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=smeta_retrieve,
+    )
+
+    result = await service.execute(
+        {"tool": "search_sources", "args": {"q": "монтаж контрольного кабеля"}}
+    )
+
+    assert general_calls == []
+    assert smeta_calls == [("монтаж контрольного кабеля", 6)]
+    assert len(result.chunks) == 6
+    assert len(result.payload["result"]["hits"]) == 6
+    assert result.payload["trace"]["rag"]["collection"] == "customer_configured_smeta_cards"
+    assert result.payload["result"]["hits"][0]["meta"]["norm_code"] == "ГЭСНм08-02-001-01"
+    assert "Состав работы: Монтаж; Проверка" in result.payload["result"]["hits"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_estimator_search_never_falls_back_when_dedicated_rrf_is_not_ready():
+    async def general_retrieve(**_kwargs):
+        pytest.fail("blocked smeta RRF must not fall back to mixed les_rag")
+
+    service = ModelResearchToolService(
+        retrieve=general_retrieve,
+        frozen_dataset_ids=("smeta-system-dataset",),
+        retrieval_kwargs={"rag_backend": "les_rag"},
+        fallback=lambda *_args: pytest.fail("fallback must not run"),
+        smeta_norm_retrieve=lambda _query, *, limit: {
+            "cards": [{"norm_code": "ГЭСН01-01-001-01", "title": "Лексический шум"}],
+            "retrieval_trace": {
+                "rag": {
+                    "status": "degraded_sparse_only",
+                    "collection": "les_smeta_norm_cards",
+                }
+            },
+        },
+    )
+
+    result = await service.execute(
+        {"tool": "search_sources", "args": {"q": "разработка грунта"}}
+    )
+
+    assert result.chunks == ()
+    assert result.payload["status"] == "blocked"
+    assert result.payload["result"]["hits"] == []
+    assert result.payload["missing"] == ["dedicated smeta native RRF is not ready"]
+
+
+@pytest.mark.asyncio
 async def test_non_search_tool_delegates_unchanged():
     delegated = []
     payload = {"schema": "les_tool_result_v1", "tool": "read_source", "result": {"x": 1}}

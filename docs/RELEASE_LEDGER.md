@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.39
-номер сборки:              679
-версия Tauri/NSIS:         5.1.679
+версия продукта (SemVer):  0.30.40
+номер сборки:              680
+версия Tauri/NSIS:         5.1.680
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.39 model-owned RAG/XLSX + complete installed FGIS runtime
+dev implementation:       0.30.40 dedicated configurable estimate RAG hotfix
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.39 full recovery release; 0.30.38 NSIS/bootstrap passed, FGIS smoke fail-closed stopped
+следующий выпуск:          0.30.40 soft hotfix поверх опубликованного 0.30.39
 рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
 ```
+
+> **0.30.40 / build 680 dedicated estimate RAG hotfix:** внешний чистый контур
+> обнаружил, что 0.30.39 добавлял smeta dataset IDs, но физически выполнял
+> запросы через общий `state.backend/les_rag`; Legion прошёл случайно благодаря
+> смешанному общему индексу. Estimator теперь читает effective dedicated
+> сметную collection из активной настройки, отдаёт модели максимум 6 карточек
+> на запрос и никогда не откатывается в общий корпус. Имя alias не зашито.
+> Regression отдельно запрещает вызов общего retriever и проверяет fail-closed
+> поведение неготового dedicated native RRF.
 
 > **0.30.39 / build 679 installed FGIS supervisor (release candidate):**
 > build 678 прошёл full NSIS, оба installed bootstrap, API/UI, process hygiene

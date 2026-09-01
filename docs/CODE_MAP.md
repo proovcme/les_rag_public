@@ -1,10 +1,18 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.40 estimate RAG routing:** model-authored estimator queries проходят
+> через `retrieve_smeta_norm_cards → norm_browser.browse_norms`, который читает
+> effective collection из активной настройки сметной базы. Общий `state.backend`
+> (`les_rag`) в этом маршруте не вызывается. Ready dedicated native RRF отдаёт
+> максимум 6 карточек; degraded/missing collection блокируется без общего
+> fallback. Имя alias не является константой hotfix.
+
 > **Текущий model → RAG → result:** профиль с
 > `rag_policy.model_authored_initial_query=true` делает ровно два смысловых
 > model-call без native tools. Сначала модель по вопросу и полному вложению
 > возвращает все собственные `queries`; application без переписывания выполняет
-> каждый запрос через `ModelResearchToolService → retrieve_chat_chunks` в
+> каждый запрос через `ModelResearchToolService`: estimator использует effective
+> dedicated сметную RRF collection, прочие профили — `retrieve_chat_chunks` в
 > замороженном dataset scope. Затем та же модель получает вложение и общий
 > evidence packet и возвращает `answer + rows`. Только после завершённого model
 > result `build_lsr_workbook` получает строки дословно и рассчитывает/рендерит

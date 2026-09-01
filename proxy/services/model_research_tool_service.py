@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Mapping
@@ -12,6 +13,22 @@ class ModelResearchToolResult:
     payload: dict[str, Any]
     chunks: tuple[Any, ...] = ()
     retrieval_trace: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class _SmetaNormChunk:
+    content: str
+    doc_name: str
+    score: float
+    meta: dict[str, Any]
+
+
+def retrieve_smeta_norm_cards(query: str, *, limit: int = 6) -> dict[str, Any]:
+    """Read model-facing cards from the dedicated smeta dense+sparse RRF."""
+
+    from proxy.smeta_core.norm_browser import browse_norms
+
+    return browse_norms(query, limit=limit)
 
 
 def _chunk_payload(chunk: Any) -> dict[str, Any]:
@@ -39,11 +56,13 @@ class ModelResearchToolService:
         frozen_dataset_ids: tuple[str, ...],
         retrieval_kwargs: Mapping[str, Any],
         fallback: Callable[[str, dict[str, Any]], Any],
+        smeta_norm_retrieve: Callable[..., Mapping[str, Any]] | None = None,
     ) -> None:
         self._retrieve = retrieve
         self._dataset_ids = tuple(str(item) for item in frozen_dataset_ids if str(item))
         self._retrieval_kwargs = dict(retrieval_kwargs)
         self._fallback = fallback
+        self._smeta_norm_retrieve = smeta_norm_retrieve
 
     async def execute(self, call: Mapping[str, Any]) -> ModelResearchToolResult:
         tool = str(call.get("tool") or "")
@@ -70,6 +89,90 @@ class ModelResearchToolService:
                     "trace": {},
                     "decision_required_from_model": True,
                 }
+            )
+
+        if self._smeta_norm_retrieve is not None:
+            browse = await asyncio.to_thread(
+                self._smeta_norm_retrieve,
+                query,
+                limit=6,
+            )
+            trace = dict(browse.get("retrieval_trace") or {})
+            rag_trace = trace.get("rag") if isinstance(trace.get("rag"), Mapping) else {}
+            if str(rag_trace.get("status") or "") != "ok" or not str(
+                rag_trace.get("collection") or ""
+            ).strip():
+                return ModelResearchToolResult(
+                    payload={
+                        "schema": "les_tool_result_v1",
+                        "tool": "search_sources",
+                        "operation": "smeta_norm_native_rrf",
+                        "inputs": [{"q": query, "limit": 6}],
+                        "status": "blocked",
+                        "result": {"hits": [], "count": 0},
+                        "sources": [],
+                        "missing": ["dedicated smeta native RRF is not ready"],
+                        "warnings": [],
+                        "trace": trace,
+                        "decision_required_from_model": True,
+                    },
+                    retrieval_trace=trace,
+                )
+            cards = list(browse.get("cards") or [])[:6]
+            chunks = tuple(
+                _SmetaNormChunk(
+                    content="\n".join(
+                        part
+                        for part in (
+                            f"Шифр: {card.get('norm_code') or ''}",
+                            f"Наименование: {card.get('title') or ''}",
+                            f"Измеритель: {card.get('measure_unit') or ''}",
+                            (
+                                "Состав работы: "
+                                + "; ".join(
+                                    str(item)
+                                    for item in (card.get("work_steps") or [])
+                                    if str(item).strip()
+                                )
+                                if card.get("work_steps")
+                                else ""
+                            ),
+                        )
+                        if part
+                    ),
+                    doc_name="smeta_norm_cards.v1",
+                    score=float(max(len(cards) - index, 1)),
+                    meta={
+                        "norm_code": str(card.get("norm_code") or ""),
+                        "measure_unit": str(card.get("measure_unit") or ""),
+                        "source_ref": str(card.get("source_ref") or ""),
+                    },
+                )
+                for index, card in enumerate(cards)
+            )
+            hits = [_chunk_payload(chunk) for chunk in chunks]
+            return ModelResearchToolResult(
+                payload={
+                    "schema": "les_tool_result_v1",
+                    "tool": "search_sources",
+                    "operation": "smeta_norm_native_rrf",
+                    "inputs": [{"q": query, "limit": 6}],
+                    "status": "ok" if hits else "missing",
+                    "result": {"hits": hits, "count": len(hits)},
+                    "sources": [
+                        {
+                            "doc_name": hit["doc_name"],
+                            "source_ref": (hit.get("meta") or {}).get("source_ref") or "",
+                        }
+                        for hit in hits
+                    ],
+                    "missing": [] if hits else ["no smeta norm cards matched query"],
+                    "warnings": [],
+                    "trace": trace,
+                    "decision_required_from_model": True,
+                },
+                chunks=chunks,
+                retrieval_trace=trace,
             )
 
         retrieval = await self._retrieve(

@@ -1784,23 +1784,33 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     def retrieve_fixture(**kwargs):
         if not model_rag_result:
             return _async_value(FakeRetrieval())
-        rag_queries.append(kwargs["question"])
-        return _async_value(
-            FakeRetrieval(
-                [
-                        SimpleNamespace(
-                            content=f"Карточка нормы для {kwargs['question']}",
-                            doc_id="doc-fsnb",
-                            doc_name="ФСНБ",
-                        score=0.9,
-                        meta={
-                            "dataset_id": "selected",
-                            "chunk_id": f"chunk-{len(rag_queries)}",
-                        },
-                    )
-                ]
-            )
-        )
+        pytest.fail("estimator model-RAG must not call the general les_rag retriever")
+
+    def retrieve_smeta_fixture(query, *, limit):
+        assert limit == 6
+        rag_queries.append(query)
+        return {
+            "backend": "typed_sqlite_fts+smeta_norm_qdrant_hybrid",
+            "cards": [
+                {
+                    "norm_code": "ГЭСНм08-02-401-01",
+                    "title": f"Карточка нормы для {query}",
+                    "measure_unit": "шт.",
+                    "work_steps": ["Монтаж оборудования"],
+                    "source_ref": f"fsnb#query={len(rag_queries)}",
+                }
+            ],
+            "retrieval_trace": {
+                "rag": {
+                    "status": "ok",
+                    "collection": "les_smeta_norm_cards",
+                    "retrieval_channels": ["dense", "bm25_sparse"],
+                    "fusion": "rrf",
+                }
+            },
+        }
+
+    monkeypatch.setattr(service, "retrieve_smeta_norm_cards", retrieve_smeta_fixture)
 
     runtime = service.EvidenceRuntimeDeps(
         state=state,
