@@ -17,6 +17,7 @@ import re
 from typing import Any, Iterable, Mapping
 
 from proxy.services.saferag_service import build_context, source_map_for_context
+from proxy.services.source_locator_service import source_locator
 
 
 SCHEMA = "les.evidence_packet.v1"
@@ -67,17 +68,11 @@ def _json_value(value: Any) -> Any:
 
 
 def _locator_for(source: Mapping[str, Any], chunk: Any) -> dict[str, Any]:
-    meta = _plain_mapping(getattr(chunk, "meta", {}))
-    locator: dict[str, Any] = {}
-    for key in _LOCATOR_KEYS:
-        value = source.get(key)
-        if value in (None, ""):
-            value = meta.get(key)
-        if value not in (None, ""):
-            locator[key] = _json_value(value)
-    # `doc_name` is the stable file coordinate even if legacy metadata omitted
-    # `file_name`; keeping it at the top level avoids a synthetic locator.
-    return locator
+    return source_locator(
+        chunk,
+        source=source,
+        excerpt=str(source.get("snippet") or ""),
+    )
 
 
 def _retrieval_summary(trace: Mapping[str, Any]) -> dict[str, Any]:

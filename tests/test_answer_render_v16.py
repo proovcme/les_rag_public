@@ -209,6 +209,89 @@ def test_citation_drawer_item_uses_stable_document_id_for_office_preview():
     assert item["viewer_url"] == "/api/documents/by-id/doc-31/viewer?locator=para4"
 
 
+def test_typed_file_locator_exposes_original_folder_path_and_quote_actions():
+    item = ar.citation_drawer_item({
+        "doc_name": "План.pdf",
+        "snippet": "Точный фрагмент",
+        "locator": {
+            "kind": "file_excerpt",
+            "doc_id": "doc-31",
+            "source_ref": "project/План.pdf#p4",
+            "relative_path": "project/План.pdf",
+            "page": 4,
+            "excerpt": "Точный фрагмент",
+        },
+    })
+
+    assert item["locator_kind"] == "file_excerpt"
+    assert item["open_url"] == "/api/documents/by-id/doc-31/raw#page=4"
+    assert item["actions"] == {
+        "open_original": True,
+        "show_in_folder": True,
+        "copy_path": True,
+        "open_norm_card": False,
+        "open_web": False,
+    }
+    assert item["copy_text"] == "project/План.pdf#p4"
+
+
+def test_typed_norm_card_opens_card_not_a_fake_file():
+    item = ar.citation_drawer_item({
+        "doc_name": "smeta_norm_cards.v1",
+        "locator": {
+            "kind": "norm_card",
+            "dataset_id": "smeta",
+            "card_code": "ГЭСН01-01-001-01",
+            "excerpt": "Разработка грунта",
+        },
+    })
+
+    assert item["locator_kind"] == "norm_card"
+    assert item["open_url"] == ""
+    assert item["norm_card_url"].startswith("/api/lsr/norms/browse?q=")
+    assert item["actions"]["open_norm_card"] is True
+    assert item["actions"]["open_original"] is False
+
+
+def test_typed_web_and_unavailable_locators_have_honest_actions():
+    web = ar.citation_drawer_item({
+        "locator": {"kind": "web_result", "url": "https://example.test/p", "title": "Цена"}
+    })
+    missing = ar.citation_drawer_item({
+        "locator": {"kind": "unavailable", "reason": "source_locator_missing"}
+    })
+
+    assert web["web_url"] == "https://example.test/p"
+    assert web["actions"]["open_web"] is True
+    assert missing["actions"] == {
+        "open_original": False,
+        "show_in_folder": False,
+        "copy_path": False,
+        "open_norm_card": False,
+        "open_web": False,
+    }
+    assert missing["unavailable_reason"] == "source_locator_missing"
+
+
+def test_source_markers_become_links_to_matching_drawer_rows():
+    rendered = ar.link_source_markers(
+        "См. [Источник 2] и [Источники 1, 3], но не [Источник 9].",
+        source_count=3,
+    )
+
+    assert "[[Источник 2]](#source-2)" in rendered
+    assert "[[Источники 1, 3]](#source-1)" in rendered
+    assert "[Источник 9]" in rendered
+
+
+def test_source_count_labels_are_not_conflated():
+    assert ar.source_count_labels({"found": 64, "model_visible": 6, "cited": 2}) == [
+        "Найдено 64",
+        "Показано модели 6",
+        "Процитировано 2",
+    ]
+
+
 def test_inline_latex_delimiters_do_not_leak_into_chat_text():
     text = "Шинопровод: $P_{уст} = 841,4$ кВт; цена \\$100; display $$x=1$$."
 

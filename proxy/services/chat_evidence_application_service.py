@@ -139,6 +139,7 @@ from proxy.services.model_research_tool_service import (
     ModelResearchToolService,
     retrieve_smeta_norm_cards,
 )
+from proxy.services.source_locator_service import evidence_counts, source_map_item
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
@@ -983,19 +984,7 @@ def build_model_rag_evidence_groups(
 
 
 def _model_rag_source_map(chunks: Sequence[_ModelRagEvidenceChunk]) -> list[dict[str, Any]]:
-    return [
-        {
-            "index": index,
-            "label": f"Источник {index}",
-            "evidence_ref": str(chunk.meta.get("model_evidence_ref") or ""),
-            "doc_name": chunk.doc_name,
-            "doc_id": chunk.doc_id,
-            "dataset_id": str(chunk.meta.get("dataset_id") or ""),
-            "snippet": chunk.content[:360],
-            "score": round(chunk.score, 4),
-        }
-        for index, chunk in enumerate(chunks, 1)
-    ]
+    return [source_map_item(chunk, index=index) for index, chunk in enumerate(chunks, 1)]
 
 
 def validate_model_rag_result_structure(
@@ -3671,6 +3660,40 @@ async def _execute_chat_evidence_application(
                 }
                 retrieval_trace["latency_phases"] = phases
                 retrieval_trace["source_map_count"] = len(answer_source_map)
+                tool_candidate_counts = []
+                for tool_result in tool_results_for_model:
+                    tool_trace = (
+                        tool_result.get("trace")
+                        if isinstance(tool_result, dict)
+                        and isinstance(tool_result.get("trace"), dict)
+                        else {}
+                    )
+                    selection = (
+                        tool_trace.get("candidate_selection")
+                        if isinstance(tool_trace.get("candidate_selection"), dict)
+                        else {}
+                    )
+                    if selection.get("found_count") is not None:
+                        tool_candidate_counts.append(int(selection["found_count"]))
+                retrieval_selection = (
+                    retrieval_trace.get("candidate_selection")
+                    if isinstance(retrieval_trace.get("candidate_selection"), dict)
+                    else {}
+                )
+                found_count = (
+                    sum(tool_candidate_counts)
+                    if tool_candidate_counts
+                    else int(
+                        retrieval_selection.get("found_count")
+                        or len(model_evidence_chunks)
+                    )
+                )
+                source_counts = evidence_counts(
+                    answer=answer,
+                    source_map=answer_source_map,
+                    found_count=found_count,
+                )
+                retrieval_trace["source_counts"] = source_counts
                 state.chat_metrics.setdefault("latency_phases", []).append(phases)
                 logger.info("[METRICS] phases=%s", phases)
                 for key in ("latency_search", "latency_gen", "tokens", "latency_phases"):
@@ -3768,6 +3791,7 @@ async def _execute_chat_evidence_application(
                     "versions": _version_stamp(),
                     "numeric_unverified": _num_unverified,
                     "source_scope": source_scope,
+                    "source_counts": source_counts,
                 }
                 if active_model_result is not None:
                     response["model_connection"] = active_model_result.public_connection_payload()

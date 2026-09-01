@@ -2201,15 +2201,27 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 err_msg = str((data or {}).get("error") or "Не удалось открыть файл в системе")
                                 ui.notify(err_msg, type="warning")
 
-                        ui.button("Открыть в системе", on_click=_do_native_open).classes("sov-answer-act")
+                        if item.get("native_open_url"):
+                            ui.button("Открыть оригинал", on_click=_do_native_open).classes("sov-answer-act")
                         if item.get("viewer_url"):
                             ui.link("Просмотр", str(item["viewer_url"])).props("target=_blank").classes("sov-answer-act")
                         if item.get("open_url"):
                             ui.link("Скачать", str(item["open_url"])).props("target=_blank").classes("sov-answer-act")
-                        else:
+                        if item.get("norm_card_url"):
+                            ui.link("Карточка нормы", str(item["norm_card_url"])).props("target=_blank").classes("sov-answer-act")
+                        if item.get("web_url"):
+                            ui.link("Открыть веб-источник", str(item["web_url"])).props("target=_blank").classes("sov-answer-act")
+                        if not any(
+                            item.get(key)
+                            for key in ("native_open_url", "viewer_url", "open_url", "norm_card_url", "web_url")
+                        ):
                             ui.label(str(item.get("unavailable_reason") or "Открытие недоступно")).classes(
                                 "src-tag src-tag-warn"
                             )
+                    if item.get("relative_path"):
+                        with ui.row().classes("gap-2 items-center flex-wrap"):
+                            ui.label(f"Путь: {item['relative_path']}").classes("sov-source-technical__ref")
+                            _copy_button("Копировать путь", str(item["relative_path"]), classes="sov-answer-act")
                     with ui.expansion("Техническая ссылка").props("dense").classes(
                         "sov-source-technical"
                     ):
@@ -2286,7 +2298,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
                         lbl = f"{i}. {_source_label(source)}"
-                        with ui.row().classes("sov-source-row sov-ui-evidence-card"):
+                        with ui.row().props(f"id=source-{i}").classes("sov-source-row sov-ui-evidence-card"):
                             if item.get("open_url"):
                                 with ui.link(
                                     target=str(item["open_url"]),
@@ -2855,6 +2867,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         body, _notes = split_inline_source_notes(text)
         return normalize_inline_math(body)
 
+    def _link_visible_sources(text: str, srcs: list, meta: dict | None) -> str:
+        from sovushka.answer_render import citation_sources, link_source_markers
+
+        effective = citation_sources(
+            srcs,
+            (meta or {}).get("source_map") if isinstance(meta, dict) else None,
+        )
+        return link_source_markers(
+            _format_sources_as_quotes(text),
+            source_count=len(effective),
+        )
+
     # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──
     # Ответ режется на сегменты по месту блока (mermaid-fence, markdown-таблица),
     # проза остаётся прозой. Каждый сегмент рисуется своим виджетом: text → ui.markdown,
@@ -3303,7 +3327,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         (старый рендер сохраняется)."""
         if not meta:
             return
-        from sovushka.answer_render import header_summary, retrieval_notice, trace_summary
+        from sovushka.answer_render import (
+            header_summary,
+            retrieval_notice,
+            source_count_labels,
+            trace_summary,
+        )
         from sovushka.uikit import render_feedback_state, status_badge
         h = header_summary(meta.get("query_route"), meta.get("evidence_summary"),
                            len(srcs or []), meta.get("total_status"))
@@ -3323,6 +3352,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 ui.label(f"{h['sources_count']} ист.").classes("sov-ev-meta")
             if h["intent"]:
                 ui.label(h["intent"]).classes("sov-ev-meta")
+            source_counts = meta.get("source_counts") or (
+                meta.get("retrieval_trace") or {}
+            ).get("source_counts")
+            if isinstance(source_counts, dict):
+                for count_label in source_count_labels(source_counts):
+                    ui.label(count_label).classes("sov-ev-meta")
         ts = trace_summary(meta.get("unified_trace"))
         if ts:
             with ui.expansion("подробнее (trace)").classes("sov-ev-trace"):
@@ -3440,7 +3475,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             if not rich:
                 _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
                 if _is_ai:
-                    ui.markdown(_format_sources_as_quotes(_disp)).classes("sov-chat-message-text sov-chat-md")
+                    ui.markdown(_link_visible_sources(_disp, srcs or [], meta)).classes("sov-chat-message-text sov-chat-md")
                 else:
                     ui.label(_disp).classes("sov-chat-message-text")
             _render_source_tags(srcs or [], crag, meta, str(text or ""))
@@ -3485,7 +3520,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             else:
                 if meta and not error:
                     label.set_visibility(False)
-                    ui.markdown(_format_sources_as_quotes(_bubble_text(str(text or ""), _mode))).classes(
+                    ui.markdown(_link_visible_sources(
+                        _bubble_text(str(text or ""), _mode), srcs or [], meta
+                    )).classes(
                         "sov-chat-message-text sov-chat-md"
                     )
                 else:
@@ -4075,6 +4112,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "workflow_plan": d.get("workflow_plan") or {},
                 "artifact": d.get("artifact") or {},
                 "source_map": d.get("source_map") or {},
+                "source_counts": d.get("source_counts") or {},
                 "project_inventory": d.get("project_inventory") or {},
                 "versions": d.get("versions") or {},
             }

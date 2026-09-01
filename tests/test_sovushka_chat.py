@@ -68,8 +68,17 @@ def test_chat_request_accepts_explicit_multi_document_scope_and_response_length(
 def test_ai_plain_markdown_is_rendered_as_markdown_widget():
     source = inspect.getsource(chat_page.build_chat)
 
-    assert "ui.markdown(_format_sources_as_quotes(_disp)).classes(\"sov-chat-message-text sov-chat-md\")" in source
-    assert "ui.markdown(_format_sources_as_quotes(_bubble_text(str(text or \"\"), _mode)))" in source
+    assert "ui.markdown(_link_visible_sources(_disp, srcs or [], meta)).classes" in source
+    assert "ui.markdown(_link_visible_sources(" in source
+
+
+def test_chat_links_source_markers_to_anchored_drawer_rows_and_shows_three_counts():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "link_source_markers" in source
+    assert 'id=source-{i}' in source
+    assert "source_count_labels" in source
+    assert 'meta.get("source_counts")' in source
 
 
 def test_smeta_operator_sees_live_tool_and_rrf_telemetry():

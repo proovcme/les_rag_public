@@ -191,6 +191,28 @@ def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
     assert len(rendered) <= 70_000
 
 
+def test_model_rag_source_map_preserves_typed_locator_and_evidence_handle():
+    chunk = service._ModelRagEvidenceChunk(
+        content="Шифр и состав работы",
+        doc_id="",
+        doc_name="smeta_norm_cards.v1",
+        score=0.75,
+        meta={
+            "dataset_id": "smeta-dataset",
+            "norm_code": "ГЭСН01-01-001-01",
+            "source_ref": "fsnb#norm=ГЭСН01-01-001-01",
+            "model_evidence_ref": "Q3.H2",
+        },
+    )
+
+    source_map = service._model_rag_source_map([chunk])
+
+    assert source_map[0]["evidence_ref"] == "Q3.H2"
+    assert source_map[0]["source_ref"] == "fsnb#norm=ГЭСН01-01-001-01"
+    assert source_map[0]["locator"]["kind"] == "norm_card"
+    assert source_map[0]["locator"]["card_code"] == "ГЭСН01-01-001-01"
+
+
 def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
     rows = [
         {
