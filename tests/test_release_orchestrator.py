@@ -21,6 +21,7 @@ from tools.release_classification import ReleaseClassification
 
 TARGET = "b" * 40
 BASE = "a" * 40
+TREE = "c" * 40
 
 
 def _args(tmp_path: Path, **overrides):
@@ -38,9 +39,17 @@ def _args(tmp_path: Path, **overrides):
         "install": tmp_path / "Programs" / "LES",
         "repo_root": r"C:\Users\Oleg\les_rag",
         "attempt": None,
+        "artifact": None,
+        "gate_receipt": None,
     }
     values.update(overrides)
     values["root"].mkdir(parents=True, exist_ok=True)
+    manifest = values["root"] / "config/windows_runtime_manifest.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text('{"schema":"les.windows-runtime-manifest.v1"}', encoding="utf-8")
+    registry = values["root"] / "installers/windows/runtime-entrypoints.json"
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text('{"schema":"les.windows-runtime-entrypoints.v1"}', encoding="utf-8")
     return argparse.Namespace(**values)
 
 
@@ -51,6 +60,84 @@ def _patch_classification():
         triggers=(),
         ignored_version_surfaces=(),
     )
+
+
+def _gate_receipt(tmp_path: Path) -> Path:
+    return release_receipt.create_gate_receipt(
+        root=tmp_path / "release-work",
+        target_commit=TARGET,
+        target_tree=TREE,
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        branch="codex/release",
+        upstream_commit=TARGET,
+        policy=release_orchestrator.PREPARE_GATES,
+        results=[
+            {"gate": label, "exit_code": 0, "duration_ms": 1}
+            for label, _command in release_orchestrator.PREPARE_GATES
+        ],
+        clean=True,
+    )
+
+
+def _passed_gates() -> list[dict]:
+    return [
+        {"gate": label, "exit_code": 0, "duration_ms": 1}
+        for label, _command in release_orchestrator.PREPARE_GATES
+    ]
+
+
+def test_prepare_reuses_exact_gate_receipt_without_running_suites(monkeypatch, tmp_path):
+    args = _args(tmp_path, gate_receipt=_gate_receipt(tmp_path))
+    args.full_feed.write_text(
+        json.dumps({"target_commit": BASE, "version": "0.30.0"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(release_orchestrator, "require_release_source", lambda **_kwargs: TARGET)
+    monkeypatch.setattr(release_orchestrator, "resolve_tree", lambda *_args: TREE)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "resolve_commit",
+        lambda _root, value="HEAD": BASE if value == BASE else TARGET,
+    )
+    monkeypatch.setattr(release_orchestrator, "resolve_tree", lambda *_args: TREE)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "load_contract",
+        lambda _root: {
+            "product_version": "0.30.40",
+            "build_number": 680,
+            "desktop_version": "5.1.680",
+        },
+    )
+    monkeypatch.setattr(release_orchestrator, "classify_release", lambda *_a, **_k: _patch_classification())
+    monkeypatch.setattr(
+        release_orchestrator,
+        "run_prepare_gates",
+        lambda _root: pytest.fail("exact gate receipt must suppress repeated suites"),
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "build_patch_candidate",
+        lambda **kwargs: _minimal_candidate(kwargs["output"]),
+    )
+
+    result = release_orchestrator.prepare(args)
+
+    assert result["status"] == "ready"
+    assert result["gate_receipt_path"] == str(Path(args.gate_receipt).resolve())
+    assert Path(result["artifact_path"]).is_file()
+
+
+def test_windows_prepare_update_stops_at_package_complete_boundary():
+    script = (
+        release_orchestrator.ROOT / "tools/windows_prepare_update.ps1"
+    ).read_text(encoding="utf-8-sig")
+
+    assert 'schema = "les.windows.prepared-package.v1"' in script
+    assert "windows_release_smoke.ps1" not in script
+    assert "Start-Process -FilePath $Installer" not in script
 
 
 def test_default_full_feed_uses_canonical_release_work_base_not_stale_dist_file(tmp_path):
@@ -112,6 +199,7 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
         "resolve_commit",
         lambda _root, value="HEAD": BASE if value == BASE else TARGET,
     )
+    monkeypatch.setattr(release_orchestrator, "resolve_tree", lambda *_args: TREE)
     monkeypatch.setattr(
         release_orchestrator,
         "load_contract",
@@ -125,7 +213,7 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
     monkeypatch.setattr(
         release_orchestrator,
         "run_prepare_gates",
-        lambda _root: [{"command": "gates", "exit_code": 0}],
+        lambda _root: _passed_gates(),
     )
 
     def patch_builder(**kwargs):
@@ -156,9 +244,9 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
 
     assert calls == ["patch"]
     assert result["release_class"] == "patch"
-    assert result["stage"] == "prepared"
-    assert Path(result["state_path"]).is_file()
-    assert [item["name"] for item in result["artifacts"]] == ["les-patch.zip"]
+    assert result["status"] == "ready"
+    assert Path(result["artifact_path"]).is_file()
+    assert [item["name"] for item in result["assets"]] == ["les-patch.zip"]
 
 
 def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
@@ -176,6 +264,7 @@ def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
         "resolve_commit",
         lambda _root, value="HEAD": BASE if value == BASE else TARGET,
     )
+    monkeypatch.setattr(release_orchestrator, "resolve_tree", lambda *_args: TREE)
     monkeypatch.setattr(
         release_orchestrator,
         "load_contract",
@@ -186,7 +275,7 @@ def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
         "classify_release",
         lambda *_args, **_kwargs: _patch_classification(),
     )
-    monkeypatch.setattr(release_orchestrator, "run_prepare_gates", lambda _root: [])
+    monkeypatch.setattr(release_orchestrator, "run_prepare_gates", lambda _root: _passed_gates())
     monkeypatch.setattr(
         release_orchestrator,
         "build_patch_candidate",
@@ -203,8 +292,7 @@ def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
 
     assert calls == ["full"]
     assert result["release_class"] == "full"
-    prepared = next(item for item in result["transitions"] if item["stage"] == "prepared")
-    assert prepared["evidence"]["classification"]["triggers"] == [
+    assert result["build_evidence"]["classification"]["triggers"] == [
         {"path": "<installed-runtime>", "reason": "operator forced a full transaction"}
     ]
 
@@ -287,7 +375,7 @@ def test_full_candidate_prepares_and_binds_a_local_acceptance_job(monkeypatch, t
     prepared_installer.parent.mkdir()
     prepared_installer.write_bytes(b"immutable installer")
     prepared = {
-        "schema": "les.windows.prepared-update.v1",
+        "schema": "les.windows.prepared-package.v1",
         "status": "prepared",
         "product_version": "0.30.35",
         "build_number": 675,
@@ -334,6 +422,38 @@ def test_full_candidate_prepares_and_binds_a_local_acceptance_job(monkeypatch, t
     assert job["installer"] == str((acceptance / "LES-Setup.exe").resolve())
     assert job["target_commit"] == TARGET
     assert result["acceptance_path"] == acceptance.resolve()
+
+
+def test_full_candidate_rejects_legacy_monolithic_prepare_schema(monkeypatch, tmp_path):
+    baseline = tmp_path / "LES-smeta-baseline.zip"
+    baseline.write_bytes(b"verified baseline")
+    installer = tmp_path / "cache/LES-Setup.exe"
+    installer.parent.mkdir()
+    installer.write_bytes(b"installer")
+    prepared = {
+        "schema": "les.windows.prepared-update.v1",
+        "status": "prepared",
+        "commit": TARGET,
+        "installer": str(installer),
+        "sha256": release_orchestrator._sha256(installer),
+        "desktop_version": "5.1.680",
+    }
+    args = _args(tmp_path, host="local", smeta_baseline_archive=baseline)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "_run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(
+            command, 0, stdout=json.dumps(prepared), stderr=""
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="package boundary"):
+        release_orchestrator.build_full_candidate(
+            target=TARGET,
+            output=tmp_path / "candidate",
+            contract={"product_version": "0.30.40", "build_number": 680},
+            args=args,
+        )
 
 
 def test_full_candidate_reports_local_windows_prepare_stderr(monkeypatch, tmp_path):
@@ -662,6 +782,117 @@ def _minimal_candidate(output: Path):
         "candidate_assets": [asset],
         "acceptance_path": acceptance,
     }
+
+
+def _ready_artifact(tmp_path: Path) -> tuple[argparse.Namespace, Path, Path]:
+    args = _args(tmp_path, host="local")
+    gate_path = _gate_receipt(tmp_path)
+    public = tmp_path / "candidate/public"
+    acceptance = tmp_path / "candidate/acceptance"
+    public.mkdir(parents=True)
+    acceptance.mkdir(parents=True)
+    asset = public / "les-patch.zip"
+    asset.write_bytes(b"exact-candidate")
+    (acceptance / "les-patch.zip").write_bytes(asset.read_bytes())
+    (acceptance / "latest.json").write_text("{}", encoding="utf-8")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=args.work_root,
+        gate_receipt=gate_path,
+        release_class="patch",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=public.parent,
+        acceptance_path=acceptance,
+        runtime_manifest_sha256=release_orchestrator._sha256(
+            args.root / "config/windows_runtime_manifest.json"
+        ),
+        entrypoint_registry_sha256=release_orchestrator._sha256(
+            args.root / "installers/windows/runtime-entrypoints.json"
+        ),
+        build_evidence={},
+        publishable=True,
+    )
+    args.artifact = artifact_path
+    return args, artifact_path, asset
+
+
+def _successful_acceptance_result() -> dict:
+    return {
+        "accepted": True,
+        "release_class": "patch",
+        "starting_identity": {"target_commit": BASE},
+        "first_install": {"target_commit": TARGET},
+        "first_smoke": {"ok": True},
+        "rollback": {"state": "rolled_back"},
+        "restored_smoke": {"ok": True},
+        "second_install": {"target_commit": TARGET},
+        "final_smoke": {"ok": True},
+        "final_identity": {
+            "product_version": "0.30.40",
+            "build_number": 680,
+            "target_commit": TARGET,
+        },
+    }
+
+
+def test_accept_artifact_never_calls_a_builder(monkeypatch, tmp_path):
+    args, artifact_path, _asset = _ready_artifact(tmp_path)
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(release_orchestrator, "is_local_host", lambda _host: True)
+    monkeypatch.setattr(release_orchestrator, "build_patch_candidate", lambda **_kw: pytest.fail("rebuilt"))
+    monkeypatch.setattr(release_orchestrator, "build_full_candidate", lambda **_kw: pytest.fail("rebuilt"))
+    monkeypatch.setattr(
+        release_orchestrator,
+        "run_local_acceptance",
+        lambda **_kwargs: _successful_acceptance_result(),
+    )
+
+    result = release_orchestrator.accept(args)
+
+    assert result["result"] == "accepted"
+    assert result["artifact_id"] == release_receipt.load_artifact_receipt(artifact_path)["artifact_id"]
+
+
+def test_retry_uses_same_artifact_after_failed_smoke(monkeypatch, tmp_path):
+    args, artifact_path, asset = _ready_artifact(tmp_path)
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(release_orchestrator, "is_local_host", lambda _host: True)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "run_local_acceptance",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("injected smoke failure")),
+    )
+    before = (artifact_path.read_bytes(), asset.read_bytes())
+    with pytest.raises(RuntimeError, match="injected smoke failure"):
+        release_orchestrator.accept(args)
+    failed = release_receipt.acceptance_attempts(artifact_path)[-1]
+    monkeypatch.setattr(
+        release_orchestrator,
+        "run_local_acceptance",
+        lambda **_kwargs: _successful_acceptance_result(),
+    )
+
+    result = release_orchestrator.retry(args)
+
+    assert result["result"] == "accepted"
+    assert result["retry_of"] == failed["acceptance_id"]
+    assert (artifact_path.read_bytes(), asset.read_bytes()) == before
+
+
+def test_cli_exposes_artifact_accept_retry_and_publish():
+    parser = release_orchestrator._parser()
+
+    accepted = parser.parse_args(["accept", "--artifact", "artifact.json"])
+    retried = parser.parse_args(["retry", "--artifact", "artifact.json"])
+    published = parser.parse_args(["publish", "--artifact", "artifact.json"])
+
+    assert accepted.artifact == Path("artifact.json")
+    assert retried.artifact == Path("artifact.json")
+    assert published.artifact == Path("artifact.json")
 
 
 @pytest.mark.parametrize(

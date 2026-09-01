@@ -62,6 +62,17 @@ def resolve_commit(root: Path, value: str = "HEAD") -> str:
     return commit
 
 
+def resolve_tree(root: Path, value: str = "HEAD") -> str:
+    tree = _run(
+        ("git", "rev-parse", "--verify", f"{value}^{{tree}}"),
+        root=Path(root),
+        capture=True,
+    ).stdout.strip()
+    if re.fullmatch(r"[0-9a-f]{40}", tree) is None:
+        raise RuntimeError("release target tree is not exact")
+    return tree
+
+
 def require_release_source(*, root: Path, branch: str, target: str) -> str:
     root = Path(root).resolve()
     if _run(("git", "status", "--porcelain"), root=root, capture=True).stdout.strip():
@@ -266,8 +277,12 @@ def build_full_candidate(
                 f"local Windows update preparation failed{suffix}"
             ) from exc
         prepared = _remote_json(completed.stdout)
-        if prepared.get("status") != "prepared" or prepared.get("commit") != target:
-            raise RuntimeError("local Windows update preparation is not valid")
+        if (
+            prepared.get("schema") != "les.windows.prepared-package.v1"
+            or prepared.get("status") != "prepared"
+            or prepared.get("commit") != target
+        ):
+            raise RuntimeError("local Windows package boundary is not valid")
     else:
         prepared = patch_release.remote_prepare_update(
             host=args.host,
@@ -418,6 +433,53 @@ def validate_patch_pipeline(classification: ReleaseClassification) -> None:
             raise ValueError(f"path is outside updater patch allowlist: {normalized}")
 
 
+def _desktop_version(contract: dict[str, Any]) -> str:
+    return str(contract.get("desktop_version") or f"5.1.{int(contract['build_number'])}")
+
+
+def _gate_receipt_for_prepare(
+    *,
+    args: argparse.Namespace,
+    root: Path,
+    work_root: Path,
+    branch: str,
+    target: str,
+    contract: dict[str, Any],
+) -> Path:
+    tree = resolve_tree(root, target)
+    upstream = resolve_commit(root, f"origin/{branch}")
+    configured = getattr(args, "gate_receipt", None)
+    if configured:
+        path = Path(configured).resolve()
+        receipt = release_receipt.load_gate_receipt(path)
+        release_receipt.verify_gate_receipt(
+            receipt,
+            target_commit=target,
+            target_tree=tree,
+            product_version=str(contract["product_version"]),
+            build_number=int(contract["build_number"]),
+            desktop_version=_desktop_version(contract),
+            branch=branch,
+            upstream_commit=upstream,
+            policy=PREPARE_GATES,
+        )
+        return path
+    results = run_prepare_gates(root)
+    return release_receipt.create_gate_receipt(
+        root=work_root,
+        target_commit=target,
+        target_tree=tree,
+        product_version=str(contract["product_version"]),
+        build_number=int(contract["build_number"]),
+        desktop_version=_desktop_version(contract),
+        branch=branch,
+        upstream_commit=upstream,
+        policy=PREPARE_GATES,
+        results=results,
+        clean=True,
+    )
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     work_root = Path(args.work_root).resolve()
@@ -445,7 +507,16 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             ignored_version_surfaces=classification.ignored_version_surfaces,
         )
     validate_patch_pipeline(classification)
-    gates = [] if args.skip_gates else run_prepare_gates(root)
+    gate_path = None
+    if not args.skip_gates:
+        gate_path = _gate_receipt_for_prepare(
+            args=args,
+            root=root,
+            work_root=work_root,
+            branch=branch,
+            target=target,
+            contract=contract,
+        )
     candidate_root = work_root / "candidates" / target
     if candidate_root.exists():
         raise RuntimeError(f"candidate output already exists: {candidate_root}")
@@ -458,6 +529,32 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         contract=contract,
         args=args,
     )
+    if gate_path is not None:
+        artifact_path = release_receipt.create_artifact_receipt(
+            root=work_root,
+            gate_receipt=gate_path,
+            release_class=classification.kind,
+            target_commit=target,
+            base_commits=[base],
+            product_version=str(contract["product_version"]),
+            build_number=int(contract["build_number"]),
+            desktop_version=_desktop_version(contract),
+            assets=list(built.get("candidate_assets") or built["assets"]),
+            candidate_root=candidate_root,
+            acceptance_path=Path(built["acceptance_path"]),
+            runtime_manifest_sha256=_sha256(root / "config/windows_runtime_manifest.json"),
+            entrypoint_registry_sha256=_sha256(
+                root / "installers/windows/runtime-entrypoints.json"
+            ),
+            build_evidence={
+                "classification": _classification_evidence(classification),
+                "build": built.get("build", {}),
+            },
+            publishable=True,
+        )
+        artifact = release_receipt.load_artifact_receipt(artifact_path)
+        _write_latest(work_root, artifact_path, str(artifact["artifact_id"]))
+        return {**artifact, "artifact_path": str(artifact_path)}
     state_path = release_receipt.create_attempt(
         root=work_root / "attempts",
         release_class=classification.kind,
@@ -473,7 +570,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         expected="planned",
         target="prepared",
         evidence={
-            "gates": gates,
+            "gates": [],
             "classification": _classification_evidence(classification),
             "candidate_root": str(candidate_root),
             "acceptance_path": str(built["acceptance_path"]),
@@ -494,6 +591,16 @@ def _attempt_path(args: argparse.Namespace) -> Path:
     return Path(str(latest["state_path"])).resolve()
 
 
+def _artifact_path(args: argparse.Namespace) -> Path:
+    if getattr(args, "artifact", None):
+        return Path(args.artifact).resolve()
+    latest = json.loads(_latest_path(args.work_root).read_text(encoding="utf-8-sig"))
+    raw = latest.get("artifact_path") or latest.get("state_path")
+    if not raw:
+        raise RuntimeError("latest release pointer has no artifact receipt")
+    return Path(str(raw)).resolve()
+
+
 def _prepared_evidence(attempt: dict[str, Any]) -> dict[str, Any]:
     for item in attempt.get("transitions", []):
         if item.get("stage") == "prepared":
@@ -504,7 +611,8 @@ def _prepared_evidence(attempt: dict[str, Any]) -> dict[str, Any]:
 
 
 def _artifact_paths(attempt: dict[str, Any]) -> list[Path]:
-    return [Path(str(item["path"])).resolve() for item in attempt.get("artifacts", [])]
+    records = attempt.get("assets") or attempt.get("artifacts") or []
+    return [Path(str(item["path"])).resolve() for item in records]
 
 
 def _verify_patch_install_bytes(attempt: dict[str, Any], acceptance_path: Path) -> None:
@@ -579,7 +687,7 @@ def run_remote_acceptance(
         branch=args.branch,
         commit=str(attempt["target_commit"]),
     )
-    release_id = str(attempt["release_id"])
+    release_id = str(attempt.get("artifact_id") or attempt.get("release_id"))
     remote_dir = f"{args.repo_root.rstrip(chr(92))}\\dist\\release-work\\incoming\\{release_id}"
     prepare_script = (
         "$ErrorActionPreference='Stop';"
@@ -623,7 +731,7 @@ def run_remote_acceptance(
         installer_record = next(
             (
                 item
-                for item in attempt.get("artifacts", [])
+                for item in (attempt.get("assets") or attempt.get("artifacts") or [])
                 if item.get("name") == "LES-Setup.exe"
             ),
             None,
@@ -702,7 +810,71 @@ def _advance_acceptance(state_path: Path, result: dict[str, Any]) -> dict[str, A
     return current
 
 
+def _accept_artifact(
+    args: argparse.Namespace, *, retry_of: str | None = None
+) -> dict[str, Any]:
+    artifact_path = _artifact_path(args)
+    artifact = release_receipt.load_artifact_receipt(artifact_path)
+    if list((artifact_path.parent / "revocations").glob("*.json")):
+        raise RuntimeError("artifact is revoked")
+    release_receipt.verify_artifact_receipt(
+        artifact,
+        commit=resolve_commit(args.root, "HEAD"),
+        assets=_artifact_paths(artifact),
+    )
+    history = release_receipt.acceptance_attempts(artifact_path)
+    if any(item.get("result") == "running" for item in history):
+        raise RuntimeError("unresolved running acceptance attempt blocks mutation")
+    attempt_path = release_receipt.create_acceptance_attempt(
+        artifact_path,
+        host=args.host,
+        retry_of=retry_of,
+    )
+    acceptance_path = Path(str(artifact["acceptance_path"]))
+    try:
+        result = (
+            run_local_acceptance(
+                attempt=artifact,
+                acceptance_path=acceptance_path,
+                args=args,
+            )
+            if is_local_host(args.host)
+            else run_remote_acceptance(
+                attempt=artifact,
+                acceptance_path=acceptance_path,
+                args=args,
+            )
+        )
+        if result.get("accepted") is not True:
+            raise RuntimeError("Legion acceptance did not return accepted=true")
+        return release_receipt.complete_acceptance_attempt(
+            attempt_path,
+            evidence=result,
+        )
+    except Exception as exc:
+        release_receipt.fail_acceptance_attempt(
+            attempt_path,
+            failed_stage="legion_acceptance",
+            error=str(exc),
+            recovery={"runner_completed": False},
+        )
+        raise
+
+
+def retry(args: argparse.Namespace) -> dict[str, Any]:
+    artifact_path = _artifact_path(args)
+    attempts = release_receipt.acceptance_attempts(artifact_path)
+    failed = [
+        item for item in attempts if item.get("result") in {"failed", "interrupted"}
+    ]
+    if not failed:
+        raise RuntimeError("retry requires a prior failed or interrupted acceptance")
+    return _accept_artifact(args, retry_of=str(failed[-1]["acceptance_id"]))
+
+
 def accept(args: argparse.Namespace) -> dict[str, Any]:
+    if getattr(args, "artifact", None):
+        return _accept_artifact(args)
     state_path = _attempt_path(args)
     attempt = release_receipt.load_attempt(state_path)
     if attempt.get("stage") != "prepared":
@@ -1014,12 +1186,14 @@ def _parser() -> argparse.ArgumentParser:
     prepare_cmd.add_argument("--full-feed", type=Path)
     prepare_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     prepare_cmd.add_argument("--smeta-baseline-archive", type=Path)
+    prepare_cmd.add_argument("--gate-receipt", type=Path)
     prepare_cmd.add_argument("--force-full", action="store_true")
     prepare_cmd.add_argument("--skip-gates", action="store_true")
     accept_cmd = sub.add_parser("accept")
     accept_cmd.add_argument("--root", type=Path, default=ROOT)
     accept_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
     accept_cmd.add_argument("--attempt", type=Path)
+    accept_cmd.add_argument("--artifact", type=Path)
     accept_cmd.add_argument("--host", default="local")
     accept_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     local = os.getenv("LOCALAPPDATA", "")
@@ -1027,10 +1201,21 @@ def _parser() -> argparse.ArgumentParser:
     accept_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
     accept_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
     accept_cmd.add_argument("--job", type=Path)
+    retry_cmd = sub.add_parser("retry")
+    retry_cmd.add_argument("--root", type=Path, default=ROOT)
+    retry_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
+    retry_cmd.add_argument("--artifact", type=Path, required=True)
+    retry_cmd.add_argument("--host", default="local")
+    retry_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
+    retry_cmd.add_argument("--runtime", type=Path, default=Path(local) / "Programs" / "LES" / "runtime")
+    retry_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
+    retry_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
+    retry_cmd.add_argument("--job", type=Path)
     publish_cmd = sub.add_parser("publish")
     publish_cmd.add_argument("--root", type=Path, default=ROOT)
     publish_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
     publish_cmd.add_argument("--attempt", type=Path)
+    publish_cmd.add_argument("--artifact", type=Path)
     run_cmd = sub.add_parser("run")
     run_cmd.add_argument("--root", type=Path, default=ROOT)
     run_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
@@ -1041,6 +1226,7 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--full-feed", type=Path)
     run_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     run_cmd.add_argument("--smeta-baseline-archive", type=Path)
+    run_cmd.add_argument("--gate-receipt", type=Path)
     run_cmd.add_argument("--force-full", action="store_true")
     run_cmd.add_argument("--skip-gates", action="store_true")
     run_cmd.add_argument("--publish", action="store_true")
@@ -1065,6 +1251,8 @@ def main(argv: list[str] | None = None) -> int:
         result = prepare(args)
     elif args.command == "accept":
         result = accept(args)
+    elif args.command == "retry":
+        result = retry(args)
     elif args.command == "publish":
         result = publish(args)
     elif args.command == "run":

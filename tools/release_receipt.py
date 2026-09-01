@@ -91,6 +91,379 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _payload_sha(payload: dict[str, Any]) -> str:
+    unsigned = {
+        key: value for key, value in payload.items() if key != "payload_sha256"
+    }
+    return hashlib.sha256(_canonical(unsigned)).hexdigest()
+
+
+def _write_hashed_json(path: Path, payload: dict[str, Any], *, immutable: bool) -> Path:
+    payload = {**payload, "payload_sha256": _payload_sha(payload)}
+    path = Path(path).resolve()
+    if path.is_file():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError("immutable release receipt is unreadable") from exc
+        ignored = {"created_at", "payload_sha256"}
+        existing_comparable = {
+            key: value for key, value in existing.items() if key not in ignored
+        }
+        payload_comparable = {
+            key: value for key, value in payload.items() if key not in ignored
+        }
+        if existing_comparable != payload_comparable:
+            raise RuntimeError("immutable release receipt already exists with different content")
+        return path
+    _atomic_json(path, payload)
+    return path
+
+
+def _load_hashed_json(path: Path, *, schema: str, label: str) -> dict[str, Any]:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"{label} is unreadable: {path}") from exc
+    if payload.get("schema") != schema:
+        raise RuntimeError(f"{label} schema is unsupported")
+    if payload.get("payload_sha256") != _payload_sha(payload):
+        raise RuntimeError(f"{label} integrity check failed")
+    return payload
+
+
+def _validate_sha256(value: str, label: str) -> str:
+    digest = str(value or "")
+    if re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+        raise ValueError(f"{label} must be a lowercase SHA-256")
+    return digest
+
+
+def _normalized_policy(
+    policy: Sequence[tuple[str, Sequence[str]]],
+) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    names: set[str] = set()
+    for raw_name, raw_argv in policy:
+        name = str(raw_name or "")
+        argv = [str(item) for item in raw_argv]
+        if re.fullmatch(r"[a-z][a-z0-9_-]{1,63}", name) is None or not argv:
+            raise ValueError("gate policy is invalid")
+        if name in names:
+            raise ValueError("gate policy contains duplicate names")
+        names.add(name)
+        normalized.append({"gate": name, "argv": argv})
+    if not normalized:
+        raise ValueError("gate policy is empty")
+    return normalized
+
+
+def create_gate_receipt(
+    *,
+    root: Path,
+    target_commit: str,
+    target_tree: str,
+    product_version: str,
+    build_number: int,
+    desktop_version: str,
+    branch: str,
+    upstream_commit: str,
+    policy: Sequence[tuple[str, Sequence[str]]],
+    results: Sequence[dict[str, Any]],
+    clean: bool,
+) -> Path:
+    target = _validate_commit(target_commit, "target_commit")
+    tree = _validate_commit(target_tree, "target_tree")
+    upstream = _validate_commit(upstream_commit, "upstream_commit")
+    normalized_policy = _normalized_policy(policy)
+    normalized_results = [dict(item) for item in results]
+    expected_names = [item["gate"] for item in normalized_policy]
+    actual_names = [str(item.get("gate") or "") for item in normalized_results]
+    if (
+        clean is not True
+        or actual_names != expected_names
+        or any(int(item.get("exit_code", -1)) != 0 for item in normalized_results)
+    ):
+        raise ValueError("gate receipt requires successful gate results and clean source")
+    policy_sha = hashlib.sha256(_canonical(normalized_policy)).hexdigest()
+    identity = {
+        "target_commit": target,
+        "target_tree": tree,
+        "product_version": str(product_version),
+        "build_number": int(build_number),
+        "desktop_version": str(desktop_version),
+        "branch": str(branch),
+        "upstream_commit": upstream,
+        "policy_sha256": policy_sha,
+    }
+    gate_id = hashlib.sha256(_canonical(identity)).hexdigest()[:24]
+    payload = {
+        "schema": GATE_SCHEMA,
+        "gate_id": gate_id,
+        **identity,
+        "clean": True,
+        "policy": normalized_policy,
+        "results": normalized_results,
+        "created_at": _now(),
+    }
+    return _write_hashed_json(
+        Path(root) / "gates" / gate_id / "gate-receipt.json",
+        payload,
+        immutable=True,
+    )
+
+
+def load_gate_receipt(path: Path) -> dict[str, Any]:
+    return _load_hashed_json(path, schema=GATE_SCHEMA, label="gate receipt")
+
+
+def verify_gate_receipt(
+    receipt: dict[str, Any],
+    *,
+    target_commit: str,
+    target_tree: str,
+    product_version: str,
+    build_number: int,
+    desktop_version: str,
+    branch: str,
+    upstream_commit: str,
+    policy: Sequence[tuple[str, Sequence[str]]],
+) -> None:
+    normalized_policy = _normalized_policy(policy)
+    expected = {
+        "target_commit": _validate_commit(target_commit, "target_commit"),
+        "target_tree": _validate_commit(target_tree, "target_tree"),
+        "product_version": str(product_version),
+        "build_number": int(build_number),
+        "desktop_version": str(desktop_version),
+        "branch": str(branch),
+        "upstream_commit": _validate_commit(upstream_commit, "upstream_commit"),
+        "policy_sha256": hashlib.sha256(_canonical(normalized_policy)).hexdigest(),
+    }
+    actual = {key: receipt.get(key) for key in expected}
+    if actual != expected or receipt.get("clean") is not True:
+        raise RuntimeError("gate receipt binding changed")
+    result_names = [str(item.get("gate") or "") for item in receipt.get("results", [])]
+    if result_names != [item["gate"] for item in normalized_policy] or any(
+        int(item.get("exit_code", -1)) != 0 for item in receipt.get("results", [])
+    ):
+        raise RuntimeError("gate receipt binding changed")
+
+
+def create_artifact_receipt(
+    *,
+    root: Path,
+    gate_receipt: Path,
+    release_class: str,
+    target_commit: str,
+    base_commits: Sequence[str],
+    product_version: str,
+    build_number: int,
+    desktop_version: str,
+    assets: Sequence[Path],
+    candidate_root: Path,
+    acceptance_path: Path,
+    runtime_manifest_sha256: str,
+    entrypoint_registry_sha256: str,
+    build_evidence: dict[str, Any],
+    publishable: bool,
+) -> Path:
+    gate = load_gate_receipt(gate_receipt)
+    target = _validate_commit(target_commit, "target_commit")
+    if gate.get("target_commit") != target:
+        raise RuntimeError("artifact gate binding changed")
+    if release_class not in {"patch", "full"}:
+        raise ValueError("release_class must be patch or full")
+    records = _artifact_records(assets)
+    identity = {
+        "gate_id": gate["gate_id"],
+        "release_class": release_class,
+        "target_commit": target,
+        "base_commits": sorted(
+            {_validate_commit(value, "base_commit") for value in base_commits}
+        ),
+        "product_version": str(product_version),
+        "build_number": int(build_number),
+        "desktop_version": str(desktop_version),
+        "runtime_manifest_sha256": _validate_sha256(
+            runtime_manifest_sha256, "runtime_manifest_sha256"
+        ),
+        "entrypoint_registry_sha256": _validate_sha256(
+            entrypoint_registry_sha256, "entrypoint_registry_sha256"
+        ),
+        "assets": [
+            {key: item[key] for key in ("name", "bytes", "sha256")}
+            for item in records
+        ],
+    }
+    artifact_id = hashlib.sha256(_canonical(identity)).hexdigest()[:24]
+    payload = {
+        "schema": ARTIFACT_SCHEMA,
+        "artifact_id": artifact_id,
+        **identity,
+        "gate_receipt_path": str(Path(gate_receipt).resolve()),
+        "candidate_root": str(Path(candidate_root).resolve()),
+        "acceptance_path": str(Path(acceptance_path).resolve()),
+        "assets": records,
+        "build_evidence": dict(build_evidence),
+        "publishable": bool(publishable),
+        "status": "ready",
+        "created_at": _now(),
+    }
+    return _write_hashed_json(
+        Path(root) / "artifacts" / artifact_id / "artifact-receipt.json",
+        payload,
+        immutable=True,
+    )
+
+
+def load_artifact_receipt(path: Path) -> dict[str, Any]:
+    return _load_hashed_json(path, schema=ARTIFACT_SCHEMA, label="artifact receipt")
+
+
+def verify_artifact_receipt(
+    artifact: dict[str, Any], *, commit: str, assets: Sequence[Path]
+) -> None:
+    expected = sorted(
+        [
+            {key: item.get(key) for key in ("name", "bytes", "sha256")}
+            for item in artifact.get("assets", [])
+        ],
+        key=lambda item: str(item["name"]),
+    )
+    actual = [
+        {key: item[key] for key in ("name", "bytes", "sha256")}
+        for item in _artifact_records(assets)
+    ]
+    if (
+        _validate_commit(commit, "commit") != artifact.get("target_commit")
+        or actual != expected
+        or artifact.get("status") != "ready"
+    ):
+        raise RuntimeError("artifact binding changed")
+
+
+def create_acceptance_attempt(
+    artifact_path: Path,
+    *,
+    host: str,
+    retry_of: str | None = None,
+) -> Path:
+    artifact_path = Path(artifact_path).resolve()
+    artifact = load_artifact_receipt(artifact_path)
+    if re.fullmatch(r"[A-Za-z0-9._-]{1,80}", str(host)) is None:
+        raise ValueError("release host label is unsafe")
+    acceptance_id = uuid.uuid4().hex
+    payload = {
+        "schema": ACCEPTANCE_SCHEMA,
+        "acceptance_id": acceptance_id,
+        "artifact_id": artifact["artifact_id"],
+        "artifact_path": str(artifact_path),
+        "host": str(host),
+        "retry_of": str(retry_of) if retry_of else None,
+        "result": "running",
+        "started_at": _now(),
+        "completed_at": None,
+        "evidence": {},
+        "failure": None,
+    }
+    path = artifact_path.parent / "acceptance" / f"{acceptance_id}.json"
+    return _write_hashed_json(path, payload, immutable=True)
+
+
+def _load_acceptance_attempt(path: Path) -> dict[str, Any]:
+    return _load_hashed_json(
+        path, schema=ACCEPTANCE_SCHEMA, label="acceptance attempt"
+    )
+
+
+def _replace_acceptance(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
+    payload = {**payload, "payload_sha256": _payload_sha(payload)}
+    _atomic_json(Path(path), payload)
+    return payload
+
+
+def complete_acceptance_attempt(
+    path: Path, *, evidence: dict[str, Any]
+) -> dict[str, Any]:
+    payload = _load_acceptance_attempt(path)
+    if payload.get("result") != "running" or evidence.get("accepted") is not True:
+        raise RuntimeError("running successful acceptance attempt required")
+    payload["result"] = "accepted"
+    payload["completed_at"] = _now()
+    payload["evidence"] = _sanitize(evidence)
+    return _replace_acceptance(path, payload)
+
+
+def fail_acceptance_attempt(
+    path: Path,
+    *,
+    failed_stage: str,
+    error: str,
+    recovery: dict[str, Any],
+) -> dict[str, Any]:
+    payload = _load_acceptance_attempt(path)
+    if payload.get("result") != "running":
+        raise RuntimeError("running acceptance attempt required")
+    payload["result"] = "failed"
+    payload["completed_at"] = _now()
+    payload["failure"] = _sanitize(
+        {
+            "failed_stage": str(failed_stage),
+            "error": str(error)[-2000:],
+            "recovery": recovery,
+        }
+    )
+    return _replace_acceptance(path, payload)
+
+
+def accepted_attempts(artifact_path: Path) -> list[dict[str, Any]]:
+    return [
+        attempt
+        for attempt in acceptance_attempts(artifact_path)
+        if attempt.get("result") == "accepted"
+    ]
+
+
+def acceptance_attempts(artifact_path: Path) -> list[dict[str, Any]]:
+    artifact_path = Path(artifact_path).resolve()
+    artifact = load_artifact_receipt(artifact_path)
+    if (artifact_path.parent / "revocations").exists():
+        return []
+    verify_artifact_receipt(
+        artifact,
+        commit=str(artifact["target_commit"]),
+        assets=[Path(str(item["path"])) for item in artifact.get("assets", [])],
+    )
+    attempts: list[dict[str, Any]] = []
+    for path in sorted((artifact_path.parent / "acceptance").glob("*.json")):
+        attempt = _load_acceptance_attempt(path)
+        if attempt.get("artifact_id") == artifact["artifact_id"]:
+            attempts.append(attempt)
+    return sorted(
+        attempts,
+        key=lambda item: (str(item.get("started_at") or ""), str(item["acceptance_id"])),
+    )
+
+
+def revoke_artifact(artifact_path: Path, *, reason: str) -> Path:
+    artifact_path = Path(artifact_path).resolve()
+    artifact = load_artifact_receipt(artifact_path)
+    revocation_id = uuid.uuid4().hex
+    payload = {
+        "schema": "les.release-artifact-revocation.v1",
+        "revocation_id": revocation_id,
+        "artifact_id": artifact["artifact_id"],
+        "reason": str(reason)[-2000:],
+        "created_at": _now(),
+    }
+    return _write_hashed_json(
+        artifact_path.parent / "revocations" / f"{revocation_id}.json",
+        payload,
+        immutable=True,
+    )
+
+
 def create_attempt(
     *,
     root: Path,
