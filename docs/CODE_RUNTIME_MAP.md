@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 961 |
-| Строк Python | 301919 |
-| PRODUCT_REACHABLE | 337 |
+| Python-файлов под git | 971 |
+| Строк Python | 303773 |
+| PRODUCT_REACHABLE | 342 |
 | RUNTIME_SUPPORT | 9 |
-| TEST_OR_TOOL_ONLY | 614 |
+| TEST_OR_TOOL_ONLY | 619 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 330 |
 | Ошибок разбора | 0 |
@@ -33,12 +33,12 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| sovushka/pages/chat.py | 4701 | 5 |
+| sovushka/pages/chat.py | 4760 | 5 |
 | backend/qdrant_adapter.py | 4542 | 28 |
+| proxy/routers/chat.py | 4227 | 40 |
 | sovushka/uikit/tokens.py | 4197 | 2 |
-| proxy/routers/chat.py | 4168 | 40 |
+| proxy/services/chat_evidence_application_service.py | 3933 | 7 |
 | sovushka/pages/documents.py | 3895 | 2 |
-| proxy/services/chat_evidence_application_service.py | 3866 | 7 |
 | proxy/routers/datasets.py | 3776 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
@@ -51,9 +51,9 @@
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
+| sovushka/pages/diag.py | 1433 | 2 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
-| sovushka/pages/diag.py | 1416 | 2 |
-| proxy/services/retrieval_service.py | 1359 | 10 |
+| proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1345 | 12 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |

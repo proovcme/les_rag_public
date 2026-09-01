@@ -1008,7 +1008,9 @@
         "proxy/services/canonical_route_service.py",
         "proxy/services/capability_broker_service.py",
         "proxy/services/chat_attachment_service.py",
+        "proxy/services/chat_capability_scope_service.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_evidence_manifest_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/chat_provider_session_service.py",
         "proxy/services/checklist_param_rules.py",
@@ -1130,6 +1132,7 @@
         "proxy/services/project_summary_service.py",
         "proxy/services/project_table_registry_service.py",
         "proxy/services/prompt_registry_service.py",
+        "proxy/services/public_error_service.py",
         "proxy/services/quantity_trace_service.py",
         "proxy/services/query_router.py",
         "proxy/services/rag_advanced_policy_service.py",
@@ -1144,6 +1147,7 @@
         "proxy/services/request_idempotency_service.py",
         "proxy/services/resource_cost_service.py",
         "proxy/services/resource_governor.py",
+        "proxy/services/retrieval_candidate_service.py",
         "proxy/services/retrieval_quality_service.py",
         "proxy/services/retrieval_service.py",
         "proxy/services/rim_agent_action_service.py",
@@ -1177,6 +1181,7 @@
         "proxy/services/smeta_ontology_service.py",
         "proxy/services/smeta_user_message_service.py",
         "proxy/services/source_adapters.py",
+        "proxy/services/source_locator_service.py",
         "proxy/services/sovushka_tone.py",
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/spreadsheet_object_model.py",
@@ -1622,7 +1627,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4168,
+      "lines": 4227,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -1641,7 +1646,9 @@
         "proxy/services/candidate_acceptance_service.py",
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
+        "proxy/services/chat_capability_scope_service.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_evidence_manifest_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/chat_provider_session_service.py",
         "proxy/services/class_router_service.py",
@@ -1672,6 +1679,7 @@
         "proxy/services/project_service.py",
         "proxy/services/project_summary_service.py",
         "proxy/services/prompt_registry_service.py",
+        "proxy/services/public_error_service.py",
         "proxy/services/query_router.py",
         "proxy/services/request_idempotency_service.py",
         "proxy/services/retrieval_service.py",
@@ -2414,7 +2422,9 @@
         "proxy/services/canonical_route_service.py",
         "proxy/services/capability_broker_service.py",
         "proxy/services/chat_attachment_service.py",
+        "proxy/services/chat_capability_scope_service.py",
         "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_evidence_manifest_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/chat_provider_session_service.py",
         "proxy/services/checklist_param_rules.py",
@@ -2536,6 +2546,7 @@
         "proxy/services/project_summary_service.py",
         "proxy/services/project_table_registry_service.py",
         "proxy/services/prompt_registry_service.py",
+        "proxy/services/public_error_service.py",
         "proxy/services/quantity_trace_service.py",
         "proxy/services/query_router.py",
         "proxy/services/rag_advanced_policy_service.py",
@@ -2550,6 +2561,7 @@
         "proxy/services/request_idempotency_service.py",
         "proxy/services/resource_cost_service.py",
         "proxy/services/resource_governor.py",
+        "proxy/services/retrieval_candidate_service.py",
         "proxy/services/retrieval_quality_service.py",
         "proxy/services/retrieval_service.py",
         "proxy/services/rim_agent_action_service.py",
@@ -2583,6 +2595,7 @@
         "proxy/services/smeta_ontology_service.py",
         "proxy/services/smeta_user_message_service.py",
         "proxy/services/source_adapters.py",
+        "proxy/services/source_locator_service.py",
         "proxy/services/sovushka_tone.py",
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/spreadsheet_object_model.py",
@@ -2965,6 +2978,22 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_chat_capability_scope_service.py"
+      ],
+      "lines": 38,
+      "module": "proxy.services.chat_capability_scope_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/chat_capability_scope_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/routers/chat.py",
         "tests/test_chat_evidence_application_service.py",
         "tests/test_chat_profile_runtime.py",
         "tests/test_live_workbook_acceptance_contract.py",
@@ -2972,7 +3001,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3866,
+      "lines": 3933,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -2985,6 +3014,9 @@
         "proxy/services/candidate_acceptance_service.py",
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/canonical_route_service.py",
+        "proxy/services/chat_capability_scope_service.py",
+        "proxy/services/chat_evidence_manifest_service.py",
+        "proxy/services/chat_profile_service.py",
         "proxy/services/context_expander_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/evidence_packet_service.py",
@@ -3004,6 +3036,7 @@
         "proxy/services/runtime_admission.py",
         "proxy/services/saferag_service.py",
         "proxy/services/smeta_chat_adapter_service.py",
+        "proxy/services/source_locator_service.py",
         "proxy/services/table_query_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/typed_memory_projection_service.py",
@@ -3016,13 +3049,31 @@
     {
       "inbound": [
         "proxy/routers/chat.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "tests/test_chat_evidence_manifest_service.py"
+      ],
+      "lines": 138,
+      "module": "proxy.services.chat_evidence_manifest_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/source_locator_service.py"
+      ],
+      "path": "proxy/services/chat_evidence_manifest_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/routers/chat.py",
         "proxy/routers/profiles.py",
+        "proxy/services/chat_evidence_application_service.py",
         "tests/test_chat_profile_service.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_profiles_router.py",
         "tests/test_workbook_tool_contracts.py"
       ],
-      "lines": 869,
+      "lines": 912,
       "module": "proxy.services.chat_profile_service",
       "outbound": [
         "backend/rag_config.py",
@@ -3787,12 +3838,13 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_evidence_packet_service.py"
       ],
-      "lines": 302,
+      "lines": 297,
       "module": "proxy.services.evidence_packet_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
-        "proxy/services/saferag_service.py"
+        "proxy/services/saferag_service.py",
+        "proxy/services/source_locator_service.py"
       ],
       "path": "proxy/services/evidence_packet_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -4456,7 +4508,7 @@
         "tools/rag_rrf_readiness.py",
         "tools/recover_orphan_rag_catalog.py"
       ],
-      "lines": 660,
+      "lines": 662,
       "module": "proxy.services.lexical_index_service",
       "outbound": [
         "backend/interface.py",
@@ -4953,7 +5005,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_model_research_tool_service.py"
       ],
-      "lines": 213,
+      "lines": 221,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5526,6 +5578,21 @@
     },
     {
       "inbound": [
+        "proxy/routers/chat.py",
+        "tests/test_public_error_service.py"
+      ],
+      "lines": 42,
+      "module": "proxy.services.public_error_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/public_error_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "tests/test_specification_to_bor_contract.py"
       ],
       "lines": 145,
@@ -5566,11 +5633,12 @@
         "proxy/services/colbert_generation_service.py",
         "proxy/services/rag_advanced_preflight_service.py",
         "proxy/services/rag_pipeline_status_service.py",
+        "proxy/services/rag_readiness_service.py",
         "proxy/services/raptor_publication_service.py",
         "proxy/services/retrieval_service.py",
         "tests/test_rag_advanced_policy_service.py"
       ],
-      "lines": 243,
+      "lines": 283,
       "module": "proxy.services.rag_advanced_policy_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -5640,12 +5708,13 @@
         "backend/qdrant_adapter.py",
         "tests/test_rag_pipeline_status_service.py"
       ],
-      "lines": 179,
+      "lines": 206,
       "module": "proxy.services.rag_pipeline_status_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
-        "proxy/services/rag_advanced_policy_service.py"
+        "proxy/services/rag_advanced_policy_service.py",
+        "proxy/services/rag_readiness_service.py"
       ],
       "path": "proxy/services/rag_pipeline_status_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -5654,15 +5723,17 @@
     {
       "inbound": [
         "proxy/routers/datasets.py",
+        "proxy/services/rag_pipeline_status_service.py",
         "tests/test_rag_readiness_service.py"
       ],
-      "lines": 422,
+      "lines": 472,
       "module": "proxy.services.rag_readiness_service",
       "outbound": [
         "backend/rag_config.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
         "proxy/services/lexical_index_service.py",
+        "proxy/services/rag_advanced_policy_service.py",
         "proxy/smeta_core/base_registry.py",
         "proxy/smeta_core/integrity.py"
       ],
@@ -5798,6 +5869,21 @@
     {
       "inbound": [
         "proxy/services/retrieval_service.py",
+        "tests/test_retrieval_candidate_service.py"
+      ],
+      "lines": 102,
+      "module": "proxy.services.retrieval_candidate_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/retrieval_candidate_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/retrieval_service.py",
         "tests/test_retrieval_quality_service.py"
       ],
       "lines": 88,
@@ -5826,7 +5912,7 @@
         "tests/test_retrieval_service.py",
         "tools/coreml_validator_probe.py"
       ],
-      "lines": 1359,
+      "lines": 1409,
       "module": "proxy.services.retrieval_service",
       "outbound": [
         "backend/colbert_late_interaction.py",
@@ -5841,6 +5927,7 @@
         "proxy/services/parent_card_hydration_service.py",
         "proxy/services/query_router.py",
         "proxy/services/rag_advanced_policy_service.py",
+        "proxy/services/retrieval_candidate_service.py",
         "proxy/services/retrieval_quality_service.py",
         "proxy/services/table_appendix_service.py"
       ],
@@ -6056,7 +6143,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_runtime_admission.py"
       ],
-      "lines": 466,
+      "lines": 499,
       "module": "proxy.services.runtime_admission",
       "outbound": [
         "proxy/__init__.py",
@@ -6492,6 +6579,23 @@
     },
     {
       "inbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_evidence_manifest_service.py",
+        "proxy/services/evidence_packet_service.py",
+        "tests/test_source_locator_service.py"
+      ],
+      "lines": 195,
+      "module": "proxy.services.source_locator_service",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/source_locator_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/services/help_chat_service.py",
         "proxy/services/smeta_chat_service.py",
         "tests/test_sovushka_tone.py"
@@ -6848,7 +6952,7 @@
         "tests/test_tools_router.py",
         "tests/test_trusted_executor_service.py"
       ],
-      "lines": 787,
+      "lines": 786,
       "module": "proxy.services.trusted_executor_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7694,7 +7798,7 @@
         "tests/test_answer_render_v16.py",
         "tests/test_v020_deploy_stamp_ui.py"
       ],
-      "lines": 472,
+      "lines": 574,
       "module": "sovushka.answer_render",
       "outbound": [
         "sovushka/__init__.py"
@@ -7883,7 +7987,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 4701,
+      "lines": 4760,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -7922,7 +8026,7 @@
         "sovushka_ng.py",
         "tests/test_diag_platform.py"
       ],
-      "lines": 1416,
+      "lines": 1433,
       "module": "sovushka.pages.diag",
       "outbound": [
         "sovushka/__init__.py",
@@ -8025,7 +8129,7 @@
         "sovushka_ng.py",
         "tests/test_profiles_ui.py"
       ],
-      "lines": 503,
+      "lines": 540,
       "module": "sovushka.pages.profiles",
       "outbound": [
         "sovushka/__init__.py",
@@ -8156,7 +8260,7 @@
         "tests/test_sovushka_chat.py",
         "tests/test_state_w53.py"
       ],
-      "lines": 768,
+      "lines": 770,
       "module": "sovushka.state",
       "outbound": [
         "backend/http_client_policy.py",
@@ -8396,7 +8500,7 @@
     },
     {
       "inbound": [],
-      "lines": 303,
+      "lines": 386,
       "module": "tests.test_answer_render_v16",
       "outbound": [
         "proxy/services/evidence_contract.py",
@@ -8884,7 +8988,18 @@
     },
     {
       "inbound": [],
-      "lines": 2250,
+      "lines": 30,
+      "module": "tests.test_chat_capability_scope_service",
+      "outbound": [
+        "proxy/services/chat_capability_scope_service.py"
+      ],
+      "path": "tests/test_chat_capability_scope_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 2278,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -8901,6 +9016,17 @@
         "proxy/services/trusted_executor_service.py"
       ],
       "path": "tests/test_chat_evidence_application_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 65,
+      "module": "tests.test_chat_evidence_manifest_service",
+      "outbound": [
+        "proxy/services/chat_evidence_manifest_service.py"
+      ],
+      "path": "tests/test_chat_evidence_manifest_service.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -8956,7 +9082,7 @@
     },
     {
       "inbound": [],
-      "lines": 390,
+      "lines": 424,
       "module": "tests.test_chat_profile_service",
       "outbound": [
         "proxy/services/chat_profile_service.py"
@@ -8990,7 +9116,7 @@
     },
     {
       "inbound": [],
-      "lines": 319,
+      "lines": 336,
       "module": "tests.test_chat_stream_w51",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10735,7 +10861,7 @@
     },
     {
       "inbound": [],
-      "lines": 315,
+      "lines": 318,
       "module": "tests.test_model_connection_chat_integration",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10882,7 +11008,7 @@
     },
     {
       "inbound": [],
-      "lines": 231,
+      "lines": 240,
       "module": "tests.test_model_research_tool_service",
       "outbound": [
         "proxy/services/model_research_tool_service.py"
@@ -11302,7 +11428,7 @@
     },
     {
       "inbound": [],
-      "lines": 93,
+      "lines": 104,
       "module": "tests.test_profiles_ui",
       "outbound": [
         "sovushka/pages/chat.py",
@@ -11455,6 +11581,17 @@
     },
     {
       "inbound": [],
+      "lines": 34,
+      "module": "tests.test_public_error_service",
+      "outbound": [
+        "proxy/services/public_error_service.py"
+      ],
+      "path": "tests/test_public_error_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 93,
       "module": "tests.test_public_provider_setup",
       "outbound": [
@@ -11560,7 +11697,7 @@
     },
     {
       "inbound": [],
-      "lines": 79,
+      "lines": 119,
       "module": "tests.test_rag_advanced_policy_service",
       "outbound": [
         "proxy/services/rag_advanced_policy_service.py"
@@ -11701,7 +11838,7 @@
     },
     {
       "inbound": [],
-      "lines": 123,
+      "lines": 142,
       "module": "tests.test_rag_pipeline_status_service",
       "outbound": [
         "proxy/services/rag_pipeline_status_service.py"
@@ -11712,7 +11849,7 @@
     },
     {
       "inbound": [],
-      "lines": 354,
+      "lines": 370,
       "module": "tests.test_rag_readiness_service",
       "outbound": [
         "proxy/services/rag_readiness_service.py"
@@ -11969,6 +12106,17 @@
     },
     {
       "inbound": [],
+      "lines": 59,
+      "module": "tests.test_retrieval_candidate_service",
+      "outbound": [
+        "proxy/services/retrieval_candidate_service.py"
+      ],
+      "path": "tests/test_retrieval_candidate_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 79,
       "module": "tests.test_retrieval_quality_service",
       "outbound": [
@@ -11982,7 +12130,7 @@
     },
     {
       "inbound": [],
-      "lines": 1102,
+      "lines": 1209,
       "module": "tests.test_retrieval_service",
       "outbound": [
         "backend/interface.py",
@@ -12217,7 +12365,7 @@
     },
     {
       "inbound": [],
-      "lines": 279,
+      "lines": 353,
       "module": "tests.test_runtime_admission",
       "outbound": [
         "proxy/services/resource_governor.py",
@@ -12825,7 +12973,18 @@
     },
     {
       "inbound": [],
-      "lines": 991,
+      "lines": 99,
+      "module": "tests.test_source_locator_service",
+      "outbound": [
+        "proxy/services/source_locator_service.py"
+      ],
+      "path": "tests/test_source_locator_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 1012,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -18040,12 +18199,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 337,
+    "product_reachable": 342,
     "registered_api_routes": 330,
     "runtime_support": 9,
-    "test_or_tool_only": 614,
-    "tracked_python_files": 961,
-    "tracked_python_lines": 301919
+    "test_or_tool_only": 619,
+    "tracked_python_files": 971,
+    "tracked_python_lines": 303773
   },
   "warnings": []
 }

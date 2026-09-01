@@ -312,4 +312,7 @@ async def test_installed_chat_rejects_per_request_provider_secret(monkeypatch) -
         await chat._run_chat_with_provider(request)
 
     assert error.value.status_code == 409
-    assert error.value.detail == "SESSION_PROVIDER_OVERRIDE_DISABLED"
+    assert error.value.detail == {
+        "code": "REQUEST_REJECTED",
+        "detail": "SESSION_PROVIDER_OVERRIDE_DISABLED",
+    }
