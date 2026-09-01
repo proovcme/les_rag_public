@@ -476,6 +476,8 @@ def _freeze_candidate(
         job.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
         )
+        frozen_assets.append(job)
+        frozen_assets.sort()
     return {
         **built,
         "assets": frozen_assets,
@@ -787,11 +789,33 @@ def run_local_acceptance(
             (item for item in attempt.get("assets", []) if item.get("name") == "LES-Setup.exe"),
             None,
         )
+        job_record = next(
+            (item for item in attempt.get("assets", []) if item.get("name") == "hard-update-job.json"),
+            None,
+        )
+        expected_status = (
+            Path(args.state).resolve()
+            / "artifacts"
+            / "updates"
+            / "hard-update-status.json"
+        )
         if (
             installer_record is None
+            or job_record is None
+            or _sha256(Path(job)) != job_record.get("sha256")
             or not installer.is_file()
             or _sha256(installer) != installer_record.get("sha256")
+            or job_payload.get("schema") != "les.windows-hard-update.v1"
             or str(job_payload.get("target_commit") or "") != attempt.get("target_commit")
+            or str(job_payload.get("product_version") or "") != attempt.get("product_version")
+            or int(job_payload.get("build_number") or 0) != int(attempt.get("build_number") or 0)
+            or str(job_payload.get("desktop_version") or "") != attempt.get("desktop_version")
+            or Path(str(job_payload.get("install_root") or "")).resolve()
+            != Path(args.install).resolve()
+            or Path(str(job_payload.get("state_root") or "")).resolve()
+            != Path(args.state).resolve()
+            or Path(str(job_payload.get("status_path") or "")).resolve()
+            != expected_status
         ):
             raise RuntimeError("artifact acceptance job differs from immutable installer")
     return windows_release_acceptance.accept_full(

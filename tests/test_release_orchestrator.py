@@ -914,6 +914,59 @@ def test_full_local_acceptance_rejects_job_outside_artifact(monkeypatch, tmp_pat
         )
 
 
+def test_full_local_acceptance_rejects_mutated_canonical_job(monkeypatch, tmp_path):
+    args = _args(tmp_path, host="local")
+    acceptance = tmp_path / "acceptance"
+    acceptance.mkdir()
+    installer = acceptance / "LES-Setup.exe"
+    installer.write_bytes(b"installer")
+    job = acceptance / "hard-update-job.json"
+    payload = {
+        "schema": "les.windows-hard-update.v1",
+        "installer": str(installer),
+        "install_root": str(args.install),
+        "state_root": str(args.state),
+        "status_path": str(args.state / "artifacts/updates/hard-update-status.json"),
+        "product_version": "0.30.40",
+        "build_number": 680,
+        "desktop_version": "5.1.680",
+        "target_commit": TARGET,
+    }
+    job.write_text(json.dumps(payload), encoding="utf-8")
+    artifact = {
+        "artifact_id": "artifact",
+        "release_class": "full",
+        "product_version": "0.30.40",
+        "build_number": 680,
+        "desktop_version": "5.1.680",
+        "target_commit": TARGET,
+        "assets": [
+            {
+                "name": installer.name,
+                "path": str(installer),
+                "sha256": release_orchestrator._sha256(installer),
+            },
+            {
+                "name": job.name,
+                "path": str(job),
+                "sha256": release_orchestrator._sha256(job),
+            },
+        ],
+    }
+    payload["install_root"] = str(tmp_path / "other-install")
+    job.write_text(json.dumps(payload), encoding="utf-8")
+    monkeypatch.setattr(
+        release_orchestrator.windows_release_acceptance,
+        "accept_full",
+        lambda **_kwargs: pytest.fail("mutated job executed"),
+    )
+
+    with pytest.raises(RuntimeError, match="artifact acceptance job differs"):
+        release_orchestrator.run_local_acceptance(
+            attempt=artifact, acceptance_path=acceptance, args=args
+        )
+
+
 def test_cli_exposes_artifact_accept_retry_and_publish():
     parser = release_orchestrator._parser()
 

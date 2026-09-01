@@ -27,7 +27,9 @@ make release RELEASE_ARGS='run --host local --publish'
    `prepare --gate-receipt`, повторный прогон suite не выполняется.
 2. Автоматически выбирает soft patch или полный NSIS-выпуск. Сразу после
    готовности ZIP/EXE, до установленного smoke, фиксирует его SHA/размер и
-   provenance в immutable `les.release-artifact.v1`.
+   provenance в immutable `les.release-artifact.v1`. Для full release туда же
+   входит SHA canonical `hard-update-job.json`; перед мутацией повторно
+   проверяются его installer, install/state/status roots и version identity.
    Для текстового Windows runtime manifest дополнительно фиксирует exact SHA
    фактически установленного файла, только если его LF-нормализованное
    содержимое совпадает с доверенным состоянием Git ancestry. Новый клиент и

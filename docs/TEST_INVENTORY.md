@@ -49,6 +49,8 @@
   Registry покрывает dotted/simple `python -m`, staged Python/PowerShell/EXE;
   lock-bound `uvicorn` объявлен отдельно. Неопределённый acceptance failure
   блокирует retry до записанного operator reconciliation и не разрешает смену host.
+  Full acceptance дополнительно связывает canonical hard-update job по SHA и
+  сверяет все mutation roots до запуска Windows update engine.
   Installed acceptance и rollback сохраняются;
   native-RRF fixture не может схлопнуться в zero-chunk, а его exact временный
   dataset удаляется без snapshot всей пользовательской коллекции.
