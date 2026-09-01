@@ -600,7 +600,11 @@ def _rag_manifest_status(*, base_path: Path, collection: str, embedding_model: s
         return False, "manifest_not_passed"
     if str(payload.get("collection") or "") != collection:
         return False, "collection_mismatch"
-    if str(payload.get("embedding_model") or "") != embedding_model:
+    def model_identity(value: object) -> str:
+        identity = str(value or "").strip().casefold()
+        return identity[:-7] if identity.endswith(":latest") else identity
+
+    if model_identity(payload.get("embedding_model")) != model_identity(embedding_model):
         return False, "embedding_model_mismatch"
     try:
         stat = base_path.stat()

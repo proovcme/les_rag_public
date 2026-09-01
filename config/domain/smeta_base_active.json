@@ -7,5 +7,5 @@
   "source_path": "data/gesn_base/gesn2022_unified.parquet",
   "minimum_norms": 40000,
   "rag_collection": "les_smeta_norm_cards",
-  "rag_embedding_model": "bge-m3:latest"
+  "rag_embedding_model": "bge-m3"
 }

@@ -7300,7 +7300,7 @@
         "tools/smeta_rerank_ab_probe.py",
         "tools/smeta_retrieval_recall_probe.py"
       ],
-      "lines": 1655,
+      "lines": 1659,
       "module": "proxy.smeta_core.norm_browser",
       "outbound": [
         "backend/inference/bm25_sparse.py",
@@ -12586,7 +12586,7 @@
     },
     {
       "inbound": [],
-      "lines": 861,
+      "lines": 885,
       "module": "tests.test_smeta_norm_browser",
       "outbound": [
         "proxy/smeta_core/norm_browser.py",
@@ -18045,7 +18045,7 @@
     "runtime_support": 9,
     "test_or_tool_only": 614,
     "tracked_python_files": 961,
-    "tracked_python_lines": 301800
+    "tracked_python_lines": 301828
   },
   "warnings": []
 }
