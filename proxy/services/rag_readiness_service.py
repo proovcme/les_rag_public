@@ -61,15 +61,23 @@ def _aliases(client: QdrantClient) -> dict[str, str]:
 def _source_chunks(dataset_id: str | None) -> int | None:
     try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
+            columns = {
+                str(row[1])
+                for row in conn.execute("PRAGMA table_info(datasets)").fetchall()
+            }
             if dataset_id:
                 row = conn.execute(
-                    "SELECT coalesce(sum(chunk_count), 0) FROM documents "
-                    "WHERE dataset_id=? AND status='INDEXED'",
+                    "SELECT coalesce(chunk_count, 0) FROM datasets WHERE id=?",
                     (dataset_id,),
                 ).fetchone()
             else:
+                scope = (
+                    " WHERE lower(coalesce(dataset_scope, 'user'))!='system'"
+                    if "dataset_scope" in columns
+                    else ""
+                )
                 row = conn.execute(
-                    "SELECT coalesce(sum(chunk_count), 0) FROM documents WHERE status='INDEXED'"
+                    "SELECT coalesce(sum(chunk_count), 0) FROM datasets" + scope
                 ).fetchone()
         return int((row or [0])[0] or 0)
     except (OSError, sqlite3.Error):
@@ -189,7 +197,6 @@ def _general_status(
         and channel_complete
         and fingerprint_complete
         and source_complete
-        and lexical_complete
     )
     if ready and activated:
         state, reason = "ready", ""
@@ -204,7 +211,7 @@ def _general_status(
         elif not source_complete:
             reason = "generation_coverage_incomplete"
         else:
-            reason = "lexical_projection_incomplete"
+            reason = "native_rrf_incomplete"
     result.update(
         {
             "state": state,
@@ -216,7 +223,11 @@ def _general_status(
             "compatible_fingerprint_points": compatible,
             "expected_source_points": expected,
             "expected_generation_points": expected,
-            "lexical": {**lexical, "ready": lexical_complete},
+            "lexical": {
+                **lexical,
+                "ready": lexical_complete,
+                "required": False,
+            },
             "rrf_ready": ready,
         }
     )
@@ -235,14 +246,17 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
     from proxy.smeta_core.base_registry import active_base
     from proxy.smeta_core.integrity import normative_base_integrity
 
-    alias = "les_smeta_norm_cards"
     base = active_base()
     base_path = Path(str(base.get("base_path") or ""))
     manifest_path = base_path.with_name("les_smeta_norm_rag_manifest.json")
     manifest = _read_json(manifest_path)
     build = _read_json(base_path.with_name("les_smeta_norm_rag_build.json"))
     quality = _read_json(base_path.with_name("les_smeta_norm_rag_quality.json"))
-    configured = str(base.get("rag_collection") or alias)
+    configured = (
+        os.getenv("LES_SMETA_NORM_RAG_COLLECTION", "").strip()
+        or str(base.get("rag_collection") or "les_smeta_norm_cards")
+    )
+    alias = configured
     manifest_collection = str(manifest.get("physical_generation") or manifest.get("collection") or "")
     build_collection = str(build.get("collection") or "") if build.get("status") == "building" else ""
     if not build_collection and not aliases.get(alias):

@@ -84,6 +84,17 @@ def test_default_full_feed_falls_back_to_canonical_repo_from_a_worktree(tmp_path
     assert resolved == canonical.resolve()
 
 
+def test_explicit_patch_base_still_resolves_the_attested_full_feed(monkeypatch, tmp_path):
+    args = _args(tmp_path, full_feed=None)
+    canonical = args.work_root / "full-base" / "latest.json"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text(json.dumps({"target_commit": BASE}), encoding="utf-8")
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda _root, value: value)
+
+    assert release_orchestrator._base_from_args(args) == BASE
+    assert args.full_feed == canonical.resolve()
+
+
 def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_path):
     args = _args(tmp_path)
     args.full_feed.write_text(

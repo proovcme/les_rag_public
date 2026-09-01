@@ -650,6 +650,7 @@ async def retrieve_chat_chunks(
     doc_filter: Optional[list[str]] = None,
     scope_source: str = "unspecified",
     scope_error_code: str = "",
+    result_limit: int | None = None,
 ):
     kot = analyze_question(question)
     retrieval_query = expand_retrieval_query(question)
@@ -693,8 +694,9 @@ async def retrieve_chat_chunks(
     effective_filter = dataset_ids or classify_query(question).dataset_filter
     is_technical_or_legal = bool(effective_filter and "MAIL" not in str(effective_filter))
     
-    merged_top_k = CHAT_TOP_K
-    if is_structured or is_technical_or_legal:
+    bounded_result_limit = max(1, int(result_limit)) if result_limit is not None else None
+    merged_top_k = bounded_result_limit or CHAT_TOP_K
+    if bounded_result_limit is None and (is_structured or is_technical_or_legal):
         merged_top_k = max(CHAT_TOP_K, 256)
         
     has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
@@ -771,33 +773,34 @@ async def retrieve_chat_chunks(
     if effective_doc_filter:
         trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
     chunks = native_chunks
-    try:
-        merged_chunks, merged_trace = _hybrid_merge(
-            question,
-            native_chunks,
-            dataset_ids,
-            rag_backend,
-            logger,
-            retrieval_query=retrieval_query,
-            pool_k=pool_k,
-            limit=merged_top_k,
-            doc_filter=effective_doc_filter or None,
-        )
-        if merged_trace.lexical_count:
-            chunks = merged_chunks
-            trace = merged_trace
-            trace.status = "ok"
-            trace.resolved_dataset_ids = list(dataset_ids or [])
-            trace.scope_source = scope_source
-            trace.mode = f"qdrant_native_{merged_trace.mode}"
-            trace.vector_count = len(native_chunks)
-            trace.retrieval_channels = ["dense", "qdrant_sparse", "lexical"]
-            trace.fusion = "qdrant_rrf+lexical_safety_rrf"
-            if effective_doc_filter:
-                trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
-            _rt["native_lexical"] = merged_trace.lexical_count
-    except Exception as native_merge_error:  # noqa: BLE001
-        logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
+    if bounded_result_limit is None:
+        try:
+            merged_chunks, merged_trace = _hybrid_merge(
+                question,
+                native_chunks,
+                dataset_ids,
+                rag_backend,
+                logger,
+                retrieval_query=retrieval_query,
+                pool_k=pool_k,
+                limit=merged_top_k,
+                doc_filter=effective_doc_filter or None,
+            )
+            if merged_trace.lexical_count:
+                chunks = merged_chunks
+                trace = merged_trace
+                trace.status = "ok"
+                trace.resolved_dataset_ids = list(dataset_ids or [])
+                trace.scope_source = scope_source
+                trace.mode = f"qdrant_native_{merged_trace.mode}"
+                trace.vector_count = len(native_chunks)
+                trace.retrieval_channels = ["dense", "qdrant_sparse", "lexical"]
+                trace.fusion = "qdrant_rrf+lexical_safety_rrf"
+                if effective_doc_filter:
+                    trace.exact_refs.extend([f"file:{name}" for name in effective_doc_filter])
+                _rt["native_lexical"] = merged_trace.lexical_count
+        except Exception as native_merge_error:  # noqa: BLE001
+            logger.warning("[HYBRID] qdrant_native lexical safety merge skipped: %s", native_merge_error)
     logger.info("[RETR] подфазы=%s", _rt)
     trace.query_embedding = query_embedding_instruction_id()
     advanced_policy = load_policy()
@@ -958,7 +961,11 @@ async def retrieve_chat_chunks(
 
     if return_trace and quality.status == "weak":
         retry_query = expanded_quality_query(question, kot)
-        retry_top_k = max(pool_k, merged_top_k)
+        retry_top_k = (
+            merged_top_k
+            if bounded_result_limit is not None
+            else max(pool_k, merged_top_k)
+        )
         if retry_top_k > merged_top_k:
             try:
                 retry_native = await rag_backend.retrieve_native_hybrid(

@@ -1622,7 +1622,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4104,
+      "lines": 4168,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -1660,6 +1660,7 @@
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/memory_port.py",
         "proxy/services/memory_service.py",
+        "proxy/services/model_capability_service.py",
         "proxy/services/model_connection_contracts.py",
         "proxy/services/model_connection_registry_service.py",
         "proxy/services/model_connection_resolver_service.py",
@@ -2971,7 +2972,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3745,
+      "lines": 3853,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3002,6 +3003,7 @@
         "proxy/services/retrieval_service.py",
         "proxy/services/runtime_admission.py",
         "proxy/services/saferag_service.py",
+        "proxy/services/smeta_chat_adapter_service.py",
         "proxy/services/table_query_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/typed_memory_projection_service.py",
@@ -4775,6 +4777,7 @@
     },
     {
       "inbound": [
+        "proxy/routers/chat.py",
         "proxy/routers/model_connections.py",
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py"
@@ -4949,7 +4952,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_model_research_tool_service.py"
       ],
-      "lines": 212,
+      "lines": 213,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5652,7 +5655,7 @@
         "proxy/routers/datasets.py",
         "tests/test_rag_readiness_service.py"
       ],
-      "lines": 408,
+      "lines": 422,
       "module": "proxy.services.rag_readiness_service",
       "outbound": [
         "backend/rag_config.py",
@@ -5822,7 +5825,7 @@
         "tests/test_retrieval_service.py",
         "tools/coreml_validator_probe.py"
       ],
-      "lines": 1348,
+      "lines": 1355,
       "module": "proxy.services.retrieval_service",
       "outbound": [
         "backend/colbert_late_interaction.py",
@@ -6291,6 +6294,7 @@
       "inbound": [
         "proxy/routers/chat.py",
         "proxy/routers/rim.py",
+        "proxy/services/chat_evidence_application_service.py",
         "proxy/services/smeta_chat_application_service.py",
         "tests/test_chat_harness_format.py",
         "tests/test_chat_profile_runtime.py",
@@ -7295,7 +7299,7 @@
         "tools/smeta_rerank_ab_probe.py",
         "tools/smeta_retrieval_recall_probe.py"
       ],
-      "lines": 1655,
+      "lines": 1659,
       "module": "proxy.smeta_core.norm_browser",
       "outbound": [
         "backend/inference/bm25_sparse.py",
@@ -8879,7 +8883,7 @@
     },
     {
       "inbound": [],
-      "lines": 2145,
+      "lines": 2221,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10730,7 +10734,7 @@
     },
     {
       "inbound": [],
-      "lines": 273,
+      "lines": 315,
       "module": "tests.test_model_connection_chat_integration",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10877,7 +10881,7 @@
     },
     {
       "inbound": [],
-      "lines": 230,
+      "lines": 231,
       "module": "tests.test_model_research_tool_service",
       "outbound": [
         "proxy/services/model_research_tool_service.py"
@@ -11707,7 +11711,7 @@
     },
     {
       "inbound": [],
-      "lines": 288,
+      "lines": 354,
       "module": "tests.test_rag_readiness_service",
       "outbound": [
         "proxy/services/rag_readiness_service.py"
@@ -11876,7 +11880,7 @@
     },
     {
       "inbound": [],
-      "lines": 798,
+      "lines": 809,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -12580,7 +12584,7 @@
     },
     {
       "inbound": [],
-      "lines": 861,
+      "lines": 885,
       "module": "tests.test_smeta_norm_browser",
       "outbound": [
         "proxy/smeta_core/norm_browser.py",
@@ -15373,7 +15377,7 @@
       "inbound": [
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 1078,
+      "lines": 1083,
       "module": "tools.release_orchestrator",
       "outbound": [
         "proxy/services/update_service.py",
@@ -18039,7 +18043,7 @@
     "runtime_support": 9,
     "test_or_tool_only": 614,
     "tracked_python_files": 961,
-    "tracked_python_lines": 301298
+    "tracked_python_lines": 301721
   },
   "warnings": []
 }

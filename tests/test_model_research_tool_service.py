@@ -58,6 +58,7 @@ async def test_search_sources_uses_canonical_retriever_and_frozen_scope():
             "dataset_ids": ["selected-a", "selected-b"],
             "rag_backend": "backend",
             "return_trace": True,
+            "result_limit": 6,
         }
     ]
     assert result.chunks == tuple(_Retrieval().chunks)

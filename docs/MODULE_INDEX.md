@@ -28,6 +28,17 @@
 > `config/windows_runtime_manifest.json`, `tests/test_tauri_desktop.py`. Статус
 > док↔код: ✅.
 
+> **0.30.42 model→RAG hotfix:** `chat_evidence_application_service` сохраняет
+> значения результата Qwen без перенумерации/regex-подмены, проверяет только
+> полноту и evidence-ссылки перед XLSX; `model_research_tool_service` и
+> `retrieval_service` ограничивают model-facing поиск шестью hits; estimator и
+> обычный RAG разведены; smeta alias берётся из active config; capability
+> evidence обновляется без рестарта. `rag_readiness_service` считает native
+> dense+sparse RRF без запрещённой зависимости от legacy lexical sidecar.
+> Точки: `proxy/{routers/chat.py,services/{chat_evidence_application_service,
+> model_research_tool_service,retrieval_service,rag_readiness_service}.py}`,
+> `proxy/smeta_core/norm_browser.py`, `tools/release_orchestrator.py`. Статус: ✅.
+>
 > **0.30.38 bounded Windows smoke path:** full-release clean-install сохраняет
 > изоляцию внутри checkout, но использует короткий `.codex_tmp/wrs/<sha12>-<id8>`.
 > Глубокие временные пути `uv`/Hatchling больше не достигают Windows

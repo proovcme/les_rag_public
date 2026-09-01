@@ -147,6 +147,16 @@ def test_existing_estimator_profile_keeps_model_authored_query_workflow_without_
     ) is False
 
 
+def test_only_estimator_model_rag_uses_the_dedicated_smeta_catalog():
+    assert service.profile_uses_smeta_norm_retrieval({"mode": "estimator"}) is True
+    assert service.profile_uses_smeta_norm_retrieval(
+        {
+            "mode": "search",
+            "rag_policy": {"model_authored_initial_query": True},
+        }
+    ) is False
+
+
 def test_model_rag_evidence_keeps_six_candidates_for_every_model_query():
     query_hits = []
     for query_index in range(1, 31):
@@ -210,6 +220,72 @@ def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
     assert service.parse_model_rag_result(answer) == (answer, rows)
 
 
+def test_model_rag_result_preserves_explicit_row_identity_and_norm_code_verbatim():
+    answer = """| source_row | title | unit | quantity | norm_code | evidence_refs |
+|---:|---|---|---:|---|---|
+| 42 | Работа модели | шт. | 3 | ГЭСН:26-01-055-01 (выбор Qwen) | Q2.H4 |
+| 7 | Другая работа | м | 8 | CUSTOM-NORM-A | Q1.H2 |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[0] == answer
+    assert parsed[1] == [
+        {
+            "source_row": 42,
+            "title": "Работа модели",
+            "unit": "шт.",
+            "quantity": 3,
+            "norm_code": "ГЭСН:26-01-055-01 (выбор Qwen)",
+            "evidence_refs": ["Q2.H4"],
+        },
+        {
+            "source_row": 7,
+            "title": "Другая работа",
+            "unit": "м",
+            "quantity": 8,
+            "norm_code": "CUSTOM-NORM-A",
+            "evidence_refs": ["Q1.H2"],
+        },
+    ]
+
+
+def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence():
+    evidence = [
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q1.H2", "norm_code": "ГЭСН26-01-055-01"}
+        ),
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q2.H4", "norm_code": "ГЭСНм08-02-146-01"}
+        ),
+    ]
+    rows = [
+        {"source_row": 1, "norm_code": "ГЭСН:26-01-055-01", "evidence_refs": ["Q1.H2"]},
+        {"source_row": 2, "norm_code": "ГЭСНм08-02-146-01", "evidence_refs": ["Q2.H4"]},
+    ]
+
+    assert service.validate_model_rag_result_structure(
+        rows,
+        evidence,
+        expected_source_rows=2,
+    ) == []
+
+    errors = service.validate_model_rag_result_structure(
+        [
+            {"source_row": 1, "norm_code": "ГЭСН26-01-055-99", "evidence_refs": ["Q1.H2"]},
+            {"source_row": 1, "norm_code": "ГЭСНм08-02-146-01", "evidence_refs": ["Q9.H9"]},
+        ],
+        evidence,
+        expected_source_rows=2,
+    )
+
+    assert "duplicate_source_row:1" in errors
+    assert "missing_source_row:2" in errors
+    assert "unknown_evidence_ref:Q9.H9" in errors
+    assert "norm_code_not_in_referenced_evidence:1" in errors
+
+
 def test_model_rag_result_reads_the_models_ordinary_sectioned_answer():
     answer = """### Раздел 1. Демонтажные работы ЭОМ
 **Строка 1: Защитное укрытие пленкой, 116 м².**
@@ -237,7 +313,7 @@ def test_model_rag_result_reads_the_models_ordinary_sectioned_answer():
                 "evidence_refs": ["Q1.H2"],
             },
             {
-                "source_row": 2,
+                "source_row": 1,
                 "section": "Раздел 2. Монтажные работы ЭОМ",
                 "title": "Монтаж блока аварийного питания",
                 "unit": "шт.",
@@ -321,7 +397,7 @@ def test_model_rag_result_reads_an_ordinary_russian_table_with_combined_norm_cel
             "title": "Защитное укрытие",
             "unit": "м²",
             "quantity": 116,
-            "norm_code": "ГЭСН26-01-055-01",
+            "norm_code": "ГЭСН26-01-055-01<br>[Q3.H2]",
             "analogue": "Аналог: пароизоляционный слой",
             "coverage": "Материал отдельно",
             "evidence_refs": ["Q3.H2"],
@@ -332,7 +408,7 @@ def test_model_rag_result_reads_an_ordinary_russian_table_with_combined_norm_cel
             "title": "Разработка проема",
             "unit": "шт.",
             "quantity": 10,
-            "norm_code": "ГЭСН15-02-035-03",
+            "norm_code": "*(Нет прямого аналога)*<br>Аналог: ГЭСН15-02-035-03<br>[Q6.H1]",
             "analogue": "Аналог по составу",
             "coverage": "Обратная операция",
             "evidence_refs": ["Q6.H1"],
@@ -357,7 +433,7 @@ def test_model_rag_result_collects_every_ordinary_table_across_sections():
 
     assert parsed is not None
     assert parsed[0] == answer
-    assert [row["source_row"] for row in parsed[1]] == [1, 2, 3]
+    assert [row["source_row"] for row in parsed[1]] == [1, 1, 2]
     assert [row["section"] for row in parsed[1]] == [
         "Раздел 1. Демонтаж",
         "Раздел 2. Монтаж",

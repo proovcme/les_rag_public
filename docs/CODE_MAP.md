@@ -1,5 +1,13 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.42 result-integrity and routing hotfix:** estimator использует только
+> настраиваемый smeta-каталог; обычный model-authored RAG остаётся в user scope;
+> `search_sources` запрашивает ровно 6 model-facing результатов; `bge-m3` и
+> `bge-m3:latest` считаются одним Ollama identity; capability evidence
+> автоматически обновляется при первом чате без рестарта. Парсер сохраняет
+> model-authored `source_row`/`norm_code`, а локальная пост-проверка только
+> блокирует ложный XLSX при неполных строках или неверных `Qx.Hy`.
+>
 > **0.30.41 installed compatibility:** `chat_profile_service` накладывает
 > estimator workflow policy на effective snapshot старой user revision, не
 > меняя её в SQLite. `ModelResearchToolService` отдаёт модели максимум 6 hits.

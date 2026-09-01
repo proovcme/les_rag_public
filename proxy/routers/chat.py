@@ -45,8 +45,12 @@ from proxy.services.candidate_acceptance_service import (
     require_candidate_acceptance,
 )
 from proxy.services.model_connection_registry_service import ModelConnectionRegistry
-from proxy.services.model_connection_contracts import ConnectionRole
-from proxy.services.model_connection_resolver_service import ModelConnectionResolver
+from proxy.services.model_capability_service import CapabilityProbe
+from proxy.services.model_connection_contracts import CapabilityName, ConnectionRole
+from proxy.services.model_connection_resolver_service import (
+    ModelConnectionResolutionError,
+    ModelConnectionResolver,
+)
 from proxy.services.model_secret_service import EnvironmentSecretStore
 from proxy.services.openai_compatible_transport_service import (
     InferenceRequest,
@@ -660,6 +664,63 @@ def _model_connection_resolver() -> tuple[ModelConnectionResolver, EnvironmentSe
         secret_store=secret_store,
         allow_private_http=True,
     ), secret_store
+
+
+def _model_capability_probe(
+    client: httpx.AsyncClient,
+    secret_store: EnvironmentSecretStore,
+) -> CapabilityProbe:
+    return CapabilityProbe(
+        client=client,
+        secret_store=secret_store,
+        allow_private_http=True,
+    )
+
+
+async def _refresh_stale_bound_model_capabilities(client: httpx.AsyncClient) -> None:
+    """Refresh expired role evidence on demand without requiring a LES restart."""
+
+    resolver, secret_store = _model_connection_resolver()
+    registry = getattr(resolver, "registry", None)
+    if registry is None:
+        # Candidate acceptance may inject an isolated resolver that already
+        # owns its complete capability contract and has no persistent registry.
+        return
+    requested = frozenset(
+        {
+            CapabilityName.MODELS,
+            CapabilityName.CHAT_COMPLETIONS,
+            CapabilityName.STREAMING,
+            CapabilityName.TOOLS,
+            CapabilityName.STRUCTURED_OUTPUT,
+        }
+    )
+    for role in (ConnectionRole.ANSWER, ConnectionRole.LOCAL_FALLBACK):
+        binding = registry.get_role_binding(role)
+        if binding is None:
+            continue
+        try:
+            resolver.resolve(role)
+            continue
+        except ModelConnectionResolutionError as error:
+            if str(error) not in {
+                "CAPABILITY_SNAPSHOT_MISSING",
+                "CAPABILITY_SNAPSHOT_STALE",
+            }:
+                raise
+        revision = registry.get_revision(binding.connection_revision_id)
+        try:
+            await _model_capability_probe(client, secret_store).probe_and_store(
+                revision,
+                requested=requested,
+                registry=registry,
+                actor="system:chat-capability-refresh",
+            )
+            resolver.resolve(role)
+        except Exception:
+            if role is ConnectionRole.ANSWER:
+                raise
+            logger.warning("[MODEL] local fallback capability refresh failed", exc_info=True)
 
 
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\u3040-\u30ff\uac00-\ud7af]+")
@@ -2020,6 +2081,7 @@ async def _run_free_mode(req: "ChatRequest", token_sink=None) -> str:
         if token_sink is not None:
             await token_sink({"event": "token", "data": disclaimer})
         async with httpx.AsyncClient(timeout=300.0) as client:
+            await _refresh_stale_bound_model_capabilities(client)
             connection_mode = _effective_model_connection_mode()
             async def legacy_complete(_request: InferenceRequest) -> InferenceResponse:
                 body = {
@@ -4097,6 +4159,8 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         token_sink=token_sink,
         version_stamp=_version_stamp,
     )
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=False) as capability_client:
+        await _refresh_stale_bound_model_capabilities(capability_client)
     return await run_chat_evidence_application(
         evidence_request,
         evidence_runtime,

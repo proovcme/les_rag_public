@@ -104,7 +104,7 @@ def test_general_rag_without_user_documents_is_empty_not_blocked(monkeypatch):
     assert result["rrf_ready"] is False
 
 
-def test_general_rrf_is_not_ready_without_alias_lexical_projection(monkeypatch):
+def test_general_native_rrf_does_not_depend_on_the_legacy_lexical_sidecar(monkeypatch):
     monkeypatch.setattr(service, "rag_collection_name", lambda: "les_rag")
     monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 10)
     monkeypatch.setattr(
@@ -122,8 +122,32 @@ def test_general_rrf_is_not_ready_without_alias_lexical_projection(monkeypatch):
     result = service._general_status(
         FakeClient(), {"les_rag": "physical_v2"}, dataset_id="dataset-1"
     )
-    assert result["rrf_ready"] is False
+    assert result["rrf_ready"] is True
+    assert result["state"] == "ready"
     assert result["lexical"]["ready"] is False
+    assert result["lexical"]["required"] is False
+
+
+def test_source_chunk_count_excludes_system_catalogs(monkeypatch, tmp_path):
+    db = tmp_path / "meta.sqlite"
+    import sqlite3
+
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+            "CREATE TABLE datasets (id TEXT, chunk_count INTEGER, dataset_scope TEXT)"
+        )
+        conn.executemany(
+            "INSERT INTO datasets VALUES (?, ?, ?)",
+            [
+                ("user-a", 11, "user"),
+                ("user-b", 7, "user"),
+                ("smeta", 49818, "system"),
+            ],
+        )
+    monkeypatch.setattr(service, "rag_meta_db_path", lambda: str(db))
+
+    assert service._source_chunks(None) == 18
+    assert service._source_chunks("user-b") == 7
 
 
 def test_general_direct_config_is_active_and_legacy_lexical_marker_is_optional(monkeypatch):
@@ -285,4 +309,46 @@ def test_smeta_ready_requires_mechanical_base_and_activated_hybrid_index(monkeyp
     assert result["ready"] is True
     assert result["mechanical_base"]["ready"] is True
     assert result["search_index"]["ready"] is True
+    assert result["rrf_ready"] is True
+
+
+def test_smeta_readiness_uses_the_configured_catalog_name(monkeypatch, tmp_path):
+    base = tmp_path / "customer.sqlite"
+    base.write_bytes(b"sqlite")
+    base.with_name("les_smeta_norm_rag_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "collection": "customer_norm_catalog",
+                "physical_generation": "customer_norm_catalog_20260901",
+                "expected_points": 10,
+                "index_mode": "hybrid",
+                "point_embedding_fingerprint": "fp",
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.base_registry.active_base",
+        lambda: {
+            "base_path": str(base),
+            "rag_collection": "customer_norm_catalog",
+        },
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.integrity.normative_base_integrity",
+        lambda: {
+            "status": "trusted",
+            "trusted_for_pricing": True,
+            "trusted_for_navigation": True,
+        },
+    )
+
+    result = service._smeta_status(
+        FakeClient(points=10),
+        {"customer_norm_catalog": "customer_norm_catalog_20260901"},
+    )
+
+    assert result["alias"] == "customer_norm_catalog"
+    assert result["physical_generation"] == "customer_norm_catalog_20260901"
     assert result["rrf_ready"] is True

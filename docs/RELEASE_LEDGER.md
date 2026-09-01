@@ -7,17 +7,28 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.41
-номер сборки:              681
-версия Tauri/NSIS:         5.1.681
+версия продукта (SemVer):  0.30.42
+номер сборки:              682
+версия Tauri/NSIS:         5.1.682
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.41 installed estimate contour compatibility hotfix
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
+dev implementation:       0.30.42 model→RAG result-integrity hotfix
+задеплоено на рантайм:     Legion 0.30.41 / build 681; 0.30.42 acceptance pending
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.41 soft hotfix поверх опубликованного 0.30.40
-рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
+следующий выпуск:          0.30.42 soft hotfix
+рантайм /api/version:      Legion 0.30.41 / build 681 перед установкой кандидата
 ```
+
+> **0.30.42 / build 682 model→RAG result-integrity hotfix:** обычный RAG и
+> estimator разведены по effective profile, сметный каталог полностью
+> настраиваемый, модель получает по 6 карточек каждого своего запроса, а
+> `bge-m3`/`bge-m3:latest` не создают ложный отказ. Итог Qwen сохраняется без
+> перенумерации `source_row` и regex-подмены `norm_code`; локальная проверка
+> полноты/`Qx.Hy` не вызывает модель и не меняет её решение. Просроченный
+> capability snapshot обновляется при первом чате без рестарта. Общий health
+> проверяет native dense+sparse RRF и больше не зависит от legacy lexical
+> sidecar. Release orchestrator теперь разрешает attested full-feed и при явно
+> переданном patch base.
 
 > **0.30.41 / build 681 installed contour compatibility hotfix:** effective
 > snapshot старого пользовательского estimator-профиля получает обязательный

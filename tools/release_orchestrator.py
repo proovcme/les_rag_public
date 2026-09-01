@@ -374,6 +374,11 @@ def resolve_full_feed(args: argparse.Namespace) -> Path:
 
 def _base_from_args(args: argparse.Namespace) -> str:
     if str(getattr(args, "base", "") or ""):
+        try:
+            args.full_feed = resolve_full_feed(args)
+        except RuntimeError:
+            if not bool(getattr(args, "skip_gates", False)):
+                raise
         return resolve_commit(args.root, args.base)
     args.full_feed = resolve_full_feed(args)
     try:

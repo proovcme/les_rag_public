@@ -503,6 +503,15 @@ def profile_uses_model_driven_retrieval(
     )
 
 
+def profile_uses_smeta_norm_retrieval(
+    profile_snapshot: dict[str, Any] | None,
+) -> bool:
+    """Route only the estimator workflow to the configured normative-card index."""
+
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    return str(snapshot.get("mode") or "").strip().casefold() == "estimator"
+
+
 def _model_json_object(raw: str) -> dict[str, Any] | None:
     """Read one model-authored JSON object without interpreting its domain values."""
 
@@ -694,8 +703,11 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 if not value:
                     continue
                 if name == "source_row":
-                    continue
-                if name in {"quantity", "coefficient"}:
+                    parsed_source_row = number(value)
+                    if not isinstance(parsed_source_row, int):
+                        return None
+                    row[name] = parsed_source_row
+                elif name in {"quantity", "coefficient"}:
                     numeric_value = value
                     if name == "coefficient":
                         match = re.match(r"[+-]?[0-9]+(?:[.,][0-9]+)?", value)
@@ -718,12 +730,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                         ]
                     if refs:
                         row[name] = refs
-                elif name == "norm_code":
-                    code_match = re.search(
-                        r"[А-ЯA-ZЁа-яa-zё]+\d{2}-\d{2}-\d{3}-\d{2}",
-                        value,
-                    )
-                    row[name] = code_match.group(0) if code_match else ""
                 else:
                     row[name] = value
             embedded_refs = list(
@@ -734,7 +740,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             if embedded_refs and not row.get("evidence_refs"):
                 row["evidence_refs"] = embedded_refs
             if row:
-                row["source_row"] = len(table_rows) + 1
                 if table_section and not row.get("section"):
                     row["section"] = table_section
                 table_rows.append(row)
@@ -745,7 +750,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
 
     section = ""
     prose_rows: list[dict[str, Any]] = []
-    row_header_re = re.compile(r"^\*\*Строка\s+\d+\s*:\s*(.+?)\*\*$", re.IGNORECASE)
+    row_header_re = re.compile(
+        r"^\*\*Строка\s+(\d+)\s*:\s*(.+?)\*\*$", re.IGNORECASE
+    )
     section_re = re.compile(r"^###\s+(Раздел\s+.+)$", re.IGNORECASE)
     quantity_re = re.compile(
         r"^(.*),\s*([0-9]+(?:[.,][0-9]+)?)\s*([^0-9]+)$"
@@ -771,7 +778,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             block.append(candidate)
             index += 1
 
-        title_with_amount = row_match.group(1).strip()
+        title_with_amount = row_match.group(2).strip()
         amount_match = quantity_re.match(title_with_amount)
         if amount_match:
             title = amount_match.group(1).strip()
@@ -796,7 +803,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             re.IGNORECASE,
         )
         row = {
-            "source_row": len(prose_rows) + 1,
+            "source_row": int(row_match.group(1)),
             "section": section,
             "title": title,
             "unit": unit,
@@ -861,11 +868,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 parsed_number = number(clean)
                 if parsed_number is not None:
                     row[key] = parsed_number
-            elif key == "norm_code":
-                code_match = re.search(
-                    r"[А-ЯA-ZЁа-яa-zё]+\d{2}-\d{2}-\d{3}-\d{2}", clean
-                )
-                row[key] = code_match.group(0) if code_match else clean
             elif key == "evidence_refs":
                 refs = list(
                     dict.fromkeys(re.findall(r"Q\d+\.H\d+", clean, re.IGNORECASE))
@@ -986,6 +988,69 @@ def _model_rag_source_map(chunks: Sequence[_ModelRagEvidenceChunk]) -> list[dict
         }
         for index, chunk in enumerate(chunks, 1)
     ]
+
+
+def validate_model_rag_result_structure(
+    rows: Sequence[dict[str, Any]],
+    evidence_chunks: Sequence[Any],
+    *,
+    expected_source_rows: int,
+) -> list[str]:
+    """Validate references before packaging without changing model decisions."""
+
+    errors: list[str] = []
+    observed: list[int] = []
+    for row in rows:
+        source_row = row.get("source_row")
+        if not isinstance(source_row, int) or source_row <= 0:
+            errors.append("invalid_source_row")
+            continue
+        observed.append(source_row)
+    observed_set = set(observed)
+    for source_row in sorted(observed_set):
+        if observed.count(source_row) > 1:
+            errors.append(f"duplicate_source_row:{source_row}")
+    if expected_source_rows > 0:
+        expected = set(range(1, expected_source_rows + 1))
+        errors.extend(
+            f"missing_source_row:{source_row}"
+            for source_row in sorted(expected - observed_set)
+        )
+        errors.extend(
+            f"unexpected_source_row:{source_row}"
+            for source_row in sorted(observed_set - expected)
+        )
+
+    evidence_by_ref: dict[str, dict[str, Any]] = {}
+    for chunk in evidence_chunks:
+        meta = dict(getattr(chunk, "meta", {}) or {})
+        evidence_ref = str(meta.get("model_evidence_ref") or "").strip().upper()
+        if evidence_ref:
+            evidence_by_ref[evidence_ref] = meta
+
+    def code_identity(value: Any) -> str:
+        return re.sub(r"[\s:]", "", str(value or "").strip()).casefold()
+
+    for row in rows:
+        source_row = row.get("source_row")
+        refs = [
+            str(item or "").strip().upper()
+            for item in (row.get("evidence_refs") or [])
+            if str(item or "").strip()
+        ]
+        if not refs:
+            errors.append(f"missing_evidence_ref:{source_row}")
+            continue
+        unknown_refs = [ref for ref in refs if ref not in evidence_by_ref]
+        errors.extend(f"unknown_evidence_ref:{ref}" for ref in unknown_refs)
+        selected_code = code_identity(row.get("norm_code"))
+        if selected_code and not any(
+            code_identity(evidence_by_ref[ref].get("norm_code")) == selected_code
+            for ref in refs
+            if ref in evidence_by_ref
+        ):
+            errors.append(f"norm_code_not_in_referenced_evidence:{source_row}")
+    return list(dict.fromkeys(errors))
 
 
 def model_rag_search_tool_schema() -> list[dict[str, Any]]:
@@ -2473,6 +2538,11 @@ async def _execute_chat_evidence_application(
                     )
                     t_llm += time.time() - t_query_model
                     model_queries = parse_model_rag_queries(query_text)
+                    if not model_queries:
+                        raise HTTPException(
+                            status_code=503,
+                            detail="MODEL_RAG_QUERY_LIST_EMPTY",
+                        )
 
                     async def _no_model_rag_fallback(_tool_name: str, _args: dict[str, Any]):
                         raise RuntimeError("MODEL_RAG_ONLY_SUPPORTS_SEARCH_SOURCES")
@@ -2500,7 +2570,11 @@ async def _execute_chat_evidence_application(
                             ),
                         },
                         fallback=_no_model_rag_fallback,
-                        smeta_norm_retrieve=retrieve_smeta_norm_cards,
+                        smeta_norm_retrieve=(
+                            retrieve_smeta_norm_cards
+                            if profile_uses_smeta_norm_retrieval(profile_snapshot)
+                            else None
+                        ),
                     )
                     for query in model_queries:
                         research_result = await model_research_tools.execute(
@@ -2509,6 +2583,19 @@ async def _execute_chat_evidence_application(
                         tool_results_for_model.append(research_result.payload)
                         model_rag_query_hits.append(
                             (query, tuple(research_result.chunks)[:6])
+                        )
+                    blocked_queries = [
+                        index
+                        for index, payload in enumerate(tool_results_for_model, 1)
+                        if str(payload.get("status") or "") != "ok"
+                    ]
+                    if blocked_queries:
+                        raise HTTPException(
+                            status_code=503,
+                            detail={
+                                "error": "MODEL_RAG_SEARCH_INCOMPLETE",
+                                "blocked_queries": blocked_queries,
+                            },
                         )
                     (
                         model_rag_evidence_groups,
@@ -3408,8 +3495,28 @@ async def _execute_chat_evidence_application(
                 if model_driven_retrieval:
                     parsed_model_result = parse_model_rag_result(answer)
                     model_result_rows: list[dict[str, Any]] = []
+                    model_result_errors: list[str] = []
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
+                        from proxy.services.smeta_chat_adapter_service import (
+                            _smeta_source_row_count,
+                        )
+
+                        model_result_errors = validate_model_rag_result_structure(
+                            model_result_rows,
+                            model_evidence_chunks,
+                            expected_source_rows=_smeta_source_row_count(
+                                attachment_context
+                            ),
+                        )
+                        if model_result_errors:
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "structural_error",
+                                "row_count": len(model_result_rows),
+                                "packaged": False,
+                                "errors": model_result_errors,
+                            }
                     else:
                         retrieval_trace["model_result"] = {
                             "schema": "les_model_rag_result_v1",
@@ -3429,6 +3536,7 @@ async def _execute_chat_evidence_application(
                     if (
                         parsed_model_result is not None
                         and model_result_rows
+                        and not model_result_errors
                         and attachment_id
                         and packaging_tool
                         and workbook_tool_executor is not None

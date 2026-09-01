@@ -178,6 +178,7 @@ class ModelResearchToolService:
         retrieval = await self._retrieve(
             question=query,
             dataset_ids=list(self._dataset_ids),
+            result_limit=6,
             **self._retrieval_kwargs,
         )
         chunks = tuple(retrieval.chunks)[:6]

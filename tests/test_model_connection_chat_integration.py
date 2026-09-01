@@ -250,6 +250,48 @@ async def test_free_chat_active_uses_bound_runner_without_legacy_http(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_chat_refreshes_stale_bound_capabilities_without_a_restart(monkeypatch) -> None:
+    revision = SimpleNamespace(revision_id="conn:answer:r1")
+    binding = SimpleNamespace(connection_revision_id=revision.revision_id)
+
+    class Registry:
+        def get_role_binding(self, role):
+            return binding if role is ConnectionRole.ANSWER else None
+
+        def get_revision(self, revision_id):
+            assert revision_id == revision.revision_id
+            return revision
+
+    class StaleResolver:
+        def __init__(self):
+            self.registry = Registry()
+            self.refreshed = False
+
+        def resolve(self, role):
+            assert role is ConnectionRole.ANSWER
+            if not self.refreshed:
+                raise ModelConnectionResolutionError("CAPABILITY_SNAPSHOT_STALE")
+            return _connection(revision.revision_id)
+
+    resolver = StaleResolver()
+    probes = []
+
+    class Probe:
+        async def probe_and_store(self, connection, *, requested, registry, actor):
+            probes.append((connection.revision_id, requested, actor))
+            resolver.refreshed = True
+
+    monkeypatch.setattr(chat, "_model_connection_resolver", lambda: (resolver, object()))
+    monkeypatch.setattr(chat, "_model_capability_probe", lambda *_args: Probe())
+
+    await chat._refresh_stale_bound_model_capabilities(object())
+
+    assert len(probes) == 1
+    assert probes[0][0] == revision.revision_id
+    assert probes[0][2] == "system:chat-capability-refresh"
+
+
+@pytest.mark.asyncio
 async def test_installed_chat_rejects_per_request_provider_secret(monkeypatch) -> None:
     monkeypatch.delenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", raising=False)
     monkeypatch.setattr(
