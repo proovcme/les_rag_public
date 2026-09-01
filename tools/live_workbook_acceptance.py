@@ -197,7 +197,10 @@ def _runtime_version(client: HttpClient, config: AcceptanceConfig) -> dict[str, 
     payload = response.json()
     if not isinstance(payload, dict):
         raise LiveAcceptanceError("runtime version was not an object")
-    source_commit_full = str(payload.get("git_commit_full") or "").strip()
+    source_commit_full = str(payload.get("git_commit_full") or "").strip().lower()
+    deployed_commit = str(payload.get("deployed_commit") or "").strip().lower()
+    if not _FULL_COMMIT_RE.fullmatch(source_commit_full):
+        source_commit_full = deployed_commit
     if not _FULL_COMMIT_RE.fullmatch(source_commit_full):
         raise LiveAcceptanceError("runtime full source commit is invalid")
     build_number = payload.get("build_number")

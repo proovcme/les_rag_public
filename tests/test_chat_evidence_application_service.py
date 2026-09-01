@@ -908,6 +908,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_recovery",
         "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
@@ -925,6 +926,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_recovery",
         "candidate_workbook",
         "shadow_workbook",
         "legacy_workbook",
@@ -934,17 +936,23 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_recovery",
         "candidate_workbook",
     }
     candidate_acceptance = scenario == "candidate_workbook"
     rejected_workbook = scenario == "active_workbook_rejected"
-    model_rag_result = scenario == "active_model_rag_result"
+    model_rag_recovery = scenario == "active_model_rag_recovery"
+    model_rag_result = scenario in {
+        "active_model_rag_result",
+        "active_model_rag_recovery",
+    }
     active = scenario in {
         "active",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
         "active_model_rag_result",
+        "active_model_rag_recovery",
         "candidate_workbook",
     }
     inactive_workbook = workbook_profile and not active
@@ -1097,6 +1105,22 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 return {
                     "schema": "les_tool_shortlist_v1",
                     "tools": [
+                        *(
+                            [
+                                {
+                                    "name": "build_vor_workbook",
+                                    "summary": "Extract a VOR workbook without estimating it",
+                                    "input_schema": {
+                                        "type": "object",
+                                        "properties": {"attachment_id": {"type": "string"}},
+                                        "required": ["attachment_id"],
+                                        "additionalProperties": False,
+                                    },
+                                }
+                            ]
+                            if model_rag_recovery
+                            else []
+                        ),
                         {
                             "name": "search_sources",
                             "summary": "Search frozen datasets with native RRF",
@@ -1268,7 +1292,16 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 self.revisions = []
                 self.requests = []
                 if model_rag_result:
-                    self.responses = [
+                    self.responses = ([
+                        InferenceResponse(
+                            text="",
+                            tool_calls=(
+                                {"id": "wrong-workbook", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'}},
+                            ),
+                            finish_reason="tool_calls",
+                            usage={},
+                        ),
+                    ] if model_rag_recovery else []) + [
                         InferenceResponse(
                             text="",
                             tool_calls=(
@@ -1312,7 +1345,11 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                             usage={},
                         ),
                         InferenceResponse(
-                            text="active visible answer" if active_workbook else '{"calls":[]}',
+                            text=(
+                                '{"calls":[]}'
+                                if rejected_workbook or not active_workbook
+                                else "active visible answer"
+                            ),
                             tool_calls=(),
                             finish_reason="stop",
                             usage={"completion_tokens": 5},
@@ -1538,9 +1575,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             (lambda call, context, progress: _rejected_workbook_execution(call, workbook_executor_calls))
             if rejected_workbook
             else (
-                (lambda call, context, progress: _tracked_workbook_execution(
-                    call, context, progress, progress_events, workbook_executor_calls
-                ))
+                (
+                    lambda call, context, progress: (
+                        _rejected_workbook_execution(call, workbook_executor_calls)
+                        if model_rag_recovery and call.get("tool") == "build_vor_workbook"
+                        else _tracked_workbook_execution(
+                            call, context, progress, progress_events, workbook_executor_calls
+                        )
+                    )
+                )
                 if active_workbook else None
             )
         ),
@@ -1571,11 +1614,18 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "прокладка контрольного кабеля",
         ]
         assert "Собери ЛСР" not in rag_queries
-        assert workbook_executor_calls[0]["args"]["decisions"] == exact_decisions
-        assert active_transport.revisions == ["conn:active:r3"] * 3
-        assert {
+        assert workbook_executor_calls[-1]["args"]["decisions"] == exact_decisions
+        assert active_transport.revisions == ["conn:active:r3"] * (
+            4 if model_rag_recovery else 3
+        )
+        expected_tools = {
             item["function"]["name"] for item in active_transport.requests[0].tools
-        } == {"search_sources", "build_lsr_workbook"}
+        }
+        assert expected_tools == (
+            {"build_vor_workbook", "search_sources", "build_lsr_workbook"}
+            if model_rag_recovery
+            else {"search_sources", "build_lsr_workbook"}
+        )
         assert "Строка 1: монтаж шкафа управления — 2 шт." in str(
             active_transport.requests[0].messages
         )
@@ -1586,6 +1636,12 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
         assert "stop_reason" in tool_loop, tool_loop
         assert tool_loop["stop_reason"] == "workbook_complete"
+        if model_rag_recovery:
+            assert [call["tool"] for call in workbook_executor_calls] == [
+                "build_vor_workbook",
+                "build_lsr_workbook",
+            ]
+            assert "выбери ровно один" not in str(active_transport.requests[0].messages)
         return
     if inactive_workbook:
         assert result["answer"] == "legacy visible answer"
@@ -1613,13 +1669,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "used_names": [],
         }
         assert active_transport.revisions == ["conn:active:r3", "conn:active:r3"] + (
-            [] if active_workbook else ["conn:active:r3"]
+            ["conn:active:r3"]
+            if rejected_workbook or not active_workbook
+            else []
         )
         if active_workbook:
-            assert len(workbook_executor_calls) == 1
+            assert len(workbook_executor_calls) == (2 if rejected_workbook else 1)
             if rejected_workbook:
                 assert "artifact" not in result
-                assert history_rows[0]["retrieval_trace"]["tool_loop"]["stop_reason"] == "workbook_attempted"
+                assert history_rows[0]["retrieval_trace"]["tool_loop"]["stop_reason"] == "model_stop"
                 return
             assert result["artifact"]["revision_id"] == "rev-2"
             assert result["attachment_retry"]["attachment_id"] == "read_123456abcdef"

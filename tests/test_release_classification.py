@@ -147,6 +147,19 @@ def test_allowed_runtime_deletion_remains_lightweight_patch(release_repo):
     assert result.triggers == ()
 
 
+def test_installed_live_acceptance_tool_can_ship_in_runtime_patch(release_repo):
+    repo, base = release_repo
+    tool = repo / "tools" / "live_workbook_acceptance.py"
+    tool.parent.mkdir(parents=True)
+    tool.write_text("VALUE = 1\n", encoding="utf-8")
+
+    result = classify_release(base, _commit(repo, "installed acceptance repair"), root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ("tools/live_workbook_acceptance.py",)
+    assert result.triggers == ()
+
+
 def test_runtime_manifest_ignores_repo_only_files_and_keeps_visualizer_content(
     release_repo,
 ):

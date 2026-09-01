@@ -315,6 +315,23 @@ def _classification_evidence(classification: ReleaseClassification) -> dict[str,
     }
 
 
+def validate_patch_pipeline(classification: ReleaseClassification) -> None:
+    """Fail before expensive gates when any patch layer rejects a classified file."""
+    if classification.kind != "patch":
+        return
+    from proxy.services import update_service
+    from tools import vps_patch, vps_patch_apply
+
+    for path in classification.runtime_files:
+        normalized = vps_patch.normalize_path(path)
+        vps_patch_apply.safe_relative_path(normalized)
+        if not (
+            normalized in update_service.VPS_PATCH_ALLOWED_FILES
+            or normalized.startswith(update_service.VPS_PATCH_ALLOWED_ROOTS)
+        ):
+            raise ValueError(f"path is outside updater patch allowlist: {normalized}")
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     work_root = Path(args.work_root).resolve()
@@ -328,6 +345,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     contract = load_contract(root)
     base = _base_from_args(args)
     classification = classify_release(base, target, root=root)
+    validate_patch_pipeline(classification)
     gates = [] if args.skip_gates else run_prepare_gates(root)
     candidate_root = work_root / "candidates" / target
     if candidate_root.exists():

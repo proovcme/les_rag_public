@@ -12,6 +12,7 @@ from tools.model_connection_live_acceptance import (
     exercise_connection,
     parse_args,
 )
+from tools import model_connection_live_acceptance as live_acceptance
 
 
 def _case(name: str, marker: str) -> dict[str, object]:
@@ -176,3 +177,22 @@ def test_cli_accepts_exact_revisions_and_no_plaintext_secret_argument(tmp_path) 
     assert config.revision_9b == "conn:qwen9:r2"
     assert config.revision_35b == "conn:qwen35:r4"
     assert config.out == tmp_path / "receipt.json"
+
+
+def test_runtime_identity_accepts_aligned_gitless_install_deployed_commit(monkeypatch) -> None:
+    monkeypatch.setattr(
+        live_acceptance,
+        "version_info",
+        lambda: {
+            "git_commit_full": "unknown",
+            "deployed_commit": "d" * 40,
+            "build_number": 670,
+            "repo_dirty": False,
+            "runtime_alignment": {"status": "aligned"},
+        },
+    )
+
+    assert live_acceptance._runtime_identity() == {
+        "source_commit": "d" * 40,
+        "build_number": 670,
+    }

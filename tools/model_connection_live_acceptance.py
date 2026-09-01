@@ -270,7 +270,13 @@ def _runtime_identity() -> dict[str, Any]:
     alignment = identity.get("runtime_alignment")
     if not isinstance(alignment, Mapping) or alignment.get("status") != "aligned":
         raise ValueError("LIVE_RUNTIME_NOT_ALIGNED")
-    commit = str(identity.get("git_commit_full") or "").strip().lower()
+    source_commit = str(identity.get("git_commit_full") or "").strip().lower()
+    deployed_commit = str(identity.get("deployed_commit") or "").strip().lower()
+    commit = (
+        source_commit
+        if _FULL_COMMIT_RE.fullmatch(source_commit)
+        else deployed_commit
+    )
     if not _FULL_COMMIT_RE.fullmatch(commit):
         raise ValueError("SOURCE_COMMIT_INVALID")
     build = identity.get("build_number")

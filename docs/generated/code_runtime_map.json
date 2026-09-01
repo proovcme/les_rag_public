@@ -2971,7 +2971,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 2825,
+      "lines": 2819,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6917,10 +6917,11 @@
         "tests/test_update_service.py",
         "tests/test_vps_patch.py",
         "tools/mac_update.py",
+        "tools/release_orchestrator.py",
         "tools/vps_patch.py",
         "tools/windows_clean_install.py"
       ],
-      "lines": 1068,
+      "lines": 1072,
       "module": "proxy.services.update_service",
       "outbound": [
         "proxy/__init__.py",
@@ -8873,7 +8874,7 @@
     },
     {
       "inbound": [],
-      "lines": 1741,
+      "lines": 1799,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10419,7 +10420,7 @@
     },
     {
       "inbound": [],
-      "lines": 776,
+      "lines": 804,
       "module": "tests.test_live_workbook_acceptance_contract",
       "outbound": [
         "proxy/routers/artifacts.py",
@@ -10754,7 +10755,7 @@
     },
     {
       "inbound": [],
-      "lines": 178,
+      "lines": 198,
       "module": "tests.test_model_connection_live_acceptance",
       "outbound": [
         "proxy/services/openai_compatible_transport_service.py",
@@ -11859,7 +11860,7 @@
     },
     {
       "inbound": [],
-      "lines": 296,
+      "lines": 309,
       "module": "tests.test_release_classification",
       "outbound": [
         "tools/release_classification.py"
@@ -11870,7 +11871,7 @@
     },
     {
       "inbound": [],
-      "lines": 614,
+      "lines": 648,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -13451,10 +13452,11 @@
     },
     {
       "inbound": [],
-      "lines": 1086,
+      "lines": 1099,
       "module": "tests.test_vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
+        "tools/release_classification.py",
         "tools/vps_patch.py",
         "tools/vps_patch_apply.py"
       ],
@@ -14865,7 +14867,7 @@
         "proxy/services/canonical_promotion_service.py",
         "tests/test_live_workbook_acceptance_contract.py"
       ],
-      "lines": 693,
+      "lines": 696,
       "module": "tools.live_workbook_acceptance",
       "outbound": [
         "tools/__init__.py"
@@ -14934,7 +14936,7 @@
       "inbound": [
         "tests/test_model_connection_live_acceptance.py"
       ],
-      "lines": 391,
+      "lines": 397,
       "module": "tools.model_connection_live_acceptance",
       "outbound": [
         "proxy/config.py",
@@ -15347,11 +15349,12 @@
       "inbound": [
         "tests/test_release_classification.py",
         "tests/test_release_orchestrator.py",
+        "tests/test_vps_patch.py",
         "tools/github_patch_release.py",
         "tools/release_orchestrator.py",
         "tools/vps_patch.py"
       ],
-      "lines": 283,
+      "lines": 284,
       "module": "tools.release_classification",
       "outbound": [
         "tools/__init__.py"
@@ -15364,14 +15367,17 @@
       "inbound": [
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 962,
+      "lines": 980,
       "module": "tools.release_orchestrator",
       "outbound": [
+        "proxy/services/update_service.py",
         "tools/__init__.py",
         "tools/github_patch_release.py",
         "tools/patch_release.py",
         "tools/release_classification.py",
         "tools/release_receipt.py",
+        "tools/vps_patch.py",
+        "tools/vps_patch_apply.py",
         "tools/windows_release_acceptance.py"
       ],
       "path": "tools/release_orchestrator.py",
@@ -15892,9 +15898,10 @@
         "tests/test_github_patch_release.py",
         "tests/test_vps_patch.py",
         "tools/github_patch_release.py",
+        "tools/release_orchestrator.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 796,
+      "lines": 797,
       "module": "tools.vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -15909,9 +15916,10 @@
       "inbound": [
         "tests/test_vps_patch.py",
         "tests/test_windows_application_update.py",
+        "tools/release_orchestrator.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 977,
+      "lines": 978,
       "module": "tools.vps_patch_apply",
       "outbound": [
         "tools/__init__.py",
@@ -18025,7 +18033,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 299032
+    "tracked_python_lines": 299226
   },
   "warnings": []
 }

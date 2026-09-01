@@ -134,6 +134,40 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
     assert [item["name"] for item in result["artifacts"]] == ["les-patch.zip"]
 
 
+def test_prepare_rejects_patch_allowlist_drift_before_expensive_gates(monkeypatch, tmp_path):
+    args = _args(tmp_path)
+    args.full_feed.write_text(
+        json.dumps({"target_commit": BASE, "version": "0.30.0"}),
+        encoding="utf-8",
+    )
+    drifted = ReleaseClassification(
+        kind="patch",
+        runtime_files=("tools/not-approved.py",),
+        triggers=(),
+        ignored_version_surfaces=(),
+    )
+    monkeypatch.setattr(release_orchestrator, "require_release_source", lambda **_kwargs: TARGET)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "resolve_commit",
+        lambda _root, value="HEAD": BASE if value == BASE else TARGET,
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "load_contract",
+        lambda _root: {"product_version": "0.30.31", "build_number": 671},
+    )
+    monkeypatch.setattr(release_orchestrator, "classify_release", lambda *_a, **_k: drifted)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "run_prepare_gates",
+        lambda _root: pytest.fail("expensive gates must not run before patch preflight"),
+    )
+
+    with pytest.raises(ValueError, match="allowlist"):
+        release_orchestrator.prepare(args)
+
+
 def test_patch_candidate_prints_builder_progress(monkeypatch, tmp_path, capsys):
     output = tmp_path / "candidate"
     runtime = tmp_path / "installed-runtime"

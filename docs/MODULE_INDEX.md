@@ -1,5 +1,17 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.31 rejected workbook recovery:** generic model-owned tool loop не
+> форсирует workbook как первый/единственный шаг и не считает отклонённый draft
+> завершением исследования. Tool result возвращается той же модели; она может
+> сама выполнить RAG-поиск и повторить сборку, пока не создан artifact, не выбран
+> model stop или не исчерпан технический deadline. Gitless live acceptance
+> использует verified `deployed_commit` установленного aligned runtime.
+> Точки входа: `proxy/services/chat_evidence_application_service.py`,
+> `tools/{model_connection_live_acceptance,live_workbook_acceptance}.py`,
+> `tests/{test_chat_evidence_application_service,
+> test_model_connection_live_acceptance,
+> test_live_workbook_acceptance_contract}.py`. Статус док↔код: ✅.
+
 > **0.30.30 model → RAG → result:** role-bound estimator scope добавляет только
 > typed system datasets `smeta`; первый и последующие запросы `search_sources`
 > формулирует сама active answer model. Вложение входит в evidence первого

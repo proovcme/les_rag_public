@@ -468,6 +468,34 @@ def test_contract_exercise_rejects_unverified_runtime_identity(tmp_path, field, 
         exercise_contract(config, client=client)
 
 
+def test_contract_exercise_accepts_aligned_gitless_install_deployed_commit(tmp_path):
+    source = tmp_path / "user-owned.xlsx"
+    source.write_bytes(b"source")
+    client = _FakeHttpClient()
+    original_request = client.request
+
+    def installed_version(method, url, **kwargs):
+        response = original_request(method, url, **kwargs)
+        if url.endswith("/api/version"):
+            response._payload["git_commit_full"] = "unknown"
+            response._payload["deployed_commit"] = "d" * 40
+        return response
+
+    client.request = installed_version
+    config = AcceptanceConfig(
+        attachment=source,
+        base_url="http://127.0.0.1:8050",
+        profile_revision_id="profile:7",
+        model_preset="qwen-9b",
+        out=tmp_path / "receipt.json",
+        api_key=None,
+    )
+
+    report = exercise_contract(config, client=client)
+
+    assert report["runtime"]["source_commit_full"] == "d" * 40
+
+
 def test_asgi_contract_exercises_guarded_multipart_sse_and_artifact_boundaries(monkeypatch, tmp_path):
     """Hermetic HTTP boundary evidence, not a model-quality acceptance.
 

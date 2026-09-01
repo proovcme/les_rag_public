@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from proxy.services import update_service
-from tools import vps_patch
+from tools import release_classification, vps_patch
 from tools import vps_patch_apply
 
 
@@ -231,6 +231,19 @@ def test_patch_allowlist_accepts_shared_console_free_runtime_launcher():
 def test_patch_allowlist_accepts_self_hosted_local_update_builder():
     assert vps_patch.normalize_path("tools/vps_patch.py") == "tools/vps_patch.py"
     assert "tools/vps_patch.py" in vps_patch_apply.ALLOWED_FILES
+
+
+def test_patch_allowlists_accept_installed_workbook_acceptance_tool():
+    path = "tools/live_workbook_acceptance.py"
+    assert vps_patch.normalize_path(path) == path
+    assert path in vps_patch_apply.ALLOWED_FILES
+    assert path in update_service.VPS_PATCH_ALLOWED_FILES
+
+
+def test_patch_allowlists_are_synchronized_across_build_and_apply():
+    assert release_classification.PATCH_ALLOWED_FILES <= vps_patch.ALLOWED_FILES
+    assert vps_patch.ALLOWED_FILES == vps_patch_apply.ALLOWED_FILES
+    assert vps_patch.ALLOWED_FILES == update_service.VPS_PATCH_ALLOWED_FILES
 
 
 def test_patch_allowlist_accepts_qdrant_visualizer_content():

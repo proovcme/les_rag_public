@@ -4,22 +4,39 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-08-31)
+## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.30
-номер сборки:              670
-версия Tauri/NSIS:         5.1.670
-ветка разработки:          codex/model-rag-result от a297872f (локальный 0.30.29)
-dev implementation:       0.30.30 model-authored RAG → model-owned workbook result; candidate до live acceptance
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.29 / build 669 / commit a297872f
+версия продукта (SemVer):  0.30.31
+номер сборки:              671
+версия Tauri/NSIS:         5.1.671
+ветка разработки:          codex/model-rag-result
+dev implementation:       0.30.31 rejected workbook → model retry; gitless live acceptance repair
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.30 / build 670 / commit a133a000
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.30 cumulative patch после Legion acceptance
-рантайм /api/version:      Legion 0.30.29 / build 669 / desktop 5.1.669 / commit a297872f; aligned
+следующий выпуск:          0.30.31 cumulative patch после реального PDF → Qwen 9B → RAG → XLSX
+рантайм /api/version:      Legion 0.30.30 / build 670 / desktop 5.1.670 / commit a133a000; aligned
 ```
 
-> **0.30.30 / build 670 model → RAG → result (release candidate):** профиль
+> **0.30.31 / build 671 workbook retry + truthful installed acceptance
+> (release candidate):** общий model-owned tool loop больше не принуждает модель
+> немедленно выбирать один workbook-вызов и не завершает исследование после
+> отклонённого workbook result. Отказ возвращается той же модели как tool
+> evidence; в пределах общего deadline/call budget она может сформулировать
+> собственные `search_sources.q`, получить RAG-карточки и повторить сборку.
+> Регрессия воспроизводит именно live-цепочку: ошибочный `build_vor_workbook` →
+> `rejected` → два model-authored RAG-запроса → `build_lsr_workbook` → artifact.
+> Live acceptance tools теперь принимают полный `deployed_commit` у aligned
+> gitless Windows runtime, а не требуют несуществующий `.git`. Публичный выпуск
+> допустим только после реального пятистрочного PDF → Qwen 9B → RAG → XLSX.
+> `live_workbook_acceptance.py` явно входит в Windows runtime manifest и разрешён
+> всеми слоями lightweight patch (classification, builder, updater, detached
+> apply); один regression-контракт держит их согласованными. Его исправление не
+> требует полного NSIS и повторной упаковки неизменной сметной baseline.
+
+> **0.30.30 / build 670 model → RAG → result (установлен на Legion, публично не
+> выпущен):** профиль
 > «Сметчик» явно подключает только typed system datasets модуля `smeta` и
 > показывает модели четыре инструмента: `search_sources`, `read_source`,
 > `build_lsr_workbook`, `build_vor_workbook`. Код больше не запускает первичный
@@ -31,8 +48,10 @@ dev implementation:       0.30.30 model-authored RAG → model-owned workbook re
 > сохраняются; лимит числа видимых tool definitions больше не обрезает пакет
 > поисковых запросов. Сквозная offline-приёмка доказывает два exact model-authored
 > query, отсутствие исходной команды в retrieval и неизменные workbook decisions.
-> Установленный Legion и публичные refs этой веткой не менялись; live Qwen 9B acceptance ещё
-> обязательна перед выпуском.
+> Установщик, smoke, rollback и повторная установка прошли, но реальная Qwen 9B
+> выбрала навязанный generic prompt-ом `build_vor_workbook`; результат был
+> отклонён, а цикл ошибочно остановился до RAG. Поэтому 0.30.30 не публикуется и
+> заменяется 0.30.31.
 
 > **0.30.29 / build 669 workbook attachment handoff repair (локально на Legion,
 > публично не выпущен):**

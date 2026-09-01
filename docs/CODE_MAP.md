@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.31 model retry after rejected workbook:** общий selector prompt не
+> требует немедленного единственного workbook-вызова. Если workbook executor
+> возвращает `rejected`, его безопасная проекция входит в следующий model call;
+> цикл продолжается до успешного artifact, явного model stop или технического
+> deadline. Модель может после отказа сама обратиться к `search_sources` и затем
+> повторить `build_lsr_workbook`. `tools/{model_connection_live_acceptance,
+> live_workbook_acceptance}.py` связывают gitless установленный runtime с полным
+> `deployed_commit`, если `/api/version` одновременно подтверждает clean/aligned.
+
 > **0.30.29 workbook attachment handoff repair:** обязательный selector request
 > снова содержит факт server-owned attachment и его временный ID. Это переносит
 > рабочий контракт PR `dbd4123a` в новый ContextGovernor/tool-loop: модель сама

@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 961 |
-| Строк Python | 299032 |
+| Строк Python | 299226 |
 | PRODUCT_REACHABLE | 337 |
 | RUNTIME_SUPPORT | 8 |
 | TEST_OR_TOOL_ONLY | 615 |
@@ -41,7 +41,7 @@
 | proxy/routers/datasets.py | 3776 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
-| proxy/services/chat_evidence_application_service.py | 2825 | 7 |
+| proxy/services/chat_evidence_application_service.py | 2819 | 7 |
 | proxy/services/smeta_chat_adapter_service.py | 2437 | 14 |
 | proxy/services/dataset_memory_service.py | 2288 | 7 |
 | mlx_host.py | 2216 | 2 |
@@ -61,7 +61,7 @@
 | backend/document_router.py | 1124 | 6 |
 | proxy/routers/rim.py | 1122 | 2 |
 | tools/build_rag_contract_sibling.py | 1114 | 4 |
-| proxy/services/update_service.py | 1068 | 7 |
+| proxy/services/update_service.py | 1072 | 8 |
 
 ## Сметный монолит: фактические потребители
 

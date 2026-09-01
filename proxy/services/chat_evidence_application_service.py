@@ -1944,7 +1944,6 @@ async def _execute_chat_evidence_application(
                         selected_calls: list[dict[str, Any]] = []
                         selector_usage: list[dict[str, Any]] = []
                         research_rounds: list[dict[str, Any]] = []
-                        workbook_call_attempted = False
                         research_deadline_seconds = max(
                             1.0,
                             _env_float("LES_CHAT_RESEARCH_DEADLINE_SECONDS", 120.0),
@@ -1968,7 +1967,6 @@ async def _execute_chat_evidence_application(
                                     profile_system_prompt(profile_snapshot, strict=False),
                                     "\n\nТы управляешь коротким исследовательским чтением LES. ",
                                     "Выбирай read-only инструменты, чтобы закрыть конкретный пробел evidence. ",
-                                    "Если оператор просит собрать XLSX и доступен workbook-инструмент, выбери ровно один такой draft-вызов. ",
                                     "Если оператор явно просит посмотреть глазами страницу или лист PDF, ",
                                     "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; ",
                                     "текстовый read_pdf_source не заменяет просмотр пикселей. ",
@@ -2084,7 +2082,6 @@ async def _execute_chat_evidence_application(
                                     and canonical_execution_mode is CanonicalRouteMode.ACTIVE
                                     and workbook_tool_executor is not None
                                 ):
-                                    workbook_call_attempted = True
                                     async def workbook_progress(event: dict[str, Any]) -> None:
                                         if token_sink is not None:
                                             await token_sink({"event": "tool_progress", "data": event})
@@ -2173,10 +2170,7 @@ async def _execute_chat_evidence_application(
                                     workbook_chat_meta = harvested
                                     stop_reason = "workbook_complete"
                                     break
-                                if workbook_call_attempted:
-                                    stop_reason = "workbook_attempted"
-                                    break
-                            if workbook_chat_meta or workbook_call_attempted:
+                            if workbook_chat_meta:
                                 break
                         tool_context = _format_tool_results_for_model(tool_results_for_model)
                         retrieval_trace["tool_loop"] = {
