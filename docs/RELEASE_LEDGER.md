@@ -11,12 +11,12 @@
 номер сборки:              682
 версия Tauri/NSIS:         5.1.682
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.42 model→RAG result-integrity hotfix
-задеплоено на рантайм:     Legion 0.30.41 / build 681; 0.30.42 acceptance pending
+dev implementation:       0.30.42 model→RAG + bounded web-search hotfixes
+задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.42 soft hotfix
-рантайм /api/version:      Legion 0.30.41 / build 681 перед установкой кандидата
+следующий выпуск:          консолидация только с сохранением рабочего baseline 0.30.42
+рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
 
 > **0.30.42 / build 682 model→RAG result-integrity hotfix:** обычный RAG и
@@ -41,6 +41,14 @@ dev implementation:       0.30.42 model→RAG result-integrity hotfix
 > проверяет native dense+sparse RRF и больше не зависит от legacy lexical
 > sidecar. Release orchestrator теперь разрешает attested full-feed и при явно
 > переданном patch base.
+>
+> **Рабочий baseline после двух технических web-search hotfixes:** Legion
+> фактически работает на exact commit `ab5146b2` (`0.30.42`, build `682`, desktop
+> `5.1.682`). Первый hotfix `c8b2967d` восстановил bounded web research в
+> Agent mode; второй `ab5146b2` вернул модели сами результаты поиска
+> вместо `TOOL_RESULT_BUDGET_EXCEEDED`. Это не release candidate и не одна лишь
+> зелёная проверка, а сохраняемый рабочий пользовательский baseline.
+> Любая последующая консолидация обязана не ухудшить этот путь.
 
 > **0.30.41 / build 681 installed contour compatibility hotfix:** effective
 > snapshot старого пользовательского estimator-профиля получает обязательный
