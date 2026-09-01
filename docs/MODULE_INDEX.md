@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.37 installed-smoke environment repair:** full-release smoke перед
+> запуском установленного `bootstrap.ps1` восстанавливает совместимый с Windows
+> PowerShell 5.1 `PSModulePath` и удаляет унаследованные dev `VIRTUAL_ENV/UV_*`.
+> Clean install больше не объявляет исправный bundled runtime повреждённым из-за
+> отсутствующего `Get-FileHash`. Точки: `tools/windows_release_smoke.ps1`,
+> `tests/test_installer_windows.py`. Статус док↔код: ✅.
+
 > **0.30.36 full-installer staging repair:** Windows runtime manifest включает
 > корневой `README.md`, который объявлен package metadata в `pyproject.toml` и
 > необходим локальному `uv sync --locked` при сборке offline cache. Ошибка

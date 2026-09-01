@@ -264,6 +264,18 @@ def test_windows_release_smoke_executes_installed_runtime_and_real_rrf():
     assert "bootstrap PowerShell stayed alive after terminal ready" in text
 
 
+def test_windows_release_smoke_resets_incompatible_powershell_module_path():
+    smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
+    text = smoke.read_text(encoding="utf-8-sig")
+
+    assert "function Set-WindowsPowerShellModulePath" in text
+    assert '"WindowsPowerShell\\Modules"' in text
+    assert '"system32\\WindowsPowerShell\\v1.0\\Modules"' in text
+    assert text.index("Set-WindowsPowerShellModulePath") < text.index(
+        'Start-Process -FilePath "powershell.exe"'
+    )
+
+
 def test_windows_release_smoke_requires_two_consecutive_offline_bootstraps():
     smoke = build_windows_installer.ROOT / "tools" / "windows_release_smoke.ps1"
     text = smoke.read_text(encoding="utf-8-sig")

@@ -60,6 +60,12 @@ runtime до `uv sync --locked`. При отказе локального prepar
 возвращает ограниченный хвост stdout/stderr, чтобы ошибка сборки не сводилась к
 одному exit code.
 
+Installed clean-smoke запускает Windows bootstrap только с системным
+`WindowsPowerShell\v1.0\Modules` в `PSModulePath` и без унаследованных
+`VIRTUAL_ENV`, `UV_PROJECT_ENVIRONMENT`, `UV_CACHE_DIR`. Операторский PowerShell
+7/Codex environment не должен лишать дочерний Windows PowerShell стандартных
+cmdlet вроде `Get-FileHash` или направлять installed bootstrap в dev-venv.
+
 Построитель cumulative patch читает Git history пакетно и печатает
 ограниченный прогресс по ancestry и manifest-файлам. Результат автоматического
 public-main sync (`before`, `after`, `fast_forwarded`) записывается в persisted

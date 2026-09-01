@@ -37,6 +37,20 @@ $smokeCollection = "les_release_smoke_$([guid]::NewGuid().ToString('N'))"
 $env:RAG_COLLECTION_NAME = $smokeCollection
 $env:LES_RELEASE_SMOKE = "1"
 
+function Set-WindowsPowerShellModulePath {
+  foreach ($name in @("VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT", "UV_CACHE_DIR")) {
+    Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+  }
+  $modulePaths = @(
+    (Join-Path $env:USERPROFILE "Documents\WindowsPowerShell\Modules"),
+    (Join-Path $env:ProgramFiles "WindowsPowerShell\Modules"),
+    (Join-Path $env:SystemRoot "system32\WindowsPowerShell\v1.0\Modules")
+  )
+  $env:PSModulePath = $modulePaths -join [System.IO.Path]::PathSeparator
+}
+
+Set-WindowsPowerShellModulePath
+
 function Invoke-BootstrapPass([string]$PassName) {
   Remove-Item $StatusPath, $RuntimeStatePath -Force -ErrorAction SilentlyContinue
   $process = Start-Process -FilePath "powershell.exe" `

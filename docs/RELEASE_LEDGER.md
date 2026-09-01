@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.36
-номер сборки:              676
-версия Tauri/NSIS:         5.1.676
+версия продукта (SemVer):  0.30.37
+номер сборки:              677
+версия Tauri/NSIS:         5.1.677
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.36 model-owned RAG/XLSX + full-installer staging repair
+dev implementation:       0.30.37 model-owned RAG/XLSX + installed-smoke environment repair
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.36 full recovery release; 0.30.35 full prepare остановлен до candidate
+следующий выпуск:          0.30.37 full recovery release; 0.30.36 NSIS built, installed smoke fail-closed stopped
 рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
 ```
+
+> **0.30.37 / build 677 installed-smoke environment repair (release candidate):**
+> 0.30.36 успешно собрал offline runtime, прошёл prebundle smoke, Rust/Tauri и
+> создал NSIS, но installed clean-smoke унаследовал PowerShell 7/Codex
+> `PSModulePath`; дочерний Windows PowerShell 5.1 не нашёл стандартный
+> `Get-FileHash` и fail-closed остановил выпуск. Installed smoke теперь перед
+> обоими bootstrap-проходами восстанавливает WindowsPowerShell module paths и
+> удаляет dev `VIRTUAL_ENV/UV_*`. Dependency cache 420,9 МБ сохраняется между
+> попытками. Production Legion и public release отказом не менялись.
 
 > **0.30.36 / build 676 full-installer staging repair (release candidate):**
 > первый локальный full prepare 0.30.35 после зелёных gates обнаружил, что

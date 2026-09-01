@@ -10168,7 +10168,7 @@
     },
     {
       "inbound": [],
-      "lines": 603,
+      "lines": 615,
       "module": "tests.test_installer_windows",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -18037,7 +18037,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 300860
+    "tracked_python_lines": 300872
   },
   "warnings": []
 }

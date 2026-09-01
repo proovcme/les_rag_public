@@ -1,5 +1,18 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-01 — Clean-install smoke унаследовал несовместимый PSModulePath
+
+- **Симптом:** Tauri и NSIS успешно создали `ЛЕС_5.1.676_x64-setup.exe`, clean
+  install распаковал полный runtime, но первый bootstrap завершился как
+  `bundled_runtime_unavailable`: Windows PowerShell не находил `Get-FileHash`.
+- **Причина:** release-run был запущен из PowerShell 7/Codex environment;
+  `windows_release_smoke.ps1` передал дочернему `powershell.exe` несовместимый
+  `PSModulePath`. Быстрый prebundle gate уже нормализовал окружение, installed
+  smoke — ещё нет.
+- **Исправление:** installed smoke применяет тот же Windows PowerShell 5.1
+  module path и удаляет dev `VIRTUAL_ENV/UV_*` перед обоими bootstrap-проходами.
+  Установщик, bundled cache и пользовательские данные не были причиной отказа.
+
 ## 2026-09-01 — Полный Windows runtime не содержал package README
 
 - **Симптом:** все release gates были зелёными, но локальный полный NSIS prepare
