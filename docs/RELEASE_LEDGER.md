@@ -34,6 +34,9 @@ dev implementation:       0.30.42 model→RAG result-integrity hotfix
 > алфавитно сохранённого user-profile allowlist, а существующий call budget
 > теперь ограничивает весь research loop, а не каждый его круг. Код не выбирает
 > поисковые запросы и не переписывает итог модели.
+> Один web-вызов механически ограничен четырьмя полными результатами: прежние
+> 10 результатов переполняли собственный trusted-envelope и модель получала
+> только `TOOL_RESULT_BUDGET_EXCEEDED` вместо найденных ссылок.
 > capability snapshot обновляется при первом чате без рестарта. Общий health
 > проверяет native dense+sparse RRF и больше не зависит от legacy lexical
 > sidecar. Release orchestrator теперь разрешает attested full-feed и при явно

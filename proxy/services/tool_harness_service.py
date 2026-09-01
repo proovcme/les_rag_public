@@ -1018,7 +1018,10 @@ def _tool_web_search(args: dict[str, Any]) -> dict[str, Any]:
     from proxy.services.web_search_service import search_web
 
     query = str(args.get("q") or "").strip()
-    limit = _int_arg(args.get("limit"), 8, min_value=1, max_value=12)
+    # The trusted result envelope repeats result/source provenance. Four public
+    # hits keep that complete envelope inside the registered 7k character
+    # budget even when a model requests a larger page.
+    limit = _int_arg(args.get("limit"), 4, min_value=1, max_value=4)
     payload = search_web(query, limit=limit)
     rows = list(payload.get("results") or [])
     sources = [

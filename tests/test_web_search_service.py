@@ -1,4 +1,5 @@
 from proxy.services.tool_harness_service import ToolHarness
+from proxy.services import web_search_service
 from proxy.services.web_search_service import parse_search_results
 
 
@@ -33,3 +34,33 @@ def test_agent_shortlist_exposes_web_and_read_only_filesystem_tools():
     web = next(tool for tool in registry["tools"] if tool["name"] == "web_search")
     assert web["side_effects"] == "none"
     assert web["approval_required"] is False
+
+
+def test_web_tool_bounds_model_requested_results_to_its_result_budget(monkeypatch):
+    observed = {}
+
+    def fake_search(query, *, limit):
+        observed.update(query=query, limit=limit)
+        return {
+            "status": "ok",
+            "query": query,
+            "results": [
+                {
+                    "title": f"Источник {index}",
+                    "snippet": "Цена указана на странице продавца.",
+                    "url": f"https://example.org/{index}",
+                    "domain": "example.org",
+                }
+                for index in range(limit)
+            ],
+            "missing": [],
+        }
+
+    monkeypatch.setattr(web_search_service, "search_web", fake_search)
+
+    result = ToolHarness().call("web_search", {"q": "цена цемента", "limit": 10})
+
+    assert observed == {"query": "цена цемента", "limit": 4}
+    assert result["status"] == "ok"
+    assert result["execution"]["code"] == "TOOL_OK"
+    assert len(result["result"]["results"]) == 4

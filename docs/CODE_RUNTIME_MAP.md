@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 961 |
-| Строк Python | 301885 |
+| Строк Python | 301919 |
 | PRODUCT_REACHABLE | 337 |
 | RUNTIME_SUPPORT | 9 |
 | TEST_OR_TOOL_ONLY | 614 |
@@ -54,7 +54,7 @@
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | sovushka/pages/diag.py | 1416 | 2 |
 | proxy/services/retrieval_service.py | 1359 | 10 |
-| proxy/services/tool_harness_service.py | 1342 | 12 |
+| proxy/services/tool_harness_service.py | 1345 | 12 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |

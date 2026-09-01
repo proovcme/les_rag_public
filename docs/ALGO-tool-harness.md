@@ -160,7 +160,9 @@ Filesystem read-only и whitelist-first. Базовые корни: `docs`,
 Web:
 
 - `web_search` — bounded поиск публичных страниц через существующий DuckDuckGo HTML adapter;
-  возвращает title/snippet/direct URL и никогда не объявляет snippet доказанным фактом.
+  один вызов возвращает не более четырёх полных title/snippet/direct URL, чтобы
+  provenance-envelope целиком помещался в свой result budget; tool никогда не
+  объявляет snippet доказанным фактом.
 
 Режим чата «Агент» явно включает model-owned research loop. Он не получает shell,
 desktop-control, запись файлов или произвольные HTTP-действия: только зарегистрированные
