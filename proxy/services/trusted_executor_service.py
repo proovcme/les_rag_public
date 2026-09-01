@@ -472,7 +472,6 @@ class TrustedExecutor:
                 request,
                 "error",
                 "TOOL_HANDLER_ERROR",
-                {"error_type": type(exc).__name__},
             )
         if not isinstance(raw, Mapping):
             self._mark_ambiguous(request, fingerprint, durable_claimed)

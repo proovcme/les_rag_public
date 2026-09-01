@@ -74,7 +74,7 @@ from proxy.services.project_summary_service import (
 from proxy.services.prompt_registry_service import build_mode_system_prompt
 from proxy.services.chat_profile_service import effective_retrieval_policy
 from proxy.services.retrieval_service import required_reranker_policy, retrieve_chat_chunks
-from proxy.services.runtime_admission import generation_semaphore
+from proxy.services.runtime_admission import acquire_generation_slot, generation_semaphore
 from proxy.services.saferag_service import (
     build_validation_context,
     concentrate_sources,
@@ -2175,8 +2175,6 @@ async def _execute_chat_evidence_application(
 
     # Облако не держит локальный Metal-слот: отдельный пул (LES_CLOUD_LLM_CONCURRENCY).
     gen_semaphore = generation_semaphore(state.llm_semaphore)
-    if gen_semaphore._value == 0:
-        raise HTTPException(429, "Сервер занят — идёт генерация, попробуй через несколько секунд")
 
     t_gen_start = time.time()
     t_llm = 0.0  # W0.1: чистое время LLM-вызовов (включая загрузку модели на стороне MLX)
@@ -2269,7 +2267,7 @@ async def _execute_chat_evidence_application(
         ),
     )
     selector_source_map = answer_source_map
-    async with gen_semaphore:
+    async with acquire_generation_slot(gen_semaphore, timeout_seconds=45.0):
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
                 answer = ""

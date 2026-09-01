@@ -108,7 +108,12 @@ from proxy.services.llm_transport_profile_service import (
 )
 from proxy.services.query_router import route_query
 from proxy.services.retrieval_service import resolve_dataset_ids, retrieve_chat_chunks
-from proxy.services.runtime_admission import count_active_jobs, evaluate_chat_admission, generation_semaphore
+from proxy.services.runtime_admission import (
+    GenerationSlotTimeout,
+    count_active_jobs,
+    evaluate_chat_admission,
+)
+from proxy.services.public_error_service import public_error_payload
 from proxy.services.runtime_dispatcher import RuntimeDispatcher
 from proxy.services.smeta_artifact_service import (
     build_norm_candidate_artifact_from_lookup,
@@ -568,27 +573,54 @@ def _runtime_from_provider_config(config: ChatProviderConfig) -> LlmRuntime:
 
 async def _run_chat_with_provider(req: ChatRequest, token_sink=None):
     """Bind a provider to this asyncio context only, then reliably remove it."""
-    if req.provider_config is None:
-        if token_sink is None:
-            return await _run_chat(req)
-        return await _run_chat(req, token_sink=token_sink)
-    if os.getenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", "false").strip().lower() not in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }:
-        raise HTTPException(409, "SESSION_PROVIDER_OVERRIDE_DISABLED")
-    runtime = _runtime_from_provider_config(req.provider_config)
-    runtime_token = _REQUEST_LLM_RUNTIME.set(runtime)
-    consent_token = _REQUEST_CLOUD_CONSENT.set(is_cloud_provider(runtime.provider))
     try:
-        if token_sink is None:
-            return await _run_chat(req)
-        return await _run_chat(req, token_sink=token_sink)
-    finally:
-        _REQUEST_CLOUD_CONSENT.reset(consent_token)
-        _REQUEST_LLM_RUNTIME.reset(runtime_token)
+        if req.provider_config is None:
+            if token_sink is None:
+                return await _run_chat(req)
+            return await _run_chat(req, token_sink=token_sink)
+        if os.getenv("LES_DEMO_PROVIDER_OVERRIDE_ENABLED", "false").strip().lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            raise HTTPException(409, "SESSION_PROVIDER_OVERRIDE_DISABLED")
+        runtime = _runtime_from_provider_config(req.provider_config)
+        runtime_token = _REQUEST_LLM_RUNTIME.set(runtime)
+        consent_token = _REQUEST_CLOUD_CONSENT.set(is_cloud_provider(runtime.provider))
+        try:
+            if token_sink is None:
+                return await _run_chat(req)
+            return await _run_chat(req, token_sink=token_sink)
+        finally:
+            _REQUEST_CLOUD_CONSENT.reset(consent_token)
+            _REQUEST_LLM_RUNTIME.reset(runtime_token)
+    except GenerationSlotTimeout as error:
+        logger.info("[CHAT] model queue timeout: %s", error)
+        detail = public_error_payload(
+            status_code=429,
+            detail={
+                "code": error.code,
+                "detail": "Модель занята. Запрос дождался своей очереди, но время ожидания истекло.",
+            },
+        )
+        raise HTTPException(429, detail=detail) from error
+    except HTTPException as error:
+        detail = public_error_payload(status_code=error.status_code, detail=error.detail)
+        raise HTTPException(error.status_code, detail=detail, headers=error.headers) from error
+
+
+async def _run_chat_public(req: ChatRequest):
+    """Non-stream boundary: preserve diagnostics in logs, never in HTTP JSON."""
+
+    try:
+        return await _run_chat_with_provider(req)
+    except HTTPException:
+        raise
+    except Exception as error:
+        logger.exception("[CHAT] unexpected request failure")
+        detail = public_error_payload(status_code=500, detail=str(error))
+        raise HTTPException(500, detail=detail) from error
 
 
 def _idempotency_payload(req: ChatRequest) -> dict[str, Any]:
@@ -1876,7 +1908,7 @@ async def chat(
     """
     _require_candidate_acceptance(req, _user)
     if not idempotency_key:
-        return decorate_payload(await _run_chat_with_provider(req))
+        return decorate_payload(await _run_chat_public(req))
 
     from proxy.services.request_idempotency_service import (
         IdempotencyConflict,
@@ -1909,7 +1941,7 @@ async def chat(
         )
 
     try:
-        result = decorate_payload(await _run_chat_with_provider(req))
+        result = decorate_payload(await _run_chat_public(req))
     except Exception:
         await asyncio.to_thread(
             release,
@@ -2013,7 +2045,8 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
-                await queue.put({"event": "error", "data": {"status": he.status_code, "detail": he.detail}})
+                public = public_error_payload(status_code=he.status_code, detail=he.detail)
+                await queue.put({"event": "error", "data": {"status": he.status_code, **public}})
         except Exception as e:  # noqa: BLE001 — любую ошибку доносим клиенту как событие
             logger.error("[CHAT/STREAM] %s", e)
             recovered = _recoverable_stream_payload(req, stream_state, e)
@@ -2021,7 +2054,8 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
-                await queue.put({"event": "error", "data": {"status": 500, "detail": f"{type(e).__name__}: {e}"}})
+                public = public_error_payload(status_code=500, detail=str(e))
+                await queue.put({"event": "error", "data": {"status": 500, **public}})
         finally:
             await queue.put(None)
 
@@ -4036,12 +4070,10 @@ async def _run_chat(req: ChatRequest, token_sink=None):
 
     table_result = None
 
-    _gen_semaphore = generation_semaphore(state.llm_semaphore)
     admission = evaluate_chat_admission(
         current_mode=state.current_mode,
         metrics_cache=state.metrics_cache,
         active_jobs=count_active_jobs(state.job_service, state.job_tracker) + _active_dispatcher_reindex_jobs(state),
-        llm_available=getattr(_gen_semaphore, "_value", 1) > 0,
     )
     if not admission.allowed:
         raise HTTPException(status_code=admission.status_code, detail=admission.reason)

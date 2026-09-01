@@ -141,6 +141,8 @@ def _api_error(method: str, path: str, exc: Exception) -> None:
         try:
             body = exc.response.json()
             detail = body.get("detail", detail) if isinstance(body, dict) else str(body)
+            if isinstance(detail, dict):
+                detail = str(detail.get("detail") or detail.get("message") or "Ошибка API")
         except Exception:
             detail = exc.response.text or detail
     # W5.3: честное сообщение и индикатор «proxy недоступен» — отличаем сетевую

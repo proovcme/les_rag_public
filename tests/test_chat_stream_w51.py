@@ -139,7 +139,24 @@ async def test_chat_stream_emits_error_event_on_http_exception(monkeypatch):
     assert "event: error" in body
     err = json.loads(body.split("event: error\ndata: ", 1)[1].split("\n\n", 1)[0])
     assert err["status"] == 503
-    assert "недоступен" in err["detail"]
+    assert err["code"] == "MODEL_SERVICE_UNAVAILABLE"
+    assert "временно недоступен" in err["detail"]
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_never_exposes_unexpected_exception_text(monkeypatch):
+    async def boom(req, token_sink=None):
+        raise ValueError("password=do-not-leak")
+
+    monkeypatch.setattr(chat_router, "_run_chat", boom)
+    resp = await chat_stream(ChatRequest(question="привет"), _user=None)
+    body = await _drain(resp)
+    err = json.loads(body.split("event: error\ndata: ", 1)[1].split("\n\n", 1)[0])
+
+    assert err["status"] == 500
+    assert err["code"] == "INTERNAL_CHAT_ERROR"
+    assert "password" not in body
+    assert "ValueError" not in body
 
 
 @pytest.mark.asyncio

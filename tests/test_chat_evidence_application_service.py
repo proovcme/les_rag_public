@@ -1045,7 +1045,7 @@ def test_general_evidence_execution_is_outside_http_router():
     assert "async with gen_semaphore" not in router_source
     assert "retrieval_trace = retrieval.payload()" in evidence_source
     assert "build_retrieval_evidence_packet(" in evidence_source
-    assert "async with gen_semaphore" in evidence_source
+    assert "async with acquire_generation_slot" in evidence_source
 
 
 def test_evidence_boundary_is_typed_and_does_not_capture_namespaces():

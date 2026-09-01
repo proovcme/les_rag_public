@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -85,6 +86,38 @@ LOCAL_LLM_PROVIDERS = {
 # облачная генерация не должна блокировать чат «slots=0», кейс 2026-06-14).
 _CLOUD_LLM_CONCURRENCY = int(os.getenv("LES_CLOUD_LLM_CONCURRENCY", "4") or "4")
 cloud_llm_semaphore = asyncio.Semaphore(max(1, _CLOUD_LLM_CONCURRENCY))
+
+
+class GenerationSlotTimeout(TimeoutError):
+    """A request waited for model capacity but did not acquire a permit."""
+
+    code = "MODEL_QUEUE_TIMEOUT"
+
+
+@asynccontextmanager
+async def acquire_generation_slot(semaphore, *, timeout_seconds: float):
+    """Wait for one generation permit and release only a permit we acquired.
+
+    This deliberately uses the public semaphore API. Reading ``_value`` races
+    with the next waiter and used to reject valid concurrent chat requests.
+    """
+
+    acquired = False
+    try:
+        try:
+            await asyncio.wait_for(
+                semaphore.acquire(),
+                timeout=max(0.001, float(timeout_seconds)),
+            )
+        except TimeoutError as error:
+            raise GenerationSlotTimeout(
+                "model generation queue wait expired"
+            ) from error
+        acquired = True
+        yield
+    finally:
+        if acquired:
+            semaphore.release()
 
 
 def active_llm_provider() -> str:

@@ -1,10 +1,78 @@
+import asyncio
+
+import pytest
+
 from proxy.services.runtime_admission import (
+    GenerationSlotTimeout,
+    acquire_generation_slot,
     count_active_jobs,
     evaluate_chat_admission,
     evaluate_memory_pressure,
     memory_snapshot,
 )
 from proxy.services.resource_governor import current_runtime_profile, enter_chat_mode, enter_indexing_mode
+
+
+@pytest.mark.asyncio
+async def test_generation_slot_waits_for_current_request_then_acquires():
+    semaphore = asyncio.Semaphore(1)
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    second_entered = asyncio.Event()
+
+    async def first_request():
+        async with acquire_generation_slot(semaphore, timeout_seconds=0.5):
+            first_entered.set()
+            await release_first.wait()
+
+    async def second_request():
+        await first_entered.wait()
+        async with acquire_generation_slot(semaphore, timeout_seconds=0.5):
+            second_entered.set()
+
+    first = asyncio.create_task(first_request())
+    second = asyncio.create_task(second_request())
+    await first_entered.wait()
+    await asyncio.sleep(0)
+    assert second_entered.is_set() is False
+
+    release_first.set()
+    await asyncio.gather(first, second)
+    assert second_entered.is_set() is True
+    assert semaphore._value == 1
+
+
+@pytest.mark.asyncio
+async def test_generation_slot_timeout_does_not_release_unowned_permit():
+    semaphore = asyncio.Semaphore(1)
+    await semaphore.acquire()
+
+    with pytest.raises(GenerationSlotTimeout) as raised:
+        async with acquire_generation_slot(semaphore, timeout_seconds=0.01):
+            raise AssertionError("unreachable")
+
+    assert raised.value.code == "MODEL_QUEUE_TIMEOUT"
+    assert semaphore._value == 0
+    semaphore.release()
+
+
+@pytest.mark.asyncio
+async def test_generation_slot_cancellation_releases_owned_permit():
+    semaphore = asyncio.Semaphore(1)
+    entered = asyncio.Event()
+
+    async def request():
+        async with acquire_generation_slot(semaphore, timeout_seconds=0.5):
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(request())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert semaphore._value == 1
 
 
 def test_memory_snapshot_prefers_explicit_free_memory():
@@ -214,7 +282,13 @@ def test_chat_admission_blocks_active_jobs_and_busy_llm():
     assert "llm_generation_slots=0" in result.reason
 
 
-def test_memory_pressure_profiles_green_yellow_red_critical():
+def test_memory_pressure_profiles_green_yellow_red_critical(monkeypatch):
+    monkeypatch.setenv("LES_MEMORY_GREEN_MIN_FREE_GB", "12")
+    monkeypatch.setenv("LES_MEMORY_RED_MIN_FREE_GB", "8")
+    monkeypatch.setenv("LES_MEMORY_CRITICAL_MIN_FREE_GB", "6")
+    monkeypatch.setenv("LES_MEMORY_GREEN_MAX_SWAP_PCT", "40")
+    monkeypatch.setenv("LES_MEMORY_RED_MAX_SWAP_PCT", "60")
+    monkeypatch.setenv("LES_MEMORY_CRITICAL_MAX_SWAP_PCT", "75")
     assert evaluate_memory_pressure({"ram_free_gb": 16.0, "swap_pct": 5.0}).state == "GREEN"
     assert evaluate_memory_pressure({"ram_free_gb": 10.0, "swap_pct": 5.0}).state == "YELLOW"
     assert evaluate_memory_pressure({"ram_free_gb": 7.0, "swap_pct": 5.0}).state == "RED"
