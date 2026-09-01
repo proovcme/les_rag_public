@@ -59,6 +59,9 @@ engine.
 runtime до `uv sync --locked`. При отказе локального prepare оркестратор
 возвращает ограниченный хвост stdout/stderr, чтобы ошибка сборки не сводилась к
 одному exit code.
+Динамические Python entrypoints (`python -m ...`), включая фоновый FGIS
+supervisor, перечисляются в manifest явно: статический import-аудит их не видит,
+а installed smoke обязан доказать реальный старт процесса.
 
 Installed clean-smoke запускает Windows bootstrap только с системным
 `WindowsPowerShell\v1.0\Modules` в `PSModulePath` и без унаследованных

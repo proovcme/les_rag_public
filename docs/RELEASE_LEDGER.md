@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.38
-номер сборки:              678
-версия Tauri/NSIS:         5.1.678
+версия продукта (SemVer):  0.30.39
+номер сборки:              679
+версия Tauri/NSIS:         5.1.679
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.38 model-owned RAG/XLSX + bounded installed-smoke path
+dev implementation:       0.30.39 model-owned RAG/XLSX + complete installed FGIS runtime
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.38 full recovery release; 0.30.37 NSIS built, installed smoke fail-closed stopped
+следующий выпуск:          0.30.39 full recovery release; 0.30.38 NSIS/bootstrap passed, FGIS smoke fail-closed stopped
 рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
 ```
+
+> **0.30.39 / build 679 installed FGIS supervisor (release candidate):**
+> build 678 прошёл full NSIS, оба installed bootstrap, API/UI, process hygiene
+> и сметную baseline; FGIS operator smoke выявил отсутствующий динамический
+> `python -m tools.fgis_update_supervisor` в Windows runtime manifest. Supervisor
+> включён явно и удерживается regression. Production Legion и public release
+> отказом не менялись.
 
 > **0.30.38 / build 678 bounded installed-smoke path (release candidate):**
 > 0.30.37 успешно создал NSIS и прошёл установку, но offline editable build

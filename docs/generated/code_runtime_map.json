@@ -13086,7 +13086,7 @@
     },
     {
       "inbound": [],
-      "lines": 550,
+      "lines": 551,
       "module": "tests.test_tauri_desktop",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -14501,8 +14501,8 @@
         "tools/fgis_full_update.py"
       ],
       "path": "tools/fgis_update_supervisor.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
+      "status": "RUNTIME_SUPPORT",
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [],
@@ -18034,10 +18034,10 @@
     "parse_warnings": 0,
     "product_reachable": 337,
     "registered_api_routes": 330,
-    "runtime_support": 8,
-    "test_or_tool_only": 615,
+    "runtime_support": 9,
+    "test_or_tool_only": 614,
     "tracked_python_files": 961,
-    "tracked_python_lines": 300874
+    "tracked_python_lines": 300875
   },
   "warnings": []
 }

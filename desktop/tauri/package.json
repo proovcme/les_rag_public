@@ -1,7 +1,7 @@
 {
   "name": "les-desktop",
   "private": true,
-  "version": "0.30.38",
+  "version": "0.30.39",
   "scripts": {
     "tauri": "tauri"
   },

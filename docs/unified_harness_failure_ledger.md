@@ -1,5 +1,15 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-01 — Windows runtime потерял динамический FGIS supervisor
+
+- **Симптом:** build 678 прошёл оба installed bootstrap, API/UI, process hygiene
+  и сметную baseline, но FGIS smoke оставался в `starting` без живого процесса.
+- **Причина:** API запускает `python -m tools.fgis_update_supervisor`; этот
+  динамический entrypoint не виден import-аудиту и отсутствовал в Windows
+  runtime manifest, хотя вызываемый им `fgis_full_update.py` был включён.
+- **Исправление:** supervisor добавлен в staged runtime, а manifest regression
+  фиксирует его как обязательную установленную зависимость.
+
 ## 2026-09-01 — Editable-build clean smoke превысил Windows path limit
 
 - **Симптом:** NSIS `5.1.677` успешно собрался и установился в изолированный

@@ -25,6 +25,7 @@
     "tools/build_smeta_service_rag.py",
     "tools/build_smeta_structured_base.py",
     "tools/fgis_full_update.py",
+    "tools/fgis_update_supervisor.py",
     "tools/gesn_bulk_import.py",
     "tools/gesn_import.py",
     "tools/gesn_pdf_import.py",

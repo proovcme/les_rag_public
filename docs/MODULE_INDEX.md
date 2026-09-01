@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.39 installed FGIS supervisor:** Windows runtime manifest включает
+> динамическую `python -m tools.fgis_update_supervisor` зависимость штатной
+> кнопки обновления ФГИС/ФСНБ. Installed API больше не сообщает ложный
+> `started` перед немедленным отказом отсутствующего модуля. Точки:
+> `config/windows_runtime_manifest.json`, `tests/test_tauri_desktop.py`. Статус
+> док↔код: ✅.
+
 > **0.30.38 bounded Windows smoke path:** full-release clean-install сохраняет
 > изоляцию внутри checkout, но использует короткий `.codex_tmp/wrs/<sha12>-<id8>`.
 > Глубокие временные пути `uv`/Hatchling больше не достигают Windows

@@ -151,6 +151,7 @@ def test_windows_runtime_manifest_keeps_product_and_excludes_repository_only_fil
         ROOT / "tools" / "vps_patch_apply.py",
         ROOT / "tools" / "smeta_release_baseline.py",
         ROOT / "tools" / "live_workbook_acceptance.py",
+        ROOT / "tools" / "fgis_update_supervisor.py",
     ]
     excluded = [
         ROOT / "tests" / "test_chat_evidence_application_service.py",
