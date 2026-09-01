@@ -140,6 +140,7 @@ from proxy.services.model_research_tool_service import (
     retrieve_smeta_norm_cards,
 )
 from proxy.services.source_locator_service import evidence_counts, source_map_item
+from proxy.services.chat_evidence_manifest_service import build_evidence_manifest
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
@@ -3694,15 +3695,30 @@ async def _execute_chat_evidence_application(
                     found_count=found_count,
                 )
                 retrieval_trace["source_counts"] = source_counts
+                evidence_manifest = build_evidence_manifest(
+                    query=str(req.question or ""),
+                    scope={
+                        "dataset_ids": [str(item) for item in _dataset_ids],
+                        "dataset_filter": str(effective_dataset_filter or ""),
+                        "model_queries": list(
+                            (retrieval_trace.get("tool_loop") or {}).get("model_queries")
+                            or []
+                        ),
+                    },
+                    chunks=model_evidence_chunks,
+                    answer=answer,
+                )
+                retrieval_trace["evidence_manifest"] = evidence_manifest
                 state.chat_metrics.setdefault("latency_phases", []).append(phases)
                 logger.info("[METRICS] phases=%s", phases)
                 for key in ("latency_search", "latency_gen", "tokens", "latency_phases"):
                     state.chat_metrics[key] = state.chat_metrics[key][-100:]
 
-                sources_list = source_names(chunks)
+                history_chunks = model_evidence_chunks if model_evidence_chunks else chunks
+                sources_list = source_names(history_chunks)
                 if project_inventory_prompt:
                     sources_list = [*sources_list, "Опись файлов датасета (MetaDB documents)"]
-                source_dataset_ids = _dataset_ids_from_chunks(chunks)
+                source_dataset_ids = _dataset_ids_from_chunks(history_chunks)
                 source_dataset_names = _names_for_dataset_ids(source_dataset_ids, dataset_name_by_id)
                 source_scope = {
                     "requested": [
@@ -3783,7 +3799,7 @@ async def _execute_chat_evidence_application(
                     "cache": cache_marker,
                     "validation": {"enabled": use_validation},
                     "history_id": history_id,
-                    "source_excerpts": source_excerpts(chunks),
+                    "source_excerpts": source_excerpts(history_chunks),
                     "source_map": answer_source_map,
                     "evidence_packet": final_evidence_packet,
                     "latency_phases": phases,

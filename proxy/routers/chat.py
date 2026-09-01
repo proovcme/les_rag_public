@@ -3763,6 +3763,25 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     except Exception as err:
         logger.warning("[MEMORY] session recall failed: %s", err)
         session_block = ""
+    try:
+        from proxy.services.chat_evidence_manifest_service import (
+            compact_prior_evidence_index,
+            format_prior_evidence_index,
+        )
+
+        prior_traces = session_recent_retrieval_traces(req.session_id, max_turns=6)
+        prior_manifests = [
+            trace.get("evidence_manifest")
+            for trace in prior_traces
+            if isinstance(trace, dict) and isinstance(trace.get("evidence_manifest"), dict)
+        ]
+        prior_index = format_prior_evidence_index(
+            compact_prior_evidence_index(prior_manifests, max_items=24)
+        )
+        if prior_index:
+            session_block = "\n\n".join(part for part in (session_block, prior_index) if part)
+    except Exception as err:  # advisory continuity must not block a new question
+        logger.warning("[MEMORY] prior evidence index skipped: %s", err)
 
     rag_backend = state.backend
 
