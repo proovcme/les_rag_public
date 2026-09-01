@@ -15,6 +15,22 @@ class FakeClient:
         return SimpleNamespace(count=self.points)
 
 
+def test_user_readiness_separates_backend_contract_optional_and_query_dimensions():
+    result = service.user_readiness_dimensions(
+        backend_available=True,
+        contract_complete=True,
+        optional_stages={"colbert": {"status": "bypassed", "reason": "not_ready"}},
+        query_quality={"status": "weak", "detail": "one query"},
+    )
+
+    assert result["overall"] == "ready"
+    assert result["blocking_dimension"] == ""
+    assert result["backend_available"]["status"] == "ready"
+    assert result["contract_complete"]["status"] == "ready"
+    assert result["optional_stages"]["colbert"]["reason"] == "not_ready"
+    assert result["query_quality"]["status"] == "weak"
+
+
 def test_general_rrf_ready_requires_contract_channels_fingerprint_and_alias(monkeypatch):
     monkeypatch.setattr(service, "rag_collection_name", lambda: "les_rag")
     monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 10)

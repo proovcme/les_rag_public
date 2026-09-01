@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from backend.interface import EmbeddingContractError
-from backend.rag_config import query_embedding_instruction_id
+from backend.rag_config import index_contract_status, query_embedding_instruction_id
 from proxy.services.kot_service import analyze_question, extract_norm_refs
 from proxy.services.lexical_index_service import LexicalIndex, RetrievalTrace, lexical_enabled, merge_rrf
 from proxy.services.query_router import route_query
@@ -26,7 +26,12 @@ from proxy.services.retrieval_candidate_service import (
     select_diverse_candidates,
 )
 from backend.colbert_late_interaction import CircuitBreaker
-from proxy.services.rag_advanced_policy_service import load_policy, load_status, save_status
+from proxy.services.rag_advanced_policy_service import (
+    colbert_generation_readiness,
+    load_policy,
+    load_status,
+    save_status,
+)
 
 
 CHAT_TOP_K = int(os.getenv("RAG_CHAT_TOP_K", "64"))
@@ -1083,9 +1088,14 @@ async def retrieve_chat_chunks(
     # the already valid native-RRF shortlist.
     colbert_policy = advanced_policy["colbert"]
     colbert_mode = str(colbert_policy["mode"])
+    colbert_readiness = colbert_generation_readiness(
+        advanced_policy,
+        advanced_status["colbert"],
+        index_contract_status(),
+    )
     exact_early_exit = bool(advanced_policy["execution"]["exact_early_exit"])
     colbert_should_run = (
-        colbert_mode != "off"
+        colbert_readiness["ready"]
         and len(chunks) > 1
         and hasattr(rag_backend, "rerank_colbert")
         and not (colbert_mode == "adaptive" and exact_early_exit and (exact_terms or exact_norm_refs))
@@ -1129,7 +1139,7 @@ async def retrieve_chat_chunks(
             logger.warning("[COLBERT] fallback to native RRF order: %s", colbert_error)
     else:
         reason = (
-            "disabled" if colbert_mode == "off" else
+            str(colbert_readiness["reason"]) if not colbert_readiness["ready"] else
             "exact_early_exit" if exact_early_exit and (exact_terms or exact_norm_refs) else
             "circuit_open" if not _COLBERT_BREAKER.allow() else
             "backend_unavailable"

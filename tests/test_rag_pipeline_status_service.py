@@ -46,9 +46,25 @@ def test_pipeline_reports_proven_base_and_honest_optional_stages(monkeypatch):
     assert result["status"] == "ready"
     assert result["stages"]["native_rrf"]["status"] == "ready"
     assert result["stages"]["hierarchy"]["status"] == "ready"
-    assert result["stages"]["raptor"]["status"] == "configured"
+    assert result["stages"]["raptor"]["status"] == "disabled"
     assert result["stages"]["colbert"]["status"] == "configured"
     assert result["stages"]["reranker"]["status"] == "configured"
+
+
+def test_query_quality_cannot_turn_healthy_backend_or_contract_red():
+    snapshot = _healthy_snapshot()
+    snapshot["query_quality"] = {
+        "status": "weak",
+        "detail": "exact application reference had a low semantic score",
+    }
+
+    result = build_retrieval_pipeline_status(snapshot)
+
+    assert result["dimensions"]["backend_available"]["status"] == "ready"
+    assert result["dimensions"]["contract_complete"]["status"] == "ready"
+    assert result["dimensions"]["query_quality"]["status"] == "weak"
+    assert result["overall"] == "ready"
+    assert result["blocking_dimension"] == ""
 
 
 def test_pipeline_blocks_rrf_when_sparse_contract_is_missing():
@@ -64,6 +80,9 @@ def test_pipeline_blocks_rrf_when_sparse_contract_is_missing():
 
 def test_pipeline_marks_published_raptor_generation_ready(monkeypatch):
     snapshot = _healthy_snapshot()
+    enabled_policy = pipeline_status.load_policy()
+    enabled_policy["raptor"]["mode"] = "always"
+    monkeypatch.setattr(pipeline_status, "load_policy", lambda: enabled_policy)
     monkeypatch.setattr(
         pipeline_status,
         "load_status",

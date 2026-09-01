@@ -28,7 +28,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "total_latency_budget_ms": 2200,
     },
     "raptor": {
-        "mode": "adaptive",
+        "mode": "off",
         "fanout": 8,
         "route_k": 8,
         "max_depth": 3,
@@ -83,6 +83,46 @@ DEFAULT_STATUS: dict[str, Any] = {
 
 class AdvancedPolicyError(ValueError):
     pass
+
+
+def colbert_generation_readiness(
+    policy: dict[str, Any],
+    status: dict[str, Any],
+    index_contract: dict[str, Any],
+) -> dict[str, Any]:
+    """Prove that ColBERT belongs to the complete active generation.
+
+    Activation writes the audited readiness hash and exact generation count
+    into the alias contract.  Retrieval reads that proof; it never probes or
+    mutates Qdrant while answering a user query.
+    """
+
+    mode = str((policy.get("colbert") or {}).get("mode") or "off")
+    if mode == "off":
+        return {"ready": False, "reason": "disabled", "mode": mode}
+    if str(status.get("readiness") or "") != "ready":
+        return {"ready": False, "reason": "not_ready", "mode": mode}
+    if str(status.get("circuit_state") or "closed") != "closed":
+        return {"ready": False, "reason": "circuit_open", "mode": mode}
+
+    actual = index_contract.get("actual") if isinstance(index_contract.get("actual"), dict) else {}
+    target = str(status.get("target_collection") or "")
+    complete = bool(
+        index_contract.get("compatible")
+        and target
+        and str(actual.get("physical_generation") or "") == target
+        and str(actual.get("colbert_schema") or "") == "les.rag.colbert.bge-m3.v1"
+        and str(actual.get("colbert_vector_name") or "")
+        and int(actual.get("generation_points") or 0) > 0
+        and str(actual.get("readiness_report_sha256") or "")
+    )
+    if not complete:
+        return {
+            "ready": False,
+            "reason": "multivector_contract_incomplete",
+            "mode": mode,
+        }
+    return {"ready": True, "reason": "ready", "mode": mode}
 
 
 def policy_path() -> Path:

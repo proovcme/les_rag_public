@@ -7,6 +7,7 @@ import sys
 from typing import Any
 
 from proxy.services.rag_advanced_policy_service import load_policy, load_status
+from proxy.services.rag_readiness_service import user_readiness_dimensions
 
 
 PIPELINE_SCHEMA = "les.rag.retrieval-pipeline-status.v1"
@@ -171,9 +172,35 @@ def build_retrieval_pipeline_status(rag_snapshot: dict[str, Any]) -> dict[str, A
         pipeline_status = "ready"
     elif required_ready and index_stage_status == "indexing":
         pipeline_status = "indexing"
+    dimensions = user_readiness_dimensions(
+        backend_available=bool(qdrant.get("ok")),
+        contract_complete=bool(named_hybrid and hierarchy_ready),
+        optional_stages={
+            "raptor": {
+                "status": stages["raptor"]["status"],
+                "reason": str(raptor_runtime.get("last_bypass_reason") or ""),
+            },
+            "colbert": {
+                "status": stages["colbert"]["status"],
+                "reason": str((advanced_status.get("colbert") or {}).get("last_bypass_reason") or ""),
+            },
+        },
+        query_quality=(
+            rag_snapshot.get("query_quality")
+            if isinstance(rag_snapshot.get("query_quality"), dict)
+            else {"status": "not_measured", "detail": "per-query only"}
+        ),
+    )
     return {
         "schema": PIPELINE_SCHEMA,
         "status": pipeline_status,
+        "overall": dimensions["overall"],
+        "blocking_dimension": dimensions["blocking_dimension"],
+        "dimensions": {
+            key: value
+            for key, value in dimensions.items()
+            if key not in {"overall", "blocking_dimension"}
+        },
         "stages": stages,
         "execution_note": "Фактическое прохождение стадий показывается в trace конкретного ответа.",
     }

@@ -14,11 +14,40 @@ from typing import Any
 from qdrant_client import QdrantClient, models
 
 from backend.rag_config import index_contract_status, rag_collection_name, rag_meta_db_path
+from proxy.services.rag_advanced_policy_service import load_policy, load_status
 
 
 _CACHE_LOCK = threading.Lock()
 _CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _CACHE_TTL_SEC = 10.0
+
+
+def user_readiness_dimensions(
+    *,
+    backend_available: bool,
+    contract_complete: bool,
+    optional_stages: dict[str, Any] | None = None,
+    query_quality: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Keep service, index, optional stages and one-query quality independent."""
+
+    blocking_dimension = ""
+    if not backend_available:
+        blocking_dimension = "backend_available"
+    elif not contract_complete:
+        blocking_dimension = "contract_complete"
+    return {
+        "overall": "blocked" if blocking_dimension else "ready",
+        "blocking_dimension": blocking_dimension,
+        "backend_available": {
+            "status": "ready" if backend_available else "blocked",
+        },
+        "contract_complete": {
+            "status": "ready" if contract_complete else "blocked",
+        },
+        "optional_stages": dict(optional_stages or {}),
+        "query_quality": dict(query_quality or {"status": "not_measured", "detail": ""}),
+    }
 
 
 def _scope(dataset_id: str | None) -> models.Filter | None:
@@ -399,12 +428,29 @@ def rag_readiness(*, dataset_id: str | None = None, force: bool = False) -> dict
     )
     try:
         aliases = _aliases(client)
+        general = _general_status(client, aliases, dataset_id=dataset_id)
+        advanced_policy = load_policy()
+        advanced_status = load_status()
+        optional_stages = {
+            name: {
+                "mode": str((advanced_policy.get(name) or {}).get("mode") or "off"),
+                "status": str((advanced_status.get(name) or {}).get("readiness") or "not_built"),
+                "reason": str((advanced_status.get(name) or {}).get("last_bypass_reason") or ""),
+            }
+            for name in ("raptor", "colbert")
+        }
         payload = {
             "schema": "les.rag.readiness.v1",
             "status": "ok",
             "generated_at": time.time(),
-            "general": _general_status(client, aliases, dataset_id=dataset_id),
+            "general": general,
             "smeta": _smeta_status(client, aliases),
+            "user_status": user_readiness_dimensions(
+                backend_available=True,
+                contract_complete=bool(general.get("rrf_ready")),
+                optional_stages=optional_stages,
+                query_quality={"status": "not_measured", "detail": "per-query only"},
+            ),
         }
     except Exception as exc:
         payload = {
@@ -414,6 +460,10 @@ def rag_readiness(*, dataset_id: str | None = None, force: bool = False) -> dict
             "error": type(exc).__name__,
             "general": {"state": "unknown", "ready": False, "rrf_ready": False},
             "smeta": {"state": "unknown", "ready": False, "rrf_ready": False},
+            "user_status": user_readiness_dimensions(
+                backend_available=False,
+                contract_complete=False,
+            ),
         }
     finally:
         client.close()

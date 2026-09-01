@@ -589,6 +589,32 @@ async def test_colbert_runs_between_native_rrf_and_cross_encoder(monkeypatch):
     policy["colbert"]["candidate_k"] = 12
     policy["colbert"]["output_k"] = 8
     monkeypatch.setattr(retrieval_service, "load_policy", lambda: policy)
+    monkeypatch.setattr(
+        retrieval_service,
+        "load_status",
+        lambda: {
+            "raptor": {"readiness": "not_built"},
+            "colbert": {
+                "readiness": "ready",
+                "target_collection": "colbert_generation",
+                "circuit_state": "closed",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        retrieval_service,
+        "index_contract_status",
+        lambda: {
+            "compatible": True,
+            "actual": {
+                "physical_generation": "colbert_generation",
+                "colbert_schema": "les.rag.colbert.bge-m3.v1",
+                "colbert_vector_name": "colbert",
+                "generation_points": 64,
+                "readiness_report_sha256": "proof",
+            },
+        },
+    )
     monkeypatch.setattr(retrieval_service, "_save_advanced_status_safely", lambda payload: None)
     backend = ColbertBackend()
     result = await retrieve_chat_chunks(
@@ -605,6 +631,79 @@ async def test_colbert_runs_between_native_rrf_and_cross_encoder(monkeypatch):
     assert backend.colbert_call == (12, 8, policy["colbert"]["max_query_tokens"])
     assert result.trace.colbert["status"] == "applied"
     assert result.trace.rerank["status"] == "applied"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("readiness", "contract_ready", "reason"),
+    [
+        ("not_built", True, "not_ready"),
+        ("ready", False, "multivector_contract_incomplete"),
+    ],
+)
+async def test_colbert_bypasses_unready_generation_without_call_or_breaker_failure(
+    monkeypatch,
+    readiness,
+    contract_ready,
+    reason,
+):
+    from proxy.services import retrieval_service
+
+    class GuardedBackend(FakeBackend):
+        colbert_calls = 0
+
+        async def rerank_colbert(self, *args, **kwargs):
+            self.colbert_calls += 1
+            raise AssertionError("unready ColBERT generation must never run")
+
+    policy = retrieval_service.load_policy()
+    policy["colbert"]["mode"] = "always"
+    monkeypatch.setattr(retrieval_service, "load_policy", lambda: policy)
+    monkeypatch.setattr(
+        retrieval_service,
+        "load_status",
+        lambda: {
+            "raptor": {"readiness": "not_built"},
+            "colbert": {
+                "readiness": readiness,
+                "target_collection": "colbert_generation",
+                "circuit_state": "closed",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        retrieval_service,
+        "index_contract_status",
+        lambda: {
+            "compatible": True,
+            "actual": {
+                "physical_generation": "colbert_generation",
+                "colbert_schema": "les.rag.colbert.bge-m3.v1",
+                "colbert_vector_name": "colbert",
+                "generation_points": 64,
+                "readiness_report_sha256": "proof" if contract_ready else "",
+            },
+        },
+    )
+    monkeypatch.setattr(retrieval_service, "_save_advanced_status_safely", lambda payload: None)
+    failure_count = retrieval_service._COLBERT_BREAKER.failures
+    backend = GuardedBackend()
+
+    result = await retrieve_chat_chunks(
+        question="состав проекта",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=None,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert backend.colbert_calls == 0
+    assert result.trace.colbert["reason"] == reason
+    assert retrieval_service._COLBERT_BREAKER.failures == failure_count
 
 
 @pytest.mark.asyncio

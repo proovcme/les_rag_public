@@ -15,11 +15,51 @@ def isolated_policy(monkeypatch, tmp_path):
 def test_default_policy_is_gui_visible_and_has_no_hidden_overrides(isolated_policy):
     snapshot = policy.operator_snapshot()
 
-    assert snapshot["policy"]["raptor"]["mode"] == "adaptive"
+    assert snapshot["policy"]["raptor"]["mode"] == "off"
     assert snapshot["policy"]["colbert"]["mode"] == "adaptive"
     assert snapshot["policy"]["colbert"]["model"] == "BAAI/bge-m3"
     assert snapshot["hidden_runtime_overrides"] == []
     assert snapshot["status"]["colbert"]["readiness"] == "not_built"
+
+
+def test_absent_legacy_raptor_mode_migrates_to_safe_effective_off(isolated_policy):
+    saved = policy.validate_policy({"schema": policy.POLICY_SCHEMA, "raptor": {}})
+
+    assert saved["raptor"]["mode"] == "off"
+
+
+def test_colbert_ready_requires_activated_complete_generation_contract(isolated_policy):
+    current = policy.load_policy()
+    current["colbert"]["mode"] = "always"
+    status = {
+        "readiness": "ready",
+        "target_collection": "les_rag_colbert_abc",
+        "circuit_state": "closed",
+    }
+    contract = {
+        "compatible": True,
+        "actual": {
+            "physical_generation": "les_rag_colbert_abc",
+            "colbert_schema": "les.rag.colbert.bge-m3.v1",
+            "colbert_vector_name": "colbert",
+            "generation_points": 42,
+            "readiness_report_sha256": "proof",
+        },
+    }
+
+    ready = policy.colbert_generation_readiness(current, status, contract)
+    incomplete = policy.colbert_generation_readiness(
+        current,
+        status,
+        {**contract, "actual": {**contract["actual"], "readiness_report_sha256": ""}},
+    )
+
+    assert ready["ready"] is True
+    assert incomplete == {
+        "ready": False,
+        "reason": "multivector_contract_incomplete",
+        "mode": "always",
+    }
 
 
 def test_policy_roundtrip_is_atomic_versioned_and_unicode_safe(isolated_policy):

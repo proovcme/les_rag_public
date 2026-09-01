@@ -349,12 +349,17 @@ def build_diag():
             with ui.row().classes("w-full gap-3"):
                 raptor_mode_select = select_field(
                     {"off": "Выключен", "adaptive": "Adaptive", "always": "Всегда"},
-                    value="adaptive", label="RAPTOR", classes="grow",
+                    value="off", label="RAPTOR", classes="grow",
                 )
                 colbert_mode_select = select_field(
                     {"off": "Выключен", "adaptive": "Adaptive", "always": "Всегда"},
                     value="adaptive", label="ColBERT", classes="grow",
                 )
+                colbert_model_input = text_field(
+                    label="Модель ColBERT",
+                    value="BAAI/bge-m3",
+                    classes="grow",
+                ).props("readonly")
             with ui.row().classes("w-full gap-3"):
                 colbert_candidates_input = ui.number(
                     "Кандидатов ColBERT", value=64, min=1, max=100000,
@@ -397,7 +402,10 @@ def build_diag():
                     "Выход резюме, символов", value=1800, min=128, max=10000,
                 ).classes("grow")
                 colbert_passage_tokens_input = ui.number(
-                    "Токенов ColBERT", value=128, min=8, max=1024,
+                    "Токенов passage ColBERT", value=128, min=8, max=1024,
+                ).classes("grow")
+                colbert_query_tokens_input = ui.number(
+                    "Токенов query ColBERT", value=48, min=8, max=1024,
                 ).classes("grow")
                 colbert_latency_input = ui.number(
                     "ColBERT бюджет, мс", value=700, min=1, max=100000,
@@ -610,7 +618,7 @@ def build_diag():
         raptor = policy.get("raptor") or {}
         colbert = policy.get("colbert") or {}
         execution = policy.get("execution") or {}
-        raptor_mode_select.value = str(raptor.get("mode") or "adaptive")
+        raptor_mode_select.value = str(raptor.get("mode") or "off")
         raptor_fanout_input.value = int(raptor.get("fanout") or 8)
         raptor_depth_input.value = int(raptor.get("max_depth") or 3)
         raptor_route_k_input.value = int(raptor.get("route_k") or 8)
@@ -627,8 +635,10 @@ def build_diag():
             raptor.get("circuit_breaker_cooldown_sec") or 180
         )
         colbert_mode_select.value = str(colbert.get("mode") or "adaptive")
+        colbert_model_input.value = str(colbert.get("model") or "BAAI/bge-m3")
         colbert_candidates_input.value = int(colbert.get("candidate_k") or 64)
         colbert_output_input.value = int(colbert.get("output_k") or 32)
+        colbert_query_tokens_input.value = int(colbert.get("max_query_tokens") or 48)
         colbert_passage_tokens_input.value = int(colbert.get("max_passage_tokens") or 128)
         colbert_latency_input.value = int(colbert.get("latency_budget_ms") or 700)
         colbert_circuit_failures_input.value = int(colbert.get("circuit_breaker_failures") or 3)
@@ -675,6 +685,10 @@ def build_diag():
                     detail = "Политика включена, индекс ещё не построен."
                 else:
                     detail = "Модель не загружена; базовый поиск продолжает работать."
+                if title == "ColBERT":
+                    generation = str(runtime.get("target_collection") or "не построена")
+                    source = str(runtime.get("source_collection") or "активный RAG")
+                    detail = f"{detail} Источник: {source}; генерация: {generation}."
                 with panel(variant="inset", classes="w-full"):
                     with ui.row().classes("w-full items-center gap-3 no-wrap"):
                         with ui.column().classes("grow gap-0"):
@@ -794,7 +808,7 @@ def build_diag():
         policy["raptor"] = dict(policy.get("raptor") or {})
         policy["colbert"] = dict(policy.get("colbert") or {})
         policy["execution"]["total_latency_budget_ms"] = int(total_budget_input.value or 2200)
-        policy["raptor"]["mode"] = str(raptor_mode_select.value or "adaptive")
+        policy["raptor"]["mode"] = str(raptor_mode_select.value or "off")
         policy["raptor"]["fanout"] = int(raptor_fanout_input.value or 8)
         policy["raptor"]["max_depth"] = int(raptor_depth_input.value or 3)
         policy["raptor"]["route_k"] = int(raptor_route_k_input.value or 8)
@@ -819,6 +833,9 @@ def build_diag():
         policy["colbert"]["mode"] = str(colbert_mode_select.value or "adaptive")
         policy["colbert"]["candidate_k"] = int(colbert_candidates_input.value or 64)
         policy["colbert"]["output_k"] = int(colbert_output_input.value or 32)
+        policy["colbert"]["max_query_tokens"] = int(
+            colbert_query_tokens_input.value or 48
+        )
         policy["colbert"]["max_passage_tokens"] = int(
             colbert_passage_tokens_input.value or 128
         )
