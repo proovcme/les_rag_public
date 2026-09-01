@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,6 +35,38 @@ def test_native_rrf_cleanup_requests_guarded_ephemeral_policy():
         f"{acceptance.PROXY}/api/rag/datasets/ds-1"
         "?recovery_policy=release_acceptance_ephemeral"
     )
+
+
+def test_short_installed_commit_is_expanded_only_by_trusted_checkout(monkeypatch, tmp_path):
+    exact = "2a6eadac" + "1" * 32
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        return SimpleNamespace(returncode=0, stdout=exact + "\n", stderr="")
+
+    monkeypatch.setattr(acceptance.subprocess, "run", fake_run)
+
+    assert acceptance.resolve_exact_installed_commit(
+        "2a6eadac",
+        repo_root=tmp_path,
+    ) == exact
+    assert calls[0][0][-2:] == ["--verify", "2a6eadac^{commit}"]
+
+
+def test_short_installed_commit_rejects_unrelated_git_resolution(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        acceptance.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="f" * 40 + "\n",
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="no exact commit"):
+        acceptance.resolve_exact_installed_commit("2a6eadac", repo_root=tmp_path)
 
 
 def _patch_dependencies(monkeypatch, calls):

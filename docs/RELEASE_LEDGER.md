@@ -7,17 +7,25 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.32
-номер сборки:              672
-версия Tauri/NSIS:         5.1.672
+версия продукта (SemVer):  0.30.33
+номер сборки:              673
+версия Tauri/NSIS:         5.1.673
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.32 model → RAG → model result; code packages after result
+dev implementation:       0.30.33 model → RAG → model result; legacy short-stamp acceptance
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.30 / build 670 / commit a133a000
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.32 cumulative patch после реального PDF → Qwen 9B → RAG → XLSX
+следующий выпуск:          0.30.33 cumulative patch после реального PDF → Qwen 9B → RAG → XLSX
 рантайм /api/version:      Legion 0.30.30 / build 670 / desktop 5.1.670 / commit a133a000; aligned
 ```
+
+> **0.30.33 / build 673 legacy short-stamp acceptance (release candidate):**
+> установленный 0.30.31 после прежнего `copy_files` deploy хранит уникальный
+> короткий `deployed_commit=2a6eadac`. Release acceptance теперь расширяет такой
+> legacy hash до 40 символов только через доверенный source checkout, требует
+> валидный commit object и точное совпадение префикса. Произвольный, неоднозначный
+> или неразрешимый stamp по-прежнему fail-closed. Сам runtime stamp и persistent
+> state не переписываются. Продуктовый model→RAG→result поток идентичен 0.30.32.
 
 > **0.30.32 / build 672 model → RAG → model result (release candidate):**
 > прежний native-tool selector и workbook recovery loop исключены из активного
@@ -32,6 +40,8 @@ dev implementation:       0.30.32 model → RAG → model result; code packages 
 > продуктового row cap и главный вопрос «не мешаем ли мы модели?». Прежний
 > `document_workflow.py` документирован как исторический/экспериментальный, не
 > активное ядро. Публикация запрещена до живого Legion PDF → Qwen 9B → RAG → XLSX.
+> Candidate superseded до установки из-за legacy short deploy stamp 0.30.31 и
+> публично не выпускался.
 
 > **0.30.31 / build 671 workbook retry + truthful installed acceptance
 > (superseded, не публиковался):** общий model-owned tool loop больше не принуждает модель

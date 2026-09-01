@@ -8,6 +8,7 @@ import json
 import mimetypes
 import os
 import re
+import subprocess
 import sys
 import time
 import urllib.error
@@ -67,6 +68,36 @@ def _read_json(path: Path, label: str) -> dict[str, Any]:
     return payload
 
 
+def resolve_exact_installed_commit(
+    value: Any,
+    *,
+    repo_root: Path | None = None,
+) -> str:
+    """Expand a legacy short deploy hash through the trusted source checkout."""
+
+    commit = str(value or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{40}", commit):
+        return commit
+    if re.fullmatch(r"[0-9a-f]{7,39}", commit) is None:
+        raise RuntimeError("installed deploy stamp has no exact commit")
+    root = Path(repo_root or Path(__file__).resolve().parents[1]).resolve()
+    resolved = subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "--verify", f"{commit}^{{commit}}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    exact = str(resolved.stdout or "").strip().lower()
+    if (
+        resolved.returncode != 0
+        or re.fullmatch(r"[0-9a-f]{40}", exact) is None
+        or not exact.startswith(commit)
+    ):
+        raise RuntimeError("installed deploy stamp has no exact commit")
+    return exact
+
+
 def snapshot_installed(runtime: Path, state: Path) -> dict[str, Any]:
     runtime = Path(runtime).resolve()
     state = Path(state).resolve()
@@ -74,9 +105,7 @@ def snapshot_installed(runtime: Path, state: Path) -> dict[str, Any]:
         raise RuntimeError("installed runtime and persistent state boundary is invalid")
     contract = _read_json(runtime / "config" / "version.json", "installed version")
     stamp = _read_json(runtime / ".les_deploy_stamp.json", "installed deploy stamp")
-    commit = str(stamp.get("deployed_commit") or "")
-    if re.fullmatch(r"[0-9a-f]{40}", commit) is None:
-        raise RuntimeError("installed deploy stamp has no exact commit")
+    commit = resolve_exact_installed_commit(stamp.get("deployed_commit"))
     try:
         live_version = _request_json(f"{PROXY}/api/version", timeout=10)
         health = _request_json(f"{PROXY}/api/health", timeout=10)
