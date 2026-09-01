@@ -1,5 +1,18 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-01 — Полный Windows runtime не содержал package README
+
+- **Симптом:** все release gates были зелёными, но локальный полный NSIS prepare
+  падал внутри `uv sync --locked`; оркестратор показывал только exit code 1.
+- **Причина:** `config/windows_runtime_manifest.json` включал `pyproject.toml`,
+  где объявлен `readme = "README.md"`, но исключал сам корневой `README.md`.
+  Hatchling не мог собрать staged локальный пакет. Захваченный stderr не
+  добавлялся в ошибку верхнего уровня.
+- **Исправление:** `README.md` включён в Windows runtime manifest; regression
+  проверяет его как обязательную продуктовую поверхность. Local full builder
+  возвращает bounded stdout/stderr исходного prepare-отказа. Это исправляет
+  упаковку и диагностику, не меняя runtime-модель, RAG, сметное ядро или данные.
+
 ## 2026-09-01 — Patch release не учитывал worktree и несовместимый установленный runtime
 
 - **Симптом 1:** release остановился до prepare, потому что искал attested

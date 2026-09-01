@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.36 full-installer staging repair:** Windows runtime manifest включает
+> корневой `README.md`, который объявлен package metadata в `pyproject.toml` и
+> необходим локальному `uv sync --locked` при сборке offline cache. Ошибка
+> локального `windows_prepare_update.ps1` теперь сохраняет bounded stdout/stderr
+> в сообщении оркестратора вместо немого exit code. Точки:
+> `config/windows_runtime_manifest.json`, `tools/release_orchestrator.py`,
+> `tests/test_{tauri_desktop,release_orchestrator}.py`. Статус док↔код: ✅.
+
 > **0.30.35 release recovery:** release-orchestrator разрешает feature worktree
 > найти attested full-base в каноническом `repo_root`; `--force-full` переводит
 > доказанно несовместимую установленную базу в полный NSIS-контур, не ослабляя

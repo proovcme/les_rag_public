@@ -251,9 +251,21 @@ def build_full_candidate(
             "-SmetaBaselineArchive",
             str(baseline),
         )
-        prepared = _remote_json(
-            _run(command, root=Path(args.root), capture=True).stdout
-        )
+        try:
+            completed = _run(command, root=Path(args.root), capture=True)
+        except subprocess.CalledProcessError as exc:
+            details = "\n".join(
+                part.strip()
+                for part in (exc.stdout, exc.stderr)
+                if isinstance(part, str) and part.strip()
+            )
+            if len(details) > 12_000:
+                details = details[-12_000:]
+            suffix = f":\n{details}" if details else ""
+            raise RuntimeError(
+                f"local Windows update preparation failed{suffix}"
+            ) from exc
+        prepared = _remote_json(completed.stdout)
         if prepared.get("status") != "prepared" or prepared.get("commit") != target:
             raise RuntimeError("local Windows update preparation is not valid")
     else:

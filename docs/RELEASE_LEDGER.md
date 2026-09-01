@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.35
-номер сборки:              675
-версия Tauri/NSIS:         5.1.675
+версия продукта (SemVer):  0.30.36
+номер сборки:              676
+версия Tauri/NSIS:         5.1.676
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.35 model-owned RAG/XLSX + fail-closed full-release recovery
+dev implementation:       0.30.36 model-owned RAG/XLSX + full-installer staging repair
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.35 full recovery release; 0.30.34 patch acceptance fail-closed остановлена
+следующий выпуск:          0.30.36 full recovery release; 0.30.35 full prepare остановлен до candidate
 рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
 ```
+
+> **0.30.36 / build 676 full-installer staging repair (release candidate):**
+> первый локальный full prepare 0.30.35 после зелёных gates обнаружил, что
+> Windows runtime manifest переносит `pyproject.toml`, но не объявленный в нём
+> корневой `README.md`; Hatchling останавливал `uv sync --locked` до Tauri/NSIS.
+> `README.md` добавлен в staged product runtime, regression держит package
+> metadata замкнутой. Local full builder теперь возвращает bounded stdout/stderr
+> дочернего prepare, а не только exit code. Model→RAG→result→XLSX поведение
+> идентично живо принятому 0.30.34; installed Legion и public release первым
+> неуспешным prepare не менялись.
 
 > **0.30.35 / build 675 worktree/full-release recovery (release candidate):**
 > failed attempt `9e54c899b9442c6c57c959c0` доказал два дефекта процедуры:

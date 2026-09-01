@@ -325,6 +325,34 @@ def test_full_candidate_prepares_and_binds_a_local_acceptance_job(monkeypatch, t
     assert result["acceptance_path"] == acceptance.resolve()
 
 
+def test_full_candidate_reports_local_windows_prepare_stderr(monkeypatch, tmp_path):
+    baseline = tmp_path / "LES-smeta-baseline.zip"
+    baseline.write_bytes(b"verified baseline")
+    args = _args(
+        tmp_path,
+        host="local",
+        smeta_baseline_archive=baseline,
+    )
+
+    def failed_run(command, *, root, capture=False):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="partial stdout",
+            stderr="Readme file does not exist: README.md",
+        )
+
+    monkeypatch.setattr(release_orchestrator, "_run", failed_run)
+
+    with pytest.raises(RuntimeError, match="Readme file does not exist: README.md"):
+        release_orchestrator.build_full_candidate(
+            target=TARGET,
+            output=tmp_path / "candidate",
+            contract={"product_version": "0.30.35", "build_number": 675},
+            args=args,
+        )
+
+
 def test_cli_forces_utf8_for_windows_operator_output(tmp_path):
     state = release_receipt.create_attempt(
         root=tmp_path / "attempts",

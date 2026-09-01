@@ -53,6 +53,13 @@ make release RELEASE_ARGS='run --host local --publish'
 exact installer, делает rollback и повторную установку через общий hard-update
 engine.
 
+Полный Windows runtime manifest обязан включать не только импортируемый код, но
+и package metadata, которую читает build backend. В частности, если
+`pyproject.toml` объявляет корневой `README.md`, оба файла входят в staged
+runtime до `uv sync --locked`. При отказе локального prepare оркестратор
+возвращает ограниченный хвост stdout/stderr, чтобы ошибка сборки не сводилась к
+одному exit code.
+
 Построитель cumulative patch читает Git history пакетно и печатает
 ограниченный прогресс по ancestry и manifest-файлам. Результат автоматического
 public-main sync (`before`, `after`, `fast_forwarded`) записывается в persisted

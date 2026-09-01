@@ -11874,7 +11874,7 @@
     },
     {
       "inbound": [],
-      "lines": 770,
+      "lines": 798,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -13086,7 +13086,7 @@
     },
     {
       "inbound": [],
-      "lines": 549,
+      "lines": 550,
       "module": "tests.test_tauri_desktop",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -15371,7 +15371,7 @@
       "inbound": [
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 1066,
+      "lines": 1078,
       "module": "tools.release_orchestrator",
       "outbound": [
         "proxy/services/update_service.py",
@@ -18037,7 +18037,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 300819
+    "tracked_python_lines": 300860
   },
   "warnings": []
 }

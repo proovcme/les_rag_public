@@ -132,6 +132,7 @@ def test_tauri_runtime_stage_excludes_recursive_shell_and_local_ui_state(tmp_pat
 
 def test_windows_runtime_manifest_keeps_product_and_excludes_repository_only_files():
     included = [
+        ROOT / "README.md",
         ROOT / "pyproject.toml",
         ROOT / "uv.lock",
         ROOT / "env.example",

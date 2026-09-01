@@ -11,6 +11,7 @@
   ],
   "include_files": [
     "LICENSE",
+    "README.md",
     "env.example",
     "lemonade_host.py",
     "mlx_host.py",
