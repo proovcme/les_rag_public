@@ -141,6 +141,7 @@ from proxy.services.model_research_tool_service import (
 )
 from proxy.services.source_locator_service import evidence_counts, source_map_item
 from proxy.services.chat_evidence_manifest_service import build_evidence_manifest
+from proxy.services.chat_capability_scope_service import filter_profile_tools
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
 
 logger = logging.getLogger(__name__)
@@ -2455,6 +2456,18 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
+                selected_sources_only = bool(
+                    getattr(req, "selected_sources_only", False)
+                )
+                profile_tools = filter_profile_tools(
+                    profile_tools,
+                    selected_sources_only=selected_sources_only,
+                )
+                retrieval_trace["capability_scope"] = {
+                    "selected_sources_only": selected_sources_only,
+                    "public_web_available": not selected_sources_only,
+                    "source": "explicit_or_frozen_request",
+                }
                 profile_tools = tools_for_document_scope(
                     profile_tools,
                     enabled=document_grounding_enabled,
@@ -3703,6 +3716,9 @@ async def _execute_chat_evidence_application(
                         "model_queries": list(
                             (retrieval_trace.get("tool_loop") or {}).get("model_queries")
                             or []
+                        ),
+                        "selected_sources_only": bool(
+                            getattr(req, "selected_sources_only", False)
                         ),
                     },
                     chunks=model_evidence_chunks,

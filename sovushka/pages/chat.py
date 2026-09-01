@@ -810,7 +810,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     ).tooltip("Открыть панель результатов и файлов")
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
-                    scope_state = {"scope_type": "none", "project_ids": [], "dataset_ids": [], "label": "Без источников"}
+                    scope_state = {
+                        "scope_type": "none",
+                        "project_ids": [],
+                        "dataset_ids": [],
+                        "label": "Без источников",
+                        "selected_sources_only": False,
+                    }
                     scope_opts_cache: dict = {"data": None}
 
                     scope_btn = action_button(
@@ -821,6 +827,18 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         classes="sov-scope-btn",
                     ).tooltip(
                         "Область поиска: в каких проектах и датасетах ЛЕС будет искать источники.")
+                    selected_sources_only_switch = ui.switch(
+                        "Только выбранные источники",
+                        value=bool(scope_state["selected_sources_only"]),
+                    ).props("dense")
+                    selected_sources_only_switch.tooltip(
+                        "Отключает публичный веб-поиск для этого диалога; выбор датасета сам по себе веб не запрещает."
+                    )
+                    selected_sources_only_switch.on_value_change(
+                        lambda event: scope_state.__setitem__(
+                            "selected_sources_only", bool(event.value)
+                        )
+                    )
 
                     def _scope_label() -> str:
                         st = scope_state["scope_type"]
@@ -3987,6 +4005,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "session_id": state.get("session_id"),
             "response_length": str(response_length_select.value or "standard"),
         }
+        payload["selected_sources_only"] = bool(
+            scope_state.get("selected_sources_only", False)
+        )
         if apply_active_profile["v"]:
             payload["apply_profile_revision"] = True
             apply_active_profile["v"] = False

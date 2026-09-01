@@ -65,6 +65,11 @@ def test_chat_request_accepts_explicit_multi_document_scope_and_response_length(
     assert req.response_length == "detailed"
 
 
+def test_chat_request_accepts_explicit_selected_sources_only_capability():
+    assert ChatRequest(question="q", selected_sources_only=True).selected_sources_only is True
+    assert ChatRequest(question="q").selected_sources_only is None
+
+
 def test_ai_plain_markdown_is_rendered_as_markdown_widget():
     source = inspect.getsource(chat_page.build_chat)
 
@@ -79,6 +84,13 @@ def test_chat_links_source_markers_to_anchored_drawer_rows_and_shows_three_count
     assert 'id=source-{i}' in source
     assert "source_count_labels" in source
     assert 'meta.get("source_counts")' in source
+
+
+def test_chat_exposes_and_sends_selected_sources_only_switch():
+    source = inspect.getsource(chat_page.build_chat)
+
+    assert "Только выбранные источники" in source
+    assert 'payload["selected_sources_only"]' in source
 
 
 def test_smeta_operator_sees_live_tool_and_rrf_telemetry():
@@ -428,7 +440,7 @@ def test_selected_dataset_ids_stay_in_model_owned_scope_without_deterministic_fi
 def test_chat_defaults_to_plain_ai_and_always_sends_explicit_scope():
     source = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
 
-    assert 'scope_state = {"scope_type": "none"' in source
+    assert '"scope_type": "none"' in source
     assert '"label": "Без источников"' in source
     assert 'scope_state["scope_type"] = "none"' in source
     assert 'scope_state["scope_type"] = "all"' in source

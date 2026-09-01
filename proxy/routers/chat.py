@@ -254,6 +254,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     project_id: Optional[int] = None  # W17.1: режим проекта — ретрив сужается к датасетам объекта
     scope: Optional[dict] = None  # v0.21: нормализованная область поиска {scope_type, project_ids, dataset_ids}
+    selected_sources_only: Optional[bool] = None
     output_directive: Optional[str] = None  # формат/стиль ответа — ТОЛЬКО в генерацию (не в роутинг/заметки/ретрив)
     response_length: Optional[str] = None  # short|standard|detailed|maximum; только бюджет/форма генерации
     mode: Optional[str] = None  # явный РЕЖИМ из UI («smeta» → форс сметного пути минуя роутер/RAG)
@@ -3758,6 +3759,7 @@ async def _run_chat(req: ChatRequest, token_sink=None):
         logger.info("[MEMORY] подмешано %s символов рабочей памяти", len(memory_block))
     # «Запоминать всё»: история диалога текущей сессии в промпт (чат потурно безсостоятельный).
     # Только в промпт LLM, НЕ дописываем к детерминированным ответам (это были бы простыни).
+    prior_traces: list[dict[str, Any]] = []
     try:
         session_block = session_memory(req.session_id)
     except Exception as err:
@@ -3782,6 +3784,12 @@ async def _run_chat(req: ChatRequest, token_sink=None):
             session_block = "\n\n".join(part for part in (session_block, prior_index) if part)
     except Exception as err:  # advisory continuity must not block a new question
         logger.warning("[MEMORY] prior evidence index skipped: %s", err)
+    from proxy.services.chat_capability_scope_service import resolve_selected_sources_only
+
+    req.selected_sources_only = resolve_selected_sources_only(
+        req.selected_sources_only,
+        prior_traces,
+    )
 
     rag_backend = state.backend
 
