@@ -40,23 +40,7 @@ _VOR_INPUT_SCHEMA = {
     "properties": _BASE_INPUT_PROPERTIES,
 }
 
-_LSR_DECISION_SCHEMA = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["title", "unit", "quantity", "norm_code"],
-    "properties": {
-        "source_row": {"type": ["integer", "null"], "minimum": 1},
-        "section": {"type": "string"},
-        "title": {"type": "string", "minLength": 1},
-        "unit": {"type": "string", "minLength": 1},
-        "quantity": {"type": "number"},
-        "norm_code": {"type": "string", "minLength": 1},
-        "analogue": {"type": ["string", "null"]},
-        "coverage": {"type": ["string", "null"]},
-        "coefficient": {"type": ["number", "null"]},
-        "evidence_refs": {"type": "array", "items": {"type": "string"}},
-    },
-}
+_LSR_DECISION_SCHEMA = {"type": "object"}
 
 _LSR_INPUT_SCHEMA = {
     "type": "object",
@@ -67,7 +51,6 @@ _LSR_INPUT_SCHEMA = {
         "decisions": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 500,
             "items": _LSR_DECISION_SCHEMA,
         },
     },

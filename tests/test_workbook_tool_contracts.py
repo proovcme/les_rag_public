@@ -45,14 +45,14 @@ def test_chat_only_advertises_workbook_tools_with_a_real_adapter():
     assert available_chat_workbook_tools(executor_configured=False) == frozenset()
 
 
-def test_lsr_contract_accepts_model_owned_decisions_but_vor_does_not():
+def test_lsr_contract_accepts_plain_model_output_without_a_decision_schema():
     registry = canonical_tool_registry()
     lsr_schema = registry.require("build_lsr_workbook").contract.input_schema
     vor_schema = registry.require("build_vor_workbook").contract.input_schema
 
-    assert list(lsr_schema["properties"]["decisions"]["items"]["required"]) == [
-        "title", "unit", "quantity", "norm_code"
-    ]
+    decisions_schema = lsr_schema["properties"]["decisions"]
+    assert decisions_schema["items"] == {"type": "object"}
+    assert "maxItems" not in decisions_schema
     assert "decisions" not in vor_schema["properties"]
 
 

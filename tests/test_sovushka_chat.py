@@ -820,7 +820,7 @@ def test_chat_prompt_uses_canonical_typed_context_order():
     ]
     assert "working_memory=answer_working_memory" in source
     assert "evidence=[" in source
-    assert "source_map=answer_source_map" in source
+    assert "source_map=(() if model_driven_retrieval else answer_source_map)" in source
     assert "tool_exchange=answer_tool_exchange" in source
     assert "dialogue=[session_block] if session_block else []" in source
 
@@ -932,7 +932,7 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "Контракт: замечания" not in labels
     assert "Ход: нужны данные" not in labels
     assert "Не финал" not in labels
-    assert "12.3с" not in labels
+    assert "12,3 с" in labels
     assert all("KOT" not in label and "CACHE" not in label for label in labels)
 
     tech = _operator_technical_chips(meta)
@@ -947,6 +947,16 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
     assert "WF_FINALITY not_final" in tech
     assert "WF_MISSING structured_rows" in tech
     assert "WF_ACTION Выбрать табличный датасет" in tech
+
+
+def test_operator_status_chips_show_long_answer_time_in_minutes():
+    chips = _operator_status_chips(
+        "MODEL_OUTPUT",
+        {"latency_phases": {"total": 183.381}},
+        [],
+    )
+
+    assert [chip["label"] for chip in chips] == ["3 мин 3 с"]
 
 
 def test_dataset_and_chat_profile_operator_summaries_are_human_readable():

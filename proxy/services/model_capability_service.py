@@ -38,6 +38,7 @@ class CapabilityRequirementError(RuntimeError):
 
 PeerVerifier = Callable[[httpx.Response, ValidatedEndpoint], None]
 Clock = Callable[[], datetime]
+_OLLAMA_SHOW_BODY_LIMIT = 262_144
 
 
 def _utc_now() -> datetime:
@@ -133,14 +134,41 @@ def _state_for_status(status_code: int) -> CapabilityState:
     return CapabilityState.UNKNOWN
 
 
-def _native_chat_url(endpoint: ValidatedEndpoint) -> str:
+def _native_api_url(endpoint: ValidatedEndpoint, operation: str) -> str:
     parsed = urlsplit(endpoint.canonical_base_url)
     path = parsed.path.rstrip("/")
     for suffix in ("/api/v1", "/v1"):
         if path.endswith(suffix):
             path = path[: -len(suffix)]
             break
-    return urlunsplit((parsed.scheme, parsed.netloc, f"{path}/api/chat", "", ""))
+    return urlunsplit(
+        (parsed.scheme, parsed.netloc, f"{path}/api/{operation.lstrip('/')}", "", "")
+    )
+
+
+def _native_chat_url(endpoint: ValidatedEndpoint) -> str:
+    return _native_api_url(endpoint, "chat")
+
+
+def _observed_context_tokens(payload: object) -> int | None:
+    """Read Ollama's generic model context value without model-specific keys."""
+
+    if not isinstance(payload, Mapping):
+        return None
+    model_info = payload.get("model_info")
+    if not isinstance(model_info, Mapping):
+        return None
+    candidates: list[int] = []
+    for key, value in model_info.items():
+        if not str(key).casefold().endswith(".context_length"):
+            continue
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            continue
+        if parsed > 0:
+            candidates.append(parsed)
+    return max(candidates) if candidates else None
 
 
 class CapabilityProbe:
@@ -291,6 +319,40 @@ class CapabilityProbe:
                         transport_options["chat_protocol"] = "native_chat_v1"
             except (httpx.HTTPError, OSError, ValueError):
                 pass
+
+            if transport_options.get("chat_protocol") == "native_chat_v1":
+                try:
+                    async with self.client.stream(
+                        "POST",
+                        _native_api_url(endpoint, "show"),
+                        headers=headers,
+                        json={"model": connection.model_id},
+                        follow_redirects=False,
+                    ) as response:
+                        self.peer_verifier(response, endpoint)
+                        show_chunks: list[bytes] = []
+                        show_size = 0
+                        async for chunk in response.aiter_bytes():
+                            show_size += len(chunk)
+                            if show_size > _OLLAMA_SHOW_BODY_LIMIT:
+                                show_chunks = []
+                                break
+                            show_chunks.append(chunk)
+                        show_payload = (
+                            httpx.Response(
+                                status_code=response.status_code,
+                                content=b"".join(show_chunks),
+                            ).json()
+                            if 200 <= response.status_code < 300 and show_chunks
+                            else None
+                        )
+                        observed_context = _observed_context_tokens(show_payload)
+                        if observed_context is not None:
+                            transport_options["observed_context_tokens"] = str(
+                                observed_context
+                            )
+                except (httpx.HTTPError, OSError, TypeError, ValueError):
+                    pass
 
         return CapabilitySnapshot(
             snapshot_id=f"cap:{uuid4().hex}",

@@ -10,6 +10,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from proxy.services import fgis_price_service
 from proxy.services.rim_lsr_trace_service import build_lsr_trace_from_visible_rows
 from proxy.services.rim_trace_xlsx_service import render_lsr_xlsx
 
@@ -22,18 +23,44 @@ async def build_lsr_workbook_from_decisions(
 ) -> Mapping[str, Any]:
     """Calculate and render the model's explicit LSR row decisions."""
     decisions = [dict(item) for item in (args.get("decisions") or [])]
+    requested_pricebook = str(
+        args.get("pricebook") or args.get("pricebook_id") or ""
+    ).strip()
+    pricebook_path = fgis_price_service.resolve_pricebook_path(
+        requested_pricebook or None
+    )
+    pricebook = (
+        fgis_price_service.get_pricebook(pricebook_path)
+        if pricebook_path
+        else None
+    )
+    pricebook_name = Path(pricebook_path).stem if pricebook_path else ""
     progress("model_decisions", 0, len(decisions))
     trace = await asyncio.to_thread(
         build_lsr_trace_from_visible_rows,
         decisions,
+        pricebook=pricebook,
         name=str(args.get("question") or "Локальный сметный расчёт"),
     )
+    render_meta = {
+        "source": str(args.get("_source_name") or ""),
+        "pricebook": pricebook_name,
+    }
+    if pricebook is not None:
+        render_meta.update(
+            {
+                "subject": str(getattr(pricebook, "region", "") or "Не указан"),
+                "price_level": str(
+                    getattr(pricebook, "quarter", "") or pricebook_name
+                ),
+            }
+        )
     await asyncio.to_thread(
         render_lsr_xlsx,
         trace,
         output_path,
         title=str(args.get("question") or "Локальный сметный расчёт"),
-        meta={"source": str(args.get("_source_name") or "")},
+        meta=render_meta,
     )
     progress("model_decisions", len(decisions), len(decisions))
 
@@ -47,6 +74,8 @@ async def build_lsr_workbook_from_decisions(
     return {
         "file_path": output_path,
         "source_rows": len(decisions),
+        "pricebook": pricebook_name,
+        "pricing_status": str((trace.get("summary") or {}).get("result_status") or ""),
         "missing": missing,
         "blockers": ([] if bound_rows else ["NO_BOUND_LSR_ROWS"]),
     }

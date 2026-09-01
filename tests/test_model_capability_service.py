@@ -111,6 +111,14 @@ async def test_probe_records_native_chat_profile_only_after_live_probe() -> None
             return httpx.Response(200, json={"choices": [{"message": {"content": "ok"}}]})
         if request.url.path == "/api/chat":
             return httpx.Response(200, json={"message": {"content": "ok"}, "done": True})
+        if request.url.path == "/api/show":
+            return httpx.Response(
+                200,
+                json={
+                    "model_info": {"qwen35.context_length": 32768},
+                    "details": {"parameter_size": "9B"},
+                },
+            )
         return httpx.Response(404, json={"error": "missing"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
@@ -125,8 +133,11 @@ async def test_probe_records_native_chat_profile_only_after_live_probe() -> None
         )
 
     assert snapshot.transport_options["chat_protocol"] == "native_chat_v1"
+    assert snapshot.transport_options["observed_context_tokens"] == "32768"
     native = next(item for item in requests if item[1] == "/api/chat")
     assert native[2]["think"] is False
+    show = next(item for item in requests if item[1] == "/api/show")
+    assert show[2] == {"model": "qwen-test"}
 
 
 @pytest.mark.asyncio

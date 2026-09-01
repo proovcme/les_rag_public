@@ -944,6 +944,15 @@ async def _execute_chat_workbook_tool(
     if pending_progress:
         await asyncio.gather(*pending_progress, return_exceptions=True)
     result = envelope.to_dict()["result"]
+    if envelope.status not in {"ok", "overflow"}:
+        result = {
+            "schema": "les.workbook_tool_result.v1",
+            "tool": tool_name,
+            "status": "failed",
+            "code": envelope.code,
+            "missing": [],
+            "blockers": [],
+        }
     if isinstance(result, dict):
         result["execution"] = envelope.metadata()
     return result

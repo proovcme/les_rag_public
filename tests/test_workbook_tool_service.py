@@ -11,11 +11,13 @@ from proxy.services.artifact_revision_service import ArtifactRevisionStore
 from proxy.services.chat_attachment_service import preserve_read_attachment
 from proxy.services.workflow_checkpoint_service import WorkflowCheckpointService
 from proxy.services.workbook_tool_service import (
+    BUILD_LSR_WORKBOOK,
     WorkbookExecutionContext,
     build_lsr_workbook,
     build_vor_workbook,
 )
 from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
+from proxy.services.structured_extract import validate as validate_json_schema
 
 
 def _source_workbook(path: Path) -> Path:
@@ -27,6 +29,27 @@ def _source_workbook(path: Path) -> Path:
     workbook.save(path)
     workbook.close()
     return path
+
+
+def test_lsr_contract_accepts_unbound_rows_and_has_no_fixed_row_limit():
+    decisions = [
+        {
+            "source_row": index,
+            "title": f"Работа {index}",
+            "unit": "шт.",
+            "quantity": 1,
+            **({"norm_code": ""} if index % 2 else {}),
+            "model_note": {"kept_unchanged": True},
+        }
+        for index in range(1, 502)
+    ]
+
+    errors = validate_json_schema(
+        {"attachment_id": "read_123456abcdef", "decisions": decisions},
+        BUILD_LSR_WORKBOOK.input_schema,
+    )
+
+    assert errors == []
 
 
 def _context(tmp_path: Path, *, key: str = "key-1", decision: str = "decision-1",
@@ -114,6 +137,7 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
         "norm_code": "ГЭСН20-01-001-01",
     }]
     captured = {}
+    system_pricebook = object()
 
     def calculate(rows, **kwargs):
         captured["rows"] = rows
@@ -138,6 +162,14 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
         "proxy.services.lsr_workbook_adapter_service.render_lsr_xlsx",
         render,
     )
+    monkeypatch.setattr(
+        "proxy.services.fgis_price_service.resolve_pricebook_path",
+        lambda book=None: "sankt-peterburg_2kv2026.parquet",
+    )
+    monkeypatch.setattr(
+        "proxy.services.fgis_price_service.get_pricebook",
+        lambda _path: system_pricebook,
+    )
 
     result = await build_lsr_workbook_from_decisions(
         tmp_path / "source.xlsx",
@@ -148,7 +180,9 @@ async def test_thin_lsr_adapter_renders_only_model_selected_norms(tmp_path, monk
 
     assert captured["rows"] == decisions
     assert captured["kwargs"]["name"] == "Собери ЛСР"
+    assert captured["kwargs"]["pricebook"] is system_pricebook
     assert result["source_rows"] == 1
+    assert result["pricebook"] == "sankt-peterburg_2kv2026"
     assert result["missing"] == []
     assert result["blockers"] == []
     assert result["file_path"].exists()

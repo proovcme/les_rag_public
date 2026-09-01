@@ -7,17 +7,32 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.33
-номер сборки:              673
-версия Tauri/NSIS:         5.1.673
+версия продукта (SemVer):  0.30.34
+номер сборки:              674
+версия Tauri/NSIS:         5.1.674
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.33 model → RAG → model result; legacy short-stamp acceptance
+dev implementation:       0.30.34 chat → Qwen queries → grouped RAG → Qwen answer → code-built XLSX
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.30 / build 670 / commit a133a000
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.33 cumulative patch после реального PDF → Qwen 9B → RAG → XLSX
+следующий выпуск:          0.30.34 cumulative patch; live dev acceptance пройдена, публикации/деплоя нет
 рантайм /api/version:      Legion 0.30.30 / build 670 / desktop 5.1.670 / commit a133a000; aligned
 ```
+
+> **0.30.34 / build 674 ordinary Qwen result → automatic XLSX (live accepted,
+> не задеплоен и не опубликован):** первый no-tools вызов Qwen получает полный
+> PDF и возвращает обычные поисковые строки. Код снимает только Markdown-
+> оформление, выполняет все запросы общим RAG и группирует первые шесть карточек
+> каждого запроса как `Qx.Hy`; ранние группы не вытесняют поздние. Финальный
+> no-tools вызов получает исходный PDF и все группы, без JSON/schema, model tool
+> calls, source-map дублей и дополнительной advisory memory. Обычный Markdown-
+> ответ Qwen остаётся видимым неизменным; mechanical reader собирает все таблицы
+> по разделам, после чего код сам один раз вызывает `build_lsr_workbook`.
+> Изолированный live proxy `8060`: PDF 19 строк/2366 символов, 11 запросов Qwen,
+> 66 карточек, 19 итоговых строк/шифров/`Qx.Hy`, XLSX 32 645 байт. В workbook 17
+> bound и 2 unit conflicts, pricebook Санкт-Петербург II квартал 2026, 395
+> формул без явных formula errors, итог рассчитанной части без НДС
+> 3 564 688,87 руб. Установленные `8050/8051` не менялись.
 
 > **0.30.33 / build 673 legacy short-stamp acceptance (release candidate):**
 > установленный 0.30.31 после прежнего `copy_files` deploy хранит уникальный

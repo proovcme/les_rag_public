@@ -128,6 +128,45 @@ def test_model_rag_batch_preserves_every_model_query_without_a_row_limit():
     ) == queries
 
 
+def test_model_rag_batch_reads_plain_model_authored_lines_without_a_row_limit():
+    queries = [f"точный запрос {index}" for index in range(30)]
+
+    assert service.parse_model_rag_queries("\n".join(queries)) == queries
+
+
+def test_model_rag_evidence_keeps_six_candidates_for_every_model_query():
+    query_hits = []
+    for query_index in range(1, 31):
+        hits = [
+            SimpleNamespace(
+                content=(
+                    f"Шифр: ГЭСН{query_index:02d}-00-000-{hit_index:02d} "
+                    f"Наименование: кандидат {hit_index} " + "состав работ " * 80
+                ),
+                doc_id=f"doc-{query_index}-{hit_index}",
+                doc_name="smeta_norm_cards.v1",
+                score=1.0 / hit_index,
+                meta={"dataset_id": "smeta"},
+            )
+            for hit_index in range(1, 9)
+        ]
+        query_hits.append((f"работа {query_index}", hits))
+
+    groups, chunks = service.build_model_rag_evidence_groups(
+        query_hits,
+        max_chars=70_000,
+    )
+
+    rendered = "\n\n".join(groups)
+    assert len(groups) == 30
+    assert len(chunks) == 180
+    assert "[Поисковый запрос Q30] работа 30" in rendered
+    assert "[Q30.H6 | smeta_norm_cards.v1" in rendered
+    assert "ГЭСН30-00-000-06" in rendered
+    assert "ГЭСН30-00-000-07" not in rendered
+    assert len(rendered) <= 70_000
+
+
 def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
     rows = [
         {
@@ -141,9 +180,176 @@ def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
         for index in range(1, 31)
     ]
 
-    assert service.parse_model_rag_result(
-        json.dumps({"answer": "Готово", "rows": rows}, ensure_ascii=False)
-    ) == ("Готово", rows)
+    answer = "\n".join(
+        [
+            "Готово",
+            "",
+            "| source_row | section | title | unit | quantity | norm_code | analogue | coverage | coefficient | evidence_refs |",
+            "|---:|---|---|---|---:|---|---|---|---:|---|",
+            *[
+                f"| {index} | | Работа {index} | шт. | {index} | "
+                f"ГЭСНм00-00-000-{index:02d} | | | | Источник {index} |"
+                for index in range(1, 31)
+            ],
+        ]
+    )
+
+    assert service.parse_model_rag_result(answer) == (answer, rows)
+
+
+def test_model_rag_result_reads_the_models_ordinary_sectioned_answer():
+    answer = """### Раздел 1. Демонтажные работы ЭОМ
+**Строка 1: Защитное укрытие пленкой, 116 м².**
+* **Выбранный аналог:** `ГЭСН26-01-055-01` (Установка пароизоляционного слоя из пленки).
+* **Обоснование:** Ближайший по составу работ аналог [Q1.H2].
+
+### Раздел 2. Монтажные работы ЭОМ
+**Строка 1: Монтаж блока аварийного питания, 16 шт.**
+* **Выбранный аналог:** `ГЭСНм34-01-071-01` (Светильник с аварийным питанием).
+* **Обоснование:** Аналог по сложности монтажа Q7.H1; Q7.H3.
+"""
+
+    assert service.parse_model_rag_result(answer) == (
+        answer,
+        [
+            {
+                "source_row": 1,
+                "section": "Раздел 1. Демонтажные работы ЭОМ",
+                "title": "Защитное укрытие пленкой",
+                "unit": "м²",
+                "quantity": 116,
+                "norm_code": "ГЭСН26-01-055-01",
+                "analogue": "Установка пароизоляционного слоя из пленки",
+                "coverage": "Ближайший по составу работ аналог [Q1.H2].",
+                "evidence_refs": ["Q1.H2"],
+            },
+            {
+                "source_row": 2,
+                "section": "Раздел 2. Монтажные работы ЭОМ",
+                "title": "Монтаж блока аварийного питания",
+                "unit": "шт.",
+                "quantity": 16,
+                "norm_code": "ГЭСНм34-01-071-01",
+                "analogue": "Светильник с аварийным питанием",
+                "coverage": "Аналог по сложности монтажа Q7.H1; Q7.H3.",
+                "evidence_refs": ["Q7.H1", "Q7.H3"],
+            },
+        ],
+    )
+
+
+def test_model_rag_queries_ignore_only_plain_text_presentation_wrappers():
+    raw = (
+        "Вот список поисковых запросов.\n"
+        "```text\n"
+        '"демонтаж кабеля в гофре"\n'
+        '"монтаж аварийного светильника"\n'
+        "```"
+    )
+
+    assert service.parse_model_rag_queries(raw) == [
+        "демонтаж кабеля в гофре",
+        "монтаж аварийного светильника",
+    ]
+
+
+def test_model_rag_result_reads_an_ordinary_russian_table_with_combined_norm_cell():
+    answer = """| № п/п | Наименование работ (из ВОР) | Ед. изм. | Кол-во | Нормативная база (Шифр нормы) | Обоснование выбора и аналог | Примечания к составу работ |
+|:---:|:---|:---:|:---:|:---|:---|:---|
+| **Раздел 1. Демонтажные работы** | | | | | | |
+| 1 | Защитное укрытие | м² | 116 | **ГЭСН26-01-055-01**<br>[Q3.H2] | Аналог: пароизоляционный слой | Материал отдельно |
+| 2 | Разработка проема | шт. | 10 | *(Нет прямого аналога)*<br>Аналог: **ГЭСН15-02-035-03**<br>[Q6.H1] | Аналог по составу | Обратная операция |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[0] == answer
+    assert parsed[1] == [
+        {
+            "source_row": 1,
+            "section": "Раздел 1. Демонтажные работы",
+            "title": "Защитное укрытие",
+            "unit": "м²",
+            "quantity": 116,
+            "norm_code": "ГЭСН26-01-055-01",
+            "analogue": "Аналог: пароизоляционный слой",
+            "coverage": "Материал отдельно",
+            "evidence_refs": ["Q3.H2"],
+        },
+        {
+            "source_row": 2,
+            "section": "Раздел 1. Демонтажные работы",
+            "title": "Разработка проема",
+            "unit": "шт.",
+            "quantity": 10,
+            "norm_code": "ГЭСН15-02-035-03",
+            "analogue": "Аналог по составу",
+            "coverage": "Обратная операция",
+            "evidence_refs": ["Q6.H1"],
+        },
+    ]
+
+
+def test_model_rag_result_collects_every_ordinary_table_across_sections():
+    answer = """### Раздел 1. Демонтаж
+| № пп | Наименование работ | Ед. изм. | Кол-во | Нормативная база (Norm Code) | Обоснование выбора и аналог | Примечания к выбору |
+|:---|:---|:---:|:---:|:---|:---|:---|
+| 1 | Работа 1 | м² | 116 | **ГЭСН26-02-010-02** | Аналог 1 | **Evidence:** Q1.H3 |
+
+### Раздел 2. Монтаж
+| № пп | Наименование работ | Ед. изм. | Кол-во | Нормативная база (Norm Code) | Обоснование выбора и аналог | Примечания к выбору |
+|:---|:---|:---:|:---:|:---|:---|:---|
+| 1 | Работа 2 | шт. | 10 | **ГЭСН17-01-010-01** | Аналог 2 | **Evidence:** Q3.H3 |
+| 2 | Работа 3 | м | 160 | **ГЭСНм08-02-146-02** | Аналог 3 | **Evidence:** Q9.H4 |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[0] == answer
+    assert [row["source_row"] for row in parsed[1]] == [1, 2, 3]
+    assert [row["section"] for row in parsed[1]] == [
+        "Раздел 1. Демонтаж",
+        "Раздел 2. Монтаж",
+        "Раздел 2. Монтаж",
+    ]
+    assert [row["norm_code"] for row in parsed[1]] == [
+        "ГЭСН26-02-010-02",
+        "ГЭСН17-01-010-01",
+        "ГЭСНм08-02-146-02",
+    ]
+    assert [row["evidence_refs"] for row in parsed[1]] == [
+        ["Q1.H3"],
+        ["Q3.H3"],
+        ["Q9.H4"],
+    ]
+
+
+def test_model_rag_result_accepts_the_models_short_ordinary_column_names():
+    answer = """### Раздел 1. Работы
+| № пп | Наименование | Ед. изм. | Кол-во | Примечание | norm_code (Шифр) | Аналог/Обоснование | Coverage (Соответствие) | Coefficient (Кэф.) | Evidence_refs |
+|:---|:---|:---|:---|:---|:---|:---|:---|:---|:---|
+| 1 | Работа | м² | 116 | Текст модели | ГЭСН26-01-055-01 | Аналог модели | Частичное | 1.0 | [Q1.H2] |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[1] == [
+        {
+            "source_row": 1,
+            "section": "Раздел 1. Работы",
+            "title": "Работа",
+            "unit": "м²",
+            "quantity": 116,
+            "norm_code": "ГЭСН26-01-055-01",
+            "analogue": "Аналог модели",
+            "coverage": "Частичное",
+            "coefficient": 1,
+            "evidence_refs": ["Q1.H2"],
+        }
+    ]
 
 
 async def _async_append(target, value):
@@ -1049,9 +1255,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     rag_queries = []
     exact_decisions = [
         {
-            "row_id": "row-1",
+            "source_row": 1,
+            "section": "ЭОМ",
+            "title": "монтаж шкафа управления",
+            "unit": "шт.",
+            "quantity": 2.0,
             "norm_code": "ГЭСНм08-02-401-01",
-            "reason": "Монтаж оборудования по найденной карточке нормы",
+            "analogue": "Монтаж оборудования по найденной карточке нормы",
+            "coverage": "прямое соответствие",
+            "evidence_refs": ["Q1.H1"],
         }
     ]
     protected_db = tmp_path / "protected.db"
@@ -1375,26 +1587,21 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 if model_rag_result:
                     self.responses = [
                         InferenceResponse(
-                            text=json.dumps(
-                                {
-                                    "queries": [
-                                        "монтаж шкафа управления",
-                                        "прокладка контрольного кабеля",
-                                    ]
-                                },
-                                ensure_ascii=False,
+                            text=(
+                                "монтаж шкафа управления\n"
+                                "прокладка контрольного кабеля"
                             ),
                             tool_calls=(),
                             finish_reason="stop",
                             usage={},
                         ),
                         InferenceResponse(
-                            text=json.dumps(
-                                {
-                                    "answer": "active visible answer",
-                                    "rows": exact_decisions,
-                                },
-                                ensure_ascii=False,
+                            text=(
+                                "active visible answer\n\n"
+                                "| source_row | section | title | unit | quantity | norm_code | analogue | coverage | coefficient | evidence_refs |\n"
+                                "|---:|---|---|---|---:|---|---|---|---:|---|\n"
+                                "| 1 | ЭОМ | монтаж шкафа управления | шт. | 2 | ГЭСНм08-02-401-01 | "
+                                "Монтаж оборудования по найденной карточке нормы | прямое соответствие | | Q1.H1 |"
                             ),
                             tool_calls=(),
                             finish_reason="stop",
@@ -1683,7 +1890,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     after_protected = protected_hash()
     if model_rag_result:
-        assert result["answer"] == "active visible answer"
+        assert result["answer"].startswith("active visible answer\n\n| source_row |")
         assert rag_queries == [
             "монтаж шкафа управления",
             "прокладка контрольного кабеля",
@@ -1696,9 +1903,21 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "Строка 1: монтаж шкафа управления — 2 шт." in str(
             active_transport.requests[0].messages
         )
-        assert "сформулируй все необходимые запросы" in str(
-            active_transport.requests[0].messages
-        )
+        final_messages = str(active_transport.requests[1].messages)
+        assert "Строка 1: монтаж шкафа управления — 2 шт." in final_messages
+        assert "Карточка нормы для монтаж шкафа управления" in final_messages
+        assert "Карточка нормы для прокладка контрольного кабеля" in final_messages
+        assert "[Поисковый запрос Q1] монтаж шкафа управления" in final_messages
+        assert "Q1.H1" in final_messages
+        assert "[Поисковый запрос Q2] прокладка контрольного кабеля" in final_messages
+        assert "Q2.H1" in final_messages
+        first_messages = str(active_transport.requests[0].messages)
+        assert "Строка 1: монтаж шкафа управления — 2 шт." in first_messages
+        assert '"queries"' not in first_messages
+        assert "верни только сами поисковые запросы" in first_messages
+        assert "фиксированного лимита нет" in first_messages
+        assert "по всем фактическим строкам" in first_messages
+        assert "Код не подтверждает и не меняет твой выбор" in final_messages
         assert history_rows[0]["retrieval_trace"]["status"] == "model_driven"
         assert history_rows[0]["retrieval_trace"]["reason"] == (
             "awaiting_model_authored_query"
@@ -1706,6 +1925,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
         assert tool_loop["schema"] == "les_model_rag_batch_v1"
         assert tool_loop["model_queries"] == rag_queries
+        assert tool_loop["evidence_groups"] == ["Q1", "Q2"]
         assert "rounds" not in tool_loop
         assert "review" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
         assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()

@@ -1,15 +1,22 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **Текущий model → RAG → result:** модель без native tools читает вопрос и
-> вложение и возвращает все поисковые запросы. Application дословно исполняет их
-> через общий native-RRF RAG в выбранном scope. Та же модель получает весь
-> evidence packet и возвращает `answer + rows`; только затем код один раз
-> рассчитывает/упаковывает XLSX. Selector/workbook loop, `status`, confirm/review
-> и лимит числа строк в активном пути отсутствуют. Ошибка упаковки не меняет
-> model result и не запускает новый предметный ход.
+> **Текущий model → RAG → result:** активный контракт закреплён в
+> [ADR-15](ADR-15-model-rag-result.md): одна модель видит исходный вопрос и
+> вложение, сама формулирует любое необходимое число запросов, получает ответы
+> общего native-RRF RAG в явно выбранном scope и выдаёт все профессиональные
+> строки. Только после терминального model result код рассчитывает, подставляет
+> цены из pricebook и автоматически прикладывает XLSX. Selector/workbook loop,
+> `status`, confirm/review и лимит числа строк в активном пути отсутствуют.
+> Ошибка упаковки не меняет model result и не запускает новый предметный ход.
 > Точки входа: `proxy/services/chat_evidence_application_service.py`,
 > `proxy/services/model_research_tool_service.py`,
-> `tests/test_chat_evidence_application_service.py`. Статус док↔код: ✅.
+> `proxy/services/lsr_workbook_adapter_service.py`,
+> `tests/test_chat_evidence_application_service.py`. Статус док↔код: ✅ —
+> изолированный dev-chat на Legion принял реальный PDF: Qwen сформировала 11
+> обычных поисковых строк, RAG вернул 11 групп по 6 карточек `Qx.Hy`, финальный
+> no-tools ответ дал 19 строк, а код автоматически собрал XLSX. В книге 17
+> привязанных норм, 2 видимых конфликта единиц, цены Санкт-Петербурга за II
+> квартал 2026 года и формульный итог. Установленные 8050/8051 не изменялись.
 
 > **0.30.30 model → RAG → result:** role-bound estimator scope добавляет только
 > typed system datasets `smeta`; первый и последующие запросы `search_sources`
@@ -475,7 +482,7 @@
 | workbook-tools | Канонические `build_lsr_workbook` / `build_vor_workbook`: server-owned attachment, required idempotency, durable checkpoint, immutable artifact lineage и bounded result без filesystem path. Оба контракта context-bound и не выдаются обычным ToolHarness shortlist. Единый chat capability manifest одновременно определяет, что видит модель и какой callable исполняет tool. VOR использует built-in adapter; тонкий LSR adapter принимает выбранные моделью строки/шифры, использует exact calculation/renderer и не запускает второго агента | `proxy/services/{workbook_tool_service,lsr_workbook_adapter_service,artifact_revision_service,workflow_checkpoint_service,bor_service,rim_lsr_trace_service,rim_trace_xlsx_service}.py`; `proxy/routers/{chat,artifacts}.py` | [ALGO-tool-harness](ALGO-tool-harness.md) | ✅ |
 | smeta/model-quality | Воспроизводимый live Qwen↔Gemma A/B на одном canonical XLSX/PDF→ЛСР workflow: одинаковые prompt, corpus, tools, seed, limits и начальное состояние; per-row calculated/partial/missing, tool calls/repeats, **stage_latency** (catalog/search/read/bind/llm p50/p95), unit/volume/provenance integrity, hierarchical-route trace и реальный checkpoint/resume. `--resume-run` продолжает существующий run только после совпадения source SHA, model profiles и fixed contract. Главный сравнительный gate вместо golden/ranx. Профессиональная правильность — только по явному `les.smeta.qrels.v1` | `tools/smeta_model_quality_benchmark.py`; `tests/test_smeta_model_quality_benchmark.py` | [modules/smeta-core.md](modules/smeta-core.md) · [BACKLOG_RAG_EXCEL_PDF.md](BACKLOG_RAG_EXCEL_PDF.md) | ✅ |
 | core/modules | лёгкий реестр профессиональных модулей LES: smeta, normcontrol, BIM/QTO, docs_review, procurement, contracts, project RAG; router выбирает модуль, но не решает предметную область | `les_module_service`, `active_state_service`, `scoped_rag_builder`, `skill_snippet_registry`, `tool_trace_policy` | [ALGO-routing.md](ALGO-routing.md) | ✅ |
-| core/chat-evidence | application-граница model-owned evidence-first RAG: явный user scope либо typed system datasets роли → первый no-tools model call формулирует все запросы → каждый exact query идёт через named dense+sparse native RRF → общий evidence packet → второй no-tools call той же модели возвращает `answer + rows` → только после model result код рассчитывает и упаковывает XLSX. Нет selector/workbook loop, `status`, confirm/review и row-count cap; packaging failure не меняет model result. Grounded cache выключен, пустой retrieval не создаёт кодовый `NO_DATA`, evidence/source-map входят раньше advisory memory и доступны в trace | `proxy/services/chat_evidence_application_service.py`, `proxy/services/{context_governor,typed_memory_projection,model_execution_preset,llm_transport_profile,model_research_tool}_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [ALGO-context-memory.md](ALGO-context-memory.md) · [design](superpowers/specs/2026-08-30-model-owned-evidence-first-rag-design.md) | ✅ |
+| core/chat-evidence | application-граница model-owned evidence-first RAG: явный user scope либо typed system datasets роли → первый no-tools model call возвращает обычные поисковые строки → каждый exact query идёт через named dense+sparse native RRF → по 6 карточек на запрос группируются только как `Qx.Hy` и все группы резервируются в context → второй no-tools call той же модели возвращает обычный итоговый текст → механический reader собирает все Markdown-таблицы/строки ответа без изменения решений → только затем код вызывает `build_lsr_workbook`. Нет JSON-schema, native-tool selector/workbook loop, `status`, confirm/review и row-count cap; packaging failure не меняет model result. В model-RAG answer служебная память и дублирующий `Источник N` не конкурируют с вложением/evidence | `proxy/services/chat_evidence_application_service.py`, `proxy/services/{context_governor,model_execution_preset,llm_transport_profile,model_research_tool}_service.py`, `proxy/routers/chat.py`, `retrieval_service`, `evidence_packet_service` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) · [ADR-15](ADR-15-model-rag-result.md) | ✅ |
 | core/tool-harness | controlled registry/executor для инструментов: карта датасета, source search/read, PDF/Excel readers, bounded vision и read-only filesystem. Model shortlist строится только из runtime-исполняемых контрактов: registry-запись сама по себе не делает context-bound tool доступным. В grounded chat `ModelResearchToolService` исполняет `search_sources` тем же production native RRF и не позволяет модели расширить операторский dataset scope; цикл останавливает модель (`calls: []`) или технический deadline | `proxy/services/{tool_contract_service,tool_registry_service,capability_broker_service,trusted_executor_service,tool_harness_service,model_research_tool_service,workbook_tool_service}.py`, `proxy/routers/tools.py`, `tools/les_tool_harness.py`, `routers/chat.py` | [ALGO-tool-harness.md](ALGO-tool-harness.md) · [CHAT_OPERATOR_CONTRACT.md](CHAT_OPERATOR_CONTRACT.md) | ✅ |
 | core/public-provider-session | обязательный выбор локальной или BYOK-облачной модели после публичного ключа; API-ключ хранится только в process-memory vault с TTL, runtime изолирован `ContextVar`, общий `.env` не меняется | `sovushka/{auth,provider_setup,provider_session,state}.py`, `proxy/services/chat_provider_session_service.py`, `proxy/routers/chat.py`, `/provider-setup`, `/api/chat[/stream]` | [modules/public-provider-session.md](modules/public-provider-session.md) | ✅ |
 | core/test-infrastructure | комплексная автоматизированная тестовая инфраструктура: unit, offline smoke, test runner, coverage и CI отчёты | `tools/test_runner.py`, `tests/test_smoke_offline.py`, `tests/test_unit_core_business.py`, `Makefile` | [TESTING_GUIDE.md](TESTING_GUIDE.md) · [TEST_INVENTORY.md](TEST_INVENTORY.md) | ✅ |
@@ -512,11 +519,9 @@ Live Qwen `vor-0013` прошёл `5 семейств → 47 сборников 
 `smeta_mapping_quality --prepare-from` создаёт очередь экспертной разметки, не принимая предложение
 модели за эталон.
 
-**ADR-13 / 0.24.45:** локальный и облачный контуры закреплены как transport profiles одного
-`SmetaSession`. Каждый поиск несёт model-authored `smeta_scope_plan_v1`
-(`scoped` с `base_types/collections` или явный `global`); Python только валидирует и исполняет план.
-R1→R2→`mapping_locked` остаются append-only, производные поля старой нормы не переносятся при смене
-нормы, а `simple_rag`, subject heuristics, auto-unbound и stall-auto-search запрещены.
+**ADR-13 / 0.24.45 — исторический/экспериментальный контур:** `SmetaSession`,
+`smeta_scope_plan_v1`, R1→R2 и `mapping_locked` заменены ADR-15 для активного
+продуктового пути и не могут быть обязательной обвязкой между моделью и RAG.
 
 **0.24.46 / build 467:** принят operational-контур публичного PR: document Qwen `qwen3.5:9b`
 работает с `temperature=0`, фиксируемым `LES_SMETA_DOCUMENT_SEED` и локальным batch=5; запросы и

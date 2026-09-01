@@ -102,6 +102,9 @@ _FACTORY_35B = ModelExecutionPreset(
 # is not coherent after fixed generation and safety reserves. A 35B identity
 # therefore keeps the 9B-compatible execution contract on small KV windows.
 _MIN_EXTENDED_35B_CONTEXT_TOKENS = 16384
+_MIN_EXTENDED_GENERATION_CONTEXT_TOKENS = 16384
+_EXTENDED_GENERATION_RESERVE_TOKENS = 4096
+_PROVEN_RESTRICTIVE_CONTEXT_TOKENS = 32768
 
 
 def _is_qwen_35b(model_id: str) -> bool:
@@ -173,12 +176,25 @@ def resolve_execution_preset(
     if has_observed_capacity:
         source_chain.append("observed_backend_capacity")
         observed_context = int(capacity.context_tokens or 0)
+        usable_context = (
+            observed_context
+            if extended_35b_available
+            else min(observed_context, _PROVEN_RESTRICTIVE_CONTEXT_TOKENS)
+        )
         resolved = replace(
             resolved,
             input_token_limit=(
-                min(observed_context, requested_context)
+                min(usable_context, requested_context)
                 if requested_context is not None
-                else observed_context
+                else usable_context
+            ),
+            generation_reserve_tokens=(
+                max(
+                    resolved.generation_reserve_tokens,
+                    _EXTENDED_GENERATION_RESERVE_TOKENS,
+                )
+                if observed_context >= _MIN_EXTENDED_GENERATION_CONTEXT_TOKENS
+                else resolved.generation_reserve_tokens
             ),
         )
     elif requested_context is not None:

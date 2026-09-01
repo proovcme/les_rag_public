@@ -1622,7 +1622,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4095,
+      "lines": 4104,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -2971,7 +2971,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3262,
+      "lines": 3673,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3856,6 +3856,7 @@
         "proxy/services/fgis_price_fetch_service.py",
         "proxy/services/kac_service.py",
         "proxy/services/lsr_assembly_service.py",
+        "proxy/services/lsr_workbook_adapter_service.py",
         "proxy/services/smeta_artifact_service.py",
         "proxy/services/smeta_chat_service.py",
         "proxy/smeta_core/calculator.py",
@@ -4561,11 +4562,12 @@
         "proxy/services/workbook_tool_service.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 52,
+      "lines": 81,
       "module": "proxy.services.lsr_workbook_adapter_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
+        "proxy/services/fgis_price_service.py",
         "proxy/services/rim_lsr_trace_service.py",
         "proxy/services/rim_trace_xlsx_service.py"
       ],
@@ -4777,7 +4779,7 @@
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_model_capability_service.py"
       ],
-      "lines": 333,
+      "lines": 395,
       "module": "proxy.services.model_capability_service",
       "outbound": [
         "proxy/__init__.py",
@@ -4932,7 +4934,7 @@
         "tests/test_model_preset_workflow_parity.py",
         "tests/test_openai_compatible_transport_service.py"
       ],
-      "lines": 195,
+      "lines": 211,
       "module": "proxy.services.model_execution_preset_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6558,6 +6560,7 @@
         "proxy/services/trusted_executor_service.py",
         "tests/test_extract_service.py",
         "tests/test_structured_extract.py",
+        "tests/test_workbook_tool_service.py",
         "tools/extract_bench.py"
       ],
       "lines": 261,
@@ -7006,7 +7009,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 418,
+      "lines": 401,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7873,7 +7876,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 4688,
+      "lines": 4701,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -8874,7 +8877,7 @@
     },
     {
       "inbound": [],
-      "lines": 1866,
+      "lines": 2086,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -10712,7 +10715,7 @@
     },
     {
       "inbound": [],
-      "lines": 315,
+      "lines": 326,
       "module": "tests.test_model_capability_service",
       "outbound": [
         "proxy/services/model_capability_service.py",
@@ -10835,7 +10838,7 @@
     },
     {
       "inbound": [],
-      "lines": 126,
+      "lines": 134,
       "module": "tests.test_model_execution_preset_service",
       "outbound": [
         "proxy/services/model_execution_preset_service.py"
@@ -12814,7 +12817,7 @@
     },
     {
       "inbound": [],
-      "lines": 981,
+      "lines": 991,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13557,12 +13560,13 @@
     },
     {
       "inbound": [],
-      "lines": 285,
+      "lines": 319,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/lsr_workbook_adapter_service.py",
+        "proxy/services/structured_extract.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py"
       ],
@@ -18033,7 +18037,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 299805
+    "tracked_python_lines": 300611
   },
   "warnings": []
 }

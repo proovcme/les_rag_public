@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -523,12 +524,36 @@ def _model_json_object(raw: str) -> dict[str, Any] | None:
 
 
 def parse_model_rag_queries(raw: str) -> list[str]:
-    """Return every non-empty RAG query authored by the model, unchanged."""
+    """Return the model-authored plain-text query lines without presentation wrappers."""
 
     payload = _model_json_object(raw) or {}
     raw_queries = payload.get("queries")
     if not isinstance(raw_queries, list):
-        return []
+        raw_calls = payload.get("calls")
+        raw_queries = []
+        if isinstance(raw_calls, list):
+            for call in raw_calls:
+                if not isinstance(call, dict) or call.get("tool") != "search_sources":
+                    continue
+                args = call.get("args")
+                if isinstance(args, dict):
+                    raw_queries.append(args.get("q"))
+    if not raw_queries:
+        plain_lines = [line.strip() for line in str(raw or "").splitlines()]
+        fence_indexes = [
+            index for index, line in enumerate(plain_lines) if line.startswith("```")
+        ]
+        if len(fence_indexes) >= 2:
+            plain_lines = plain_lines[fence_indexes[0] + 1 : fence_indexes[-1]]
+        quoted_lines = [
+            line[1:-1].strip()
+            for line in plain_lines
+            if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}
+        ]
+        raw_queries = quoted_lines or [
+            line for line in plain_lines if line and not line.startswith("```")
+        ]
+
     queries: list[str] = []
     for item in raw_queries:
         value: Any = item
@@ -543,33 +568,372 @@ def parse_model_rag_queries(raw: str) -> list[str]:
 
 
 def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
-    """Split the model's visible answer from rows later consumed by code."""
+    """Read model-authored rows from its ordinary Markdown answer without changing it."""
 
-    payload = _model_json_object(raw)
-    if payload is None or not isinstance(payload.get("answer"), str):
-        return None
-    rows = payload.get("rows")
-    if not isinstance(rows, list) or any(not isinstance(item, dict) for item in rows):
-        return None
-    return payload["answer"], [dict(item) for item in rows]
+    required_fields = {"title", "unit", "quantity", "norm_code"}
 
+    def field_name(value: str) -> str:
+        normalized = re.sub(r"\s+", " ", value.replace("**", "").strip()).casefold()
+        if normalized in {
+            "source_row",
+            "section",
+            "title",
+            "unit",
+            "quantity",
+            "norm_code",
+            "analogue",
+            "coverage",
+            "coefficient",
+            "evidence_refs",
+        }:
+            return normalized
+        if normalized.startswith("№"):
+            return "source_row"
+        if normalized == "наименование" or normalized.startswith("наименование работ"):
+            return "title"
+        if normalized.startswith("ед. изм"):
+            return "unit"
+        if normalized.startswith("кол-во"):
+            return "quantity"
+        if normalized.startswith("norm_code"):
+            return "norm_code"
+        if normalized.startswith("нормативная база") or "шифр нормы" in normalized:
+            return "norm_code"
+        if normalized.startswith("analogue / coverage"):
+            return "analogue"
+        if normalized.startswith("аналог/") or normalized.startswith("аналог /"):
+            return "analogue"
+        if normalized.startswith("обоснование выбора"):
+            return "analogue"
+        if normalized.startswith("coefficient"):
+            return "coefficient"
+        if normalized.startswith("evidence_refs"):
+            return "evidence_refs"
+        if normalized.startswith("примечание инженера"):
+            return "coverage"
+        if normalized.startswith("примечания к составу"):
+            return "coverage"
+        if normalized.startswith("coverage"):
+            return "coverage"
+        return ""
 
-def profile_model_rag_query_prompt(profile_snapshot: dict[str, Any] | None) -> str:
-    """Thin query-authoring contract: model asks, RAG transport only executes."""
+    def cells(line: str) -> list[str]:
+        stripped = line.strip()
+        if not stripped.startswith("|") or not stripped.endswith("|"):
+            return []
+        return [item.strip() for item in stripped[1:-1].split("|")]
 
-    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
-    skill = str(snapshot.get("skill_text") or "").strip()
-    parts = [
-        (
-            "Прочитай задачу и явно прикреплённые материалы; сформулируй все необходимые "
-            "запросы к выбранным датасетам. Верни только JSON вида "
-            '{"queries":["запрос 1","запрос 2"]}. '
-            "Не отвечай по существу на этом шаге. Число запросов определяешь ты."
+    def number(value: str) -> int | float | None:
+        normalized = value.replace("\u00a0", "").replace(" ", "").replace(",", ".")
+        if not normalized:
+            return None
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            return None
+        return int(parsed) if parsed.is_integer() else parsed
+
+    lines = str(raw or "").splitlines()
+    table_rows: list[dict[str, Any]] = []
+    current_section = ""
+    header_index = 0
+    while header_index < len(lines):
+        section_match = re.match(
+            r"^###\s+(Раздел\s+.+)$", lines[header_index].strip(), re.IGNORECASE
         )
+        if section_match:
+            current_section = section_match.group(1).strip()
+            header_index += 1
+            continue
+        header = cells(lines[header_index])
+        mapped_header = [field_name(item) for item in header]
+        if (
+            not header
+            or not required_fields.issubset(set(mapped_header))
+            or len([item for item in mapped_header if item])
+            != len(set(item for item in mapped_header if item))
+        ):
+            header_index += 1
+            continue
+        if header_index + 1 >= len(lines):
+            break
+        divider = cells(lines[header_index + 1])
+        if len(divider) != len(header) or not all(
+            re.fullmatch(r":?-{3,}:?", item) for item in divider
+        ):
+            header_index += 1
+            continue
+        table_section = current_section
+        row_index = header_index + 2
+        while row_index < len(lines):
+            values = cells(lines[row_index])
+            if not values:
+                break
+            if len(values) != len(header):
+                return None
+            visible_values = [value.replace("**", "").strip() for value in values]
+            if visible_values[0].casefold().startswith("раздел") and not any(
+                visible_values[1:]
+            ):
+                table_section = visible_values[0]
+                row_index += 1
+                continue
+            raw_row = {
+                name: value
+                for name, value in zip(mapped_header, visible_values, strict=True)
+                if name
+            }
+            row: dict[str, Any] = {}
+            for name, value in raw_row.items():
+                if not value:
+                    continue
+                if name == "source_row":
+                    continue
+                if name in {"quantity", "coefficient"}:
+                    numeric_value = value
+                    if name == "coefficient":
+                        match = re.match(r"[+-]?[0-9]+(?:[.,][0-9]+)?", value)
+                        numeric_value = match.group(0) if match else ""
+                    parsed_number = number(numeric_value)
+                    if parsed_number is None:
+                        return None
+                    row[name] = parsed_number
+                elif name == "evidence_refs":
+                    refs = list(
+                        dict.fromkeys(
+                            re.findall(r"Q\d+\.H\d+", value, re.IGNORECASE)
+                        )
+                    )
+                    if not refs:
+                        refs = [
+                            item.strip()
+                            for item in re.split(r"[,;]", value)
+                            if item.strip()
+                        ]
+                    if refs:
+                        row[name] = refs
+                elif name == "norm_code":
+                    code_match = re.search(
+                        r"[А-ЯA-ZЁа-яa-zё]+\d{2}-\d{2}-\d{3}-\d{2}",
+                        value,
+                    )
+                    row[name] = code_match.group(0) if code_match else ""
+                else:
+                    row[name] = value
+            embedded_refs = list(
+                dict.fromkeys(
+                    re.findall(r"Q\d+\.H\d+", " ".join(visible_values), re.IGNORECASE)
+                )
+            )
+            if embedded_refs and not row.get("evidence_refs"):
+                row["evidence_refs"] = embedded_refs
+            if row:
+                row["source_row"] = len(table_rows) + 1
+                if table_section and not row.get("section"):
+                    row["section"] = table_section
+                table_rows.append(row)
+            row_index += 1
+        header_index = max(row_index, header_index + 1)
+    if table_rows:
+        return str(raw or ""), table_rows
+
+    section = ""
+    prose_rows: list[dict[str, Any]] = []
+    row_header_re = re.compile(r"^\*\*Строка\s+\d+\s*:\s*(.+?)\*\*$", re.IGNORECASE)
+    section_re = re.compile(r"^###\s+(Раздел\s+.+)$", re.IGNORECASE)
+    quantity_re = re.compile(
+        r"^(.*),\s*([0-9]+(?:[.,][0-9]+)?)\s*([^0-9]+)$"
+    )
+    index = 0
+    while index < len(lines):
+        stripped = lines[index].strip()
+        section_match = section_re.match(stripped)
+        if section_match:
+            section = section_match.group(1).strip()
+            index += 1
+            continue
+        row_match = row_header_re.match(stripped)
+        if not row_match:
+            index += 1
+            continue
+        block: list[str] = []
+        index += 1
+        while index < len(lines):
+            candidate = lines[index].strip()
+            if row_header_re.match(candidate) or section_re.match(candidate):
+                break
+            block.append(candidate)
+            index += 1
+
+        title_with_amount = row_match.group(1).strip()
+        amount_match = quantity_re.match(title_with_amount)
+        if amount_match:
+            title = amount_match.group(1).strip()
+            quantity = number(amount_match.group(2))
+            unit = amount_match.group(3).strip()
+            if unit.endswith(("².", "³.")):
+                unit = unit[:-1]
+        else:
+            title = title_with_amount
+            quantity = None
+            unit = ""
+
+        block_text = "\n".join(block)
+        analogue_match = re.search(
+            r"\*\*Выбранный аналог:\*\*\s*`([^`]+)`(?:\s*\(([^\n]*)\))?",
+            block_text,
+            re.IGNORECASE,
+        )
+        coverage_match = re.search(
+            r"\*\*(?:Обоснование|Решение):\*\*\s*([^\n]+)",
+            block_text,
+            re.IGNORECASE,
+        )
+        row = {
+            "source_row": len(prose_rows) + 1,
+            "section": section,
+            "title": title,
+            "unit": unit,
+            "quantity": quantity,
+            "norm_code": analogue_match.group(1).strip() if analogue_match else "",
+        }
+        if analogue_match and analogue_match.group(2):
+            row["analogue"] = analogue_match.group(2).strip().rstrip(".")
+        if coverage_match:
+            row["coverage"] = coverage_match.group(1).strip()
+        refs = list(dict.fromkeys(re.findall(r"Q\d+\.H\d+", block_text, re.IGNORECASE)))
+        if refs:
+            row["evidence_refs"] = refs
+        prose_rows.append(row)
+    return (str(raw or ""), prose_rows) if prose_rows else None
+
+
+@dataclass(frozen=True)
+class _ModelRagEvidenceChunk:
+    """One model-visible RAG hit with its query/hit coordinate preserved."""
+
+    content: str
+    doc_id: str
+    doc_name: str
+    score: float
+    meta: dict[str, Any]
+
+
+def build_model_rag_evidence_groups(
+    query_hits: Sequence[tuple[str, Sequence[Any]]],
+    *,
+    max_chars: int,
+) -> tuple[list[str], list[_ModelRagEvidenceChunk]]:
+    """Render six RAG hits per model query without letting early queries crowd out later ones."""
+
+    prepared: list[tuple[int, str, list[tuple[int, Any, str, str]]]] = []
+    source_index = 0
+    fixed_chars = 0
+    segment_count = 0
+    for query_index, (raw_query, raw_hits) in enumerate(query_hits, 1):
+        query = str(raw_query or "").strip()
+        query_header = f"[Поисковый запрос Q{query_index}] {query}"
+        hits: list[tuple[int, Any, str, str]] = []
+        fixed_chars += len(query_header)
+        segment_count += 1
+        for hit_index, hit in enumerate(list(raw_hits)[:6], 1):
+            source_index += 1
+            doc_name = str(getattr(hit, "doc_name", "") or "")
+            score = float(getattr(hit, "score", 0.0) or 0.0)
+            source_header = (
+                f"[Q{query_index}.H{hit_index} | {doc_name} | score={score:.4f}]"
+            )
+            body = str(getattr(hit, "content", "") or "").strip()
+            hits.append((hit_index, hit, source_header, body))
+            fixed_chars += len(source_header) + 2
+            segment_count += 1
+        prepared.append((query_index, query_header, hits))
+
+    fixed_chars += max(0, segment_count - 1) * 2
+    if fixed_chars > max_chars:
+        raise ValueError("MODEL_RAG_EVIDENCE_BUDGET_TOO_SMALL_FOR_ALL_QUERY_HEADERS")
+
+    bodies = [body for _qi, _qh, hits in prepared for _hi, _hit, _sh, body in hits]
+    body_budget = max_chars - fixed_chars
+    low, high = 0, max((len(body) for body in bodies), default=0)
+    while low < high:
+        cap = (low + high + 1) // 2
+        if sum(min(len(body), cap) for body in bodies) <= body_budget:
+            low = cap
+        else:
+            high = cap - 1
+    body_cap = low
+
+    groups: list[str] = []
+    chunks: list[_ModelRagEvidenceChunk] = []
+    source_index = 0
+    for query_index, query_header, hits in prepared:
+        group_parts = [query_header]
+        for hit_index, hit, source_header, body in hits:
+            source_index += 1
+            visible_body = body
+            if len(visible_body) > body_cap:
+                visible_body = (
+                    visible_body[: max(0, body_cap - 1)].rstrip() + "…"
+                    if body_cap
+                    else ""
+                )
+            group_parts.append(f"{source_header}:\n{visible_body}")
+            meta = dict(getattr(hit, "meta", {}) or {})
+            meta.update(
+                {
+                    "model_query_index": query_index,
+                    "model_hit_index": hit_index,
+                    "model_evidence_ref": f"Q{query_index}.H{hit_index}",
+                    "model_source_index": source_index,
+                }
+            )
+            chunks.append(
+                _ModelRagEvidenceChunk(
+                    content=visible_body,
+                    doc_id=str(getattr(hit, "doc_id", "") or ""),
+                    doc_name=str(getattr(hit, "doc_name", "") or ""),
+                    score=float(getattr(hit, "score", 0.0) or 0.0),
+                    meta=meta,
+                )
+            )
+        groups.append("\n\n".join(group_parts))
+    return groups, chunks
+
+
+def _model_rag_source_map(chunks: Sequence[_ModelRagEvidenceChunk]) -> list[dict[str, Any]]:
+    return [
+        {
+            "index": index,
+            "label": f"Источник {index}",
+            "evidence_ref": str(chunk.meta.get("model_evidence_ref") or ""),
+            "doc_name": chunk.doc_name,
+            "doc_id": chunk.doc_id,
+            "dataset_id": str(chunk.meta.get("dataset_id") or ""),
+            "snippet": chunk.content[:360],
+            "score": round(chunk.score, 4),
+        }
+        for index, chunk in enumerate(chunks, 1)
     ]
-    if skill:
-        parts.append("Активный skill профиля:\n" + skill)
-    return "\n\n".join(parts)
+
+
+def model_rag_search_tool_schema() -> list[dict[str, Any]]:
+    """Expose the selected datasets as one native search tool."""
+
+    return native_model_tool_schemas(
+        [
+            {
+                "name": "search_sources",
+                "summary": "Искать evidence в явно выбранных датасетах",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"q": {"type": "string"}},
+                    "required": ["q"],
+                    "additionalProperties": False,
+                },
+            }
+        ]
+    )
 
 
 def _bounded_source_blocks(text: str, *, max_chars: int = 700) -> list[str]:
@@ -1948,6 +2312,8 @@ async def _execute_chat_evidence_application(
                 tool_results_for_model: list[dict[str, Any]] = []
                 workbook_chat_meta: dict[str, Any] = {}
                 tool_context = ""
+                model_rag_query_hits: list[tuple[str, Sequence[Any]]] = []
+                model_rag_evidence_groups: list[str] = []
                 visual_tool_requested = any(
                     marker in str(req.question or "").casefold().replace("ё", "е")
                     for marker in ("посмотри глазами", "посмотри чертеж", "посмотри схему", "что видно на лист", "что изображено на лист")
@@ -1995,7 +2361,15 @@ async def _execute_chat_evidence_application(
                         query_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
                     query_messages, query_packet = govern_inference_messages(
                         preset=execution_preset,
-                        profile_prefix=profile_model_rag_query_prompt(profile_snapshot),
+                        profile_prefix=(
+                            profile_system_prompt(profile_snapshot, strict=False)
+                            + "\n\nПрочитай приложенный материал целиком. Сформулируй поисковые "
+                            "запросы к выбранным датасетам, необходимые для подбора evidence "
+                            "по всем фактическим строкам исходного материала. Число запросов "
+                            "определяешь ты; фиксированного лимита нет. Сейчас не выбирай нормы "
+                            "и не отвечай по существу — верни только сами поисковые запросы, "
+                            "каждый с новой строки."
+                        ),
                         request_payload={
                             "question": str(req.question or ""),
                             "dataset_ids": [str(item) for item in _dataset_ids],
@@ -2061,46 +2435,29 @@ async def _execute_chat_evidence_application(
                             {"tool": "search_sources", "args": {"q": query}}
                         )
                         tool_results_for_model.append(research_result.payload)
-                        if research_result.chunks:
-                            known_chunk_ids = {
-                                str((getattr(item, "meta", {}) or {}).get("chunk_id") or "")
-                                or hashlib.sha256(
-                                    (
-                                        str(getattr(item, "doc_name", "") or "")
-                                        + "\x00"
-                                        + str(getattr(item, "content", "") or "")
-                                    ).encode("utf-8")
-                                ).hexdigest()
-                                for item in chunks
-                            }
-                            for found_chunk in research_result.chunks:
-                                found_id = str(
-                                    (getattr(found_chunk, "meta", {}) or {}).get("chunk_id") or ""
-                                ) or hashlib.sha256(
-                                    (
-                                        str(getattr(found_chunk, "doc_name", "") or "")
-                                        + "\x00"
-                                        + str(getattr(found_chunk, "content", "") or "")
-                                    ).encode("utf-8")
-                                ).hexdigest()
-                                if found_id not in known_chunk_ids:
-                                    chunks.append(found_chunk)
-                                    known_chunk_ids.add(found_id)
-                    research_windows = expand_context_windows(
-                        chunks,
-                        collection=getattr(rag_backend, "collection_name", ""),
-                        logger=logger,
-                        max_chunks=context_max_chunks,
-                        max_chars_per_chunk=context_window_chars,
-                        radius=context_radius,
-                    )
-                    model_evidence_chunks = list(research_windows.chunks)
+                        model_rag_query_hits.append(
+                            (query, tuple(research_result.chunks)[:6])
+                        )
                     (
-                        model_rag_evidence_packet,
-                        context,
-                        answer_source_map,
-                        final_evidence_packet,
-                    ) = _build_model_evidence(model_evidence_chunks)
+                        model_rag_evidence_groups,
+                        model_evidence_chunks,
+                    ) = build_model_rag_evidence_groups(
+                        model_rag_query_hits,
+                        max_chars=context_chars_limit,
+                    )
+                    context = "\n\n".join(model_rag_evidence_groups)
+                    model_rag_evidence_packet = build_retrieval_evidence_packet(
+                        question=req.question,
+                        chunks=model_evidence_chunks,
+                        retrieval_trace=retrieval_trace,
+                        navigation=evidence_navigation,
+                        deterministic_evidence=deterministic_evidence,
+                    )
+                    answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                    final_evidence_packet = model_rag_evidence_packet.to_dict(
+                        max_chars=context_chars_limit,
+                        include_metadata=True,
+                    )
                     retrieval_trace["evidence_packet"] = (
                         model_rag_evidence_packet.trace_summary(
                             max_chars=context_chars_limit,
@@ -2115,6 +2472,12 @@ async def _execute_chat_evidence_application(
                         "model_queries": model_queries,
                         "query_usage": query_usage,
                         "results": tool_results_for_model,
+                        "evidence_groups": [
+                            f"Q{index}" for index in range(1, len(model_rag_evidence_groups) + 1)
+                        ],
+                        "hits_per_query": [
+                            len(hits) for _query, hits in model_rag_query_hits
+                        ],
                     }
                 elif tool_loop_enabled:
                     tool_loop_stage = "harness"
@@ -2525,20 +2888,25 @@ async def _execute_chat_evidence_application(
                         ),
                         "persisted_effects": 0,
                     }
+                # Keep the connection/preset-owned split between input and output.
+                # Reserving 4096 tokens unconditionally for model-authored rows made
+                # the profile + request overflow an 8K Qwen window before evidence
+                # could reach the model at all.
                 answer_execution_preset = execution_preset
-                if model_driven_retrieval:
-                    model_result_reserve = min(
-                        4096,
-                        max(
-                            execution_preset.generation_reserve_tokens,
-                            execution_preset.input_token_limit
-                            - execution_preset.safety_reserve_tokens
-                            - 512,
-                        ),
-                    )
+                if (
+                    model_driven_retrieval
+                    and answer_execution_preset.input_token_limit >= 32_768
+                ):
                     answer_execution_preset = replace(
-                        execution_preset,
-                        generation_reserve_tokens=model_result_reserve,
+                        answer_execution_preset,
+                        generation_reserve_tokens=max(
+                            answer_execution_preset.generation_reserve_tokens,
+                            8_192,
+                        ),
+                        source_chain=(
+                            *answer_execution_preset.source_chain,
+                            "model_rag_complete_answer",
+                        ),
                     )
                 max_attempts = 1 if model_driven_retrieval else 2
                 for attempt in range(1, max_attempts + 1):
@@ -2613,13 +2981,71 @@ async def _execute_chat_evidence_application(
                     )
                     if model_driven_retrieval:
                         question_tail += (
-                            "\nВерни только JSON-объект с полями answer и rows. "
-                            "answer — полный видимый ответ пользователю; rows — все строки результата, "
-                            "которые затем без предметной правки будут переданы коду для расчёта и XLSX. "
-                            "Для строки ЛСР укажи source_row, section, title, unit, quantity, norm_code, "
-                            "analogue, coverage, coefficient и evidence_refs. Не добавляй status и не "
-                            "ограничивай количество строк."
+                            "\nДай итоговый ответ обычным текстом по всем строкам исходного ВОР. Для каждой "
+                            "строки явно укажи source_row, section, title, unit, quantity, выбранный тобой "
+                            "norm_code, analogue, coverage, coefficient и evidence_refs Qx.Hy. Не добавляй "
+                            "status и не ограничивай количество строк. Если выбираешь карточку как норму "
+                            "или инженерный аналог, укажи её точный шифр в norm_code; оставляй его пустым "
+                            "только если не выбрана ни одна карточка. Для каждой строки обязательно укажи "
+                            "точную evidence_refs Qx.Hy выбранной карточки; не сокращай её до Qx. Не выводи "
+                            "JSON. Код не подтверждает и не меняет твой выбор. Ответ должен вместить все "
+                            "строки: без вводного обзора и итоговых рекомендаций, кратко по одной строке ВОР."
                         )
+                        fixed_model_rag_evidence = selector_evidence_payload(
+                            attachment_context=attachment_context,
+                            rendered_context="",
+                        )
+                        _, fixed_packet = govern_inference_messages(
+                            preset=answer_execution_preset,
+                            profile_prefix=sys_msg,
+                            request_payload=question_tail,
+                            checkpoint=(),
+                            working_memory=(),
+                            evidence=fixed_model_rag_evidence,
+                            source_map=(),
+                            tool_exchange=(),
+                            dialogue=(),
+                        )
+                        remaining_group_tokens = max(
+                            0,
+                            fixed_packet.input_budget_tokens
+                            - fixed_packet.included_tokens
+                            - len(model_rag_query_hits)
+                            - 2,
+                        )
+                        (
+                            model_rag_evidence_groups,
+                            model_evidence_chunks,
+                        ) = build_model_rag_evidence_groups(
+                            model_rag_query_hits,
+                            max_chars=min(
+                                context_chars_limit,
+                                remaining_group_tokens * 2,
+                            ),
+                        )
+                        context = "\n\n".join(model_rag_evidence_groups)
+                        answer_source_map = _model_rag_source_map(model_evidence_chunks)
+                        model_rag_evidence_packet = build_retrieval_evidence_packet(
+                            question=req.question,
+                            chunks=model_evidence_chunks,
+                            retrieval_trace=retrieval_trace,
+                            navigation=evidence_navigation,
+                            deterministic_evidence=deterministic_evidence,
+                        )
+                        final_evidence_packet = model_rag_evidence_packet.to_dict(
+                            max_chars=context_chars_limit,
+                            include_metadata=True,
+                        )
+                        retrieval_trace["grouped_model_evidence"] = {
+                            "schema": "les.model-rag-grouped-evidence.v1",
+                            "query_count": len(model_rag_evidence_groups),
+                            "hit_count": len(model_evidence_chunks),
+                            "group_ids": [
+                                f"Q{index}"
+                                for index in range(1, len(model_rag_evidence_groups) + 1)
+                            ],
+                            "rendered_chars": len(context),
+                        }
                     answer_checkpoint = tuple(
                         item
                         for candidate in memory_candidates
@@ -2650,6 +3076,9 @@ async def _execute_chat_evidence_application(
                         answer_working_memory += _text_context_objects(
                             f"navigation:{navigation_name}", navigation_text
                         )
+                    if model_driven_retrieval:
+                        answer_checkpoint = ()
+                        answer_working_memory = ()
                     answer_tool_exchange = (
                         []
                         if model_driven_retrieval
@@ -2659,10 +3088,7 @@ async def _execute_chat_evidence_application(
                         ]
                     )
                     answer_evidence = (
-                        selector_evidence_payload(
-                            attachment_context=attachment_context,
-                            rendered_context=context,
-                        )
+                        [*fixed_model_rag_evidence, *model_rag_evidence_groups]
                         if model_driven_retrieval
                         else [
                             "Материалы из найденных документов:",
@@ -2680,7 +3106,7 @@ async def _execute_chat_evidence_application(
                             checkpoint=answer_checkpoint,
                             working_memory=answer_working_memory,
                             evidence=answer_evidence,
-                            source_map=answer_source_map,
+                            source_map=(() if model_driven_retrieval else answer_source_map),
                             tool_exchange=answer_tool_exchange,
                             dialogue=[session_block] if session_block else [],
                         )
@@ -2834,7 +3260,9 @@ async def _execute_chat_evidence_application(
                                         )
                                     ],
                                 ],
-                                source_map=answer_source_map,
+                                source_map=(
+                                    () if model_driven_retrieval else answer_source_map
+                                ),
                                 tool_exchange=answer_tool_exchange,
                                 dialogue=[session_block] if session_block else [],
                             )
@@ -2861,19 +3289,6 @@ async def _execute_chat_evidence_application(
                         )
                         execution_preset = fallback_preset
                         answer_execution_preset = fallback_preset
-                        if model_driven_retrieval:
-                            answer_execution_preset = replace(
-                                fallback_preset,
-                                generation_reserve_tokens=min(
-                                    4096,
-                                    max(
-                                        fallback_preset.generation_reserve_tokens,
-                                        fallback_preset.input_token_limit
-                                        - fallback_preset.safety_reserve_tokens
-                                        - 512,
-                                    ),
-                                ),
-                            )
                         headers = {}
                         retrieval_trace.setdefault("routing", {}).update(
                             {"cloud_fallback": type(net_err).__name__, "effective_provider": "mlx", "is_cloud": False}
@@ -2937,11 +3352,7 @@ async def _execute_chat_evidence_application(
                     packaging_tool = (
                         "build_lsr_workbook"
                         if "build_lsr_workbook" in profile_tools
-                        else (
-                            "build_vor_workbook"
-                            if "build_vor_workbook" in profile_tools
-                            else ""
-                        )
+                        else ""
                     )
                     if (
                         parsed_model_result is not None

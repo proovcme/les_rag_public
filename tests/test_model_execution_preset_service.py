@@ -84,6 +84,14 @@ def test_observed_context_is_used_when_request_has_no_context_override():
     resolved = resolve_execution_preset(_capacity(tokens=32768))
 
     assert resolved.input_token_limit == 32768
+    assert resolved.generation_reserve_tokens == 4096
+
+
+def test_9b_uses_proven_window_instead_of_architecture_maximum():
+    resolved = resolve_execution_preset(_capacity(tokens=262144))
+
+    assert resolved.input_token_limit == 32768
+    assert resolved.generation_reserve_tokens == 4096
 
 
 def test_35b_with_small_observed_kv_stays_on_restrictive_limits():

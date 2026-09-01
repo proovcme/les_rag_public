@@ -29,9 +29,35 @@ runtime data, logs, model caches or private corpora.
 - Do not add query hardcodes, dataset-specific boosts or professional answers implemented in code.
 - Typed readers and calculators return exact evidence; they do not choose an engineering or
   estimating decision for the model.
-- The active estimator path is attachment + selected dataset → model-authored queries → shared RAG
-  → the same model's result → calculation/XLSX packaging. `proxy/smeta_core/document_workflow.py`
-  is historical/experimental compatibility code, not the product chat core.
+- The active estimator path is **one model-owned path**: original question + complete attachment +
+  explicitly selected dataset → the same model returns ordinary plain-text retrieval queries → code
+  executes them literally through shared RAG and groups six cards per query as `Qx.Hy` → the same
+  model simultaneously receives the original input and every evidence group and returns an ordinary
+  final answer → code mechanically reads all model-authored rows, calculates and automatically
+  attaches XLSX. No JSON/schema or model workbook tool-call is required. Seven, nineteen, thirty or
+  any other number of rows and queries are equally valid. `proxy/smeta_core/document_workflow.py` is
+  historical/experimental compatibility code, not the product chat core. See
+  `docs/ADR-15-model-rag-result.md`.
+- **Never put an orchestration gate between the model and RAG.** Do not require a planning/status JSON
+  handshake before retrieval; do not replace the attachment with a summary; do not drop the original
+  question or attachment from the final model call; do not let code choose queries, norms, analogues,
+  coverage or professional status; and do not require R1/R2 review, mapping lock, confirmation loops or
+  a fixed row/turn count in the active path. Normal model text must never become a reason to deny RAG.
+- Before the model's terminal result, code may only resolve the explicit dataset scope, expose and
+  execute read-only RAG, preserve trace/source coordinates and stop technically infinite execution.
+  After the terminal model result, code may verify structural references, units and provenance, fill
+  prices from the selected/default pricebook, calculate and package XLSX. It must preserve model choices
+  and expose conflicts instead of silently rewriting or deleting them.
+- **Mandatory self-check before every chat/RAG/estimate change:** (1) does the final model call contain
+  the original question/attachment and the returned RAG evidence at the same time; (2) does any code
+  decide professional content or prevent model access to evidence; (3) does live acceptance produce the
+  user-visible answer and attached artifact with a non-fixed row count. Isolated green tests are not a
+  substitute for this check.
+- **A live-proven model → RAG → result path is frozen.** After the owner accepts a real model answer,
+  do not refactor, optimize, replace its transport, add another tool loop or run an alternative
+  orchestration experiment inside the same task. Wire the exact proven inputs, calls and outputs into
+  the product, then add packaging and regression coverage after that boundary. If integration appears
+  to require changing the proven path, stop and obtain a new explicit owner instruction first.
 
 ## Runtime surfaces
 

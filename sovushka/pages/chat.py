@@ -210,6 +210,19 @@ def _operator_status_chips(crag: str, meta: dict | None, srcs: list | None = Non
     src_count = len(srcs or [])
     if src_count:
         chips.append({"label": f"{src_count} источн.", "tone": "ok"})
+    latency = (meta or {}).get("latency_phases")
+    raw_total = latency.get("total") if isinstance(latency, dict) else None
+    try:
+        total_seconds = float(raw_total)
+    except (TypeError, ValueError):
+        total_seconds = -1.0
+    if 0 <= total_seconds < 60:
+        elapsed = f"{total_seconds:.1f}".replace(".", ",")
+        chips.append({"label": f"{elapsed} с", "tone": "muted"})
+    elif total_seconds >= 60:
+        rounded_seconds = int(round(total_seconds))
+        minutes, seconds = divmod(rounded_seconds, 60)
+        chips.append({"label": f"{minutes} мин {seconds} с", "tone": "muted"})
     return chips
 
 
