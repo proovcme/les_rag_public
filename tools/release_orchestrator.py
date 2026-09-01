@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -156,6 +157,13 @@ def run_prepare_gates(root: Path) -> list[dict[str, Any]]:
             }
         )
     return evidence
+
+
+def verify_post_gate_source(*, root: Path, target: str, tree: str) -> None:
+    if _run(("git", "status", "--porcelain"), root=root, capture=True).stdout.strip():
+        raise RuntimeError("release gates changed the source checkout")
+    if resolve_commit(root, "HEAD") != target or resolve_tree(root, "HEAD") != tree:
+        raise RuntimeError("release source identity changed while gates were running")
 
 
 def _sha256(path: Path) -> str:
@@ -429,6 +437,55 @@ def _classification_evidence(classification: ReleaseClassification) -> dict[str,
     }
 
 
+def _freeze_candidate(
+    *, work_root: Path, candidate_root: Path, built: dict[str, Any]
+) -> dict[str, Any]:
+    candidate_root = Path(candidate_root).resolve()
+    source_assets = [Path(path).resolve() for path in built["assets"]]
+    identity = [
+        {
+            "path": path.relative_to(candidate_root).as_posix(),
+            "bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        for path in sorted(source_assets)
+    ]
+    digest = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    destination = Path(work_root).resolve() / "artifacts" / "candidates" / digest
+    if not destination.exists():
+        staging = destination.parent / f".staging-{uuid.uuid4().hex}"
+        staging.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(candidate_root, staging)
+        os.replace(staging, destination)
+    frozen_assets = [destination / path.relative_to(candidate_root) for path in source_assets]
+    if any(not path.is_file() for path in frozen_assets):
+        raise RuntimeError("durable candidate copy is incomplete")
+    acceptance_path = Path(str(built["acceptance_path"]))
+    try:
+        frozen_acceptance = destination / acceptance_path.resolve().relative_to(candidate_root)
+    except ValueError:
+        frozen_acceptance = acceptance_path
+    job = frozen_acceptance / "hard-update-job.json"
+    if job.is_file():
+        payload = json.loads(job.read_text(encoding="utf-8-sig"))
+        installer = frozen_acceptance / "LES-Setup.exe"
+        payload["installer"] = str(installer.resolve())
+        payload["installer_sha256"] = _sha256(installer)
+        job.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+    return {
+        **built,
+        "assets": frozen_assets,
+        "candidate_assets": frozen_assets,
+        "candidate_root": destination,
+        "acceptance_path": frozen_acceptance,
+        "candidate_digest": digest,
+    }
+
+
 def validate_patch_pipeline(classification: ReleaseClassification) -> None:
     """Fail before expensive gates when any patch layer rejects a classified file."""
     if classification.kind != "patch":
@@ -478,6 +535,7 @@ def _gate_receipt_for_prepare(
         )
         return path
     results = run_prepare_gates(root)
+    verify_post_gate_source(root=root, target=target, tree=tree)
     return release_receipt.create_gate_receipt(
         root=work_root,
         target_commit=target,
@@ -559,6 +617,10 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
         contract=contract,
         args=args,
     )
+    built = _freeze_candidate(
+        work_root=work_root, candidate_root=candidate_root, built=built
+    )
+    candidate_root = Path(str(built["candidate_root"]))
     if gate_path is not None:
         artifact_path = release_receipt.create_artifact_receipt(
             root=work_root,
@@ -569,7 +631,7 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             product_version=str(contract["product_version"]),
             build_number=int(contract["build_number"]),
             desktop_version=_desktop_version(contract),
-            assets=list(built.get("candidate_assets") or built["assets"]),
+            assets=list(built["assets"]),
             candidate_root=candidate_root,
             acceptance_path=Path(built["acceptance_path"]),
             runtime_manifest_sha256=_sha256(root / "config/windows_runtime_manifest.json"),
@@ -706,10 +768,32 @@ def run_local_acceptance(
             expected=expected,
         )
     job = getattr(args, "job", None)
-    if job is None:
-        job = Path(acceptance_path) / "hard-update-job.json"
+    canonical_job = Path(acceptance_path) / "hard-update-job.json"
+    if attempt.get("artifact_id"):
+        if job is not None and Path(job).resolve() != canonical_job.resolve():
+            raise RuntimeError("external acceptance job is forbidden for an artifact")
+        job = canonical_job
+    elif job is None:
+        job = canonical_job
     if not Path(job).is_file():
         raise RuntimeError("full local acceptance requires a prepared hard-update job")
+    if attempt.get("artifact_id"):
+        try:
+            job_payload = json.loads(Path(job).read_text(encoding="utf-8-sig"))
+        except (OSError, ValueError, TypeError) as exc:
+            raise RuntimeError("artifact acceptance job is unreadable") from exc
+        installer = Path(str(job_payload.get("installer") or "")).resolve()
+        installer_record = next(
+            (item for item in attempt.get("assets", []) if item.get("name") == "LES-Setup.exe"),
+            None,
+        )
+        if (
+            installer_record is None
+            or not installer.is_file()
+            or _sha256(installer) != installer_record.get("sha256")
+            or str(job_payload.get("target_commit") or "") != attempt.get("target_commit")
+        ):
+            raise RuntimeError("artifact acceptance job differs from immutable installer")
     return windows_release_acceptance.accept_full(
         job_path=Path(job),
         install=Path(args.install),
@@ -886,6 +970,11 @@ def _accept_artifact(
         artifact_path,
         host=args.host,
         retry_of=retry_of,
+        reconciliation=(
+            {"operator_proved": True, "prior_acceptance_id": retry_of}
+            if retry_of and getattr(args, "recovery_proved", False)
+            else None
+        ),
     )
     acceptance_path = Path(str(artifact["acceptance_path"]))
     try:
@@ -926,42 +1015,23 @@ def retry(args: argparse.Namespace) -> dict[str, Any]:
     ]
     if not failed:
         raise RuntimeError("retry requires a prior failed or interrupted acceptance")
-    return _accept_artifact(args, retry_of=str(failed[-1]["acceptance_id"]))
+    prior = failed[-1]
+    recovery = (prior.get("failure") or {}).get("recovery") or {}
+    if recovery.get("runner_completed") is not True and not getattr(
+        args, "recovery_proved", False
+    ):
+        raise RuntimeError("explicit host recovery proof required before retry")
+    if str(prior.get("host") or "").casefold() != str(args.host).casefold():
+        raise RuntimeError("retry host must match the failed acceptance host")
+    return _accept_artifact(args, retry_of=str(prior["acceptance_id"]))
 
 
 def accept(args: argparse.Namespace) -> dict[str, Any]:
     if getattr(args, "artifact", None):
         return _accept_artifact(args)
-    state_path = _attempt_path(args)
-    attempt = release_receipt.load_attempt(state_path)
-    if attempt.get("stage") != "prepared":
-        raise RuntimeError("prepared release attempt required for Legion acceptance")
-    if str(args.host).casefold() != str(attempt.get("host") or "").casefold():
-        raise RuntimeError("release host differs from prepared attempt")
-    release_receipt.verify_binding(
-        attempt,
-        commit=resolve_commit(args.root, "HEAD"),
-        assets=_artifact_paths(attempt),
+    raise RuntimeError(
+        "legacy release attempts are read-only; accept requires --artifact"
     )
-    acceptance_path = Path(str(_prepared_evidence(attempt)["acceptance_path"]))
-    try:
-        result = (
-            run_local_acceptance(attempt=attempt, acceptance_path=acceptance_path, args=args)
-            if is_local_host(args.host)
-            else run_remote_acceptance(attempt=attempt, acceptance_path=acceptance_path, args=args)
-        )
-        if result.get("accepted") is not True:
-            raise RuntimeError("Legion acceptance did not return accepted=true")
-        accepted = _advance_acceptance(state_path, result)
-        return {**accepted, "state_path": str(state_path)}
-    except Exception as exc:
-        release_receipt.fail_attempt(
-            state_path,
-            stage="legion_acceptance",
-            error=str(exc),
-            recovery={"runner_completed": False},
-        )
-        raise
 
 
 def status(
@@ -1114,6 +1184,18 @@ def publish_artifact_candidate(
         dist=public,
         resume_stage=resume_stage,
     )
+
+
+def _publication_public_dir(
+    *, artifact_path: Path, artifact: dict[str, Any]
+) -> Path:
+    source = Path(str(artifact["candidate_root"])) / "public"
+    destination = Path(artifact_path).resolve().parent / "publication-assets"
+    if not destination.exists():
+        staging = destination.with_name(f".publication-{uuid.uuid4().hex}")
+        shutil.copytree(source, staging)
+        os.replace(staging, destination)
+    return destination
 
 
 def publish_patch_candidate(
@@ -1286,7 +1368,9 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
                 name="public_main_sync",
                 evidence=public_main_sync,
             )
-        public = Path(str(artifact["candidate_root"])) / "public"
+        public = _publication_public_dir(
+            artifact_path=artifact_path, artifact=artifact
+        )
         expected_for_stage = {
             "draft_uploaded": "accepted",
             "draft_verified": "draft_uploaded",
@@ -1337,92 +1421,9 @@ def publish(args: argparse.Namespace) -> dict[str, Any]:
             evidence=postflight,
         )
         return {**completed, "publication_path": str(publication_path)}
-    state_path = _attempt_path(args)
-    attempt = release_receipt.load_attempt(state_path)
-    current_stage = str(attempt.get("stage") or "")
-    if (
-        current_stage
-        not in {"accepted", "draft_uploaded", "draft_verified", "published"}
-        or attempt.get("publishable") is not True
-    ):
-        raise RuntimeError("installed acceptance required before publication")
-    release_receipt.verify_binding(
-        attempt,
-        commit=resolve_commit(args.root, "HEAD"),
-        assets=_artifact_paths(attempt),
+    raise RuntimeError(
+        "legacy release attempts are read-only; publish requires --artifact"
     )
-    public_main_sync: dict[str, Any] | None = None
-    if current_stage == "accepted":
-        public_main_sync = sync_public_main(
-            root=Path(args.root),
-            target=str(attempt["target_commit"]),
-        )
-        attempt = release_receipt.record_checkpoint(
-            state_path,
-            expected="accepted",
-            name="public_main_sync",
-            evidence=public_main_sync,
-        )
-    prepared = _prepared_evidence(attempt)
-    public = Path(str(prepared["candidate_root"])) / "public"
-
-    expected_for_stage = {
-        "draft_uploaded": "accepted",
-        "draft_verified": "draft_uploaded",
-        "published": "draft_verified",
-    }
-
-    def advance(stage: str, evidence: dict[str, Any]) -> None:
-        release_receipt.transition(
-            state_path,
-            expected=expected_for_stage[stage],
-            target=stage,
-            evidence=evidence,
-        )
-
-    if current_stage == "published":
-        asset_names = (
-            github_patch_release.PUBLISHED_ASSET_NAMES
-            if attempt["release_class"] == "patch"
-            else (
-                "LES-Setup.exe",
-                "LES-Setup.exe.sha256",
-                "latest.json",
-                "release-receipt.json",
-            )
-        )
-        publication = {
-            "published": True,
-            "assets": [str(public / name) for name in asset_names],
-        }
-    else:
-        publication = (
-            publish_patch_candidate(
-                attempt_path=state_path,
-                attempt=attempt,
-                public=public,
-                stage_callback=advance,
-                resume_stage=current_stage,
-            )
-            if attempt["release_class"] == "patch"
-            else publish_full_candidate(
-                attempt_path=state_path,
-                attempt=attempt,
-                public=public,
-                stage_callback=advance,
-                root=Path(args.root),
-                resume_stage=current_stage,
-            )
-        )
-    assets = [Path(path) for path in publication["assets"]]
-    postflight = verify_public_provenance(attempt=attempt, assets=assets)
-    completed = release_receipt.transition(
-        state_path,
-        expected="published",
-        target="postflight_verified",
-        evidence=postflight,
-    )
-    return {**completed, "state_path": str(state_path)}
 
 
 def run_release(args: argparse.Namespace) -> dict[str, Any]:
@@ -1483,6 +1484,11 @@ def _parser() -> argparse.ArgumentParser:
     retry_cmd.add_argument("--state", type=Path, default=Path(local) / "LES")
     retry_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
     retry_cmd.add_argument("--job", type=Path)
+    retry_cmd.add_argument(
+        "--recovery-proved",
+        action="store_true",
+        help="operator confirms the failed host was reconciled before retry",
+    )
     publish_cmd = sub.add_parser("publish")
     publish_cmd.add_argument("--root", type=Path, default=ROOT)
     publish_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)

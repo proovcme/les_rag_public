@@ -225,6 +225,7 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
         "run_prepare_gates",
         lambda _root: _passed_gates(),
     )
+    monkeypatch.setattr(release_orchestrator, "verify_post_gate_source", lambda **_kwargs: None)
 
     def patch_builder(**kwargs):
         calls.append("patch")
@@ -256,7 +257,11 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
     assert result["release_class"] == "patch"
     assert result["status"] == "ready"
     assert Path(result["artifact_path"]).is_file()
-    assert [item["name"] for item in result["assets"]] == ["les-patch.zip"]
+    assert [item["name"] for item in result["assets"]] == [
+        "les-patch.zip",
+        "les-update.json",
+    ]
+    assert "artifacts\\candidates" in result["candidate_root"]
 
 
 def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
@@ -286,6 +291,7 @@ def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
         lambda *_args, **_kwargs: _patch_classification(),
     )
     monkeypatch.setattr(release_orchestrator, "run_prepare_gates", lambda _root: _passed_gates())
+    monkeypatch.setattr(release_orchestrator, "verify_post_gate_source", lambda **_kwargs: None)
     monkeypatch.setattr(
         release_orchestrator,
         "build_patch_candidate",
@@ -594,7 +600,7 @@ def test_sync_public_main_refuses_divergent_remote_without_force(tmp_path):
         release_orchestrator.sync_public_main(root=repo, target=target)
 
 
-def test_accept_uses_prepared_bytes_without_rebuilding(monkeypatch, tmp_path):
+def test_legacy_accept_is_read_only(monkeypatch, tmp_path):
     args = _args(tmp_path)
     public = tmp_path / "candidate" / "public"
     acceptance = tmp_path / "candidate" / "acceptance"
@@ -621,47 +627,13 @@ def test_accept_uses_prepared_bytes_without_rebuilding(monkeypatch, tmp_path):
         evidence={"acceptance_path": str(acceptance), "gates": []},
     )
     args.attempt = state_path
-    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
-    monkeypatch.setattr(release_orchestrator, "is_local_host", lambda _host: True)
-    monkeypatch.setattr(
-        release_orchestrator,
-        "build_patch_candidate",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("candidate rebuilt")),
-    )
-    monkeypatch.setattr(
-        release_orchestrator,
-        "run_local_acceptance",
-        lambda **kwargs: {
-            "accepted": True,
-            "release_class": "patch",
-            "starting_identity": {"target_commit": BASE},
-            "first_install": {"target_commit": TARGET},
-            "first_smoke": {"ok": True},
-            "rollback": {"state": "rolled_back"},
-            "restored_smoke": {"ok": True},
-            "second_install": {"target_commit": TARGET},
-            "final_smoke": {"ok": True},
-            "final_identity": {
-                "product_version": "0.30.8",
-                "build_number": 648,
-                "target_commit": TARGET,
-            },
-        },
-    )
-
-    result = release_orchestrator.accept(args)
-
-    assert result["stage"] == "accepted"
-    assert [item["stage"] for item in result["transitions"]][-5:] == [
-        "legion_installed",
-        "legion_smoke_passed",
-        "rollback_passed",
-        "legion_reinstalled",
-        "accepted",
-    ]
+    before = state_path.read_bytes()
+    with pytest.raises(RuntimeError, match="legacy release attempts are read-only"):
+        release_orchestrator.accept(args)
+    assert state_path.read_bytes() == before
 
 
-def test_accept_failure_is_persisted_and_not_publishable(monkeypatch, tmp_path):
+def test_legacy_failed_acceptance_path_is_not_replayed(monkeypatch, tmp_path):
     args = _args(tmp_path)
     candidate = tmp_path / "candidate"
     candidate.mkdir()
@@ -684,20 +656,10 @@ def test_accept_failure_is_persisted_and_not_publishable(monkeypatch, tmp_path):
         evidence={"acceptance_path": str(candidate)},
     )
     args.attempt = state_path
-    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
-    monkeypatch.setattr(release_orchestrator, "is_local_host", lambda _host: True)
-    monkeypatch.setattr(
-        release_orchestrator,
-        "run_local_acceptance",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("Legion smoke failed")),
-    )
-
-    with pytest.raises(RuntimeError, match="Legion smoke failed"):
+    before = state_path.read_bytes()
+    with pytest.raises(RuntimeError, match="legacy release attempts are read-only"):
         release_orchestrator.accept(args)
-
-    failed = release_receipt.load_attempt(state_path)
-    assert failed["stage"] == "failed"
-    assert failed["publishable"] is False
+    assert state_path.read_bytes() == before
 
 
 def test_skipped_gates_make_attempt_permanently_non_publishable(monkeypatch, tmp_path):
@@ -900,6 +862,7 @@ def test_retry_uses_same_artifact_after_failed_smoke(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="injected smoke failure"):
         release_orchestrator.accept(args)
     failed = release_receipt.acceptance_attempts(artifact_path)[-1]
+    args.recovery_proved = True
     monkeypatch.setattr(
         release_orchestrator,
         "run_local_acceptance",
@@ -910,7 +873,45 @@ def test_retry_uses_same_artifact_after_failed_smoke(monkeypatch, tmp_path):
 
     assert result["result"] == "accepted"
     assert result["retry_of"] == failed["acceptance_id"]
+    assert result["reconciliation"] == {
+        "operator_proved": True,
+        "prior_acceptance_id": failed["acceptance_id"],
+    }
     assert (artifact_path.read_bytes(), asset.read_bytes()) == before
+
+
+def test_retry_blocks_uncertain_host_without_explicit_reconciliation(monkeypatch, tmp_path):
+    args, artifact_path, _asset = _ready_artifact(tmp_path)
+    attempt_path = release_receipt.create_acceptance_attempt(
+        artifact_path, host="local"
+    )
+    release_receipt.fail_acceptance_attempt(
+        attempt_path,
+        failed_stage="smoke",
+        error="connection lost",
+        recovery={"runner_completed": False},
+    )
+    args.recovery_proved = False
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+
+    with pytest.raises(RuntimeError, match="explicit host recovery proof required"):
+        release_orchestrator.retry(args)
+
+
+def test_full_local_acceptance_rejects_job_outside_artifact(monkeypatch, tmp_path):
+    args, artifact_path, _asset = _ready_artifact(tmp_path)
+    artifact = release_receipt.load_artifact_receipt(artifact_path)
+    artifact["release_class"] = "full"
+    outside = tmp_path / "outside-job.json"
+    outside.write_text("{}", encoding="utf-8")
+    args.job = outside
+
+    with pytest.raises(RuntimeError, match="external acceptance job is forbidden"):
+        release_orchestrator.run_local_acceptance(
+            attempt=artifact,
+            acceptance_path=Path(artifact["acceptance_path"]),
+            args=args,
+        )
 
 
 def test_cli_exposes_artifact_accept_retry_and_publish():
@@ -1036,67 +1037,23 @@ def test_publish_refuses_every_preaccepted_stage(tmp_path, stage):
     args, state_path = _attempt_at_stage(tmp_path, stage)
     args.attempt = state_path
 
-    with pytest.raises(RuntimeError, match="installed acceptance required"):
+    with pytest.raises(RuntimeError, match="legacy release attempts are read-only"):
         release_orchestrator.publish(args)
 
 
-def test_publish_advances_only_after_draft_verification_and_postflight(
-    monkeypatch, tmp_path
-):
+def test_legacy_accepted_attempt_cannot_publish(monkeypatch, tmp_path):
     args, state_path = _attempt_at_stage(tmp_path, "accepted")
     args.attempt = state_path
-    callbacks = []
-    synced = []
-
-    def publish_patch(**kwargs):
-        for stage in ("draft_uploaded", "draft_verified", "published"):
-            callbacks.append(stage)
-            kwargs["stage_callback"](stage, {"ok": True})
-        return {"published": True, "assets": ["les-patch.zip"]}
-
-    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
-    monkeypatch.setattr(
-        release_orchestrator,
-        "sync_public_main",
-        lambda **kwargs: synced.append(kwargs) or {"after": TARGET},
-        raising=False,
-    )
-    monkeypatch.setattr(release_orchestrator, "publish_patch_candidate", publish_patch)
-    monkeypatch.setattr(
-        release_orchestrator,
-        "verify_public_provenance",
-        lambda **_kwargs: {"ok": True, "target_commit": TARGET},
-    )
-
-    result = release_orchestrator.publish(args)
-
-    assert callbacks == ["draft_uploaded", "draft_verified", "published"]
-    assert synced == [{"root": args.root, "target": TARGET}]
-    assert result["stage"] == "postflight_verified"
-    assert result["checkpoints"]["public_main_sync"] == {"after": TARGET}
-    assert result["transitions"][-1]["evidence"]["target_commit"] == TARGET
+    with pytest.raises(RuntimeError, match="legacy release attempts are read-only"):
+        release_orchestrator.publish(args)
 
 
-def test_published_attempt_resumes_only_independent_postflight(monkeypatch, tmp_path):
+def test_legacy_published_attempt_is_status_only(monkeypatch, tmp_path):
     args, state_path = _attempt_at_stage(tmp_path, "published")
     args.attempt = state_path
-    public = tmp_path / "candidate" / "public"
-    (public / "release-receipt.json").write_text("{}", encoding="utf-8")
-    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
-    monkeypatch.setattr(
-        release_orchestrator,
-        "publish_patch_candidate",
-        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("release republished")),
-    )
-    monkeypatch.setattr(
-        release_orchestrator,
-        "verify_public_provenance",
-        lambda **_kwargs: {"ok": True, "target_commit": TARGET},
-    )
-
-    result = release_orchestrator.publish(args)
-
-    assert result["stage"] == "postflight_verified"
+    with pytest.raises(RuntimeError, match="legacy release attempts are read-only"):
+        release_orchestrator.publish(args)
+    assert release_orchestrator.status(state_path)["stage"] == "published"
 
 
 def test_run_release_preserves_prepare_accept_publish_boundaries(monkeypatch, tmp_path):

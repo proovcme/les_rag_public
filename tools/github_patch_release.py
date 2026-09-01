@@ -99,6 +99,8 @@ def publish_github_patch_release(
     upstream = _git("rev-parse", "@{u}")
     if head != upstream:
         raise RuntimeError("release commit is not the pushed upstream commit")
+    if artifact_path is None:
+        raise RuntimeError("legacy release attempts are read-only")
     if artifact_path is not None:
         artifact = release_receipt.load_artifact_receipt(Path(artifact_path))
         if acceptance_path is None:
@@ -117,21 +119,6 @@ def publish_github_patch_release(
             assets=[Path(str(item["path"])) for item in artifact.get("assets", [])],
         )
         attempt = artifact
-    else:
-        if attempt_path is None:
-            raise RuntimeError("release publication binding is missing")
-        attempt = release_receipt.load_attempt(Path(attempt_path))
-        if (
-            attempt.get("stage") != resume_stage
-            or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
-            or attempt.get("publishable") is not True
-        ):
-            raise RuntimeError("installed acceptance required before GitHub publication")
-        release_receipt.verify_binding(
-            attempt,
-            commit=head,
-            assets=[Path(str(item["path"])) for item in attempt.get("artifacts", [])],
-        )
     feed_path = next(path for path in assets if path.name == "les-update.json")
     try:
         feed = json.loads(feed_path.read_text(encoding="utf-8-sig"))
@@ -151,9 +138,6 @@ def publish_github_patch_release(
         receipt.get("schema") == release_receipt.PUBLIC_ARTIFACT_SCHEMA
         and receipt.get("artifact_id") == attempt.get("artifact_id")
         and receipt.get("acceptance_id") == acceptance.get("acceptance_id")
-        if artifact_path is not None
-        else receipt.get("schema") == release_receipt.PUBLIC_SCHEMA
-        and receipt.get("release_id") == attempt.get("release_id")
     )
     if not receipt_identity_ok or receipt.get("target_commit") != head:
         raise RuntimeError("public release receipt does not match accepted attempt")

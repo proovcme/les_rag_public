@@ -111,6 +111,10 @@ make release RELEASE_ARGS='retry --artifact <artifact-receipt.json> --host local
 поддержанный ручной fallback: он требует успешную попытку, повторно сверяет SHA
 и не содержит build. Старый `les.release-attempt.v1` доступен через
 `status --attempt` только для исторической диагностики.
+Если runner оборвался до доказанного восстановления host, обычный `retry`
+fail-closed остановится. После ручной сверки installed identity и завершения
+rollback оператор повторяет его с `--recovery-proved`; этот факт и ID прежней
+попытки записываются в новую acceptance-квитанцию. Host при retry менять нельзя.
 
 `local` — явный псевдоним машины, на которой запущен оркестратор. Имя или SSH
 alias (например, `legion`) указывается только при действительно удалённой

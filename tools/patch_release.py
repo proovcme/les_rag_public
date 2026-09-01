@@ -532,6 +532,8 @@ def publish(
         raise RuntimeError("release asset names must be unique")
     head = output(["git", "rev-parse", "HEAD"])
     upstream = output(["git", "rev-parse", "@{u}"])
+    if artifact_path is None:
+        raise RuntimeError("legacy release attempts are read-only")
     if artifact_path is not None:
         artifact = release_receipt.load_artifact_receipt(Path(artifact_path))
         if acceptance_path is None:
@@ -550,21 +552,6 @@ def publish(
             commit=head,
             assets=[Path(str(item["path"])) for item in artifact.get("assets", [])],
         )
-    else:
-        if attempt_path is None:
-            raise RuntimeError("release publication binding is missing")
-        attempt = release_receipt.load_attempt(Path(attempt_path))
-        if (
-            attempt.get("stage") != resume_stage
-            or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
-            or attempt.get("publishable") is not True
-        ):
-            raise RuntimeError("installed acceptance required before GitHub publication")
-        release_receipt.verify_binding(
-            attempt,
-            commit=head,
-            assets=[Path(str(item["path"])) for item in attempt.get("artifacts", [])],
-        )
     if head != upstream or head != attempt.get("target_commit"):
         raise RuntimeError("accepted target, HEAD, and pushed upstream must be identical")
     receipt = next((path for path in assets if path.name == "release-receipt.json"), None)
@@ -575,9 +562,6 @@ def publish(
         receipt_payload.get("schema") == release_receipt.PUBLIC_ARTIFACT_SCHEMA
         and receipt_payload.get("artifact_id") == attempt.get("artifact_id")
         and receipt_payload.get("acceptance_id") == acceptance.get("acceptance_id")
-        if artifact_path is not None
-        else receipt_payload.get("schema") == release_receipt.PUBLIC_SCHEMA
-        and receipt_payload.get("release_id") == attempt.get("release_id")
     )
     if not receipt_identity_ok or receipt_payload.get("target_commit") != head:
         raise RuntimeError("public release receipt does not match accepted attempt")

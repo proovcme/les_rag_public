@@ -348,7 +348,7 @@ def test_patch_release_requires_independent_legion_persistence(monkeypatch):
     assert result["desktop_processes"] == 1
 
 
-def test_publish_includes_and_verifies_extra_platform_assets(monkeypatch, tmp_path):
+def test_legacy_full_publisher_is_read_only(monkeypatch, tmp_path):
     dist = tmp_path / "dist"
     dist.mkdir()
     (dist / "LES-Setup.exe").write_bytes(b"windows")
@@ -423,25 +423,17 @@ def test_publish_includes_and_verifies_extra_platform_assets(monkeypatch, tmp_pa
         ),
     )
 
-    patch_release.publish(
-        {
-            "product_version": "1.2.3",
-            "build_number": 4,
-            "desktop_version": "5.1.4",
-        },
-        extra_assets=[dmg, checksum, receipt],
-        attempt_path=attempt,
-    )
-
-    create = next(call for call in calls if call[:3] == ["gh", "release", "create"])
-    upload = next(call for call in calls if call[:3] == ["gh", "release", "upload"])
-    published = next(call for call in calls if call[:3] == ["gh", "release", "edit"])
-    assert "--draft" in create
-    assert create[create.index("--target") + 1] == "c" * 40
-    assert str(dmg.resolve()) in upload
-    assert str(checksum.resolve()) in upload
-    assert str(receipt.resolve()) in upload
-    assert "--draft=false" in published
+    with pytest.raises(RuntimeError, match="legacy release attempts are read-only"):
+        patch_release.publish(
+            {
+                "product_version": "1.2.3",
+                "build_number": 4,
+                "desktop_version": "5.1.4",
+            },
+            extra_assets=[dmg, checksum, receipt],
+            attempt_path=attempt,
+        )
+    assert calls == []
 
 
 def test_platform_workflows_cover_mac_windows_builds_and_atomic_release():

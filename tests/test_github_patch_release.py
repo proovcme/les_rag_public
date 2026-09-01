@@ -10,25 +10,43 @@ import pytest
 from tools import github_patch_release, release_receipt, vps_patch
 
 
-def _accepted_attempt(tmp_path: Path, candidate: Path, target: str) -> tuple[Path, Path]:
-    attempt = release_receipt.create_attempt(
-        root=tmp_path / "attempts",
-        release_class="patch",
+def _accepted_attempt(tmp_path: Path, candidate: Path, target: str) -> tuple[Path, Path, Path]:
+    gate = release_receipt.create_gate_receipt(
+        root=tmp_path / "work",
+        target_commit=target,
+        target_tree="b" * 40,
         product_version="0.28.2",
         build_number=589,
+        desktop_version="5.1.589",
+        branch="codex/release",
+        upstream_commit=target,
+        policy=[("verify", ("make", "verify"))],
+        results=[{"gate": "verify", "exit_code": 0, "duration_ms": 1}],
+        clean=True,
+    )
+    artifact = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate,
+        release_class="patch",
         target_commit=target,
         base_commits=["a" * 40],
-        host="legion",
+        product_version="0.28.2",
+        build_number=589,
+        desktop_version="5.1.589",
         assets=[candidate],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="c" * 64,
+        entrypoint_registry_sha256="d" * 64,
+        build_evidence={},
+        publishable=True,
     )
-    current = "planned"
-    for stage in release_receipt.STAGES[1 : release_receipt.STAGES.index("accepted") + 1]:
-        release_receipt.transition(
-            attempt, expected=current, target=stage, evidence={"ok": True}
-        )
-        current = stage
-    receipt = release_receipt.write_public_receipt(
-        attempt, tmp_path / "release-receipt.json"
+    acceptance = release_receipt.create_acceptance_attempt(artifact, host="legion")
+    release_receipt.complete_acceptance_attempt(
+        acceptance, evidence={"accepted": True, "final_identity": {"target_commit": target}}
+    )
+    receipt = release_receipt.write_public_artifact_receipt(
+        artifact, acceptance, tmp_path / "release-receipt.json"
     )
     feed_path = tmp_path / "les-update.json"
     if feed_path.is_file():
@@ -39,7 +57,7 @@ def _accepted_attempt(tmp_path: Path, candidate: Path, target: str) -> tuple[Pat
             "sha256": vps_patch.sha256_file(receipt),
         }
         feed_path.write_text(json.dumps(feed), encoding="utf-8")
-    return attempt, receipt
+    return artifact, acceptance, receipt
 
 
 def _commit(repo: Path, message: str) -> str:
@@ -184,7 +202,7 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
     )
     notes = tmp_path / "notes.md"
     notes.write_text("release notes", encoding="utf-8")
-    attempt, receipt = _accepted_attempt(
+    attempt, acceptance, receipt = _accepted_attempt(
         tmp_path, tmp_path / "les-patch.zip", "c" * 40
     )
     assets.append(receipt)
@@ -221,7 +239,7 @@ def test_publisher_uses_immutable_draft_verify_publish_sequence(tmp_path, monkey
     )
 
     github_patch_release.publish_github_patch_release(
-        "v0.28.2", assets, notes, attempt_path=attempt
+        "v0.28.2", assets, notes, artifact_path=attempt, acceptance_path=acceptance
     )
 
     create = next(command for command in commands if command[:3] == ["gh", "release", "create"])
@@ -253,7 +271,7 @@ def test_publisher_refuses_public_main_for_a_different_commit(tmp_path, monkeypa
     )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
-    attempt, receipt = _accepted_attempt(
+    attempt, acceptance, receipt = _accepted_attempt(
         tmp_path, tmp_path / "les-patch.zip", "c" * 40
     )
     assets.append(receipt)
@@ -283,7 +301,7 @@ def test_publisher_refuses_public_main_for_a_different_commit(tmp_path, monkeypa
 
     with pytest.raises(RuntimeError, match="public main does not match HEAD"):
         github_patch_release.publish_github_patch_release(
-            "v0.28.2", assets, notes, attempt_path=attempt
+            "v0.28.2", assets, notes, artifact_path=attempt, acceptance_path=acceptance
         )
     assert calls == [
         [
@@ -311,7 +329,7 @@ def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch)
     )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
-    attempt, receipt = _accepted_attempt(
+    attempt, acceptance, receipt = _accepted_attempt(
         tmp_path, tmp_path / "les-patch.zip", "c" * 40
     )
     assets.append(receipt)
@@ -330,7 +348,7 @@ def test_publisher_refuses_existing_release_before_upload(tmp_path, monkeypatch)
 
     with pytest.raises(RuntimeError, match="already exists"):
         github_patch_release.publish_github_patch_release(
-            "v0.28.2", assets, notes, attempt_path=attempt
+            "v0.28.2", assets, notes, artifact_path=attempt, acceptance_path=acceptance
         )
     assert not any(command[:3] == ["gh", "release", "upload"] for command in calls)
 
@@ -352,7 +370,7 @@ def test_publisher_refuses_feed_for_a_different_commit_before_github_calls(tmp_p
     )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
-    attempt, receipt = _accepted_attempt(
+    attempt, acceptance, receipt = _accepted_attempt(
         tmp_path, tmp_path / "les-patch.zip", "c" * 40
     )
     assets.append(receipt)
@@ -370,7 +388,7 @@ def test_publisher_refuses_feed_for_a_different_commit_before_github_calls(tmp_p
 
     with pytest.raises(RuntimeError, match="feed target commit does not match HEAD"):
         github_patch_release.publish_github_patch_release(
-            "v0.28.2", assets, notes, attempt_path=attempt
+            "v0.28.2", assets, notes, artifact_path=attempt, acceptance_path=acceptance
         )
     assert calls == []
 
@@ -392,16 +410,10 @@ def test_publisher_resumes_verified_draft_without_recreating_release(tmp_path, m
         ),
         encoding="utf-8",
     )
-    attempt, receipt = _accepted_attempt(
+    attempt, acceptance, receipt = _accepted_attempt(
         tmp_path, tmp_path / "les-patch.zip", "c" * 40
     )
     assets.append(receipt)
-    release_receipt.transition(
-        attempt,
-        expected="accepted",
-        target="draft_uploaded",
-        evidence={"tag": "v0.28.2"},
-    )
     notes = tmp_path / "notes.md"
     notes.write_text("notes", encoding="utf-8")
     monkeypatch.setattr(
@@ -442,7 +454,8 @@ def test_publisher_resumes_verified_draft_without_recreating_release(tmp_path, m
         "v0.28.2",
         assets,
         notes,
-        attempt_path=attempt,
+        artifact_path=attempt,
+        acceptance_path=acceptance,
         resume_stage="draft_uploaded",
         stage_callback=lambda stage, _evidence: stages.append(stage),
     )

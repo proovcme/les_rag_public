@@ -1,0 +1,41 @@
+{
+  "schema": "les.windows-runtime-entrypoints.v1",
+  "entries": [
+    {
+      "id": "les-shell",
+      "kind": "python_module",
+      "target": "tools.les_shell",
+      "required_files": ["tools/les_shell.py"],
+      "callsites": ["installers/windows/app/bootstrap.ps1"]
+    },
+    {
+      "id": "uvicorn-runtime",
+      "kind": "python_module",
+      "target": "uvicorn",
+      "resolution": "locked_distribution",
+      "required_files": ["uv.lock"],
+      "callsites": ["installers/windows/start-light.ps1", "tools/windows_runtime.py"]
+    },
+    {
+      "id": "fgis-update-supervisor",
+      "kind": "python_module",
+      "target": "tools.fgis_update_supervisor",
+      "required_files": ["tools/fgis_update_supervisor.py"],
+      "callsites": ["proxy/services/fgis_update_service.py"]
+    },
+    {
+      "id": "fgis-full-update",
+      "kind": "python_module",
+      "target": "tools.fgis_full_update",
+      "required_files": ["tools/fgis_full_update.py"],
+      "callsites": ["tools/fgis_update_supervisor.py"]
+    },
+    {
+      "id": "gesn-update-from-fgis",
+      "kind": "python_module",
+      "target": "tools.gesn_update_from_fgis",
+      "required_files": ["tools/gesn_update_from_fgis.py"],
+      "callsites": ["proxy/services/gesn_update_service.py"]
+    }
+  ]
+}

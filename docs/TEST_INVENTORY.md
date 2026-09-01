@@ -46,6 +46,9 @@
   draft/postflight checkpoints и не может вызвать builder. До Tauri/NSIS отдельный registry-тест сверяет
   literal `python -m` callsites с реально staged модулями и runtime manifest;
   незарегистрированный или отсутствующий entrypoint падает fail-closed.
+  Registry покрывает dotted/simple `python -m`, staged Python/PowerShell/EXE;
+  lock-bound `uvicorn` объявлен отдельно. Неопределённый acceptance failure
+  блокирует retry до записанного operator reconciliation и не разрешает смену host.
   Installed acceptance и rollback сохраняются;
   native-RRF fixture не может схлопнуться в zero-chunk, а его exact временный
   dataset удаляется без snapshot всей пользовательской коллекции.

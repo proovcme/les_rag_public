@@ -360,6 +360,7 @@ def create_acceptance_attempt(
     *,
     host: str,
     retry_of: str | None = None,
+    reconciliation: dict[str, Any] | None = None,
 ) -> Path:
     artifact_path = Path(artifact_path).resolve()
     artifact = load_artifact_receipt(artifact_path)
@@ -373,6 +374,7 @@ def create_acceptance_attempt(
         "artifact_path": str(artifact_path),
         "host": str(host),
         "retry_of": str(retry_of) if retry_of else None,
+        "reconciliation": _sanitize(reconciliation or {}),
         "result": "running",
         "started_at": _now(),
         "completed_at": None,
