@@ -187,7 +187,10 @@ class OpenAICompatibleTransport:
         connection: ResolvedModelConnection,
         request: InferenceRequest,
     ) -> dict[str, Any]:
-        options: dict[str, Any] = {"num_predict": request.max_output_tokens}
+        options: dict[str, Any] = {
+            "num_predict": request.max_output_tokens,
+            "num_ctx": int(connection.effective_preset.input_token_limit),
+        }
         if request.temperature is not None:
             options["temperature"] = request.temperature
         body: dict[str, Any] = {

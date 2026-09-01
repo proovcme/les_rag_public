@@ -7,20 +7,34 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.31
-номер сборки:              671
-версия Tauri/NSIS:         5.1.671
+версия продукта (SemVer):  0.30.32
+номер сборки:              672
+версия Tauri/NSIS:         5.1.672
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.31 rejected workbook → model retry; gitless live acceptance repair
+dev implementation:       0.30.32 model → RAG → model result; code packages after result
 задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.30 / build 670 / commit a133a000
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.31 cumulative patch после реального PDF → Qwen 9B → RAG → XLSX
+следующий выпуск:          0.30.32 cumulative patch после реального PDF → Qwen 9B → RAG → XLSX
 рантайм /api/version:      Legion 0.30.30 / build 670 / desktop 5.1.670 / commit a133a000; aligned
 ```
 
+> **0.30.32 / build 672 model → RAG → model result (release candidate):**
+> прежний native-tool selector и workbook recovery loop исключены из активного
+> estimator-пути. Первый no-tools вызов той же answer model читает вопрос и
+> вложение и возвращает все `queries`; application дословно выполняет каждый
+> через общий `ModelResearchToolService → retrieve_chat_chunks` в выбранном
+> dataset scope. Второй no-tools вызов получает вложение и весь evidence packet
+> и возвращает `answer + rows`. Только затем workbook adapter один раз получает
+> все строки без `status`, confirm/review и предметной правки кодом. Служебный
+> JSON не стримится пользователю; packaging failure сохраняет видимый model
+> result и отдельный trace ошибки. Тесты фиксируют 30 запросов/30 строк без
+> продуктового row cap и главный вопрос «не мешаем ли мы модели?». Прежний
+> `document_workflow.py` документирован как исторический/экспериментальный, не
+> активное ядро. Публикация запрещена до живого Legion PDF → Qwen 9B → RAG → XLSX.
+
 > **0.30.31 / build 671 workbook retry + truthful installed acceptance
-> (release candidate):** общий model-owned tool loop больше не принуждает модель
+> (superseded, не публиковался):** общий model-owned tool loop больше не принуждает модель
 > немедленно выбирать один workbook-вызов и не завершает исследование после
 > отклонённого workbook result. Отказ возвращается той же модели как tool
 > evidence; в пределах общего deadline/call budget она может сформулировать

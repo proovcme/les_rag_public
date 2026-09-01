@@ -120,6 +120,32 @@ def test_model_authored_search_batch_is_not_cut_to_five_calls():
     ]
 
 
+def test_model_rag_batch_preserves_every_model_query_without_a_row_limit():
+    queries = [f"точный запрос {index}" for index in range(30)]
+
+    assert service.parse_model_rag_queries(
+        json.dumps({"queries": queries}, ensure_ascii=False)
+    ) == queries
+
+
+def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
+    rows = [
+        {
+            "source_row": index,
+            "title": f"Работа {index}",
+            "unit": "шт.",
+            "quantity": index,
+            "norm_code": f"ГЭСНм00-00-000-{index:02d}",
+            "evidence_refs": [f"Источник {index}"],
+        }
+        for index in range(1, 31)
+    ]
+
+    assert service.parse_model_rag_result(
+        json.dumps({"answer": "Готово", "rows": rows}, ensure_ascii=False)
+    ) == ("Готово", rows)
+
+
 async def _async_append(target, value):
     target.append(value)
 
@@ -831,6 +857,62 @@ def test_estimator_role_uses_model_authored_initial_rag_query() -> None:
             },
         }
     ) is True
+
+
+def test_native_tool_selector_keeps_attachment_rows_inside_9b_context() -> None:
+    attachment = "\n".join(
+        f"{row}. Работа {row} | шт. | {row}" for row in range(1, 31)
+    )
+    evidence = service.selector_evidence_payload(
+        attachment_context=attachment,
+        rendered_context="[ФРАГМЕНТЫ ИЗ ИСТОЧНИКОВ]\nНет найденных фрагментов.",
+    )
+    messages, packet = service.govern_inference_messages(
+        preset=_governor_preset(input_tokens=6000, preset_id="qwen-9b-restrictive"),
+        profile_prefix=("Роль сметчика. " * 380),
+        request_payload={"question": "Собери ЛСР", "attachment_id": "read_123456abcdef"},
+        shortlist=service.selector_context_shortlist(
+            [
+                {"name": "search_sources", "input_schema": {"type": "object"}},
+                {"name": "build_lsr_workbook", "input_schema": {"type": "object"}},
+            ],
+            native_tool_schemas=True,
+        ),
+        evidence=evidence,
+    )
+
+    visible = str(messages)
+    assert "1. Работа 1 | шт. | 1" in visible
+    assert "5. Работа 5 | шт. | 5" in visible
+    assert not any(section.kind is ContextKind.TOOL_SHORTLIST for section in packet.sections)
+
+
+def test_model_authored_first_search_is_not_labelled_as_empty_retrieval() -> None:
+    empty_status = "[СТАТУС ИСТОЧНИКОВ: ФРАГМЕНТЫ НЕ НАЙДЕНЫ]"
+
+    assert service.initial_selector_context(
+        empty_status,
+        model_authored_initial_query=True,
+    ) == ""
+    assert service.initial_selector_context(
+        empty_status,
+        model_authored_initial_query=False,
+    ) == empty_status
+
+
+def test_tool_selector_uses_thin_role_contract_and_bound_skill() -> None:
+    prompt = service.profile_tool_selector_prompt(
+        {
+            "mode": "estimator",
+            "prompt_text": "LONG ANSWER PROMPT MUST NOT ENTER TOOL DECISION",
+            "skill_text": "Сначала изучи ВОР, затем ищи нормы.",
+        }
+    )
+
+    assert "профиль estimator" in prompt
+    assert "Сначала изучи ВОР, затем ищи нормы." in prompt
+    assert "LONG ANSWER PROMPT" not in prompt
+    assert "предметные решения" in prompt
     assert service.profile_uses_model_driven_retrieval(
         {
             "mode": "estimator",
@@ -968,7 +1050,6 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     exact_decisions = [
         {
             "row_id": "row-1",
-            "status": "bind",
             "norm_code": "ГЭСНм08-02-401-01",
             "reason": "Монтаж оборудования по найденной карточке нормы",
         }
@@ -1292,35 +1373,29 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
                 self.revisions = []
                 self.requests = []
                 if model_rag_result:
-                    self.responses = ([
+                    self.responses = [
                         InferenceResponse(
-                            text="",
-                            tool_calls=(
-                                {"id": "wrong-workbook", "type": "function", "function": {"name": "build_vor_workbook", "arguments": '{"attachment_id":"read_123456abcdef"}'}},
+                            text=json.dumps(
+                                {
+                                    "queries": [
+                                        "монтаж шкафа управления",
+                                        "прокладка контрольного кабеля",
+                                    ]
+                                },
+                                ensure_ascii=False,
                             ),
-                            finish_reason="tool_calls",
-                            usage={},
-                        ),
-                    ] if model_rag_recovery else []) + [
-                        InferenceResponse(
-                            text="",
-                            tool_calls=(
-                                {"id": "search-1", "type": "function", "function": {"name": "search_sources", "arguments": '{"q":"монтаж шкафа управления"}'}},
-                                {"id": "search-2", "type": "function", "function": {"name": "search_sources", "arguments": '{"q":"прокладка контрольного кабеля"}'}},
-                            ),
-                            finish_reason="tool_calls",
+                            tool_calls=(),
+                            finish_reason="stop",
                             usage={},
                         ),
                         InferenceResponse(
-                            text="",
-                            tool_calls=(
-                                {"id": "workbook-1", "type": "function", "function": {"name": "build_lsr_workbook", "arguments": json.dumps({"attachment_id": "read_123456abcdef", "decisions": exact_decisions}, ensure_ascii=False)}},
+                            text=json.dumps(
+                                {
+                                    "answer": "active visible answer",
+                                    "rows": exact_decisions,
+                                },
+                                ensure_ascii=False,
                             ),
-                            finish_reason="tool_calls",
-                            usage={},
-                        ),
-                        InferenceResponse(
-                            text="active visible answer",
                             tool_calls=(),
                             finish_reason="stop",
                             usage={"completion_tokens": 5},
@@ -1615,18 +1690,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         ]
         assert "Собери ЛСР" not in rag_queries
         assert workbook_executor_calls[-1]["args"]["decisions"] == exact_decisions
-        assert active_transport.revisions == ["conn:active:r3"] * (
-            4 if model_rag_recovery else 3
-        )
-        expected_tools = {
-            item["function"]["name"] for item in active_transport.requests[0].tools
-        }
-        assert expected_tools == (
-            {"build_vor_workbook", "search_sources", "build_lsr_workbook"}
-            if model_rag_recovery
-            else {"search_sources", "build_lsr_workbook"}
-        )
+        assert active_transport.revisions == ["conn:active:r3"] * 2
+        assert active_transport.requests[0].tools == ()
+        assert active_transport.requests[1].tools == ()
         assert "Строка 1: монтаж шкафа управления — 2 шт." in str(
+            active_transport.requests[0].messages
+        )
+        assert "сформулируй все необходимые запросы" in str(
             active_transport.requests[0].messages
         )
         assert history_rows[0]["retrieval_trace"]["status"] == "model_driven"
@@ -1634,14 +1704,11 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "awaiting_model_authored_query"
         )
         tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
-        assert "stop_reason" in tool_loop, tool_loop
-        assert tool_loop["stop_reason"] == "workbook_complete"
-        if model_rag_recovery:
-            assert [call["tool"] for call in workbook_executor_calls] == [
-                "build_vor_workbook",
-                "build_lsr_workbook",
-            ]
-            assert "выбери ровно один" not in str(active_transport.requests[0].messages)
+        assert tool_loop["schema"] == "les_model_rag_batch_v1"
+        assert tool_loop["model_queries"] == rag_queries
+        assert "rounds" not in tool_loop
+        assert "review" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
+        assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
         return
     if inactive_workbook:
         assert result["answer"] == "legacy visible answer"

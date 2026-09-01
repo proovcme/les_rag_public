@@ -255,7 +255,11 @@ async def test_complete_uses_capability_selected_native_chat_without_reasoning(t
 
     assert captured["path"] == "/api/chat"
     assert captured["body"]["think"] is False
-    assert captured["body"]["options"] == {"num_predict": 64, "temperature": 0.0}
+    assert captured["body"]["options"] == {
+        "num_predict": 64,
+        "num_ctx": 8192,
+        "temperature": 0.0,
+    }
     assert result.text == "ЛЕС"
     assert result.finish_reason == "stop"
     assert result.usage == {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11}

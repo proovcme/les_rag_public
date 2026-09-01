@@ -29,8 +29,9 @@ runtime data, logs, model caches or private corpora.
 - Do not add query hardcodes, dataset-specific boosts or professional answers implemented in code.
 - Typed readers and calculators return exact evidence; they do not choose an engineering or
   estimating decision for the model.
-- `proxy/smeta_core/**` is a protected compatibility module. Do not change it unless the owner
-  explicitly requests that work and the benchmark in `AGENTS.md` is run.
+- The active estimator path is attachment + selected dataset → model-authored queries → shared RAG
+  → the same model's result → calculation/XLSX packaging. `proxy/smeta_core/document_workflow.py`
+  is historical/experimental compatibility code, not the product chat core.
 
 ## Runtime surfaces
 

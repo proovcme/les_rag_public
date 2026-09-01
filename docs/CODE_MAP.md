@@ -1,13 +1,16 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
-> **0.30.31 model retry after rejected workbook:** общий selector prompt не
-> требует немедленного единственного workbook-вызова. Если workbook executor
-> возвращает `rejected`, его безопасная проекция входит в следующий model call;
-> цикл продолжается до успешного artifact, явного model stop или технического
-> deadline. Модель может после отказа сама обратиться к `search_sources` и затем
-> повторить `build_lsr_workbook`. `tools/{model_connection_live_acceptance,
-> live_workbook_acceptance}.py` связывают gitless установленный runtime с полным
-> `deployed_commit`, если `/api/version` одновременно подтверждает clean/aligned.
+> **Текущий model → RAG → result:** профиль с
+> `rag_policy.model_authored_initial_query=true` делает ровно два смысловых
+> model-call без native tools. Сначала модель по вопросу и полному вложению
+> возвращает все собственные `queries`; application без переписывания выполняет
+> каждый запрос через `ModelResearchToolService → retrieve_chat_chunks` в
+> замороженном dataset scope. Затем та же модель получает вложение и общий
+> evidence packet и возвращает `answer + rows`. Только после завершённого model
+> result `build_lsr_workbook` получает строки дословно и рассчитывает/рендерит
+> XLSX. В активном пути нет selector/workbook loop, `status`, confirm/review или
+> лимита количества строк. Ошибка упаковки не меняет ответ и не возвращает
+> предметное решение модели в цикл.
 
 > **0.30.29 workbook attachment handoff repair:** обязательный selector request
 > снова содержит факт server-owned attachment и его временный ID. Это переносит
@@ -60,18 +63,10 @@
 > model-owned shortlist/исполнении. Маршрутный trace показывает владельца через
 > `tool_policy_source=chat_profile_snapshot`; эффективное поведение не изменено.
 
-> **0.30.30 model → RAG → result:** estimator Factory Base связывает роль с
-> typed system datasets `smeta`, но не создаёт поисковые фразы. Для профиля с
-> `rag_policy.model_authored_initial_query=true`
-> `chat_evidence_application_service.py` не делает initial retrieval по исходной
-> команде; attachment text входит в первый evidence packet, active answer model
-> получает native schemas `search_sources/read_source/build_*_workbook`, сама
-> вызывает общий `ModelResearchToolService → retrieve_chat_chunks` и передаёт
-> exact `decisions` workbook adapter. `BoundModelChatRunner` сохраняет все calls
-> одного ответа; `CapabilityBroker` разделяет число видимых tool definitions и
-> бюджет вызовов. `_augment_model_tool_args` добавляет frozen scope, но никогда
-> не подставляет user command вместо model-authored `search_sources.q`. Имя
-> режима в application-коде не проверяется.
+> Прежние варианты 0.30.30–0.30.31 с native tool selector, повторными
+> workbook-вызовами и recovery loop признаны неактивным историческим подходом:
+> они мешали модели выполнить простую работу по датасету и не описывают текущий
+> production-flow.
 
 > **0.30.6 transactional delete bridge:** `tools/vps_patch.py` кодирует удаление
 > runtime content как обратно совместимый v2 entry с `operation=delete` и

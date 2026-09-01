@@ -11,7 +11,7 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from backend.runtime_paths import mutable_path
 from typing import Any, Callable, Sequence
@@ -496,6 +496,144 @@ def profile_uses_model_driven_retrieval(
     )
 
 
+def _model_json_object(raw: str) -> dict[str, Any] | None:
+    """Read one model-authored JSON object without interpreting its domain values."""
+
+    text = str(raw or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines:
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
+    candidates = [text]
+    first = text.find("{")
+    last = text.rfind("}")
+    if 0 <= first < last:
+        candidates.append(text[first : last + 1])
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            return payload
+    return None
+
+
+def parse_model_rag_queries(raw: str) -> list[str]:
+    """Return every non-empty RAG query authored by the model, unchanged."""
+
+    payload = _model_json_object(raw) or {}
+    raw_queries = payload.get("queries")
+    if not isinstance(raw_queries, list):
+        return []
+    queries: list[str] = []
+    for item in raw_queries:
+        value: Any = item
+        if isinstance(item, dict):
+            value = item.get("query") if "query" in item else item.get("q")
+        if not isinstance(value, str):
+            continue
+        query = value.strip()
+        if query:
+            queries.append(query)
+    return queries
+
+
+def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
+    """Split the model's visible answer from rows later consumed by code."""
+
+    payload = _model_json_object(raw)
+    if payload is None or not isinstance(payload.get("answer"), str):
+        return None
+    rows = payload.get("rows")
+    if not isinstance(rows, list) or any(not isinstance(item, dict) for item in rows):
+        return None
+    return payload["answer"], [dict(item) for item in rows]
+
+
+def profile_model_rag_query_prompt(profile_snapshot: dict[str, Any] | None) -> str:
+    """Thin query-authoring contract: model asks, RAG transport only executes."""
+
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    skill = str(snapshot.get("skill_text") or "").strip()
+    parts = [
+        (
+            "Прочитай задачу и явно прикреплённые материалы; сформулируй все необходимые "
+            "запросы к выбранным датасетам. Верни только JSON вида "
+            '{"queries":["запрос 1","запрос 2"]}. '
+            "Не отвечай по существу на этом шаге. Число запросов определяешь ты."
+        )
+    ]
+    if skill:
+        parts.append("Активный skill профиля:\n" + skill)
+    return "\n\n".join(parts)
+
+
+def _bounded_source_blocks(text: str, *, max_chars: int = 700) -> list[str]:
+    """Keep source rows intact while making a large attachment packable."""
+
+    blocks: list[str] = []
+    current: list[str] = []
+    current_chars = 0
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        added = len(line) + (1 if current else 0)
+        if current and current_chars + added > max_chars:
+            blocks.append("\n".join(current))
+            current = []
+            current_chars = 0
+        if len(line) > max_chars:
+            if current:
+                blocks.append("\n".join(current))
+                current = []
+                current_chars = 0
+            blocks.append(line)
+            continue
+        current.append(line)
+        current_chars += len(line) + (1 if current_chars else 0)
+    if current:
+        blocks.append("\n".join(current))
+    return blocks
+
+
+def selector_evidence_payload(
+    *, attachment_context: str, rendered_context: str,
+) -> list[Any]:
+    """Return model evidence as independently packable, ordered source blocks."""
+
+    payload: list[Any] = []
+    if str(attachment_context or "").strip():
+        payload.append("Текст явно прикреплённого пользователем файла:")
+        payload.extend(_bounded_source_blocks(attachment_context))
+    payload.append("Материалы из найденных документов:")
+    payload.extend(
+        item.payload
+        for item in _text_context_objects("selector-evidence", rendered_context)
+    )
+    return payload
+
+
+def selector_context_shortlist(
+    shortlist: Sequence[Any], *, native_tool_schemas: bool,
+) -> Sequence[Any]:
+    """Do not duplicate native provider tool schemas inside message context."""
+
+    return () if native_tool_schemas else shortlist
+
+
+def initial_selector_context(
+    rendered_context: str, *, model_authored_initial_query: bool,
+) -> str:
+    """Do not label a not-yet-run model-authored search as empty retrieval."""
+
+    return "" if model_authored_initial_query else rendered_context
+
+
 def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bool) -> str:
     """Compile the exact per-chat prompt/skill snapshot for grounded generation."""
 
@@ -518,6 +656,24 @@ def profile_system_prompt(profile_snapshot: dict[str, Any] | None, *, strict: bo
             "Ссылки оформляй номерами из заголовков [Источник N]; навигационные карты помогают "
             "выбрать файл, но сами по себе не подтверждают факт."
         )
+    return "\n\n".join(parts)
+
+
+def profile_tool_selector_prompt(profile_snapshot: dict[str, Any] | None) -> str:
+    """Compile the thin role+skill contract for one native tool decision."""
+
+    snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
+    mode = str(snapshot.get("mode") or "agent").strip() or "agent"
+    skill = str(snapshot.get("skill_text") or "").strip()
+    parts = [
+        (
+            f"Ты — Л.Е.С., профиль {mode}. На этом вызове выбери нужные native tools, "
+            "а не формулируй итоговый ответ. Модель сама создаёт поисковые запросы и "
+            "принимает предметные решения; код только исполняет вызовы и оформляет результат."
+        )
+    ]
+    if skill:
+        parts.append("Активный skill профиля:\n" + skill)
     return "\n\n".join(parts)
 
 @dataclass(frozen=True)
@@ -1604,30 +1760,15 @@ async def _execute_chat_evidence_application(
         include_metadata=True,
     )
     attachment_context = str(getattr(req, "attachment_context", "") or "").strip()
+    model_driven_retrieval = profile_uses_model_driven_retrieval(profile_snapshot)
 
-    def _selector_evidence_payload(rendered_context: str) -> list[Any]:
-        payload: list[Any] = []
-        if attachment_context:
-            payload.extend(
-                [
-                    "Текст явно прикреплённого пользователем файла:",
-                    attachment_context,
-                ]
-            )
-        payload.extend(
-            [
-                "Материалы из найденных документов:",
-                *[
-                    item.payload
-                    for item in _text_context_objects(
-                        "selector-evidence", rendered_context
-                    )
-                ],
-            ]
-        )
-        return payload
-
-    selector_evidence = _selector_evidence_payload(context)
+    selector_evidence = selector_evidence_payload(
+        attachment_context=attachment_context,
+        rendered_context=initial_selector_context(
+            context,
+            model_authored_initial_query=model_driven_retrieval,
+        ),
+    )
     selector_source_map = answer_source_map
     async with gen_semaphore:
         try:
@@ -1769,7 +1910,9 @@ async def _execute_chat_evidence_application(
                         rj.get("usage", {}) or {},
                     )
 
-                async def _post_cloud_fallback(runtime, hdrs, body):
+                async def _post_cloud_fallback(
+                    runtime, hdrs, body, *, allow_stream: bool = True,
+                ):
                     """Облако: перебор цепочки моделей с конечным таймаутом на модель.
                     Зависла/ошиблась/пустой ответ → следующая. Возвращает
                     (answer, usage, used_model); все упали → последняя ошибка."""
@@ -1782,7 +1925,14 @@ async def _execute_chat_evidence_application(
                             await token_sink({"event": "reset", "data": ""})
                         try:
                             ans, usage_m = await asyncio.wait_for(
-                                _post_llm(runtime, m, hdrs, body), timeout=per_model
+                                _post_llm(
+                                    runtime,
+                                    m,
+                                    hdrs,
+                                    body,
+                                    allow_stream=allow_stream,
+                                ),
+                                timeout=per_model,
                             )
                             if ans:
                                 if i > 0:
@@ -1839,7 +1989,134 @@ async def _execute_chat_evidence_application(
                     retrieval_trace["route_comparison"]["candidate_acceptance"] = True
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
-                if tool_loop_enabled:
+                if model_driven_retrieval and tool_loop_enabled:
+                    query_headers = {}
+                    if llm_runtime.api_key:
+                        query_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
+                    query_messages, query_packet = govern_inference_messages(
+                        preset=execution_preset,
+                        profile_prefix=profile_model_rag_query_prompt(profile_snapshot),
+                        request_payload={
+                            "question": str(req.question or ""),
+                            "dataset_ids": [str(item) for item in _dataset_ids],
+                        },
+                        checkpoint=(),
+                        working_memory=(),
+                        evidence=selector_evidence,
+                        source_map=selector_source_map,
+                        tool_exchange=(),
+                    )
+                    retrieval_trace["context_governor"]["calls"].append(
+                        context_packet_trace(query_packet, purpose="model_rag_queries")
+                    )
+                    query_body = {
+                        "messages": query_messages,
+                        "stream": False,
+                        "temperature": 0,
+                        "max_tokens": max(
+                            256,
+                            _env_int("LES_CHAT_MODEL_RAG_QUERY_MAX_TOKENS", 1600),
+                        ),
+                    }
+                    t_query_model = time.time()
+                    query_text, query_usage = await _post_llm(
+                        llm_runtime,
+                        llm_model,
+                        query_headers,
+                        query_body,
+                        allow_stream=False,
+                    )
+                    t_llm += time.time() - t_query_model
+                    model_queries = parse_model_rag_queries(query_text)
+
+                    async def _no_model_rag_fallback(_tool_name: str, _args: dict[str, Any]):
+                        raise RuntimeError("MODEL_RAG_ONLY_SUPPORTS_SEARCH_SOURCES")
+
+                    model_research_tools = ModelResearchToolService(
+                        retrieve=retrieve_chat_chunks,
+                        frozen_dataset_ids=tuple(
+                            str(item) for item in _dataset_ids if str(item)
+                        ),
+                        retrieval_kwargs={
+                            "rag_backend": rag_backend,
+                            "reranker_enabled": _reranker_on,
+                            "reranker_available": state.reranker_available,
+                            "reranker_cls": state.reranker_cls,
+                            "mlx_url": os.getenv("MLX_URL", "http://127.0.0.1:8080"),
+                            "logger": logger,
+                            "llm_semaphore": state.llm_semaphore,
+                            "return_trace": True,
+                            "doc_filter": None,
+                            "scope_source": str(
+                                (scope_resolution or {}).get("scope_source") or "unspecified"
+                            ),
+                            "scope_error_code": str(
+                                (scope_resolution or {}).get("error_code") or ""
+                            ),
+                        },
+                        fallback=_no_model_rag_fallback,
+                    )
+                    for query in model_queries:
+                        research_result = await model_research_tools.execute(
+                            {"tool": "search_sources", "args": {"q": query}}
+                        )
+                        tool_results_for_model.append(research_result.payload)
+                        if research_result.chunks:
+                            known_chunk_ids = {
+                                str((getattr(item, "meta", {}) or {}).get("chunk_id") or "")
+                                or hashlib.sha256(
+                                    (
+                                        str(getattr(item, "doc_name", "") or "")
+                                        + "\x00"
+                                        + str(getattr(item, "content", "") or "")
+                                    ).encode("utf-8")
+                                ).hexdigest()
+                                for item in chunks
+                            }
+                            for found_chunk in research_result.chunks:
+                                found_id = str(
+                                    (getattr(found_chunk, "meta", {}) or {}).get("chunk_id") or ""
+                                ) or hashlib.sha256(
+                                    (
+                                        str(getattr(found_chunk, "doc_name", "") or "")
+                                        + "\x00"
+                                        + str(getattr(found_chunk, "content", "") or "")
+                                    ).encode("utf-8")
+                                ).hexdigest()
+                                if found_id not in known_chunk_ids:
+                                    chunks.append(found_chunk)
+                                    known_chunk_ids.add(found_id)
+                    research_windows = expand_context_windows(
+                        chunks,
+                        collection=getattr(rag_backend, "collection_name", ""),
+                        logger=logger,
+                        max_chunks=context_max_chunks,
+                        max_chars_per_chunk=context_window_chars,
+                        radius=context_radius,
+                    )
+                    model_evidence_chunks = list(research_windows.chunks)
+                    (
+                        model_rag_evidence_packet,
+                        context,
+                        answer_source_map,
+                        final_evidence_packet,
+                    ) = _build_model_evidence(model_evidence_chunks)
+                    retrieval_trace["evidence_packet"] = (
+                        model_rag_evidence_packet.trace_summary(
+                            max_chars=context_chars_limit,
+                            include_metadata=True,
+                        )
+                    )
+                    tool_context = _format_tool_results_for_model(tool_results_for_model)
+                    retrieval_trace["tool_loop"] = {
+                        "schema": "les_model_rag_batch_v1",
+                        "enabled": True,
+                        "model_owns_queries": True,
+                        "model_queries": model_queries,
+                        "query_usage": query_usage,
+                        "results": tool_results_for_model,
+                    }
+                elif tool_loop_enabled:
                     tool_loop_stage = "harness"
                     try:
                         from proxy.services.tool_harness_service import harness
@@ -1870,9 +2147,6 @@ async def _execute_chat_evidence_application(
                                 ),
                             },
                             fallback=_fallback_model_tool,
-                        )
-                        model_driven_retrieval = profile_uses_model_driven_retrieval(
-                            profile_snapshot
                         )
                         shortlist_limit = (
                             len(profile_tools)
@@ -1964,9 +2238,13 @@ async def _execute_chat_evidence_application(
                             )
                             selector_profile = "".join(
                                 (
-                                    profile_system_prompt(profile_snapshot, strict=False),
+                                    profile_tool_selector_prompt(profile_snapshot),
                                     "\n\nТы управляешь коротким исследовательским чтением LES. ",
-                                    "Выбирай read-only инструменты, чтобы закрыть конкретный пробел evidence. ",
+                                    "Явно прикреплённый текст ниже уже доступен тебе как evidence и не требует индексации. "
+                                    "Сначала прочитай его и используй read-only инструменты, чтобы закрыть конкретные пробелы. "
+                                    "Если оператор просит артефакт, после получения достаточного evidence вызови "
+                                    "подходящий draft-инструмент; предметные решения и поисковые запросы выбираешь ты. "
+                                    "Не объявляй вложение отсутствующим, когда его текст присутствует в пакете. ",
                                     "Если оператор явно просит посмотреть глазами страницу или лист PDF, ",
                                     "обязательно выбери look_at_pdf_page с указанными файлом и номером страницы; ",
                                     "текстовый read_pdf_source не заменяет просмотр пикселей. ",
@@ -2005,7 +2283,12 @@ async def _execute_chat_evidence_application(
                                     round_no=research_round,
                                     attachment_id=getattr(req, "attachment_id", None),
                                 ),
-                                shortlist=shortlist.get("tools") or [],
+                                shortlist=selector_context_shortlist(
+                                    shortlist.get("tools") or [],
+                                    native_tool_schemas=(
+                                        canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                                    ),
+                                ),
                                 checkpoint=selector_checkpoint,
                                 working_memory=selector_working_memory,
                                 evidence=selector_evidence,
@@ -2156,8 +2439,9 @@ async def _execute_chat_evidence_application(
                                                 include_metadata=True,
                                             )
                                         )
-                                        selector_evidence = _selector_evidence_payload(
-                                            context
+                                        selector_evidence = selector_evidence_payload(
+                                            attachment_context=attachment_context,
+                                            rendered_context=context,
                                         )
                                         selector_source_map = answer_source_map
                                 selected_calls.append(call)
@@ -2241,7 +2525,22 @@ async def _execute_chat_evidence_application(
                         ),
                         "persisted_effects": 0,
                     }
-                max_attempts = 2
+                answer_execution_preset = execution_preset
+                if model_driven_retrieval:
+                    model_result_reserve = min(
+                        4096,
+                        max(
+                            execution_preset.generation_reserve_tokens,
+                            execution_preset.input_token_limit
+                            - execution_preset.safety_reserve_tokens
+                            - 512,
+                        ),
+                    )
+                    answer_execution_preset = replace(
+                        execution_preset,
+                        generation_reserve_tokens=model_result_reserve,
+                    )
+                max_attempts = 1 if model_driven_retrieval else 2
                 for attempt in range(1, max_attempts + 1):
                     if attempt == 2:
                         # Ретрай не выбрасывает найденные источники: повторная генерация получает
@@ -2312,6 +2611,15 @@ async def _execute_chat_evidence_application(
                         "Дай итоговый инженерный ответ. Не выдумывай факты и используй только существующие "
                         "номера [Источник N]. Если материалов недостаточно, отдели это от подтверждённых выводов."
                     )
+                    if model_driven_retrieval:
+                        question_tail += (
+                            "\nВерни только JSON-объект с полями answer и rows. "
+                            "answer — полный видимый ответ пользователю; rows — все строки результата, "
+                            "которые затем без предметной правки будут переданы коду для расчёта и XLSX. "
+                            "Для строки ЛСР укажи source_row, section, title, unit, quantity, norm_code, "
+                            "analogue, coverage, coefficient и evidence_refs. Не добавляй status и не "
+                            "ограничивай количество строк."
+                        )
                     answer_checkpoint = tuple(
                         item
                         for candidate in memory_candidates
@@ -2342,24 +2650,36 @@ async def _execute_chat_evidence_application(
                         answer_working_memory += _text_context_objects(
                             f"navigation:{navigation_name}", navigation_text
                         )
-                    answer_tool_exchange = [
-                        _compact_tool_result_for_prompt(item, max_chars=2400)
-                        for item in tool_results_for_model
-                    ]
+                    answer_tool_exchange = (
+                        []
+                        if model_driven_retrieval
+                        else [
+                            _compact_tool_result_for_prompt(item, max_chars=2400)
+                            for item in tool_results_for_model
+                        ]
+                    )
+                    answer_evidence = (
+                        selector_evidence_payload(
+                            attachment_context=attachment_context,
+                            rendered_context=context,
+                        )
+                        if model_driven_retrieval
+                        else [
+                            "Материалы из найденных документов:",
+                            *[
+                                item.payload
+                                for item in _text_context_objects("answer-evidence", context)
+                            ],
+                        ]
+                    )
                     try:
                         messages, answer_packet = govern_inference_messages(
-                            preset=execution_preset,
+                            preset=answer_execution_preset,
                             profile_prefix=sys_msg,
                             request_payload=question_tail,
                             checkpoint=answer_checkpoint,
                             working_memory=answer_working_memory,
-                            evidence=[
-                                "Материалы из найденных документов:",
-                                *[
-                                    item.payload
-                                    for item in _text_context_objects("answer-evidence", context)
-                                ],
-                            ],
+                            evidence=answer_evidence,
                             source_map=answer_source_map,
                             tool_exchange=answer_tool_exchange,
                             dialogue=[session_block] if session_block else [],
@@ -2431,8 +2751,10 @@ async def _execute_chat_evidence_application(
                         )
                     generation_budget = min(
                         generation_budget,
-                        execution_preset.generation_reserve_tokens,
+                        answer_execution_preset.generation_reserve_tokens,
                     )
+                    if model_driven_retrieval:
+                        generation_budget = answer_execution_preset.generation_reserve_tokens
 
                     chat_body = {
                         "messages": messages,
@@ -2451,15 +2773,30 @@ async def _execute_chat_evidence_application(
                     try:
                         if canonical_execution_mode is CanonicalRouteMode.ACTIVE:
                             answer, usage = await _post_llm(
-                                llm_runtime, llm_model, headers, chat_body
+                                llm_runtime,
+                                llm_model,
+                                headers,
+                                chat_body,
+                                allow_stream=not model_driven_retrieval,
                             )
                             if active_model_result is not None:
                                 llm_model = active_model_result.connection.model_id
                         elif is_cloud_provider(llm_runtime.provider):
                             # Облако: цепочка моделей с таймаутом на модель (зависла → следующая).
-                            answer, usage, llm_model = await _post_cloud_fallback(llm_runtime, headers, chat_body)
+                            answer, usage, llm_model = await _post_cloud_fallback(
+                                llm_runtime,
+                                headers,
+                                chat_body,
+                                allow_stream=not model_driven_retrieval,
+                            )
                         else:
-                            answer, usage = await _post_llm(llm_runtime, llm_model, headers, chat_body)
+                            answer, usage = await _post_llm(
+                                llm_runtime,
+                                llm_model,
+                                headers,
+                                chat_body,
+                                allow_stream=not model_driven_retrieval,
+                            )
                     except (httpx.TransportError, httpx.TimeoutException, asyncio.TimeoutError, httpx.HTTPStatusError) as net_err:
                         # W3.3/ADR-9: все облачные модели не ответили → деградация на
                         # локальный MLX. Для не-облака (MLX) ошибку прокидываем как раньше.
@@ -2523,6 +2860,20 @@ async def _execute_chat_evidence_application(
                             fallback_preset.preset_id
                         )
                         execution_preset = fallback_preset
+                        answer_execution_preset = fallback_preset
+                        if model_driven_retrieval:
+                            answer_execution_preset = replace(
+                                fallback_preset,
+                                generation_reserve_tokens=min(
+                                    4096,
+                                    max(
+                                        fallback_preset.generation_reserve_tokens,
+                                        fallback_preset.input_token_limit
+                                        - fallback_preset.safety_reserve_tokens
+                                        - 512,
+                                    ),
+                                ),
+                            )
                         headers = {}
                         retrieval_trace.setdefault("routing", {}).update(
                             {"cloud_fallback": type(net_err).__name__, "effective_provider": "mlx", "is_cloud": False}
@@ -2543,6 +2894,7 @@ async def _execute_chat_evidence_application(
                             llm_model,
                             headers,
                             fallback_body,
+                            allow_stream=not model_driven_retrieval,
                         )
                     t_llm += time.time() - t_llm_call
                     if not answer:
@@ -2565,6 +2917,97 @@ async def _execute_chat_evidence_application(
                     crag_status = "MODEL_OUTPUT"
                     logger.info("[CHAT] model answer accepted unchanged; citation check is trace-only")
                     break
+
+                if model_driven_retrieval:
+                    parsed_model_result = parse_model_rag_result(answer)
+                    model_result_rows: list[dict[str, Any]] = []
+                    if parsed_model_result is not None:
+                        answer, model_result_rows = parsed_model_result
+                    else:
+                        retrieval_trace["model_result"] = {
+                            "schema": "les_model_rag_result_v1",
+                            "status": "unstructured",
+                            "packaged": False,
+                        }
+                    if token_sink is not None:
+                        await token_sink({"event": "reset", "data": ""})
+                        if answer:
+                            await token_sink({"event": "token", "data": answer})
+                    attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
+                    packaging_tool = (
+                        "build_lsr_workbook"
+                        if "build_lsr_workbook" in profile_tools
+                        else (
+                            "build_vor_workbook"
+                            if "build_vor_workbook" in profile_tools
+                            else ""
+                        )
+                    )
+                    if (
+                        parsed_model_result is not None
+                        and model_result_rows
+                        and attachment_id
+                        and packaging_tool
+                        and workbook_tool_executor is not None
+                        and canonical_execution_mode is CanonicalRouteMode.ACTIVE
+                    ):
+                        async def workbook_progress(event: dict[str, Any]) -> None:
+                            if token_sink is not None:
+                                await token_sink({"event": "tool_progress", "data": event})
+
+                        workbook_call = {
+                            "tool": packaging_tool,
+                            "args": {
+                                "attachment_id": attachment_id,
+                                "decisions": model_result_rows,
+                            },
+                        }
+                        try:
+                            workbook_payload = await workbook_tool_executor(
+                                workbook_call,
+                                {
+                                    "session_id": str(req.session_id or ""),
+                                    "question": str(req.question or ""),
+                                    "dataset_ids": [str(item) for item in _dataset_ids],
+                                    "project_id": getattr(req, "project_id", None),
+                                    "attachment_id": attachment_id,
+                                    "profile_revision_id": str(
+                                        (profile_snapshot or {}).get("revision_id") or ""
+                                    ),
+                                    "model_identity": str(
+                                        getattr(
+                                            getattr(active_model_result, "connection", None),
+                                            "model_id",
+                                            "",
+                                        )
+                                        or llm_model
+                                    ),
+                                    "model_preset": execution_preset.preset_id,
+                                },
+                                workbook_progress,
+                            )
+                            safe_payload = safe_workbook_history_projection(workbook_payload)
+                            workbook_chat_meta = harvest_workbook_tool_result(safe_payload)
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "accepted_unchanged",
+                                "row_count": len(model_result_rows),
+                                "packaging": safe_payload,
+                            }
+                        except Exception as packaging_error:  # noqa: BLE001 - keep the model answer visible
+                            logger.exception(
+                                "[WORKBOOK] post-model packaging failed: %s",
+                                type(packaging_error).__name__,
+                            )
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "accepted_unchanged",
+                                "row_count": len(model_result_rows),
+                                "packaging": {
+                                    "status": "error",
+                                    "error_type": type(packaging_error).__name__,
+                                },
+                            }
 
                 try:
                     from proxy.services.evidence_packet_service import verify_answer_source_labels
