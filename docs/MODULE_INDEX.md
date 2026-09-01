@@ -1,8 +1,25 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.43 RAG evidence continuity and readiness candidate:** native RRF
+> overfetch, document diversity и model evidence limit принадлежат effective
+> профилю (`64/2/6` по умолчанию) и видны в GUI. Source map сохраняет typed
+> locator/page/source_ref и раздельные found/model-visible/cited counts;
+> фактически показанный evidence сохраняется immutable manifest между
+> репликами. `selected_sources_only` исполняемо управляет web capability.
+> Запросы ждут bounded model queue без чтения `Semaphore._value`; публичные
+> ошибки не раскрывают exception detail. Readiness разделён по измерениям,
+> RAPTOR default `off`, ColBERT работает только с audited ready generation.
+> Точки: `proxy/services/{retrieval_candidate,source_locator,
+> chat_evidence_manifest,chat_capability_scope,public_error,runtime_admission,
+> rag_advanced_policy,rag_pipeline_status,rag_readiness}_service.py`, существующие
+> chat/retrieval services и `sovushka/pages/{chat,profiles,diag}.py`.
+> [Модуль](modules/rag-evidence-flow.md). Статус док↔код: ✅; candidate не
+> установлен и не опубликован.
+
 > **0.30.41 installed contour compatibility hotfix:** effective estimator
 > snapshot поднимает model-authored query policy для старых user revisions без
-> их перезаписи; каждый model-visible `search_sources` ограничен шестью hits.
+> их перезаписи; каждый model-visible `search_sources` использует effective
+> profile limit (заводской default 6).
 > Health распознаёт полную legacy-смесь system ФСНБ в общем физическом индексе,
 > отдельно показывает её объём и оценивает user-каталог без ложного red.
 > Механический упаковщик понимает обычные подписанные строки ответа модели, а не

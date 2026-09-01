@@ -1,8 +1,20 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.43 RAG evidence boundary:** `chat_profile_service` владеет effective
+> retrieval policy; `retrieval_service` делает native-RRF overfetch, затем
+> `retrieval_candidate_service` выполняет exact-fragment dedup и document
+> diversity до model evidence limit. `chat_evidence_manifest_service` хранит
+> фактически показанный модели evidence и frozen scope; `source_locator_service`
+> строит typed переходы к файлу/странице, карточке нормы или web URL.
+> `chat_capability_scope_service` исполняет явный source-only режим. Admission
+> ожидает semaphore permit, публичные ошибки санитизируются. Readiness разделяет
+> backend/contract/optional/query dimensions; RAPTOR default off, ColBERT требует
+> audited active multivector generation. Полный контракт:
+> [rag-evidence-flow](modules/rag-evidence-flow.md).
+
 > **0.30.42 result-integrity and routing hotfix:** estimator использует только
 > настраиваемый smeta-каталог; обычный model-authored RAG остаётся в user scope;
-> `search_sources` запрашивает ровно 6 model-facing результатов; `bge-m3` и
+> `search_sources` использует effective model-facing limit (default 6); `bge-m3` и
 > `bge-m3:latest` считаются одним Ollama identity; capability evidence
 > автоматически обновляется при первом чате без рестарта. Парсер сохраняет
 > model-authored `source_row`/`norm_code`, а локальная пост-проверка только

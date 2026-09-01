@@ -4,20 +4,35 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-01)
+## Текущее состояние (2026-09-02)
 
 ```
-версия продукта (SemVer):  0.30.42
-номер сборки:              682
-версия Tauri/NSIS:         5.1.682
+версия продукта (SemVer):  0.30.43
+номер сборки:              683
+версия Tauri/NSIS:         5.1.683
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.42 model→RAG + bounded web-search hotfixes
+dev implementation:       0.30.43 RAG evidence continuity/readiness candidate; code through 9b60d74f
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          консолидация только с сохранением рабочего baseline 0.30.42
+следующий выпуск:          0.30.43 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.43 / build 683 RAG evidence continuity/readiness candidate (не
+> установлен и не опубликован):** profile-owned `candidate_k /
+> document_diversity_k / model_evidence_k` заменили жёсткий model-facing limit;
+> native RRF делает overfetch, exact dedup и document diversity. Source map
+> сохраняет typed locator/page/source_ref и раздельные found/model-visible/cited
+> counts. Между репликами хранится immutable manifest фактически показанного
+> evidence и frozen scope. Явная галочка source-only исполняемо отключает web,
+> но не меняет решение модели. Параллельный запрос ждёт bounded model queue;
+> HTTP/SSE/tool-result не раскрывают exception detail. Readiness разделяет
+> backend, contract, optional stages и per-query quality. RAPTOR default off;
+> ColBERT не вызывается без audited ready active generation. Реализованный код
+> заканчивается commit `9b60d74f`; сметное ядро и установленный рабочий baseline
+> `0.30.42 · 682 · ab5146b2` не изменялись. Выпуск, рестарт, reindex и тяжёлые
+> optional-generation jobs не запускались.
 
 > **0.30.42 / build 682 model→RAG result-integrity hotfix:** обычный RAG и
 > estimator разведены по effective profile, сметный каталог полностью

@@ -23,9 +23,12 @@
 ## Что входит в текущий LES
 
 - Evidence/chat: scope `none | selected | all`, evidence packet, context governor,
-  citations/source navigation, research tools и отсутствие кодового final вместо модели.
+  typed citations/source navigation, immutable model-visible evidence manifest,
+  explicit source-only capability, research tools и отсутствие кодового final вместо модели.
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
-  hierarchy/parent expansion, readiness и dataset integrity; отдельный boundary-test
+  profile-owned overfetch/diversity/evidence limits, hierarchy/parent expansion,
+  dimensional readiness, ready-generation guard для ColBERT и dataset integrity;
+  отдельный boundary-test
   подтверждает, что живые source adapters используют самостоятельный document classifier,
   а не выключенный Unified Harness.
 - Models: connection registry, secrets boundary, capability resolution,
@@ -33,7 +36,8 @@
 - UI: общий UIKit, WCAG AA, документы, чат, источники, model connections и
   отсутствие скрытого автоматического scope.
 - Runtime/release: Windows process ownership, persistent-state boundary,
-  lightweight/full update, immutable receipt, installed acceptance и rollback;
+  bounded model queue, safe public errors, lightweight/full update, immutable
+  receipt, installed acceptance и rollback;
   native-RRF fixture не может схлопнуться в zero-chunk, а его exact временный
   dataset удаляется без snapshot всей пользовательской коллекции.
 - Профессиональные модули: только их действующие contract-тесты. Сметный
