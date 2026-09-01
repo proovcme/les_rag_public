@@ -30,6 +30,10 @@ dev implementation:       0.30.42 model→RAG result-integrity hotfix
 > сохраняются до расчёта, а конфликты файла выдаются как `partial`, не скрывая
 > артефакт. Техническая manifest-проверка считает Ollama-алиасы `bge-m3` и
 > `bge-m3:latest` одним embedding identity; сметные решения не затрагиваются.
+> В Agent режиме `web_search` остаётся в restrictive shortlist даже для
+> алфавитно сохранённого user-profile allowlist, а существующий call budget
+> теперь ограничивает весь research loop, а не каждый его круг. Код не выбирает
+> поисковые запросы и не переписывает итог модели.
 > capability snapshot обновляется при первом чате без рестарта. Общий health
 > проверяет native dense+sparse RRF и больше не зависит от legacy lexical
 > sidecar. Release orchestrator теперь разрешает attested full-feed и при явно

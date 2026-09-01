@@ -2752,8 +2752,9 @@ async def _execute_chat_evidence_application(
                         )
                         research_deadline = time.monotonic() + research_deadline_seconds
                         research_round = 0
+                        calls_remaining = max_calls
                         stop_reason = "deadline"
-                        while time.monotonic() < research_deadline:
+                        while time.monotonic() < research_deadline and calls_remaining > 0:
                             research_round += 1
                             prior_results = [
                                 _compact_tool_result_for_prompt(item, max_chars=2400)
@@ -2856,7 +2857,7 @@ async def _execute_chat_evidence_application(
                                 for call in _parse_model_tool_calls(
                                     selector_text,
                                     allowed_tools=allowed_tools,
-                                    max_calls=max_calls,
+                                    max_calls=calls_remaining,
                                 )
                             ]
                             if (
@@ -2878,7 +2879,7 @@ async def _execute_chat_evidence_application(
                                 )
                                 retrieval_trace["canonical_shadow"] = shadow_trace
                                 canonical_shadow_recorded = True
-                            calls = list(proposed_calls[:max_calls])
+                            calls = list(proposed_calls[:calls_remaining])
                             research_rounds.append(
                                 {"round": research_round, "proposed": len(proposed_calls), "executed": len(calls)}
                             )
@@ -2973,6 +2974,7 @@ async def _execute_chat_evidence_application(
                                         )
                                         selector_source_map = answer_source_map
                                 selected_calls.append(call)
+                                calls_remaining -= 1
                                 safe_payload = safe_workbook_history_projection(payload)
                                 tool_results_for_model.append(
                                     safe_payload if safe_payload else payload
@@ -2983,6 +2985,9 @@ async def _execute_chat_evidence_application(
                                     stop_reason = "workbook_complete"
                                     break
                             if workbook_chat_meta:
+                                break
+                            if calls_remaining <= 0:
+                                stop_reason = "calls_budget"
                                 break
                         tool_context = _format_tool_results_for_model(tool_results_for_model)
                         retrieval_trace["tool_loop"] = {
@@ -3001,6 +3006,8 @@ async def _execute_chat_evidence_application(
                             "stop_reason": stop_reason,
                             "deadline_seconds": research_deadline_seconds,
                             "max_calls_per_model_response": max_calls,
+                            "max_calls_total": max_calls,
+                            "calls_remaining": calls_remaining,
                             "native_tool_schemas": bool(native_tools),
                         }
                     except ContextRequiredSectionOverflow as context_error:

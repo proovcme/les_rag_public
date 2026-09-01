@@ -214,19 +214,20 @@ class ToolHarness:
         result_chars_remaining: int = 35_000,
         attachment_ids: tuple[str, ...] = (),
     ) -> dict[str, Any]:
+        is_agent = str(mode).strip().casefold() == "agent"
+        agent_order = {
+            "web_search": 0,
+            "filesystem_search": 1,
+            "filesystem_read_text": 2,
+            "filesystem_list": 3,
+            "filesystem_stat": 4,
+            "filesystem_hash": 5,
+            "filesystem_roots": 6,
+        }
         if allowed_tools is None:
             registrations = list(self._registry.registrations())
-            if str(mode).strip().casefold() == "agent":
+            if is_agent:
                 priority = {"web": 0, "filesystem": 1, "dataset": 2, "source": 3}
-                agent_order = {
-                    "web_search": 0,
-                    "filesystem_search": 1,
-                    "filesystem_read_text": 2,
-                    "filesystem_list": 3,
-                    "filesystem_stat": 4,
-                    "filesystem_hash": 5,
-                    "filesystem_roots": 6,
-                }
                 registrations.sort(
                     key=lambda item: (
                         priority.get(item.contract.category, 4),
@@ -238,6 +239,14 @@ class ToolHarness:
         else:
             raw_tools = sorted(allowed_tools) if isinstance(allowed_tools, set) else allowed_tools
             profile_tools = tuple(dict.fromkeys(str(name).strip() for name in raw_tools if str(name).strip()))
+            if is_agent:
+                profile_tools = tuple(
+                    name
+                    for _index, name in sorted(
+                        enumerate(profile_tools),
+                        key=lambda item: (agent_order.get(item[1], 100), item[0]),
+                    )
+                )
         available = runtime_available
         if available is None:
             available = self.directly_executable_tool_names()

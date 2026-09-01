@@ -1270,13 +1270,25 @@ def test_model_research_loop_is_evidence_first_and_model_stopped() -> None:
     source = inspect.getsource(service._execute_chat_evidence_application)
 
     initial_packet = source.index("initial_evidence_packet,")
-    selector_loop = source.index("while time.monotonic() < research_deadline:")
+    selector_loop = source.index(
+        "while time.monotonic() < research_deadline and calls_remaining > 0:"
+    )
     assert initial_packet < selector_loop
     assert "evidence=selector_evidence" in source
     assert "source_map=selector_source_map" in source
     assert "research_result.chunks" in source
     assert "seen_call_signatures" not in source
     assert 'stop_reason = "model_stop"' in source
+
+
+def test_model_research_loop_enforces_call_budget_across_all_rounds() -> None:
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    assert "calls_remaining = max_calls" in source
+    assert "while time.monotonic() < research_deadline and calls_remaining > 0:" in source
+    assert "max_calls=calls_remaining" in source
+    assert "calls_remaining -= 1" in source
+    assert 'stop_reason = "calls_budget"' in source
 
 
 def test_ordinary_chat_does_not_semantically_validate_or_rewrite_model_answer() -> None:

@@ -2972,7 +2972,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3859,
+      "lines": 3866,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6757,7 +6757,7 @@
         "tests/test_web_search_service.py",
         "tools/les_tool_harness.py"
       ],
-      "lines": 1333,
+      "lines": 1342,
       "module": "proxy.services.tool_harness_service",
       "outbound": [
         "backend/converter.py",
@@ -8884,7 +8884,7 @@
     },
     {
       "inbound": [],
-      "lines": 2238,
+      "lines": 2250,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13154,7 +13154,7 @@
     },
     {
       "inbound": [],
-      "lines": 303,
+      "lines": 332,
       "module": "tests.test_tool_harness_service",
       "outbound": [
         "proxy/routers/tools.py",
@@ -18045,7 +18045,7 @@
     "runtime_support": 9,
     "test_or_tool_only": 614,
     "tracked_python_files": 961,
-    "tracked_python_lines": 301828
+    "tracked_python_lines": 301885
   },
   "warnings": []
 }

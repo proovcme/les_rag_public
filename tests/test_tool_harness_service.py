@@ -119,6 +119,35 @@ def test_tool_shortlist_delegates_policy_without_domain_word_routing():
     assert first["budget"]["calls"] == 5
 
 
+def test_agent_profile_allowlist_keeps_web_search_inside_restrictive_shortlist():
+    allowed = [
+        "filesystem_hash",
+        "filesystem_list",
+        "filesystem_read_text",
+        "filesystem_roots",
+        "filesystem_search",
+        "filesystem_stat",
+        "web_search",
+    ]
+
+    result = ToolHarness().shortlist(
+        "найди актуальные цены в интернете",
+        mode="agent",
+        allowed_tools=allowed,
+        limit=5,
+        model_preset="qwen-9b-restrictive",
+    )
+
+    assert [item["name"] for item in result["tools"]] == [
+        "web_search",
+        "filesystem_search",
+        "filesystem_read_text",
+        "filesystem_list",
+        "filesystem_stat",
+    ]
+    assert "web_search" not in result["omitted_by_reason"].get("preset_limit", ())
+
+
 def test_context_bound_workbook_tools_are_not_shortlisted_without_runtime_executor():
     result = ToolHarness().shortlist(
         "Собери ведомость и локальную смету",

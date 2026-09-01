@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 961 |
-| Строк Python | 301828 |
+| Строк Python | 301885 |
 | PRODUCT_REACHABLE | 337 |
 | RUNTIME_SUPPORT | 9 |
 | TEST_OR_TOOL_ONLY | 614 |
@@ -38,7 +38,7 @@
 | sovushka/uikit/tokens.py | 4197 | 2 |
 | proxy/routers/chat.py | 4168 | 40 |
 | sovushka/pages/documents.py | 3895 | 2 |
-| proxy/services/chat_evidence_application_service.py | 3859 | 7 |
+| proxy/services/chat_evidence_application_service.py | 3866 | 7 |
 | proxy/routers/datasets.py | 3776 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
@@ -54,7 +54,7 @@
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
 | sovushka/pages/diag.py | 1416 | 2 |
 | proxy/services/retrieval_service.py | 1359 | 10 |
-| proxy/services/tool_harness_service.py | 1333 | 12 |
+| proxy/services/tool_harness_service.py | 1342 | 12 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |
