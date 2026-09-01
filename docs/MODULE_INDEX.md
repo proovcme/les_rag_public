@@ -4,7 +4,9 @@
 > effective сметную RAG-коллекцию из активной настройки базы, а не в общий
 > `les_rag`. Имя коллекции не зашито: поддерживается любой настроенный alias.
 > Каждый запрос возвращает модели не более 6 карточек; неготовый dedicated
-> native RRF блокируется без fallback в смешанный общий корпус. Точки:
+> native RRF блокируется без fallback в смешанный общий корпус. Для уже
+> выбранных пользовательских estimator-профилей model-authored query является
+> инвариантом режима и не зависит от отсутствующего в старом snapshot флага. Точки:
 > `proxy/services/{chat_evidence_application,model_research_tool}_service.py`,
 > `tests/test_{chat_evidence_application,model_research_tool}_service.py`.
 > Статус док↔код: ✅.

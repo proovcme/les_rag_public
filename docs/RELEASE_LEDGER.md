@@ -26,7 +26,9 @@ dev implementation:       0.30.40 dedicated configurable estimate RAG hotfix
 > сметную collection из активной настройки, отдаёт модели максимум 6 карточек
 > на запрос и никогда не откатывается в общий корпус. Имя alias не зашито.
 > Regression отдельно запрещает вызов общего retriever и проверяет fail-closed
-> поведение неготового dedicated native RRF.
+> поведение неготового dedicated native RRF. Старые user-profile snapshot с
+> keep-state сохраняют prompt/skill неизменными, но estimator workflow всегда
+> формирует первый список запросов моделью даже без нового policy-флага.
 
 > **0.30.39 / build 679 installed FGIS supervisor (release candidate):**
 > build 678 прошёл full NSIS, оба installed bootstrap, API/UI, process hygiene

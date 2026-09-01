@@ -5,9 +5,10 @@
 > effective collection из активной настройки сметной базы. Общий `state.backend`
 > (`les_rag`) в этом маршруте не вызывается. Ready dedicated native RRF отдаёт
 > максимум 6 карточек; degraded/missing collection блокируется без общего
-> fallback. Имя alias не является константой hotfix.
+> fallback. Имя alias не является константой hotfix. Режим `estimator` включает
+> этот workflow независимо от наличия нового policy-флага в старом keep-state snapshot.
 
-> **Текущий model → RAG → result:** профиль с
+> **Текущий model → RAG → result:** estimator либо профиль с явным
 > `rag_policy.model_authored_initial_query=true` делает ровно два смысловых
 > model-call без native tools. Сначала модель по вопросу и полному вложению
 > возвращает все собственные `queries`; application без переписывания выполняет

@@ -134,6 +134,19 @@ def test_model_rag_batch_reads_plain_model_authored_lines_without_a_row_limit():
     assert service.parse_model_rag_queries("\n".join(queries)) == queries
 
 
+def test_existing_estimator_profile_keeps_model_authored_query_workflow_without_new_flag():
+    assert service.profile_uses_model_driven_retrieval(
+        {
+            "revision_id": "user:profile:estimator:legacy",
+            "mode": "estimator",
+            "rag_policy": {"grounded": True, "system_datasets": ["smeta"]},
+        }
+    ) is True
+    assert service.profile_uses_model_driven_retrieval(
+        {"mode": "search", "rag_policy": {"grounded": True}}
+    ) is False
+
+
 def test_model_rag_evidence_keeps_six_candidates_for_every_model_query():
     query_hits = []
     for query_index in range(1, 31):
@@ -1124,7 +1137,7 @@ def test_tool_selector_uses_thin_role_contract_and_bound_skill() -> None:
             "mode": "estimator",
             "rag_policy": {"system_datasets": ["smeta"]},
         }
-    ) is False
+    ) is True
     assert service.profile_uses_model_driven_retrieval(
         {
             "mode": "search",

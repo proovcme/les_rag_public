@@ -39,6 +39,12 @@ workbook adapter. Ограничение количества tool definitions �
 сборку. Профиль по-прежнему задаёт доступные capability/datasets, но не порядок
 вызовов и не предметное решение.
 
+**Build 680:** model-authored query является инвариантом режима `estimator`,
+поэтому keep-state старого пользовательского profile snapshot не возвращает
+чат в прежний общий-RAG путь. Prompt, skill и сохранённая ревизия пользователя
+не переписываются. Поиск норм использует effective dedicated collection,
+настроенную active base/runtime, и не делает fallback в общий `les_rag`.
+
 Канонический профиль чата связывает immutable Factory Base и пользовательские ревизии
 prompt/skill с режимом, allowlist инструментов, model policy и RAG policy. Активная ревизия
 фиксируется snapshot-ом при создании чата; уже открытый чат меняет её только по явному действию

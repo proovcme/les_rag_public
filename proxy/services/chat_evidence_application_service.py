@@ -492,11 +492,14 @@ def profile_research_rounds(profile_snapshot: dict[str, Any] | None, *, configur
 def profile_uses_model_driven_retrieval(
     profile_snapshot: dict[str, Any] | None,
 ) -> bool:
-    """True when the profile explicitly gives the first RAG query to the model."""
+    """Keep model-authored retrieval as an estimator workflow invariant."""
 
     snapshot = profile_snapshot if isinstance(profile_snapshot, dict) else {}
     return bool(
-        (snapshot.get("rag_policy") or {}).get("model_authored_initial_query", False)
+        str(snapshot.get("mode") or "").strip().casefold() == "estimator"
+        or (snapshot.get("rag_policy") or {}).get(
+            "model_authored_initial_query", False
+        )
     )
 
 
