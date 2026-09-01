@@ -301,3 +301,20 @@ def test_conflict_block_visible_with_sources():
 
 def test_conflict_block_none_for_single_value():
     assert ar.conflict_block([{"label": "A", "value": "1", "sources": []}]) is None
+
+
+def test_source_card_title_prefers_cipher_over_collection_name():
+    title = ar.source_card_title(
+        {
+            "doc_name": "smeta_norm_cards.v1",
+            "snippet": "Шифр: ГЭСН10-01-001-01\nНаименование: Установка блока",
+        },
+        "smeta_norm_cards.v1",
+    )
+    assert title.startswith("ГЭСН10-01-001-01")
+    assert "Установка блока" in title
+    chip = ar.source_chip({
+        "doc_name": "smeta_norm_cards.v1",
+        "snippet": "Шифр: ГЭСН10-01-001-01\nНаименование: Установка блока",
+    }, 1)
+    assert chip["file"].startswith("ГЭСН10-01-001-01")

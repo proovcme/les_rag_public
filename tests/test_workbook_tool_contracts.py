@@ -53,7 +53,8 @@ def test_lsr_contract_accepts_plain_model_output_without_a_decision_schema():
     decisions_schema = lsr_schema["properties"]["decisions"]
     assert decisions_schema["items"] == {"type": "object"}
     assert "maxItems" not in decisions_schema
-    assert "decisions" not in vor_schema["properties"]
+    assert "decisions" in vor_schema["properties"]
+    assert "decisions" not in vor_schema.get("required", [])
 
 
 def test_chat_workbook_capabilities_come_from_the_executor_manifest():

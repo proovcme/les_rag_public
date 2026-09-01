@@ -1,5 +1,10 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.42 packaging/UI:** `estimator_workbook_packaging_tools` выбирает
+> `build_lsr_workbook` или `build_vor_workbook` по тексту запроса; harvest
+> отдаёт безопасное `filename`. Совушка: дата+время в пузыре, карточки
+> источников без наезда, итоговая таблица из `draft_rows`.
+
 > **0.30.41 installed compatibility:** `chat_profile_service` накладывает
 > estimator workflow policy на effective snapshot старой user revision, не
 > меняя её в SQLite. `ModelResearchToolService` отдаёт модели максимум 6 hits.
@@ -23,8 +28,8 @@
 > dedicated сметную RRF collection, прочие профили — `retrieve_chat_chunks` в
 > замороженном dataset scope. Затем та же модель получает вложение и общий
 > evidence packet и возвращает `answer + rows`. Только после завершённого model
-> result `build_lsr_workbook` получает строки дословно и рассчитывает/рендерит
-> XLSX. В активном пути нет selector/workbook loop, `status`, confirm/review или
+> result код вызывает `build_lsr_workbook` (запрос ЛСР) или `build_vor_workbook`
+> (запрос ВОР). Строки модели в LSR передаются дословно. В активном пути нет selector/workbook loop, `status`, confirm/review или
 > лимита количества строк. Ошибка упаковки не меняет ответ и не возвращает
 > предметное решение модели в цикл.
 

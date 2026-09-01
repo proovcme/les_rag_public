@@ -768,16 +768,85 @@ html {
 
 /* Chat first layer: prompt, one mode selector, attachment, settings and send.
    Guidance stays inside the settings menu and never floats over the thread. */
+.sov-app-content .sov-composer-footer,
 .sov-composer-footer {
+  position: static;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  display: flex;
+  width: 100%;
   min-height: var(--sov-ui-hit);
+  margin-top: var(--sov-ui-space-2);
+  padding-top: var(--sov-ui-space-2);
 }
 
+.sov-app-content .sov-composer-actions,
 .sov-composer-actions {
   width: 100%;
   min-width: 0;
   gap: var(--sov-ui-space-2);
   align-items: center;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.sov-answer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 0 0 4px;
+  max-width: 100%;
+}
+
+.sov-chat-timing {
+  color: var(--dim);
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-meta);
+  font-weight: 600;
+  line-height: 1.35;
+  letter-spacing: .01em;
+  white-space: normal;
+}
+
+.sov-chat-timing--user {
+  align-self: flex-end;
+  margin: 0 0 2px;
+  opacity: .85;
+}
+
+.sov-source-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  border-radius: 9px;
+}
+
+.sov-source-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+  max-height: 2.8em;
+  margin: 0;
+  white-space: normal;
+}
+
+.sov-source-card .sov-source-primary {
+  flex: 0 1 auto;
+  min-height: 32px !important;
+  height: auto;
+  white-space: normal;
 }
 
 .sov-mode-select {

@@ -103,3 +103,9 @@ Allowlist имеет одного владельца: `chat_profile_service` с�
 
 Точки входа: `proxy/services/model_execution_preset_service.py` и
 `proxy/services/llm_transport_profile_service.py`.
+
+**Build 682:** после model-RAG код пакует только запрошенный workbook.
+«Собери ЛСР» → `build_lsr_workbook`; «Собери ВОР» → `build_vor_workbook` по
+xlsx-спецификации (или по строкам модели, если оператор явно просит ВОР).
+Оба файла сразу — только если в запросе есть и ЛСР, и ВОР. Имя скачивания
+`LSR_`/`VOR_` + дата. Нормы моделью код не подменяет.
