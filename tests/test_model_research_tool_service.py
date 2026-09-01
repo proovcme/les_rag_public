@@ -43,6 +43,9 @@ async def test_search_sources_uses_canonical_retriever_and_frozen_scope():
         frozen_dataset_ids=("selected-a", "selected-b"),
         retrieval_kwargs={"rag_backend": "backend", "return_trace": True},
         fallback=lambda *_args: pytest.fail("fallback must not run"),
+        retrieval_candidate_k=64,
+        document_diversity_k=2,
+        model_evidence_k=4,
     )
 
     result = await service.execute(
@@ -58,7 +61,9 @@ async def test_search_sources_uses_canonical_retriever_and_frozen_scope():
             "dataset_ids": ["selected-a", "selected-b"],
             "rag_backend": "backend",
             "return_trace": True,
-            "result_limit": 6,
+            "result_limit": 4,
+            "candidate_limit": 64,
+            "document_diversity_k": 2,
         }
     ]
     assert result.chunks == tuple(_Retrieval().chunks)
@@ -88,7 +93,7 @@ async def test_search_sources_preserves_rrf_provenance_in_tool_payload():
 
 
 @pytest.mark.asyncio
-async def test_search_sources_never_exposes_more_than_six_hits_to_the_model():
+async def test_search_sources_exposes_only_configured_evidence_limit_to_the_model():
     class LargeRetrieval:
         chunks = [
             SimpleNamespace(
@@ -112,19 +117,22 @@ async def test_search_sources_never_exposes_more_than_six_hits_to_the_model():
         frozen_dataset_ids=("selected-a",),
         retrieval_kwargs={},
         fallback=lambda *_args: pytest.fail("fallback must not run"),
+        retrieval_candidate_k=64,
+        document_diversity_k=2,
+        model_evidence_k=4,
     )
 
     result = await service.execute(
         {"tool": "search_sources", "args": {"q": "точный запрос"}}
     )
 
-    assert len(result.chunks) == 6
-    assert result.payload["result"]["count"] == 6
-    assert len(result.payload["result"]["hits"]) == 6
+    assert len(result.chunks) == 4
+    assert result.payload["result"]["count"] == 4
+    assert len(result.payload["result"]["hits"]) == 4
 
 
 @pytest.mark.asyncio
-async def test_estimator_search_uses_dedicated_smeta_rrf_and_returns_six_cards():
+async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
     general_calls = []
     smeta_calls = []
 
@@ -162,6 +170,7 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_returns_six_cards()
         retrieval_kwargs={"rag_backend": "les_rag"},
         fallback=lambda *_args: pytest.fail("fallback must not run"),
         smeta_norm_retrieve=smeta_retrieve,
+        model_evidence_k=4,
     )
 
     result = await service.execute(
@@ -169,9 +178,9 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_returns_six_cards()
     )
 
     assert general_calls == []
-    assert smeta_calls == [("монтаж контрольного кабеля", 6)]
-    assert len(result.chunks) == 6
-    assert len(result.payload["result"]["hits"]) == 6
+    assert smeta_calls == [("монтаж контрольного кабеля", 4)]
+    assert len(result.chunks) == 4
+    assert len(result.payload["result"]["hits"]) == 4
     assert result.payload["trace"]["rag"]["collection"] == "customer_configured_smeta_cards"
     assert result.payload["result"]["hits"][0]["meta"]["norm_code"] == "ГЭСНм08-02-001-01"
     assert "Состав работы: Монтаж; Проверка" in result.payload["result"]["hits"][0]["content"]

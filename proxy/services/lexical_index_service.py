@@ -54,6 +54,7 @@ class RetrievalTrace:
     colbert: dict[str, Any] = field(default_factory=dict)
     retry: dict[str, Any] = field(default_factory=dict)
     parent_hydration: dict[str, Any] = field(default_factory=dict)
+    candidate_selection: dict[str, Any] = field(default_factory=dict)
 
     def payload(self) -> dict[str, Any]:
         return {
@@ -80,6 +81,7 @@ class RetrievalTrace:
             "colbert": self.colbert,
             "retry": self.retry,
             "parent_hydration": self.parent_hydration,
+            "candidate_selection": self.candidate_selection,
         }
 
 

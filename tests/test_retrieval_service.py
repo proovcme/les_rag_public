@@ -504,7 +504,7 @@ async def test_native_rrf_failure_is_blocked_without_legacy_retrieval():
 
 
 @pytest.mark.asyncio
-async def test_bounded_model_research_skips_document_router_and_512_scroll(monkeypatch):
+async def test_bounded_model_research_overfetches_without_document_router(monkeypatch):
     from proxy.services import doc_router
 
     monkeypatch.setenv("LES_TYPED_RETRIEVAL", "true")
@@ -526,10 +526,18 @@ async def test_bounded_model_research_skips_document_router_and_512_scroll(monke
         logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
         return_trace=True,
         result_limit=6,
+        candidate_limit=64,
+        document_diversity_k=2,
     )
 
-    assert backend.native_calls[0]["top_k"] == 6
+    assert backend.native_calls[0]["top_k"] == 64
     assert len(result.chunks) <= 6
+    assert result.trace.candidate_selection == {
+        "requested_candidate_k": 64,
+        "found_count": 1,
+        "document_diversity_k": 2,
+        "model_visible_count": 1,
+    }
 
 
 def test_legacy_hybrid_backend_env_cannot_change_native_rrf(monkeypatch):

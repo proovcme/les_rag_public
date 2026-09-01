@@ -21,6 +21,10 @@ from proxy.services.retrieval_quality_service import (
     evaluate_retrieval_quality,
     expanded_quality_query,
 )
+from proxy.services.retrieval_candidate_service import (
+    collapse_exact_duplicates,
+    select_diverse_candidates,
+)
 from backend.colbert_late_interaction import CircuitBreaker
 from proxy.services.rag_advanced_policy_service import load_policy, load_status, save_status
 
@@ -651,6 +655,8 @@ async def retrieve_chat_chunks(
     scope_source: str = "unspecified",
     scope_error_code: str = "",
     result_limit: int | None = None,
+    candidate_limit: int | None = None,
+    document_diversity_k: int | None = None,
 ):
     kot = analyze_question(question)
     retrieval_query = expand_retrieval_query(question)
@@ -695,7 +701,12 @@ async def retrieve_chat_chunks(
     is_technical_or_legal = bool(effective_filter and "MAIL" not in str(effective_filter))
     
     bounded_result_limit = max(1, int(result_limit)) if result_limit is not None else None
-    merged_top_k = bounded_result_limit or CHAT_TOP_K
+    bounded_candidate_limit = (
+        max(1, int(candidate_limit)) if candidate_limit is not None else None
+    )
+    if bounded_result_limit is not None and bounded_candidate_limit is not None:
+        bounded_candidate_limit = max(bounded_candidate_limit, bounded_result_limit)
+    merged_top_k = bounded_candidate_limit or bounded_result_limit or CHAT_TOP_K
     if bounded_result_limit is None and (is_structured or is_technical_or_legal):
         merged_top_k = max(CHAT_TOP_K, 256)
         
@@ -961,6 +972,13 @@ async def retrieve_chat_chunks(
             logger.warning("[TABLE_APPENDIX] fallback на плоский пул: %s", _tbl_err)
     # NB: hot-path дедуп по content_hash снят — измерено 0.7% дублей / 3 кросс-кластера на 6000
     # (tools/ingestion_quality_report). Кросс-датасетные дубли — задача ingestion QA, не рантайма.
+    if bounded_candidate_limit is not None:
+        collapsed = collapse_exact_duplicates(chunks)
+        chunks = select_diverse_candidates(
+            collapsed,
+            per_document_k=document_diversity_k or len(collapsed) or 1,
+            limit=bounded_candidate_limit,
+        )
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
 
     if return_trace and quality.status == "weak":
@@ -1051,6 +1069,14 @@ async def retrieve_chat_chunks(
                     "query_changed": False,
                     "error": type(retry_error).__name__,
                 }
+
+    if bounded_candidate_limit is not None:
+        collapsed = collapse_exact_duplicates(chunks)
+        chunks = select_diverse_candidates(
+            collapsed,
+            per_document_k=document_diversity_k or len(collapsed) or 1,
+            limit=bounded_candidate_limit,
+        )
 
     # Late interaction sits strictly between RRF/hierarchy and cross-encoder.
     # It is evidence-only and fail-soft: a missing optional vector never erases
@@ -1266,6 +1292,20 @@ async def retrieve_chat_chunks(
 
     # A weak-query retry may replace the trace; record the actual query contract
     # only after every dense pass has completed.
+    collapsed_chunks = collapse_exact_duplicates(chunks)
+    found_count = len(collapsed_chunks)
+    if bounded_result_limit is not None:
+        chunks = select_diverse_candidates(
+            collapsed_chunks,
+            per_document_k=document_diversity_k or found_count or 1,
+            limit=bounded_result_limit,
+        )
+        trace.candidate_selection = {
+            "requested_candidate_k": merged_top_k,
+            "found_count": found_count,
+            "document_diversity_k": document_diversity_k or found_count or 1,
+            "model_visible_count": len(chunks),
+        }
     quality = evaluate_retrieval_quality(question=question, chunks=chunks, trace=trace, kot=kot)
     trace.query_embedding = query_embedding_instruction_id()
     trace.quality_status = quality.status

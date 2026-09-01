@@ -57,12 +57,18 @@ class ModelResearchToolService:
         retrieval_kwargs: Mapping[str, Any],
         fallback: Callable[[str, dict[str, Any]], Any],
         smeta_norm_retrieve: Callable[..., Mapping[str, Any]] | None = None,
+        retrieval_candidate_k: int = 64,
+        document_diversity_k: int = 2,
+        model_evidence_k: int = 6,
     ) -> None:
         self._retrieve = retrieve
         self._dataset_ids = tuple(str(item) for item in frozen_dataset_ids if str(item))
         self._retrieval_kwargs = dict(retrieval_kwargs)
         self._fallback = fallback
         self._smeta_norm_retrieve = smeta_norm_retrieve
+        self._retrieval_candidate_k = max(int(retrieval_candidate_k), 1)
+        self._document_diversity_k = max(int(document_diversity_k), 1)
+        self._model_evidence_k = max(int(model_evidence_k), 1)
 
     async def execute(self, call: Mapping[str, Any]) -> ModelResearchToolResult:
         tool = str(call.get("tool") or "")
@@ -95,7 +101,7 @@ class ModelResearchToolService:
             browse = await asyncio.to_thread(
                 self._smeta_norm_retrieve,
                 query,
-                limit=6,
+                limit=self._model_evidence_k,
             )
             trace = dict(browse.get("retrieval_trace") or {})
             rag_trace = trace.get("rag") if isinstance(trace.get("rag"), Mapping) else {}
@@ -107,7 +113,7 @@ class ModelResearchToolService:
                         "schema": "les_tool_result_v1",
                         "tool": "search_sources",
                         "operation": "smeta_norm_native_rrf",
-                        "inputs": [{"q": query, "limit": 6}],
+                            "inputs": [{"q": query, "limit": self._model_evidence_k}],
                         "status": "blocked",
                         "result": {"hits": [], "count": 0},
                         "sources": [],
@@ -118,7 +124,7 @@ class ModelResearchToolService:
                     },
                     retrieval_trace=trace,
                 )
-            cards = list(browse.get("cards") or [])[:6]
+            cards = list(browse.get("cards") or [])[: self._model_evidence_k]
             chunks = tuple(
                 _SmetaNormChunk(
                     content="\n".join(
@@ -156,7 +162,7 @@ class ModelResearchToolService:
                     "schema": "les_tool_result_v1",
                     "tool": "search_sources",
                     "operation": "smeta_norm_native_rrf",
-                    "inputs": [{"q": query, "limit": 6}],
+                    "inputs": [{"q": query, "limit": self._model_evidence_k}],
                     "status": "ok" if hits else "missing",
                     "result": {"hits": hits, "count": len(hits)},
                     "sources": [
@@ -178,10 +184,12 @@ class ModelResearchToolService:
         retrieval = await self._retrieve(
             question=query,
             dataset_ids=list(self._dataset_ids),
-            result_limit=6,
+            result_limit=self._model_evidence_k,
+            candidate_limit=self._retrieval_candidate_k,
+            document_diversity_k=self._document_diversity_k,
             **self._retrieval_kwargs,
         )
-        chunks = tuple(retrieval.chunks)[:6]
+        chunks = tuple(retrieval.chunks)[: self._model_evidence_k]
         trace = dict(retrieval.payload())
         hits = [_chunk_payload(chunk) for chunk in chunks]
         sources = [

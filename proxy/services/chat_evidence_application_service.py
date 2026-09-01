@@ -72,6 +72,7 @@ from proxy.services.project_summary_service import (
     format_project_inventory_prompt,
 )
 from proxy.services.prompt_registry_service import build_mode_system_prompt
+from proxy.services.chat_profile_service import effective_retrieval_policy
 from proxy.services.retrieval_service import required_reranker_policy, retrieve_chat_chunks
 from proxy.services.runtime_admission import generation_semaphore
 from proxy.services.saferag_service import (
@@ -902,8 +903,9 @@ def build_model_rag_evidence_groups(
     query_hits: Sequence[tuple[str, Sequence[Any]]],
     *,
     max_chars: int,
+    hits_per_query: int,
 ) -> tuple[list[str], list[_ModelRagEvidenceChunk]]:
-    """Render six RAG hits per model query without letting early queries crowd out later ones."""
+    """Render the profile-owned hit count without letting early queries crowd out later ones."""
 
     prepared: list[tuple[int, str, list[tuple[int, Any, str, str]]]] = []
     source_index = 0
@@ -915,7 +917,7 @@ def build_model_rag_evidence_groups(
         hits: list[tuple[int, Any, str, str]] = []
         fixed_chars += len(query_header)
         segment_count += 1
-        for hit_index, hit in enumerate(list(raw_hits)[:6], 1):
+        for hit_index, hit in enumerate(list(raw_hits)[: max(1, int(hits_per_query))], 1):
             source_index += 1
             doc_name = str(getattr(hit, "doc_name", "") or "")
             score = float(getattr(hit, "score", 0.0) or 0.0)
@@ -2498,6 +2500,7 @@ async def _execute_chat_evidence_application(
                 canonical_shadow_recorded = False
                 tool_loop_enabled = bool(profile_tools)
                 if model_driven_retrieval and tool_loop_enabled:
+                    retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     query_headers = {}
                     if llm_runtime.api_key:
                         query_headers["Authorization"] = f"Bearer {llm_runtime.api_key}"
@@ -2581,6 +2584,7 @@ async def _execute_chat_evidence_application(
                             if profile_uses_smeta_norm_retrieval(profile_snapshot)
                             else None
                         ),
+                        **retrieval_limits,
                     )
                     for query in model_queries:
                         research_result = await model_research_tools.execute(
@@ -2588,7 +2592,12 @@ async def _execute_chat_evidence_application(
                         )
                         tool_results_for_model.append(research_result.payload)
                         model_rag_query_hits.append(
-                            (query, tuple(research_result.chunks)[:6])
+                            (
+                                query,
+                                tuple(research_result.chunks)[
+                                    : retrieval_limits["model_evidence_k"]
+                                ],
+                            )
                         )
                     blocked_queries = [
                         index
@@ -2609,6 +2618,7 @@ async def _execute_chat_evidence_application(
                     ) = build_model_rag_evidence_groups(
                         model_rag_query_hits,
                         max_chars=context_chars_limit,
+                        hits_per_query=retrieval_limits["model_evidence_k"],
                     )
                     context = "\n\n".join(model_rag_evidence_groups)
                     model_rag_evidence_packet = build_retrieval_evidence_packet(
@@ -2645,6 +2655,7 @@ async def _execute_chat_evidence_application(
                         ],
                     }
                 elif tool_loop_enabled:
+                    retrieval_limits = effective_retrieval_policy(profile_snapshot)
                     tool_loop_stage = "harness"
                     try:
                         from proxy.services.tool_harness_service import harness
@@ -2675,6 +2686,7 @@ async def _execute_chat_evidence_application(
                                 ),
                             },
                             fallback=_fallback_model_tool,
+                            **retrieval_limits,
                         )
                         shortlist_limit = (
                             len(profile_tools)
@@ -3194,6 +3206,7 @@ async def _execute_chat_evidence_application(
                                 context_chars_limit,
                                 remaining_group_tokens * 2,
                             ),
+                            hits_per_query=retrieval_limits["model_evidence_k"],
                         )
                         context = "\n\n".join(model_rag_evidence_groups)
                         answer_source_map = _model_rag_source_map(model_evidence_chunks)

@@ -157,7 +157,7 @@ def test_only_estimator_model_rag_uses_the_dedicated_smeta_catalog():
     ) is False
 
 
-def test_model_rag_evidence_keeps_six_candidates_for_every_model_query():
+def test_model_rag_evidence_keeps_configured_candidates_for_every_model_query():
     query_hits = []
     for query_index in range(1, 31):
         hits = [
@@ -178,15 +178,16 @@ def test_model_rag_evidence_keeps_six_candidates_for_every_model_query():
     groups, chunks = service.build_model_rag_evidence_groups(
         query_hits,
         max_chars=70_000,
+        hits_per_query=4,
     )
 
     rendered = "\n\n".join(groups)
     assert len(groups) == 30
-    assert len(chunks) == 180
+    assert len(chunks) == 120
     assert "[Поисковый запрос Q30] работа 30" in rendered
-    assert "[Q30.H6 | smeta_norm_cards.v1" in rendered
-    assert "ГЭСН30-00-000-06" in rendered
-    assert "ГЭСН30-00-000-07" not in rendered
+    assert "[Q30.H4 | smeta_norm_cards.v1" in rendered
+    assert "ГЭСН30-00-000-04" in rendered
+    assert "ГЭСН30-00-000-05" not in rendered
     assert len(rendered) <= 70_000
 
 
