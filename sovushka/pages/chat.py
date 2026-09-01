@@ -8,8 +8,9 @@ import inspect
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from nicegui import context, ui
 
@@ -189,6 +190,146 @@ CHAT_MODE_GUIDANCE = {
         ),
     },
 }
+
+
+def format_chat_duration_sec(value: float | int | None) -> str:
+    """Human-readable duration for chat timing chips."""
+    if value is None:
+        return ""
+    try:
+        sec = max(0.0, float(value))
+    except (TypeError, ValueError):
+        return ""
+    if sec >= 3600:
+        hours = int(sec // 3600)
+        minutes = int((sec % 3600) // 60)
+        return f"{hours}ч {minutes}м"
+    if sec >= 60:
+        minutes = int(sec // 60)
+        seconds = int(round(sec % 60))
+        if seconds == 60:
+            minutes += 1
+            seconds = 0
+        return f"{minutes}м {seconds}с" if seconds else f"{minutes}м"
+    if sec >= 10:
+        return f"{int(round(sec))}с"
+    text = f"{sec:.1f}".rstrip("0").rstrip(".")
+    return f"{text}с"
+
+
+def workbook_chat_filename(item: Any) -> str:
+    """Download label for a packaged LSR/VOR file; never a generic artifact.xlsx."""
+
+    payload = item if isinstance(item, dict) else {}
+    name = str(payload.get("filename") or "").strip()
+    if (
+        name
+        and Path(name).name == name
+        and name.lower().endswith(".xlsx")
+        and name.lower() not in {".xlsx", "artifact.xlsx"}
+    ):
+        return name
+    kind = str(payload.get("artifact_kind") or "").casefold()
+    return "VOR.xlsx" if "vor" in kind else "LSR.xlsx"
+
+
+def format_chat_request_clock(requested_at: Any) -> str:
+    """Local clock for the moment the user sent the question."""
+    if requested_at in (None, ""):
+        return ""
+    dt: datetime | None = None
+    if isinstance(requested_at, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(float(requested_at)).astimezone()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    else:
+        raw = str(requested_at).strip()
+        if not raw:
+            return ""
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.astimezone()
+            else:
+                dt = dt.astimezone()
+        except ValueError:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    dt = datetime.strptime(raw[:19], fmt).astimezone()
+                    break
+                except ValueError:
+                    continue
+    if dt is None:
+        return ""
+    return dt.strftime("%d.%m.%Y %H:%M")
+
+
+def resolve_answer_timing(
+    *,
+    requested_at: Any = None,
+    elapsed_sec: float | int | None = None,
+    latency_phases: dict | None = None,
+    model_think_sec: float | int | None = None,
+) -> dict[str, Any]:
+    """Merge client wall-clock with backend latency_phases for the answer chip."""
+    phases = latency_phases if isinstance(latency_phases, dict) else {}
+    elapsed = elapsed_sec
+    wall = phases.get("wall_total")
+    if wall is not None:
+        try:
+            elapsed = float(wall)
+        except (TypeError, ValueError):
+            pass
+    elif elapsed is not None:
+        try:
+            elapsed = float(elapsed)
+        except (TypeError, ValueError):
+            elapsed = None
+    think = model_think_sec
+    generation = phases.get("generation")
+    if generation is not None:
+        try:
+            think = float(generation)
+        except (TypeError, ValueError):
+            pass
+    elif think is not None:
+        try:
+            think = float(think)
+        except (TypeError, ValueError):
+            think = None
+    return {
+        "requested_at": requested_at,
+        "elapsed_sec": elapsed,
+        "model_think_sec": think,
+    }
+
+
+def format_answer_timing_line(
+    *,
+    requested_at: Any = None,
+    elapsed_sec: float | int | None = None,
+    model_think_sec: float | int | None = None,
+    latency_phases: dict | None = None,
+) -> str:
+    """Compact line shown next to the answer: `21:09 · ответ 42с · модель 28с`."""
+    timing = resolve_answer_timing(
+        requested_at=requested_at,
+        elapsed_sec=elapsed_sec,
+        latency_phases=latency_phases,
+        model_think_sec=model_think_sec,
+    )
+    parts: list[str] = []
+    clock = format_chat_request_clock(timing.get("requested_at"))
+    if clock:
+        parts.append(clock)
+    elapsed_label = format_chat_duration_sec(timing.get("elapsed_sec"))
+    think_label = format_chat_duration_sec(timing.get("model_think_sec"))
+    if elapsed_label:
+        parts.append(f"ответ {elapsed_label}")
+    if think_label:
+        parts.append(f"модель {think_label}")
+    return " · ".join(parts)
 
 
 def visible_chat_modes() -> tuple[str, ...]:
@@ -590,6 +731,27 @@ def _smeta_artifact_rows(artifact: dict | None) -> list[dict]:
             "unit": str(item.get("unit") or "").strip(),
             "norm_code": code if code.casefold() != "missing" else "",
             "decision": decision,
+        })
+    if rows:
+        return rows
+    draft = artifact.get("draft_rows")
+    if not isinstance(draft, list):
+        return []
+    for index, item in enumerate(draft, 1):
+        if not isinstance(item, dict):
+            continue
+        work_id = str(item.get("work_id") or item.get("source_row") or index).strip()
+        if not work_id or work_id in seen:
+            continue
+        seen.add(work_id)
+        code = str(item.get("norm_code") or item.get("code") or "").strip()
+        rows.append({
+            "work_id": work_id,
+            "title": str(item.get("title") or item.get("name") or work_id).strip(),
+            "quantity": item.get("qty", item.get("quantity")),
+            "unit": str(item.get("unit") or "").strip(),
+            "norm_code": code,
+            "decision": str(item.get("decision") or code or "unbound"),
         })
     return rows
 
@@ -2238,7 +2400,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         title = str(item.get("file") or f"Источник {index}")
                         if item.get("locator"):
                             title += f" · {item['locator']}"
-                        with ui.element("section").classes("sov-source-row sov-ui-evidence-card"):
+                        snippet = str(item.get("snippet") or "").strip()
+                        with ui.column().classes("sov-source-card sov-ui-evidence-card"):
                             target = str(item.get("open_url") or "")
                             if target:
                                 ui.link(title, target, new_tab=True).classes(
@@ -2252,8 +2415,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                 ).props("flat dense no-caps").classes(
                                     "sov-source-primary sov-ui-source-chip"
                                 )
-                            if item.get("snippet"):
-                                ui.markdown(f"> {item['snippet']}").classes("sov-artifact-markdown")
+                            if snippet:
+                                ui.label(snippet).classes("sov-source-snippet")
                 _copy_button(
                     "Скопировать с источниками",
                     answer_copy_text(answer, sources, with_sources=True),
@@ -2814,10 +2977,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         artifact_mode = str(meta_artifact.get("mode") or mode or "text")
         if not meta_artifact and not _artifact_present(ans, mode):
             return
-        # В model-first сметах таблица внутри Markdown — часть человеческого ответа,
-        # а не отдельный "артефакт". Иначе в пузыре появляется шумная кнопка
-        # "Артефакт: Таблица" для обычной ВОР.
-        if not meta_artifact and str(mode or "text") == "text":
+        # В model-first сметах таблица внутри Markdown — часть человеческого ответа.
+        # Кнопку «Артефакт: Таблица» оставляем только когда таблицу реально есть
+        # чем открыть; иначе она пропадает и из пузыря, и из панели.
+        if not meta_artifact and str(mode or "text") == "text" and not _parse_markdown_table(ans):
             return
         has_inventory = bool(_inventory_file_rows_from_meta(meta))
         lbl = (
@@ -2838,13 +3001,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         )
 
     def _bubble_text(ans: str, mode: str) -> str:
-        """Текст для пузыря: если есть артефакт — убираем дублирующую таблицу/код-блоки
-        (они уже в артефакте), оставляем только коммент модели. Олег: «текст-то зачем?»."""
+        """Текст для пузыря: таблицу в режиме text не вырезаем — кнопка артефакта для
+        сметного Markdown намеренно скрыта, иначе таблица пропадает и там, и тут."""
         ans = ans or ""
+        if str(mode or "text") == "text":
+            return ans
         if not _artifact_present(ans, mode):
             return ans
-        t = re.sub(r"```.*?```", "", ans, flags=re.DOTALL)           # fenced json/svg/mermaid
-        t = "\n".join(ln for ln in t.splitlines() if not ln.strip().startswith("|"))  # md-таблица
+        t = re.sub(r"```.*?```", "", ans, flags=re.DOTALL)
+        t = "\n".join(ln for ln in t.splitlines() if not ln.strip().startswith("|"))
         t = re.sub(r"\n{3,}", "\n\n", t).strip()
         return t or "Готово — результат в артефакте (кнопка ниже)."
 
@@ -3247,10 +3412,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
         if not isinstance(artifact, dict):
             return
+        files = artifact.get("files") if isinstance(artifact.get("files"), list) else []
+        registered_urls: set[str] = set()
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            url = str(item.get("download_url") or "").strip()
+            name = workbook_chat_filename(item)
+            if url and url not in registered_urls:
+                registered_urls.add(url)
+                _register_file_artifact(name, url, "xlsx")
         direct_download = str(artifact.get("download_url") or "").strip()
-        if direct_download:
-            filename = str(artifact.get("filename") or "artifact.xlsx").strip()
-            _register_file_artifact(filename, direct_download, "xlsx")
+        if direct_download and direct_download not in registered_urls:
+            _register_file_artifact(workbook_chat_filename(artifact), direct_download, "xlsx")
         downloads = artifact.get("downloads") or {}
         if not isinstance(downloads, dict):
             return
@@ -3393,6 +3567,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "Модель/провайдер этого ответа"
             )
 
+    def _render_answer_timing(meta: dict | None, *, user_requested_at: Any = None) -> None:
+        """Clock + wall/model duration next to the answer."""
+        payload = meta if isinstance(meta, dict) else {}
+        line = format_answer_timing_line(
+            requested_at=payload.get("requested_at") or user_requested_at,
+            elapsed_sec=payload.get("elapsed_sec"),
+            model_think_sec=payload.get("model_think_sec"),
+            latency_phases=payload.get("latency_phases"),
+        )
+        if not line:
+            return
+        ui.label(line).classes("sov-chat-timing").tooltip(
+            "Время отправки запроса и длительность ответа / работы модели"
+        )
+
     def _render_dataset_scope_badge(meta: dict | None) -> None:
         if not isinstance(meta, dict):
             return
@@ -3425,14 +3614,26 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         srcs: list | None = None,
         crag: str = "",
         meta: dict | None = None,
+        *,
+        requested_at: Any = None,
     ):
         _mode = (meta or {}).get("out_mode", "text")
         _is_ai = "chat-msg-ai" in class_name
         with ui.element("div").classes(class_name) as bubble:
             if _is_ai:
-                _render_model_badge(meta)
-                _render_dataset_scope_badge(meta)
+                with ui.row().classes("sov-answer-meta"):
+                    _render_model_badge(meta)
+                    _render_dataset_scope_badge(meta)
+                    _render_answer_timing(meta, user_requested_at=requested_at)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
+            else:
+                user_clock = format_chat_request_clock(
+                    (meta or {}).get("requested_at") if meta else requested_at
+                )
+                if user_clock:
+                    ui.label(user_clock).classes(
+                        "sov-chat-timing sov-chat-timing--user"
+                    ).tooltip("Время отправки запроса")
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
             explicit_artifact = bool(_artifact_from_meta(meta))
@@ -3474,8 +3675,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         _mode = (meta or {}).get("out_mode", "text")
         with bubble:
             if not error:
-                _render_model_badge(meta)
-                _render_dataset_scope_badge(meta)
+                with ui.row().classes("sov-answer-meta"):
+                    _render_model_badge(meta)
+                    _render_dataset_scope_badge(meta)
+                    _render_answer_timing(meta)
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
             explicit_artifact = bool(_artifact_from_meta(meta))
@@ -3502,7 +3705,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     def _render_msg(msg):
         if msg.get("role") == "user":
-            _render_chat_bubble(msg.get("text", ""), "chat-msg-user")
+            _render_chat_bubble(
+                msg.get("text", ""),
+                "chat-msg-user",
+                requested_at=msg.get("requested_at"),
+            )
             return
         if msg.get("role") == "system":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
@@ -3513,6 +3720,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             msg.get("srcs", []),
             msg.get("crag", ""),
             msg.get("meta"),
+            requested_at=(msg.get("meta") or {}).get("requested_at") if isinstance(msg.get("meta"), dict) else None,
         )
         _register_artifact_downloads(msg.get("meta"))
 
@@ -3901,11 +4109,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if display_notes:
             question_display = f"{question_display}\n\n" + "\n".join(display_notes)
 
-        state["chat_history"].append({"role": "user", "text": question_display})
-        state["chat_pending"] = {"question": payload_question, "started_at": time.time()}
+        request_started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        state["chat_history"].append({
+            "role": "user",
+            "text": question_display,
+            "requested_at": request_started_at,
+        })
+        state["chat_pending"] = {
+            "question": payload_question,
+            "started_at": time.time(),
+            "requested_at": request_started_at,
+        }
 
         with chat_column:
-            _render_chat_bubble(question_display, "chat-msg-user")
+            _render_chat_bubble(
+                question_display,
+                "chat-msg-user",
+                requested_at=request_started_at,
+            )
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
             smeta_operator_lines: list[str] = []
             smeta_operator_log = None
@@ -4052,6 +4273,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 or retrieval_trace.get("status") == "blocked"
             ):
                 total_status = "blocked"
+            latency_phases = (
+                d.get("latency_phases")
+                or (retrieval_trace.get("latency_phases") if isinstance(retrieval_trace, dict) else None)
+            )
+            timing = resolve_answer_timing(
+                requested_at=request_started_at,
+                elapsed_sec=round(max(0.0, time.monotonic() - _t0), 1),
+                latency_phases=latency_phases if isinstance(latency_phases, dict) else None,
+            )
             meta = {
                 "query_route": d.get("query_route") or {},
                 "retrieval_trace": retrieval_trace,
@@ -4063,7 +4293,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "validation": d.get("validation") or {"enabled": True},
                 "history_id": d.get("history_id"),
                 "table_query": d.get("table_query"),
-                "latency_phases": d.get("latency_phases") or (d.get("retrieval_trace") or {}).get("latency_phases"),
+                "latency_phases": latency_phases if isinstance(latency_phases, dict) else {},
+                "requested_at": timing.get("requested_at"),
+                "elapsed_sec": timing.get("elapsed_sec"),
+                "model_think_sec": timing.get("model_think_sec"),
                 "out_mode": out_mode,
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],

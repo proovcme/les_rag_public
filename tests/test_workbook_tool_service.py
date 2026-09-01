@@ -10,11 +10,14 @@ import pytest
 from proxy.services.artifact_revision_service import ArtifactRevisionStore
 from proxy.services.chat_attachment_service import preserve_read_attachment
 from proxy.services.workflow_checkpoint_service import WorkflowCheckpointService
+from datetime import datetime
+
 from proxy.services.workbook_tool_service import (
     BUILD_LSR_WORKBOOK,
     WorkbookExecutionContext,
     build_lsr_workbook,
     build_vor_workbook,
+    workbook_download_filename,
 )
 from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
 from proxy.services.structured_extract import validate as validate_json_schema
@@ -317,3 +320,16 @@ def test_source_fixture_hash_is_stable(tmp_path):
     meta = _attachment(tmp_path)
     payload = (tmp_path / "attachments" / "read_123456abcdef.xlsx").read_bytes()
     assert hashlib.sha256(payload).hexdigest() == meta["sha256"]
+
+
+def test_workbook_download_filename_uses_kind_and_date():
+    when = datetime(2026, 9, 1, 21, 47)
+    assert workbook_download_filename(
+        artifact_kind="lsr_workbook",
+        source_name="VOR montage.pdf",
+        when=when,
+    ) == "LSR_VOR_montage_2026-09-01_2147.xlsx"
+    assert workbook_download_filename(
+        artifact_kind="vor_workbook",
+        when=when,
+    ) == "VOR_2026-09-01_2147.xlsx"

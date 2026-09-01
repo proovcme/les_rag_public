@@ -233,6 +233,37 @@ def safe_selected_call_trace(call: dict[str, Any]) -> dict[str, str]:
     return trace
 
 
+def _safe_workbook_filename(value: Any) -> str:
+    """Keep only a basename xlsx name; drop filesystem paths from chat/history."""
+
+    raw = str(value or "").strip().replace("\\", "/")
+    name = Path(raw).name
+    if not name or name != raw or ".." in name:
+        return ""
+    if not name.lower().endswith(".xlsx") or name.lower() in {".xlsx", "artifact.xlsx"}:
+        return ""
+    return name
+
+
+def _chat_workbook_filename(
+    filename: Any,
+    *,
+    artifact_kind: str = "",
+    tool: str = "",
+) -> str:
+    """Operator-facing xlsx name without a generic artifact.xlsx fallback."""
+
+    safe = _safe_workbook_filename(filename)
+    if safe:
+        return safe
+    kind = str(artifact_kind or "").strip()
+    if kind not in {"lsr_workbook", "vor_workbook"}:
+        kind = "vor_workbook" if tool == "build_vor_workbook" else "lsr_workbook"
+    from proxy.services.workbook_tool_service import workbook_download_filename
+
+    return workbook_download_filename(artifact_kind=kind)
+
+
 def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str, Any]:
     """Retain only workbook identifiers that the chat UI can safely use."""
     result = payload if isinstance(payload, dict) else {}
@@ -249,7 +280,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         (
             "artifact_id", "revision_id", "revision_no", "parent_revision_id",
             "sha256", "byte_size", "download_url", "source_scope",
-            "decision_checkpoint_id",
+            "decision_checkpoint_id", "filename", "artifact_kind",
         ),
     )
     checkpoint = selected(
@@ -258,6 +289,16 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
     )
     source = selected(result.get("source"), ("attachment_id", "sha256", "rows"))
     if artifact:
+        filename = _safe_workbook_filename(artifact.get("filename"))
+        if filename:
+            artifact["filename"] = filename
+        else:
+            artifact.pop("filename", None)
+        kind = str(artifact.get("artifact_kind") or "").strip()
+        if kind in {"lsr_workbook", "vor_workbook"}:
+            artifact["artifact_kind"] = kind
+        else:
+            artifact.pop("artifact_kind", None)
         safe["artifact"] = artifact
     if checkpoint:
         safe["checkpoint"] = checkpoint
@@ -503,6 +544,43 @@ def profile_uses_model_driven_retrieval(
     )
 
 
+def estimator_workbook_packaging_tools(
+    question: str, profile_tools: Any,
+) -> list[str]:
+    """Package only the workbook the operator asked for."""
+
+    tools = {str(item).strip() for item in (profile_tools or []) if str(item).strip()}
+    text = str(question or "").casefold()
+    wants_lsr = bool(re.search(r"\bлср\b|локальн\w+\s+смет", text))
+    wants_vor = bool(re.search(r"\bвор\b|ведомост\w+\s+объ[её]м", text))
+    ordered: list[str] = []
+    if (wants_lsr or not wants_vor) and "build_lsr_workbook" in tools:
+        ordered.append("build_lsr_workbook")
+    if wants_vor and "build_vor_workbook" in tools:
+        ordered.append("build_vor_workbook")
+    return ordered
+
+
+def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
+    """Keep a chat-visible mapping table without changing model-owned fields."""
+
+    compact: list[dict[str, Any]] = []
+    for index, item in enumerate(rows or [], 1):
+        if not isinstance(item, dict):
+            continue
+        compact.append({
+            "work_id": str(item.get("source_row") or index),
+            "source_row": item.get("source_row") or index,
+            "section": str(item.get("section") or "").strip(),
+            "title": str(item.get("title") or "").strip(),
+            "quantity": item.get("quantity"),
+            "unit": str(item.get("unit") or "").strip(),
+            "norm_code": str(item.get("norm_code") or "").strip(),
+            "decision": str(item.get("norm_code") or "").strip() or "unbound",
+        })
+    return compact
+
+
 def _model_json_object(raw: str) -> dict[str, Any] | None:
     """Read one model-authored JSON object without interpreting its domain values."""
 
@@ -603,7 +681,14 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             return "quantity"
         if normalized.startswith("norm_code"):
             return "norm_code"
-        if normalized.startswith("нормативная база") or "шифр нормы" in normalized:
+        if (
+            normalized.startswith("нормативная база")
+            or "шифр нормы" in normalized
+            or (
+                "нормативн" in normalized
+                and any(token in normalized for token in ("код", "шифр", "гэсн", "ер", "фснб"))
+            )
+        ):
             return "norm_code"
         if normalized.startswith("analogue / coverage"):
             return "analogue"
@@ -611,13 +696,15 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             return "analogue"
         if normalized.startswith("обоснование выбора"):
             return "analogue"
-        if normalized.startswith("coefficient"):
+        if "коэфф" in normalized or normalized.startswith("coefficient"):
             return "coefficient"
         if normalized.startswith("evidence_refs"):
             return "evidence_refs"
         if normalized.startswith("примечание инженера"):
             return "coverage"
         if normalized.startswith("примечания к составу"):
+            return "coverage"
+        if normalized.startswith("примечания к выбору"):
             return "coverage"
         if normalized.startswith("coverage"):
             return "coverage"
@@ -675,8 +762,10 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             values = cells(lines[row_index])
             if not values:
                 break
-            if len(values) != len(header):
-                return None
+            if len(values) < len(header):
+                values = values + [""] * (len(header) - len(values))
+            elif len(values) > len(header):
+                values = values[: len(header)]
             visible_values = [value.replace("**", "").strip() for value in values]
             if visible_values[0].casefold().startswith("раздел") and not any(
                 visible_values[1:]
@@ -696,13 +785,28 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 if name == "source_row":
                     continue
                 if name in {"quantity", "coefficient"}:
-                    numeric_value = value
+                    raw_value = value.replace("\u00a0", "").strip()
+                    if raw_value.casefold() in {
+                        "", "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
+                    }:
+                        continue
+                    numeric_value = raw_value
                     if name == "coefficient":
-                        match = re.match(r"[+-]?[0-9]+(?:[.,][0-9]+)?", value)
+                        fraction = re.fullmatch(
+                            r"([+-]?[0-9]+(?:[.,][0-9]+)?)\s*/\s*([0-9]+(?:[.,][0-9]+)?)",
+                            raw_value,
+                        )
+                        if fraction:
+                            numerator = number(fraction.group(1))
+                            denominator = number(fraction.group(2))
+                            if numerator is not None and denominator:
+                                row[name] = numerator / denominator
+                                continue
+                        match = re.match(r"[+-]?[0-9]+(?:[.,][0-9]+)?", raw_value)
                         numeric_value = match.group(0) if match else ""
                     parsed_number = number(numeric_value)
                     if parsed_number is None:
-                        return None
+                        continue
                     row[name] = parsed_number
                 elif name == "evidence_refs":
                     refs = list(
@@ -2382,6 +2486,7 @@ async def _execute_chat_evidence_application(
 
                 tool_results_for_model: list[dict[str, Any]] = []
                 workbook_chat_meta: dict[str, Any] = {}
+                model_result_rows: list[dict[str, Any]] = []
                 tool_context = ""
                 model_rag_query_hits: list[tuple[str, Sequence[Any]]] = []
                 model_rag_evidence_groups: list[str] = []
@@ -3407,7 +3512,6 @@ async def _execute_chat_evidence_application(
 
                 if model_driven_retrieval:
                     parsed_model_result = parse_model_rag_result(answer)
-                    model_result_rows: list[dict[str, Any]] = []
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
                     else:
@@ -3421,16 +3525,12 @@ async def _execute_chat_evidence_application(
                         if answer:
                             await token_sink({"event": "token", "data": answer})
                     attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
-                    packaging_tool = (
-                        "build_lsr_workbook"
-                        if "build_lsr_workbook" in profile_tools
-                        else ""
+                    packaging_tools = estimator_workbook_packaging_tools(
+                        str(req.question or ""), profile_tools
                     )
                     if (
-                        parsed_model_result is not None
-                        and model_result_rows
-                        and attachment_id
-                        and packaging_tool
+                        attachment_id
+                        and packaging_tools
                         and workbook_tool_executor is not None
                         and canonical_execution_mode is CanonicalRouteMode.ACTIVE
                     ):
@@ -3438,59 +3538,99 @@ async def _execute_chat_evidence_application(
                             if token_sink is not None:
                                 await token_sink({"event": "tool_progress", "data": event})
 
-                        workbook_call = {
-                            "tool": packaging_tool,
-                            "args": {
+                        packaging_trace: list[dict[str, Any]] = []
+                        workbook_files: list[dict[str, Any]] = []
+                        for packaging_tool in packaging_tools:
+                            if packaging_tool == "build_lsr_workbook" and not model_result_rows:
+                                continue
+                            workbook_args: dict[str, Any] = {
                                 "attachment_id": attachment_id,
-                                "decisions": model_result_rows,
-                            },
-                        }
-                        try:
-                            workbook_payload = await workbook_tool_executor(
-                                workbook_call,
-                                {
-                                    "session_id": str(req.session_id or ""),
-                                    "question": str(req.question or ""),
-                                    "dataset_ids": [str(item) for item in _dataset_ids],
-                                    "project_id": getattr(req, "project_id", None),
-                                    "attachment_id": attachment_id,
-                                    "profile_revision_id": str(
-                                        (profile_snapshot or {}).get("revision_id") or ""
-                                    ),
-                                    "model_identity": str(
-                                        getattr(
-                                            getattr(active_model_result, "connection", None),
-                                            "model_id",
-                                            "",
-                                        )
-                                        or llm_model
-                                    ),
-                                    "model_preset": execution_preset.preset_id,
-                                },
-                                workbook_progress,
-                            )
-                            safe_payload = safe_workbook_history_projection(workbook_payload)
-                            workbook_chat_meta = harvest_workbook_tool_result(safe_payload)
-                            retrieval_trace["model_result"] = {
-                                "schema": "les_model_rag_result_v1",
-                                "status": "accepted_unchanged",
-                                "row_count": len(model_result_rows),
-                                "packaging": safe_payload,
+                                "question": str(req.question or ""),
                             }
-                        except Exception as packaging_error:  # noqa: BLE001 - keep the model answer visible
-                            logger.exception(
-                                "[WORKBOOK] post-model packaging failed: %s",
-                                type(packaging_error).__name__,
-                            )
-                            retrieval_trace["model_result"] = {
-                                "schema": "les_model_rag_result_v1",
-                                "status": "accepted_unchanged",
-                                "row_count": len(model_result_rows),
-                                "packaging": {
+                            if model_result_rows:
+                                workbook_args["decisions"] = model_result_rows
+                            workbook_call = {
+                                "tool": packaging_tool,
+                                "args": workbook_args,
+                            }
+                            try:
+                                workbook_payload = await workbook_tool_executor(
+                                    workbook_call,
+                                    {
+                                        "session_id": str(req.session_id or ""),
+                                        "question": str(req.question or ""),
+                                        "dataset_ids": [str(item) for item in _dataset_ids],
+                                        "project_id": getattr(req, "project_id", None),
+                                        "attachment_id": attachment_id,
+                                        "profile_revision_id": str(
+                                            (profile_snapshot or {}).get("revision_id") or ""
+                                        ),
+                                        "model_identity": str(
+                                            getattr(
+                                                getattr(active_model_result, "connection", None),
+                                                "model_id",
+                                                "",
+                                            )
+                                            or llm_model
+                                        ),
+                                        "model_preset": execution_preset.preset_id,
+                                    },
+                                    workbook_progress,
+                                )
+                                safe_payload = safe_workbook_history_projection(workbook_payload)
+                                harvested = harvest_workbook_tool_result(safe_payload)
+                                packaging_trace.append({
+                                    "tool": packaging_tool,
+                                    "status": safe_payload.get("status") or "empty",
+                                    "code": safe_payload.get("code") or "",
+                                })
+                                if harvested:
+                                    art = harvested.get("artifact")
+                                    art = art if isinstance(art, dict) else {}
+                                    if art.get("download_url"):
+                                        kind = str(art.get("artifact_kind") or "").strip()
+                                        if kind not in {"lsr_workbook", "vor_workbook"}:
+                                            kind = (
+                                                "vor_workbook"
+                                                if packaging_tool == "build_vor_workbook"
+                                                else "lsr_workbook"
+                                            )
+                                        workbook_files.append({
+                                            "filename": _chat_workbook_filename(
+                                                art.get("filename"),
+                                                artifact_kind=kind,
+                                                tool=packaging_tool,
+                                            ),
+                                            "download_url": str(art["download_url"]),
+                                            "artifact_kind": kind,
+                                        })
+                                    if packaging_tool == "build_lsr_workbook" or not workbook_chat_meta:
+                                        workbook_chat_meta = harvested
+                            except Exception as packaging_error:  # noqa: BLE001 - keep the model answer visible
+                                logger.exception(
+                                    "[WORKBOOK] post-model packaging failed: %s",
+                                    type(packaging_error).__name__,
+                                )
+                                packaging_trace.append({
+                                    "tool": packaging_tool,
                                     "status": "error",
                                     "error_type": type(packaging_error).__name__,
-                                },
+                                })
+                        if workbook_files:
+                            artifact_meta = workbook_chat_meta.setdefault("artifact", {})
+                            if isinstance(artifact_meta, dict):
+                                artifact_meta["files"] = workbook_files
+                                if not artifact_meta.get("filename"):
+                                    artifact_meta["filename"] = workbook_files[0]["filename"]
+                        if parsed_model_result is not None and model_result_rows:
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "accepted_unchanged",
+                                "row_count": len(model_result_rows),
+                                "packaging": packaging_trace,
                             }
+                        elif packaging_trace:
+                            retrieval_trace["workbook_packaging"] = packaging_trace
 
                 try:
                     from proxy.services.evidence_packet_service import verify_answer_source_labels
@@ -3557,6 +3697,11 @@ async def _execute_chat_evidence_application(
                 }
                 retrieval_trace["source_scope"] = source_scope
                 history_id = None
+                if model_result_rows:
+                    compact_rows = compact_estimator_draft_rows(model_result_rows)
+                    artifact_meta = workbook_chat_meta.setdefault("artifact", {})
+                    if isinstance(artifact_meta, dict):
+                        artifact_meta["draft_rows"] = compact_rows
 
                 try:
                     history_id = save_chat_history(

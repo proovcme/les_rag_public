@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import httpx
+import re
 
 from backend.http_client_policy import trust_env_for_url
 import json
@@ -14,6 +15,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import unquote
 from nicegui import app
 from typing import Optional, Union
 
@@ -347,8 +349,15 @@ async def api_get_bytes(path: str, base: Optional[str] = None) -> Optional[tuple
             r.raise_for_status()
             disp = r.headers.get("content-disposition", "")
             fname = ""
-            if "filename=" in disp:
-                fname = disp.split("filename=", 1)[1].strip('"; ')
+            star = re.search(r"filename\*\s*=\s*UTF-8''([^;]+)", disp, flags=re.I)
+            if star:
+                fname = unquote(star.group(1).strip().strip('"'))
+            else:
+                plain = re.search(r'filename\s*=\s*"([^"]+)"', disp, flags=re.I)
+                if not plain:
+                    plain = re.search(r"filename\s*=\s*([^;]+)", disp, flags=re.I)
+                if plain:
+                    fname = plain.group(1).strip().strip('"')
             _api_success()
             return r.content, (fname or path.rsplit("/", 1)[-1])
     except Exception as e:

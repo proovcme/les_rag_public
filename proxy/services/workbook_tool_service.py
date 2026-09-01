@@ -4,7 +4,9 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Awaitable, Callable, Mapping
@@ -33,14 +35,20 @@ _BASE_INPUT_PROPERTIES = {
     "dataset_ids": {"type": ["array", "null"], "items": {"type": "string"}},
 }
 
+_LSR_DECISION_SCHEMA = {"type": "object"}
+
 _VOR_INPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["attachment_id"],
-    "properties": _BASE_INPUT_PROPERTIES,
+    "properties": {
+        **_BASE_INPUT_PROPERTIES,
+        "decisions": {
+            "type": "array",
+            "items": _LSR_DECISION_SCHEMA,
+        },
+    },
 }
-
-_LSR_DECISION_SCHEMA = {"type": "object"}
 
 _LSR_INPUT_SCHEMA = {
     "type": "object",
@@ -89,6 +97,43 @@ BUILD_VOR_WORKBOOK = _contract(
     "Build an immutable VOR draft preserving source rows and quantities.", (),
     input_schema=_VOR_INPUT_SCHEMA,
 )
+
+
+def workbook_download_filename(
+    *,
+    artifact_kind: str,
+    source_name: str = "",
+    when: datetime | None = None,
+) -> str:
+    """Stable operator-facing workbook name with kind and local stamp."""
+
+    stamp = (when or datetime.now()).strftime("%Y-%m-%d_%H%M")
+    prefix = "VOR" if str(artifact_kind) == "vor_workbook" else "LSR"
+    stem = Path(str(source_name or "")).stem
+    stem = re.sub(r"[^\w\-]+", "_", stem, flags=re.UNICODE).strip("._")
+    stem = re.sub(r"_+", "_", stem)[:48]
+    name = f"{prefix}_{stem}_{stamp}.xlsx" if stem else f"{prefix}_{stamp}.xlsx"
+    return name.replace('"', "").replace("/", "_").replace("\\", "_")
+
+
+def _vor_rows_from_draft(draft: Any, *, source_label: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, item in enumerate(draft or [], 1):
+        if not isinstance(item, Mapping):
+            continue
+        name = str(item.get("title") or item.get("name") or item.get("work_name") or "").strip()
+        if not name:
+            continue
+        rows.append({
+            "section": str(item.get("section") or "").strip(),
+            "name": name,
+            "code": str(item.get("mark") or item.get("code") or "").strip(),
+            "unit": str(item.get("unit") or "").strip(),
+            "qty": item.get("quantity") if item.get("quantity") not in (None, "") else item.get("qty"),
+            "source_file": source_label,
+            "pos": item.get("source_row") or index,
+        })
+    return rows
 
 
 WorkbookAdapter = Callable[
@@ -205,11 +250,26 @@ async def _default_vor_adapter(
     from proxy.services.bor_service import source_rows_to_vor_xlsx
     from proxy.services.spec_to_bor_service import rows_from_spec_xlsx
 
-    rows = await asyncio.to_thread(
-        rows_from_spec_xlsx,
-        source_path,
-        source_label=str(args.get("_source_name") or source_path.name),
-    )
+    source_label = str(args.get("_source_name") or source_path.name)
+    rows: list[dict[str, Any]] = []
+    spec_error: Exception | None = None
+    if source_path.suffix.lower() in {".xlsx", ".xlsm"}:
+        try:
+            rows = await asyncio.to_thread(
+                rows_from_spec_xlsx,
+                source_path,
+                source_label=source_label,
+            )
+        except Exception as error:  # noqa: BLE001 - PDF/draft fallback must still package
+            spec_error = error
+            rows = []
+    if not rows:
+        rows = _vor_rows_from_draft(
+            args.get("decisions") or args.get("_draft_rows") or [],
+            source_label=source_label,
+        )
+    if not rows and spec_error is not None:
+        raise spec_error
     progress("source_rows", 0, len(rows))
     await asyncio.to_thread(
         source_rows_to_vor_xlsx,
@@ -269,7 +329,15 @@ async def _build_workbook(
         )
     except (FileNotFoundError, ValueError, json.JSONDecodeError) as error:
         return {**_rejected("ATTACHMENT_INVALID", str(error)), "tool": tool_name}
-    supported = {".xlsx", ".xlsm"} if artifact_kind == "vor_workbook" else {".pdf", ".xlsx", ".xlsm"}
+    draft_rows = [
+        dict(item) for item in (args.get("decisions") or []) if isinstance(item, Mapping)
+    ]
+    if artifact_kind == "vor_workbook":
+        supported = {".xlsx", ".xlsm"}
+        if draft_rows:
+            supported.add(".pdf")
+    else:
+        supported = {".pdf", ".xlsx", ".xlsm"}
     if source_path.suffix.lower() not in supported:
         return {**_rejected("UNSUPPORTED_ATTACHMENT_TYPE", f"unsupported attachment type: {source_path.suffix}"), "tool": tool_name}
 
@@ -327,6 +395,16 @@ async def _build_workbook(
         adapter_args = {**normalized, "_source_name": str(attachment_meta["original_name"])}
         generated = await _call_adapter(adapter, source_path, adapter_args, output_path, progress)
         generated_path = Path(str(generated.get("file_path") or output_path))
+        display_name = workbook_download_filename(
+            artifact_kind=artifact_kind,
+            source_name=str(attachment_meta.get("original_name") or ""),
+        )
+        named_path = generated_path.with_name(display_name)
+        if named_path.resolve() != generated_path.resolve() and generated_path.exists():
+            if named_path.exists():
+                named_path.unlink()
+            generated_path.replace(named_path)
+            generated_path = named_path
         missing = tuple(str(item) for item in (generated.get("missing") or ()))
         blockers = tuple(str(item) for item in (generated.get("blockers") or ()))
         revision = ctx.artifacts.create_revision(ArtifactRevisionRequest(

@@ -103,12 +103,47 @@ _KIND_HUMAN = {"parquet_row": "таблица", "file_body": "текст", "eml_
                "extracted_body": "извлечено", "workbook_cell": "ячейка", "lexical_chunk": "индекс",
                "vector_chunk": "vector", "filename_metadata": "имя файла"}
 
+_COLLECTION_LABELS = {
+    "smeta_norm_cards.v1",
+    "smeta_norm_cards",
+}
+
 _EMBEDDED_VIEW_EXTENSIONS = {
     ".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".eml",
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
     ".txt", ".md", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".log",
     ".ini", ".cfg", ".sql", ".py", ".html", ".svg", ".csv", ".tsv",
 }
+
+
+def source_card_title(source: Any, fallback: str = "") -> str:
+    """Prefer cipher/title over a repeated collection name in source chips."""
+
+    snippet = ""
+    if isinstance(source, dict):
+        snippet = str(source.get("snippet") or source.get("excerpt") or source.get("content") or "")
+    cipher_match = re.search(
+        r"(?:шифр|norm[_\s]?code)\s*[:/]\s*([^\n|;]+)",
+        snippet,
+        flags=re.I,
+    )
+    name_match = re.search(
+        r"(?:наименование|title)\s*[:/]\s*([^\n|;]+)",
+        snippet,
+        flags=re.I,
+    )
+    cipher = " ".join((cipher_match.group(1) if cipher_match else "").split())
+    name = " ".join((name_match.group(1) if name_match else "").split())
+    if len(name) > 90:
+        name = name[:87].rstrip() + "…"
+    fallback_key = str(fallback or "").strip()
+    if cipher and name:
+        return f"{cipher} · {name}"
+    if cipher:
+        return cipher
+    if fallback_key.casefold() in _COLLECTION_LABELS or "norm_card" in fallback_key.casefold():
+        return name or fallback_key
+    return fallback_key
 
 
 def source_chip(source: Any, index: int | None = None) -> dict:
@@ -138,6 +173,8 @@ def source_chip(source: Any, index: int | None = None) -> dict:
             page_value = source.get("source_page") or source.get("page") or source.get("page_number")
             loc = f"p{page_value}" if page_value else ""
     file_name = file_part.rsplit("/", 1)[-1] if file_part else display_name
+    if isinstance(source, dict):
+        file_name = source_card_title(source, file_name)
     # локатор человекочитаемо: para85→абз.85, p3→стр.3, row5→стр.5, Лист!R12→Лист R12, chunk2→чанк2
     loc_h = loc
     for pat, rep in ((r"^para(\d+)", r"абз.\1"), (r"^p(\d+)$", r"стр.\1"), (r"^row(\d+)", r"стр.\1"),

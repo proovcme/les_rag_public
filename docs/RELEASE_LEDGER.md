@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.41
-номер сборки:              681
-версия Tauri/NSIS:         5.1.681
-ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.41 installed estimate contour compatibility hotfix
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
+версия продукта (SemVer):  0.30.42
+номер сборки:              682
+версия Tauri/NSIS:         5.1.682
+ветка разработки:          fix/estimator-chat-lsr-ui
+dev implementation:       0.30.42 packaging LSR/VOR by request + chat UI
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.41 / build 681 / commit 223c7ad5
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.41 soft hotfix поверх опубликованного 0.30.40
-рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.41
+следующий выпуск:          0.30.42 hotfix поверх опубликованного 0.30.41
+рантайм /api/version:      Legion 0.30.41 / build 681 / desktop 5.1.681 / commit 223c7ad5
 ```
+
+> **0.30.42 / build 682 estimator chat packaging/UI hotfix:** после model-RAG
+> код пакует только запрошенный workbook: «Собери ЛСР» → LSR, «Собери ВОР» →
+> ВОР. Имя скачивания `LSR_`/`VOR_` + штамп даты; harvest отдаёт basename без
+> путей. Совушка показывает дату и время в пузырях, карточки источников с
+> шифром/наименованием без наезда и итоговую таблицу из `draft_rows`.
+> `document_workflow` не возвращался.
 
 > **0.30.41 / build 681 installed contour compatibility hotfix:** effective
 > snapshot старого пользовательского estimator-профиля получает обязательный

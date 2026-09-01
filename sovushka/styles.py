@@ -1628,7 +1628,7 @@ body, .nicegui-content {
 .sov-source-list {
   width: 100%;
   max-height: min(42vh, 360px);
-  gap: 2px !important;
+  gap: 8px !important;
   padding: 4px 7px 8px;
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -1641,9 +1641,40 @@ body, .nicegui-content {
   margin: 0;
   padding: 4px 5px 4px 9px;
   border-radius: 9px;
+  overflow: hidden;
   transition-property: background-color, box-shadow;
   transition-duration: .14s;
   transition-timing-function: ease;
+}
+.sov-source-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: hidden;
+  border-radius: 9px;
+}
+.sov-source-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 1.35;
+  max-height: 2.8em;
+  margin: 0;
+  white-space: normal;
+}
+.sov-source-card .sov-source-primary {
+  flex: 0 1 auto;
+  min-height: 32px !important;
+  height: auto;
+  white-space: normal;
 }
 .sov-source-row:hover {
   background: color-mix(in srgb, var(--accent) 7%, transparent);
@@ -2043,23 +2074,25 @@ body, .nicegui-content {
   box-shadow: 0 0 0 1px rgba(52,211,153,.32);
 }
 .sov-composer-footer {
-  position: absolute;
-  right: 10px;
-  bottom: 8px;
-  z-index: 2;
-  width: auto;
+  position: static;
+  right: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 100%;
   min-height: 44px;
   display: flex;
   align-items: center;
-  margin: 0;
-  padding: 0;
+  margin: 8px 0 0;
+  padding: 8px 0 0;
   background: transparent;
   box-shadow: none;
 }
 .sov-composer-actions {
-  width: auto;
-  margin: 0 0 0 auto;
-  flex-wrap: nowrap;
+  width: 100%;
+  margin: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 }
 .sov-composer-action {
   min-width: 40px !important;

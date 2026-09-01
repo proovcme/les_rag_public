@@ -28,6 +28,9 @@ from sovushka.pages.chat import (
     _smeta_progress_text,
     _smeta_rows_markdown,
     _runtime_guard_reason_label,
+    format_chat_request_clock,
+    format_answer_timing_line,
+    workbook_chat_filename,
     should_skip_chat_resource_gate,
     _preserved_attachment,
 )
@@ -989,3 +992,46 @@ def test_dataset_and_chat_profile_operator_summaries_are_human_readable():
     assert any("Табличный сигнал" in line for line in ds_lines)
     assert "Ходов: 4" in chat_lines[0]
     assert any("нет PDF проекта" in line for line in chat_lines)
+
+
+def test_chat_bubble_clock_always_includes_date():
+    clock = format_chat_request_clock("2026-08-02T21:09:11+03:00")
+    assert clock == "02.08.2026 21:09"
+    line = format_answer_timing_line(
+        requested_at="2026-08-02T21:09:11+03:00",
+        elapsed_sec=50,
+        latency_phases={"wall_total": 42.2, "generation": 28.0},
+    )
+    assert "02.08.2026 21:09" in line
+    assert "ответ 42с" in line
+
+
+def test_workbook_chat_filename_never_falls_back_to_artifact():
+    assert workbook_chat_filename({
+        "filename": "LSR_demo_2026-09-01_2147.xlsx",
+    }) == "LSR_demo_2026-09-01_2147.xlsx"
+    assert workbook_chat_filename({"artifact_kind": "vor_workbook"}) == "VOR.xlsx"
+    assert workbook_chat_filename({"filename": "artifact.xlsx"}) == "LSR.xlsx"
+
+
+def test_smeta_artifact_rows_can_use_finished_draft_rows():
+    rows = _smeta_artifact_rows({
+        "draft_rows": [
+            {"work_id": "1", "title": "Кабель", "quantity": 12, "unit": "м", "norm_code": "ГЭСНм08-02-409-09"},
+        ]
+    })
+    assert rows[0]["title"] == "Кабель"
+    assert rows[0]["norm_code"] == "ГЭСНм08-02-409-09"
+
+
+def test_composer_footer_and_source_cards_do_not_overlap():
+    styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
+    tokens = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
+    source = inspect.getsource(chat_page.build_chat)
+    assert "position: static" in styles
+    assert "sov-source-card" in styles
+    assert "sov-source-snippet" in styles
+    assert "sov-source-card" in tokens
+    assert "sov-chat-timing" in tokens
+    assert "sov-source-card" in source
+    assert "draft_rows" in inspect.getsource(chat_page._smeta_artifact_rows)

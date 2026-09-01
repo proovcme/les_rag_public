@@ -1,5 +1,7 @@
 """Authenticated metadata and verified downloads for immutable artifacts."""
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
@@ -22,6 +24,14 @@ def _not_found(exc: Exception) -> HTTPException:
     return HTTPException(status_code=404, detail={"code": "ARTIFACT_NOT_FOUND", "message": str(exc)})
 
 
+def content_disposition_attachment(filename: str) -> str:
+    raw = str(filename or "workbook.xlsx").replace("\r", "").replace("\n", "").replace('"', "")
+    ascii_name = raw.encode("ascii", "ignore").decode("ascii").strip("._") or "workbook.xlsx"
+    if "." not in ascii_name:
+        ascii_name = "workbook.xlsx"
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{quote(raw)}'
+
+
 @router.get("/{revision_id}/download")
 async def artifact_download(revision_id: str, _user=Depends(require_user)):
     try:
@@ -34,7 +44,7 @@ async def artifact_download(revision_id: str, _user=Depends(require_user)):
     return Response(
         payload,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{revision.filename}"'},
+        headers={"Content-Disposition": content_disposition_attachment(revision.filename)},
     )
 
 

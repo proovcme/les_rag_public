@@ -475,6 +475,7 @@ def test_workbook_result_harvests_revision_retry_and_checkpoint():
     )
 
     assert harvested["artifact"]["revision_id"] == "rev-2"
+    assert harvested["artifact"]["filename"] == "vor-r2.xlsx"
     assert harvested["attachment_retry"]["attachment_id"] == "read_123456abcdef"
     assert harvested["source"] == {
         "attachment_id": "read_123456abcdef",
@@ -2139,6 +2140,68 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     assert "legacy fixture" not in json.dumps(governor_trace, ensure_ascii=False)
     assert "secret shadow failure" not in str(history_rows[0])
     assert after_protected == before_protected
+
+
+def test_estimator_packages_lsr_or_vor_from_the_operator_request_not_both():
+    tools = ["search_sources", "build_lsr_workbook", "build_vor_workbook"]
+    assert service.estimator_workbook_packaging_tools("Собери ЛСР", tools) == [
+        "build_lsr_workbook"
+    ]
+    assert service.estimator_workbook_packaging_tools("Собери ВОР", tools) == [
+        "build_vor_workbook"
+    ]
+    assert service.estimator_workbook_packaging_tools("Собери ЛСР и ВОР", tools) == [
+        "build_lsr_workbook",
+        "build_vor_workbook",
+    ]
+
+
+def test_workbook_filename_projection_keeps_basename_and_drops_paths():
+    assert service._safe_workbook_filename("LSR_source_2026-09-01_2147.xlsx") == (
+        "LSR_source_2026-09-01_2147.xlsx"
+    )
+    assert service._safe_workbook_filename("C:/private/workbook.xlsx") == ""
+    assert service._safe_workbook_filename("artifact.xlsx") == ""
+    assert service._chat_workbook_filename(
+        "",
+        artifact_kind="vor_workbook",
+    ).startswith("VOR_")
+    assert "artifact.xlsx" not in service._chat_workbook_filename(
+        "artifact.xlsx",
+        artifact_kind="lsr_workbook",
+    )
+
+
+def test_model_rag_result_reads_normative_code_header_and_skips_missing_numbers():
+    answer = """
+| № | Наименование | Ед. изм. | Кол-во | Нормативный код (ГЭСН/ЕР) | Коэфф. | Примечание |
+|---:|---|---|---:|---|---|---|
+| 1 | Кабель | м | 12 | ГЭСНм08-02-409-09 | — |  |
+| 2 | Плёнка | м2 |  | ГЭСН26-01-055-02 | 1/100 | нет прямого аналога |
+"""
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    _, rows = parsed
+    assert rows[0]["norm_code"] == "ГЭСНм08-02-409-09"
+    assert "coefficient" not in rows[0]
+    assert rows[1]["coefficient"] == 0.01
+    assert "quantity" not in rows[1]
+
+
+def test_compact_draft_rows_keep_model_owned_codes():
+    compact = service.compact_estimator_draft_rows(
+        [{"source_row": 3, "title": "Кабель", "quantity": 12, "unit": "м", "norm_code": "ГЭСНм08-02-409-09"}]
+    )
+    assert compact == [{
+        "work_id": "3",
+        "source_row": 3,
+        "section": "",
+        "title": "Кабель",
+        "quantity": 12,
+        "unit": "м",
+        "norm_code": "ГЭСНм08-02-409-09",
+        "decision": "ГЭСНм08-02-409-09",
+    }]
 
 
 async def _async_value(value):
