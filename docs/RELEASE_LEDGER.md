@@ -34,6 +34,12 @@ dev implementation:       0.30.43 RAG evidence continuity/readiness candidate; c
 > `0.30.42 · 682 · ab5146b2` не изменялись. Выпуск, рестарт, reindex и тяжёлые
 > optional-generation jobs не запускались.
 
+> **Artifact-first release recovery включён в кандидат 0.30.43:** reusable
+> gate receipt, immutable package artifact, append-only retryable acceptance и
+> resumable publication разделены. Повторная приёмка и публикация используют
+> exact сохранённые SHA без пересборки; dynamic Windows entrypoints проверяются
+> до Tauri/NSIS. Живой Legion rehearsal остаётся обязательным условием выпуска.
+
 > **0.30.42 / build 682 model→RAG result-integrity hotfix:** обычный RAG и
 > estimator разведены по effective profile, сметный каталог полностью
 > настраиваемый, модель получает по 6 карточек каждого своего запроса, а

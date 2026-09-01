@@ -190,3 +190,28 @@ Stop/deps/docker не имеют права ронять Setup с «ошибка
 
 Для обоих сохраняются job, status timeline, process snapshot и acceptance JSON. Только после двух
 зелёных сценариев запускается model-quality benchmark.
+
+## 10. Artifact-first публичный выпуск
+
+Публичный release lifecycle не объединяется с установленной acceptance в один
+mutable state:
+
+1. `gate` один раз доказывает exact clean/pushed commit, tree, version contract
+   и полный ordered gate policy; receipt переиспользуется только при полном
+   совпадении этих полей.
+2. `prepare` строит patch или NSIS. Full Windows child заканчивает работу после
+   package/checksum/cache manifest и не устанавливает приложение.
+3. Parent сразу фиксирует installable bytes, runtime manifest и dynamic
+   entrypoint registry в immutable artifact receipt. До этого момента installed
+   smoke не запускается.
+4. `accept --artifact` создаёт отдельную попытку и выполняет install → smoke →
+   rollback → smoke прежней версии → reinstall exact SHA. Отказ закрывает только
+   попытку.
+5. `retry --artifact` требует предыдущую неуспешную попытку и повторяет те же
+   bytes без gates, Tauri или NSIS.
+6. `publish --artifact` требует accepted attempt, повторно проверяет source и
+   asset hashes, безопасно продолжает draft и завершает независимым postflight.
+
+Любой drift commit/version/runtime manifest/entrypoint registry/asset создаёт
+revocation sidecar и блокирует дальнейшую мутацию. Legacy
+`les.release-attempt.v1` не повышается до нового artifact автоматически.

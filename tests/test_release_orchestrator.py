@@ -50,6 +50,16 @@ def _args(tmp_path: Path, **overrides):
     registry = values["root"] / "installers/windows/runtime-entrypoints.json"
     registry.parent.mkdir(parents=True, exist_ok=True)
     registry.write_text('{"schema":"les.windows-runtime-entrypoints.v1"}', encoding="utf-8")
+    (values["root"] / "config/version.json").write_text(
+        json.dumps(
+            {
+                "product_version": "0.30.40",
+                "build_number": 680,
+                "desktop_version": "5.1.680",
+            }
+        ),
+        encoding="utf-8",
+    )
     return argparse.Namespace(**values)
 
 
@@ -857,6 +867,26 @@ def test_accept_artifact_never_calls_a_builder(monkeypatch, tmp_path):
     assert result["artifact_id"] == release_receipt.load_artifact_receipt(artifact_path)["artifact_id"]
 
 
+def test_accept_artifact_rejects_manifest_drift_before_windows(monkeypatch, tmp_path):
+    args, _artifact_path, _asset = _ready_artifact(tmp_path)
+    (args.root / "config/windows_runtime_manifest.json").write_text(
+        '{"schema":"les.windows-runtime-manifest.v1","drift":true}',
+        encoding="utf-8",
+    )
+    called = []
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "run_local_acceptance",
+        lambda **_kwargs: called.append(True),
+    )
+
+    with pytest.raises(RuntimeError, match="release source contract changed"):
+        release_orchestrator.accept(args)
+
+    assert called == []
+
+
 def test_retry_uses_same_artifact_after_failed_smoke(monkeypatch, tmp_path):
     args, artifact_path, asset = _ready_artifact(tmp_path)
     monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
@@ -889,10 +919,113 @@ def test_cli_exposes_artifact_accept_retry_and_publish():
     accepted = parser.parse_args(["accept", "--artifact", "artifact.json"])
     retried = parser.parse_args(["retry", "--artifact", "artifact.json"])
     published = parser.parse_args(["publish", "--artifact", "artifact.json"])
+    gated = parser.parse_args(["gate", "--branch", "codex/release"])
+    inspected = parser.parse_args(["status", "--artifact", "artifact.json"])
 
     assert accepted.artifact == Path("artifact.json")
     assert retried.artifact == Path("artifact.json")
     assert published.artifact == Path("artifact.json")
+    assert gated.command == "gate"
+    assert inspected.artifact == Path("artifact.json")
+
+
+def test_latest_pointer_uses_artifact_fields(tmp_path):
+    artifact_path = tmp_path / "artifact-receipt.json"
+    artifact_path.write_text("{}", encoding="utf-8")
+
+    release_orchestrator._write_latest(
+        tmp_path / "work", artifact_path, "artifact-123", artifact=True
+    )
+    pointer = json.loads(
+        (tmp_path / "work/latest.json").read_text(encoding="utf-8")
+    )
+
+    assert pointer == {
+        "artifact_id": "artifact-123",
+        "artifact_path": str(artifact_path.resolve()),
+    }
+
+
+def test_status_artifact_summarizes_attempts(tmp_path):
+    _args_value, artifact_path, _asset = _ready_artifact(tmp_path)
+    attempt = release_receipt.create_acceptance_attempt(artifact_path, host="Legion")
+    release_receipt.fail_acceptance_attempt(
+        attempt, failed_stage="smoke", error="no", recovery={}
+    )
+
+    result = release_orchestrator.status(artifact_path=artifact_path)
+
+    assert result["artifact"]["status"] == "ready"
+    assert result["acceptance_attempts"][0]["result"] == "failed"
+    assert result["revoked"] is False
+
+
+def test_publish_artifact_is_manual_fallback_without_builder(monkeypatch, tmp_path):
+    args, artifact_path, _asset = _ready_artifact(tmp_path)
+    acceptance_path = release_receipt.create_acceptance_attempt(
+        artifact_path, host="Legion"
+    )
+    accepted = release_receipt.complete_acceptance_attempt(
+        acceptance_path, evidence=_successful_acceptance_result()
+    )
+    callbacks = []
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "build_patch_candidate",
+        lambda **_kwargs: pytest.fail("publish rebuilt patch"),
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "build_full_candidate",
+        lambda **_kwargs: pytest.fail("publish rebuilt installer"),
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "sync_public_main",
+        lambda **_kwargs: {"after": TARGET},
+    )
+
+    def publish_artifact_candidate(**kwargs):
+        assert kwargs["artifact_path"] == artifact_path
+        assert kwargs["acceptance_path"] == acceptance_path
+        for stage in ("draft_uploaded", "draft_verified", "published"):
+            callbacks.append(stage)
+            kwargs["stage_callback"](stage, {"ok": True})
+        return {"published": True, "assets": [str(_asset)]}
+
+    monkeypatch.setattr(
+        release_orchestrator,
+        "publish_artifact_candidate",
+        publish_artifact_candidate,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "verify_public_provenance",
+        lambda **_kwargs: {"ok": True, "target_commit": TARGET},
+    )
+
+    result = release_orchestrator.publish(args)
+
+    assert result["stage"] == "postflight_verified"
+    assert result["artifact_id"] == accepted["artifact_id"]
+    assert result["acceptance_id"] == accepted["acceptance_id"]
+    assert callbacks == ["draft_uploaded", "draft_verified", "published"]
+
+
+def test_publish_artifact_rejects_failed_only_acceptance(monkeypatch, tmp_path):
+    args, artifact_path, _asset = _ready_artifact(tmp_path)
+    attempt_path = release_receipt.create_acceptance_attempt(
+        artifact_path, host="Legion"
+    )
+    release_receipt.fail_acceptance_attempt(
+        attempt_path, failed_stage="smoke", error="no", recovery={}
+    )
+    monkeypatch.setattr(release_orchestrator, "resolve_commit", lambda *_args: TARGET)
+
+    with pytest.raises(RuntimeError, match="successful acceptance required"):
+        release_orchestrator.publish(args)
 
 
 @pytest.mark.parametrize(
@@ -973,7 +1106,7 @@ def test_run_release_preserves_prepare_accept_publish_boundaries(monkeypatch, tm
     monkeypatch.setattr(
         release_orchestrator,
         "prepare",
-        lambda _args: calls.append("prepare") or {"state_path": str(state_path)},
+        lambda _args: calls.append("prepare") or {"artifact_path": str(state_path)},
     )
     monkeypatch.setattr(
         release_orchestrator,
@@ -989,7 +1122,7 @@ def test_run_release_preserves_prepare_accept_publish_boundaries(monkeypatch, tm
     result = release_orchestrator.run_release(args)
 
     assert calls == ["prepare", "accept", "publish"]
-    assert args.attempt == state_path
+    assert args.artifact == state_path
     assert result["stage"] == "postflight_verified"
 
 

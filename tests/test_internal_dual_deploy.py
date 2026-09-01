@@ -198,10 +198,10 @@ def test_windows_prepare_and_apply_are_separate_cached_steps():
         encoding="utf-8-sig"
     )
 
-    assert "les.windows.prepared-update.v1" in prepare
+    assert "les.windows.prepared-package.v1" in prepare
     assert "Read-PreparedUpdate" in prepare
     assert "cache_hit = $true" in prepare
-    assert "windows_release_smoke.ps1" in prepare
+    assert "windows_release_smoke.ps1" not in prepare
     assert "windows_transactional_production_deploy.ps1" not in prepare
     assert "les.windows-hard-update.v1" in apply
     assert "windows_production_deploy.ps1" in apply

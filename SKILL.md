@@ -179,9 +179,12 @@ Public release has one operator entry point:
 make release RELEASE_ARGS='run --host legion --publish'
 ```
 
-It prepares immutable candidate bytes, installs them on Legion, runs smoke,
-controlled rollback and reinstall, then publishes an accepted draft and performs
-independent postflight. Do not publish through the internal patch/full adapters.
+It writes one reusable exact-commit gate receipt, prepares immutable candidate
+bytes and finalizes their artifact receipt before installed smoke. Acceptance
+attempts are append-only; after a late failure use `retry --artifact <receipt>`
+to install the same SHA without gates or NSIS. `publish --artifact <receipt>` is
+the only supported manual fallback and cannot build. Do not publish through the
+internal patch/full adapters.
 The exact stages, resume rules and stop conditions are in
 `docs/RELEASE_PROCEDURE.md`.
 

@@ -160,14 +160,13 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
     assert "Restore-SmokeEnvironment" in source
 
 
-def test_prepared_update_smoke_uses_checkout_owned_temporary_root():
+def test_prepared_update_stops_after_immutable_package_cache():
     source = (ROOT / "tools/windows_prepare_update.ps1").read_text(encoding="utf-8")
 
-    assert '.codex_tmp\\wrs' in source
-    assert '$BuildCommit.Substring(0, 12)' in source
-    assert '[guid]::NewGuid().ToString("N").Substring(0, 8)' in source
-    assert '.codex_tmp\\windows-release-smoke' not in source
-    assert 'Join-Path $env:LOCALAPPDATA "LES-release-smoke"' not in source
+    assert 'schema = "les.windows.prepared-package.v1"' in source
+    assert "Get-FileHash" in source
+    assert "windows_release_smoke.ps1" not in source
+    assert "CleanInstall" not in source
 
 
 def test_windows_release_smoke_does_not_replace_user_outlook_task():

@@ -7,7 +7,7 @@
 ## Полный проход
 
 Из чистой ветки, отправленной в `origin`, принять кандидата на текущем Legion и
-опубликовать тот же immutable attempt одной командой:
+опубликовать тот же immutable artifact одной командой:
 
 ```text
 make release RELEASE_ARGS='run --host local --publish'
@@ -15,15 +15,19 @@ make release RELEASE_ARGS='run --host local --publish'
 
 Команда последовательно и с сохранением state выполняет:
 
-1. Сверяет `HEAD`, upstream, версию и generated maps; запускает `make verify`,
+1. Сверяет `HEAD`, upstream, версию и generated maps; один раз запускает `make verify`,
    `make test`, `make test-updater` и `make public-check`.
    Базу накопительного patch берёт только из проверенного
    `dist/release-work/full-base/latest.json`; из feature worktree сначала
    проверяет её локальный release-work, затем канонический `repo_root`.
    Исторический `dist/latest.json` не участвует в классификации. `--full-feed`
    нужен только для явной замены этого attested full-base.
-2. Автоматически выбирает soft patch или полный NSIS-выпуск и фиксирует SHA
-   устанавливаемого ZIP/EXE в immutable attempt.
+   Успех сохраняется как `les.release-gate-receipt.v1`, привязанный к exact
+   commit/tree/version и политике gates. Такой receipt можно явно передать в
+   `prepare --gate-receipt`, повторный прогон suite не выполняется.
+2. Автоматически выбирает soft patch или полный NSIS-выпуск. Сразу после
+   готовности ZIP/EXE, до установленного smoke, фиксирует его SHA/размер и
+   provenance в immutable `les.release-artifact.v1`.
    Для текстового Windows runtime manifest дополнительно фиксирует exact SHA
    фактически установленного файла, только если его LF-нормализованное
    содержимое совпадает с доверенным состоянием Git ancestry. Новый клиент и
@@ -76,8 +80,8 @@ Smoke-root остаётся checkout-owned, но его имя ограниче�
 Построитель cumulative patch читает Git history пакетно и печатает
 ограниченный прогресс по ancestry и manifest-файлам. Результат автоматического
 public-main sync (`before`, `after`, `fast_forwarded`) записывается в persisted
-attempt. Если последующий шаг упал, повторный `publish` продолжает тот же
-attempt; уже выполненный exact sync становится безопасным no-op.
+publication state. Если последующий шаг упал, повторный `publish --artifact`
+продолжает тот же draft; уже выполненный exact sync становится безопасным no-op.
 Release CLI до первого вывода принудительно устанавливает UTF-8 для stdout и
 stderr, поэтому русский progress и итоговый JSON не зависят от Windows codepage.
 
@@ -88,16 +92,25 @@ stderr, поэтому русский progress и итоговый JSON не з�
 ## Раздельное выполнение и продолжение
 
 ```text
-make release RELEASE_ARGS='prepare --host local'
-make release RELEASE_ARGS='accept --host local'
-make release RELEASE_ARGS='status --attempt dist/release-work/<id>/release-state.json'
-make release RELEASE_ARGS='publish'
+make release RELEASE_ARGS='gate --branch <branch>'
+make release RELEASE_ARGS='prepare --host local --gate-receipt <gate-receipt.json>'
+make release RELEASE_ARGS='accept --artifact <artifact-receipt.json> --host local'
+make release RELEASE_ARGS='status --artifact <artifact-receipt.json>'
+make release RELEASE_ARGS='publish --artifact <artifact-receipt.json>'
 ```
 
-Последний attempt записан в `dist/release-work/latest.json`. Кандидат после
-prepare не пересобирается. Сохранённый draft продолжается с последней
-подтверждённой стадии; опубликованный выпуск повторно не публикуется, а только
-повторяет postflight.
+Последний artifact записан в `dist/release-work/latest.json`. Если acceptance
+упала после build, повторить те же exact bytes без gates/Tauri/NSIS:
+
+```text
+make release RELEASE_ARGS='retry --artifact <artifact-receipt.json> --host local'
+```
+
+Каждая попытка хранится отдельно как `les.release-acceptance.v2`; неудача не
+меняет artifact receipt и candidate bytes. `publish --artifact` — единственный
+поддержанный ручной fallback: он требует успешную попытку, повторно сверяет SHA
+и не содержит build. Старый `les.release-attempt.v1` доступен через
+`status --attempt` только для исторической диагностики.
 
 `local` — явный псевдоним машины, на которой запущен оркестратор. Имя или SSH
 alias (например, `legion`) указывается только при действительно удалённой
@@ -113,7 +126,8 @@ alias (например, `legion`) указывается только при д
   release-процедура проверяет доступность и continuity, но не создаёт и не
   переписывает Scheduled Task.
 - `%LOCALAPPDATA%\LES` не входит в application transaction.
-- `--skip-gates` создаёт навсегда непубликуемый dev-attempt.
+- `--skip-gates` создаёт только непубликуемый legacy dev-attempt; публичный v2
+  artifact требует точный gate receipt.
 - Ошибка после публикации — критический immutable-release incident; stage
   `postflight_verified` не выставляется.
 

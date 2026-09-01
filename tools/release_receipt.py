@@ -14,6 +14,18 @@ from typing import Any, Sequence
 
 ATTEMPT_SCHEMA = "les.release-attempt.v1"
 PUBLIC_SCHEMA = "les.release-receipt.v1"
+PUBLIC_ARTIFACT_SCHEMA = "les.release-receipt.v2"
+GATE_SCHEMA = "les.release-gate-receipt.v1"
+ARTIFACT_SCHEMA = "les.release-artifact.v1"
+ACCEPTANCE_SCHEMA = "les.release-acceptance.v2"
+PUBLICATION_SCHEMA = "les.release-publication.v1"
+PUBLICATION_STAGES = (
+    "accepted",
+    "draft_uploaded",
+    "draft_verified",
+    "published",
+    "postflight_verified",
+)
 STAGES = (
     "planned",
     "prepared",
@@ -28,7 +40,7 @@ STAGES = (
     "postflight_verified",
 )
 _SENSITIVE_KEY = re.compile(r"(?:secret|token|password|credential|api[_-]?key)", re.I)
-_WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+_WINDOWS_PATH = re.compile(r"[A-Za-z]:[\\/]")
 
 
 def _now() -> str:
@@ -377,6 +389,10 @@ def _load_acceptance_attempt(path: Path) -> dict[str, Any]:
     )
 
 
+def load_acceptance_attempt(path: Path) -> dict[str, Any]:
+    return _load_acceptance_attempt(path)
+
+
 def _replace_acceptance(path: Path, payload: dict[str, Any]) -> dict[str, Any]:
     payload = {**payload, "payload_sha256": _payload_sha(payload)}
     _atomic_json(Path(path), payload)
@@ -428,8 +444,6 @@ def accepted_attempts(artifact_path: Path) -> list[dict[str, Any]]:
 def acceptance_attempts(artifact_path: Path) -> list[dict[str, Any]]:
     artifact_path = Path(artifact_path).resolve()
     artifact = load_artifact_receipt(artifact_path)
-    if (artifact_path.parent / "revocations").exists():
-        return []
     verify_artifact_receipt(
         artifact,
         commit=str(artifact["target_commit"]),
@@ -454,7 +468,7 @@ def revoke_artifact(artifact_path: Path, *, reason: str) -> Path:
         "schema": "les.release-artifact-revocation.v1",
         "revocation_id": revocation_id,
         "artifact_id": artifact["artifact_id"],
-        "reason": str(reason)[-2000:],
+        "reason": _sanitize(str(reason)[-2000:]),
         "created_at": _now(),
     }
     return _write_hashed_json(
@@ -462,6 +476,92 @@ def revoke_artifact(artifact_path: Path, *, reason: str) -> Path:
         payload,
         immutable=True,
     )
+
+
+def create_publication(
+    artifact_path: Path, *, acceptance_path: Path
+) -> Path:
+    artifact_path = Path(artifact_path).resolve()
+    acceptance_path = Path(acceptance_path).resolve()
+    artifact = load_artifact_receipt(artifact_path)
+    acceptance = load_acceptance_attempt(acceptance_path)
+    if (
+        acceptance.get("result") != "accepted"
+        or acceptance.get("artifact_id") != artifact.get("artifact_id")
+        or artifact.get("publishable") is not True
+    ):
+        raise RuntimeError("successful acceptance required for publication")
+    path = artifact_path.parent / "publication.json"
+    payload = {
+        "schema": PUBLICATION_SCHEMA,
+        "artifact_id": artifact["artifact_id"],
+        "acceptance_id": acceptance["acceptance_id"],
+        "acceptance_path": str(acceptance_path),
+        "stage": "accepted",
+        "checkpoints": {},
+        "transitions": [
+            {"stage": "accepted", "at": _now(), "evidence": {"accepted": True}}
+        ],
+    }
+    if path.is_file():
+        existing = load_publication(path)
+        if (
+            existing.get("artifact_id") != payload["artifact_id"]
+            or existing.get("acceptance_id") != payload["acceptance_id"]
+        ):
+            raise RuntimeError("artifact publication is already bound differently")
+        return path
+    _atomic_json(path, payload)
+    return path
+
+
+def load_publication(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"publication state is unreadable: {path}") from exc
+    if payload.get("schema") != PUBLICATION_SCHEMA:
+        raise RuntimeError("publication state schema is unsupported")
+    return payload
+
+
+def transition_publication(
+    path: Path,
+    *,
+    expected: str,
+    target: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    payload = load_publication(path)
+    current = str(payload.get("stage") or "")
+    if not (
+        current == expected
+        and expected in PUBLICATION_STAGES
+        and target in PUBLICATION_STAGES
+        and PUBLICATION_STAGES.index(target) == PUBLICATION_STAGES.index(expected) + 1
+    ):
+        raise RuntimeError(
+            f"invalid publication transition: current={current}, expected={expected}, target={target}"
+        )
+    payload["stage"] = target
+    payload["transitions"].append(
+        {"stage": target, "at": _now(), "evidence": _sanitize(evidence)}
+    )
+    _atomic_json(Path(path), payload)
+    return payload
+
+
+def record_publication_checkpoint(
+    path: Path, *, expected: str, name: str, evidence: dict[str, Any]
+) -> dict[str, Any]:
+    payload = load_publication(path)
+    if payload.get("stage") != expected:
+        raise RuntimeError("publication checkpoint stage changed")
+    if re.fullmatch(r"[a-z][a-z0-9_]{1,63}", str(name or "")) is None:
+        raise ValueError("publication checkpoint name is invalid")
+    payload.setdefault("checkpoints", {}).setdefault(str(name), _sanitize(evidence))
+    _atomic_json(Path(path), payload)
+    return payload
 
 
 def create_attempt(
@@ -659,7 +759,7 @@ def _sanitize(value: Any, *, key: str = "") -> Any:
     if isinstance(value, list):
         return [_sanitize(item) for item in value]
     if isinstance(value, str) and (
-        _WINDOWS_PATH.match(value) is not None or value.startswith("/")
+        _WINDOWS_PATH.search(value) is not None or value.startswith("/")
     ):
         return "[redacted-path]"
     return value
@@ -685,6 +785,48 @@ def write_public_receipt(attempt_path: Path, destination: Path) -> Path:
         ],
         "checkpoints": _sanitize(attempt.get("checkpoints", {})),
         "transitions": _sanitize(attempt["transitions"]),
+    }
+    destination = Path(destination).resolve()
+    _atomic_json(destination, receipt)
+    return destination
+
+
+def write_public_artifact_receipt(
+    artifact_path: Path, acceptance_path: Path, destination: Path
+) -> Path:
+    artifact_path = Path(artifact_path).resolve()
+    acceptance_path = Path(acceptance_path).resolve()
+    artifact = load_artifact_receipt(artifact_path)
+    acceptance = load_acceptance_attempt(acceptance_path)
+    if (
+        acceptance.get("result") != "accepted"
+        or acceptance.get("artifact_id") != artifact.get("artifact_id")
+        or artifact.get("publishable") is not True
+        or list((artifact_path.parent / "revocations").glob("*.json"))
+    ):
+        raise RuntimeError("successful acceptance required for public receipt")
+    verify_artifact_receipt(
+        artifact,
+        commit=str(artifact["target_commit"]),
+        assets=[Path(str(item["path"])) for item in artifact.get("assets", [])],
+    )
+    receipt = {
+        "schema": PUBLIC_ARTIFACT_SCHEMA,
+        "accepted": True,
+        "artifact_id": artifact["artifact_id"],
+        "acceptance_id": acceptance["acceptance_id"],
+        "release_class": artifact["release_class"],
+        "product_version": artifact["product_version"],
+        "build_number": artifact["build_number"],
+        "desktop_version": artifact["desktop_version"],
+        "target_commit": artifact["target_commit"],
+        "base_commits": artifact["base_commits"],
+        "host": acceptance["host"],
+        "assets": [
+            {key: item[key] for key in ("name", "bytes", "sha256")}
+            for item in artifact["assets"]
+        ],
+        "evidence": _sanitize(acceptance.get("evidence", {})),
     }
     destination = Path(destination).resolve()
     _atomic_json(destination, receipt)

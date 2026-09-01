@@ -183,3 +183,279 @@ def test_non_publishable_mark_is_permanent_for_development_attempt(tmp_path):
         release_receipt.write_public_receipt(
             state, tmp_path / "release-receipt.json"
         )
+def test_gate_receipt_reuses_only_exact_commit_tree_version_and_policy(tmp_path):
+    path = _gate(tmp_path)
+    receipt = release_receipt.load_gate_receipt(path)
+    exact = {
+        "target_commit": TARGET,
+        "target_tree": TREE,
+        "product_version": "0.30.40",
+        "build_number": 680,
+        "desktop_version": "5.1.680",
+        "branch": "codex/release",
+        "upstream_commit": TARGET,
+        "policy": [("verify", ("make", "verify"))],
+    }
+
+    release_receipt.verify_gate_receipt(receipt, **exact)
+    with pytest.raises(RuntimeError, match="gate receipt binding changed"):
+        release_receipt.verify_gate_receipt(
+            receipt,
+            **{**exact, "target_tree": "d" * 40},
+        )
+
+
+def test_gate_receipt_rejects_failed_results(tmp_path):
+    with pytest.raises(ValueError, match="successful gate results"):
+        release_receipt.create_gate_receipt(
+            root=tmp_path,
+            target_commit=TARGET,
+            target_tree=TREE,
+            product_version="0.30.40",
+            build_number=680,
+            desktop_version="5.1.680",
+            branch="codex/release",
+            upstream_commit=TARGET,
+            policy=[("verify", ("make", "verify"))],
+            results=[{"gate": "verify", "exit_code": 1, "duration_ms": 7}],
+            clean=True,
+        )
+
+
+def test_gate_receipt_creation_is_idempotent_for_same_evidence(tmp_path):
+    first = _gate(tmp_path)
+    first_bytes = first.read_bytes()
+
+    second = _gate(tmp_path)
+
+    assert second == first
+    assert second.read_bytes() == first_bytes
+
+
+def test_failed_acceptance_does_not_change_artifact_receipt_or_bytes(tmp_path):
+    gate_path = _gate(tmp_path)
+    asset = tmp_path / "LES-Setup.exe"
+    asset.write_bytes(b"installer")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate_path,
+        release_class="full",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="d" * 64,
+        entrypoint_registry_sha256="e" * 64,
+        build_evidence={"duration_ms": 10},
+        publishable=True,
+    )
+    before = artifact_path.read_bytes()
+    attempt_path = release_receipt.create_acceptance_attempt(
+        artifact_path,
+        host="local",
+    )
+    failed = release_receipt.fail_acceptance_attempt(
+        attempt_path,
+        failed_stage="smoke",
+        error="injected",
+        recovery={"ok": True},
+    )
+
+    assert failed["result"] == "failed"
+    assert artifact_path.read_bytes() == before
+    assert asset.read_bytes() == b"installer"
+    assert release_receipt.accepted_attempts(artifact_path) == []
+
+
+def test_artifact_verification_rejects_one_byte_drift_and_writes_revocation(tmp_path):
+    gate_path = _gate(tmp_path)
+    asset = tmp_path / "les-patch.zip"
+    asset.write_bytes(b"candidate")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate_path,
+        release_class="patch",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="d" * 64,
+        entrypoint_registry_sha256="e" * 64,
+        build_evidence={},
+        publishable=True,
+    )
+    artifact = release_receipt.load_artifact_receipt(artifact_path)
+    asset.write_bytes(b"Candidate")
+
+    with pytest.raises(RuntimeError, match="artifact binding changed"):
+        release_receipt.verify_artifact_receipt(
+            artifact,
+            commit=TARGET,
+            assets=[asset],
+        )
+    revocation = release_receipt.revoke_artifact(
+        artifact_path,
+        reason="artifact binding changed",
+    )
+    assert revocation.is_file()
+    assert release_receipt.load_artifact_receipt(artifact_path)["status"] == "ready"
+
+
+def test_artifact_receipt_tampering_is_detected_before_acceptance(tmp_path):
+    gate_path = _gate(tmp_path)
+    asset = tmp_path / "les-patch.zip"
+    asset.write_bytes(b"candidate")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate_path,
+        release_class="patch",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="d" * 64,
+        entrypoint_registry_sha256="e" * 64,
+        build_evidence={},
+        publishable=True,
+    )
+    payload = json.loads(artifact_path.read_text(encoding="utf-8"))
+    payload["build_number"] = 681
+    artifact_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="integrity check failed"):
+        release_receipt.load_artifact_receipt(artifact_path)
+
+
+def test_only_successful_attempt_is_returned_for_publication(tmp_path):
+    gate_path = _gate(tmp_path)
+    asset = tmp_path / "les-patch.zip"
+    asset.write_bytes(b"candidate")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate_path,
+        release_class="patch",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="d" * 64,
+        entrypoint_registry_sha256="e" * 64,
+        build_evidence={},
+        publishable=True,
+    )
+    failed_path = release_receipt.create_acceptance_attempt(artifact_path, host="local")
+    release_receipt.fail_acceptance_attempt(
+        failed_path,
+        failed_stage="smoke",
+        error="no",
+        recovery={"ok": True},
+    )
+    accepted_path = release_receipt.create_acceptance_attempt(
+        artifact_path,
+        host="local",
+        retry_of=json.loads(failed_path.read_text(encoding="utf-8"))["acceptance_id"],
+    )
+    accepted = release_receipt.complete_acceptance_attempt(
+        accepted_path,
+        evidence={"accepted": True, "final_identity": {"target_commit": TARGET}},
+    )
+
+    assert release_receipt.accepted_attempts(artifact_path) == [accepted]
+
+
+def test_public_artifact_receipt_binds_only_successful_acceptance(tmp_path):
+    gate_path = _gate(tmp_path)
+    asset = tmp_path / "les-patch.zip"
+    asset.write_bytes(b"candidate")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate_path,
+        release_class="patch",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="d" * 64,
+        entrypoint_registry_sha256="e" * 64,
+        build_evidence={},
+        publishable=True,
+    )
+    attempt_path = release_receipt.create_acceptance_attempt(
+        artifact_path, host="Legion"
+    )
+    accepted = release_receipt.complete_acceptance_attempt(
+        attempt_path,
+        evidence={
+            "accepted": True,
+            "final_identity": {"target_commit": TARGET},
+            "runtime": r"C:\Users\Oleg\AppData\Local\LES",
+            "api_token": "must-not-leak",
+        },
+    )
+
+    destination = tmp_path / "release-receipt.json"
+    release_receipt.write_public_artifact_receipt(
+        artifact_path, attempt_path, destination
+    )
+    public = json.loads(destination.read_text(encoding="utf-8"))
+
+    assert public["schema"] == release_receipt.PUBLIC_ARTIFACT_SCHEMA
+    assert public["artifact_id"] == accepted["artifact_id"]
+    assert public["acceptance_id"] == accepted["acceptance_id"]
+    assert public["evidence"]["runtime"] == "[redacted-path]"
+    assert public["evidence"]["api_token"] == "[redacted]"
+    assert "artifact_path" not in public
+
+
+def test_public_artifact_receipt_rejects_failed_acceptance(tmp_path):
+    gate_path = _gate(tmp_path)
+    asset = tmp_path / "les-patch.zip"
+    asset.write_bytes(b"candidate")
+    artifact_path = release_receipt.create_artifact_receipt(
+        root=tmp_path / "work",
+        gate_receipt=gate_path,
+        release_class="patch",
+        target_commit=TARGET,
+        base_commits=[BASE],
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        assets=[asset],
+        candidate_root=tmp_path,
+        acceptance_path=tmp_path,
+        runtime_manifest_sha256="d" * 64,
+        entrypoint_registry_sha256="e" * 64,
+        build_evidence={},
+        publishable=True,
+    )
+    attempt_path = release_receipt.create_acceptance_attempt(
+        artifact_path, host="Legion"
+    )
+    release_receipt.fail_acceptance_attempt(
+        attempt_path, failed_stage="smoke", error="no", recovery={}
+    )
+
+    with pytest.raises(RuntimeError, match="successful acceptance required"):
+        release_receipt.write_public_artifact_receipt(
+            artifact_path, attempt_path, tmp_path / "release-receipt.json"
+        )

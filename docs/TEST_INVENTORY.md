@@ -36,8 +36,17 @@
 - UI: общий UIKit, WCAG AA, документы, чат, источники, model connections и
   отсутствие скрытого автоматического scope.
 - Runtime/release: Windows process ownership, persistent-state boundary,
-  bounded model queue, safe public errors, lightweight/full update, immutable
-  receipt, installed acceptance и rollback;
+  bounded model queue, safe public errors, lightweight/full update, legacy
+  `les.release-attempt.v1` и раздельные
+  `les.release-gate-receipt.v1` / `les.release-artifact.v1` /
+  `les.release-acceptance.v2` / `les.release-publication.v1` и публичную
+  проекцию `les.release-receipt.v2`; тесты фиксируют exact commit/tree/policy,
+  неизменность artifact при failed acceptance, SHA-drift, revocation и выбор
+  только успешной попытки. Publication требует accepted artifact, сохраняет
+  draft/postflight checkpoints и не может вызвать builder. До Tauri/NSIS отдельный registry-тест сверяет
+  literal `python -m` callsites с реально staged модулями и runtime manifest;
+  незарегистрированный или отсутствующий entrypoint падает fail-closed.
+  Installed acceptance и rollback сохраняются;
   native-RRF fixture не может схлопнуться в zero-chunk, а его exact временный
   dataset удаляется без snapshot всей пользовательской коллекции.
 - Профессиональные модули: только их действующие contract-тесты. Сметный

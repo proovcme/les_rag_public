@@ -294,6 +294,12 @@ def build_full_candidate(
             smeta_baseline_archive=baseline,
             smeta_baseline_sha256=_sha256(baseline),
         )
+        if (
+            prepared.get("schema") != "les.windows.prepared-package.v1"
+            or prepared.get("status") != "prepared"
+            or prepared.get("commit") != target
+        ):
+            raise RuntimeError("remote Windows package boundary is not valid")
     output = Path(output).resolve()
     public = output / "public"
     acceptance = output / "acceptance"
@@ -348,13 +354,20 @@ def _latest_path(work_root: Path) -> Path:
     return Path(work_root).resolve() / "latest.json"
 
 
-def _write_latest(work_root: Path, state_path: Path, release_id: str) -> None:
+def _write_latest(
+    work_root: Path, state_path: Path, release_id: str, *, artifact: bool = False
+) -> None:
     target = _latest_path(work_root)
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(target.name + ".tmp")
+    pointer = (
+        {"artifact_id": release_id, "artifact_path": str(Path(state_path).resolve())}
+        if artifact
+        else {"release_id": release_id, "state_path": str(Path(state_path).resolve())}
+    )
     temporary.write_text(
         json.dumps(
-            {"release_id": release_id, "state_path": str(Path(state_path).resolve())},
+            pointer,
             ensure_ascii=False,
             indent=2,
         )
@@ -480,6 +493,23 @@ def _gate_receipt_for_prepare(
     )
 
 
+def gate(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.root).resolve()
+    work_root = Path(args.work_root).resolve()
+    branch = str(getattr(args, "branch", "") or "") or current_branch(root)
+    target = require_release_source(root=root, branch=branch, target=args.target)
+    contract = load_contract(root)
+    path = _gate_receipt_for_prepare(
+        args=argparse.Namespace(gate_receipt=None),
+        root=root,
+        work_root=work_root,
+        branch=branch,
+        target=target,
+        contract=contract,
+    )
+    return {**release_receipt.load_gate_receipt(path), "gate_path": str(path)}
+
+
 def prepare(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.root).resolve()
     work_root = Path(args.work_root).resolve()
@@ -553,7 +583,9 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
             publishable=True,
         )
         artifact = release_receipt.load_artifact_receipt(artifact_path)
-        _write_latest(work_root, artifact_path, str(artifact["artifact_id"]))
+        _write_latest(
+            work_root, artifact_path, str(artifact["artifact_id"]), artifact=True
+        )
         return {**artifact, "artifact_path": str(artifact_path)}
     state_path = release_receipt.create_attempt(
         root=work_root / "attempts",
@@ -613,6 +645,26 @@ def _prepared_evidence(attempt: dict[str, Any]) -> dict[str, Any]:
 def _artifact_paths(attempt: dict[str, Any]) -> list[Path]:
     records = attempt.get("assets") or attempt.get("artifacts") or []
     return [Path(str(item["path"])).resolve() for item in records]
+
+
+def _verify_artifact_source_contract(
+    artifact: dict[str, Any], *, root: Path
+) -> None:
+    root = Path(root).resolve()
+    contract = load_contract(root)
+    expected = {
+        "product_version": str(contract["product_version"]),
+        "build_number": int(contract["build_number"]),
+        "desktop_version": _desktop_version(contract),
+        "runtime_manifest_sha256": _sha256(
+            root / "config/windows_runtime_manifest.json"
+        ),
+        "entrypoint_registry_sha256": _sha256(
+            root / "installers/windows/runtime-entrypoints.json"
+        ),
+    }
+    if any(artifact.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("release source contract changed since artifact creation")
 
 
 def _verify_patch_install_bytes(attempt: dict[str, Any], acceptance_path: Path) -> None:
@@ -817,11 +869,16 @@ def _accept_artifact(
     artifact = release_receipt.load_artifact_receipt(artifact_path)
     if list((artifact_path.parent / "revocations").glob("*.json")):
         raise RuntimeError("artifact is revoked")
-    release_receipt.verify_artifact_receipt(
-        artifact,
-        commit=resolve_commit(args.root, "HEAD"),
-        assets=_artifact_paths(artifact),
-    )
+    try:
+        release_receipt.verify_artifact_receipt(
+            artifact,
+            commit=resolve_commit(args.root, "HEAD"),
+            assets=_artifact_paths(artifact),
+        )
+        _verify_artifact_source_contract(artifact, root=Path(args.root))
+    except (OSError, RuntimeError, ValueError) as exc:
+        release_receipt.revoke_artifact(artifact_path, reason=str(exc))
+        raise
     history = release_receipt.acceptance_attempts(artifact_path)
     if any(item.get("result") == "running" for item in history):
         raise RuntimeError("unresolved running acceptance attempt blocks mutation")
@@ -907,7 +964,21 @@ def accept(args: argparse.Namespace) -> dict[str, Any]:
         raise
 
 
-def status(attempt_path: Path) -> dict[str, Any]:
+def status(
+    attempt_path: Path | None = None, *, artifact_path: Path | None = None
+) -> dict[str, Any]:
+    if artifact_path is not None:
+        path = Path(artifact_path).resolve()
+        artifact = release_receipt.load_artifact_receipt(path)
+        revocations = sorted((path.parent / "revocations").glob("*.json"))
+        return {
+            "artifact": artifact,
+            "acceptance_attempts": release_receipt.acceptance_attempts(path),
+            "revoked": bool(revocations),
+            "revocations": [str(item) for item in revocations],
+        }
+    if attempt_path is None:
+        raise RuntimeError("status requires --artifact or --attempt")
     return release_receipt.load_attempt(Path(attempt_path))
 
 
@@ -940,6 +1011,109 @@ def _bind_public_receipt(
         json.dumps(feed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     return receipt, feed_path
+
+
+def _bind_artifact_public_receipt(
+    *, artifact_path: Path, acceptance_path: Path, public: Path, feed_name: str
+) -> tuple[Path, Path]:
+    receipt = public / "release-receipt.json"
+    if not receipt.is_file():
+        release_receipt.write_public_artifact_receipt(
+            artifact_path, acceptance_path, receipt
+        )
+    else:
+        public_receipt = json.loads(receipt.read_text(encoding="utf-8-sig"))
+        artifact = release_receipt.load_artifact_receipt(artifact_path)
+        acceptance = release_receipt.load_acceptance_attempt(acceptance_path)
+        if (
+            public_receipt.get("schema") != release_receipt.PUBLIC_ARTIFACT_SCHEMA
+            or public_receipt.get("artifact_id") != artifact.get("artifact_id")
+            or public_receipt.get("acceptance_id") != acceptance.get("acceptance_id")
+            or public_receipt.get("target_commit") != artifact.get("target_commit")
+        ):
+            raise RuntimeError("existing public receipt differs from accepted artifact")
+    feed_path = public / feed_name
+    try:
+        feed = json.loads(feed_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, TypeError) as exc:
+        raise RuntimeError(f"publication feed is unreadable: {feed_name}") from exc
+    feed["acceptance_receipt"] = {
+        "name": receipt.name,
+        "bytes": receipt.stat().st_size,
+        "sha256": _sha256(receipt),
+    }
+    feed_path.write_text(
+        json.dumps(feed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+    return receipt, feed_path
+
+
+def publish_artifact_candidate(
+    *,
+    artifact_path: Path,
+    acceptance_path: Path,
+    artifact: dict[str, Any],
+    public: Path,
+    stage_callback,
+    root: Path,
+    resume_stage: str = "accepted",
+) -> dict[str, Any]:
+    if artifact["release_class"] == "patch":
+        _bind_artifact_public_receipt(
+            artifact_path=artifact_path,
+            acceptance_path=acceptance_path,
+            public=public,
+            feed_name="les-update.json",
+        )
+        assets = [public / name for name in github_patch_release.PUBLISHED_ASSET_NAMES]
+        return github_patch_release.publish_github_patch_release(
+            f"v{artifact['product_version']}",
+            assets,
+            public / "release-notes.md",
+            artifact_path=artifact_path,
+            acceptance_path=acceptance_path,
+            stage_callback=stage_callback,
+            resume_stage=resume_stage,
+        )
+    latest = public / "latest.json"
+    if not latest.is_file():
+        latest.write_text(
+            json.dumps(
+                {
+                    "schema": "les.update.v1",
+                    "version": artifact["product_version"],
+                    "build_number": artifact["build_number"],
+                    "desktop_version": artifact["desktop_version"],
+                    "target_commit": artifact["target_commit"],
+                    "build_commit": artifact["target_commit"],
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+    notes = public / "release-notes.md"
+    if not notes.is_file():
+        notes.write_text(
+            f"## ЛЕС {artifact['product_version']}\n\nПринятый полный выпуск.\n",
+            encoding="utf-8",
+        )
+    receipt, _feed = _bind_artifact_public_receipt(
+        artifact_path=artifact_path,
+        acceptance_path=acceptance_path,
+        public=public,
+        feed_name="latest.json",
+    )
+    return patch_release.publish(
+        load_contract(root),
+        extra_assets=[receipt],
+        artifact_path=artifact_path,
+        acceptance_path=acceptance_path,
+        stage_callback=stage_callback,
+        dist=public,
+        resume_stage=resume_stage,
+    )
 
 
 def publish_patch_candidate(
@@ -1073,6 +1247,96 @@ def verify_public_provenance(
 
 
 def publish(args: argparse.Namespace) -> dict[str, Any]:
+    if getattr(args, "artifact", None):
+        artifact_path = _artifact_path(args)
+        artifact = release_receipt.load_artifact_receipt(artifact_path)
+        if list((artifact_path.parent / "revocations").glob("*.json")):
+            raise RuntimeError("artifact is revoked")
+        try:
+            release_receipt.verify_artifact_receipt(
+                artifact,
+                commit=resolve_commit(args.root, "HEAD"),
+                assets=_artifact_paths(artifact),
+            )
+            _verify_artifact_source_contract(artifact, root=Path(args.root))
+        except (OSError, RuntimeError, ValueError) as exc:
+            release_receipt.revoke_artifact(artifact_path, reason=str(exc))
+            raise
+        accepted = release_receipt.accepted_attempts(artifact_path)
+        if not accepted:
+            raise RuntimeError("successful acceptance required for publication")
+        acceptance = accepted[-1]
+        acceptance_path = (
+            artifact_path.parent / "acceptance" / f"{acceptance['acceptance_id']}.json"
+        )
+        publication_path = release_receipt.create_publication(
+            artifact_path, acceptance_path=acceptance_path
+        )
+        publication_state = release_receipt.load_publication(publication_path)
+        current_stage = str(publication_state["stage"])
+        if current_stage == "accepted" and "public_main_sync" not in publication_state.get(
+            "checkpoints", {}
+        ):
+            public_main_sync = sync_public_main(
+                root=Path(args.root), target=str(artifact["target_commit"])
+            )
+            publication_state = release_receipt.record_publication_checkpoint(
+                publication_path,
+                expected="accepted",
+                name="public_main_sync",
+                evidence=public_main_sync,
+            )
+        public = Path(str(artifact["candidate_root"])) / "public"
+        expected_for_stage = {
+            "draft_uploaded": "accepted",
+            "draft_verified": "draft_uploaded",
+            "published": "draft_verified",
+        }
+
+        def advance_artifact(stage: str, evidence: dict[str, Any]) -> None:
+            release_receipt.transition_publication(
+                publication_path,
+                expected=expected_for_stage[stage],
+                target=stage,
+                evidence=evidence,
+            )
+
+        if current_stage == "published":
+            asset_names = (
+                github_patch_release.PUBLISHED_ASSET_NAMES
+                if artifact["release_class"] == "patch"
+                else (
+                    "LES-Setup.exe",
+                    "LES-Setup.exe.sha256",
+                    "latest.json",
+                    "release-receipt.json",
+                )
+            )
+            publication = {
+                "published": True,
+                "assets": [str(public / name) for name in asset_names],
+            }
+        else:
+            publication = publish_artifact_candidate(
+                artifact_path=artifact_path,
+                acceptance_path=acceptance_path,
+                artifact=artifact,
+                public=public,
+                stage_callback=advance_artifact,
+                root=Path(args.root),
+                resume_stage=current_stage,
+            )
+        postflight = verify_public_provenance(
+            attempt=artifact,
+            assets=[Path(path) for path in publication["assets"]],
+        )
+        completed = release_receipt.transition_publication(
+            publication_path,
+            expected="published",
+            target="postflight_verified",
+            evidence=postflight,
+        )
+        return {**completed, "publication_path": str(publication_path)}
     state_path = _attempt_path(args)
     attempt = release_receipt.load_attempt(state_path)
     current_stage = str(attempt.get("stage") or "")
@@ -1165,7 +1429,10 @@ def run_release(args: argparse.Namespace) -> dict[str, Any]:
     if args.publish and args.skip_gates:
         raise RuntimeError("public release cannot skip prepare gates")
     prepared = prepare(args)
-    args.attempt = Path(prepared["state_path"])
+    if "artifact_path" in prepared:
+        args.artifact = Path(prepared["artifact_path"])
+    else:
+        args.attempt = Path(prepared["state_path"])
     accepted = accept(args)
     if not args.publish:
         return accepted
@@ -1176,6 +1443,11 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.set_defaults(root=ROOT, work_root=DEFAULT_WORK_ROOT)
     sub = parser.add_subparsers(dest="command", required=True)
+    gate_cmd = sub.add_parser("gate")
+    gate_cmd.add_argument("--root", type=Path, default=ROOT)
+    gate_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
+    gate_cmd.add_argument("--branch", default="")
+    gate_cmd.add_argument("--target", default="HEAD")
     prepare_cmd = sub.add_parser("prepare")
     prepare_cmd.add_argument("--root", type=Path, default=ROOT)
     prepare_cmd.add_argument("--work-root", type=Path, default=DEFAULT_WORK_ROOT)
@@ -1237,7 +1509,9 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--install", type=Path, default=Path(local) / "Programs" / "LES")
     run_cmd.add_argument("--job", type=Path)
     status_cmd = sub.add_parser("status")
-    status_cmd.add_argument("--attempt", type=Path, required=True)
+    status_group = status_cmd.add_mutually_exclusive_group(required=True)
+    status_group.add_argument("--attempt", type=Path)
+    status_group.add_argument("--artifact", type=Path)
     return parser
 
 
@@ -1247,7 +1521,9 @@ def main(argv: list[str] | None = None) -> int:
         if callable(reconfigure):
             reconfigure(encoding="utf-8")
     args = _parser().parse_args(argv)
-    if args.command == "prepare":
+    if args.command == "gate":
+        result = gate(args)
+    elif args.command == "prepare":
         result = prepare(args)
     elif args.command == "accept":
         result = accept(args)
@@ -1258,7 +1534,7 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "run":
         result = run_release(args)
     else:
-        result = status(args.attempt)
+        result = status(args.attempt, artifact_path=args.artifact)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

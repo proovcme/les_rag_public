@@ -508,7 +508,9 @@ def publish(
     contract: dict[str, Any],
     *,
     extra_assets: Iterable[Path] = (),
-    attempt_path: Path,
+    attempt_path: Path | None = None,
+    artifact_path: Path | None = None,
+    acceptance_path: Path | None = None,
     stage_callback: Callable[[str, dict[str, Any]], None] | None = None,
     dist: Path | None = None,
     resume_stage: str = "accepted",
@@ -528,31 +530,56 @@ def publish(
     names = [path.name for path in assets]
     if len(names) != len(set(names)):
         raise RuntimeError("release asset names must be unique")
-    attempt = release_receipt.load_attempt(Path(attempt_path))
-    if (
-        attempt.get("stage") != resume_stage
-        or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
-        or attempt.get("publishable") is not True
-    ):
-        raise RuntimeError("installed acceptance required before GitHub publication")
     head = output(["git", "rev-parse", "HEAD"])
     upstream = output(["git", "rev-parse", "@{u}"])
+    if artifact_path is not None:
+        artifact = release_receipt.load_artifact_receipt(Path(artifact_path))
+        if acceptance_path is None:
+            raise RuntimeError("accepted artifact publication requires acceptance receipt")
+        acceptance = release_receipt.load_acceptance_attempt(Path(acceptance_path))
+        if (
+            acceptance.get("result") != "accepted"
+            or acceptance.get("artifact_id") != artifact.get("artifact_id")
+            or artifact.get("publishable") is not True
+            or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
+        ):
+            raise RuntimeError("installed acceptance required before GitHub publication")
+        attempt = artifact
+        release_receipt.verify_artifact_receipt(
+            artifact,
+            commit=head,
+            assets=[Path(str(item["path"])) for item in artifact.get("assets", [])],
+        )
+    else:
+        if attempt_path is None:
+            raise RuntimeError("release publication binding is missing")
+        attempt = release_receipt.load_attempt(Path(attempt_path))
+        if (
+            attempt.get("stage") != resume_stage
+            or resume_stage not in {"accepted", "draft_uploaded", "draft_verified"}
+            or attempt.get("publishable") is not True
+        ):
+            raise RuntimeError("installed acceptance required before GitHub publication")
+        release_receipt.verify_binding(
+            attempt,
+            commit=head,
+            assets=[Path(str(item["path"])) for item in attempt.get("artifacts", [])],
+        )
     if head != upstream or head != attempt.get("target_commit"):
         raise RuntimeError("accepted target, HEAD, and pushed upstream must be identical")
-    release_receipt.verify_binding(
-        attempt,
-        commit=head,
-        assets=[Path(str(item["path"])) for item in attempt.get("artifacts", [])],
-    )
     receipt = next((path for path in assets if path.name == "release-receipt.json"), None)
     if receipt is None:
         raise RuntimeError("accepted release receipt asset is missing")
     receipt_payload = json.loads(receipt.read_text(encoding="utf-8-sig"))
-    if (
-        receipt_payload.get("schema") != release_receipt.PUBLIC_SCHEMA
-        or receipt_payload.get("release_id") != attempt.get("release_id")
-        or receipt_payload.get("target_commit") != head
-    ):
+    receipt_identity_ok = (
+        receipt_payload.get("schema") == release_receipt.PUBLIC_ARTIFACT_SCHEMA
+        and receipt_payload.get("artifact_id") == attempt.get("artifact_id")
+        and receipt_payload.get("acceptance_id") == acceptance.get("acceptance_id")
+        if artifact_path is not None
+        else receipt_payload.get("schema") == release_receipt.PUBLIC_SCHEMA
+        and receipt_payload.get("release_id") == attempt.get("release_id")
+    )
+    if not receipt_identity_ok or receipt_payload.get("target_commit") != head:
         raise RuntimeError("public release receipt does not match accepted attempt")
     try:
         latest = json.loads(
