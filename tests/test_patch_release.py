@@ -163,8 +163,10 @@ def test_windows_patch_release_is_fail_closed_and_isolated():
 def test_prepared_update_smoke_uses_checkout_owned_temporary_root():
     source = (ROOT / "tools/windows_prepare_update.ps1").read_text(encoding="utf-8")
 
-    assert '.codex_tmp\\windows-release-smoke' in source
-    assert '[guid]::NewGuid().ToString("N")' in source
+    assert '.codex_tmp\\wrs' in source
+    assert '$BuildCommit.Substring(0, 12)' in source
+    assert '[guid]::NewGuid().ToString("N").Substring(0, 8)' in source
+    assert '.codex_tmp\\windows-release-smoke' not in source
     assert 'Join-Path $env:LOCALAPPDATA "LES-release-smoke"' not in source
 
 

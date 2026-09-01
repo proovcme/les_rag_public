@@ -95,8 +95,10 @@ try {
   # Keep the clean-install contour inside the checkout-owned temporary root.
   # A previous elevated/installer-owned LOCALAPPDATA contour can carry ACLs
   # that the next prepare cannot remove, even though it is not production.
-  $SmokeRun = "$BuildCommit-$([guid]::NewGuid().ToString("N"))"
-  $SmokeRoot = Join-Path $RepoRoot ".codex_tmp\windows-release-smoke\$SmokeRun"
+  # Keep this path deliberately short: uv/hatchling append deep editable-build
+  # paths and Windows fails those with STATUS_NAME_TOO_LONG before LES starts.
+  $SmokeRun = "$($BuildCommit.Substring(0, 12))-$([guid]::NewGuid().ToString("N").Substring(0, 8))"
+  $SmokeRoot = Join-Path $RepoRoot ".codex_tmp\wrs\$SmokeRun"
   $InstallRoot = Join-Path $SmokeRoot "app"
   $StateRoot = Join-Path $SmokeRoot "state"
   foreach ($path in @($InstallRoot, $StateRoot)) {

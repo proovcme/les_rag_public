@@ -65,6 +65,10 @@ Installed clean-smoke запускает Windows bootstrap только с си�
 `VIRTUAL_ENV`, `UV_PROJECT_ENVIRONMENT`, `UV_CACHE_DIR`. Операторский PowerShell
 7/Codex environment не должен лишать дочерний Windows PowerShell стандартных
 cmdlet вроде `Get-FileHash` или направлять installed bootstrap в dev-venv.
+Smoke-root остаётся checkout-owned, но его имя ограничено
+`.codex_tmp/wrs/<sha12>-<id8>`: `uv` и Hatchling создают под ним глубокое дерево,
+поэтому полный commit и GUID в пути запрещены как источник Windows
+`STATUS_NAME_TOO_LONG`.
 
 Построитель cumulative patch читает Git history пакетно и печатает
 ограниченный прогресс по ancestry и manifest-файлам. Результат автоматического

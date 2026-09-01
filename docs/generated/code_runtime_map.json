@@ -11164,7 +11164,7 @@
     },
     {
       "inbound": [],
-      "lines": 487,
+      "lines": 489,
       "module": "tests.test_patch_release",
       "outbound": [
         "tools/patch_release.py",
@@ -18037,7 +18037,7 @@
     "runtime_support": 8,
     "test_or_tool_only": 615,
     "tracked_python_files": 961,
-    "tracked_python_lines": 300872
+    "tracked_python_lines": 300874
   },
   "warnings": []
 }

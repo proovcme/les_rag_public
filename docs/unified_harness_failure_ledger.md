@@ -1,5 +1,16 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-01 — Editable-build clean smoke превысил Windows path limit
+
+- **Симптом:** NSIS `5.1.677` успешно собрался и установился в изолированный
+  каталог, но offline `uv sync` завершил Hatchling с `0xc0000106` до запуска
+  приложения.
+- **Причина:** checkout-owned smoke-root включал полный commit и GUID; глубокие
+  временные каталоги editable build превысили допустимую длину Windows path
+  (`STATUS_NAME_TOO_LONG`).
+- **Исправление:** изоляция сохранена, имя ограничено
+  `.codex_tmp/wrs/<sha12>-<id8>`; regression фиксирует обе границы длины.
+
 ## 2026-09-01 — Clean-install smoke унаследовал несовместимый PSModulePath
 
 - **Симптом:** Tauri и NSIS успешно создали `ЛЕС_5.1.676_x64-setup.exe`, clean

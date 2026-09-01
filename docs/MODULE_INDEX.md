@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.38 bounded Windows smoke path:** full-release clean-install сохраняет
+> изоляцию внутри checkout, но использует короткий `.codex_tmp/wrs/<sha12>-<id8>`.
+> Глубокие временные пути `uv`/Hatchling больше не достигают Windows
+> `STATUS_NAME_TOO_LONG` до запуска ЛЕС. Точки:
+> `tools/windows_prepare_update.ps1`, `tests/test_patch_release.py`. Статус
+> док↔код: ✅.
+
 > **0.30.37 installed-smoke environment repair:** full-release smoke перед
 > запуском установленного `bootstrap.ps1` восстанавливает совместимый с Windows
 > PowerShell 5.1 `PSModulePath` и удаляет унаследованные dev `VIRTUAL_ENV/UV_*`.
