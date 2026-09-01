@@ -488,6 +488,43 @@ def build_profiles():
                         "require_citations", bool(event.value)
                     )
                 )
+                with ui.row().classes("w-full gap-4 flex-wrap"):
+                    retrieval_candidate_k = ui.number(
+                        "Кандидаты RRF",
+                        value=int((draft.get("rag_policy") or {}).get("retrieval_candidate_k", 64)),
+                        min=1,
+                        max=512,
+                        step=1,
+                    ).props("outlined dense").classes("min-w-48 flex-1")
+                    document_diversity_k = ui.number(
+                        "Фрагментов на документ",
+                        value=int((draft.get("rag_policy") or {}).get("document_diversity_k", 2)),
+                        min=1,
+                        max=32,
+                        step=1,
+                    ).props("outlined dense").classes("min-w-48 flex-1")
+                    model_evidence_k = ui.number(
+                        "Evidence модели",
+                        value=int((draft.get("rag_policy") or {}).get("model_evidence_k", 6)),
+                        min=1,
+                        max=64,
+                        step=1,
+                    ).props("outlined dense").classes("min-w-48 flex-1")
+                retrieval_candidate_k.on_value_change(
+                    lambda event: draft.setdefault("rag_policy", {}).__setitem__(
+                        "retrieval_candidate_k", int(event.value or 64)
+                    )
+                )
+                document_diversity_k.on_value_change(
+                    lambda event: draft.setdefault("rag_policy", {}).__setitem__(
+                        "document_diversity_k", int(event.value or 2)
+                    )
+                )
+                model_evidence_k.on_value_change(
+                    lambda event: draft.setdefault("rag_policy", {}).__setitem__(
+                        "model_evidence_k", int(event.value or 6)
+                    )
+                )
 
             with ui.row().classes("w-full justify-end"):
                 save_button = action_button(

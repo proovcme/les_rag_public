@@ -86,6 +86,17 @@ def test_profiles_page_uses_api_owned_text_budgets_for_counters_and_save_state()
     assert "Превышен лимит" in source
 
 
+def test_profiles_page_exposes_all_effective_retrieval_limits():
+    source = inspect.getsource(profiles_page.build_profiles)
+
+    assert "Кандидаты RRF" in source
+    assert "Фрагментов на документ" in source
+    assert "Evidence модели" in source
+    assert '"retrieval_candidate_k"' in source
+    assert '"document_diversity_k"' in source
+    assert '"model_evidence_k"' in source
+
+
 def test_chat_can_apply_the_current_active_profile_on_the_next_message():
     source = inspect.getsource(chat_page.build_chat)
 

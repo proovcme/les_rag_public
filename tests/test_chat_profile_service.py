@@ -11,6 +11,8 @@ from proxy.services.chat_profile_service import (
     activate_profile_revision,
     canonical_profile_mode,
     delete_revision,
+    effective_profile_snapshot,
+    effective_retrieval_policy,
     import_legacy_prompt_overrides,
     publish_profile_revision,
     publish_text_revision,
@@ -18,6 +20,38 @@ from proxy.services.chat_profile_service import (
     resolve_profile_system_dataset_ids,
     resolve_chat_profile,
 )
+
+
+def test_effective_profile_adds_retrieval_limits_without_mutating_revision():
+    stored = {"mode": "search", "rag_policy": {"grounded": True}}
+
+    effective = effective_profile_snapshot(stored)
+
+    assert effective["rag_policy"] == {
+        "grounded": True,
+        "retrieval_candidate_k": 64,
+        "document_diversity_k": 2,
+        "model_evidence_k": 6,
+    }
+    assert stored == {"mode": "search", "rag_policy": {"grounded": True}}
+
+
+def test_effective_retrieval_policy_clamps_invalid_and_conflicting_values():
+    policy = effective_retrieval_policy(
+        {
+            "rag_policy": {
+                "retrieval_candidate_k": 2,
+                "document_diversity_k": 0,
+                "model_evidence_k": 12,
+            }
+        }
+    )
+
+    assert policy == {
+        "retrieval_candidate_k": 12,
+        "document_diversity_k": 1,
+        "model_evidence_k": 12,
+    }
 
 
 def test_factory_seed_is_idempotent_and_activates_four_base_profiles(tmp_path):

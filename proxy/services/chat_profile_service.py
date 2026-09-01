@@ -12,7 +12,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from uuid import uuid4
 
 from backend.rag_config import rag_meta_db_path
@@ -43,6 +43,48 @@ MODE_ALIASES = {
     "doc_review": "engineer",
     "normcontrol": "engineer",
 }
+
+DEFAULT_RETRIEVAL_POLICY = {
+    "retrieval_candidate_k": 64,
+    "document_diversity_k": 2,
+    "model_evidence_k": 6,
+}
+
+
+def _bounded_int(value: Any, *, default: int, low: int, high: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, low), high)
+
+
+def effective_retrieval_policy(snapshot: Mapping[str, Any] | None) -> dict[str, int]:
+    """Return safe retrieval plumbing limits without mutating a profile revision."""
+
+    raw = dict((snapshot or {}).get("rag_policy") or {})
+    model_evidence_k = _bounded_int(
+        raw.get("model_evidence_k"),
+        default=DEFAULT_RETRIEVAL_POLICY["model_evidence_k"],
+        low=1,
+        high=64,
+    )
+    retrieval_candidate_k = _bounded_int(
+        raw.get("retrieval_candidate_k"),
+        default=DEFAULT_RETRIEVAL_POLICY["retrieval_candidate_k"],
+        low=1,
+        high=512,
+    )
+    return {
+        "retrieval_candidate_k": max(model_evidence_k, retrieval_candidate_k),
+        "document_diversity_k": _bounded_int(
+            raw.get("document_diversity_k"),
+            default=DEFAULT_RETRIEVAL_POLICY["document_diversity_k"],
+            low=1,
+            high=32,
+        ),
+        "model_evidence_k": model_evidence_k,
+    }
 
 
 def canonical_profile_mode(mode: str | None) -> str:
@@ -121,10 +163,11 @@ def effective_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Apply runtime workflow invariants without mutating immutable revisions."""
 
     effective = dict(snapshot)
+    rag_policy = dict(effective.get("rag_policy") or {})
+    rag_policy.update(effective_retrieval_policy(effective))
     if canonical_profile_mode(effective.get("mode")) == "estimator":
-        rag_policy = dict(effective.get("rag_policy") or {})
         rag_policy["model_authored_initial_query"] = True
-        effective["rag_policy"] = rag_policy
+    effective["rag_policy"] = rag_policy
     return effective
 
 
