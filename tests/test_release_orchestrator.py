@@ -68,6 +68,22 @@ def test_default_full_feed_uses_canonical_release_work_base_not_stale_dist_file(
     assert resolved == canonical.resolve()
 
 
+def test_default_full_feed_falls_back_to_canonical_repo_from_a_worktree(tmp_path):
+    worktree_release_root = tmp_path / "repo" / ".worktrees" / "feature" / "dist" / "release-work"
+    canonical = tmp_path / "repo" / "dist" / "release-work" / "full-base" / "latest.json"
+    canonical.parent.mkdir(parents=True)
+    canonical.write_text(json.dumps({"target_commit": BASE}), encoding="utf-8")
+    args = argparse.Namespace(
+        work_root=worktree_release_root,
+        repo_root=str(tmp_path / "repo"),
+        full_feed=None,
+    )
+
+    resolved = release_orchestrator.resolve_full_feed(args)
+
+    assert resolved == canonical.resolve()
+
+
 def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_path):
     args = _args(tmp_path)
     args.full_feed.write_text(
@@ -132,6 +148,54 @@ def test_prepare_selects_patch_without_calling_full_builder(monkeypatch, tmp_pat
     assert result["stage"] == "prepared"
     assert Path(result["state_path"]).is_file()
     assert [item["name"] for item in result["artifacts"]] == ["les-patch.zip"]
+
+
+def test_prepare_force_full_uses_full_transaction_for_an_incompatible_install(
+    monkeypatch, tmp_path
+):
+    args = _args(tmp_path, force_full=True)
+    args.full_feed.write_text(
+        json.dumps({"target_commit": BASE, "version": "0.30.0"}),
+        encoding="utf-8",
+    )
+    calls = []
+    monkeypatch.setattr(release_orchestrator, "require_release_source", lambda **_kwargs: TARGET)
+    monkeypatch.setattr(
+        release_orchestrator,
+        "resolve_commit",
+        lambda _root, value="HEAD": BASE if value == BASE else TARGET,
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "load_contract",
+        lambda _root: {"product_version": "0.30.35", "build_number": 675},
+    )
+    monkeypatch.setattr(
+        release_orchestrator,
+        "classify_release",
+        lambda *_args, **_kwargs: _patch_classification(),
+    )
+    monkeypatch.setattr(release_orchestrator, "run_prepare_gates", lambda _root: [])
+    monkeypatch.setattr(
+        release_orchestrator,
+        "build_patch_candidate",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("patch builder called")),
+    )
+
+    def full_builder(**kwargs):
+        calls.append("full")
+        return _minimal_candidate(kwargs["output"])
+
+    monkeypatch.setattr(release_orchestrator, "build_full_candidate", full_builder)
+
+    result = release_orchestrator.prepare(args)
+
+    assert calls == ["full"]
+    assert result["release_class"] == "full"
+    prepared = next(item for item in result["transitions"] if item["stage"] == "prepared")
+    assert prepared["evidence"]["classification"]["triggers"] == [
+        {"path": "<installed-runtime>", "reason": "operator forced a full transaction"}
+    ]
 
 
 def test_prepare_rejects_patch_allowlist_drift_before_expensive_gates(monkeypatch, tmp_path):
@@ -201,6 +265,64 @@ def test_patch_candidate_prints_builder_progress(monkeypatch, tmp_path, capsys):
     assert "История патча: 7/7" in visible
     assert "Файлы патча: 2/2 — proxy/b.py" in visible
     assert captured["installed_runtime"] == runtime
+
+
+def test_full_candidate_prepares_and_binds_a_local_acceptance_job(monkeypatch, tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    baseline = tmp_path / "LES-smeta-baseline.zip"
+    baseline.write_bytes(b"verified baseline")
+    prepared_installer = tmp_path / "cache" / "LES-Setup.exe"
+    prepared_installer.parent.mkdir()
+    prepared_installer.write_bytes(b"immutable installer")
+    prepared = {
+        "schema": "les.windows.prepared-update.v1",
+        "status": "prepared",
+        "product_version": "0.30.35",
+        "build_number": 675,
+        "desktop_version": "5.1.675",
+        "commit": TARGET,
+        "installer": str(prepared_installer),
+        "sha256": release_orchestrator._sha256(prepared_installer),
+        "smoke": {"ok": True},
+    }
+    args = _args(
+        tmp_path,
+        host="local",
+        repo_root=str(repo),
+        branch="codex/release",
+        smeta_baseline_archive=baseline,
+    )
+    commands = []
+
+    def fake_run(command, *, root, capture=False):
+        commands.append(tuple(command))
+        assert command[0] == "powershell.exe"
+        return subprocess.CompletedProcess(command, 0, stdout=json.dumps(prepared), stderr="")
+
+    monkeypatch.setattr(release_orchestrator, "_run", fake_run)
+    monkeypatch.setattr(
+        release_orchestrator.patch_release,
+        "remote_prepare_update",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("remote prepare called")),
+    )
+
+    result = release_orchestrator.build_full_candidate(
+        target=TARGET,
+        output=tmp_path / "candidate",
+        contract={"product_version": "0.30.35", "build_number": 675},
+        args=args,
+    )
+
+    public_installer = tmp_path / "candidate" / "public" / "LES-Setup.exe"
+    acceptance = tmp_path / "candidate" / "acceptance"
+    job = json.loads((acceptance / "hard-update-job.json").read_text(encoding="utf-8"))
+    assert commands and public_installer.read_bytes() == b"immutable installer"
+    assert (acceptance / "LES-Setup.exe").read_bytes() == b"immutable installer"
+    assert job["schema"] == "les.windows-hard-update.v1"
+    assert job["installer"] == str((acceptance / "LES-Setup.exe").resolve())
+    assert job["target_commit"] == TARGET
+    assert result["acceptance_path"] == acceptance.resolve()
 
 
 def test_cli_forces_utf8_for_windows_operator_output(tmp_path):

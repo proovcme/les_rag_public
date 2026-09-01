@@ -24,7 +24,7 @@ from tools import (
     release_receipt,
     windows_release_acceptance,
 )
-from tools.release_classification import ReleaseClassification, classify_release
+from tools.release_classification import ReleaseClassification, ReleaseTrigger, classify_release
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -231,29 +231,88 @@ def build_full_candidate(
     baseline = Path(baseline).resolve()
     if not baseline.is_file():
         raise RuntimeError("verified smeta baseline archive is missing")
-    prepared = patch_release.remote_prepare_update(
-        host=args.host,
-        repo_root=args.repo_root,
-        branch=args.branch,
-        version=str(contract["product_version"]),
-        build_number=int(contract["build_number"]),
-        commit=target,
-        smeta_baseline_archive=baseline,
-        smeta_baseline_sha256=_sha256(baseline),
-    )
-    public = Path(output).resolve() / "public"
+    local_build = is_local_host(args.host)
+    if local_build:
+        command = (
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(Path(args.root) / "tools" / "windows_prepare_update.ps1"),
+            "-Version",
+            str(contract["product_version"]),
+            "-BuildNumber",
+            str(int(contract["build_number"])),
+            "-BuildCommit",
+            target,
+            "-RepoRoot",
+            str(Path(args.root).resolve()),
+            "-SmetaBaselineArchive",
+            str(baseline),
+        )
+        prepared = _remote_json(
+            _run(command, root=Path(args.root), capture=True).stdout
+        )
+        if prepared.get("status") != "prepared" or prepared.get("commit") != target:
+            raise RuntimeError("local Windows update preparation is not valid")
+    else:
+        prepared = patch_release.remote_prepare_update(
+            host=args.host,
+            repo_root=args.repo_root,
+            branch=args.branch,
+            version=str(contract["product_version"]),
+            build_number=int(contract["build_number"]),
+            commit=target,
+            smeta_baseline_archive=baseline,
+            smeta_baseline_sha256=_sha256(baseline),
+        )
+    output = Path(output).resolve()
+    public = output / "public"
+    acceptance = output / "acceptance"
     public.mkdir(parents=True)
     installer = public / "LES-Setup.exe"
-    _run(("scp", f"{args.host}:{str(prepared['installer']).replace(chr(92), '/')}", str(installer)), root=Path(args.root))
+    if local_build:
+        acceptance.mkdir(parents=True)
+        shutil.copy2(Path(str(prepared["installer"])), installer)
+    else:
+        _run(("scp", f"{args.host}:{str(prepared['installer']).replace(chr(92), '/')}", str(installer)), root=Path(args.root))
     if _sha256(installer) != str(prepared.get("installer_sha256") or "").lower():
-        raise RuntimeError("fetched full candidate differs from prepared installer")
+        expected_sha = str(prepared.get("sha256") or "").lower()
+        if _sha256(installer) != expected_sha:
+            raise RuntimeError("fetched full candidate differs from prepared installer")
     (public / "LES-Setup.exe.sha256").write_text(
         f"{_sha256(installer)}  LES-Setup.exe\n", encoding="ascii"
     )
+    acceptance_path: Path = Path(str(prepared["installer"]))
+    if local_build:
+        acceptance_installer = acceptance / installer.name
+        shutil.copy2(installer, acceptance_installer)
+        job = {
+            "schema": "les.windows-hard-update.v1",
+            "update_id": f"acceptance-{target}",
+            "installer": str(acceptance_installer.resolve()),
+            "installer_sha256": _sha256(acceptance_installer),
+            "install_root": str(Path(args.install).resolve()),
+            "state_root": str(Path(args.state).resolve()),
+            "status_path": str(
+                (Path(args.state).resolve() / "artifacts" / "updates" / "hard-update-status.json")
+            ),
+            "product_version": str(contract["product_version"]),
+            "build_number": int(contract["build_number"]),
+            "desktop_version": str(prepared["desktop_version"]),
+            "target_commit": target,
+            "branch": str(args.branch),
+        }
+        (acceptance / "hard-update-job.json").write_text(
+            json.dumps(job, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        acceptance_path = acceptance
     return {
         "assets": sorted(public.iterdir()),
         "candidate_assets": [installer],
-        "acceptance_path": Path(str(prepared["installer"])),
+        "acceptance_path": acceptance_path,
         "build": prepared,
     }
 
@@ -281,14 +340,24 @@ def _write_latest(work_root: Path, state_path: Path, release_id: str) -> None:
 def resolve_full_feed(args: argparse.Namespace) -> Path:
     """Resolve the attested full-release feed used as the cumulative patch base."""
     configured = getattr(args, "full_feed", None)
-    candidate = (
-        Path(configured)
+    candidates = (
+        [Path(configured)]
         if configured is not None
-        else Path(args.work_root) / "full-base" / "latest.json"
-    ).resolve()
-    if not candidate.is_file():
-        raise RuntimeError(f"attested full-release feed is missing: {candidate}")
-    return candidate
+        else [
+            Path(args.work_root) / "full-base" / "latest.json",
+            Path(getattr(args, "repo_root", ROOT))
+            / "dist"
+            / "release-work"
+            / "full-base"
+            / "latest.json",
+        ]
+    )
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved.is_file():
+            return resolved
+    checked = ", ".join(str(candidate.resolve()) for candidate in candidates)
+    raise RuntimeError(f"attested full-release feed is missing; checked: {checked}")
 
 
 def _base_from_args(args: argparse.Namespace) -> str:
@@ -345,6 +414,19 @@ def prepare(args: argparse.Namespace) -> dict[str, Any]:
     contract = load_contract(root)
     base = _base_from_args(args)
     classification = classify_release(base, target, root=root)
+    if getattr(args, "force_full", False) and classification.kind == "patch":
+        classification = ReleaseClassification(
+            kind="full",
+            runtime_files=classification.runtime_files,
+            triggers=(
+                *classification.triggers,
+                ReleaseTrigger(
+                    "<installed-runtime>",
+                    "operator forced a full transaction",
+                ),
+            ),
+            ignored_version_surfaces=classification.ignored_version_surfaces,
+        )
     validate_patch_pipeline(classification)
     gates = [] if args.skip_gates else run_prepare_gates(root)
     candidate_root = work_root / "candidates" / target
@@ -448,7 +530,9 @@ def run_local_acceptance(
         )
     job = getattr(args, "job", None)
     if job is None:
-        raise RuntimeError("full local acceptance requires --job")
+        job = Path(acceptance_path) / "hard-update-job.json"
+    if not Path(job).is_file():
+        raise RuntimeError("full local acceptance requires a prepared hard-update job")
     return windows_release_acceptance.accept_full(
         job_path=Path(job),
         install=Path(args.install),
@@ -913,6 +997,7 @@ def _parser() -> argparse.ArgumentParser:
     prepare_cmd.add_argument("--full-feed", type=Path)
     prepare_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     prepare_cmd.add_argument("--smeta-baseline-archive", type=Path)
+    prepare_cmd.add_argument("--force-full", action="store_true")
     prepare_cmd.add_argument("--skip-gates", action="store_true")
     accept_cmd = sub.add_parser("accept")
     accept_cmd.add_argument("--root", type=Path, default=ROOT)
@@ -939,6 +1024,7 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--full-feed", type=Path)
     run_cmd.add_argument("--repo-root", default=r"C:\Users\Oleg\les_rag")
     run_cmd.add_argument("--smeta-baseline-archive", type=Path)
+    run_cmd.add_argument("--force-full", action="store_true")
     run_cmd.add_argument("--skip-gates", action="store_true")
     run_cmd.add_argument("--publish", action="store_true")
     run_cmd.add_argument("--attempt", type=Path)

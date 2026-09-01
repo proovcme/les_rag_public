@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-09-01)
 
 ```
-версия продукта (SemVer):  0.30.34
-номер сборки:              674
-версия Tauri/NSIS:         5.1.674
+версия продукта (SemVer):  0.30.35
+номер сборки:              675
+версия Tauri/NSIS:         5.1.675
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.34 chat → Qwen queries → grouped RAG → Qwen answer → code-built XLSX
-задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.30 / build 670 / commit a133a000
+dev implementation:       0.30.35 model-owned RAG/XLSX + fail-closed full-release recovery
+задеплоено на рантайм:     Mac 0.25.16 / build 489; Legion 0.30.31 / build 671 / commit 2a6eadac
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.34 cumulative patch; live dev acceptance пройдена, публикации/деплоя нет
-рантайм /api/version:      Legion 0.30.30 / build 670 / desktop 5.1.670 / commit a133a000; aligned
+следующий выпуск:          0.30.35 full recovery release; 0.30.34 patch acceptance fail-closed остановлена
+рантайм /api/version:      Legion 0.30.31 / build 671 / desktop 5.1.671 / commit 2a6eadac; aligned
 ```
+
+> **0.30.35 / build 675 worktree/full-release recovery (release candidate):**
+> failed attempt `9e54c899b9442c6c57c959c0` доказал два дефекта процедуры:
+> feature worktree не находила канонический attested full-base, а установленный
+> runtime с прежним `copy_files` не принадлежал разрешённой cumulative ancestry.
+> Feed теперь разрешается через канонический `repo_root`; явный `--force-full`
+> сохраняет fail-closed checksum boundary и выбирает полный NSIS. `--host local`
+> готовит installer без SSH, фиксирует exact SHA и создаёт bounded hard-update
+> job для install/smoke/rollback/reinstall. Публикация допустима только после
+> нового полного immutable attempt.
 
 > **0.30.34 / build 674 ordinary Qwen result → automatic XLSX (live accepted,
 > не задеплоен и не опубликован):** первый no-tools вызов Qwen получает полный

@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.35 release recovery:** release-orchestrator разрешает feature worktree
+> найти attested full-base в каноническом `repo_root`; `--force-full` переводит
+> доказанно несовместимую установленную базу в полный NSIS-контур, не ослабляя
+> checksum guard. Для `--host local` installer готовится штатным
+> `windows_prepare_update.ps1`, копируется в immutable candidate и получает
+> bounded hard-update job для install → smoke → rollback → reinstall. Точки:
+> `tools/release_orchestrator.py`, `tests/test_release_orchestrator.py`,
+> `docs/RELEASE_PROCEDURE.md`. Статус док↔код: ✅.
+
 > **Текущий model → RAG → result:** активный контракт закреплён в
 > [ADR-15](ADR-15-model-rag-result.md): одна модель видит исходный вопрос и
 > вложение, сама формулирует любое необходимое число запросов, получает ответы

@@ -1,5 +1,22 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-01 — Patch release не учитывал worktree и несовместимый установленный runtime
+
+- **Симптом 1:** release остановился до prepare, потому что искал attested
+  `full-base/latest.json` только внутри feature worktree, хотя канонический feed
+  находился в основном checkout.
+- **Симптом 2:** после зелёных gates cumulative patch дошёл до acceptance и был
+  правильно отклонён checksum guard: установленный
+  `chat_evidence_application_service.py` не совпадал ни с deploy-stamp commit,
+  ни с одной доверенной ancestry-ревизией даже после LF-нормализации.
+- **Причина:** feed-resolution не учитывал общий `repo_root`; release
+  classification не имела явного полного recovery-пути, а local full builder
+  безусловно пытался использовать SSH.
+- **Исправление:** канонический feed разрешается worktree-safe; `--force-full`
+  фиксирует в receipt причину полного выпуска; `--host local` готовит exact NSIS
+  локально и создаёт hard-update job для штатной acceptance. Произвольный SHA
+  не добавляется в manifest, checksum guard остаётся fail-closed.
+
 ## 2026-09-01 — Harness мешал рабочей Qwen обратиться к RAG
 
 - **Прямой baseline:** Qwen 3.5 9B без tools прочитала реальную ВОР, за несколько

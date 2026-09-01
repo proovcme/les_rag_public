@@ -18,9 +18,10 @@ make release RELEASE_ARGS='run --host local --publish'
 1. Сверяет `HEAD`, upstream, версию и generated maps; запускает `make verify`,
    `make test`, `make test-updater` и `make public-check`.
    Базу накопительного patch берёт только из проверенного
-   `dist/release-work/full-base/latest.json`; исторический `dist/latest.json`
-   не участвует в классификации. `--full-feed` нужен только для явной замены
-   этого attested full-base.
+   `dist/release-work/full-base/latest.json`; из feature worktree сначала
+   проверяет её локальный release-work, затем канонический `repo_root`.
+   Исторический `dist/latest.json` не участвует в классификации. `--full-feed`
+   нужен только для явной замены этого attested full-base.
 2. Автоматически выбирает soft patch или полный NSIS-выпуск и фиксирует SHA
    устанавливаемого ZIP/EXE в immutable attempt.
    Для текстового Windows runtime manifest дополнительно фиксирует exact SHA
@@ -44,6 +45,13 @@ make release RELEASE_ARGS='run --host local --publish'
 6. Создаёт GitHub draft с явным target commit, добавляет
    `release-receipt.json`, скачивает все assets обратно и сверяет SHA.
 7. Публикует draft и независимо сверяет public main, tag, feed, receipt и assets.
+
+Если checksum guard доказал, что установленный runtime не принадлежит
+доверенной ancestry cumulative patch, guard не ослабляют. Оператор повторяет
+выпуск с `--force-full --smeta-baseline-archive <verified.zip>`: `local`
+готовит NSIS напрямую через `windows_prepare_update.ps1`, а acceptance ставит
+exact installer, делает rollback и повторную установку через общий hard-update
+engine.
 
 Построитель cumulative patch читает Git history пакетно и печатает
 ограниченный прогресс по ancestry и manifest-файлам. Результат автоматического
