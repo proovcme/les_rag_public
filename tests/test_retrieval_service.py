@@ -503,6 +503,35 @@ async def test_native_rrf_failure_is_blocked_without_legacy_retrieval():
     assert backend.calls == []
 
 
+@pytest.mark.asyncio
+async def test_bounded_model_research_skips_document_router_and_512_scroll(monkeypatch):
+    from proxy.services import doc_router
+
+    monkeypatch.setenv("LES_TYPED_RETRIEVAL", "true")
+    monkeypatch.setattr(
+        doc_router,
+        "route_documents",
+        lambda **_kwargs: pytest.fail("bounded model research must not call doc router"),
+    )
+    backend = NativeHybridBackend()
+
+    result = await retrieve_chat_chunks(
+        question="монтаж шкафа",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=False,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+        result_limit=6,
+    )
+
+    assert backend.native_calls[0]["top_k"] == 6
+    assert len(result.chunks) <= 6
+
+
 def test_legacy_hybrid_backend_env_cannot_change_native_rrf(monkeypatch):
     monkeypatch.setenv("RAG_HYBRID_BACKEND", "sidecar_sparse")
 

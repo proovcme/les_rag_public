@@ -62,13 +62,26 @@ def _http_response_text(response: Any) -> str:
 
 def _smeta_source_row_count(text: str) -> int:
     raw = str(text or "")
+    labelled_rows = {
+        int(match.group(1))
+        for match in re.finditer(
+            r"^\s*Строка\s+(\d+)\s*(?:[—–-]|:)",
+            raw,
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+    }
+    if labelled_rows:
+        return len(labelled_rows)
     json_rows = len(re.findall(r'"source_no"\s*:', raw))
     if json_rows:
         return json_rows
     markdown_rows = 0
     for line in raw.splitlines():
         stripped = line.strip()
-        if not (stripped.startswith("|") and stripped.endswith("|")):
+        transport_match = re.match(r"^.+!R\d+:\s*(.+)$", stripped)
+        if transport_match:
+            stripped = transport_match.group(1).strip()
+        elif not (stripped.startswith("|") and stripped.endswith("|")):
             continue
         cells = [cell.strip() for cell in stripped.strip("|").split("|")]
         if len(cells) < 4:

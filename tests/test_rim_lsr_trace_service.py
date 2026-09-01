@@ -318,6 +318,21 @@ def test_positions_from_visible_lsr_rows_converts_physical_unit_to_norm_qty():
     assert bound["row_bindings"][0]["quantity_trace"]["formula"] == "61.0 м2 × 1 / 100 = 0.61"
 
 
+def test_positions_from_visible_lsr_rows_preserves_model_source_row():
+    bound = positions_from_visible_lsr_rows([
+        {
+            "source_row": 42,
+            "basis": "ГЭСН 12-01-034-02",
+            "title": "Устройство обрешетки",
+            "quantity": "61",
+            "unit": "м2",
+        }
+    ])
+
+    assert bound["positions"][0]["source_row"] == 42
+    assert bound["row_bindings"][0]["row"] == 42
+
+
 def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
     lsr = build_lsr_trace_from_visible_rows(
         [

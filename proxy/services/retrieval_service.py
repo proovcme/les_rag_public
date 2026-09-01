@@ -706,7 +706,11 @@ async def retrieve_chat_chunks(
     # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
     effective_doc_filter = list(doc_filter or [])
     _rt: dict[str, float] = {}  # под-фазовый тайминг ретрива (профилирование латентности)
-    if os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true" and is_technical_or_legal:
+    if (
+        bounded_result_limit is None
+        and os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true"
+        and is_technical_or_legal
+    ):
         _s = time.monotonic()
         try:
             from proxy.services.doc_router import route_documents

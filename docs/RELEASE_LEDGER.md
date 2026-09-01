@@ -25,6 +25,10 @@ dev implementation:       0.30.42 model→RAG result-integrity hotfix
 > `bge-m3`/`bge-m3:latest` не создают ложный отказ. Итог Qwen сохраняется без
 > перенумерации `source_row` и regex-подмены `norm_code`; локальная проверка
 > полноты/`Qx.Hy` не вызывает модель и не меняет её решение. Просроченный
+> capability evidence обновляется без рестарта. Финальный bounded RAG не
+> запускает скрытый document-router/JSON-вызов; номера подписанных и XLSX-строк
+> сохраняются до расчёта, а конфликты файла выдаются как `partial`, не скрывая
+> артефакт. Активная база явно использует `bge-m3:latest`, без правки ядра.
 > capability snapshot обновляется при первом чате без рестарта. Общий health
 > проверяет native dense+sparse RRF и больше не зависит от legacy lexical
 > sidecar. Release orchestrator теперь разрешает attested full-feed и при явно

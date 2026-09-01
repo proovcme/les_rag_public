@@ -722,10 +722,16 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
     positions: list[dict[str, Any]] = []
     bindings: list[dict[str, Any]] = []
     for idx, row in enumerate(rows or [], 1):
+        model_source_row = row.get("source_row")
+        source_row = (
+            model_source_row
+            if isinstance(model_source_row, int) and not isinstance(model_source_row, bool) and model_source_row > 0
+            else idx
+        )
         code = _code_from_visible_row(row)
         if not code:
             bindings.append({
-                "row": idx,
+                "row": source_row,
                 "status": "norm_selection_required",
                 "message": "в строке нет шифра нормы",
                 "source_row": row,
@@ -734,7 +740,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         norm = gesn_service.get_norm(code)
         if norm is None:
             bindings.append({
-                "row": idx,
+                "row": source_row,
                 "code": code,
                 "status": "norm_not_found",
                 "message": "шифр нормы не найден в нормативной базе",
@@ -744,7 +750,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         norm_qty, qty_trace = _norm_qty_from_visible_row(row, code, norm)
         if norm_qty is None:
             bindings.append({
-                "row": idx,
+                "row": source_row,
                 "code": code,
                 "status": qty_trace.get("status") or "needs_input",
                 "quantity_trace": qty_trace,
@@ -756,7 +762,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             "code": code,
             "qty": norm_qty,
             "section": str(_first_value(row, "section", "раздел") or "").strip() or "Без раздела",
-            "source_row": idx,
+            "source_row": source_row,
             "quantity_trace": qty_trace,
         }
         if title:
@@ -765,7 +771,7 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
             position["unit"] = norm.get("unit")
         positions.append(position)
         bindings.append({
-            "row": idx,
+            "row": source_row,
             "code": code,
             "status": "bound",
             "quantity_trace": qty_trace,

@@ -2217,5 +2217,22 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     assert after_protected == before_protected
 
 
+def test_workbook_projection_keeps_bounded_conflict_diagnostics():
+    raw = {
+        "schema": "les.workbook_tool_result.v1",
+        "tool": "build_lsr_workbook",
+        "status": "complete",
+        "missing": ["row:2:unit_conflict"],
+        "blockers": [],
+        "artifact": {"revision_id": "rev-2"},
+    }
+
+    safe = service.safe_workbook_history_projection(raw)
+
+    assert safe["status"] == "partial"
+    assert safe["missing"] == ["row:2:unit_conflict"]
+    assert safe["blockers"] == []
+
+
 async def _async_value(value):
     return value

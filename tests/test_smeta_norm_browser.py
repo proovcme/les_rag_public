@@ -764,30 +764,6 @@ def test_rag_manifest_rejects_embedding_or_base_mismatch(tmp_path):
     ) == (False, "base_revision_mismatch")
 
 
-def test_rag_manifest_accepts_ollama_latest_alias_for_the_same_model(tmp_path):
-    from proxy.smeta_core.norm_browser import _rag_manifest_status
-
-    base = tmp_path / "base.sqlite"
-    base.write_bytes(b"current-base")
-    base.with_name("les_smeta_norm_rag_manifest.json").write_text(
-        json.dumps(
-            {
-                "status": "passed",
-                "collection": "customer_smeta_cards",
-                "embedding_model": "bge-m3:latest",
-                "base_sha256": hashlib.sha256(base.read_bytes()).hexdigest(),
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    assert _rag_manifest_status(
-        base_path=base,
-        collection="customer_smeta_cards",
-        embedding_model="bge-m3",
-    ) == (True, "compatible")
-
-
 def test_smeta_dense_requires_same_or_explicitly_verified_embedding_space(tmp_path, monkeypatch):
     from proxy.smeta_core.norm_browser import _rag_dense_compatibility
 

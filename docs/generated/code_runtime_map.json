@@ -2972,7 +2972,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3853,
+      "lines": 3859,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3500,7 +3500,8 @@
     },
     {
       "inbound": [
-        "proxy/services/retrieval_service.py"
+        "proxy/services/retrieval_service.py",
+        "tests/test_retrieval_service.py"
       ],
       "lines": 212,
       "module": "proxy.services.doc_router",
@@ -5825,7 +5826,7 @@
         "tests/test_retrieval_service.py",
         "tools/coreml_validator_probe.py"
       ],
-      "lines": 1355,
+      "lines": 1359,
       "module": "proxy.services.retrieval_service",
       "outbound": [
         "backend/colbert_late_interaction.py",
@@ -5914,7 +5915,7 @@
         "tests/test_rim_trace_xlsx.py",
         "tests/test_smeta_core.py"
       ],
-      "lines": 816,
+      "lines": 822,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6308,7 +6309,7 @@
         "tools/smeta_model_quality_benchmark.py",
         "tools/smeta_stability_ab_run.py"
       ],
-      "lines": 2437,
+      "lines": 2450,
       "module": "proxy.services.smeta_chat_adapter_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -7299,7 +7300,7 @@
         "tools/smeta_rerank_ab_probe.py",
         "tools/smeta_retrieval_recall_probe.py"
       ],
-      "lines": 1659,
+      "lines": 1655,
       "module": "proxy.smeta_core.norm_browser",
       "outbound": [
         "backend/inference/bm25_sparse.py",
@@ -8883,7 +8884,7 @@
     },
     {
       "inbound": [],
-      "lines": 2221,
+      "lines": 2238,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -11981,10 +11982,11 @@
     },
     {
       "inbound": [],
-      "lines": 1073,
+      "lines": 1102,
       "module": "tests.test_retrieval_service",
       "outbound": [
         "backend/interface.py",
+        "proxy/services/doc_router.py",
         "proxy/services/lexical_index_service.py",
         "proxy/services/retrieval_service.py",
         "proxy/services/saferag_service.py"
@@ -12056,7 +12058,7 @@
     },
     {
       "inbound": [],
-      "lines": 379,
+      "lines": 394,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -12489,7 +12491,7 @@
     },
     {
       "inbound": [],
-      "lines": 1611,
+      "lines": 1628,
       "module": "tests.test_smeta_chat_application_service",
       "outbound": [
         "proxy/services/smeta_chat_adapter_service.py",
@@ -12584,7 +12586,7 @@
     },
     {
       "inbound": [],
-      "lines": 885,
+      "lines": 861,
       "module": "tests.test_smeta_norm_browser",
       "outbound": [
         "proxy/smeta_core/norm_browser.py",
@@ -18043,7 +18045,7 @@
     "runtime_support": 9,
     "test_or_tool_only": 614,
     "tracked_python_files": 961,
-    "tracked_python_lines": 301721
+    "tracked_python_lines": 301800
   },
   "warnings": []
 }

@@ -6,6 +6,7 @@ import time
 import pytest
 
 from proxy.services import smeta_chat_application_service as service
+from proxy.services import smeta_chat_adapter_service as adapter_service
 
 _SMETA_HOST_ENV = (
     "LES_SMETA_DOCUMENT_BATCH_SIZE",
@@ -15,6 +16,22 @@ _SMETA_HOST_ENV = (
     "LES_SMETA_DOCUMENT_TOP_P",
     "LES_SMETA_LOCAL_GLOBAL_REVIEW",
 )
+
+
+def test_source_row_count_reads_plain_labelled_and_xlsx_transport_rows():
+    labelled = "\n".join(
+        f"Строка {index} — Работа {index}; ед. изм.: шт.; количество: {index}"
+        for index in range(1, 5)
+    )
+    xlsx_context = """Файл: test.xlsx
+## Лист: ВОР
+ВОР!R1: № | Наименование | Ед. изм. | Количество
+ВОР!R2: 1 | Монтаж шкафа | шт. | 2
+ВОР!R3: 2 | Прокладка кабеля | м | 120
+Итого непустых строк на листе «ВОР»: 3"""
+
+    assert adapter_service._smeta_source_row_count(labelled) == 4
+    assert adapter_service._smeta_source_row_count(xlsx_context) == 2
 
 
 def _clear_smeta_host_env(monkeypatch) -> None:

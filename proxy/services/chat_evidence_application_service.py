@@ -244,6 +244,12 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         return {field: source[field] for field in fields if field in source}
 
     safe = selected(result, ("schema", "tool", "status", "code"))
+    if safe.get("status") in {"complete", "partial"}:
+        for field in ("missing", "blockers"):
+            values = result.get(field)
+            safe[field] = [str(value)[:500] for value in values[:100]] if isinstance(values, list) else []
+        if safe.get("status") == "complete" and (safe["missing"] or safe["blockers"]):
+            safe["status"] = "partial"
     artifact = selected(
         result.get("artifact"),
         (
@@ -271,7 +277,7 @@ def harvest_workbook_tool_result(payload: dict[str, Any] | None) -> dict[str, An
     result = safe_workbook_history_projection(payload)
     if (
         result.get("schema") != "les.workbook_tool_result.v1"
-        or result.get("status") != "complete"
+        or result.get("status") not in {"complete", "partial"}
     ):
         return {}
     artifact = result.get("artifact") if isinstance(result.get("artifact"), dict) else {}
