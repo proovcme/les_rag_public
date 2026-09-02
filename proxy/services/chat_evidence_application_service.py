@@ -623,7 +623,7 @@ def parse_model_rag_queries(raw: str) -> list[str]:
 def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
-    required_fields = {"title", "unit", "quantity", "norm_code"}
+    required_fields = {"title", "unit", "norm_code"}
     header_fields = {
         "source_row": "source_row",
         "№": "source_row",
@@ -644,6 +644,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "norm_code (шифр)": "norm_code",
         "нормативная база (шифр нормы)": "norm_code",
         "нормативная база (norm code)": "norm_code",
+        "нормативный код (гэсн/ер)": "norm_code",
         "analogue": "analogue",
         "analogue / coverage": "analogue",
         "аналог/обоснование": "analogue",
@@ -651,10 +652,12 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "coverage": "coverage",
         "coverage (соответствие)": "coverage",
         "примечание инженера": "coverage",
+        "примечание": "coverage_fallback",
         "примечания к составу работ": "coverage",
         "примечания к выбору": "coverage",
         "coefficient": "coefficient",
         "coefficient (кэф.)": "coefficient",
+        "коэфф.": "coefficient",
         "evidence_refs": "evidence_refs",
     }
 
@@ -714,6 +717,12 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             continue
         header = cells(lines[header_index])
         mapped_header = [field_name(item) for item in header]
+        if "coverage_fallback" in mapped_header:
+            fallback_name = "" if "coverage" in mapped_header else "coverage"
+            mapped_header = [
+                fallback_name if item == "coverage_fallback" else item
+                for item in mapped_header
+            ]
         if (
             not header
             or not required_fields.issubset(set(mapped_header))
@@ -734,7 +743,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             values = cells(lines[row_index])
             if not values:
                 break
-            if len(values) != len(header):
+            if len(values) < len(header):
+                values = values + [""] * (len(header) - len(values))
+            elif len(values) > len(header):
                 return None
             visible_values = [value.replace("**", "").strip() for value in values]
             if visible_values[0].casefold().startswith("раздел") and not any(
@@ -758,7 +769,20 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                         return None
                     row[name] = parsed_source_row
                 elif name in {"quantity", "coefficient"}:
-                    parsed_number = number(value)
+                    numeric_value = value.strip()
+                    if numeric_value.casefold() in {
+                        "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
+                    }:
+                        continue
+                    parsed_number: int | float | None = None
+                    if name == "coefficient" and "/" in numeric_value:
+                        numerator_text, separator, denominator_text = numeric_value.partition("/")
+                        numerator = number(numerator_text)
+                        denominator = number(denominator_text)
+                        if separator and numerator is not None and denominator not in {None, 0}:
+                            parsed_number = numerator / denominator
+                    else:
+                        parsed_number = number(numeric_value)
                     if parsed_number is None:
                         return None
                     row[name] = parsed_number

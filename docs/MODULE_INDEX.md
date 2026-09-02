@@ -1166,6 +1166,12 @@ Artifact/UI сохраняют все workbook-файлы, безопасное 
 `test_artifacts_router.py`, `test_sovushka_chat.py`,
 `test_architecture_contract_gate.py`. ✅
 
+**0.30.45 / build 685:** безопасный model-result decoder принимает проверенный
+вариант заголовков и пустых/дробных числовых полей из рабочего контура Максима,
+не используя regex и не обрезая лишние клетки. Offline contract покрывает
+совместимость, но статус кандидата остаётся pending до отдельного живого
+Qwen→RAG→XLSX прогона. ✅ code / ⏳ live
+
 **0.29.0 / build 614:** `ui/pwa-shell` публикует manifest, root-scoped worker и
 offline draft surface для того же NiceGUI frontend. Cache allowlist содержит
 только offline HTML и общий Tauri icon; API, streams, documents/files,

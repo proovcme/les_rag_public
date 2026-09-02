@@ -480,13 +480,54 @@ def test_model_rag_result_accepts_the_models_short_ordinary_column_names():
     ]
 
 
-def test_model_rag_result_does_not_guess_unknown_header_aliases():
-    answer = """| № | Наименование | Ед. изм. | Кол-во | Нормативный код (ГЭСН/ЕР) | Коэфф. | Примечания к выбору | Evidence_refs |
+def test_model_rag_result_accepts_maxim_explicit_headers_and_missing_numbers():
+    answer = """| № | Наименование | Ед. изм. | Кол-во | Нормативный код (ГЭСН/ЕР) | Коэфф. | Примечание | Evidence_refs |
 |---:|---|---|---:|---|---|---|---|
-| 42 | Кабель модели | м | 12 | CUSTOM-NORM-A | 1.25 | Текст Qwen | Q3.H2 |
+| 1 | Кабель модели | м | 12 | CUSTOM-NORM-A | — | Текст Qwen | Q3.H2 |
+| 2 | Плёнка модели | м2 |  | CUSTOM-NORM-B | 1/100 | Нет прямого аналога | Q4.H1 |
 """
 
-    assert service.parse_model_rag_result(answer) is None
+    assert service.parse_model_rag_result(answer) == (
+        answer,
+        [
+            {
+                "source_row": 1,
+                "title": "Кабель модели",
+                "unit": "м",
+                "quantity": 12,
+                "norm_code": "CUSTOM-NORM-A",
+                "coverage": "Текст Qwen",
+                "evidence_refs": ["Q3.H2"],
+            },
+            {
+                "source_row": 2,
+                "title": "Плёнка модели",
+                "unit": "м2",
+                "norm_code": "CUSTOM-NORM-B",
+                "coefficient": 0.01,
+                "coverage": "Нет прямого аналога",
+                "evidence_refs": ["Q4.H1"],
+            },
+        ],
+    )
+
+
+def test_model_rag_result_pads_only_missing_trailing_optional_cells():
+    answer = """| № | Наименование | Ед. изм. | Кол-во | Нормативный код (ГЭСН/ЕР) | Коэфф. | Примечание |
+|---:|---|---|---:|---|---|---|
+| 7 | Работа модели | шт. | 3 | CUSTOM-NORM-A |
+"""
+
+    assert service.parse_model_rag_result(answer) == (
+        answer,
+        [{
+            "source_row": 7,
+            "title": "Работа модели",
+            "unit": "шт.",
+            "quantity": 3,
+            "norm_code": "CUSTOM-NORM-A",
+        }],
+    )
 
 
 def test_estimator_draft_projection_never_invents_source_row_or_decision():

@@ -138,6 +138,11 @@
 > не выбирает ЛСР/ВОР. `tools/architecture_contract_gate.py` защищает decoder и
 > запрет language/regex forcing.
 
+> **0.30.45 decoder compatibility:** exact header map дополнен фактическими
+> названиями колонок рабочего результата Максима; пустые numeric cells и явная
+> дробь коэффициента принимаются без regex. Decoder может дополнить только
+> отсутствующие справа пустые optional cells и никогда не обрезает лишние.
+
 > **0.30.0 ordinary answer route:** binding `answer` напрямую определяет любую модель
 > видимого free/evidence chat. Promotion/shadow не может заменить её legacy-
 > моделью. Evidence application сохраняет `source_scope`

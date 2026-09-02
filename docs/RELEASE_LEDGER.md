@@ -7,17 +7,28 @@
 ## Текущее состояние (2026-09-02)
 
 ```
-версия продукта (SemVer):  0.30.44
-номер сборки:              684
-версия Tauri/NSIS:         5.1.684
+версия продукта (SemVer):  0.30.45
+номер сборки:              685
+версия Tauri/NSIS:         5.1.685
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.44 model-integrity + workbook UX source candidate
+dev implementation:       0.30.45 model-result compatibility source candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.44 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.45 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.45 / build 685 Maxim-result compatibility candidate (не установлен и
+> не опубликован):** безопасный без-regex decoder сохраняет синтаксическую
+> терпимость доказанного рабочего варианта: принимает явные заголовки
+> `Нормативный код (ГЭСН/ЕР)`, `Коэфф.`, `Примечание`, пустые числовые клетки,
+> тире и явную дробь коэффициента `1/100`. Недостающие только справа optional-
+> клетки дополняются пустыми; лишние клетки не обрезаются. Свободная проза не
+> превращается в решение, `source_row`/`norm_code` не создаются и не меняются,
+> выбор workbook по словам вопроса не возвращён. Критерий готовности — живой
+> Qwen→RAG→все строки→автоматический XLSX не хуже принятого прогона Максима;
+> одни offline-тесты выпуском не считаются.
 
 > **0.30.44 / build 684 model-integrity + workbook UX source candidate (не
 > установлен и не опубликован):** model-RAG принимает только обычные строки
