@@ -1,5 +1,19 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.48 model-owned execution boundary:**
+> `chat_evidence_application_service` accepts ordinary Qwen query lines and
+> removes only explicit presentation wrappers; every query is executed and
+> balanced into `Qx.Hy` evidence. It preserves the final model text/fields and
+> calls the workbook adapter locally after structural reference validation.
+> `chat_attachment_service` resolves storage through the active mutable state
+> root. `web_research_config_service`, `web_search_service` and
+> `web_page_reader_service` provide GUI-selected simple or SearXNG+Crawl4AI
+> research with honest simple fallback. `runtime_admission` recognises the
+> exact resident local answer model; chat no longer performs memory-driven
+> provider replacement. `LES_STARTUP_BACKGROUND_MUTATIONS=false` keeps an
+> isolated acceptance startup read-only with respect to repair/reconcile/resume
+> jobs. Installed LES and `proxy/smeta_core/**` are untouched.
+
 > **0.30.43 RAG evidence boundary:** `chat_profile_service` владеет effective
 > retrieval policy; `retrieval_service` делает native-RRF overfetch, затем
 > `retrieval_candidate_service` выполняет exact-fragment dedup и document

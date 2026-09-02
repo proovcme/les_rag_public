@@ -17,10 +17,17 @@ import time
 from pathlib import Path
 from typing import Any
 
+from backend.runtime_paths import mutable_path
+
 
 DEFAULT_ROOT = Path(os.getenv("LES_CHAT_ATTACHMENT_ROOT", "storage/chat_attachments"))
 DEFAULT_MAX_AGE_SEC = int(os.getenv("LES_CHAT_ATTACHMENT_MAX_AGE_SEC", str(7 * 24 * 3600)))
 _ID_RE = re.compile(r"^read_[0-9a-f]{12}$")
+
+
+def _default_root() -> Path:
+    configured = os.getenv("LES_CHAT_ATTACHMENT_ROOT", "").strip()
+    return Path(configured) if configured else mutable_path("storage/chat_attachments")
 
 
 def _safe_id(attachment_id: str) -> str:
@@ -40,14 +47,14 @@ def _sha256(path: Path) -> str:
 
 def _paths(attachment_id: str, root: str | Path | None = None) -> tuple[Path, Path]:
     ident = _safe_id(attachment_id)
-    base = Path(root or DEFAULT_ROOT).resolve()
+    base = (Path(root) if root is not None else _default_root()).resolve()
     return base / f"{ident}.json", base / ident
 
 
 def cleanup_expired(
     *, root: str | Path | None = None, max_age_sec: int = DEFAULT_MAX_AGE_SEC
 ) -> int:
-    base = Path(root or DEFAULT_ROOT)
+    base = Path(root) if root is not None else _default_root()
     if not base.exists():
         return 0
     now = time.time()

@@ -37,3 +37,40 @@ def test_preflight_never_claims_model_loaded(monkeypatch, tmp_path):
     assert result["colbert"]["status"] == "blocked"
     assert result["colbert"]["storage_target"]["free_bytes"] is None
     assert result["raptor"]["estimated_navigation_nodes"] > 0
+
+
+def test_large_cpu_only_colbert_build_is_blocked_until_operator_override(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("LES_RAG_ADVANCED_POLICY_PATH", str(tmp_path / "policy.json"))
+    monkeypatch.setattr(
+        "proxy.services.rag_advanced_preflight_service._bge_m3_cache",
+        lambda: {"status": "ready", "bytes": 4_000_000_000, "error_code": ""},
+    )
+    monkeypatch.setattr(
+        "proxy.services.rag_advanced_preflight_service._colbert_acceleration",
+        lambda: {"status": "cpu_only", "backend": "cpu"},
+    )
+
+    blocked = advanced_preflight(
+        {"qdrant": {"points": 10_001, "collection": "les_rag"}}
+    )
+
+    assert "COLBERT_ACCELERATOR_REQUIRED_FOR_FULL_BUILD" in blocked["colbert"]["blockers"]
+    assert blocked["colbert"]["acceleration"] == {
+        "status": "cpu_only",
+        "backend": "cpu",
+    }
+
+    current = __import__(
+        "proxy.services.rag_advanced_policy_service", fromlist=["load_policy"]
+    ).load_policy()
+    current["colbert"]["allow_cpu_full_build"] = True
+    __import__(
+        "proxy.services.rag_advanced_policy_service", fromlist=["save_policy"]
+    ).save_policy(current)
+
+    allowed = advanced_preflight(
+        {"qdrant": {"points": 10_001, "collection": "les_rag"}}
+    )
+    assert "COLBERT_ACCELERATOR_REQUIRED_FOR_FULL_BUILD" not in allowed["colbert"]["blockers"]

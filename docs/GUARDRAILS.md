@@ -81,3 +81,39 @@ make ship-full        # полный gate + deploy + retry post-deploy-smoke
 - post-deploy `make smoke-basic`: pass=9 / warn=0 / fail=0; live deterministic chat latency: glossary ~49ms, project_noscope ~10ms.
 - live attachment-check: `crag_status=ATTACHMENT`, `route=attachment_context/read_attachment`, `sources=['attachment:demo.txt']`.
 - 0.23.6.8 задеплоено на рантайм через `tools.deploy_to_runtime --apply --restart`; `/api/version.runtime_alignment=aligned`.
+
+## 7. Стабильный цикл изменения (модель locia)
+
+Каждое изменение проходит один и тот же замкнутый маршрут:
+`baseline → candidate → rollback`. Baseline сначала фиксируется живым receipt на
+точном установленном runtime; candidate проверяется тем же сценарием; rollback
+обязан вернуть тот же baseline; тесты не являются доказательством релиза — они
+только разрешают перейти к installed user journey.
+
+- **Один пакет — одна причина.** Retrieval, UI, модельный transport, индекс,
+  workbook и release-механика не смешиваются без неизбежной зависимости.
+- **Сначала контракт, потом реализация.** До правки сохраняются exact вход,
+  ответ модели, trace, source map, artifact hash и latency. Candidate не может
+  считаться лучше, если пользовательский результат стал неполным или исчез.
+- **Модель остаётся владельцем решения.** Код предоставляет capability,
+  evidence, проверку ссылочной целостности и вычисление. Regex, скрытая
+  маршрутизация, автодополнение решения и новый модельный ход требуют отдельного
+  прямого решения владельца и отдельной приёмки.
+- **Состояние мигрирует само.** Любой изменившийся индекс/схема/конфиг получает
+  versioned preflight, автоматическая миграция либо совместимый fallback,
+  postflight и rollback. Переименование dataset/collection не требует ручного
+  редактирования файлов и не превращает health в ложный красный статус.
+- **Обновление транзакционное.** Preflight выполняется до остановки runtime;
+  замена файлов атомарна; acceptance и публикация используют одни и те же immutable bytes.
+  Ошибка запуска или postflight автоматически возвращает
+  предыдущий runtime и пользовательское состояние.
+- **Никакой слепой долгой сборки.** До NSIS/Tauri/полного индекса выполняются
+  classifier, dependency/capacity preflight, focused gate и dry-run manifest.
+  Повтор acceptance использует уже собранный artifact, если его hash не изменён.
+- **Живой путь обязателен до публикации.** Проверяются основной сценарий,
+  пустой/повреждённый state, старый state, смена имени/endpoint, недоступность
+  каждой внешней зависимости, повторный запуск, update и rollback. Для чата
+  отдельно сравнивается неизменность model answer и отсутствие скрытых вызовов.
+- **Готовность формулируется результатом.** Допустимо сказать «код и тесты
+  готовы, installed acceptance не выполнена»; запрещено говорить «исправлено»
+  или «релиз готов» без receipt installed user journey.

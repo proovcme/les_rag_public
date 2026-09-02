@@ -13,6 +13,14 @@ from proxy.services.lexical_index_service import LexicalIndex, content_hash
 from proxy.services.tool_harness_service import ToolHarness
 
 
+def test_harness_factory_preserves_request_scoped_web_config():
+    config = object()
+
+    result = tool_harness_service.harness(web_config=config)
+
+    assert result._web_config is config
+
+
 def _seed_db(path):
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
@@ -146,6 +154,41 @@ def test_agent_profile_allowlist_keeps_web_search_inside_restrictive_shortlist()
         "filesystem_stat",
     ]
     assert "web_search" not in result["omitted_by_reason"].get("preset_limit", ())
+
+
+def test_agent_shortlist_keeps_search_and_model_selected_reader_in_order():
+    allowed = [
+        "filesystem_search",
+        "web_search",
+        "web_read",
+        "filesystem_read_text",
+    ]
+
+    result = ToolHarness().shortlist(
+        "найди актуальные цены и прочитай источник",
+        mode="agent",
+        allowed_tools=allowed,
+        limit=5,
+    )
+
+    assert [item["name"] for item in result["tools"]][:2] == [
+        "web_search",
+        "web_read",
+    ]
+
+
+def test_web_reader_contract_is_bounded_read_only_public_evidence():
+    registry = ToolHarness().registry()
+
+    tool = next(item for item in registry["tools"] if item["name"] == "web_read")
+
+    assert tool["effect"] == "read"
+    assert tool["side_effects"] == "none"
+    assert tool["scopes"] == ["public_web"]
+    assert tool["input_schema"]["required"] == ["url"]
+    assert tool["result_budget"]["max_chars"] == 7000
+    assert tool["approval_required"] is False
+
 
 
 def test_context_bound_workbook_tools_are_not_shortlisted_without_runtime_executor():

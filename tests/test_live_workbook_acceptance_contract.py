@@ -689,7 +689,11 @@ def test_asgi_contract_exercises_guarded_multipart_sse_and_artifact_boundaries(m
     monkeypatch.setattr(datasets, "save_upload_tmp", save_upload_in_isolated_root)
     monkeypatch.setattr(datasets, "_prepare_read_attachment", prepared_attachment)
     monkeypatch.setattr(chat_profile_service, "resolve_chat_profile", profile_snapshot)
-    monkeypatch.setattr(tool_harness_service, "harness", lambda: ToolHarness())
+    monkeypatch.setattr(
+        tool_harness_service,
+        "harness",
+        lambda **_kwargs: ToolHarness(),
+    )
     monkeypatch.setattr(chat, "_model_connection_resolver", lambda: (ActiveResolver(), object()))
     monkeypatch.setattr(chat, "OpenAICompatibleTransport", ActiveTransport)
     monkeypatch.setattr(chat, "_execute_chat_workbook_tool", execute_workbook)

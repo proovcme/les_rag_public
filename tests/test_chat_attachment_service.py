@@ -67,3 +67,20 @@ def test_expired_attachment_is_removed(tmp_path):
 
     assert cleanup_expired(root=root, max_age_sec=10) == 1
     assert not metadata_path.exists()
+
+
+def test_default_attachment_root_follows_windows_state_root(tmp_path, monkeypatch):
+    state_root = tmp_path / "state"
+    source = tmp_path / "source.csv"
+    source.write_text("source_row;title\n1;work\n", encoding="utf-8")
+    monkeypatch.setenv("LES_WINDOWS_STATE_ROOT", str(state_root))
+    monkeypatch.delenv("LES_CHAT_ATTACHMENT_ROOT", raising=False)
+
+    preserve_read_attachment(
+        source,
+        attachment_id="read_112233aabbcc",
+        original_name="source.csv",
+    )
+    stored, _metadata = resolve_read_attachment("read_112233aabbcc")
+
+    assert stored.parent == (state_root / "storage" / "chat_attachments").resolve()

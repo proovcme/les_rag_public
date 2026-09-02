@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from backend.runtime_paths import mutable_path
-from typing import Any, Callable, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 import httpx
 from fastapi import HTTPException
@@ -24,7 +24,6 @@ from backend.inference.routing import (
     cloud_allowed,
     decide_provider,
     is_cloud_provider,
-    memory_aware_provider,
 )
 from backend.inference.validator import rules_pre_verdict
 from proxy.services.answer_form_service import classify_answer_form
@@ -143,6 +142,11 @@ from proxy.services.source_locator_service import evidence_counts, source_map_it
 from proxy.services.chat_evidence_manifest_service import build_evidence_manifest
 from proxy.services.chat_capability_scope_service import filter_profile_tools
 from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
+from proxy.services.web_research_config_service import (
+    WebResearchConfig,
+    capture_web_research_config,
+    public_web_research_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,6 +161,98 @@ _DOCUMENT_EVIDENCE_TOOLS = frozenset({
     "read_project_table",
     "assemble_project_volume",
 })
+
+
+@dataclass(frozen=True)
+class _WebToolSourceChunk:
+    content: str
+    doc_name: str
+    score: float
+    meta: dict[str, Any]
+
+
+def web_tools_for_request(
+    tools: Sequence[str], config: WebResearchConfig
+) -> list[str]:
+    """Expose page reading only for the explicitly captured extended mode."""
+
+    normalized = [str(name) for name in tools if str(name).strip()]
+    if config.mode == "extended":
+        return normalized
+    return [name for name in normalized if name != "web_read"]
+
+
+def web_source_map_from_tool_results(
+    tool_results: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Project actual web evidence into locators without changing its content."""
+
+    chunks_by_url: dict[str, _WebToolSourceChunk] = {}
+    for payload in tool_results:
+        tool = str(payload.get("tool") or "")
+        if tool not in {"web_search", "web_read"}:
+            continue
+        result = payload.get("result")
+        result_data = dict(result) if isinstance(result, Mapping) else {}
+        search_rows = result_data.get("results")
+        rows = search_rows if isinstance(search_rows, list) else []
+        rows_by_url = {
+            str(row.get("url") or ""): row
+            for row in rows
+            if isinstance(row, Mapping) and str(row.get("url") or "")
+        }
+        for raw_source in payload.get("sources") or []:
+            if not isinstance(raw_source, Mapping):
+                continue
+            url = str(raw_source.get("url") or result_data.get("final_url") or "").strip()
+            if not url:
+                continue
+            row = rows_by_url.get(url, {})
+            title = str(
+                raw_source.get("title")
+                or result_data.get("title")
+                or (row.get("title") if isinstance(row, Mapping) else "")
+                or ""
+            )
+            content = str(
+                result_data.get("text")
+                or (row.get("snippet") if isinstance(row, Mapping) else "")
+                or ""
+            )
+            chunks_by_url[url] = _WebToolSourceChunk(
+                content=content,
+                doc_name=title,
+                score=0.0,
+                meta={
+                    "url": url,
+                    "title": title,
+                    "provider": str(result_data.get("provider") or ""),
+                    "retrieved_at": str(result_data.get("retrieved_at") or ""),
+                },
+            )
+    return [
+        source_map_item(chunk, index=index)
+        for index, chunk in enumerate(chunks_by_url.values(), 1)
+    ]
+
+
+def _merge_web_source_map(
+    source_map: Sequence[dict[str, Any]],
+    tool_results: Sequence[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    web_sources = web_source_map_from_tool_results(tool_results)
+    if not web_sources:
+        return list(source_map)
+    combined_sources = [
+        dict(item)
+        for item in source_map
+        if str(((item.get("locator") or {}).get("kind") or "")) != "web_result"
+    ]
+    combined_sources.extend(web_sources)
+    for source_index, item in enumerate(combined_sources, 1):
+        item["index"] = source_index
+        item["label"] = f"Источник {source_index}"
+    return combined_sources
 
 
 def tools_for_document_scope(tools: Sequence[str], *, enabled: bool) -> list[str]:
@@ -603,12 +699,24 @@ def parse_model_rag_queries(raw: str) -> list[str]:
     ]
     if any(line.startswith(("{", "[")) or line.endswith(("}", "]")) for line in visible_lines):
         return []
-    quoted_lines = [
-        line[1:-1].strip()
-        for line in visible_lines
-        if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}
-    ]
-    raw_queries = quoted_lines or visible_lines
+    explicitly_wrapped: list[str] = []
+    for line in visible_lines:
+        if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}:
+            explicitly_wrapped.append(line[1:-1].strip())
+            continue
+        prefix = "search_sources"
+        if not line.startswith(prefix):
+            continue
+        remainder = line[len(prefix) :].strip()
+        if remainder.startswith("(") and remainder.endswith(")"):
+            remainder = remainder[1:-1].strip()
+        if (
+            len(remainder) >= 2
+            and remainder[0] == remainder[-1]
+            and remainder[0] in {'"', "'"}
+        ):
+            explicitly_wrapped.append(remainder[1:-1].strip())
+    raw_queries = explicitly_wrapped or visible_lines
 
     queries: list[str] = []
     for item in raw_queries:
@@ -784,6 +892,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     else:
                         parsed_number = number(numeric_value)
                     if parsed_number is None:
+                        if name == "coefficient":
+                            row[name] = value
+                            continue
                         return None
                     row[name] = parsed_number
                 elif name == "evidence_refs":
@@ -806,6 +917,103 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         header_index = max(row_index, header_index + 1)
     if table_rows:
         return str(raw or ""), table_rows
+
+    block_fields = {
+        "source_row": "source_row",
+        "section": "section",
+        "title": "title",
+        "unit": "unit",
+        "quantity": "quantity",
+        "norm_code": "norm_code",
+        "analogue": "analogue",
+        "coverage": "coverage",
+        "coefficient": "coefficient",
+        "evidence_refs": "evidence_refs",
+    }
+    block_rows: list[dict[str, Any]] = []
+    current_block: dict[str, Any] | None = None
+    invalid_block = False
+
+    def flush_block() -> None:
+        nonlocal current_block, invalid_block
+        if current_block is None:
+            return
+        if not required_fields.issubset(current_block) or not isinstance(
+            current_block.get("source_row"), int
+        ):
+            invalid_block = True
+        else:
+            block_rows.append(current_block)
+        current_block = None
+
+    for line in lines:
+        stripped = line.strip()
+        heading = stripped.strip("*_`# ")
+        heading_parts = heading.split()
+        explicit_heading_row: int | None = None
+        is_block_heading = (
+            len(heading_parts) >= 2
+            and heading_parts[0].casefold() == "строка"
+            and heading_parts[1].isdigit()
+        )
+        if is_block_heading and len(heading_parts) > 2:
+            heading_suffix = " ".join(heading_parts[2:]).strip()
+            if heading_suffix.startswith("(") and heading_suffix.endswith(")"):
+                identity_label, identity_delimiter, identity_value = heading_suffix[
+                    1:-1
+                ].partition("=")
+                if (
+                    identity_delimiter
+                    and identity_label.strip().casefold() == "source_row"
+                    and identity_value.strip().isdigit()
+                ):
+                    explicit_heading_row = int(identity_value.strip())
+                else:
+                    is_block_heading = False
+            else:
+                is_block_heading = False
+        if is_block_heading:
+            flush_block()
+            current_block = (
+                {"source_row": explicit_heading_row}
+                if explicit_heading_row is not None
+                else {}
+            )
+            continue
+        if current_block is None:
+            continue
+        labelled = stripped.lstrip("*-+ ").strip()
+        label, delimiter, value = labelled.partition(":")
+        if not delimiter:
+            continue
+        key = block_fields.get(label.strip().strip("*_` ").casefold())
+        clean = value.strip().lstrip("*_` ").strip()
+        if not key or not clean:
+            continue
+        if key == "source_row":
+            parsed_source_row = number(clean)
+            if not isinstance(parsed_source_row, int):
+                invalid_block = True
+                continue
+            current_block[key] = parsed_source_row
+        elif key in {"quantity", "coefficient"}:
+            parsed_number = number(clean)
+            if parsed_number is None and key == "coefficient":
+                first_token = clean.split(maxsplit=1)[0].rstrip(".,;")
+                parsed_number = number(first_token)
+            if parsed_number is None:
+                invalid_block = True
+                continue
+            current_block[key] = parsed_number
+        elif key == "evidence_refs":
+            refs = evidence_refs(clean)
+            if refs:
+                current_block[key] = refs
+        else:
+            current_block[key] = clean
+    flush_block()
+    if block_rows and not invalid_block:
+        return str(raw or ""), block_rows
 
     labelled_fields = {
         "раздел": "section",
@@ -1331,7 +1539,6 @@ async def run_chat_evidence_application(
         json=json,
         logger=logger,
         maybe_answer_table_query=maybe_answer_table_query,
-        memory_aware_provider=memory_aware_provider,
         notebook_study_prompt_block=notebook_study_prompt_block,
         os=os,
         rank_chunks_for_question=rank_chunks_for_question,
@@ -1403,7 +1610,6 @@ async def _execute_chat_evidence_application(
     json,
     logger,
     maybe_answer_table_query,
-    memory_aware_provider,
     memory_block,
     model_connection_resolver,
     model_connection_transport,
@@ -2004,17 +2210,7 @@ async def _execute_chat_evidence_application(
         logger.warning("[ROUTE] %s (датасеты: %s)", _route.reason, sorted(_source_ds))
         llm_runtime = _mlx_runtime()
     else:
-        # W3.3 memory-aware: локальный конкурент MLX за RAM (ollama/lemonade) на тесной
-        # памяти сводится к MLX (защита от swap — полевой вывод 2026-06-11).
-        _avail_gb = (state.metrics_cache or {}).get("ram_free_gb") if state.metrics_cache else None
-        _mem_provider, _mem_reason = memory_aware_provider(
-            configured_runtime.provider,
-            available_gb=_avail_gb,
-            threshold_gb=_env_float("LES_LOCAL_PROVIDER_MIN_FREE_GB", 6.0),
-        )
-        llm_runtime = _mlx_runtime() if _mem_reason else configured_runtime
-        if _mem_reason:
-            logger.warning("[ROUTE] %s", _mem_reason)
+        llm_runtime = configured_runtime
     cache_state: dict[str, Any] = {}
     if (
         canonical_execution_mode is not CanonicalRouteMode.ACTIVE
@@ -2445,6 +2641,7 @@ async def _execute_chat_evidence_application(
                 profile_tools = [
                     str(name) for name in (profile_snapshot or {}).get("tools", []) if str(name).strip()
                 ]
+                web_research_config = capture_web_research_config()
                 selected_sources_only = bool(
                     getattr(req, "selected_sources_only", False)
                 )
@@ -2452,9 +2649,19 @@ async def _execute_chat_evidence_application(
                     profile_tools,
                     selected_sources_only=selected_sources_only,
                 )
+                profile_tools = web_tools_for_request(
+                    profile_tools,
+                    web_research_config,
+                )
                 retrieval_trace["capability_scope"] = {
                     "selected_sources_only": selected_sources_only,
                     "public_web_available": not selected_sources_only,
+                    "web_research": public_web_research_config(web_research_config),
+                    "web_reader_available": (
+                        not selected_sources_only
+                        and web_research_config.mode == "extended"
+                        and "web_read" in profile_tools
+                    ),
                     "source": "explicit_or_frozen_request",
                 }
                 profile_tools = tools_for_document_scope(
@@ -2503,7 +2710,9 @@ async def _execute_chat_evidence_application(
                             + "\n\nПрочитай приложенный материал целиком. Сформулируй поисковые "
                             "запросы к выбранным датасетам, необходимые для подбора evidence "
                             "по всем фактическим строкам исходного материала. Число запросов "
-                            "определяешь ты; фиксированного лимита нет. Сейчас не выбирай нормы "
+                            "определяешь ты; фиксированного лимита нет. В запросах сохраняй язык "
+                            "и профессиональную терминологию исходных строк; не переводи и не "
+                            "транслитерируй их. Сейчас не выбирай нормы "
                             "и не отвечай по существу — верни только сами поисковые запросы, "
                             "каждый с новой строки."
                         ),
@@ -2652,7 +2861,7 @@ async def _execute_chat_evidence_application(
                     try:
                         from proxy.services.tool_harness_service import harness
 
-                        tool_harness = harness()
+                        tool_harness = harness(web_config=web_research_config)
 
                         async def _fallback_model_tool(tool_name: str, args: dict[str, Any]):
                             return await asyncio.to_thread(tool_harness.call, tool_name, args)
@@ -2983,6 +3192,11 @@ async def _execute_chat_evidence_application(
                                 tool_results_for_model.append(
                                     safe_payload if safe_payload else payload
                                 )
+                                answer_source_map = _merge_web_source_map(
+                                    answer_source_map,
+                                    tool_results_for_model,
+                                )
+                                selector_source_map = answer_source_map
                                 harvested = harvest_workbook_tool_result(safe_payload)
                                 if harvested:
                                     workbook_chat_meta = harvested
@@ -2994,6 +3208,31 @@ async def _execute_chat_evidence_application(
                                 stop_reason = "calls_budget"
                                 break
                         tool_context = _format_tool_results_for_model(tool_results_for_model)
+                        web_research_trace = public_web_research_config(
+                            web_research_config
+                        )
+                        for web_payload in tool_results_for_model:
+                            if str(web_payload.get("tool") or "") != "web_search":
+                                continue
+                            web_result = web_payload.get("result") or {}
+                            if isinstance(web_result, Mapping):
+                                web_research_trace.update(
+                                    {
+                                        "requested_mode": str(
+                                            web_result.get("requested_mode")
+                                            or web_research_config.mode
+                                        ),
+                                        "effective_mode": str(
+                                            web_result.get("effective_mode")
+                                            or web_research_config.mode
+                                        ),
+                                        "provider": str(web_result.get("provider") or ""),
+                                        "degraded": bool(web_result.get("degraded")),
+                                        "fallback_reason": str(
+                                            web_result.get("fallback_reason") or ""
+                                        ),
+                                    }
+                                )
                         retrieval_trace["tool_loop"] = {
                             "schema": "les_model_research_loop_v1",
                             "enabled": True,
@@ -3013,6 +3252,7 @@ async def _execute_chat_evidence_application(
                             "max_calls_total": max_calls,
                             "calls_remaining": calls_remaining,
                             "native_tool_schemas": bool(native_tools),
+                            "web_research": web_research_trace,
                         }
                     except ContextRequiredSectionOverflow as context_error:
                         retrieval_trace["context_governor"]["error"] = {
@@ -3115,6 +3355,10 @@ async def _execute_chat_evidence_application(
                             max_chars=context_chars_limit,
                             include_metadata=True,
                         )
+                        answer_source_map = _merge_web_source_map(
+                            answer_source_map,
+                            tool_results_for_model,
+                        )
                         sys_msg = sys_strict
                         logger.warning("[SAFERAG] Retry #2 — строгий промпт, %s чанков", len(ctx_chunks))
                     else:
@@ -3128,6 +3372,10 @@ async def _execute_chat_evidence_application(
                         retrieval_trace["evidence_packet"] = evidence_packet.trace_summary(
                             max_chars=context_chars_limit,
                             include_metadata=True,
+                        )
+                        answer_source_map = _merge_web_source_map(
+                            answer_source_map,
+                            tool_results_for_model,
                         )
                         if token_sink is not None and attempt == 1:
                             await token_sink({
@@ -3188,6 +3436,16 @@ async def _execute_chat_evidence_application(
                             - fixed_packet.included_tokens
                             - len(model_rag_query_hits)
                             - 2,
+                        )
+                        logger.warning(
+                            "[MODEL_RAG_BUDGET] queries=%s hits=%s input_budget=%s "
+                            "included=%s remaining_group_tokens=%s context_chars_limit=%s",
+                            len(model_rag_query_hits),
+                            sum(len(hits) for _query, hits in model_rag_query_hits),
+                            fixed_packet.input_budget_tokens,
+                            fixed_packet.included_tokens,
+                            remaining_group_tokens,
+                            context_chars_limit,
                         )
                         (
                             model_rag_evidence_groups,

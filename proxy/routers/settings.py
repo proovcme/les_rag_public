@@ -26,6 +26,11 @@ from proxy.services.runtime_config_registry_service import (
     registry_snapshot,
     update_factors,
 )
+from proxy.services.web_research_config_service import (
+    capture_web_research_config,
+    probe_web_research_services,
+    web_research_status,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -140,6 +145,19 @@ async def put_runtime_registry(
         )
     except RuntimeConfigRegistryError as exc:
         raise HTTPException(422, detail=str(exc)) from exc
+
+
+@router.get("/web-research")
+async def get_web_research_settings(_admin=Depends(require_admin)):
+    """Return selected providers without contacting or crawling anything."""
+    return web_research_status(capture_web_research_config())
+
+
+@router.post("/web-research/probe")
+async def probe_web_research_settings(_admin=Depends(require_admin)):
+    """Explicit bounded health probe; it never submits a page URL."""
+    config = capture_web_research_config()
+    return await asyncio.to_thread(probe_web_research_services, config)
 
 
 @router.get("")

@@ -64,6 +64,13 @@ from .rag_config import (
 logger = logging.getLogger(__name__)
 
 
+def payload_index_ensure_enabled() -> bool:
+    """Whether startup may submit idempotent Qdrant payload-index mutations."""
+    return os.getenv("LES_RAG_PAYLOAD_INDEX_ENSURE", "true").lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
 RAW_CAD_BIM_SUFFIXES = {".dwg", ".dxf", ".rvt", ".rfa", ".ifc", ".ifczip", ".nwc"}
 PDF_PAGE_NODE_SUFFIXES = {".pdf", ".p7m"}
 
@@ -2122,7 +2129,10 @@ class QdrantLlamaIndexAdapter(RAGBackend):
             # file_name). БЕЗ индекса query_points с фильтром проверяет фильтр по ВСЕМ точкам
             # (~1.6с на 179k) — с индексом ~30мс. create_payload_index идемпотентен (повторный
             # вызов — no-op/обновление). Best-effort: сбой не должен блокировать старт.
-            if self._payload_index_task is None or self._payload_index_task.done():
+            if (
+                payload_index_ensure_enabled()
+                and (self._payload_index_task is None or self._payload_index_task.done())
+            ):
                 self._payload_index_task = asyncio.create_task(self._ensure_payload_indexes())
             self._collection_ready = True
 

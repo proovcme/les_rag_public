@@ -184,12 +184,8 @@ def profile_env_overrides(profile: str | None) -> dict[str, str]:
             "LES_MEMORY_GREEN_MIN_FREE_GB": "3",
             "LES_MEMORY_RED_MIN_FREE_GB": "1.5",
             "LES_MEMORY_CRITICAL_MIN_FREE_GB": "1",
-            # memory_aware_provider на тесной RAM сводит ollama→MLX (защита от swap). Но на Windows
-            # MLX НЕТ: _mlx_runtime бьёт MLX-моделью (LLM_MODEL) по ollama-URL → 404. Порог 0 =
-            # не съезжать с ollama (LLM на Windows-lite и так в отдельном процессе ollama).
-            "LES_LOCAL_PROVIDER_MIN_FREE_GB": "0",
             # LLM_MODEL — фолбэк-модель локального рантайма; на Windows = тот же ollama-тег
-            # (если какой-то путь всё же возьмёт _mlx_runtime, чтобы не 404 на MLX-имени).
+            # для совместимости сервисов, которые читают общий идентификатор модели.
             "LLM_MODEL": "qwen3.5:9b",
             # CORS под Outlook-аддин: таскпейн на :3000 (http-server) шлёт fetch POST /api/mail/push
             # на :8050 — без origin :3000 в CORS браузерный движок таскпейна режет запрос.

@@ -266,6 +266,54 @@ async def test_complete_uses_capability_selected_native_chat_without_reasoning(t
 
 
 @pytest.mark.asyncio
+async def test_native_complete_consumes_incremental_events_into_unchanged_answer(tmp_path):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        events = (
+            {"model": "observed-model-1", "message": {"content": "Первая "}, "done": False},
+            {"model": "observed-model-1", "message": {"content": "строка"}, "done": False},
+            {
+                "model": "observed-model-1",
+                "message": {"content": ""},
+                "done": True,
+                "done_reason": "stop",
+                "prompt_eval_count": 12,
+                "eval_count": 2,
+            },
+        )
+        return httpx.Response(
+            200,
+            content=b"".join(
+                json.dumps(event, ensure_ascii=False).encode("utf-8") + b"\n"
+                for event in events
+            ),
+            headers={"content-type": "application/x-ndjson"},
+        )
+
+    # The wire representation contains repeated per-event metadata and is much
+    # larger than the model-authored text.  The configured response limit owns
+    # semantic output, not native streaming protocol overhead.
+    transport, client = _transport(tmp_path, handler, body_limit=64)
+    try:
+        result = await transport.complete(
+            _resolved(chat_protocol="native_chat_v1"),
+            InferenceRequest(
+                messages=({"role": "user", "content": "Верни две части"},),
+                max_output_tokens=64,
+            ),
+        )
+    finally:
+        await client.aclose()
+
+    assert captured["body"]["stream"] is True
+    assert result.text == "Первая строка"
+    assert result.finish_reason == "stop"
+    assert result.usage == {"prompt_tokens": 12, "completion_tokens": 2, "total_tokens": 14}
+
+
+@pytest.mark.asyncio
 async def test_complete_retries_without_system_role_for_restrictive_compatible_server(tmp_path):
     bodies = []
 

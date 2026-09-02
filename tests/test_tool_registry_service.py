@@ -90,12 +90,15 @@ def test_canonical_registry_contains_each_existing_handler_once() -> None:
         "read_project_table",
         "assemble_project_volume",
         "web_search",
+        "web_read",
         "filesystem_roots",
         "filesystem_list",
         "filesystem_stat",
         "filesystem_read_text",
         "filesystem_search",
         "filesystem_hash",
+        "build_lsr_workbook",
+        "build_vor_workbook",
     } == set(names)
 
 

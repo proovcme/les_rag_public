@@ -120,6 +120,29 @@ def test_assigned_model_timeout_is_named_and_restart_bound(monkeypatch):
     assert factor["restart_required"] is True
 
 
+@pytest.mark.parametrize(
+    ("key", "default"),
+    [
+        ("LES_RAG_CATALOG_SELF_HEAL", "true"),
+        ("LES_RAG_PAYLOAD_INDEX_ENSURE", "true"),
+        ("LES_STARTUP_MODEL_WARMUP", "true"),
+        ("LES_STARTUP_BACKGROUND_MUTATIONS", "true"),
+        ("LES_CHAT_RESIDENT_MIN_FREE_GB", "2.0"),
+    ],
+)
+def test_startup_actions_are_named_and_restart_bound(monkeypatch, key, default):
+    registry.declared_env_defaults.cache_clear()
+    monkeypatch.delenv(key, raising=False)
+
+    factor = registry._factor(key, {})
+
+    assert factor["effective_value"] == default
+    assert factor["label"] != key
+    assert factor["help_text"]
+    assert factor["mutable"] is True
+    assert factor["restart_required"] is True
+
+
 def test_context_factors_are_registered_with_effective_source() -> None:
     rows = registry.runtime_factor_rows(
         {
@@ -206,6 +229,65 @@ def test_registry_rejects_invalid_qdrant_url(isolated_registry, monkeypatch):
     )
     with pytest.raises(registry.RuntimeConfigRegistryError, match="INVALID_VALUE"):
         registry.update_factors({"QDRANT_URL": "qdrant.local:6333"})
+
+
+@pytest.mark.parametrize("key", ["LES_SEARXNG_URL", "LES_CRAWL4AI_URL"])
+def test_web_service_urls_are_hot_applied_and_http_only(
+    isolated_registry, monkeypatch, key
+):
+    declared = registry.declared_env_keys()
+    monkeypatch.setattr(
+        registry,
+        "declared_env_keys",
+        lambda: frozenset({*declared, key}),
+    )
+
+    with pytest.raises(registry.RuntimeConfigRegistryError, match="INVALID_VALUE"):
+        registry.update_factors({key: "service.local:11235"})
+
+    result = registry.update_factors({key: "http://127.0.0.1:11235"})
+
+    assert result["updated"] == [
+        {
+            "key": key,
+            "value": "http://127.0.0.1:11235",
+            "restart_required": False,
+        }
+    ]
+
+
+def test_web_token_is_masked_and_does_not_require_restart(
+    isolated_registry, monkeypatch
+):
+    declared = registry.declared_env_keys()
+    monkeypatch.setattr(
+        registry,
+        "declared_env_keys",
+        lambda: frozenset({*declared, "LES_CRAWL4AI_TOKEN"}),
+    )
+
+    result = registry.update_factors({"LES_CRAWL4AI_TOKEN": "secret-token"})
+
+    assert result["updated"] == [
+        {
+            "key": "LES_CRAWL4AI_TOKEN",
+            "value": "***",
+            "restart_required": False,
+        }
+    ]
+    assert "secret-token" not in repr(result)
+
+
+def test_web_research_factors_are_explicitly_registered_for_gui_updates(monkeypatch):
+    registry.declared_env_defaults.cache_clear()
+    registry.declared_env_keys.cache_clear()
+
+    defaults = registry.declared_env_defaults()
+
+    assert defaults["LES_WEB_SEARCH_MODE"] == "simple"
+    assert defaults["LES_SEARXNG_URL"] == ""
+    assert defaults["LES_CRAWL4AI_URL"] == ""
+    assert defaults["LES_CRAWL4AI_TOKEN"] == ""
 
 
 def test_gui_and_api_expose_registry_and_advanced_rag_controls():

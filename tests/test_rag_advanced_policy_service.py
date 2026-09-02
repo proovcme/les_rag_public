@@ -18,6 +18,7 @@ def test_default_policy_is_gui_visible_and_has_no_hidden_overrides(isolated_poli
     assert snapshot["policy"]["raptor"]["mode"] == "off"
     assert snapshot["policy"]["colbert"]["mode"] == "adaptive"
     assert snapshot["policy"]["colbert"]["model"] == "BAAI/bge-m3"
+    assert snapshot["policy"]["colbert"]["allow_cpu_full_build"] is False
     assert snapshot["hidden_runtime_overrides"] == []
     assert snapshot["status"]["colbert"]["readiness"] == "not_built"
 

@@ -93,7 +93,7 @@ def _sync_operator_status(plan: dict[str, Any]) -> dict[str, Any]:
     stage = str(state.get("stage") or "preflight")
     state_status = str(state.get("status") or "queued")
     readiness = (
-        "ready" if state_status == "activated"
+        "ready" if state_status in {"ready", "activated"}
         else "blocked" if state_status == "blocked"
         else "retrying" if state_status == "retrying"
         else "building"
@@ -177,6 +177,7 @@ def run_colbert_generation(
             "--embedding-api-model", str(backend.embed.model),
             "--rag-chunk-unit", str(_contract_for_target(plan["target"])["chunk_unit"]),
             "--with-colbert",
+            "--build-only",
             "--colbert-dimension", "1024",
             "--colbert-passage-tokens", str(int(policy["max_passage_tokens"])),
             "--create-destination",

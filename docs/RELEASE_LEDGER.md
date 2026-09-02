@@ -7,17 +7,36 @@
 ## Текущее состояние (2026-09-02)
 
 ```
-версия продукта (SemVer):  0.30.47
-номер сборки:              687
-версия Tauri/NSIS:         5.1.687
+версия продукта (SemVer):  0.30.48
+номер сборки:              688
+версия Tauri/NSIS:         5.1.688
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.47 all-update/database-resilience candidate
+dev implementation:       0.30.48 model-owned RAG/web/live-workbook candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.47 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.48 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.48 / build 688 model-owned RAG/web/live-workbook candidate (не
+> установлен и не опубликован):** Qwen формирует обычные поисковые строки;
+> каждый запрос выполняется независимо, а evidence передаётся сбалансированными
+> группами `Qx.Hy` с profile-owned limit. Код снимает только кавычки либо явно
+> написанную Qwen оболочку `search_sources("…")`, не применяет regex,
+> тематическую маршрутизацию или дополнительный model turn. Финальный текст и
+> поля модели не переписываются; attachment хранится в effective runtime root,
+> затем canonical adapter сам подключает штатную pricebook и строит XLSX.
+> GUI получил выбор простого web и SearXNG+Crawl4AI с честным simple fallback;
+> страницу для `web_read` выбирает модель. ColBERT остаётся generation-gated:
+> shadow A/B на 12 живых случаях дал 5 wins / 1 regression и неприемлемую
+> прибавку latency, поэтому индекс не активирован. Изолированный startup умеет
+> запрещать repair/reconcile/resume; admission распознаёт точную резидентную
+> Qwen, сохраняет swap guard и больше не подменяет Ollama на MLX по RAM.
+> Live acceptance: обычный RAG-диалог и web прошли; отдельная ВОР из 5 новых
+> строк дала 5/5 `bound`, 121 формулу, 0 formula errors и priced partial XLSX
+> 154 981,55 руб. Ранее принятый 19-row прогон остаётся 19 решений / 17 bound /
+> 2 unit conflicts. Установленный `0.30.42 · 682 · ab5146b2` не изменён.
 
 > **0.30.47 / build 687 all-update/database-resilience candidate (не установлен
 > и не опубликован):** GUI/API ФГИС, Make и CLI публикуют активную сметную базу

@@ -25,6 +25,9 @@
 - Evidence/chat: scope `none | selected | all`, evidence packet, context governor,
   typed citations/source navigation, immutable model-visible evidence manifest,
   explicit source-only capability, research tools и отсутствие кодового final вместо модели.
+  Отдельные регрессии фиксируют обычные model-authored query lines, либеральное
+  снятие только presentation wrappers, запрет memory-driven подмены provider,
+  runtime-relative attachment handoff и неизменность model-owned workbook rows.
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
   profile-owned overfetch/diversity/evidence limits, hierarchy/parent expansion,
   dimensional readiness, ready-generation guard для ColBERT и dataset integrity.
@@ -43,7 +46,8 @@
 - UI: общий UIKit, WCAG AA, документы, чат, источники, model connections и
   отсутствие скрытого автоматического scope.
 - Runtime/release: Windows process ownership, persistent-state boundary,
-  bounded model queue, safe public errors, lightweight/full update, legacy
+  bounded model queue, resident-model admission, отключаемые startup mutations
+  для изолированной приёмки, safe public errors, lightweight/full update, legacy
   `les.release-attempt.v1` и раздельные
   `les.release-gate-receipt.v1` / `les.release-artifact.v1` /
   `les.release-acceptance.v2` / `les.release-publication.v1` и публичную

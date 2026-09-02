@@ -36,6 +36,37 @@ def test_effective_profile_adds_retrieval_limits_without_mutating_revision():
     assert stored == {"mode": "search", "rag_policy": {"grounded": True}}
 
 
+def test_effective_profile_pairs_reader_only_with_explicit_web_search():
+    stored = {
+        "mode": "agent",
+        "tools": ["web_search", "filesystem_search"],
+    }
+
+    effective = effective_profile_snapshot(stored)
+
+    assert effective["tools"] == [
+        "web_search",
+        "web_read",
+        "filesystem_search",
+    ]
+    assert effective["effective_capability_bridges"] == [
+        "paired_web_capability_v1"
+    ]
+    assert stored == {
+        "mode": "agent",
+        "tools": ["web_search", "filesystem_search"],
+    }
+
+
+def test_profile_without_web_search_does_not_gain_reader():
+    stored = {"mode": "agent", "tools": ["filesystem_search"]}
+
+    effective = effective_profile_snapshot(stored)
+
+    assert effective["tools"] == ["filesystem_search"]
+    assert effective.get("effective_capability_bridges") in (None, [])
+
+
 def test_effective_retrieval_policy_clamps_invalid_and_conflicting_values():
     policy = effective_retrieval_policy(
         {

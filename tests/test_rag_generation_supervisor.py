@@ -95,6 +95,7 @@ def test_generation_job_preserves_colbert_publication_contract():
         with_colbert=True,
         colbert_dimension=1024,
         colbert_passage_tokens=96,
+        build_only=True,
     )
 
     worker = _worker_arguments(args)
@@ -102,6 +103,7 @@ def test_generation_job_preserves_colbert_publication_contract():
     assert "--with-colbert" in worker
     assert worker[worker.index("--colbert-dimension") + 1] == "1024"
     assert worker[worker.index("--colbert-passage-tokens") + 1] == "96"
+    assert "--build-only" in worker
 
 
 def test_alias_target_resolution_supports_self_migration_guard():

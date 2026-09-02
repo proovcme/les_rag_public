@@ -39,6 +39,67 @@ _FACTOR_PRESENTATION = {
         "help_text": "Общий срок ожидания модели, назначенной на роль «Ответы».",
         "category": "models",
     },
+    "LES_RAG_CATALOG_SELF_HEAL": {
+        "label": "Самовосстановление каталога RAG при запуске",
+        "help_text": "Сверяет и восстанавливает служебную навигацию после перезапуска.",
+        "category": "reliability",
+    },
+    "LES_RAG_PAYLOAD_INDEX_ENSURE": {
+        "label": "Проверка фильтрующих индексов Qdrant при запуске",
+        "help_text": "Создаёт недостающие служебные индексы для быстрого поиска по датасетам.",
+        "category": "reliability",
+    },
+    "LES_STARTUP_MODEL_WARMUP": {
+        "label": "Прогрев моделей при запуске",
+        "help_text": "Заранее прогревает модели, чтобы ускорить первый пользовательский запрос.",
+        "category": "performance",
+    },
+    "LES_STARTUP_BACKGROUND_MUTATIONS": {
+        "label": "Фоновые изменения RAG при запуске",
+        "help_text": (
+            "Разрешает восстановление каталога, сверку поколений и возобновление "
+            "прерванных построений. Для изолированной приёмки можно отключить."
+        ),
+        "category": "reliability",
+    },
+    "LES_CHAT_RESIDENT_MIN_FREE_GB": {
+        "label": "Минимум свободной ОЗУ при загруженной модели, ГБ",
+        "help_text": (
+            "Жёсткий порог для следующего запроса, когда точная локальная модель "
+            "ответов уже находится в памяти. Не отменяет защиту от swap."
+        ),
+        "category": "reliability",
+    },
+    "LES_WEB_SEARCH_MODE": {
+        "label": "Режим веб-поиска",
+        "help_text": "Простой DuckDuckGo или расширенный SearXNG + Crawl4AI.",
+        "category": "web",
+    },
+    "LES_SEARXNG_URL": {
+        "label": "Адрес SearXNG",
+        "help_text": "Внешний сервис расширенного поиска; применяется к следующему запросу.",
+        "category": "web",
+    },
+    "LES_CRAWL4AI_URL": {
+        "label": "Адрес Crawl4AI",
+        "help_text": "Внешний сервис чтения выбранной моделью веб-страницы.",
+        "category": "web",
+    },
+    "LES_CRAWL4AI_TOKEN": {
+        "label": "Токен Crawl4AI",
+        "help_text": "Необязательный токен; значение всегда скрыто.",
+        "category": "web",
+    },
+}
+_EXPLICIT_FACTOR_DEFAULTS = {
+    # Web factors are read through an injected Mapping; numeric admission
+    # factors use the shared _env_float helper. AST discovery cannot infer
+    # either default from a literal os.getenv call.
+    "LES_WEB_SEARCH_MODE": "simple",
+    "LES_SEARXNG_URL": "",
+    "LES_CRAWL4AI_URL": "",
+    "LES_CRAWL4AI_TOKEN": "",
+    "LES_CHAT_RESIDENT_MIN_FREE_GB": "2.0",
 }
 _ROOT = Path(__file__).resolve().parents[2]
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")
@@ -74,6 +135,11 @@ _RESTART_KEYS = {
     "LES_CANONICAL_AGENT_ROUTE_MODE",
     "LES_DEMO_PROVIDER_OVERRIDE_ENABLED",
     "LES_MODEL_CONNECTION_TIMEOUT_SEC",
+    "LES_RAG_CATALOG_SELF_HEAL",
+    "LES_RAG_PAYLOAD_INDEX_ENSURE",
+    "LES_STARTUP_MODEL_WARMUP",
+    "LES_STARTUP_BACKGROUND_MUTATIONS",
+    "LES_CHAT_RESIDENT_MIN_FREE_GB",
 }
 _SKIP_PARTS = {
     ".git", ".venv", ".test-tmp", "data", "logs", "storage", "dist",
@@ -110,7 +176,7 @@ def _literal_env_key(call: ast.Call) -> str:
 
 @lru_cache(maxsize=1)
 def declared_env_defaults() -> dict[str, str]:
-    defaults: dict[str, str] = {}
+    defaults: dict[str, str] = dict(_EXPLICIT_FACTOR_DEFAULTS)
     source_paths: list[Path] = []
     for root, directories, files in os.walk(_ROOT):
         directories[:] = [
@@ -304,10 +370,12 @@ def update_factors(
         value = str(raw_value)
         if "\n" in value or "\r" in value or "\x00" in value:
             raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
-        if key == "QDRANT_URL":
+        if key in {"QDRANT_URL", "LES_SEARXNG_URL", "LES_CRAWL4AI_URL"} and value:
             parsed = urlparse(value)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                 raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
+        if key == "LES_WEB_SEARCH_MODE" and value not in {"simple", "extended"}:
+            raise RuntimeConfigRegistryError(f"RUNTIME_FACTOR_INVALID_VALUE: {key}")
         normalized[key] = value
     backup = _backup_env(env_path())
     _write_dotenv(env_path(), normalized)

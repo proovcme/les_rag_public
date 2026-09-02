@@ -73,6 +73,11 @@ domain-prose в query и dataset/case-specific boosts запрещены.
    [`config/version.json`](config/version.json) + строка в [RELEASE_LEDGER](docs/RELEASE_LEDGER.md).
 5. **Гейт ПЕРЕД «готово»:** `make verify` (всегда); `make test` если трогал логику.
 6. **В прод — только `make ship`** (verify→test→smoke зелёные) + известный откат (git checkout + redeploy / `tools/restore_runtime.sh`).
+7. **Стабильный цикл locia:** для изменённого пользовательского пути сохранить и сравнить
+   `baseline → candidate → rollback`; не объявлять исправление готовым до installed user journey.
+   Candidate, acceptance и публикация используют exact immutable artifact; изменение
+   индекса/схемы/конфига включает автоматическую миграцию или совместимый fallback,
+   postflight и rollback. Зелёные тесты разрешают живую приёмку, но не заменяют её.
 
 ## Грабли и осторожность
 - **uv-проект:** зависимости/запуск через `uv run`. Не ставить пакеты без одобрения (`uv add` меняет lock).

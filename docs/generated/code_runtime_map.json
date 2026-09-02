@@ -588,7 +588,7 @@
         "tools/smeta_embedding_parity.py",
         "tools/smeta_rag_quality_probe.py"
       ],
-      "lines": 4542,
+      "lines": 4552,
       "module": "backend.qdrant_adapter",
       "outbound": [
         "backend/__init__.py",
@@ -829,6 +829,7 @@
         "proxy/routers/runtime.py",
         "proxy/services/bor_service.py",
         "proxy/services/candidate_acceptance_service.py",
+        "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "proxy/services/colbert_generation_service.py",
         "proxy/services/construction_harness_service.py",
@@ -1249,7 +1250,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 725,
+      "lines": 772,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1330,7 +1331,7 @@
         "tests/test_smoke_offline.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 171,
+      "lines": 170,
       "module": "proxy.config",
       "outbound": [
         "proxy/__init__.py",
@@ -1632,7 +1633,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4227,
+      "lines": 4226,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -2243,7 +2244,7 @@
         "tests/test_proxy_routers.py",
         "tests/test_smeta_agent_runners.py"
       ],
-      "lines": 567,
+      "lines": 585,
       "module": "proxy.routers.settings",
       "outbound": [
         "proxy/__init__.py",
@@ -2252,6 +2253,7 @@
         "proxy/routers/__init__.py",
         "proxy/routers/chat.py",
         "proxy/security.py",
+        "proxy/services/__init__.py",
         "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/preset_service.py",
@@ -2410,6 +2412,7 @@
     },
     {
       "inbound": [
+        "proxy/routers/settings.py",
         "proxy/services/active_state_service.py",
         "proxy/services/agent_router_service.py",
         "proxy/services/answer_contract_service.py",
@@ -2629,7 +2632,9 @@
         "proxy/services/web_search_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
-        "proxy/services/workflow_plan_service.py"
+        "proxy/services/workflow_plan_service.py",
+        "tests/test_chat_evidence_application_service.py",
+        "tests/test_web_search_service.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -2971,9 +2976,10 @@
         "tests/test_datasets_router.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 140,
+      "lines": 147,
       "module": "proxy.services.chat_attachment_service",
       "outbound": [
+        "backend/runtime_paths.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py"
       ],
@@ -3007,7 +3013,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3966,
+      "lines": 4224,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3079,7 +3085,7 @@
         "tests/test_profiles_router.py",
         "tests/test_workbook_tool_contracts.py"
       ],
-      "lines": 912,
+      "lines": 920,
       "module": "proxy.services.chat_profile_service",
       "outbound": [
         "backend/rag_config.py",
@@ -3246,7 +3252,7 @@
         "proxy/routers/rag_advanced.py",
         "tests/test_colbert_generation_service.py"
       ],
-      "lines": 224,
+      "lines": 225,
       "module": "proxy.services.colbert_generation_service",
       "outbound": [
         "backend/rag_config.py",
@@ -5218,7 +5224,7 @@
         "tests/test_openai_compatible_transport_service.py",
         "tools/model_connection_live_acceptance.py"
       ],
-      "lines": 477,
+      "lines": 517,
       "module": "proxy.services.openai_compatible_transport_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5649,7 +5655,7 @@
         "proxy/services/retrieval_service.py",
         "tests/test_rag_advanced_policy_service.py"
       ],
-      "lines": 283,
+      "lines": 287,
       "module": "proxy.services.rag_advanced_policy_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -5665,7 +5671,7 @@
         "proxy/routers/rag_advanced.py",
         "tests/test_rag_advanced_preflight_service.py"
       ],
-      "lines": 157,
+      "lines": 186,
       "module": "proxy.services.rag_advanced_preflight_service",
       "outbound": [
         "backend/raptor_qdrant_store.py",
@@ -6154,7 +6160,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_runtime_admission.py"
       ],
-      "lines": 499,
+      "lines": 536,
       "module": "proxy.services.runtime_admission",
       "outbound": [
         "proxy/__init__.py",
@@ -6171,7 +6177,7 @@
         "tests/test_candidate_acceptance_service.py",
         "tests/test_runtime_config_registry_service.py"
       ],
-      "lines": 329,
+      "lines": 397,
       "module": "proxy.services.runtime_config_registry_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -6890,7 +6896,7 @@
         "tests/test_web_search_service.py",
         "tools/les_tool_harness.py"
       ],
-      "lines": 1345,
+      "lines": 1408,
       "module": "proxy.services.tool_harness_service",
       "outbound": [
         "backend/converter.py",
@@ -7129,7 +7135,7 @@
         "proxy/services/tool_harness_service.py",
         "tests/test_web_search_service.py"
       ],
-      "lines": 106,
+      "lines": 234,
       "module": "proxy.services.web_search_service",
       "outbound": [
         "backend/http_client_policy.py",
@@ -8057,7 +8063,7 @@
         "sovushka_ng.py",
         "tests/test_diag_platform.py"
       ],
-      "lines": 1433,
+      "lines": 1602,
       "module": "sovushka.pages.diag",
       "outbound": [
         "sovushka/__init__.py",
@@ -9009,7 +9015,7 @@
     },
     {
       "inbound": [],
-      "lines": 69,
+      "lines": 86,
       "module": "tests.test_chat_attachment_service",
       "outbound": [
         "proxy/services/chat_attachment_service.py"
@@ -9031,10 +9037,11 @@
     },
     {
       "inbound": [],
-      "lines": 2345,
+      "lines": 2720,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
+        "proxy/services/__init__.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_evidence_application_service.py",
@@ -9117,7 +9124,7 @@
     },
     {
       "inbound": [],
-      "lines": 424,
+      "lines": 455,
       "module": "tests.test_chat_profile_service",
       "outbound": [
         "proxy/services/chat_profile_service.py"
@@ -9341,7 +9348,7 @@
     },
     {
       "inbound": [],
-      "lines": 98,
+      "lines": 99,
       "module": "tests.test_colbert_generation_service",
       "outbound": [
         "proxy/services/colbert_generation_service.py"
@@ -9731,7 +9738,7 @@
     },
     {
       "inbound": [],
-      "lines": 91,
+      "lines": 108,
       "module": "tests.test_documentation_contract",
       "outbound": [
         "tools/documentation_contract.py"
@@ -10591,7 +10598,7 @@
     },
     {
       "inbound": [],
-      "lines": 804,
+      "lines": 808,
       "module": "tests.test_live_workbook_acceptance_contract",
       "outbound": [
         "proxy/routers/artifacts.py",
@@ -11249,7 +11256,7 @@
     },
     {
       "inbound": [],
-      "lines": 406,
+      "lines": 454,
       "module": "tests.test_openai_compatible_transport_service",
       "outbound": [
         "proxy/services/model_connection_contracts.py",
@@ -11732,7 +11739,7 @@
     },
     {
       "inbound": [],
-      "lines": 119,
+      "lines": 120,
       "module": "tests.test_rag_advanced_policy_service",
       "outbound": [
         "proxy/services/rag_advanced_policy_service.py"
@@ -11743,7 +11750,7 @@
     },
     {
       "inbound": [],
-      "lines": 39,
+      "lines": 76,
       "module": "tests.test_rag_advanced_preflight_service",
       "outbound": [
         "proxy/services/rag_advanced_preflight_service.py"
@@ -11820,7 +11827,7 @@
     },
     {
       "inbound": [],
-      "lines": 117,
+      "lines": 119,
       "module": "tests.test_rag_generation_supervisor",
       "outbound": [
         "tools/rag_generation_supervisor.py"
@@ -12409,7 +12416,7 @@
     },
     {
       "inbound": [],
-      "lines": 353,
+      "lines": 414,
       "module": "tests.test_runtime_admission",
       "outbound": [
         "proxy/services/resource_governor.py",
@@ -12421,7 +12428,7 @@
     },
     {
       "inbound": [],
-      "lines": 226,
+      "lines": 308,
       "module": "tests.test_runtime_config_registry_service",
       "outbound": [
         "proxy/services/runtime_config_registry_service.py"
@@ -13399,7 +13406,7 @@
     },
     {
       "inbound": [],
-      "lines": 332,
+      "lines": 375,
       "module": "tests.test_tool_harness_service",
       "outbound": [
         "proxy/routers/tools.py",
@@ -13425,7 +13432,7 @@
     },
     {
       "inbound": [],
-      "lines": 108,
+      "lines": 111,
       "module": "tests.test_tool_registry_service",
       "outbound": [
         "proxy/services/tool_contract_service.py",
@@ -13736,9 +13743,10 @@
     },
     {
       "inbound": [],
-      "lines": 66,
+      "lines": 268,
       "module": "tests.test_web_search_service",
       "outbound": [
+        "proxy/services/__init__.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/web_search_service.py"
       ],
@@ -15006,7 +15014,7 @@
         "tests/test_install_profile_env.py",
         "tools/lesctl.py"
       ],
-      "lines": 288,
+      "lines": 284,
       "module": "tools.install_les",
       "outbound": [
         "tools/__init__.py"
@@ -15515,7 +15523,7 @@
       "inbound": [
         "tests/test_rag_generation_supervisor.py"
       ],
-      "lines": 442,
+      "lines": 462,
       "module": "tools.rag_generation_supervisor",
       "outbound": [
         "tools/__init__.py"
@@ -18150,6 +18158,18 @@
       "source": "proxy/routers/settings.py"
     },
     {
+      "handler": "get_web_research_settings",
+      "method": "GET",
+      "path": "/api/settings/web-research",
+      "source": "proxy/routers/settings.py"
+    },
+    {
+      "handler": "probe_web_research_settings",
+      "method": "POST",
+      "path": "/api/settings/web-research/probe",
+      "source": "proxy/routers/settings.py"
+    },
+    {
       "handler": "smeta_artifact_download",
       "method": "GET",
       "path": "/api/smeta-artifacts/download",
@@ -18395,11 +18415,11 @@
     "dormant_candidates": 1,
     "parse_warnings": 0,
     "product_reachable": 348,
-    "registered_api_routes": 330,
+    "registered_api_routes": 332,
     "runtime_support": 11,
     "test_or_tool_only": 623,
     "tracked_python_files": 983,
-    "tracked_python_lines": 308796
+    "tracked_python_lines": 310621
   },
   "warnings": []
 }

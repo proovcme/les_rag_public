@@ -62,7 +62,7 @@ def test_colbert_generation_uses_checkpointed_sibling_and_gated_activation(
         state_path = command[command.index("--state-path") + 1]
         progress_path = command[command.index("--progress-path") + 1]
         with open(state_path, "w", encoding="utf-8") as stream:
-            json.dump({"status": "activated", "stage": "complete"}, stream)
+            json.dump({"status": "ready", "stage": "awaiting_activation"}, stream)
         with open(progress_path, "w", encoding="utf-8") as stream:
             json.dump(
                 {
@@ -92,6 +92,7 @@ def test_colbert_generation_uses_checkpointed_sibling_and_gated_activation(
     command = captured["command"]
     assert "--with-colbert" in command
     assert "--create-destination" in command
+    assert "--build-only" in command
     assert command[command.index("--src") + 1] == "les_rag"
     assert command[command.index("--dst") + 1].startswith("les_rag_colbert_")
     assert result["readiness"] == "ready"

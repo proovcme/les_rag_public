@@ -263,17 +263,36 @@ async def metrics_collector_loop():
             files = await asyncio.to_thread(_get_db_files)
 
             host_mem = {}
+            loaded_model_names: list[str] = []
             try:
                 provider = os.getenv("LES_LLM_PROVIDER", "mlx").strip().lower() or "mlx"
+                local_model_url = ""
                 if provider == "mlx":
-                    mlx_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+                    local_model_url = os.getenv("MLX_URL", "http://127.0.0.1:8080")
+                elif provider == "ollama":
+                    local_model_url = os.getenv(
+                        "OLLAMA_BASE_URL",
+                        os.getenv("OLLAMA_URL", "http://127.0.0.1:11434"),
+                    )
+                local_model_url = local_model_url.rstrip("/")
+                if local_model_url.casefold().endswith("/v1"):
+                    local_model_url = local_model_url[:-3]
+                if local_model_url:
                     async with httpx.AsyncClient(
-                        trust_env=trust_env_for_url(mlx_url),
+                        trust_env=trust_env_for_url(local_model_url),
                         timeout=2.0,
                     ) as client:
-                        response = await client.get(f"{mlx_url}/api/host_memory")
+                        if provider == "mlx":
+                            response = await client.get(f"{local_model_url}/api/host_memory")
+                            if response.status_code == 200:
+                                host_mem = response.json()
+                        response = await client.get(f"{local_model_url}/api/ps")
                         if response.status_code == 200:
-                            host_mem = response.json()
+                            loaded_model_names = [
+                                str(model.get("name") or model.get("model") or "").strip()
+                                for model in (response.json().get("models") or [])
+                                if str(model.get("name") or model.get("model") or "").strip()
+                            ]
             except Exception:
                 pass
 
@@ -302,6 +321,7 @@ async def metrics_collector_loop():
                     "swap_used_gb": host_mem.get("swap_used_gb", 0),
                     "swap_total_gb": host_mem.get("swap_total_gb", 0),
                     "swap_pct": host_mem.get("swap_pct", 0),
+                    "llm_loaded_models": loaded_model_names,
                     "datasets": ds_count,
                     "files_processed": files,
                     "chunks_indexed": chunks,
@@ -357,14 +377,41 @@ async def startup():
         recovered_outlook = recover_outlook_spool()
         if recovered_outlook:
             logger.info("[INIT] Resumed %s durable Outlook spool item(s)", recovered_outlook)
-        asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
-        asyncio.create_task(_catalog_self_heal())
-        asyncio.create_task(_smeta_generation_reconcile())
-        asyncio.create_task(_parse_resume_supervisor())
-        asyncio.create_task(_raptor_resume_supervisor())
+        if startup_model_warmup_enabled():
+            asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
+        if startup_background_mutations_enabled():
+            if catalog_self_heal_enabled():
+                asyncio.create_task(_catalog_self_heal())
+            asyncio.create_task(_smeta_generation_reconcile())
+            asyncio.create_task(_parse_resume_supervisor())
+            asyncio.create_task(_raptor_resume_supervisor())
+        else:
+            logger.info(
+                "[INIT] Background state mutation is disabled; "
+                "catalog repair, generation reconciliation and resume supervisors were not started"
+            )
     except Exception as e:
         logger.error("[INIT] Backend initialization failed: %s", e)
         raise
+
+
+def catalog_self_heal_enabled() -> bool:
+    return os.getenv("LES_RAG_CATALOG_SELF_HEAL", "true").lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def startup_model_warmup_enabled() -> bool:
+    return os.getenv("LES_STARTUP_MODEL_WARMUP", "true").lower() in {
+        "1", "true", "yes", "on"
+    }
+
+
+def startup_background_mutations_enabled() -> bool:
+    """Whether startup may repair, reconcile or resume persisted RAG state."""
+    return os.getenv("LES_STARTUP_BACKGROUND_MUTATIONS", "true").lower() in {
+        "1", "true", "yes", "on"
+    }
 
 
 async def _catalog_self_heal():
@@ -376,7 +423,7 @@ async def _catalog_self_heal():
         qdrant_url=os.getenv("QDRANT_URL", "http://127.0.0.1:6333"),
         collection=rag_backend.collection_name,
         meta_db_path=rag_meta_db_path(),
-        apply=os.getenv("LES_RAG_CATALOG_SELF_HEAL", "true").lower() in {"1", "true", "yes", "on"},
+        apply=True,
     )
     navigation_counts = None
     if result.get("status") != "blocked":

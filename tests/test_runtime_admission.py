@@ -8,6 +8,7 @@ from proxy.services.runtime_admission import (
     count_active_jobs,
     evaluate_chat_admission,
     evaluate_memory_pressure,
+    local_model_resident,
     memory_snapshot,
 )
 from proxy.services.resource_governor import current_runtime_profile, enter_chat_mode, enter_indexing_mode
@@ -156,6 +157,66 @@ def test_chat_admission_allows_loaded_local_model_on_24gb_mac_default(monkeypatc
 
     assert result.allowed is True
     assert result.memory_state == "CRITICAL"
+
+
+def test_chat_admission_uses_lower_hard_floor_for_exact_resident_ollama_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    monkeypatch.setenv("LES_CHAT_MIN_FREE_GB", "4")
+    monkeypatch.setenv("LES_CHAT_RESIDENT_MIN_FREE_GB", "2")
+    metrics = {
+        "ram_free_gb": 3.2,
+        "swap_used_gb": 0.0,
+        "swap_pct": 0.0,
+        "llm_loaded_models": ["qwen3.5:9b", "bge-m3:latest"],
+    }
+
+    assert local_model_resident(metrics) is True
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"}, metrics_cache=metrics, active_jobs=0
+    )
+
+    assert result.allowed is True
+    assert result.indexing_chat_policy["model_resident"] is True
+    assert result.indexing_chat_policy["hard_min_free_gb"] == 2.0
+
+
+def test_chat_admission_does_not_treat_embedding_model_as_resident_answer_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    metrics = {
+        "ram_free_gb": 3.2,
+        "swap_used_gb": 0.0,
+        "swap_pct": 0.0,
+        "llm_loaded_models": ["bge-m3:latest"],
+    }
+
+    assert local_model_resident(metrics) is False
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"}, metrics_cache=metrics, active_jobs=0
+    )
+
+    assert result.allowed is False
+    assert "ram_free_gb=3.2 < 4.0" in result.reason
+
+
+def test_chat_admission_still_blocks_critical_floor_with_resident_model(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    monkeypatch.setenv("LES_CHAT_RESIDENT_MIN_FREE_GB", "2")
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"},
+        metrics_cache={
+            "ram_free_gb": 1.5,
+            "swap_used_gb": 0.0,
+            "swap_pct": 0.0,
+            "llm_loaded_models": ["qwen3.5:9b"],
+        },
+        active_jobs=0,
+    )
+
+    assert result.allowed is False
+    assert "ram_free_gb=1.5 < 2.0" in result.reason
 
 
 def test_chat_admission_blocks_indexing_mode_before_memory_checks(monkeypatch):

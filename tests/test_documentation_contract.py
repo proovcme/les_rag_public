@@ -89,3 +89,20 @@ def test_current_docs_advertise_only_the_acceptance_orchestrator_for_public_rele
     assert "make release RELEASE_ARGS=" in procedure
     assert "Legion" in procedure
     assert "rollback" in procedure
+
+
+def test_locia_stability_policy_requires_user_path_and_atomic_updates():
+    guardrails = (ROOT / "docs" / "GUARDRAILS.md").read_text(encoding="utf-8")
+    agents = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+
+    for required in (
+        "baseline → candidate → rollback",
+        "одни и те же immutable bytes",
+        "индекс/схема/конфиг",
+        "автоматическая миграция",
+        "installed user journey",
+        "тесты не являются доказательством релиза",
+    ):
+        assert required in guardrails
+    assert "baseline → candidate → rollback" in agents
+    assert "не объявлять исправление готовым до installed user journey" in agents

@@ -63,7 +63,6 @@ from backend.inference.routing import (
     estimate_cost_usd,
     is_cloud_provider,
     load_price_table_from_env,
-    memory_aware_provider,
 )
 from proxy.services.cad_bim_highlight import extract_highlight, set_highlight
 from proxy.services.clause_lookup_service import maybe_answer_clause_lookup

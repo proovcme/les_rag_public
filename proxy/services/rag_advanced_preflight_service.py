@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+from pathlib import Path
 from typing import Any
 
 from backend.raptor_qdrant_store import target_collection_name
@@ -16,6 +17,26 @@ COLBERT_DIMENSION = 1024
 FLOAT16_BYTES = 2
 QDRANT_MULTIVECTOR_OVERHEAD_RATIO = 1.25
 BGE_M3_EXPECTED_CACHE_BYTES = 2_400_000_000
+CPU_FULL_BUILD_POINT_LIMIT = 10_000
+
+
+def _colbert_acceleration() -> dict[str, str]:
+    """Inspect the installed Torch build without importing Torch or loading a model."""
+    spec = importlib.util.find_spec("torch")
+    if spec is None or not spec.origin:
+        return {"status": "missing", "backend": "none"}
+    version_path = Path(spec.origin).parent / "version.py"
+    try:
+        lines = version_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"status": "unknown", "backend": "unknown"}
+    for backend in ("cuda", "hip", "xpu"):
+        prefix = f"{backend}:"
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith(prefix) and not stripped.endswith("= None"):
+                return {"status": "accelerated", "backend": backend}
+    return {"status": "cpu_only", "backend": "cpu"}
 
 
 def _bge_m3_cache() -> dict[str, Any]:
@@ -98,6 +119,7 @@ def advanced_preflight(rag_snapshot: dict[str, Any]) -> dict[str, Any]:
         max_passage_tokens=int(colbert_policy["max_passage_tokens"]),
     )
     model_remaining = max(0, BGE_M3_EXPECTED_CACHE_BYTES - int(cache.get("bytes") or 0))
+    acceleration = _colbert_acceleration()
     raptor_status = load_status()["raptor"]
     source_collection = str(
         qdrant.get("physical_collection") or qdrant.get("collection") or ""
@@ -110,6 +132,12 @@ def advanced_preflight(rag_snapshot: dict[str, Any]) -> dict[str, Any]:
         blockers.append(str(cache.get("error_code") or "COLBERT_MODEL_CACHE_MISSING"))
     if not evidence_points:
         blockers.append("COLBERT_EVIDENCE_POINTS_MISSING")
+    if (
+        evidence_points > CPU_FULL_BUILD_POINT_LIMIT
+        and acceleration.get("status") != "accelerated"
+        and not bool(colbert_policy.get("allow_cpu_full_build", False))
+    ):
+        blockers.append("COLBERT_ACCELERATOR_REQUIRED_FOR_FULL_BUILD")
     return {
         "schema": PREFLIGHT_SCHEMA,
         "read_only": True,
@@ -121,6 +149,7 @@ def advanced_preflight(rag_snapshot: dict[str, Any]) -> dict[str, Any]:
                 "module": "FlagEmbedding",
                 "installed": dependency_ready,
             },
+            "acceleration": acceleration,
             "model": {
                 "id": colbert_policy["model"],
                 "cache": cache,

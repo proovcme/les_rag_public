@@ -17,6 +17,9 @@ planner/model-review шага и JSON-протокола между модель
    документа, затем передаёт модели `model_evidence_k` результатов.
 3. Для model-authored запросов каждая группа сохраняется независимо как
    `Qx.Hy`; ранние запросы не могут вытеснить поздние.
+   Транспорт принимает обычные строки. Кавычки и явно написанная самой моделью
+   оболочка `search_sources("…")` снимаются только синтаксически; вступительная
+   проза при наличии таких строк не превращается в дополнительный запрос.
 4. Фактически показанные модели chunks образуют immutable evidence manifest.
    Следующая реплика получает компактный индекс использованного evidence и тот
    же frozen scope, но не повторные полные тела фрагментов.
@@ -26,6 +29,10 @@ planner/model-review шага и JSON-протокола между модель
 6. `selected_sources_only=true` исполняемо удаляет web capability; при `false`
    web остаётся доступен согласно профилю. Между репликами флаг наследуется из
    manifest, если пользователь не изменил его явно.
+7. Web policy принадлежит GUI: `simple` использует рабочий DuckDuckGo,
+   `extended` запрашивает SearXNG и даёт модели отдельный `web_read` для
+   выбранной страницы через Crawl4AI. Недоступный расширенный поиск явно
+   деградирует в simple; код не выбирает страницу за модель.
 
 ## Надёжность и readiness
 
@@ -40,6 +47,13 @@ planner/model-review шага и JSON-протокола между модель
 - RAPTOR по умолчанию `off`. ColBERT вызывается только при status `ready`,
   закрытом breaker и audited active-generation contract с полной multivector
   readiness; отсутствие такой генерации — обычный `not_ready` bypass.
+- Приёмочный runtime может выставить
+  `LES_STARTUP_BACKGROUND_MUTATIONS=false`: startup тогда не запускает repair,
+  generation reconciliation и resume supervisors. Default остаётся `true` и
+  виден в runtime registry.
+- Admission различает загрузку точной локальной answer-model и чужой модели.
+  Для уже резидентной модели действует отдельный жёсткий RAM floor; swap guard
+  сохраняется. Chat не заменяет выбранный Ollama/MLX provider по уровню RAM.
 
 ## Точки входа
 
@@ -52,6 +66,7 @@ planner/model-review шага и JSON-протокола между модель
 - `proxy/services/chat_capability_scope_service.py`
 - `proxy/services/source_locator_service.py`
 - `proxy/services/runtime_admission.py`
+- `proxy/services/web_{research_config,search,page_reader}_service.py`
 - `proxy/services/rag_{readiness,pipeline_status,advanced_policy}_service.py`
 - `sovushka/pages/{chat,profiles,diag}.py`
 

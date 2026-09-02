@@ -197,7 +197,10 @@ class OpenAICompatibleTransport:
             "model": connection.model_id,
             "messages": [dict(item) for item in request.messages],
             "think": False,
-            "stream": False,
+            # Native chat sends one NDJSON event per generated fragment.
+            # Consuming it keeps a long local generation alive while complete()
+            # still returns the exact concatenated model answer as one value.
+            "stream": True,
             "options": options,
         }
         if request.tools:
@@ -226,27 +229,64 @@ class OpenAICompatibleTransport:
             body=self._native_chat_body(connection, request),
         )
         try:
-            raw = await self._read_bounded(response)
             if not 200 <= response.status_code < 300:
+                await self._read_bounded(response)
                 raise ModelTransportError(f"UPSTREAM_HTTP_ERROR: {response.status_code}")
-            try:
-                payload = json.loads(raw)
-                message = payload["message"]
-            except (KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise ModelTransportError("UPSTREAM_RESPONSE_INVALID") from exc
-            tool_calls_raw = message.get("tool_calls") or ()
-            if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, str):
-                raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
-            prompt_tokens = int(payload.get("prompt_eval_count") or 0)
-            completion_tokens = int(payload.get("eval_count") or 0)
-            return InferenceResponse(
-                text=str(message.get("content") or ""),
-                tool_calls=tuple(
+
+            semantic_size = 0
+            event_count = 0
+            event_count_limit = max(256, request.max_output_tokens * 8)
+            event_wire_limit = max(1024, self.response_body_limit * 8)
+            saw_event = False
+            text_parts: list[str] = []
+            tool_calls: list[Mapping[str, Any]] = []
+            prompt_tokens = 0
+            completion_tokens = 0
+            finish_reason = ""
+            model_id = connection.model_id
+            async for line in response.aiter_lines():
+                event_count += 1
+                if event_count > event_count_limit or len(line.encode("utf-8")) > event_wire_limit:
+                    raise ModelTransportError("UPSTREAM_RESPONSE_TOO_LARGE")
+                if not line.strip():
+                    continue
+                try:
+                    payload = json.loads(line)
+                    message = payload["message"]
+                    if not isinstance(message, Mapping):
+                        raise TypeError("message must be a mapping")
+                    prompt_tokens = int(payload.get("prompt_eval_count") or prompt_tokens)
+                    completion_tokens = int(payload.get("eval_count") or completion_tokens)
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise ModelTransportError("UPSTREAM_RESPONSE_INVALID") from exc
+                saw_event = True
+                model_id = str(payload.get("model") or model_id)
+                content = message.get("content")
+                if isinstance(content, str) and content:
+                    semantic_size += len(content.encode("utf-8"))
+                    if semantic_size > self.response_body_limit:
+                        raise ModelTransportError("UPSTREAM_RESPONSE_TOO_LARGE")
+                    text_parts.append(content)
+                tool_calls_raw = message.get("tool_calls") or ()
+                if not isinstance(tool_calls_raw, Sequence) or isinstance(tool_calls_raw, str):
+                    raise ModelTransportError("UPSTREAM_TOOL_CALLS_INVALID")
+                semantic_size += len(
+                    json.dumps(tool_calls_raw, ensure_ascii=False).encode("utf-8")
+                ) if tool_calls_raw else 0
+                if semantic_size > self.response_body_limit:
+                    raise ModelTransportError("UPSTREAM_RESPONSE_TOO_LARGE")
+                tool_calls.extend(
                     MappingProxyType(dict(item))
                     for item in tool_calls_raw
                     if isinstance(item, Mapping)
-                ),
-                finish_reason=str(payload.get("done_reason") or ""),
+                )
+                finish_reason = str(payload.get("done_reason") or finish_reason)
+            if not saw_event:
+                raise ModelTransportError("UPSTREAM_RESPONSE_INVALID")
+            return InferenceResponse(
+                text="".join(text_parts),
+                tool_calls=tuple(tool_calls),
+                finish_reason=finish_reason,
                 usage=MappingProxyType(
                     {
                         "prompt_tokens": prompt_tokens,
@@ -254,7 +294,7 @@ class OpenAICompatibleTransport:
                         "total_tokens": prompt_tokens + completion_tokens,
                     }
                 ),
-                model_id=str(payload.get("model") or connection.model_id),
+                model_id=model_id,
             )
         finally:
             await response.aclose()

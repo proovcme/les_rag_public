@@ -168,6 +168,14 @@ def effective_profile_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     if canonical_profile_mode(effective.get("mode")) == "estimator":
         rag_policy["model_authored_initial_query"] = True
     effective["rag_policy"] = rag_policy
+    tools = list(effective.get("tools") or [])
+    if "web_search" in tools and "web_read" not in tools:
+        tools.insert(tools.index("web_search") + 1, "web_read")
+        effective["tools"] = tools
+        bridges = list(effective.get("effective_capability_bridges") or [])
+        if "paired_web_capability_v1" not in bridges:
+            bridges.append("paired_web_capability_v1")
+        effective["effective_capability_bridges"] = bridges
     return effective
 
 

@@ -52,6 +52,14 @@ def chat_min_free_gb() -> float:
     return _env_float("LES_CHAT_MIN_FREE_GB", 4.0)
 
 
+def chat_resident_min_free_gb() -> float:
+    """Hard RAM floor after the exact local answer model is already resident."""
+    return max(
+        memory_critical_min_free_gb(),
+        _env_float("LES_CHAT_RESIDENT_MIN_FREE_GB", 2.0),
+    )
+
+
 def chat_max_swap_pct() -> float:
     # Match the MLX host's own hard-pressure stop.  YELLOW/RED pressure remains
     # visible in telemetry and still prevents concurrent indexing, but does not
@@ -169,6 +177,31 @@ def chat_memory_guard_for_provider() -> bool:
     if provider in LOCAL_LLM_PROVIDERS:
         return chat_memory_guard_enabled()
     return _env_bool("LES_CHAT_MEMORY_GUARD", False)
+
+
+def _model_identity(value: Any) -> str:
+    identity = str(value or "").strip().casefold()
+    return identity.removesuffix(":latest")
+
+
+def local_model_resident(metrics_cache: dict[str, Any] | None) -> bool:
+    """Whether telemetry proves the exact configured local answer model is loaded."""
+    provider = active_llm_provider()
+    if provider == "ollama":
+        requested = os.getenv("OLLAMA_MODEL", "").strip() or os.getenv("LLM_MODEL", "").strip()
+    elif provider in {"mlx", "local-mlx", "local_mlx"}:
+        requested = os.getenv("LLM_MODEL", "").strip() or os.getenv("MLX_MODEL", "").strip()
+    else:
+        return False
+    requested_identity = _model_identity(requested)
+    if not requested_identity:
+        return False
+    loaded = (metrics_cache or {}).get("llm_loaded_models") or []
+    for item in loaded:
+        name = item.get("name") if isinstance(item, dict) else item
+        if _model_identity(name) == requested_identity:
+            return True
+    return False
 
 
 def memory_green_min_free_gb() -> float:
@@ -400,6 +433,8 @@ def evaluate_chat_admission(
     block_jobs = chat_block_active_jobs() if block_active_jobs is None else block_active_jobs
     guard_memory = chat_memory_guard_for_provider() if memory_guard is None else memory_guard
     provider_is_cloud = llm_provider_is_cloud()
+    model_resident = local_model_resident(metrics_cache)
+    hard_min_free = chat_resident_min_free_gb() if model_resident else min_free
 
     mode_allowed, mode_reason = chat_generation_allowed(current_mode)
     memory = memory_snapshot(metrics_cache)
@@ -425,6 +460,8 @@ def evaluate_chat_admission(
         "embed_backend": active_embed_backend(),
         "indexing_uses_coreml": coreml_indexing,
         "memory_state": memory_pressure.state,
+        "model_resident": model_resident,
+        "hard_min_free_gb": hard_min_free,
         "local_generation_allowed": bool(local_index_green),
         "reason": "not_indexing",
     }
@@ -454,8 +491,8 @@ def evaluate_chat_admission(
         ram_free = memory.get("ram_free_gb")
         swap_used = memory.get("swap_used_gb")
         swap_pct = memory.get("swap_pct")
-        if ram_free is not None and ram_free < min_free:
-            failures.append(f"ram_free_gb={ram_free:.1f} < {min_free:.1f}")
+        if ram_free is not None and ram_free < hard_min_free:
+            failures.append(f"ram_free_gb={ram_free:.1f} < {hard_min_free:.1f}")
             status_code = max(status_code, 503)
         if swap_pct is not None and swap_pct > max_swap:
             # macOS can keep swap allocated after pressure is gone. Treat that

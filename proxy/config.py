@@ -44,7 +44,6 @@ ALLOWED_SETTINGS = {
     # W3.3 (ADR-9): маршрутизация локал/облако
     "LES_CLOUD_CONSENT",            # разрешить P2-данные в облако (P0 — никогда)
     "LES_CLOUD_PRICES",             # переопределение цен: "model:in/out,..."
-    "LES_LOCAL_PROVIDER_MIN_FREE_GB",  # ниже порога локальный конкурент MLX сводится к MLX
 }
 DEFAULT_RAG_UPLOAD_SUFFIXES = (
     ".pdf",

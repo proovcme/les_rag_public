@@ -114,6 +114,11 @@ def _common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--colbert-dimension", type=int, default=1024)
     parser.add_argument("--colbert-passage-tokens", type=int, default=128)
     parser.add_argument(
+        "--build-only",
+        action="store_true",
+        help="stop after readiness and leave the active alias unchanged",
+    )
+    parser.add_argument(
         "--create-destination",
         action="store_true",
         help="allow the reviewed generation job to create its missing sibling collection",
@@ -158,6 +163,8 @@ def _worker_arguments(args: argparse.Namespace) -> list[str]:
                 "--colbert-passage-tokens", str(getattr(args, "colbert_passage_tokens", 128)),
             )
         )
+    if getattr(args, "build_only", False):
+        result.append("--build-only")
     return result
 
 
@@ -313,6 +320,19 @@ def _run_locked(args: argparse.Namespace) -> int:
                 "--report-path", str(args.readiness_report),
             ],
         )
+        if getattr(args, "build_only", False):
+            state.update(
+                {
+                    "status": "ready",
+                    "stage": "awaiting_activation",
+                    "failures": 0,
+                    "error_code": "",
+                    "error": "",
+                    "updated_at": time.time(),
+                }
+            )
+            _write_json_atomic(args.state_path, state)
+            return 0
         activation = [
                 str(python),
                 str(ROOT / "tools/activate_qdrant_generation.py"),

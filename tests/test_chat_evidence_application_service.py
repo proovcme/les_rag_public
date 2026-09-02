@@ -15,6 +15,83 @@ from proxy.routers import chat
 from proxy.services import chat_evidence_application_service as service
 from proxy.services.chat_attachment_service import preserve_read_attachment
 from proxy.services.tool_harness_service import ToolHarness
+from proxy.services.web_research_config_service import WebResearchConfig
+
+
+def test_web_reader_is_visible_only_in_explicit_extended_request_snapshot():
+    tools = ["web_search", "web_read", "filesystem_search"]
+
+    simple = service.web_tools_for_request(
+        tools,
+        WebResearchConfig("simple", "", "", ""),
+    )
+    extended = service.web_tools_for_request(
+        tools,
+        WebResearchConfig(
+            "extended",
+            "http://127.0.0.1:8888",
+            "http://127.0.0.1:11235",
+            "",
+        ),
+    )
+
+    assert simple == ["web_search", "filesystem_search"]
+    assert extended == tools
+
+
+def test_web_tool_sources_replace_search_snippet_with_read_page_provenance():
+    tool_results = [
+        {
+            "tool": "web_search",
+            "result": {
+                "results": [
+                    {
+                        "title": "Каталог",
+                        "snippet": "Краткая выдача",
+                        "url": "https://public.example/material",
+                        "domain": "public.example",
+                    }
+                ]
+            },
+            "sources": [
+                {
+                    "kind": "web",
+                    "title": "Каталог",
+                    "url": "https://public.example/material",
+                    "domain": "public.example",
+                }
+            ],
+        },
+        {
+            "tool": "web_read",
+            "result": {
+                "title": "Каталог материалов",
+                "text": "Полный текст страницы",
+                "final_url": "https://public.example/material",
+                "retrieved_at": "2026-09-02T10:00:00+00:00",
+            },
+            "sources": [
+                {
+                    "kind": "web_page",
+                    "title": "Каталог материалов",
+                    "url": "https://public.example/material",
+                }
+            ],
+        },
+    ]
+
+    source_map = service.web_source_map_from_tool_results(tool_results)
+
+    assert len(source_map) == 1
+    assert source_map[0]["label"] == "Источник 1"
+    assert source_map[0]["snippet"] == "Полный текст страницы"
+    assert source_map[0]["locator"] == {
+        "kind": "web_result",
+        "url": "https://public.example/material",
+        "title": "Каталог материалов",
+        "retrieved_at": "2026-09-02T10:00:00+00:00",
+        "excerpt": "Полный текст страницы",
+    }
 
 
 def test_attachment_workbook_tools_survive_restrictive_model_shortlist():
@@ -251,6 +328,12 @@ def test_model_rag_result_decoder_has_no_regex_or_language_router():
     assert "query" not in source
 
 
+def test_chat_application_does_not_replace_the_configured_model_for_memory_pressure():
+    source = inspect.getsource(service._execute_chat_evidence_application)
+
+    assert "memory_aware_provider" not in source
+
+
 def test_model_rag_result_preserves_explicit_row_identity_and_norm_code_verbatim():
     answer = """| source_row | title | unit | quantity | norm_code | evidence_refs |
 |---:|---|---|---:|---|---|
@@ -332,6 +415,86 @@ def test_model_rag_result_does_not_infer_rows_from_prose():
     assert service.parse_model_rag_result(answer) is None
 
 
+def test_model_rag_result_reads_explicit_multiline_labelled_blocks():
+    answer = """**Строка 1**
+* **source_row**: 1
+* **section**: Демонтаж
+* **title**: Демонтаж керамической плитки со стен
+* **unit**: м2
+* **quantity**: 24
+* **norm_code**: ГЭСНр63-03-001-05
+* **analogue**: Нет
+* **coverage**: Полное соответствие
+* **coefficient**: 1.0
+* **evidence_refs**: Q6.H4, Q13.H5
+
+**Строка 2**
+- **source_row**: 2
+- **title**: Окраска стен
+- **unit**: м2
+- **quantity**: 60
+- **norm_code**: ГЭСН15-04-007-05
+- **coverage**: Полное соответствие
+- **evidence_refs**: Q3.H2; Q8.H5
+"""
+
+    assert service.parse_model_rag_result(answer) == (
+        answer,
+        [
+            {
+                "source_row": 1,
+                "section": "Демонтаж",
+                "title": "Демонтаж керамической плитки со стен",
+                "unit": "м2",
+                "quantity": 24,
+                "norm_code": "ГЭСНр63-03-001-05",
+                "analogue": "Нет",
+                "coverage": "Полное соответствие",
+                "coefficient": 1,
+                "evidence_refs": ["Q6.H4", "Q13.H5"],
+            },
+            {
+                "source_row": 2,
+                "title": "Окраска стен",
+                "unit": "м2",
+                "quantity": 60,
+                "norm_code": "ГЭСН15-04-007-05",
+                "coverage": "Полное соответствие",
+                "evidence_refs": ["Q3.H2", "Q8.H5"],
+            },
+        ],
+    )
+
+
+def test_model_rag_result_reads_source_row_explicit_in_block_heading():
+    answer = """### Строка 1 (source_row=1)
+* **section:** Демонтаж
+* **title:** Разборка облицовки стен
+* **unit:** м2
+* **quantity:** 24
+* **norm_code:** ГЭСНр63-03-001-05
+* **coverage:** Полное покрытие
+* **coefficient:** 1.0 (без дополнительных коэффициентов)
+* **evidence_refs:** Q4.H1
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[0] == answer
+    assert parsed[1] == [{
+        "source_row": 1,
+        "section": "Демонтаж",
+        "title": "Разборка облицовки стен",
+        "unit": "м2",
+        "quantity": 24,
+        "norm_code": "ГЭСНр63-03-001-05",
+        "coverage": "Полное покрытие",
+        "coefficient": 1,
+        "evidence_refs": ["Q4.H1"],
+    }]
+
+
 def test_model_rag_result_reads_explicit_labelled_lines_without_semantic_repair():
     answer = """Строка 1 — Прокладка контрольного кабеля; раздел: Монтаж; ед. изм.: м; количество: 120; norm_code: ГЭСНм08-02-146-01; аналог: Кабель контрольный; обоснование: прямое соответствие составу; коэффициент: 1; evidence: Q1.H2.
 Строка 2 — Монтаж шкафа управления; раздел: Автоматика; ед. изм.: шт.; количество: 2; norm_code: ГЭСНм11-03-001-01; аналог: Шкаф управления; обоснование: совпадают измеритель и операции; evidence_refs: Q2.H1, Q2.H3."""
@@ -378,6 +541,20 @@ def test_model_rag_queries_ignore_only_plain_text_presentation_wrappers():
     assert service.parse_model_rag_queries(raw) == [
         "демонтаж кабеля в гофре",
         "монтаж аварийного светильника",
+    ]
+
+
+def test_model_rag_queries_liberally_unwrap_model_written_search_call_lines():
+    raw = (
+        "Сейчас сформирую запросы.\n"
+        'search_sources "демонтаж штукатурки со стен"\n'
+        'search_sources("монтаж воздуховодов круглого сечения")\n'
+        "Это все запросы."
+    )
+
+    assert service.parse_model_rag_queries(raw) == [
+        "демонтаж штукатурки со стен",
+        "монтаж воздуховодов круглого сечения",
     ]
 
 
@@ -509,6 +686,26 @@ def test_model_rag_result_accepts_maxim_explicit_headers_and_missing_numbers():
                 "evidence_refs": ["Q4.H1"],
             },
         ],
+    )
+
+
+def test_model_rag_result_preserves_non_numeric_coefficient_text_unchanged():
+    answer = """| source_row | title | unit | quantity | norm_code | coefficient | evidence_refs |
+|---:|---|---|---:|---|---|---|
+| 1 | Работа модели | м2 | 24 | ГЭСНр63-03-001-05 | 1/100 = 0.24 | Q4.H1 |
+"""
+
+    assert service.parse_model_rag_result(answer) == (
+        answer,
+        [{
+            "source_row": 1,
+            "title": "Работа модели",
+            "unit": "м2",
+            "quantity": 24,
+            "norm_code": "ГЭСНр63-03-001-05",
+            "coefficient": "1/100 = 0.24",
+            "evidence_refs": ["Q4.H1"],
+        }],
     )
 
 
@@ -1418,6 +1615,7 @@ async def test_shadow_failure_is_redacted_and_cannot_escape_to_legacy_path() -> 
         "selector_overflow",
         "cloud_retry",
         "active",
+        "active_web_research",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
@@ -1460,8 +1658,10 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "active_model_rag_result",
         "active_model_rag_recovery",
     }
+    active_web_research = scenario == "active_web_research"
     active = scenario in {
         "active",
+        "active_web_research",
         "active_workbook",
         "active_workbook_private_arg",
         "active_workbook_rejected",
@@ -1478,6 +1678,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     history_rows = []
     progress_events = []
     workbook_executor_calls = []
+    captured_web_configs = []
     rag_queries = []
     exact_decisions = [
         {
@@ -1620,6 +1821,32 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     class ExecutorBackedHarness:
         def shortlist(self, *_args, **kwargs):
             shortlist_policies.append(dict(kwargs))
+            if active_web_research:
+                return {
+                    "schema": "les_tool_shortlist_v1",
+                    "tools": [
+                        {
+                            "name": "web_search",
+                            "summary": "Search public web",
+                            "input_schema": {
+                                "type": "object",
+                                "properties": {"q": {"type": "string"}},
+                                "required": ["q"],
+                                "additionalProperties": False,
+                            },
+                        },
+                        {
+                            "name": "web_read",
+                            "summary": "Read selected public page",
+                            "input_schema": {
+                                "type": "object",
+                                "properties": {"url": {"type": "string"}},
+                                "required": ["url"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    ],
+                }
             if model_rag_result:
                 return {
                     "schema": "les_tool_shortlist_v1",
@@ -1699,6 +1926,69 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
         def call(self, tool, args):
             legacy_calls.append((tool, dict(args)))
+            if active_web_research and tool == "web_search":
+                return {
+                    "schema": "les_tool_result_v1",
+                    "tool": "web_search",
+                    "operation": "search",
+                    "inputs": [dict(args)],
+                    "status": "ok",
+                    "result": {
+                        "query": args["q"],
+                        "requested_mode": "extended",
+                        "effective_mode": "extended",
+                        "provider": "searxng",
+                        "degraded": False,
+                        "fallback_reason": "",
+                        "results": [
+                            {
+                                "title": "Каталог материалов",
+                                "snippet": "Цены на цемент и арматуру",
+                                "url": "https://public.example/materials",
+                                "domain": "public.example",
+                            }
+                        ],
+                    },
+                    "sources": [
+                        {
+                            "kind": "web",
+                            "title": "Каталог материалов",
+                            "url": "https://public.example/materials",
+                            "domain": "public.example",
+                        }
+                    ],
+                    "missing": [],
+                    "warnings": [],
+                    "trace": "fixture search",
+                    "decision_required_from_model": True,
+                }
+            if active_web_research and tool == "web_read":
+                return {
+                    "schema": "les_tool_result_v1",
+                    "tool": "web_read",
+                    "operation": "read",
+                    "inputs": [dict(args)],
+                    "status": "ok",
+                    "result": {
+                        "requested_url": args["url"],
+                        "final_url": args["url"],
+                        "title": "Каталог материалов",
+                        "text": "Цемент — 650 руб.; арматура — 72 000 руб./т.",
+                        "text_truncated": False,
+                        "retrieved_at": "2026-09-02T10:00:00+00:00",
+                    },
+                    "sources": [
+                        {
+                            "kind": "web_page",
+                            "title": "Каталог материалов",
+                            "url": args["url"],
+                        }
+                    ],
+                    "missing": [],
+                    "warnings": [],
+                    "trace": "fixture read",
+                    "decision_required_from_model": True,
+                }
             return {
                 "schema": "les_tool_result_v1",
                 "tool": tool,
@@ -1765,7 +2055,15 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     from proxy.services import tool_harness_service
 
-    monkeypatch.setattr(tool_harness_service, "harness", lambda: ExecutorBackedHarness())
+    def fixture_harness(**kwargs):
+        captured_web_configs.append(kwargs.get("web_config"))
+        return ExecutorBackedHarness()
+
+    monkeypatch.setattr(tool_harness_service, "harness", fixture_harness)
+    if active_web_research:
+        monkeypatch.setenv("LES_WEB_SEARCH_MODE", "extended")
+        monkeypatch.setenv("LES_SEARXNG_URL", "http://127.0.0.1:8888")
+        monkeypatch.setenv("LES_CRAWL4AI_URL", "http://127.0.0.1:11235")
     monkeypatch.setattr(service.httpx, "AsyncClient", FakeAsyncClient)
     monkeypatch.setattr(
         service,
@@ -1810,7 +2108,52 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             def __init__(self):
                 self.revisions = []
                 self.requests = []
-                if model_rag_result:
+                if active_web_research:
+                    self.responses = [
+                        InferenceResponse(
+                            text="",
+                            tool_calls=(
+                                {
+                                    "id": "web-search-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "web_search",
+                                        "arguments": '{"q":"цены цемента и арматуры"}',
+                                    },
+                                },
+                            ),
+                            finish_reason="tool_calls",
+                            usage={},
+                        ),
+                        InferenceResponse(
+                            text="",
+                            tool_calls=(
+                                {
+                                    "id": "web-read-1",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "web_read",
+                                        "arguments": '{"url":"https://public.example/materials"}',
+                                    },
+                                },
+                            ),
+                            finish_reason="tool_calls",
+                            usage={},
+                        ),
+                        InferenceResponse(
+                            text="Исследование завершено",
+                            tool_calls=(),
+                            finish_reason="stop",
+                            usage={},
+                        ),
+                        InferenceResponse(
+                            text="Цемент — 650 руб.; арматура — 72 000 руб./т.",
+                            tool_calls=(),
+                            finish_reason="stop",
+                            usage={"completion_tokens": 12},
+                        ),
+                    ]
+                elif model_rag_result:
                     self.responses = [
                         InferenceResponse(
                             text=(
@@ -1950,8 +2293,14 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     request = service.EvidenceRequestContext(
         req=SimpleNamespace(
-            question="Собери ЛСР; ВОР не создавай" if model_rag_result else "Проверь документы",
-            mode="estimator" if model_rag_result else "rag",
+            question=(
+                "Найди текущие цены цемента и арматуры"
+                if active_web_research
+                else "Собери ЛСР; ВОР не создавай"
+                if model_rag_result
+                else "Проверь документы"
+            ),
+            mode="agent" if active_web_research else "estimator" if model_rag_result else "rag",
             response_length="short",
             output_directive="",
             session_id="session-1",
@@ -1988,9 +2337,11 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         request_started_at=1.0,
         profile_snapshot={
             "revision_id": "fixture-profile:1",
-            "mode": "estimator" if model_rag_result else "rag",
+            "mode": "agent" if active_web_research else "estimator" if model_rag_result else "rag",
             "tools": (
-                ["search_sources", "build_lsr_workbook", "build_vor_workbook"]
+                ["web_search", "web_read"]
+                if active_web_research
+                else ["search_sources", "build_lsr_workbook", "build_vor_workbook"]
                 if model_rag_result
                 else ["build_vor_workbook" if workbook_profile else "read_source"]
             ),
@@ -2071,11 +2422,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         ollama_native_complete=lambda *_args, **_kwargs: None,
         parse_model_tool_calls=(
             lambda raw, *_args, **_kwargs: (
-                [{"tool": "build_vor_workbook", "args": {"attachment_id": "read_123456abcdef"}}]
-                    if workbook_profile and not active
-                    else json.loads(raw).get("calls", [])
-            )
-        ),
+                    [{"tool": "build_vor_workbook", "args": {"attachment_id": "read_123456abcdef"}}]
+                        if workbook_profile and not active
+                        else json.loads(raw).get("calls", [])
+                        if str(raw).lstrip().startswith("{")
+                        else []
+                )
+            ),
         prepare_notebook_reader_memory=lambda *_args, **_kwargs: None,
         record_cloud_cost=lambda *_args, **_kwargs: None,
         retrieve_chat_chunks=retrieve_fixture,
@@ -2125,6 +2478,26 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
     result = await service.run_chat_evidence_application(request, runtime, boundary)
 
     after_protected = protected_hash()
+    if active_web_research:
+        expected_answer = "Цемент — 650 руб.; арматура — 72 000 руб./т."
+        assert result["answer"].encode("utf-8") == expected_answer.encode("utf-8")
+        assert history_rows[0]["answer"].encode("utf-8") == expected_answer.encode("utf-8")
+        assert [call[0] for call in legacy_calls] == ["web_search", "web_read"]
+        assert legacy_calls[1][1] == {"url": "https://public.example/materials"}
+        assert captured_web_configs[0].mode == "extended"
+        tool_loop = history_rows[0]["retrieval_trace"]["tool_loop"]
+        assert [call["tool"] for call in tool_loop["selected_calls"]] == [
+            "web_search",
+            "web_read",
+        ]
+        assert tool_loop["web_research"]["mode"] == "extended"
+        assert result["source_map"][0]["locator"]["url"] == (
+            "https://public.example/materials"
+        )
+        assert result["source_map"][0]["snippet"].startswith("Цемент — 650")
+        assert len(active_transport.requests) == 4
+        assert "Цемент — 650" in str(active_transport.requests[3].messages)
+        return
     if model_rag_result:
         assert result["answer"].startswith("active visible answer\n\n| source_row |")
         assert rag_queries == [
@@ -2154,6 +2527,8 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert "верни только сами поисковые запросы" in first_messages
         assert "фиксированного лимита нет" in first_messages
         assert "по всем фактическим строкам" in first_messages
+        assert "сохраняй язык и профессиональную терминологию исходных строк" in first_messages
+        assert "не переводи и не транслитерируй" in first_messages
         assert "Код не подтверждает и не меняет твой выбор" in final_messages
         assert history_rows[0]["retrieval_trace"]["status"] == "model_driven"
         assert history_rows[0]["retrieval_trace"]["reason"] == (

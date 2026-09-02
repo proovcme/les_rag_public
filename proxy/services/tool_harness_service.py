@@ -136,6 +136,7 @@ def _canonical_input_schema(name: str, shorthand: dict[str, Any]) -> dict[str, A
         "read_project_table": ["dataset_id", "table_id"],
         "assemble_project_volume": ["dataset_id", "index"],
         "web_search": ["q"],
+        "web_read": ["url"],
         "filesystem_search": ["q"],
     }
     schema: dict[str, Any] = {
@@ -166,7 +167,14 @@ def _canonical_input_schema(name: str, shorthand: dict[str, Any]) -> dict[str, A
 class ToolHarness:
     """Registry + executor for bounded LES tools."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, web_config: Any | None = None) -> None:
+        if web_config is None:
+            from proxy.services.web_research_config_service import (
+                capture_web_research_config,
+            )
+
+            web_config = capture_web_research_config()
+        self._web_config = web_config
         self._registry = ToolRegistry()
         self._register_defaults()
         from proxy.services.workbook_tool_service import register_workbook_contracts
@@ -217,12 +225,13 @@ class ToolHarness:
         is_agent = str(mode).strip().casefold() == "agent"
         agent_order = {
             "web_search": 0,
-            "filesystem_search": 1,
-            "filesystem_read_text": 2,
-            "filesystem_list": 3,
-            "filesystem_stat": 4,
-            "filesystem_hash": 5,
-            "filesystem_roots": 6,
+            "web_read": 1,
+            "filesystem_search": 2,
+            "filesystem_read_text": 3,
+            "filesystem_list": 4,
+            "filesystem_stat": 5,
+            "filesystem_hash": 6,
+            "filesystem_roots": 7,
         }
         if allowed_tools is None:
             registrations = list(self._registry.registrations())
@@ -496,7 +505,22 @@ class ToolHarness:
                 returns="public search results with direct source URLs",
                 tags=("agent", "web", "internet", "search", "актуальный", "интернет", "сайт"),
             ),
-            _tool_web_search,
+            lambda args: _tool_web_search(args, config=self._web_config),
+        )
+        self._register(
+            ToolSpec(
+                name="web_read",
+                title="Read selected public web page",
+                category="web",
+                summary=(
+                    "Read exactly one public URL selected by the model through the configured "
+                    "bounded page reader; never auto-read search results."
+                ),
+                args_schema={"url": "str", "max_chars": "int"},
+                returns="bounded page text with direct source provenance",
+                tags=("agent", "web", "internet", "read", "source", "прочитай", "страница"),
+            ),
+            lambda args: _tool_web_read(args, config=self._web_config),
         )
         self._register(
             ToolSpec(
@@ -1014,7 +1038,7 @@ def _tool_filesystem_roots(args: dict[str, Any]) -> dict[str, Any]:
                    result=result, trace="listed whitelist filesystem roots")
 
 
-def _tool_web_search(args: dict[str, Any]) -> dict[str, Any]:
+def _tool_web_search(args: dict[str, Any], *, config: Any) -> dict[str, Any]:
     from proxy.services.web_search_service import search_web
 
     query = str(args.get("q") or "").strip()
@@ -1022,7 +1046,7 @@ def _tool_web_search(args: dict[str, Any]) -> dict[str, Any]:
     # hits keep that complete envelope inside the registered 7k character
     # budget even when a model requests a larger page.
     limit = _int_arg(args.get("limit"), 4, min_value=1, max_value=4)
-    payload = search_web(query, limit=limit)
+    payload = search_web(query, limit=limit, config=config)
     rows = list(payload.get("results") or [])
     sources = [
         {"kind": "web", "url": row.get("url"), "title": row.get("title"), "domain": row.get("domain")}
@@ -1033,10 +1057,49 @@ def _tool_web_search(args: dict[str, Any]) -> dict[str, Any]:
         operation="search",
         inputs=[{"q": query, "limit": limit}],
         status=str(payload.get("status") or "missing"),
-        result={"query": payload.get("query") or query, "results": rows},
+        result={
+            "query": payload.get("query") or query,
+            "results": rows,
+            "requested_mode": payload.get("requested_mode") or "simple",
+            "effective_mode": payload.get("effective_mode") or "simple",
+            "provider": payload.get("provider") or "duckduckgo",
+            "degraded": bool(payload.get("degraded")),
+            "fallback_reason": payload.get("fallback_reason") or "",
+        },
         sources=sources,
         missing=list(payload.get("missing") or []),
+        warnings=(
+            [str(payload.get("fallback_reason"))]
+            if payload.get("fallback_reason")
+            else []
+        ),
         trace=f"searched public web; returned {len(rows)} bounded result(s)",
+    )
+
+
+def _tool_web_read(args: dict[str, Any], *, config: Any) -> dict[str, Any]:
+    from proxy.services.web_page_reader_service import read_web_page
+
+    url = str(args.get("url") or "").strip()
+    max_chars = _int_arg(args.get("max_chars"), 4000, min_value=1, max_value=4000)
+    payload = read_web_page(url, max_chars=max_chars, config=config)
+    return _result(
+        tool="web_read",
+        operation="read",
+        inputs=[{"url": url, "max_chars": max_chars}],
+        status=str(payload.get("status") or "missing"),
+        result={
+            "requested_url": payload.get("requested_url") or url,
+            "final_url": payload.get("final_url") or "",
+            "title": payload.get("title") or "",
+            "text": payload.get("text") or "",
+            "text_truncated": bool(payload.get("text_truncated")),
+            "retrieved_at": payload.get("retrieved_at") or "",
+        },
+        sources=list(payload.get("sources") or []),
+        missing=list(payload.get("missing") or []),
+        warnings=list(payload.get("warnings") or []),
+        trace="read one model-selected public web page",
     )
 
 
@@ -1336,8 +1399,8 @@ def _redact_args(args: dict[str, Any]) -> dict[str, Any]:
     return redacted
 
 
-def harness() -> ToolHarness:
-    return ToolHarness()
+def harness(*, web_config: Any | None = None) -> ToolHarness:
+    return ToolHarness(web_config=web_config)
 
 
 def _build_canonical_tool_registry() -> ToolRegistry:

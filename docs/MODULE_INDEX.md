@@ -1,5 +1,20 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.48 model-owned RAG/web/live-workbook candidate:** Qwen-authored query
+> lines are retrieved independently and rendered as balanced `Qx.Hy` groups;
+> only syntactic quote/`search_sources(...)` wrappers are removed, without
+> regex, topic routing or another model call. Attachment storage follows the
+> selected runtime state root, so the unchanged model result reaches the
+> canonical workbook adapter and pricebook. Web research has GUI-owned
+> `simple | extended` policy, SearXNG fallback and model-invoked page reading.
+> Startup mutation can be disabled for bounded acceptance; resident-model
+> admission no longer rejects the already loaded exact Qwen or silently swaps
+> Ollama for MLX. ColBERT remains generation-gated and was shadow-tested only.
+> Live isolated acceptance: ordinary dialogue and web succeeded; alternate
+> 5-row VOR produced 5 bound norms, 121 formulas, 0 formula errors and a priced
+> XLSX total of 154,981.55 RUB. Installed baseline `0.30.42 · 682 · ab5146b2`
+> is unchanged. Status docs↔code: ✅; candidate is not installed or published.
+
 > **0.30.47 all-update/database-resilience candidate:** все активные пути
 > обновления сметной базы (GUI/API ФГИС, Make и CLI) замкнуты на один
 > coordinator; низкоуровневый builder не может заменить configured active

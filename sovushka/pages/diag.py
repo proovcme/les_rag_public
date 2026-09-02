@@ -69,6 +69,18 @@ def _runtime_factor_source(value: str) -> str:
     return " → ".join(labels.get(part, part) for part in parts if part)
 
 
+def _web_research_probe_failed(payload: dict) -> bool:
+    config = payload.get("config") or {}
+    mode = str(config.get("mode") or "simple")
+    services = payload.get("services") or {}
+    required = ("simple",) if mode == "simple" else ("simple", "searxng", "crawl4ai")
+    return any(
+        str((services.get(service_name) or {}).get("status") or "missing")
+        in {"error", "missing"}
+        for service_name in required
+    )
+
+
 def _is_windows() -> bool:
     return sys.platform.startswith("win")
 
@@ -423,6 +435,10 @@ def build_diag():
                 colbert_circuit_cooldown_input = ui.number(
                     "Пауза ColBERT, сек", value=300, min=1, max=86400,
                 ).classes("grow")
+            colbert_cpu_build_switch = ui.switch(
+                "Разрешить полную CPU-сборку ColBERT (Danger · может занять часы)",
+                value=False,
+            )
             rag_advanced_status = ui.label("Загрузка…").classes("sov-ui-section-detail")
             rag_advanced_feedback = ui.column().classes("w-full")
             rag_advanced_runtime_rows = ui.column().classes("w-full gap-2")
@@ -453,6 +469,51 @@ def build_diag():
                     variant="danger",
                 )
                 colbert_build_btn.props("disabled")
+
+        with panel(variant="plain", classes="sov-config-section") as web_research_panel:
+            with ui.row().classes("w-full items-start justify-between gap-3 flex-wrap"):
+                section_heading(
+                    "Веб-поиск",
+                    "Простой режим сохраняет рабочий DuckDuckGo. Расширенный использует SearXNG, а модель сама выбирает страницу для чтения через Crawl4AI.",
+                )
+                web_effective_badge = status_badge("Фактически используется: —", "muted")
+            with ui.row().classes("w-full gap-3 flex-wrap"):
+                web_mode_select = select_field(
+                    {"simple": "Простой", "extended": "Расширенный"},
+                    value="simple",
+                    label="Режим веб-поиска",
+                    classes="grow",
+                )
+                web_searxng_input = text_field(
+                    label="Адрес SearXNG",
+                    placeholder="http://127.0.0.1:8081",
+                    classes="grow",
+                )
+                web_crawl4ai_input = text_field(
+                    label="Адрес Crawl4AI",
+                    placeholder="http://127.0.0.1:11235",
+                    classes="grow",
+                )
+                web_crawl4ai_token_input = text_field(
+                    label="Новый токен Crawl4AI",
+                    placeholder="Оставьте пустым, чтобы сохранить текущий",
+                    classes="grow",
+                ).props("type=password")
+            web_research_status_rows = ui.column().classes("w-full gap-2")
+            web_research_feedback = ui.column().classes("w-full")
+            with ui.row().classes("w-full gap-2 flex-wrap"):
+                web_research_save_btn = action_button(
+                    "Сохранить веб-поиск",
+                    icon="o_save",
+                    on_click=lambda: asyncio.create_task(save_web_research()),
+                    variant="secondary",
+                )
+                web_research_probe_btn = action_button(
+                    "Проверить веб-поиск",
+                    icon="o_fact_check",
+                    on_click=lambda: asyncio.create_task(probe_web_research()),
+                    variant="secondary",
+                )
 
         with ui.expansion(
             "Все параметры среды",
@@ -639,6 +700,9 @@ def build_diag():
         colbert_candidates_input.value = int(colbert.get("candidate_k") or 64)
         colbert_output_input.value = int(colbert.get("output_k") or 32)
         colbert_query_tokens_input.value = int(colbert.get("max_query_tokens") or 48)
+        colbert_cpu_build_switch.value = bool(
+            colbert.get("allow_cpu_full_build", False)
+        )
         colbert_passage_tokens_input.value = int(colbert.get("max_passage_tokens") or 128)
         colbert_latency_input.value = int(colbert.get("latency_budget_ms") or 700)
         colbert_circuit_failures_input.value = int(colbert.get("circuit_breaker_failures") or 3)
@@ -836,6 +900,9 @@ def build_diag():
         policy["colbert"]["max_query_tokens"] = int(
             colbert_query_tokens_input.value or 48
         )
+        policy["colbert"]["allow_cpu_full_build"] = bool(
+            colbert_cpu_build_switch.value
+        )
         policy["colbert"]["max_passage_tokens"] = int(
             colbert_passage_tokens_input.value or 128
         )
@@ -972,6 +1039,107 @@ def build_diag():
             await load_runtime_registry()
         else:
             ui.notify("Параметр не сохранён", type="negative")
+
+    def render_web_research_status(payload: dict):
+        config = payload.get("config") or {}
+        mode = str(config.get("mode") or "simple")
+        web_effective_badge.set_text(
+            "Фактически используется: "
+            + ("Расширенный" if mode == "extended" else "Простой")
+        )
+        web_research_status_rows.clear()
+        labels = {
+            "simple": "Простой поиск",
+            "searxng": "SearXNG",
+            "crawl4ai": "Crawl4AI",
+        }
+        status_labels = {
+            "available": ("Доступен", "ok"),
+            "configured": ("Настроен", "warn"),
+            "ok": ("Готов", "ok"),
+            "missing": ("Не настроен", "muted"),
+            "error": ("Недоступен", "error"),
+        }
+        with web_research_status_rows:
+            for service_name in ("simple", "searxng", "crawl4ai"):
+                service = (payload.get("services") or {}).get(service_name) or {}
+                status = str(service.get("status") or "missing")
+                badge_text, badge_tone = status_labels.get(status, (status, "muted"))
+                with panel(variant="inset", classes="w-full"):
+                    with ui.row().classes("w-full items-center justify-between gap-2"):
+                        ui.label(labels[service_name]).classes("sov-ui-section-title")
+                        status_badge(badge_text, badge_tone)
+
+    async def load_web_research():
+        payload = await api_get("/api/settings/web-research")
+        web_research_feedback.clear()
+        if not isinstance(payload, dict):
+            with web_research_feedback:
+                render_feedback_state(
+                    "error",
+                    detail="Не удалось прочитать настройки веб-поиска.",
+                )
+            return
+        config = payload.get("config") or {}
+        web_mode_select.value = str(config.get("mode") or "simple")
+        web_searxng_input.value = str(config.get("searxng_url") or "")
+        web_crawl4ai_input.value = str(config.get("crawl4ai_url") or "")
+        web_crawl4ai_token_input.value = ""
+        render_web_research_status(payload)
+
+    async def save_web_research():
+        updates = {
+            "LES_WEB_SEARCH_MODE": str(web_mode_select.value or "simple"),
+            "LES_SEARXNG_URL": str(web_searxng_input.value or "").strip(),
+            "LES_CRAWL4AI_URL": str(web_crawl4ai_input.value or "").strip(),
+        }
+        token = str(web_crawl4ai_token_input.value or "").strip()
+        if token:
+            updates["LES_CRAWL4AI_TOKEN"] = token
+        web_research_save_btn.props("disabled")
+        try:
+            result = await api_put(
+                "/api/settings/runtime-registry",
+                {"updates": updates, "danger_confirmations": []},
+            )
+            if result:
+                with web_research_panel:
+                    ui.notify("Настройки веб-поиска сохранены", type="positive")
+                await load_web_research()
+                await load_runtime_registry()
+            else:
+                with web_research_panel:
+                    ui.notify("Настройки веб-поиска не сохранены", type="negative")
+        finally:
+            web_research_save_btn.props(remove="disabled")
+
+    async def probe_web_research():
+        web_research_probe_btn.props("disabled")
+        web_research_feedback.clear()
+        with web_research_feedback:
+            render_feedback_state("loading", detail="Проверяю SearXNG и Crawl4AI…")
+        try:
+            payload = await api_post("/api/settings/web-research/probe", {})
+            web_research_feedback.clear()
+            if isinstance(payload, dict):
+                render_web_research_status(payload)
+                failed = _web_research_probe_failed(payload)
+                with web_research_feedback:
+                    render_feedback_state(
+                        "error" if failed else "success",
+                        detail=(
+                            "Часть расширенного веб-контура недоступна; простой поиск остаётся рабочим."
+                            if failed
+                            else "Веб-поиск готов."
+                        ),
+                    )
+            else:
+                with web_research_feedback:
+                    render_feedback_state(
+                        "error", detail="Проверка веб-поиска не вернула результат."
+                    )
+        finally:
+            web_research_probe_btn.props(remove="disabled")
 
     async def load_memory_config():
         payload = await api_get("/api/memory/status")
@@ -1427,6 +1595,7 @@ def build_diag():
     ui.timer(0.1, lambda: asyncio.create_task(load_memory_config()), once=True)
     ui.timer(0.1, lambda: asyncio.create_task(load_rag_pipeline()), once=True)
     ui.timer(0.1, lambda: asyncio.create_task(load_rag_advanced()), once=True)
+    ui.timer(0.1, lambda: asyncio.create_task(load_web_research()), once=True)
     ui.timer(0.2, lambda: asyncio.create_task(load_rag_preflight()), once=True)
     advanced_status_timer = ui.timer(3.0, lambda: asyncio.create_task(load_rag_advanced()))
     ui.timer(0.1, lambda: asyncio.create_task(load_runtime_registry()), once=True)

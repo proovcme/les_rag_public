@@ -48,6 +48,7 @@ DEFAULT_POLICY: dict[str, Any] = {
         "output_k": 32,
         "max_query_tokens": 48,
         "max_passage_tokens": 128,
+        "allow_cpu_full_build": False,
         "latency_budget_ms": 700,
         "circuit_breaker_failures": 3,
         "circuit_breaker_cooldown_sec": 300,
@@ -177,6 +178,9 @@ def validate_policy(payload: dict[str, Any]) -> dict[str, Any]:
         result[section]["mode"] = mode
     result["execution"]["exact_early_exit"] = bool(
         result["execution"].get("exact_early_exit", True)
+    )
+    result["colbert"]["allow_cpu_full_build"] = bool(
+        result["colbert"].get("allow_cpu_full_build", False)
     )
     integer_fields = {
         "execution": ("total_latency_budget_ms",),
