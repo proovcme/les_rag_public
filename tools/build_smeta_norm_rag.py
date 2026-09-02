@@ -187,9 +187,10 @@ def build(
     replace_dense: bool = False,
     manifest_path: Path | None = None,
     build_status_path: Path | None = None,
+    base_path: Path | None = None,
 ) -> dict[str, object]:
     config = active_base()
-    base_path = Path(config["base_path"])
+    base_path = Path(base_path or config["base_path"])
     integrity = normative_base_integrity(base_path=base_path)
     # Qdrant is a navigation projection, never a pricing source. Missing original
     # provenance keeps the resulting estimate draft/partial, but must not hide a
@@ -281,6 +282,7 @@ def build(
         "schema": "smeta_norm_rag_build_v1",
         "status": "building",
         "collection": collection,
+        "base_sha256": base_sha,
         "expected_points": total_expected,
         "points": int(client.count(collection, exact=True).count),
         "dense_points": _dense_count(client, collection),
@@ -445,6 +447,11 @@ def main() -> int:
         type=Path,
         help="generation-scoped progress file; defaults to the active sibling status",
     )
+    parser.add_argument(
+        "--base-path",
+        type=Path,
+        help="explicit staged SQLite base; defaults to the active registry",
+    )
     args = parser.parse_args()
     result = build(
         collection=args.collection,
@@ -457,6 +464,7 @@ def main() -> int:
         replace_dense=args.replace_dense,
         manifest_path=args.manifest_path,
         build_status_path=args.build_status_path,
+        base_path=args.base_path,
     )
     return 0 if result["status"] == "passed" else 1
 

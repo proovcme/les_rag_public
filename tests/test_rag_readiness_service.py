@@ -1,4 +1,5 @@
 import json
+import hashlib
 from types import SimpleNamespace
 
 from proxy.services import rag_readiness_service as service
@@ -326,6 +327,56 @@ def test_smeta_ready_requires_mechanical_base_and_activated_hybrid_index(monkeyp
     assert result["mechanical_base"]["ready"] is True
     assert result["search_index"]["ready"] is True
     assert result["rrf_ready"] is True
+
+
+def test_smeta_readiness_blocks_mismatched_sqlite_and_rag_revisions(monkeypatch, tmp_path):
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"new-sqlite-revision")
+    active_sha = hashlib.sha256(base.read_bytes()).hexdigest()
+    indexed_sha = hashlib.sha256(b"old-sqlite-revision").hexdigest()
+    base.with_name("les_smeta_norm_rag_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "physical_generation": "smeta_physical_v3",
+                "expected_points": 10,
+                "index_mode": "hybrid",
+                "point_embedding_fingerprint": "fp",
+                "base_sha256": indexed_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.base_registry.active_base",
+        lambda: {"base_path": str(base), "rag_collection": "les_smeta_norm_cards"},
+    )
+    monkeypatch.setattr(
+        "proxy.smeta_core.integrity.normative_base_integrity",
+        lambda: {
+            "status": "trusted",
+            "trusted_for_pricing": True,
+            "trusted_for_navigation": True,
+        },
+    )
+
+    result = service._smeta_status(
+        FakeClient(points=10),
+        {"les_smeta_norm_cards": "smeta_physical_v3"},
+    )
+
+    assert result["state"] == "blocked"
+    assert result["ready"] is False
+    assert result["rrf_ready"] is False
+    assert result["reason"] == "base_index_revision_mismatch"
+    assert result["revision"] == {
+        "state": "mismatch",
+        "active_base_sha256": active_sha,
+        "indexed_base_sha256": indexed_sha,
+        "restart_required": False,
+    }
+    assert result["warnings"][0]["code"] == "SMETA_BASE_INDEX_REVISION_MISMATCH"
+    assert result["warnings"][0]["action"] == "rebuild_or_activate_matching_generation"
 
 
 def test_smeta_readiness_uses_the_configured_catalog_name(monkeypatch, tmp_path):

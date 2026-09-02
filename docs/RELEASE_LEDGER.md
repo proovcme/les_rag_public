@@ -7,17 +7,29 @@
 ## Текущее состояние (2026-09-02)
 
 ```
-версия продукта (SemVer):  0.30.45
-номер сборки:              685
-версия Tauri/NSIS:         5.1.685
+версия продукта (SemVer):  0.30.46
+номер сборки:              686
+версия Tauri/NSIS:         5.1.686
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.45 model-result compatibility source candidate
+dev implementation:       0.30.46 atomic smeta base/index generation candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.45 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.46 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.46 / build 686 atomic smeta base/index candidate (не установлен и не
+> опубликован):** обновление ФГИС больше не может отдельно заменить активную
+> SQLite и оставить старый RAG. Новая база, integrity/manifest и dedicated
+> dense+sparse индекс строятся как sibling-generation; exact SHA и live RRF
+> проверяются до единого переключения файлов и Qdrant alias. Любой отказ
+> возвращает прежнюю пару. На startup сверяется фактический alias: найденное
+> проверенное exact-SHA поколение активируется, иначе запускается фоновая
+> сборка без рестарта. Read-only readiness и Совушка явно показывают
+> `SMETA_BASE_INDEX_REVISION_MISMATCH`. Чат, решения модели, XLSX и
+> `proxy/smeta_core/**` не менялись; установленный рабочий baseline
+> `0.30.42 · 682 · ab5146b2` не затронут.
 
 > **0.30.45 / build 685 Maxim-result compatibility candidate (не установлен и
 > не опубликован):** безопасный без-regex decoder сохраняет синтаксическую

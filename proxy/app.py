@@ -359,6 +359,7 @@ async def startup():
             logger.info("[INIT] Resumed %s durable Outlook spool item(s)", recovered_outlook)
         asyncio.create_task(_warmup_models())  # №2: убрать холодный старт первого запроса
         asyncio.create_task(_catalog_self_heal())
+        asyncio.create_task(_smeta_generation_reconcile())
         asyncio.create_task(_parse_resume_supervisor())
         asyncio.create_task(_raptor_resume_supervisor())
     except Exception as e:
@@ -394,6 +395,28 @@ async def _catalog_self_heal():
         )
     else:
         logger.info("[CATALOG_GUARD] %s", result)
+
+
+async def _smeta_generation_reconcile():
+    """Switch only to an exact previously verified smeta generation."""
+    await asyncio.sleep(3)
+    from proxy.services.smeta_generation_reconciliation_service import (
+        reconcile_runtime_generation,
+    )
+
+    try:
+        result = await asyncio.to_thread(reconcile_runtime_generation, apply=True)
+    except Exception as exc:
+        logger.error(
+            "[SMETA_GENERATION] reconciliation failed: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
+        return
+    if result.get("status") in {"build_required", "blocked"}:
+        logger.warning("[SMETA_GENERATION] %s", result)
+    else:
+        logger.info("[SMETA_GENERATION] %s", result)
 
 
 async def _parse_resume_supervisor():

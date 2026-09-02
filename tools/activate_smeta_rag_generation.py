@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+from uuid import uuid4
 
 from qdrant_client import QdrantClient, models
 
@@ -95,6 +97,7 @@ def activate(
     report: dict[str, Any],
     manifest_source: Path,
     manifest_destinations: list[Path],
+    post_activate: Callable[[], None] | None = None,
 ) -> None:
     if not manifest_destinations:
         raise ValueError("at least one active manifest destination is required")
@@ -148,6 +151,8 @@ def activate(
         }
         if activated.get(alias) != target:
             raise RuntimeError("smeta alias postcondition failed")
+        if post_activate is not None:
+            post_activate()
     except Exception:
         try:
             current = {
@@ -176,6 +181,62 @@ def activate(
             for destination, previous in previous_manifests.items():
                 _restore_file(destination, previous)
         raise
+
+
+def activate_release(
+    *,
+    client: QdrantClient,
+    alias: str,
+    target: str,
+    report: dict[str, Any],
+    rag_manifest_source: Path,
+    rag_manifest_destinations: list[Path],
+    artifact_pairs: list[tuple[Path, Path]],
+    post_activate: Callable[[], None] | None = None,
+) -> None:
+    """Publish one verified SQLite/RAG generation with byte-for-byte rollback."""
+    if not artifact_pairs:
+        raise ValueError("release activation requires staged artifacts")
+    token = uuid4().hex
+    prepared: dict[Path, Path] = {}
+    backups: dict[Path, Path | None] = {}
+    try:
+        for source, destination in artifact_pairs:
+            if not source.is_file():
+                raise ValueError(f"staged release artifact is missing: {source}")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_name(f".{destination.name}.{token}.activate")
+            shutil.copy2(source, temporary)
+            prepared[destination] = temporary
+        for destination, temporary in prepared.items():
+            backup = destination.with_name(f".{destination.name}.{token}.rollback")
+            if destination.exists():
+                destination.replace(backup)
+                backups[destination] = backup
+            else:
+                backups[destination] = None
+            temporary.replace(destination)
+        activate(
+            client=client,
+            alias=alias,
+            target=target,
+            report=report,
+            manifest_source=rag_manifest_source,
+            manifest_destinations=rag_manifest_destinations,
+            post_activate=post_activate,
+        )
+    except Exception:
+        for destination, backup in reversed(list(backups.items())):
+            destination.unlink(missing_ok=True)
+            if backup is not None and backup.exists():
+                backup.replace(destination)
+        raise
+    finally:
+        for temporary in prepared.values():
+            temporary.unlink(missing_ok=True)
+        for backup in backups.values():
+            if backup is not None:
+                backup.unlink(missing_ok=True)
 
 
 def main() -> int:

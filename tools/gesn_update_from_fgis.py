@@ -8,12 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from backend.runtime_paths import mutable_path
 from tools import gesn_bulk_import
 from tools import build_smeta_service_rag
 from tools.build_smeta_structured_base import (
     DEFAULT_MANIFEST as DEFAULT_STRUCTURED_MANIFEST,
     DEFAULT_OUT as DEFAULT_STRUCTURED_OUT,
-    build_structured_base,
 )
 from tools.gesn_unify_base import (
     DEFAULT_AUDIT,
@@ -22,6 +22,7 @@ from tools.gesn_unify_base import (
     DEFAULT_OVERLAY,
     build_unified,
 )
+from tools.smeta_generation_coordinator import publish_generation as publish_smeta_generation
 
 DEFAULT_STATUS = Path("storage/jobs/gesn_fgis_update_status.json")
 
@@ -77,7 +78,8 @@ def run_update(
     _write_status(status_out, unify_payload)
     if progress_callback:
         progress_callback(unify_payload)
-    minimum_norms = int(active_base().get("minimum_norms") or 1)
+    base_config = active_base()
+    minimum_norms = int(base_config.get("minimum_norms") or 1)
     audit = build_unified(
         legacy=raw_out,
         overlay=overlay,
@@ -97,12 +99,30 @@ def run_update(
         _write_status(status_out, structured_payload)
         if progress_callback:
             progress_callback(structured_payload)
-        structured = build_structured_base(
+        configured_base = Path(str(base_config.get("base_path") or ""))
+        uses_configured_base = configured_base.resolve(strict=False) == structured_out.resolve(
+            strict=False
+        )
+        active_integrity = (
+            Path(str(base_config.get("integrity_path") or ""))
+            if uses_configured_base and base_config.get("integrity_path")
+            else structured_out.with_name(f"{structured_out.stem}_integrity.json")
+        )
+        structured_generation = publish_smeta_generation(
             source=unified_out,
-            out=structured_out,
-            manifest_out=structured_manifest_out,
+            active_base=structured_out,
+            active_base_manifest=structured_manifest_out,
+            active_integrity=active_integrity,
+            active_rag_manifest=structured_out.with_name(
+                "les_smeta_norm_rag_manifest.json"
+            ),
+            generations_root=mutable_path("storage/smeta_generations"),
+            alias=str(base_config.get("rag_collection") or "les_smeta_norm_cards"),
             minimum_norms=minimum_norms,
         )
+        structured = structured_generation.get("structured") or {}
+    else:
+        structured_generation = None
     service_rag: dict | None = None
     if not skip_service_rag:
         service_rag_payload = {
@@ -123,6 +143,7 @@ def run_update(
         "download": stats,
         "audit": audit,
         "structured": structured,
+        "structured_generation": structured_generation,
         "service_rag": service_rag,
     }
     _write_status(status_out, result)

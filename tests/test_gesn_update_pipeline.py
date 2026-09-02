@@ -26,8 +26,15 @@ def test_fgis_update_runs_full_machine_base_pipeline(tmp_path: Path, monkeypatch
     def fake_structured(**kwargs):
         calls.append("structured")
         assert kwargs["source"] == tmp_path / "unified.parquet"
-        assert kwargs["out"] == tmp_path / "structured.sqlite"
-        return {"schema": "les_smeta_base_v1", "output": {"norms": 2, "resources": 3}}
+        assert kwargs["active_base"] == tmp_path / "structured.sqlite"
+        return {
+            "status": "activated",
+            "collection": "smeta_new",
+            "structured": {
+                "schema": "les_smeta_base_v1",
+                "output": {"norms": 2, "resources": 3},
+            },
+        }
 
     def fake_service_rag(out_dir: Path):
         calls.append("service_rag")
@@ -36,7 +43,7 @@ def test_fgis_update_runs_full_machine_base_pipeline(tmp_path: Path, monkeypatch
 
     monkeypatch.setattr(updater.gesn_bulk_import, "run", fake_download)
     monkeypatch.setattr(updater, "build_unified", fake_unify)
-    monkeypatch.setattr(updater, "build_structured_base", fake_structured)
+    monkeypatch.setattr(updater, "publish_smeta_generation", fake_structured)
     monkeypatch.setattr(updater.build_smeta_service_rag, "build", fake_service_rag)
 
     result = updater.run_update(
@@ -74,7 +81,11 @@ def test_fgis_update_can_skip_generated_layers(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(updater.gesn_bulk_import, "run", lambda **_: calls.append("download") or {})
     monkeypatch.setattr(updater, "build_unified", lambda **_: calls.append("unify") or {})
-    monkeypatch.setattr(updater, "build_structured_base", lambda **_: calls.append("structured") or {})
+    monkeypatch.setattr(
+        updater,
+        "publish_smeta_generation",
+        lambda **_: calls.append("structured") or {},
+    )
     monkeypatch.setattr(updater.build_smeta_service_rag, "build", lambda *_: calls.append("service_rag") or {})
 
     updater.run_update(
@@ -88,3 +99,36 @@ def test_fgis_update_can_skip_generated_layers(tmp_path: Path, monkeypatch):
     )
 
     assert calls == ["download", "unify"]
+
+
+def test_fgis_update_publishes_structured_base_through_generation_coordinator(
+    tmp_path: Path, monkeypatch
+):
+    calls: list[str] = []
+    active_base = tmp_path / "active.sqlite"
+    active_base.write_bytes(b"old")
+
+    monkeypatch.setattr(updater.gesn_bulk_import, "run", lambda **_: {})
+    monkeypatch.setattr(updater, "build_unified", lambda **_: {})
+    monkeypatch.setattr(
+        updater,
+        "publish_smeta_generation",
+        lambda **kwargs: calls.append(str(kwargs["active_base"]))
+        or {"status": "activated", "collection": "smeta_new"},
+        raising=False,
+    )
+    monkeypatch.setattr(updater.build_smeta_service_rag, "build", lambda *_: {})
+
+    result = updater.run_update(
+        raw_out=tmp_path / "raw.parquet",
+        overlay=tmp_path / "overlay.parquet",
+        unified_out=tmp_path / "unified.parquet",
+        audit_out=tmp_path / "audit.json",
+        structured_out=active_base,
+        structured_manifest_out=tmp_path / "active-manifest.json",
+        service_rag_out=tmp_path / "SMETA_SERVICE",
+        status_out=tmp_path / "status.json",
+    )
+
+    assert calls == [str(active_base)]
+    assert result["structured_generation"]["status"] == "activated"

@@ -15,7 +15,12 @@ from urllib.parse import quote, urlencode
 from nicegui import context, ui
 
 from sovushka.state import api_get, api_get_bytes, api_patch, api_post, api_post_file, add_log, last_api_error_text
-from sovushka.uikit.components import acronym_identity, action_button, text_field
+from sovushka.uikit.components import (
+    acronym_identity,
+    action_button,
+    render_feedback_state,
+    text_field,
+)
 
 DATASET_KIND_OPTIONS = {
     "": "Все типы",
@@ -44,6 +49,31 @@ DATASET_GROUP_OPTIONS = {
     "project": "Проекты",
     "other": "Не проекты",
 }
+
+
+def smeta_readiness_presentation(smeta: dict) -> dict[str, str]:
+    """Translate smeta generation state without hiding a revision mismatch."""
+    warnings = [item for item in (smeta.get("warnings") or []) if isinstance(item, dict)]
+    warning = next(
+        (
+            str(item.get("message") or "")
+            for item in warnings
+            if item.get("code") == "SMETA_BASE_INDEX_REVISION_MISMATCH"
+        ),
+        "",
+    )
+    if str(smeta.get("reason") or "") == "base_index_revision_mismatch":
+        return {
+            "label": "База и индекс рассогласованы",
+            "tone": "blocked",
+            "warning": warning or "Сметная база и поисковый индекс относятся к разным ревизиям.",
+        }
+    mechanical = smeta.get("mechanical_base") if isinstance(smeta.get("mechanical_base"), dict) else {}
+    if smeta.get("ready"):
+        return {"label": "База и индекс готовы", "tone": "ok", "warning": ""}
+    if mechanical.get("ready"):
+        return {"label": "Индекс карточек не готов", "tone": "warn", "warning": ""}
+    return {"label": "Сметная база не готова", "tone": "blocked", "warning": ""}
 
 
 def build_documents(
@@ -2122,9 +2152,9 @@ def build_documents(
             general = readiness.get("general") if isinstance(readiness.get("general"), dict) else {}
             smeta = readiness.get("smeta") if isinstance(readiness.get("smeta"), dict) else {}
             general_label, general_cls = _readiness_label(general)
-            mechanical = smeta.get("mechanical_base") if isinstance(smeta.get("mechanical_base"), dict) else {}
-            smeta_label = "База готова" if mechanical.get("ready") else "База не готова"
-            smeta_cls = "tag-ok" if mechanical.get("ready") else "tag-warn"
+            smeta_view = smeta_readiness_presentation(smeta)
+            smeta_label = smeta_view["label"]
+            smeta_cls = "tag-ok" if smeta_view["tone"] == "ok" else "tag-warn"
             _badge(f"RAG: {general_label}", general_cls)
             _badge(f"Сметы: {smeta_label}", smeta_cls)
 
@@ -2279,9 +2309,9 @@ def build_documents(
                 _label("Статус RAG пока недоступен.", size="11px", color="var(--dim)").style("margin-top:8px;")
                 return
             general_label, general_cls = _readiness_label(general)
-            mechanical = smeta.get("mechanical_base") if isinstance(smeta.get("mechanical_base"), dict) else {}
-            smeta_label = "Механическая база готова" if mechanical.get("ready") else "Механическая база не готова"
-            smeta_cls = "tag-ok" if mechanical.get("ready") else "tag-warn"
+            smeta_view = smeta_readiness_presentation(smeta)
+            smeta_label = smeta_view["label"]
+            smeta_cls = "tag-ok" if smeta_view["tone"] == "ok" else "tag-warn"
             with ui.row().classes("items-center w-full").style("gap:6px;margin-top:9px;flex-wrap:wrap;"):
                 _badge(general_label, general_cls)
                 _badge(f"dense {int(general.get('dense_points') or 0)}/{int(general.get('points') or 0)}")
@@ -2303,9 +2333,11 @@ def build_documents(
                 _badge(f"sparse {int(smeta.get('sparse_points') or 0)}/{int(smeta.get('expected_points') or 0)}")
                 search_index = smeta.get("search_index") if isinstance(smeta.get("search_index"), dict) else {}
                 _badge(
-                    "Поиск по карточкам готов" if search_index.get("ready") else "Карточки норм не построены (необязательно)",
-                    "tag-ok" if search_index.get("ready") else "tag-dim",
+                    "Поиск по карточкам готов" if search_index.get("ready") else "Поиск по карточкам не готов",
+                    "tag-ok" if search_index.get("ready") else "tag-warn",
                 )
+            if smeta_view["warning"]:
+                render_feedback_state("blocked", detail=smeta_view["warning"])
             quality = smeta.get("quality_probe") if isinstance(smeta.get("quality_probe"), dict) else {}
             if quality.get("status") == "measured":
                 _label(

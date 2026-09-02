@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from tools import activate_smeta_rag_generation as activation
 from tools.activate_smeta_rag_generation import (
     activate,
     read_smeta_ready_report,
@@ -132,3 +133,76 @@ def test_smeta_activation_publishes_alias_and_active_manifest_together(tmp_path)
     assert payload["collection"] == "les_smeta_norm_cards"
     assert payload["physical_generation"] == "smeta_v4"
     assert runtime_payload == payload
+
+
+def test_release_activation_rolls_back_sqlite_when_alias_postcheck_fails(tmp_path):
+    class Client:
+        def __init__(self):
+            self.aliases = {"les_smeta_norm_cards": "old_generation"}
+
+        def collection_exists(self, target):
+            return target == "new_generation"
+
+        def count(self, _target, *, count_filter=None, exact=True):
+            return SimpleNamespace(count=1)
+
+        def get_aliases(self):
+            return SimpleNamespace(
+                aliases=[
+                    SimpleNamespace(alias_name=alias, collection_name=target)
+                    for alias, target in self.aliases.items()
+                ]
+            )
+
+        def update_collection_aliases(self, operations):
+            for operation in operations:
+                if hasattr(operation, "delete_alias"):
+                    self.aliases.pop(operation.delete_alias.alias_name, None)
+                elif hasattr(operation, "create_alias"):
+                    value = operation.create_alias
+                    self.aliases[value.alias_name] = value.collection_name
+            return True
+
+    staged = tmp_path / "staged"
+    active = tmp_path / "active"
+    staged.mkdir()
+    active.mkdir()
+    new_base = staged / "base.sqlite"
+    old_base = active / "base.sqlite"
+    new_base.write_bytes(b"new")
+    old_base.write_bytes(b"old")
+    rag_source = staged / "rag.json"
+    rag_active = active / "rag.json"
+    rag_active.write_text('{"old": true}', encoding="utf-8")
+    rag_source.write_text(
+        json.dumps(
+            {
+                "schema": "smeta_norm_rag_manifest_v2",
+                "collection": "new_generation",
+                "status": "passed",
+                "expected_points": 1,
+                "point_embedding_fingerprint": "fp",
+                "base_sha256": "base-sha",
+            }
+        ),
+        encoding="utf-8",
+    )
+    client = Client()
+
+    with pytest.raises(RuntimeError, match="post activation failed"):
+        activation.activate_release(
+            client=client,
+            alias="les_smeta_norm_cards",
+            target="new_generation",
+            report={"expected_points": 1, "base_sha256": "base-sha"},
+            rag_manifest_source=rag_source,
+            rag_manifest_destinations=[rag_active],
+            artifact_pairs=[(new_base, old_base)],
+            post_activate=lambda: (_ for _ in ()).throw(
+                RuntimeError("post activation failed")
+            ),
+        )
+
+    assert client.aliases == {"les_smeta_norm_cards": "old_generation"}
+    assert old_base.read_bytes() == b"old"
+    assert json.loads(rag_active.read_text(encoding="utf-8")) == {"old": True}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -271,6 +272,14 @@ def _read_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(8 * 1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, Any]:
     from proxy.smeta_core.base_registry import active_base
     from proxy.smeta_core.integrity import normative_base_integrity
@@ -308,6 +317,13 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
     activated = aliases.get(alias) == physical and bool(aliases.get(alias))
     expected = int(build.get("expected_points") or manifest.get("expected_points") or manifest.get("points") or 0)
     active_identity = build if build_collection else manifest
+    indexed_base_sha256 = str(active_identity.get("base_sha256") or "").strip().casefold()
+    active_base_sha256 = _sha256_file(base_path) if base_path.is_file() else ""
+    revision_mismatch = bool(
+        active_base_sha256
+        and indexed_base_sha256
+        and active_base_sha256 != indexed_base_sha256
+    )
     fingerprint = str(active_identity.get("point_embedding_fingerprint") or "")
     result: dict[str, Any] = {
         "alias": alias,
@@ -328,6 +344,27 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
             "generated_at": quality.get("generated_at"),
             "collection": str(quality.get("collection") or ""),
         },
+        "revision": {
+            "state": "mismatch" if revision_mismatch else "matched",
+            "active_base_sha256": active_base_sha256,
+            "indexed_base_sha256": indexed_base_sha256,
+            "restart_required": False,
+        },
+        "warnings": (
+            [
+                {
+                    "code": "SMETA_BASE_INDEX_REVISION_MISMATCH",
+                    "message": (
+                        "Активная сметная база и индекс карточек относятся к разным ревизиям. "
+                        "ЛЕС не будет использовать этот индекс до автоматического переключения "
+                        "или завершения сборки подходящего поколения."
+                    ),
+                    "action": "rebuild_or_activate_matching_generation",
+                }
+            ]
+            if revision_mismatch
+            else []
+        ),
     }
     integrity = normative_base_integrity()
     mechanical_ready = bool(
@@ -372,7 +409,9 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
         and active_identity.get("status") in {"passed", "completed"}
         and active_identity.get("index_mode", "hybrid") == "hybrid"
     )
-    if complete and activated:
+    if revision_mismatch:
+        state, reason = "blocked", "base_index_revision_mismatch"
+    elif complete and activated:
         state, reason = "ready", ""
     elif complete:
         state, reason = "awaiting_activation", "alias_not_activated"
@@ -380,7 +419,7 @@ def _smeta_status(client: QdrantClient, aliases: dict[str, str]) -> dict[str, An
         state, reason = "building", "index_build_in_progress"
     else:
         state, reason = "blocked", "manifest_or_vector_coverage_incomplete"
-    search_ready = bool(complete and activated)
+    search_ready = bool(complete and activated and not revision_mismatch)
     overall_ready = bool(mechanical_ready and search_ready)
     if not mechanical_ready:
         overall_state, overall_reason = "blocked", "mechanical_base_missing_or_untrusted"

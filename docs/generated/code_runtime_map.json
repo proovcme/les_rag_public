@@ -863,6 +863,7 @@
         "proxy/services/runtime_config_registry_service.py",
         "proxy/services/smeta_artifact_service.py",
         "proxy/services/smeta_chat_application_service.py",
+        "proxy/services/smeta_generation_reconciliation_service.py",
         "proxy/services/smeta_norm_store.py",
         "proxy/services/spec_to_bor_service.py",
         "proxy/services/table_query_service.py",
@@ -870,7 +871,8 @@
         "proxy/services/unified_construction_harness_service.py",
         "proxy/storage/file_storage.py",
         "sovushka/state.py",
-        "tests/test_runtime_paths.py"
+        "tests/test_runtime_paths.py",
+        "tools/gesn_update_from_fgis.py"
       ],
       "lines": 31,
       "module": "backend.runtime_paths",
@@ -1176,6 +1178,7 @@
         "proxy/services/smeta_chat_adapter_service.py",
         "proxy/services/smeta_chat_application_service.py",
         "proxy/services/smeta_chat_service.py",
+        "proxy/services/smeta_generation_reconciliation_service.py",
         "proxy/services/smeta_memory_adapter.py",
         "proxy/services/smeta_norm_store.py",
         "proxy/services/smeta_ontology_service.py",
@@ -1245,7 +1248,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 702,
+      "lines": 725,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1297,7 +1300,8 @@
         "proxy/services/rag_catalog_guard_service.py",
         "proxy/services/raptor_publication_service.py",
         "proxy/services/resource_governor.py",
-        "proxy/services/retrieval_service.py"
+        "proxy/services/retrieval_service.py",
+        "proxy/services/smeta_generation_reconciliation_service.py"
       ],
       "path": "proxy/app.py",
       "status": "PRODUCT_REACHABLE",
@@ -2590,6 +2594,7 @@
         "proxy/services/smeta_chat_adapter_service.py",
         "proxy/services/smeta_chat_application_service.py",
         "proxy/services/smeta_chat_service.py",
+        "proxy/services/smeta_generation_reconciliation_service.py",
         "proxy/services/smeta_memory_adapter.py",
         "proxy/services/smeta_norm_store.py",
         "proxy/services/smeta_ontology_service.py",
@@ -5343,6 +5348,7 @@
         "proxy/services/fgis_update_service.py",
         "proxy/services/gesn_update_service.py",
         "proxy/services/runtime_dispatcher.py",
+        "proxy/services/smeta_generation_reconciliation_service.py",
         "tests/test_process_status.py"
       ],
       "lines": 54,
@@ -5726,7 +5732,7 @@
         "proxy/services/rag_pipeline_status_service.py",
         "tests/test_rag_readiness_service.py"
       ],
-      "lines": 472,
+      "lines": 511,
       "module": "proxy.services.rag_readiness_service",
       "outbound": [
         "backend/rag_config.py",
@@ -6472,6 +6478,24 @@
       ],
       "path": "proxy/services/smeta_chat_service.py",
       "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/app.py"
+      ],
+      "lines": 234,
+      "module": "proxy.services.smeta_generation_reconciliation_service",
+      "outbound": [
+        "backend/runtime_paths.py",
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/process_status.py",
+        "proxy/smeta_core/base_registry.py",
+        "tools/activate_smeta_rag_generation.py"
+      ],
+      "path": "proxy/services/smeta_generation_reconciliation_service.py",
+      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
@@ -7227,6 +7251,7 @@
         "proxy/services/rag_readiness_service.py",
         "proxy/services/service_source_registry.py",
         "proxy/services/smeta_chat_application_service.py",
+        "proxy/services/smeta_generation_reconciliation_service.py",
         "proxy/services/smeta_norm_store.py",
         "proxy/smeta_core/integrity.py",
         "proxy/smeta_core/norm_browser.py",
@@ -8043,9 +8068,10 @@
     {
       "inbound": [
         "sovushka/pages/data_workspace.py",
-        "tests/test_sovushka_documents.py"
+        "tests/test_sovushka_documents.py",
+        "tests/test_sovushka_rag_warning.py"
       ],
-      "lines": 3895,
+      "lines": 3927,
       "module": "sovushka.pages.documents",
       "outbound": [
         "sovushka/__init__.py",
@@ -8442,7 +8468,7 @@
     },
     {
       "inbound": [],
-      "lines": 134,
+      "lines": 208,
       "module": "tests.test_activate_smeta_rag_generation",
       "outbound": [
         "tools/activate_smeta_rag_generation.py"
@@ -10153,7 +10179,7 @@
     },
     {
       "inbound": [],
-      "lines": 90,
+      "lines": 134,
       "module": "tests.test_gesn_update_pipeline",
       "outbound": [
         "tools/gesn_update_from_fgis.py"
@@ -11849,7 +11875,7 @@
     },
     {
       "inbound": [],
-      "lines": 370,
+      "lines": 421,
       "module": "tests.test_rag_readiness_service",
       "outbound": [
         "proxy/services/rag_readiness_service.py"
@@ -11956,6 +11982,15 @@
         "proxy/routers/chat.py"
       ],
       "path": "tests/test_reasoning_answer.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 60,
+      "module": "tests.test_rebuild_active_smeta_rag",
+      "outbound": [],
+      "path": "tests/test_rebuild_active_smeta_rag.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -12694,6 +12729,24 @@
     },
     {
       "inbound": [],
+      "lines": 143,
+      "module": "tests.test_smeta_generation_coordinator",
+      "outbound": [],
+      "path": "tests/test_smeta_generation_coordinator.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 208,
+      "module": "tests.test_smeta_generation_reconciliation_service",
+      "outbound": [],
+      "path": "tests/test_smeta_generation_reconciliation_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 124,
       "module": "tests.test_smeta_memory_isolation",
       "outbound": [
@@ -13051,6 +13104,17 @@
       "module": "tests.test_sovushka_pwa",
       "outbound": [],
       "path": "tests/test_sovushka_pwa.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 22,
+      "module": "tests.test_sovushka_rag_warning",
+      "outbound": [
+        "sovushka/pages/documents.py"
+      ],
+      "path": "tests/test_sovushka_rag_warning.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -13871,6 +13935,7 @@
         "tools/rag_rrf_readiness.py",
         "tools/rag_safe_parse_loop.py",
         "tools/rag_scope_manifest.py",
+        "tools/rebuild_active_smeta_rag.py",
         "tools/recover_orphan_rag_catalog.py",
         "tools/reindex_datasets_guarded.py",
         "tools/reindex_route_changes_guarded.py",
@@ -13892,6 +13957,7 @@
         "tools/smeta_document_live_smoke.py",
         "tools/smeta_document_local_run.py",
         "tools/smeta_embedding_parity.py",
+        "tools/smeta_generation_coordinator.py",
         "tools/smeta_mapping_quality.py",
         "tools/smeta_model_quality_benchmark.py",
         "tools/smeta_rag_quality_probe.py",
@@ -13945,21 +14011,24 @@
         "tools/__init__.py"
       ],
       "path": "tools/activate_qdrant_generation.py",
-      "status": "TEST_OR_TOOL_ONLY",
+      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
       "inbound": [
-        "tests/test_activate_smeta_rag_generation.py"
+        "proxy/services/smeta_generation_reconciliation_service.py",
+        "tests/test_activate_smeta_rag_generation.py",
+        "tools/rebuild_active_smeta_rag.py",
+        "tools/smeta_generation_coordinator.py"
       ],
-      "lines": 218,
+      "lines": 279,
       "module": "tools.activate_smeta_rag_generation",
       "outbound": [
         "tools/__init__.py",
         "tools/activate_qdrant_generation.py"
       ],
       "path": "tools/activate_smeta_rag_generation.py",
-      "status": "TEST_OR_TOOL_ONLY",
+      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
@@ -14289,9 +14358,11 @@
       "inbound": [
         "tests/test_build_smeta_norm_rag.py",
         "tests/test_smeta_norm_browser.py",
-        "tools/smeta_embedding_parity.py"
+        "tools/rebuild_active_smeta_rag.py",
+        "tools/smeta_embedding_parity.py",
+        "tools/smeta_generation_coordinator.py"
       ],
-      "lines": 465,
+      "lines": 473,
       "module": "tools.build_smeta_norm_rag",
       "outbound": [
         "backend/inference/bm25_sparse.py",
@@ -14302,7 +14373,7 @@
         "tools/__init__.py"
       ],
       "path": "tools/build_smeta_norm_rag.py",
-      "status": "TEST_OR_TOOL_ONLY",
+      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
@@ -14326,7 +14397,8 @@
         "proxy/services/gesn_update_service.py",
         "tests/test_smeta_structured_base.py",
         "tools/build_smeta_base_v2.py",
-        "tools/gesn_update_from_fgis.py"
+        "tools/gesn_update_from_fgis.py",
+        "tools/smeta_generation_coordinator.py"
       ],
       "lines": 504,
       "module": "tools.build_smeta_structured_base",
@@ -14814,15 +14886,17 @@
         "tests/test_gesn_update_pipeline.py",
         "tools/fgis_full_update.py"
       ],
-      "lines": 175,
+      "lines": 196,
       "module": "tools.gesn_update_from_fgis",
       "outbound": [
+        "backend/runtime_paths.py",
         "proxy/smeta_core/base_registry.py",
         "tools/__init__.py",
         "tools/build_smeta_service_rag.py",
         "tools/build_smeta_structured_base.py",
         "tools/gesn_bulk_import.py",
-        "tools/gesn_unify_base.py"
+        "tools/gesn_unify_base.py",
+        "tools/smeta_generation_coordinator.py"
       ],
       "path": "tools/gesn_update_from_fgis.py",
       "status": "PRODUCT_REACHABLE",
@@ -15486,6 +15560,20 @@
     },
     {
       "inbound": [],
+      "lines": 117,
+      "module": "tools.rebuild_active_smeta_rag",
+      "outbound": [
+        "tools/__init__.py",
+        "tools/activate_smeta_rag_generation.py",
+        "tools/build_smeta_norm_rag.py",
+        "tools/smeta_generation_coordinator.py"
+      ],
+      "path": "tools/rebuild_active_smeta_rag.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 72,
       "module": "tools.recover_orphan_rag_catalog",
       "outbound": [
@@ -15788,6 +15876,23 @@
       ],
       "path": "tools/smeta_embedding_parity.py",
       "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "tools/gesn_update_from_fgis.py",
+        "tools/rebuild_active_smeta_rag.py"
+      ],
+      "lines": 158,
+      "module": "tools.smeta_generation_coordinator",
+      "outbound": [
+        "tools/__init__.py",
+        "tools/activate_smeta_rag_generation.py",
+        "tools/build_smeta_norm_rag.py",
+        "tools/build_smeta_structured_base.py"
+      ],
+      "path": "tools/smeta_generation_coordinator.py",
+      "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
     {
@@ -18226,12 +18331,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 342,
+    "product_reachable": 347,
     "registered_api_routes": 330,
     "runtime_support": 9,
-    "test_or_tool_only": 621,
-    "tracked_python_files": 973,
-    "tracked_python_lines": 306524
+    "test_or_tool_only": 623,
+    "tracked_python_files": 980,
+    "tracked_python_lines": 307819
   },
   "warnings": []
 }
