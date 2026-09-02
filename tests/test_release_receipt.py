@@ -10,6 +10,23 @@ from tools import release_receipt
 
 TARGET = "a" * 40
 BASE = "b" * 40
+TREE = "c" * 40
+
+
+def _gate(tmp_path: Path) -> Path:
+    return release_receipt.create_gate_receipt(
+        root=tmp_path / "work",
+        target_commit=TARGET,
+        target_tree=TREE,
+        product_version="0.30.40",
+        build_number=680,
+        desktop_version="5.1.680",
+        branch="codex/release",
+        upstream_commit=TARGET,
+        policy=[("verify", ("make", "verify"))],
+        results=[{"gate": "verify", "exit_code": 0, "duration_ms": 7}],
+        clean=True,
+    )
 
 
 def _attempt(tmp_path: Path, *, assets: list[Path] | None = None) -> Path:

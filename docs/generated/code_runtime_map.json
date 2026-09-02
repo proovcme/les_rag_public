@@ -10164,7 +10164,7 @@
     },
     {
       "inbound": [],
-      "lines": 452,
+      "lines": 465,
       "module": "tests.test_github_patch_release",
       "outbound": [
         "tools/github_patch_release.py",
@@ -11297,7 +11297,7 @@
     },
     {
       "inbound": [],
-      "lines": 489,
+      "lines": 480,
       "module": "tests.test_patch_release",
       "outbound": [
         "tools/patch_release.py",
@@ -12018,7 +12018,7 @@
     },
     {
       "inbound": [],
-      "lines": 809,
+      "lines": 1183,
       "module": "tests.test_release_orchestrator",
       "outbound": [
         "tools/release_classification.py",
@@ -12031,7 +12031,7 @@
     },
     {
       "inbound": [],
-      "lines": 185,
+      "lines": 478,
       "module": "tests.test_release_receipt",
       "outbound": [
         "tools/release_receipt.py"
@@ -13694,6 +13694,18 @@
     },
     {
       "inbound": [],
+      "lines": 174,
+      "module": "tests.test_windows_runtime_entrypoints",
+      "outbound": [
+        "tools/build_tauri_app.py",
+        "tools/windows_runtime_entrypoints.py"
+      ],
+      "path": "tests/test_windows_runtime_entrypoints.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 72,
       "module": "tests.test_windows_update_shell",
       "outbound": [
@@ -13908,6 +13920,7 @@
         "tools/windows_prebundle_smoke.py",
         "tools/windows_release_acceptance.py",
         "tools/windows_runtime.py",
+        "tools/windows_runtime_entrypoints.py",
         "tools/windows_update_engine.py",
         "tools/windows_update_shell.py",
         "tools/zerotier_access_smoke.py"
@@ -14331,6 +14344,7 @@
         "tests/test_installer_windows.py",
         "tests/test_software_versions.py",
         "tests/test_tauri_desktop.py",
+        "tests/test_windows_runtime_entrypoints.py",
         "tools/build_macos_app.py",
         "tools/build_windows_installer.py",
         "tools/internal_dual_deploy.py",
@@ -14819,7 +14833,7 @@
         "tests/test_github_patch_release.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 490,
+      "lines": 501,
       "module": "tools.github_patch_release",
       "outbound": [
         "tools/__init__.py",
@@ -15217,7 +15231,7 @@
         "tools/multiplatform_release.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 748,
+      "lines": 759,
       "module": "tools.patch_release",
       "outbound": [
         "tools/__init__.py",
@@ -15538,7 +15552,7 @@
       "inbound": [
         "tests/test_release_orchestrator.py"
       ],
-      "lines": 1083,
+      "lines": 1577,
       "module": "tools.release_orchestrator",
       "outbound": [
         "proxy/services/update_service.py",
@@ -15565,7 +15579,7 @@
         "tools/patch_release.py",
         "tools/release_orchestrator.py"
       ],
-      "lines": 318,
+      "lines": 836,
       "module": "tools.release_receipt",
       "outbound": [
         "tools/__init__.py"
@@ -16171,6 +16185,19 @@
       "path": "tools/windows_runtime.py",
       "status": "RUNTIME_SUPPORT",
       "windows_runtime_explicit": true
+    },
+    {
+      "inbound": [
+        "tests/test_windows_runtime_entrypoints.py"
+      ],
+      "lines": 225,
+      "module": "tools.windows_runtime_entrypoints",
+      "outbound": [
+        "tools/__init__.py"
+      ],
+      "path": "tools/windows_runtime_entrypoints.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
     },
     {
       "inbound": [
@@ -18202,9 +18229,9 @@
     "product_reachable": 342,
     "registered_api_routes": 330,
     "runtime_support": 9,
-    "test_or_tool_only": 619,
-    "tracked_python_files": 971,
-    "tracked_python_lines": 303773
+    "test_or_tool_only": 621,
+    "tracked_python_files": 973,
+    "tracked_python_lines": 305877
   },
   "warnings": []
 }

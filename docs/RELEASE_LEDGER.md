@@ -11,7 +11,7 @@
 номер сборки:              683
 версия Tauri/NSIS:         5.1.683
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.43 RAG evidence continuity/readiness candidate; code through 9b60d74f
+dev implementation:       0.30.43 RAG evidence continuity/readiness + artifact-first release candidate; code through c6a14aec
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
@@ -31,8 +31,9 @@ dev implementation:       0.30.43 RAG evidence continuity/readiness candidate; c
 > backend, contract, optional stages и per-query quality. RAPTOR default off;
 > ColBERT не вызывается без audited ready active generation. Реализованный код
 > заканчивается commit `9b60d74f`; сметное ядро и установленный рабочий baseline
-> `0.30.42 · 682 · ab5146b2` не изменялись. Выпуск, рестарт, reindex и тяжёлые
-> optional-generation jobs не запускались.
+> `0.30.42 · 682 · ab5146b2` не изменялись. Reindex и тяжёлые
+> optional-generation jobs не запускались; выпуск начинается только после
+> повторной проверки объединённого кандидата.
 
 > **Artifact-first release recovery включён в кандидат 0.30.43:** reusable
 > gate receipt, immutable package artifact, append-only retryable acceptance и
