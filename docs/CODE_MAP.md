@@ -127,6 +127,17 @@
 > Открытая live-приёмка: `tools/rag_dataset_story_acceptance.py` с вопросом
 > `Расскажи про датасет.`; тест не выставляет ожидаемые термины или pass-score.
 
+> **0.30.44 model-RAG integrity boundary:**
+> `chat_evidence_application_service.parse_model_rag_queries` принимает только
+> обычные строки Qwen; JSON/native-tool compatibility отсутствует.
+> `parse_model_rag_result` механически декодирует однозначную таблицу или запись
+> с явно подписанными полями, сохраняет исходный answer и значения и не
+> использует regex. Свободная проза и
+> неизвестная структура не превращаются кодом в сметное решение. Автоматический
+> workbook остаётся свойством явно активного estimator profile; текст вопроса
+> не выбирает ЛСР/ВОР. `tools/architecture_contract_gate.py` защищает decoder и
+> запрет language/regex forcing.
+
 > **0.30.0 ordinary answer route:** binding `answer` напрямую определяет любую модель
 > видимого free/evidence chat. Promotion/shadow не может заменить её legacy-
 > моделью. Evidence application сохраняет `source_scope`

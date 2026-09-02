@@ -120,12 +120,12 @@ def test_model_authored_search_batch_is_not_cut_to_five_calls():
     ]
 
 
-def test_model_rag_batch_preserves_every_model_query_without_a_row_limit():
+def test_model_rag_batch_does_not_accept_a_legacy_json_protocol():
     queries = [f"точный запрос {index}" for index in range(30)]
 
     assert service.parse_model_rag_queries(
         json.dumps({"queries": queries}, ensure_ascii=False)
-    ) == queries
+    ) == []
 
 
 def test_model_rag_batch_reads_plain_model_authored_lines_without_a_row_limit():
@@ -243,6 +243,14 @@ def test_model_rag_result_preserves_all_rows_and_domain_fields_unchanged():
     assert service.parse_model_rag_result(answer) == (answer, rows)
 
 
+def test_model_rag_result_decoder_has_no_regex_or_language_router():
+    source = inspect.getsource(service.parse_model_rag_result)
+
+    assert "re." not in source
+    assert "question" not in source
+    assert "query" not in source
+
+
 def test_model_rag_result_preserves_explicit_row_identity_and_norm_code_verbatim():
     answer = """| source_row | title | unit | quantity | norm_code | evidence_refs |
 |---:|---|---|---:|---|---|
@@ -309,7 +317,7 @@ def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence()
     assert "norm_code_not_in_referenced_evidence:1" in errors
 
 
-def test_model_rag_result_reads_the_models_ordinary_sectioned_answer():
+def test_model_rag_result_does_not_infer_rows_from_prose():
     answer = """### Раздел 1. Демонтажные работы ЭОМ
 **Строка 1: Защитное укрытие пленкой, 116 м².**
 * **Выбранный аналог:** `ГЭСН26-01-055-01` (Установка пароизоляционного слоя из пленки).
@@ -321,48 +329,20 @@ def test_model_rag_result_reads_the_models_ordinary_sectioned_answer():
 * **Обоснование:** Аналог по сложности монтажа Q7.H1; Q7.H3.
 """
 
+    assert service.parse_model_rag_result(answer) is None
+
+
+def test_model_rag_result_reads_explicit_labelled_lines_without_semantic_repair():
+    answer = """Строка 1 — Прокладка контрольного кабеля; раздел: Монтаж; ед. изм.: м; количество: 120; norm_code: ГЭСНм08-02-146-01; аналог: Кабель контрольный; обоснование: прямое соответствие составу; коэффициент: 1; evidence: Q1.H2.
+Строка 2 — Монтаж шкафа управления; раздел: Автоматика; ед. изм.: шт.; количество: 2; norm_code: ГЭСНм11-03-001-01; аналог: Шкаф управления; обоснование: совпадают измеритель и операции; evidence_refs: Q2.H1, Q2.H3."""
+
     assert service.parse_model_rag_result(answer) == (
         answer,
         [
             {
                 "source_row": 1,
-                "section": "Раздел 1. Демонтажные работы ЭОМ",
-                "title": "Защитное укрытие пленкой",
-                "unit": "м²",
-                "quantity": 116,
-                "norm_code": "ГЭСН26-01-055-01",
-                "analogue": "Установка пароизоляционного слоя из пленки",
-                "coverage": "Ближайший по составу работ аналог [Q1.H2].",
-                "evidence_refs": ["Q1.H2"],
-            },
-            {
-                "source_row": 1,
-                "section": "Раздел 2. Монтажные работы ЭОМ",
-                "title": "Монтаж блока аварийного питания",
-                "unit": "шт.",
-                "quantity": 16,
-                "norm_code": "ГЭСНм34-01-071-01",
-                "analogue": "Светильник с аварийным питанием",
-                "coverage": "Аналог по сложности монтажа Q7.H1; Q7.H3.",
-                "evidence_refs": ["Q7.H1", "Q7.H3"],
-            },
-        ],
-    )
-
-
-def test_model_rag_result_packages_plain_labelled_lines_without_a_markdown_table():
-    answer = """Строка 1 — Прокладка контрольного кабеля; раздел: Монтаж; ед. изм.: м; количество: 120; norm_code: ГЭСНм08-02-146-01; аналог: Кабель контрольный; обоснование: прямое соответствие составу; коэффициент: 1; evidence: Q1.H2.
-Строка 2 — Монтаж шкафа управления; раздел: Автоматика; ед. изм.: шт.; количество: 2; norm_code: ГЭСНм11-03-001-01; аналог: Шкаф управления; обоснование: совпадают измеритель и операции; evidence_refs: Q2.H1, Q2.H3."""
-
-    parsed = service.parse_model_rag_result(answer)
-
-    assert parsed == (
-        answer,
-        [
-            {
-                "source_row": 1,
-                "section": "Монтаж",
                 "title": "Прокладка контрольного кабеля",
+                "section": "Монтаж",
                 "unit": "м",
                 "quantity": 120,
                 "norm_code": "ГЭСНм08-02-146-01",
@@ -373,8 +353,8 @@ def test_model_rag_result_packages_plain_labelled_lines_without_a_markdown_table
             },
             {
                 "source_row": 2,
-                "section": "Автоматика",
                 "title": "Монтаж шкафа управления",
+                "section": "Автоматика",
                 "unit": "шт.",
                 "quantity": 2,
                 "norm_code": "ГЭСНм11-03-001-01",
@@ -498,6 +478,51 @@ def test_model_rag_result_accepts_the_models_short_ordinary_column_names():
             "evidence_refs": ["Q1.H2"],
         }
     ]
+
+
+def test_model_rag_result_does_not_guess_unknown_header_aliases():
+    answer = """| № | Наименование | Ед. изм. | Кол-во | Нормативный код (ГЭСН/ЕР) | Коэфф. | Примечания к выбору | Evidence_refs |
+|---:|---|---|---:|---|---|---|---|
+| 42 | Кабель модели | м | 12 | CUSTOM-NORM-A | 1.25 | Текст Qwen | Q3.H2 |
+"""
+
+    assert service.parse_model_rag_result(answer) is None
+
+
+def test_estimator_draft_projection_never_invents_source_row_or_decision():
+    rows = service.compact_estimator_draft_rows([
+        {
+            "source_row": 42,
+            "title": "Кабель",
+            "quantity": 12,
+            "unit": "м",
+            "norm_code": "CUSTOM-NORM-A",
+            "analogue": "Аналог Qwen",
+        },
+        {
+            "title": "Строка без идентичности",
+            "norm_code": "CUSTOM-NORM-B",
+        },
+    ])
+
+    assert rows == [{
+        "work_id": "42",
+        "source_row": 42,
+        "section": "",
+        "title": "Кабель",
+        "quantity": 12,
+        "unit": "м",
+        "norm_code": "CUSTOM-NORM-A",
+        "analogue": "Аналог Qwen",
+    }]
+
+
+def test_workbook_filename_projection_keeps_basename_and_drops_paths():
+    assert service._safe_workbook_filename("LSR_source_2026-09-01_2147.xlsx") == (
+        "LSR_source_2026-09-01_2147.xlsx"
+    )
+    assert service._safe_workbook_filename("C:/private/workbook.xlsx") == ""
+    assert service._safe_workbook_filename("artifact.xlsx") == ""
 
 
 async def _async_append(target, value):
@@ -1884,7 +1909,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
 
     request = service.EvidenceRequestContext(
         req=SimpleNamespace(
-            question="Собери ЛСР" if model_rag_result else "Проверь документы",
+            question="Собери ЛСР; ВОР не создавай" if model_rag_result else "Проверь документы",
             mode="estimator" if model_rag_result else "rag",
             response_length="short",
             output_directive="",
@@ -1924,7 +1949,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             "revision_id": "fixture-profile:1",
             "mode": "estimator" if model_rag_result else "rag",
             "tools": (
-                ["search_sources", "build_lsr_workbook"]
+                ["search_sources", "build_lsr_workbook", "build_vor_workbook"]
                 if model_rag_result
                 else ["build_vor_workbook" if workbook_profile else "read_source"]
             ),
@@ -2067,6 +2092,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         ]
         assert "Собери ЛСР" not in rag_queries
         assert workbook_executor_calls[-1]["args"]["decisions"] == exact_decisions
+        assert workbook_executor_calls[-1]["tool"] == "build_lsr_workbook"
         assert active_transport.revisions == ["conn:active:r3"] * 2
         assert active_transport.requests[0].tools == ()
         assert active_transport.requests[1].tools == ()

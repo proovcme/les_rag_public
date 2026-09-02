@@ -103,12 +103,46 @@ _KIND_HUMAN = {"parquet_row": "таблица", "file_body": "текст", "eml_
                "extracted_body": "извлечено", "workbook_cell": "ячейка", "lexical_chunk": "индекс",
                "vector_chunk": "vector", "filename_metadata": "имя файла"}
 
+_COLLECTION_LABELS = {"smeta_norm_cards.v1", "smeta_norm_cards"}
+
 _EMBEDDED_VIEW_EXTENSIONS = {
     ".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".eml",
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp",
     ".txt", ".md", ".json", ".jsonl", ".xml", ".yaml", ".yml", ".log",
     ".ini", ".cfg", ".sql", ".py", ".html", ".svg", ".csv", ".tsv",
 }
+
+
+def source_card_title(source: Any, fallback: str = "") -> str:
+    """Expose a norm cipher/title instead of a repeated collection label."""
+
+    if not isinstance(source, dict):
+        return str(fallback or "")
+    snippet = str(source.get("snippet") or source.get("excerpt") or source.get("content") or "")
+    explicit: dict[str, str] = {}
+    labels = {
+        "шифр": "cipher",
+        "norm_code": "cipher",
+        "norm code": "cipher",
+        "наименование": "title",
+        "title": "title",
+    }
+    for line in snippet.splitlines():
+        label, separator, value = line.partition(":")
+        if not separator:
+            continue
+        field = labels.get(" ".join(label.strip().split()).casefold())
+        clean = value.strip().split("|", 1)[0].split(";", 1)[0].strip()
+        if field and clean and field not in explicit:
+            explicit[field] = clean
+    cipher = explicit.get("cipher", "")
+    title = explicit.get("title", "")
+    if cipher and title:
+        return f"{cipher} · {title}"
+    if cipher or title:
+        return cipher or title
+    display = str(fallback or "")
+    return display if display not in _COLLECTION_LABELS else "Карточка нормы"
 
 
 def source_chip(source: Any, index: int | None = None) -> dict:
@@ -159,6 +193,8 @@ def source_chip(source: Any, index: int | None = None) -> dict:
             page_value = source.get("source_page") or source.get("page") or source.get("page_number")
             loc = f"p{page_value}" if page_value else ""
     file_name = file_part.rsplit("/", 1)[-1] if file_part else display_name
+    if isinstance(source, dict):
+        file_name = source_card_title(source, file_name)
     # локатор человекочитаемо: para85→абз.85, p3→стр.3, row5→стр.5, Лист!R12→Лист R12, chunk2→чанк2
     loc_h = loc
     for pat, rep in ((r"^para(\d+)", r"абз.\1"), (r"^p(\d+)$", r"стр.\1"), (r"^row(\d+)", r"стр.\1"),

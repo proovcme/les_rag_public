@@ -384,3 +384,26 @@ def test_conflict_block_visible_with_sources():
 
 def test_conflict_block_none_for_single_value():
     assert ar.conflict_block([{"label": "A", "value": "1", "sources": []}]) is None
+
+
+def test_source_card_title_prefers_norm_cipher_over_collection_name():
+    source = {
+        "doc_name": "smeta_norm_cards.v1",
+        "snippet": "Шифр: ГЭСН10-01-001-01\nНаименование: Установка блока",
+    }
+
+    title = ar.source_card_title(source, "smeta_norm_cards.v1")
+    chip = ar.source_chip(source, 1)
+
+    assert title == "ГЭСН10-01-001-01 · Установка блока"
+    assert chip["file"] == title
+
+
+def test_source_card_title_uses_only_explicit_fields_without_regex():
+    import inspect
+
+    assert "re." not in inspect.getsource(ar.source_card_title)
+    assert ar.source_card_title(
+        {"snippet": "В тексте упомянут ГЭСН10-01-001-01"},
+        "smeta_norm_cards.v1",
+    ) == "Карточка нормы"

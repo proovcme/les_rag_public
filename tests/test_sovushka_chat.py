@@ -1,4 +1,5 @@
 import inspect
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -28,6 +29,10 @@ from sovushka.pages.chat import (
     _smeta_progress_text,
     _smeta_rows_markdown,
     _runtime_guard_reason_label,
+    artifact_workbook_files,
+    format_answer_timing_line,
+    format_chat_request_clock,
+    workbook_chat_filename,
     should_skip_chat_resource_gate,
     _preserved_attachment,
 )
@@ -38,6 +43,84 @@ def test_chat_has_no_special_smeta_mode():
     modes = getattr(chat_page, "visible_chat_modes", lambda: ("smeta",))()
 
     assert "smeta" not in modes
+
+
+def test_chat_timing_uses_backend_wall_clock_and_generation():
+    requested = datetime(2026, 8, 2, 18, 9, 11, tzinfo=timezone.utc).isoformat()
+
+    assert format_chat_request_clock(requested).endswith("21:09")
+    assert format_answer_timing_line(
+        requested_at=requested,
+        elapsed_sec=50,
+        latency_phases={"wall_total": 42.2, "generation": 28.0},
+    ).endswith("ответ 42с · модель 28с")
+
+
+def test_workbook_chat_filename_never_exposes_path_or_generic_artifact():
+    assert workbook_chat_filename({
+        "filename": "LSR_demo_2026-09-01_2147.xlsx",
+    }) == "LSR_demo_2026-09-01_2147.xlsx"
+    assert workbook_chat_filename({
+        "filename": "C:/private/workbook.xlsx",
+        "artifact_kind": "vor_workbook",
+    }) == "VOR.xlsx"
+    assert workbook_chat_filename({"filename": "artifact.xlsx"}) == "LSR.xlsx"
+
+
+def test_artifact_workbook_files_preserves_all_distinct_downloads():
+    files = artifact_workbook_files({
+        "download_url": "/api/artifacts/lsr/download",
+        "filename": "LSR_demo.xlsx",
+        "files": [
+            {
+                "download_url": "/api/artifacts/lsr/download",
+                "filename": "LSR_demo.xlsx",
+                "artifact_kind": "lsr_workbook",
+            },
+            {
+                "download_url": "/api/artifacts/vor/download",
+                "filename": "VOR_demo.xlsx",
+                "artifact_kind": "vor_workbook",
+            },
+        ],
+    })
+
+    assert files == [
+        {
+            "download_url": "/api/artifacts/lsr/download",
+            "filename": "LSR_demo.xlsx",
+            "artifact_kind": "lsr_workbook",
+        },
+        {
+            "download_url": "/api/artifacts/vor/download",
+            "filename": "VOR_demo.xlsx",
+            "artifact_kind": "vor_workbook",
+        },
+    ]
+
+
+def test_smeta_artifact_rows_uses_exact_finished_draft_rows_without_decision_fallback():
+    rows = _smeta_artifact_rows({
+        "draft_rows": [{
+            "work_id": "42",
+            "source_row": 42,
+            "title": "Кабель",
+            "quantity": 12,
+            "unit": "м",
+            "norm_code": "CUSTOM-NORM-A",
+            "analogue": "Аналог Qwen",
+        }],
+    })
+
+    assert rows == [{
+        "work_id": "42",
+        "source_row": 42,
+        "title": "Кабель",
+        "quantity": 12,
+        "unit": "м",
+        "norm_code": "CUSTOM-NORM-A",
+        "analogue": "Аналог Qwen",
+    }]
 
 
 def test_chat_session_id_survives_ui_reopen(monkeypatch):
@@ -248,7 +331,10 @@ def test_chat_ui_consumes_tool_progress_and_canonical_artifact_download():
     assert 'elif event == "tool_progress":' in source
     assert 'stream_state["got_progress"] = True' in source
     assert 'should_retry_unstreamed_chat(' in source
-    assert 'artifact.get("download_url")' in source
+    assert artifact_workbook_files({
+        "download_url": "/api/artifacts/rev-1/download",
+        "filename": "LSR_demo.xlsx",
+    })[0]["download_url"] == "/api/artifacts/rev-1/download"
     assert 'retry.get("attachment_id")' in helper
 
 

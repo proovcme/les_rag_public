@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
+from datetime import datetime
 from pathlib import Path
 
 import openpyxl
@@ -15,6 +16,7 @@ from proxy.services.workbook_tool_service import (
     WorkbookExecutionContext,
     build_lsr_workbook,
     build_vor_workbook,
+    workbook_download_filename,
 )
 from proxy.services.lsr_workbook_adapter_service import build_lsr_workbook_from_decisions
 from proxy.services.structured_extract import validate as validate_json_schema
@@ -317,3 +319,56 @@ def test_source_fixture_hash_is_stable(tmp_path):
     meta = _attachment(tmp_path)
     payload = (tmp_path / "attachments" / "read_123456abcdef.xlsx").read_bytes()
     assert hashlib.sha256(payload).hexdigest() == meta["sha256"]
+
+
+def test_workbook_download_filename_uses_kind_source_and_date():
+    when = datetime(2026, 9, 1, 21, 47)
+
+    assert workbook_download_filename(
+        artifact_kind="lsr_workbook",
+        source_name="VOR montage.pdf",
+        when=when,
+    ) == "LSR_VOR_montage_2026-09-01_2147.xlsx"
+    assert workbook_download_filename(
+        artifact_kind="vor_workbook",
+        when=when,
+    ) == "VOR_2026-09-01_2147.xlsx"
+
+
+@pytest.mark.asyncio
+async def test_vor_can_package_exact_model_rows_from_a_pdf_without_renumbering(tmp_path):
+    source = tmp_path / "source.pdf"
+    source.write_bytes(b"%PDF-1.4 fixture")
+    meta = preserve_read_attachment(
+        source,
+        attachment_id="read_123456abcdef",
+        original_name="source.pdf",
+        root=tmp_path / "attachments",
+    )
+
+    ctx = _context(tmp_path)
+    result = await build_vor_workbook(
+        {
+            "attachment_id": meta["attachment_id"],
+            "decisions": [{
+                "source_row": 42,
+                "section": "ЭОМ",
+                "title": "Прокладка кабеля",
+                "unit": "м",
+                "quantity": 12.5,
+                "norm_code": "CUSTOM-NORM-A",
+            }],
+        },
+        ctx,
+    )
+
+    assert result["status"] == "complete"
+    assert result["source"]["rows"] == 1
+    artifact_path = ctx.artifacts.resolve_path(result["artifact"]["revision_id"])
+    workbook = openpyxl.load_workbook(artifact_path, data_only=True, read_only=True)
+    try:
+        values = list(workbook.active.iter_rows(min_row=4, values_only=True))
+    finally:
+        workbook.close()
+    assert values[0][1:6] == ("ЭОМ", "Прокладка кабеля", None, "м", 12.5)
+    assert "source.pdf#42" in values[0][6]

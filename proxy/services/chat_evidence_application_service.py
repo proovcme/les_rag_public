@@ -237,6 +237,37 @@ def safe_selected_call_trace(call: dict[str, Any]) -> dict[str, str]:
     return trace
 
 
+def _safe_workbook_filename(value: Any) -> str:
+    """Keep one operator-facing xlsx basename and never expose a local path."""
+
+    raw = str(value or "").strip().replace("\\", "/")
+    name = Path(raw).name
+    if not name or name != raw or ".." in name:
+        return ""
+    if not name.lower().endswith(".xlsx") or name.lower() in {".xlsx", "artifact.xlsx"}:
+        return ""
+    return name
+
+
+def _chat_workbook_filename(
+    filename: Any,
+    *,
+    artifact_kind: str = "",
+    tool: str = "",
+) -> str:
+    """Return a safe download name without changing workbook contents."""
+
+    safe = _safe_workbook_filename(filename)
+    if safe:
+        return safe
+    kind = str(artifact_kind or "").strip()
+    if kind not in {"lsr_workbook", "vor_workbook"}:
+        kind = "vor_workbook" if tool == "build_vor_workbook" else "lsr_workbook"
+    from proxy.services.workbook_tool_service import workbook_download_filename
+
+    return workbook_download_filename(artifact_kind=kind)
+
+
 def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str, Any]:
     """Retain only workbook identifiers that the chat UI can safely use."""
     result = payload if isinstance(payload, dict) else {}
@@ -259,7 +290,7 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
         (
             "artifact_id", "revision_id", "revision_no", "parent_revision_id",
             "sha256", "byte_size", "download_url", "source_scope",
-            "decision_checkpoint_id",
+            "decision_checkpoint_id", "filename", "artifact_kind",
         ),
     )
     checkpoint = selected(
@@ -268,6 +299,16 @@ def safe_workbook_history_projection(payload: dict[str, Any] | None) -> dict[str
     )
     source = selected(result.get("source"), ("attachment_id", "sha256", "rows"))
     if artifact:
+        filename = _safe_workbook_filename(artifact.get("filename"))
+        if filename:
+            artifact["filename"] = filename
+        else:
+            artifact.pop("filename", None)
+        kind = str(artifact.get("artifact_kind") or "").strip()
+        if kind in {"lsr_workbook", "vor_workbook"}:
+            artifact["artifact_kind"] = kind
+        else:
+            artifact.pop("artifact_kind", None)
         safe["artifact"] = artifact
     if checkpoint:
         safe["checkpoint"] = checkpoint
@@ -522,125 +563,104 @@ def profile_uses_smeta_norm_retrieval(
     return str(snapshot.get("mode") or "").strip().casefold() == "estimator"
 
 
-def _model_json_object(raw: str) -> dict[str, Any] | None:
-    """Read one model-authored JSON object without interpreting its domain values."""
+def compact_estimator_draft_rows(rows: Sequence[Any]) -> list[dict[str, Any]]:
+    """Project model rows for display without inventing identity or a decision."""
 
-    text = str(raw or "").strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines:
-            lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    candidates = [text]
-    first = text.find("{")
-    last = text.rfind("}")
-    if 0 <= first < last:
-        candidates.append(text[first : last + 1])
-    for candidate in candidates:
-        try:
-            payload = json.loads(candidate)
-        except (TypeError, ValueError, json.JSONDecodeError):
+    compact: list[dict[str, Any]] = []
+    for item in rows or []:
+        if not isinstance(item, dict):
             continue
-        if isinstance(payload, dict):
-            return payload
-    return None
+        source_row = item.get("source_row")
+        if source_row in (None, ""):
+            continue
+        row = {
+            "work_id": str(source_row),
+            "source_row": source_row,
+            "section": str(item.get("section") or "").strip(),
+            "title": str(item.get("title") or "").strip(),
+            "quantity": item.get("quantity"),
+            "unit": str(item.get("unit") or "").strip(),
+            "norm_code": str(item.get("norm_code") or "").strip(),
+        }
+        for field_name in ("analogue", "coverage", "coefficient", "evidence_refs"):
+            if field_name in item:
+                row[field_name] = item[field_name]
+        compact.append(row)
+    return compact
 
 
 def parse_model_rag_queries(raw: str) -> list[str]:
     """Return the model-authored plain-text query lines without presentation wrappers."""
 
-    payload = _model_json_object(raw) or {}
-    raw_queries = payload.get("queries")
-    if not isinstance(raw_queries, list):
-        raw_calls = payload.get("calls")
-        raw_queries = []
-        if isinstance(raw_calls, list):
-            for call in raw_calls:
-                if not isinstance(call, dict) or call.get("tool") != "search_sources":
-                    continue
-                args = call.get("args")
-                if isinstance(args, dict):
-                    raw_queries.append(args.get("q"))
-    if not raw_queries:
-        plain_lines = [line.strip() for line in str(raw or "").splitlines()]
-        fence_indexes = [
-            index for index, line in enumerate(plain_lines) if line.startswith("```")
-        ]
-        if len(fence_indexes) >= 2:
-            plain_lines = plain_lines[fence_indexes[0] + 1 : fence_indexes[-1]]
-        quoted_lines = [
-            line[1:-1].strip()
-            for line in plain_lines
-            if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}
-        ]
-        raw_queries = quoted_lines or [
-            line for line in plain_lines if line and not line.startswith("```")
-        ]
+    plain_lines = [line.strip() for line in str(raw or "").splitlines()]
+    fence_indexes = [
+        index for index, line in enumerate(plain_lines) if line.startswith("```")
+    ]
+    if len(fence_indexes) >= 2:
+        plain_lines = plain_lines[fence_indexes[0] + 1 : fence_indexes[-1]]
+    visible_lines = [
+        line for line in plain_lines if line and not line.startswith("```")
+    ]
+    if any(line.startswith(("{", "[")) or line.endswith(("}", "]")) for line in visible_lines):
+        return []
+    quoted_lines = [
+        line[1:-1].strip()
+        for line in visible_lines
+        if len(line) >= 2 and line[0] == line[-1] and line[0] in {'"', "'"}
+    ]
+    raw_queries = quoted_lines or visible_lines
 
     queries: list[str] = []
     for item in raw_queries:
-        value: Any = item
-        if isinstance(item, dict):
-            value = item.get("query") if "query" in item else item.get("q")
-        if not isinstance(value, str):
+        if not isinstance(item, str):
             continue
-        query = value.strip()
+        query = item.strip()
         if query:
             queries.append(query)
     return queries
 
 
 def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
-    """Read model-authored rows from its ordinary Markdown answer without changing it."""
+    """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
     required_fields = {"title", "unit", "quantity", "norm_code"}
+    header_fields = {
+        "source_row": "source_row",
+        "№": "source_row",
+        "№ п/п": "source_row",
+        "№ пп": "source_row",
+        "section": "section",
+        "раздел": "section",
+        "title": "title",
+        "наименование": "title",
+        "наименование работ": "title",
+        "наименование работ (из вор)": "title",
+        "unit": "unit",
+        "ед. изм.": "unit",
+        "ед. изм": "unit",
+        "quantity": "quantity",
+        "кол-во": "quantity",
+        "norm_code": "norm_code",
+        "norm_code (шифр)": "norm_code",
+        "нормативная база (шифр нормы)": "norm_code",
+        "нормативная база (norm code)": "norm_code",
+        "analogue": "analogue",
+        "analogue / coverage": "analogue",
+        "аналог/обоснование": "analogue",
+        "обоснование выбора и аналог": "analogue",
+        "coverage": "coverage",
+        "coverage (соответствие)": "coverage",
+        "примечание инженера": "coverage",
+        "примечания к составу работ": "coverage",
+        "примечания к выбору": "coverage",
+        "coefficient": "coefficient",
+        "coefficient (кэф.)": "coefficient",
+        "evidence_refs": "evidence_refs",
+    }
 
     def field_name(value: str) -> str:
-        normalized = re.sub(r"\s+", " ", value.replace("**", "").strip()).casefold()
-        if normalized in {
-            "source_row",
-            "section",
-            "title",
-            "unit",
-            "quantity",
-            "norm_code",
-            "analogue",
-            "coverage",
-            "coefficient",
-            "evidence_refs",
-        }:
-            return normalized
-        if normalized.startswith("№"):
-            return "source_row"
-        if normalized == "наименование" or normalized.startswith("наименование работ"):
-            return "title"
-        if normalized.startswith("ед. изм"):
-            return "unit"
-        if normalized.startswith("кол-во"):
-            return "quantity"
-        if normalized.startswith("norm_code"):
-            return "norm_code"
-        if normalized.startswith("нормативная база") or "шифр нормы" in normalized:
-            return "norm_code"
-        if normalized.startswith("analogue / coverage"):
-            return "analogue"
-        if normalized.startswith("аналог/") or normalized.startswith("аналог /"):
-            return "analogue"
-        if normalized.startswith("обоснование выбора"):
-            return "analogue"
-        if normalized.startswith("coefficient"):
-            return "coefficient"
-        if normalized.startswith("evidence_refs"):
-            return "evidence_refs"
-        if normalized.startswith("примечание инженера"):
-            return "coverage"
-        if normalized.startswith("примечания к составу"):
-            return "coverage"
-        if normalized.startswith("coverage"):
-            return "coverage"
-        return ""
+        normalized = " ".join(value.replace("**", "").strip().split()).casefold()
+        return header_fields.get(normalized, "")
 
     def cells(line: str) -> list[str]:
         stripped = line.strip()
@@ -658,16 +678,38 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             return None
         return int(parsed) if parsed.is_integer() else parsed
 
+    def divider_cell(value: str) -> bool:
+        candidate = value.strip()
+        if candidate.startswith(":"):
+            candidate = candidate[1:]
+        if candidate.endswith(":"):
+            candidate = candidate[:-1]
+        return len(candidate) >= 3 and set(candidate) == {"-"}
+
+    def evidence_refs(value: str) -> list[str]:
+        separated = value.replace("<br>", " ").replace("<br/>", " ")
+        for marker in "[](),;":
+            separated = separated.replace(marker, " ")
+        found: list[str] = []
+        for token in separated.split():
+            candidate = token.strip(".*_`:").upper()
+            if not candidate.startswith("Q") or ".H" not in candidate:
+                continue
+            left, right = candidate[1:].split(".H", 1)
+            if left.isdigit() and right.isdigit():
+                found.append(candidate)
+        return list(dict.fromkeys(found))
+
     lines = str(raw or "").splitlines()
     table_rows: list[dict[str, Any]] = []
     current_section = ""
     header_index = 0
     while header_index < len(lines):
-        section_match = re.match(
-            r"^###\s+(Раздел\s+.+)$", lines[header_index].strip(), re.IGNORECASE
-        )
-        if section_match:
-            current_section = section_match.group(1).strip()
+        stripped_line = lines[header_index].strip()
+        if stripped_line.startswith("### ") and stripped_line[4:].casefold().startswith(
+            "раздел "
+        ):
+            current_section = stripped_line[4:].strip()
             header_index += 1
             continue
         header = cells(lines[header_index])
@@ -683,9 +725,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if header_index + 1 >= len(lines):
             break
         divider = cells(lines[header_index + 1])
-        if len(divider) != len(header) or not all(
-            re.fullmatch(r":?-{3,}:?", item) for item in divider
-        ):
+        if len(divider) != len(header) or not all(divider_cell(item) for item in divider):
             header_index += 1
             continue
         table_section = current_section
@@ -718,35 +758,20 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                         return None
                     row[name] = parsed_source_row
                 elif name in {"quantity", "coefficient"}:
-                    numeric_value = value
-                    if name == "coefficient":
-                        match = re.match(r"[+-]?[0-9]+(?:[.,][0-9]+)?", value)
-                        numeric_value = match.group(0) if match else ""
-                    parsed_number = number(numeric_value)
+                    parsed_number = number(value)
                     if parsed_number is None:
                         return None
                     row[name] = parsed_number
                 elif name == "evidence_refs":
-                    refs = list(
-                        dict.fromkeys(
-                            re.findall(r"Q\d+\.H\d+", value, re.IGNORECASE)
-                        )
-                    )
+                    refs = evidence_refs(value)
                     if not refs:
-                        refs = [
-                            item.strip()
-                            for item in re.split(r"[,;]", value)
-                            if item.strip()
-                        ]
+                        separated = value.replace(";", ",")
+                        refs = [item.strip() for item in separated.split(",") if item.strip()]
                     if refs:
                         row[name] = refs
-                else:
+                elif name:
                     row[name] = value
-            embedded_refs = list(
-                dict.fromkeys(
-                    re.findall(r"Q\d+\.H\d+", " ".join(visible_values), re.IGNORECASE)
-                )
-            )
+            embedded_refs = evidence_refs(" ".join(visible_values))
             if embedded_refs and not row.get("evidence_refs"):
                 row["evidence_refs"] = embedded_refs
             if row:
@@ -758,84 +783,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     if table_rows:
         return str(raw or ""), table_rows
 
-    section = ""
-    prose_rows: list[dict[str, Any]] = []
-    row_header_re = re.compile(
-        r"^\*\*Строка\s+(\d+)\s*:\s*(.+?)\*\*$", re.IGNORECASE
-    )
-    section_re = re.compile(r"^###\s+(Раздел\s+.+)$", re.IGNORECASE)
-    quantity_re = re.compile(
-        r"^(.*),\s*([0-9]+(?:[.,][0-9]+)?)\s*([^0-9]+)$"
-    )
-    index = 0
-    while index < len(lines):
-        stripped = lines[index].strip()
-        section_match = section_re.match(stripped)
-        if section_match:
-            section = section_match.group(1).strip()
-            index += 1
-            continue
-        row_match = row_header_re.match(stripped)
-        if not row_match:
-            index += 1
-            continue
-        block: list[str] = []
-        index += 1
-        while index < len(lines):
-            candidate = lines[index].strip()
-            if row_header_re.match(candidate) or section_re.match(candidate):
-                break
-            block.append(candidate)
-            index += 1
-
-        title_with_amount = row_match.group(2).strip()
-        amount_match = quantity_re.match(title_with_amount)
-        if amount_match:
-            title = amount_match.group(1).strip()
-            quantity = number(amount_match.group(2))
-            unit = amount_match.group(3).strip()
-            if unit.endswith(("².", "³.")):
-                unit = unit[:-1]
-        else:
-            title = title_with_amount
-            quantity = None
-            unit = ""
-
-        block_text = "\n".join(block)
-        analogue_match = re.search(
-            r"\*\*Выбранный аналог:\*\*\s*`([^`]+)`(?:\s*\(([^\n]*)\))?",
-            block_text,
-            re.IGNORECASE,
-        )
-        coverage_match = re.search(
-            r"\*\*(?:Обоснование|Решение):\*\*\s*([^\n]+)",
-            block_text,
-            re.IGNORECASE,
-        )
-        row = {
-            "source_row": int(row_match.group(1)),
-            "section": section,
-            "title": title,
-            "unit": unit,
-            "quantity": quantity,
-            "norm_code": analogue_match.group(1).strip() if analogue_match else "",
-        }
-        if analogue_match and analogue_match.group(2):
-            row["analogue"] = analogue_match.group(2).strip().rstrip(".")
-        if coverage_match:
-            row["coverage"] = coverage_match.group(1).strip()
-        refs = list(dict.fromkeys(re.findall(r"Q\d+\.H\d+", block_text, re.IGNORECASE)))
-        if refs:
-            row["evidence_refs"] = refs
-        prose_rows.append(row)
-    if prose_rows:
-        return str(raw or ""), prose_rows
-
-    labelled_rows: list[dict[str, Any]] = []
-    labelled_header = re.compile(
-        r"^\s*Строка\s+(\d+)\s*(?:[—–-]|:)\s*([^;]+)(?:;|$)",
-        re.IGNORECASE,
-    )
     labelled_fields = {
         "раздел": "section",
         "ед. изм.": "unit",
@@ -847,7 +794,6 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "quantity": "quantity",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
-        "норма": "norm_code",
         "аналог": "analogue",
         "обоснование": "coverage",
         "coverage": "coverage",
@@ -856,39 +802,56 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "evidence": "evidence_refs",
         "evidence_refs": "evidence_refs",
     }
+    labelled_rows: list[dict[str, Any]] = []
     for line in lines:
-        match = labelled_header.match(line)
-        if match is None:
+        stripped = line.strip()
+        separator = next(
+            (candidate for candidate in (" — ", " – ", " - ") if candidate in stripped),
+            "",
+        )
+        if not separator:
             continue
+        identity, remainder = stripped.split(separator, 1)
+        identity_parts = identity.split()
+        if (
+            len(identity_parts) != 2
+            or identity_parts[0].casefold() != "строка"
+            or not identity_parts[1].isdigit()
+        ):
+            continue
+        segments = remainder.split(";")
+        title = segments[0].strip()
+        if not title:
+            return None
         row: dict[str, Any] = {
-            "source_row": int(match.group(1)),
-            "title": match.group(2).strip(),
+            "source_row": int(identity_parts[1]),
+            "title": title,
         }
-        for segment in line[match.end() :].split(";"):
-            if ":" not in segment:
+        for segment in segments[1:]:
+            label, delimiter, value = segment.partition(":")
+            if not delimiter:
                 continue
-            label, value = segment.split(":", 1)
-            key = labelled_fields.get(
-                re.sub(r"\s+", " ", label.strip()).casefold()
-            )
+            key = labelled_fields.get(" ".join(label.strip().split()).casefold())
             clean = value.strip()
             if not key or not clean:
                 continue
             if key in {"quantity", "coefficient"}:
                 parsed_number = number(clean)
-                if parsed_number is not None:
-                    row[key] = parsed_number
+                if parsed_number is None:
+                    return None
+                row[key] = parsed_number
             elif key == "evidence_refs":
-                refs = list(
-                    dict.fromkeys(re.findall(r"Q\d+\.H\d+", clean, re.IGNORECASE))
-                )
+                refs = evidence_refs(clean)
                 if refs:
                     row[key] = refs
             else:
                 row[key] = clean
-        if {"title", "unit", "quantity", "norm_code"}.issubset(row):
-            labelled_rows.append(row)
-    return (str(raw or ""), labelled_rows) if labelled_rows else None
+        if not required_fields.issubset(row):
+            return None
+        labelled_rows.append(row)
+    if labelled_rows:
+        return str(raw or ""), labelled_rows
+    return None
 
 
 @dataclass(frozen=True)
@@ -1028,7 +991,11 @@ def validate_model_rag_result_structure(
             evidence_by_ref[evidence_ref] = meta
 
     def code_identity(value: Any) -> str:
-        return re.sub(r"[\s:]", "", str(value or "").strip()).casefold()
+        return "".join(
+            character
+            for character in str(value or "").strip().casefold()
+            if not character.isspace() and character != ":"
+        )
 
     for row in rows:
         source_row = row.get("source_row")
@@ -3555,17 +3522,17 @@ async def _execute_chat_evidence_application(
                         if answer:
                             await token_sink({"event": "token", "data": answer})
                     attachment_id = str(getattr(req, "attachment_id", None) or "").strip()
-                    packaging_tool = (
-                        "build_lsr_workbook"
+                    packaging_tools = (
+                        ["build_lsr_workbook"]
                         if "build_lsr_workbook" in profile_tools
-                        else ""
+                        else []
                     )
                     if (
                         parsed_model_result is not None
                         and model_result_rows
                         and not model_result_errors
                         and attachment_id
-                        and packaging_tool
+                        and packaging_tools
                         and workbook_tool_executor is not None
                         and canonical_execution_mode is CanonicalRouteMode.ACTIVE
                     ):
@@ -3573,59 +3540,101 @@ async def _execute_chat_evidence_application(
                             if token_sink is not None:
                                 await token_sink({"event": "tool_progress", "data": event})
 
-                        workbook_call = {
-                            "tool": packaging_tool,
-                            "args": {
-                                "attachment_id": attachment_id,
-                                "decisions": model_result_rows,
-                            },
-                        }
-                        try:
-                            workbook_payload = await workbook_tool_executor(
-                                workbook_call,
-                                {
-                                    "session_id": str(req.session_id or ""),
-                                    "question": str(req.question or ""),
-                                    "dataset_ids": [str(item) for item in _dataset_ids],
-                                    "project_id": getattr(req, "project_id", None),
+                        packaging_trace: list[dict[str, Any]] = []
+                        workbook_files: list[dict[str, str]] = []
+                        for packaging_tool in packaging_tools:
+                            workbook_call = {
+                                "tool": packaging_tool,
+                                "args": {
                                     "attachment_id": attachment_id,
-                                    "profile_revision_id": str(
-                                        (profile_snapshot or {}).get("revision_id") or ""
-                                    ),
-                                    "model_identity": str(
-                                        getattr(
-                                            getattr(active_model_result, "connection", None),
-                                            "model_id",
-                                            "",
-                                        )
-                                        or llm_model
-                                    ),
-                                    "model_preset": execution_preset.preset_id,
+                                    "question": str(req.question or ""),
+                                    "decisions": model_result_rows,
                                 },
-                                workbook_progress,
-                            )
-                            safe_payload = safe_workbook_history_projection(workbook_payload)
-                            workbook_chat_meta = harvest_workbook_tool_result(safe_payload)
-                            retrieval_trace["model_result"] = {
-                                "schema": "les_model_rag_result_v1",
-                                "status": "accepted_unchanged",
-                                "row_count": len(model_result_rows),
-                                "packaging": safe_payload,
                             }
-                        except Exception as packaging_error:  # noqa: BLE001 - keep the model answer visible
-                            logger.exception(
-                                "[WORKBOOK] post-model packaging failed: %s",
-                                type(packaging_error).__name__,
-                            )
-                            retrieval_trace["model_result"] = {
-                                "schema": "les_model_rag_result_v1",
-                                "status": "accepted_unchanged",
-                                "row_count": len(model_result_rows),
-                                "packaging": {
+                            try:
+                                workbook_payload = await workbook_tool_executor(
+                                    workbook_call,
+                                    {
+                                        "session_id": str(req.session_id or ""),
+                                        "question": str(req.question or ""),
+                                        "dataset_ids": [str(item) for item in _dataset_ids],
+                                        "project_id": getattr(req, "project_id", None),
+                                        "attachment_id": attachment_id,
+                                        "profile_revision_id": str(
+                                            (profile_snapshot or {}).get("revision_id") or ""
+                                        ),
+                                        "model_identity": str(
+                                            getattr(
+                                                getattr(active_model_result, "connection", None),
+                                                "model_id",
+                                                "",
+                                            )
+                                            or llm_model
+                                        ),
+                                        "model_preset": execution_preset.preset_id,
+                                    },
+                                    workbook_progress,
+                                )
+                                safe_payload = safe_workbook_history_projection(workbook_payload)
+                                harvested = harvest_workbook_tool_result(safe_payload)
+                                packaging_trace.append({
+                                    "tool": packaging_tool,
+                                    "status": str(safe_payload.get("status") or "empty"),
+                                    "code": str(safe_payload.get("code") or ""),
+                                })
+                                if not harvested:
+                                    continue
+                                artifact = (
+                                    harvested.get("artifact")
+                                    if isinstance(harvested.get("artifact"), dict)
+                                    else {}
+                                )
+                                if artifact.get("download_url"):
+                                    kind = str(artifact.get("artifact_kind") or "").strip()
+                                    if kind not in {"lsr_workbook", "vor_workbook"}:
+                                        kind = (
+                                            "vor_workbook"
+                                            if packaging_tool == "build_vor_workbook"
+                                            else "lsr_workbook"
+                                        )
+                                    workbook_files.append({
+                                        "filename": _chat_workbook_filename(
+                                            artifact.get("filename"),
+                                            artifact_kind=kind,
+                                            tool=packaging_tool,
+                                        ),
+                                        "download_url": str(artifact["download_url"]),
+                                        "artifact_kind": kind,
+                                    })
+                                if packaging_tool == "build_lsr_workbook" or not workbook_chat_meta:
+                                    workbook_chat_meta = harvested
+                            except Exception as packaging_error:  # noqa: BLE001 - keep model answer visible
+                                logger.exception(
+                                    "[WORKBOOK] post-model packaging failed: %s",
+                                    type(packaging_error).__name__,
+                                )
+                                packaging_trace.append({
+                                    "tool": packaging_tool,
                                     "status": "error",
                                     "error_type": type(packaging_error).__name__,
-                                },
-                            }
+                                })
+                        if workbook_chat_meta:
+                            artifact_meta = workbook_chat_meta.get("artifact")
+                            if isinstance(artifact_meta, dict):
+                                artifact_meta["draft_rows"] = compact_estimator_draft_rows(
+                                    model_result_rows
+                                )
+                                if workbook_files:
+                                    artifact_meta["files"] = workbook_files
+                                    artifact_meta.setdefault(
+                                        "filename", workbook_files[0]["filename"]
+                                    )
+                        retrieval_trace["model_result"] = {
+                            "schema": "les_model_rag_result_v1",
+                            "status": "accepted_unchanged",
+                            "row_count": len(model_result_rows),
+                            "packaging": packaging_trace,
+                        }
 
                 try:
                     from proxy.services.evidence_packet_service import verify_answer_source_labels

@@ -8,8 +8,9 @@ import inspect
 import json
 import re
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from nicegui import context, ui
 
@@ -189,6 +190,157 @@ CHAT_MODE_GUIDANCE = {
         ),
     },
 }
+
+
+def format_chat_duration_sec(value: float | int | None) -> str:
+    """Human-readable duration for the answer timing line."""
+
+    if value is None:
+        return ""
+    try:
+        seconds = max(0.0, float(value))
+    except (TypeError, ValueError):
+        return ""
+    if seconds >= 3600:
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        return f"{hours}ч {minutes}м"
+    if seconds >= 60:
+        minutes, remainder = divmod(int(round(seconds)), 60)
+        return f"{minutes}м {remainder}с"
+    if seconds >= 10:
+        return f"{int(round(seconds))}с"
+    text = f"{seconds:.1f}".rstrip("0").rstrip(".")
+    return f"{text}с"
+
+
+def workbook_chat_filename(item: Any) -> str:
+    """Safe workbook label for chat history and download controls."""
+
+    payload = item if isinstance(item, dict) else {}
+    name = str(payload.get("filename") or "").strip().replace("\\", "/")
+    if (
+        name
+        and Path(name).name == name
+        and ".." not in name
+        and name.lower().endswith(".xlsx")
+        and name.lower() not in {".xlsx", "artifact.xlsx"}
+    ):
+        return name
+    return "VOR.xlsx" if payload.get("artifact_kind") == "vor_workbook" else "LSR.xlsx"
+
+
+def artifact_workbook_files(artifact: Any) -> list[dict[str, str]]:
+    """Return every distinct workbook download advertised by an artifact."""
+
+    payload = artifact if isinstance(artifact, dict) else {}
+    candidates = payload.get("files") if isinstance(payload.get("files"), list) else []
+    direct_url = str(payload.get("download_url") or "").strip()
+    if direct_url:
+        candidates = [
+            *candidates,
+            {
+                "download_url": direct_url,
+                "filename": payload.get("filename"),
+                "artifact_kind": payload.get("artifact_kind"),
+            },
+        ]
+    files: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("download_url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        kind = str(item.get("artifact_kind") or "").strip()
+        if kind not in {"lsr_workbook", "vor_workbook"}:
+            kind = "vor_workbook" if workbook_chat_filename(item).startswith("VOR") else "lsr_workbook"
+        files.append({
+            "download_url": url,
+            "filename": workbook_chat_filename({**item, "artifact_kind": kind}),
+            "artifact_kind": kind,
+        })
+    return files
+
+
+def format_chat_request_clock(requested_at: Any) -> str:
+    """Local date and clock for the user request."""
+
+    if requested_at in (None, ""):
+        return ""
+    dt: datetime | None = None
+    if isinstance(requested_at, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(float(requested_at)).astimezone()
+        except (OverflowError, OSError, ValueError):
+            return ""
+    else:
+        raw = str(requested_at).strip()
+        if not raw:
+            return ""
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            dt = dt.astimezone()
+        except ValueError:
+            return ""
+    return dt.strftime("%d.%m.%Y %H:%M") if dt is not None else ""
+
+
+def resolve_answer_timing(
+    *,
+    requested_at: Any = None,
+    elapsed_sec: float | int | None = None,
+    latency_phases: dict | None = None,
+    model_think_sec: float | int | None = None,
+) -> dict[str, Any]:
+    """Prefer authoritative backend phase timings over client estimates."""
+
+    phases = latency_phases if isinstance(latency_phases, dict) else {}
+    elapsed = phases.get("wall_total", elapsed_sec)
+    think = phases.get("generation", model_think_sec)
+    try:
+        elapsed = float(elapsed) if elapsed is not None else None
+    except (TypeError, ValueError):
+        elapsed = None
+    try:
+        think = float(think) if think is not None else None
+    except (TypeError, ValueError):
+        think = None
+    return {
+        "requested_at": requested_at,
+        "elapsed_sec": elapsed,
+        "model_think_sec": think,
+    }
+
+
+def format_answer_timing_line(
+    *,
+    requested_at: Any = None,
+    elapsed_sec: float | int | None = None,
+    model_think_sec: float | int | None = None,
+    latency_phases: dict | None = None,
+) -> str:
+    """Compact request date plus total/model durations."""
+
+    timing = resolve_answer_timing(
+        requested_at=requested_at,
+        elapsed_sec=elapsed_sec,
+        latency_phases=latency_phases,
+        model_think_sec=model_think_sec,
+    )
+    parts: list[str] = []
+    clock = format_chat_request_clock(timing["requested_at"])
+    if clock:
+        parts.append(clock)
+    elapsed_label = format_chat_duration_sec(timing["elapsed_sec"])
+    if elapsed_label:
+        parts.append(f"ответ {elapsed_label}")
+    think_label = format_chat_duration_sec(timing["model_think_sec"])
+    if think_label:
+        parts.append(f"модель {think_label}")
+    return " · ".join(parts)
 
 
 def visible_chat_modes() -> tuple[str, ...]:
@@ -591,6 +743,31 @@ def _smeta_artifact_rows(artifact: dict | None) -> list[dict]:
             "norm_code": code if code.casefold() != "missing" else "",
             "decision": decision,
         })
+    if rows:
+        return rows
+
+    draft_rows = artifact.get("draft_rows")
+    if not isinstance(draft_rows, list):
+        return []
+    for item in draft_rows:
+        if not isinstance(item, dict):
+            continue
+        source_row = item.get("source_row")
+        work_id = str(item.get("work_id") or source_row or "").strip()
+        if not work_id or work_id in seen or source_row in (None, ""):
+            continue
+        seen.add(work_id)
+        row = {
+            key: item[key]
+            for key in (
+                "work_id", "source_row", "section", "title", "quantity", "unit",
+                "norm_code", "analogue", "coverage", "coefficient", "evidence_refs",
+            )
+            if key in item
+        }
+        row["work_id"] = work_id
+        row["source_row"] = source_row
+        rows.append(row)
     return rows
 
 
@@ -2315,7 +2492,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     for i, source in enumerate(effective_sources, 1):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
-                        lbl = f"{i}. {_source_label(source)}"
+                        lbl = f"{i}. {c['file'] or _source_label(source)}"
                         with ui.row().props(f"id=source-{i}").classes("sov-source-row sov-ui-evidence-card"):
                             if item.get("open_url"):
                                 with ui.link(
@@ -3289,10 +3466,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         artifact = (meta or {}).get("artifact") if isinstance(meta, dict) else {}
         if not isinstance(artifact, dict):
             return
-        direct_download = str(artifact.get("download_url") or "").strip()
-        if direct_download:
-            filename = str(artifact.get("filename") or "artifact.xlsx").strip()
-            _register_file_artifact(filename, direct_download, "xlsx")
+        for item in artifact_workbook_files(artifact):
+            _register_file_artifact(
+                item["filename"], item["download_url"], "xlsx"
+            )
         downloads = artifact.get("downloads") or {}
         if not isinstance(downloads, dict):
             return
@@ -3461,6 +3638,19 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "Фактические датасеты, из которых взяты фрагменты ответа"
         )
 
+    def _render_answer_timing(meta: dict | None) -> None:
+        payload = meta if isinstance(meta, dict) else {}
+        line = format_answer_timing_line(
+            requested_at=payload.get("requested_at"),
+            elapsed_sec=payload.get("elapsed_sec"),
+            model_think_sec=payload.get("model_think_sec"),
+            latency_phases=payload.get("latency_phases"),
+        )
+        if line:
+            ui.label(line).classes("sov-chat-timing").tooltip(
+                "Время запроса, полная длительность и время работы модели"
+            )
+
     def _render_answer_actions(text: str, srcs: list) -> None:
         """v0.20: панель действий ответа — «Копировать» (чистый текст) и «С источниками» (без полного
         тела письма — только chip-локатор). Без скрытого trace."""
@@ -3505,6 +3695,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     _artifact_button(str(text or ""), _mode, meta, srcs or [])
             if _is_ai and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
+            if _is_ai:
+                _render_answer_timing(meta)
+            elif meta and meta.get("requested_at"):
+                ui.label(format_chat_request_clock(meta["requested_at"])).classes(
+                    "sov-chat-timing"
+                )
         return bubble
 
     def _render_ai_placeholder(text: str):
@@ -3554,10 +3750,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     _artifact_button(str(text or ""), meta.get("out_mode", "text"), meta, srcs or [])
             if not error and str(text or "").strip():
                 _render_answer_actions(str(text or ""), srcs or [])
+            if not error:
+                _render_answer_timing(meta)
 
     def _render_msg(msg):
         if msg.get("role") == "user":
-            _render_chat_bubble(msg.get("text", ""), "chat-msg-user")
+            _render_chat_bubble(
+                msg.get("text", ""),
+                "chat-msg-user",
+                meta={"requested_at": msg.get("requested_at")},
+            )
             return
         if msg.get("role") == "system":
             _render_chat_bubble(msg.get("text", ""), "chat-msg-sys")
@@ -3956,11 +4158,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         if display_notes:
             question_display = f"{question_display}\n\n" + "\n".join(display_notes)
 
-        state["chat_history"].append({"role": "user", "text": question_display})
-        state["chat_pending"] = {"question": payload_question, "started_at": time.time()}
+        request_started_at = datetime.now().astimezone().isoformat(timespec="seconds")
+        state["chat_history"].append({
+            "role": "user",
+            "text": question_display,
+            "requested_at": request_started_at,
+        })
+        state["chat_pending"] = {
+            "question": payload_question,
+            "started_at": time.time(),
+            "requested_at": request_started_at,
+        }
 
         with chat_column:
-            _render_chat_bubble(question_display, "chat-msg-user")
+            _render_chat_bubble(
+                question_display,
+                "chat-msg-user",
+                meta={"requested_at": request_started_at},
+            )
             ai_placeholder, ai_placeholder_label = _render_ai_placeholder(f"{_initial_status} 0с")
             smeta_operator_lines: list[str] = []
             smeta_operator_log = None
@@ -4122,6 +4337,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 "history_id": d.get("history_id"),
                 "table_query": d.get("table_query"),
                 "latency_phases": d.get("latency_phases") or (d.get("retrieval_trace") or {}).get("latency_phases"),
+                "requested_at": request_started_at,
+                "elapsed_sec": round(max(0.0, time.monotonic() - _t0), 1),
                 "out_mode": out_mode,
                 "clarifying_questions": d.get("clarifying_questions") or [],
                 "suggested_filters": d.get("suggested_filters") or [],

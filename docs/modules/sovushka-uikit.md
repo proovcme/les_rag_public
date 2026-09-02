@@ -82,6 +82,12 @@ desktop и mobile smoke, keyboard/focus проверки и записи в `MOD
 
 ## Текущие поверхности
 
+**Build 684:** чат показывает локальное время запроса и завершения ответа без
+нового UI-компонента, регистрирует все workbook-файлы одного результата и
+использует server-provided безопасное имя XLSX. Карточка источника может
+показывать шифр/название карточки из явных полей evidence; это только
+представление и не участвует в выборе workflow или нормы.
+
 Windows setup surface использует существующее lifecycle-состояние bootstrap: во время `running`
 основное действие disabled и показывает фактическую фазу. До NiceGUI это автономный static
 catalogue: LES core, answer providers, embeddings и Qdrant разделены по ролям; Ollama, FreeToken,

@@ -7,17 +7,31 @@
 ## Текущее состояние (2026-09-02)
 
 ```
-версия продукта (SemVer):  0.30.43
-номер сборки:              683
-версия Tauri/NSIS:         5.1.683
+версия продукта (SemVer):  0.30.44
+номер сборки:              684
+версия Tauri/NSIS:         5.1.684
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.43 RAG evidence continuity/readiness + artifact-first release candidate; code through c6a14aec
+dev implementation:       0.30.44 model-integrity + workbook UX source candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.43 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.44 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.44 / build 684 model-integrity + workbook UX source candidate (не
+> установлен и не опубликован):** model-RAG принимает только обычные строки
+> поисковых запросов Qwen, без legacy JSON/native-tool протокола и без лимита
+> числа строк. Итоговый ответ сохраняется дословно; механический decoder читает
+> однозначную Markdown-таблицу либо запись с явно подписанными полями. Regex-
+> разбор свободной прозы и предметных aliases удалён: при неоднозначности
+> ответ остаётся видимым, а XLSX не подделывается. Локальная проверка
+> `source_row`/`Qx.Hy`/шифра не меняет поля модели и не вызывает её повторно.
+> Architecture gate отдельно запрещает regex внутри decoder-а и по-прежнему
+> запрещает language/regex forcing workbook-вызовов. Артефакты получают
+> безопасные содержательные имена, UTF-8 download filename, все созданные XLSX
+> видны в чате и истории; Совушка показывает время запроса и ответа. Рабочий
+> установленный baseline `0.30.42 · 682 · ab5146b2` не изменён.
 
 > **0.30.43 / build 683 RAG evidence continuity/readiness candidate (не
 > установлен и не опубликован):** profile-owned `candidate_k /

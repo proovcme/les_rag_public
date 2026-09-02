@@ -7,7 +7,7 @@ from proxy.services.artifact_revision_service import ArtifactRevisionRequest, Ar
 
 
 def test_authenticated_metadata_lineage_and_download(tmp_path, monkeypatch):
-    source = tmp_path / "draft.xlsx"
+    source = tmp_path / "ЛСР черновик.xlsx"
     source.write_bytes(b"workbook")
     store = ArtifactRevisionStore(tmp_path / "meta.db", tmp_path / "artifacts")
     revision = store.create_revision(ArtifactRevisionRequest(
@@ -31,6 +31,9 @@ def test_authenticated_metadata_lineage_and_download(tmp_path, monkeypatch):
     assert [item["revision_no"] for item in lineage.json()["revisions"]] == [1]
     assert download.status_code == 200
     assert download.content == b"workbook"
+    disposition = download.headers["content-disposition"]
+    assert 'filename=".xlsx"' not in disposition
+    assert "filename*=UTF-8''%D0%9B%D0%A1%D0%A0%20%D1%87%D0%B5%D1%80%D0%BD%D0%BE%D0%B2%D0%B8%D0%BA.xlsx" in disposition
 
 
 def test_unknown_or_traversal_revision_is_rejected(tmp_path, monkeypatch):

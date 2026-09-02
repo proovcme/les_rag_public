@@ -1122,6 +1122,14 @@ html {
   line-height: 1.4;
   overflow-wrap: anywhere;
 }
+
+.sov-chat-timing {
+  color: var(--dim);
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-meta);
+  line-height: 1.25;
+  margin-top: var(--sov-ui-space-2);
+}
 .sov-answer-feedback {
   min-height: 32px;
   margin-left: 4px;

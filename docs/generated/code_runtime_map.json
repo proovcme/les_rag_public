@@ -1554,7 +1554,7 @@
         "tests/test_artifacts_router.py",
         "tests/test_live_workbook_acceptance_contract.py"
       ],
-      "lines": 55,
+      "lines": 67,
       "module": "proxy.routers.artifacts",
       "outbound": [
         "backend/runtime_paths.py",
@@ -3001,7 +3001,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3933,
+      "lines": 3942,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -7119,7 +7119,7 @@
         "tests/test_workbook_tool_contracts.py",
         "tests/test_workbook_tool_service.py"
       ],
-      "lines": 401,
+      "lines": 478,
       "module": "proxy.services.workbook_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7798,7 +7798,7 @@
         "tests/test_answer_render_v16.py",
         "tests/test_v020_deploy_stamp_ui.py"
       ],
-      "lines": 574,
+      "lines": 610,
       "module": "sovushka.answer_render",
       "outbound": [
         "sovushka/__init__.py"
@@ -7987,7 +7987,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 4760,
+      "lines": 4977,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -8377,7 +8377,7 @@
         "sovushka/uikit/__init__.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 4197,
+      "lines": 4205,
       "module": "sovushka.uikit.tokens",
       "outbound": [
         "sovushka/__init__.py",
@@ -8500,7 +8500,7 @@
     },
     {
       "inbound": [],
-      "lines": 386,
+      "lines": 409,
       "module": "tests.test_answer_render_v16",
       "outbound": [
         "proxy/services/evidence_contract.py",
@@ -8512,7 +8512,7 @@
     },
     {
       "inbound": [],
-      "lines": 182,
+      "lines": 196,
       "module": "tests.test_architecture_contract_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -8682,7 +8682,7 @@
     },
     {
       "inbound": [],
-      "lines": 47,
+      "lines": 50,
       "module": "tests.test_artifacts_router",
       "outbound": [
         "proxy/routers/artifacts.py",
@@ -8999,7 +8999,7 @@
     },
     {
       "inbound": [],
-      "lines": 2278,
+      "lines": 2304,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -12984,7 +12984,7 @@
     },
     {
       "inbound": [],
-      "lines": 1012,
+      "lines": 1098,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13726,7 +13726,7 @@
     },
     {
       "inbound": [],
-      "lines": 87,
+      "lines": 88,
       "module": "tests.test_workbook_tool_contracts",
       "outbound": [
         "proxy/services/chat_profile_service.py",
@@ -13739,7 +13739,7 @@
     },
     {
       "inbound": [],
-      "lines": 319,
+      "lines": 374,
       "module": "tests.test_workbook_tool_service",
       "outbound": [
         "proxy/services/artifact_revision_service.py",
@@ -13966,7 +13966,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 357,
+      "lines": 372,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -18231,7 +18231,7 @@
     "runtime_support": 9,
     "test_or_tool_only": 621,
     "tracked_python_files": 973,
-    "tracked_python_lines": 305877
+    "tracked_python_lines": 306459
   },
   "warnings": []
 }

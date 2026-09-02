@@ -237,6 +237,21 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
         return
 
     parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    if relative == "proxy/services/chat_evidence_application_service.py":
+        for function in (
+            item
+            for item in ast.walk(tree)
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and item.name == "parse_model_rag_result"
+        ):
+            for call in (item for item in ast.walk(function) if isinstance(item, ast.Call)):
+                if _call_name(call).startswith("re."):
+                    yield ArchitectureViolation(
+                        "MODEL_RESULT_REGEX",
+                        relative,
+                        call.lineno,
+                        "model result decoder must not interpret the answer with regex",
+                    )
     scopes: dict[int, ast.AST] = {}
     for call in (item for item in ast.walk(tree) if isinstance(item, ast.Call)):
         scope = _function_scope(call, parents)

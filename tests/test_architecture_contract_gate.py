@@ -51,6 +51,20 @@ def test_rejects_forced_workbook_language_membership(tmp_path: Path) -> None:
     assert "FORCED_WORKBOOK_CALL" in _codes(tmp_path)
 
 
+def test_rejects_regex_inside_model_result_decoder(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """import re
+
+def parse_model_rag_result(answer: str):
+    return re.search('norm', answer)
+""",
+    )
+
+    assert "MODEL_RESULT_REGEX" in _codes(tmp_path)
+
+
 def test_allows_schema_membership_assertion_near_workbook_lookup(tmp_path: Path) -> None:
     _write(
         tmp_path,

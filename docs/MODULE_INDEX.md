@@ -1152,6 +1152,20 @@ intent, а не расчётной командой, даже если внут�
 | rag/evidence-packet | общий контракт normal-RAG: source-diverse bounded context, table header, source version/locator/retrieval features; модель видит те же `Источник N`, что UI, а post-generation check отмечает missing/invalid labels | `evidence_packet_service`, `saferag_service`, `routers/chat.py` payload `evidence_packet`, `retrieval_trace.evidence_packet/citation_check` | [ALGO-evidence-packet.md](ALGO-evidence-packet.md) | ✅ |
 | rag/answer-render | видимый слой evidence в Совушке: conversation-first чат с progressive disclosure, копирование с источниками и artifact `Источники ответа`; канонический Locia-like UI kit ограничивает новый UI семью общими примитивами, едиными tokens и WCAG-проверками. Build 613 задаёт 16/14/12 px typography, 44 px hit target и 184 px desktop rail; mobile использует нижнюю навигацию с safe-area и одно меню вторичных действий. Composer оставляет вложение, один selector режима, настройки и отправку; файл добавляется через три понятные задачи и русский control. Студия сохраняется в коде/API, но до продуктовой приёмки скрыта за disabled-заглушкой `Студия · скоро`, а старый direct URL возвращает в чат. Общий `acronym_identity` показывает фирменный зелёный акроним и каноническую расшифровку, которую пользователь может скрыть. Общие controls/status/evidence/feedback используются в чате, документах, почте, истории, В.О.Л.К. и оболочке Qdrant visualizer; общий `select_field` исключает локальную геометрию выпадающих полей. Конфигурация показывает один паспорт готовности и вертикальные контуры; «Датасеты» — компактный паспорт корпуса и единый реестр наборов. История — читаемый список диалогов, В.О.Л.К. — адаптивный реестр ключей вместо таблицы, Qdrant canvas — светлая зелёно-графитовая тема с доступным iframe. Документы ведут по цепочке dataset→files→sticky «Спросить в чате», почта показывает индекс/spool и передаёт exact письмо в чат; обязательный reranker не имеет пользовательского выключателя и не может быть отключён старым API-клиентом; машинные статусы локализуются на границе UI и не выходят в операторские подписи; технический trace свёрнут; не меняет model answer | `sovushka/uikit/{tokens,states,components}.py`, `sovushka/styles.py`, `sovushka/answer_render.py`, `sovushka/pages/{chat,documents,mail,history,volk,diag,samovar}.py`, `sovushka/components/header.py`, `sovushka_ng.py`, `qdrant_visualizer/index.html`; `skills/sovushka-ui/{SKILL.md,references/review-checklist.md}`; tests `test_sovushka_uikit.py`, `test_answer_render_v16.py`, `test_static_assets.py`, `test_sovushka_chat.py` | [modules/sovushka-uikit.md](modules/sovushka-uikit.md) · [modules/file-viewer.md](modules/file-viewer.md) | ✅ |
 
+**0.30.44 / build 684:** model-RAG query/result boundary больше не имеет
+legacy JSON, regex-разбора ответа или language-driven выбора workbook. Только
+обычные строки запросов Qwen, `Qx.Hy` evidence и однозначная итоговая таблица
+либо запись с явно подписанными полями;
+нечитаемая структура остаётся видимым ответом без синтетического XLSX.
+Artifact/UI сохраняют все workbook-файлы, безопасное UTF-8 имя и время
+запроса/ответа. Точки входа: `chat_evidence_application_service.py`,
+`workbook_tool_service.py`, `routers/artifacts.py`, `sovushka/pages/chat.py`,
+`sovushka/answer_render.py`, `sovushka/uikit/tokens.py`,
+`tools/architecture_contract_gate.py`; contract tests — соответствующие
+`test_chat_evidence_application_service.py`, `test_workbook_*`,
+`test_artifacts_router.py`, `test_sovushka_chat.py`,
+`test_architecture_contract_gate.py`. ✅
+
 **0.29.0 / build 614:** `ui/pwa-shell` публикует manifest, root-scoped worker и
 offline draft surface для того же NiceGUI frontend. Cache allowlist содержит
 только offline HTML и общий Tauri icon; API, streams, documents/files,
