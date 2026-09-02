@@ -5,6 +5,8 @@ import importlib
 import json
 from pathlib import Path
 
+import pytest
+
 
 def test_active_rebuild_builds_exact_base_then_activates_alias(tmp_path: Path, monkeypatch):
     rebuild = importlib.import_module("tools.rebuild_active_smeta_rag")
@@ -58,3 +60,28 @@ def test_active_rebuild_builds_exact_base_then_activates_alias(tmp_path: Path, m
     assert calls["build"]["base_path"] == base
     assert calls["activate"]["target"] == f"customer_catalog_{base_sha[:20]}"
     assert calls["activate"]["manifest_destinations"] == [tmp_path / "active-rag.json"]
+
+
+def test_active_rebuild_refuses_to_race_a_full_generation_publish(
+    tmp_path: Path, monkeypatch
+):
+    coordinator = importlib.import_module("tools.smeta_generation_coordinator")
+    rebuild = importlib.import_module("tools.rebuild_active_smeta_rag")
+    base = tmp_path / "renamed" / "customer.sqlite"
+    base.parent.mkdir()
+    base.write_bytes(b"active-base")
+    generations = tmp_path / "generations"
+    monkeypatch.setattr(
+        rebuild,
+        "build_rag_generation",
+        lambda **_kwargs: pytest.fail("RAG builder must not run without the lease"),
+    )
+
+    with coordinator.generation_lease(generations, operation="full-publish"):
+        with pytest.raises(RuntimeError, match="already running"):
+            rebuild.rebuild_active_index(
+                base_path=base,
+                alias="renamed_catalog",
+                generations_root=generations,
+                active_manifest_path=base.with_name("active-rag.json"),
+            )

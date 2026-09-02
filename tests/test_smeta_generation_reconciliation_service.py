@@ -206,3 +206,163 @@ def test_reconciler_does_not_trust_matching_manifest_when_alias_is_stale(
 
     assert result["status"] == "activated"
     assert activated["target"] == "matching_generation"
+
+
+def test_reconciler_repairs_exact_saved_metadata_after_interrupted_file_switch(
+    tmp_path: Path, monkeypatch
+):
+    service = importlib.import_module(
+        "proxy.services.smeta_generation_reconciliation_service"
+    )
+    base = tmp_path / "renamed active" / "customer.sqlite"
+    base.parent.mkdir()
+    base.write_bytes(b"new-base")
+    base_sha = hashlib.sha256(base.read_bytes()).hexdigest()
+    active_base_manifest = tmp_path / "custom metadata" / "active-manifest.json"
+    active_integrity = tmp_path / "custom metadata" / "active-integrity.json"
+    active_base_manifest.parent.mkdir()
+    active_base_manifest.write_text('{"output":{"sha256":"old"}}', encoding="utf-8")
+    active_integrity.write_text(
+        '{"verdict":"passed","base_sha256":"old"}', encoding="utf-8"
+    )
+    active_rag_manifest = base.with_name("active-rag.json")
+    active_rag_manifest.write_text('{"base_sha256":"old"}', encoding="utf-8")
+    generation = tmp_path / "generations" / "saved"
+    generation.mkdir(parents=True)
+    saved_base_manifest = generation / "les_smeta_base_manifest.json"
+    saved_integrity = generation / "les_smeta_base_integrity.json"
+    saved_base_manifest.write_text(
+        json.dumps({"output": {"sha256": base_sha}}), encoding="utf-8"
+    )
+    saved_integrity.write_text(
+        json.dumps(
+            {
+                "schema": "les_smeta_base_integrity_v1",
+                "verdict": "passed",
+                "base_sha256": base_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+    rag_manifest = generation / "les_smeta_norm_rag_manifest.json"
+    rag_manifest.write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "collection": "renamed_catalog_generation",
+                "base_sha256": base_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (generation / "les_smeta_norm_rag_readiness.json").write_text(
+        json.dumps(
+            {
+                "schema": "les.smeta.rag-readiness.v1",
+                "status": "ready",
+                "ready": True,
+                "live_rrf_ready": True,
+                "collection": "renamed_catalog_generation",
+                "base_sha256": base_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def activate_after_metadata_recovery(**_kwargs):
+        assert json.loads(active_base_manifest.read_text(encoding="utf-8"))[
+            "output"
+        ]["sha256"] == base_sha
+        assert json.loads(active_integrity.read_text(encoding="utf-8"))[
+            "base_sha256"
+        ] == base_sha
+
+    monkeypatch.setattr(service, "activate", activate_after_metadata_recovery)
+
+    result = service.reconcile_matching_generation(
+        base_path=base,
+        active_base_manifest_path=active_base_manifest,
+        active_integrity_path=active_integrity,
+        active_manifest_path=active_rag_manifest,
+        generations_root=tmp_path / "generations",
+        alias="renamed_catalog",
+        client=object(),
+        apply=True,
+    )
+
+    assert result["status"] == "activated"
+    assert result["metadata_recovered"] is True
+
+
+def test_reconciler_blocks_corrupt_saved_metadata_without_overwriting_active_files(
+    tmp_path: Path, monkeypatch
+):
+    service = importlib.import_module(
+        "proxy.services.smeta_generation_reconciliation_service"
+    )
+    base = tmp_path / "base.sqlite"
+    base.write_bytes(b"base")
+    base_sha = hashlib.sha256(base.read_bytes()).hexdigest()
+    active_base_manifest = tmp_path / "active-base.json"
+    active_integrity = tmp_path / "active-integrity.json"
+    active_rag = tmp_path / "active-rag.json"
+    active_base_manifest.write_text('{"old":true}', encoding="utf-8")
+    active_integrity.write_text('{"old":true}', encoding="utf-8")
+    active_rag.write_text('{"base_sha256":"old"}', encoding="utf-8")
+    generation = tmp_path / "generations" / "saved"
+    generation.mkdir(parents=True)
+    (generation / "les_smeta_base_manifest.json").write_text(
+        json.dumps({"output": {"sha256": "wrong"}}), encoding="utf-8"
+    )
+    (generation / "les_smeta_base_integrity.json").write_text(
+        json.dumps({"verdict": "failed", "base_sha256": base_sha}),
+        encoding="utf-8",
+    )
+    (generation / "les_smeta_norm_rag_manifest.json").write_text(
+        json.dumps(
+            {
+                "status": "passed",
+                "collection": "candidate",
+                "base_sha256": base_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (generation / "les_smeta_norm_rag_readiness.json").write_text(
+        json.dumps(
+            {
+                "schema": "les.smeta.rag-readiness.v1",
+                "status": "ready",
+                "ready": True,
+                "live_rrf_ready": True,
+                "collection": "candidate",
+                "base_sha256": base_sha,
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        service,
+        "activate",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("corrupt saved metadata must not activate")
+        ),
+    )
+
+    result = service.reconcile_matching_generation(
+        base_path=base,
+        active_base_manifest_path=active_base_manifest,
+        active_integrity_path=active_integrity,
+        active_manifest_path=active_rag,
+        generations_root=tmp_path / "generations",
+        alias="catalog",
+        client=object(),
+        apply=True,
+    )
+
+    assert result["status"] == "blocked"
+    assert result["warning_code"] == "SMETA_SAVED_BASE_METADATA_INVALID"
+    assert json.loads(active_base_manifest.read_text(encoding="utf-8")) == {
+        "old": True
+    }
+    assert json.loads(active_integrity.read_text(encoding="utf-8")) == {"old": True}

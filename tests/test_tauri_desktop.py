@@ -176,6 +176,33 @@ def test_windows_runtime_manifest_keeps_product_and_excludes_repository_only_fil
         assert not build_tauri_app.windows_runtime_manifest_allows(path), path
 
 
+@pytest.mark.parametrize(
+    "persistent_path",
+    ["data/", "storage/", "RAG_Content/", "logs/", "artifacts/"],
+)
+def test_windows_runtime_manifest_rejects_persistent_state_roots(
+    tmp_path, monkeypatch, persistent_path
+):
+    manifest = tmp_path / "windows-runtime.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/", persistent_path],
+                "include_files": ["pyproject.toml"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(build_tauri_app, "WINDOWS_RUNTIME_MANIFEST_PATH", manifest)
+    build_tauri_app.windows_runtime_manifest.cache_clear()
+    try:
+        with pytest.raises(RuntimeError, match="persistent state"):
+            build_tauri_app.windows_runtime_manifest()
+    finally:
+        build_tauri_app.windows_runtime_manifest.cache_clear()
+
+
 def test_windows_tauri_stage_applies_runtime_manifest(tmp_path, monkeypatch):
     resources = tmp_path / "resources"
     app_file = ROOT / "proxy" / "app.py"

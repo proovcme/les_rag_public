@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import hashlib
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -141,3 +143,87 @@ def test_generation_coordinator_keeps_active_base_when_readiness_is_blocked(
         )
 
     assert active_base.read_bytes() == b"old-base"
+
+
+def test_generation_lease_rejects_a_second_live_publisher(tmp_path: Path):
+    coordinator = importlib.import_module("tools.smeta_generation_coordinator")
+    root = tmp_path / "generations"
+
+    with coordinator.generation_lease(root, operation="first"):
+        with pytest.raises(RuntimeError, match="already running"):
+            with coordinator.generation_lease(root, operation="second"):
+                pytest.fail("a concurrent publisher entered the critical section")
+
+
+def test_generation_lease_recovers_a_stale_crashed_owner(tmp_path: Path):
+    coordinator = importlib.import_module("tools.smeta_generation_coordinator")
+    root = tmp_path / "generations"
+    lock = root / ".smeta-generation.lock"
+    lock.mkdir(parents=True)
+    (lock / "owner.json").write_text(
+        json.dumps({"pid": 999999, "operation": "crashed"}),
+        encoding="utf-8",
+    )
+
+    with coordinator.generation_lease(
+        root,
+        operation="replacement",
+        pid_alive=lambda _pid: False,
+    ):
+        owner = json.loads((lock / "owner.json").read_text(encoding="utf-8"))
+        assert owner["operation"] == "replacement"
+
+    assert not lock.exists()
+
+
+def test_generation_lease_does_not_steal_a_fresh_incomplete_lock(tmp_path: Path):
+    coordinator = importlib.import_module("tools.smeta_generation_coordinator")
+    root = tmp_path / "generations"
+    lock = root / ".smeta-generation.lock"
+    lock.mkdir(parents=True)
+
+    with pytest.raises(RuntimeError, match="already running"):
+        with coordinator.generation_lease(root, operation="second"):
+            pytest.fail("a fresh lock without owner metadata was stolen")
+
+
+def test_generation_lease_recovers_an_old_incomplete_lock(tmp_path: Path):
+    coordinator = importlib.import_module("tools.smeta_generation_coordinator")
+    root = tmp_path / "generations"
+    lock = root / ".smeta-generation.lock"
+    lock.mkdir(parents=True)
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+
+    with coordinator.generation_lease(root, operation="replacement"):
+        owner = json.loads((lock / "owner.json").read_text(encoding="utf-8"))
+        assert owner["operation"] == "replacement"
+
+    assert not lock.exists()
+
+
+def test_generation_coordinator_refuses_to_build_while_an_update_lease_is_held(
+    tmp_path: Path, monkeypatch
+):
+    coordinator = importlib.import_module("tools.smeta_generation_coordinator")
+    source = tmp_path / "source.parquet"
+    source.write_bytes(b"source")
+    generations = tmp_path / "generations"
+    monkeypatch.setattr(
+        coordinator,
+        "build_structured_base",
+        lambda **_kwargs: pytest.fail("builder must not run without the lease"),
+    )
+
+    with coordinator.generation_lease(generations, operation="other"):
+        with pytest.raises(RuntimeError, match="already running"):
+            coordinator.publish_generation(
+                source=source,
+                active_base=tmp_path / "active.sqlite",
+                active_base_manifest=tmp_path / "active-manifest.json",
+                active_integrity=tmp_path / "active-integrity.json",
+                active_rag_manifest=tmp_path / "active-rag.json",
+                generations_root=generations,
+                alias="renamed_catalog",
+                minimum_norms=1,
+            )

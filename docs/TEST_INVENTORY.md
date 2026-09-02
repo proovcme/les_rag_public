@@ -11,8 +11,8 @@
 |---|---|---|
 | `make verify` | version drift, импорт/синтаксис и сбор текущего явно перечисленного набора | живые сервисы и качество ответа модели |
 | `make test` | короткий текущий contract/behavior gate `CURRENT_TESTS` | весь исторический репозиторий, GPU, пользовательский корпус |
-| `make test-updater` | soft/hard update, rollback, release receipt, Windows/Mac updater contracts | NSIS-сборку и установленный live runtime |
-| `make test-rag-core` | contract native dense+sparse/RRF, retrieval и index integrity | recall конкретного пользовательского корпуса |
+| `make test-updater` | soft/hard update, rollback, persistent-state isolation, release receipt, Windows/Mac updater contracts | NSIS-сборку и установленный live runtime |
+| `make test-rag-core` | contract native dense+sparse/RRF, атомарную alias activation/rollback, retrieval и index integrity | recall конкретного пользовательского корпуса |
 | `make test-mail` | IMAP/Outlook registry, dedup, intake, API/UI и static Windows sidecar | живой Outlook COM на Legion |
 | `make test-mail-release` | `test-mail` плюс Tauri compile-check | установленный Outlook и реальный ящик |
 
@@ -30,7 +30,11 @@
   dimensional readiness, ready-generation guard для ColBERT и dataset integrity.
   Сметный integration-набор отдельно проверяет exact-SHA sibling-сборку
   SQLite+RAG, транзакционный rollback файлов и alias, startup reconciliation,
-  фоновое восстановление и явный GUI-warning при рассогласовании;
+  фоновое восстановление, межпроцессную гонку, stale/fresh lock, произвольное
+  переименование базы/alias, locked SQLite, недоступный Qdrant и явный
+  GUI-warning при рассогласовании. `test_update_resilience_matrix.py`
+  fail-closed связывает эти проверки с dataset/general-RAG/baseline/soft/hard
+  update и не даёт им исчезнуть из именованных гейтов;
   отдельный boundary-test
   подтверждает, что живые source adapters используют самостоятельный document classifier,
   а не выключенный Unified Harness.

@@ -43,6 +43,9 @@ PATCH_SUFFIXES = {".py", ".json", ".yaml", ".yml", ".md", ".css", ".js", ".html"
 LEGACY_RUNTIME_MANIFEST_BASES = {
     "9cddee74b4818bf03d9f3e8b75ac920c85c19692",
 }
+PERSISTENT_RUNTIME_ROOTS = frozenset(
+    {"data", "storage", "rag_content", "logs", "artifacts"}
+)
 
 VERSION_SURFACES = {
     "pyproject.toml": "pyproject",
@@ -175,6 +178,16 @@ def _windows_runtime_manifest(root: Path, commit: str) -> dict[str, Any] | None:
         raise ValueError("runtime manifest include lists are invalid")
     if not all(isinstance(value, str) for value in [*prefixes, *files]):
         raise ValueError("runtime manifest paths are invalid")
+    persistent = [
+        value
+        for value in [*prefixes, *files]
+        if value.replace("\\", "/").strip("/").split("/", 1)[0].casefold()
+        in PERSISTENT_RUNTIME_ROOTS
+    ]
+    if persistent:
+        raise ValueError(
+            f"runtime manifest cannot include persistent state: {persistent}"
+        )
     return payload
 
 

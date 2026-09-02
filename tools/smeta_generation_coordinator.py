@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -13,9 +14,11 @@ from typing import Any
 
 from qdrant_client import QdrantClient
 
+from backend.runtime_paths import mutable_path
 from tools.activate_smeta_rag_generation import activate_release
 from tools.build_smeta_norm_rag import build as build_rag_generation
 from tools.build_smeta_structured_base import build_structured_base
+from tools.smeta_generation_lease import generation_lease
 
 
 def _sha256(path: Path) -> str:
@@ -66,7 +69,7 @@ def run_readiness_gate(
     return report
 
 
-def publish_generation(
+def _publish_generation_unlocked(
     *,
     source: Path,
     active_base: Path,
@@ -156,3 +159,55 @@ def publish_generation(
         "rag": rag,
         "readiness": report,
     }
+
+
+def publish_generation(
+    *,
+    source: Path,
+    active_base: Path,
+    active_base_manifest: Path,
+    active_integrity: Path,
+    active_rag_manifest: Path,
+    generations_root: Path,
+    alias: str,
+    minimum_norms: int,
+) -> dict[str, Any]:
+    with generation_lease(generations_root, operation="publish-base-and-rag"):
+        return _publish_generation_unlocked(
+            source=source,
+            active_base=active_base,
+            active_base_manifest=active_base_manifest,
+            active_integrity=active_integrity,
+            active_rag_manifest=active_rag_manifest,
+            generations_root=generations_root,
+            alias=alias,
+            minimum_norms=minimum_norms,
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    from proxy.smeta_core.base_registry import active_base
+
+    parser = argparse.ArgumentParser(
+        description="Build and activate one exact-SHA smeta SQLite/RAG generation"
+    )
+    parser.add_argument("--source", type=Path, required=True)
+    args = parser.parse_args(argv)
+    config = active_base()
+    active = Path(str(config["base_path"]))
+    result = publish_generation(
+        source=args.source,
+        active_base=active,
+        active_base_manifest=Path(str(config["manifest_path"])),
+        active_integrity=Path(str(config["integrity_path"])),
+        active_rag_manifest=active.with_name("les_smeta_norm_rag_manifest.json"),
+        generations_root=mutable_path("storage/smeta_generations"),
+        alias=str(config.get("rag_collection") or "les_smeta_norm_cards"),
+        minimum_norms=int(config.get("minimum_norms") or 1),
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0 if result.get("status") == "activated" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

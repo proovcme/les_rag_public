@@ -7,17 +7,31 @@
 ## Текущее состояние (2026-09-02)
 
 ```
-версия продукта (SemVer):  0.30.46
-номер сборки:              686
-версия Tauri/NSIS:         5.1.686
+версия продукта (SemVer):  0.30.47
+номер сборки:              687
+версия Tauri/NSIS:         5.1.687
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.46 atomic smeta base/index generation candidate
+dev implementation:       0.30.47 all-update/database-resilience candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.46 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.47 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.47 / build 687 all-update/database-resilience candidate (не установлен
+> и не опубликован):** GUI/API ФГИС, Make и CLI публикуют активную сметную базу
+> только через единый SQLite+RAG coordinator. Низкоуровневый builder не может
+> заменить configured active SQLite. Общий межпроцессный lease закрывает гонку
+> full publish ↔ background rebuild, не крадёт свежий незавершённый lock и
+> восстанавливает аварийный. Startup умеет восстановить exact-SHA metadata после
+> падения между заменой файлов и alias, включая произвольные configured пути,
+> имя базы и alias. Locked SQLite, недоступный Qdrant, corrupt saved metadata и
+> failed readiness оставляют прежнюю активную пару. Windows full/soft update
+> fail-closed запрещают persistent roots в application payload; отдельная
+> обязательная матрица покрывает dataset/general-RAG/smeta/baseline/soft/hard
+> update и rollback. Установленный baseline `0.30.42 · 682 · ab5146b2` не
+> изменён; live update/reindex не запускались.
 
 > **0.30.46 / build 686 atomic smeta base/index candidate (не установлен и не
 > опубликован):** обновление ФГИС больше не может отдельно заменить активную

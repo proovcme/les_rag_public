@@ -478,7 +478,8 @@ def build_structured_base(
 def main(argv: Iterable[str] | None = None) -> int:
     from proxy.smeta_core.base_registry import active_base
 
-    configured_minimum = int(active_base().get("minimum_norms") or 1)
+    active = active_base()
+    configured_minimum = int(active.get("minimum_norms") or 1)
     parser = argparse.ArgumentParser(description="Build canonical structured smeta SQLite base")
     parser.add_argument("--source", default=str(DEFAULT_SOURCE))
     parser.add_argument("--out", default=str(DEFAULT_OUT))
@@ -487,6 +488,13 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument("--edition", default=DEFAULT_EDITION)
     parser.add_argument("--minimum-norms", type=int, default=configured_minimum)
     args = parser.parse_args(list(argv) if argv is not None else None)
+
+    requested_out = Path(args.out).resolve(strict=False)
+    configured_out = Path(str(active.get("base_path") or "")).resolve(strict=False)
+    if requested_out == configured_out:
+        raise RuntimeError(
+            "active smeta base publication requires the generation coordinator"
+        )
 
     manifest = build_structured_base(
         source=Path(args.source),

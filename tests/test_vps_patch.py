@@ -220,6 +220,23 @@ def test_patch_allowlist_rejects_runtime_boundaries():
         vps_patch.normalize_path("../outside.py")
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "data/les_meta_qwen.db",
+        "storage/artifacts/meta.db",
+        "RAG_Content/project/source.pdf",
+        "logs/proxy.log",
+        "artifacts/result.xlsx",
+    ],
+)
+def test_soft_patch_cannot_mutate_persistent_state(path):
+    with pytest.raises(ValueError, match="allowlist|unsupported"):
+        vps_patch.normalize_path(path)
+    with pytest.raises(RuntimeError, match="allowlist|unsupported"):
+        vps_patch_apply.safe_relative_path(path)
+
+
 def test_patch_allowlist_accepts_shared_console_free_runtime_launcher():
     assert (
         vps_patch.normalize_path("tools/les_runtime_control.py")

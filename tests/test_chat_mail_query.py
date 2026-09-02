@@ -1,9 +1,13 @@
+import asyncio
 from email.message import EmailMessage
 from types import SimpleNamespace
 
 import pytest
 
 from proxy.routers import chat as chat_router
+from proxy.services.model_connection_contracts import ConnectionLocality
+from proxy.services.model_execution_preset_service import ModelExecutionPreset
+from proxy.services.openai_compatible_transport_service import InferenceResponse
 
 
 def _write_message(path, *, subject, sender, to, message_id, body, date):
@@ -49,7 +53,7 @@ async def test_chat_does_not_replace_model_with_deterministic_mail_answer(tmp_pa
     chat_router.set_chat_state(
         chat_router.ChatRouterState(
             rag_backend=MailBackend(tmp_path / "storage" / "datasets"),
-            llm_semaphore=SimpleNamespace(_value=1),
+            llm_semaphore=asyncio.Semaphore(1),
             crag_stats={"verified": 0, "no_data": 0, "hallucination": 0},
             chat_metrics={
                 "latency_search": [],
@@ -65,6 +69,57 @@ async def test_chat_does_not_replace_model_with_deterministic_mail_answer(tmp_pa
         )
     )
 
+    connection = SimpleNamespace(
+        connection_id="test-answer",
+        revision_id="test-answer:r1",
+        display_name="Test answer model",
+        model_id="test-model",
+        locality=ConnectionLocality.LOOPBACK,
+        base_url="http://127.0.0.1:1/v1",
+        secret_ref="",
+        effective_preset=ModelExecutionPreset(
+            preset_id="mail-test",
+            model_family="fixture",
+            input_token_limit=6000,
+            generation_reserve_tokens=512,
+            safety_reserve_tokens=128,
+            normal_tool_count=3,
+            max_tools=5,
+            max_batch_items=5,
+            parallel_read_limit=1,
+            reasoning_enabled=False,
+            source_chain=("test",),
+        ),
+    )
+
+    class Resolver:
+        def resolve(self, _role, *, required_capabilities=frozenset()):
+            return connection
+
+    class Transport:
+        async def complete(self, _connection, _request):
+            return InferenceResponse(
+                text="MODEL_OWNED_MAIL_ANSWER",
+                tool_calls=(),
+                finish_reason="stop",
+                usage={},
+            )
+
+    async def skip_live_capability_refresh(_client):
+        return None
+
+    monkeypatch.setattr(
+        chat_router, "_model_connection_resolver", lambda: (Resolver(), object())
+    )
+    monkeypatch.setattr(
+        chat_router, "OpenAICompatibleTransport", lambda **_kwargs: Transport()
+    )
+    monkeypatch.setattr(
+        chat_router,
+        "_refresh_stale_bound_model_capabilities",
+        skip_live_capability_refresh,
+    )
+
     response = await chat_router.chat(
         chat_router.ChatRequest(
             question="Найди письма про Dropbox",
@@ -73,7 +128,6 @@ async def test_chat_does_not_replace_model_with_deterministic_mail_answer(tmp_pa
         _user=object(),
     )
 
-    assert response["crag_status"] == "BLOCKED"
-    assert response["retrieval_trace"]["status"] == "blocked"
+    assert response["answer"] == "MODEL_OWNED_MAIL_ANSWER"
     assert response["cache"] != "deterministic_mail"
     assert "Dropbox notice" not in response["answer"]

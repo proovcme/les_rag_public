@@ -36,6 +36,28 @@
       "target": "tools.gesn_update_from_fgis",
       "required_files": ["tools/gesn_update_from_fgis.py"],
       "callsites": ["proxy/services/gesn_update_service.py"]
+    },
+    {
+      "id": "smeta-rag-rebuild",
+      "kind": "python_module",
+      "target": "tools.rebuild_active_smeta_rag",
+      "required_files": [
+        "tools/rebuild_active_smeta_rag.py",
+        "tools/smeta_generation_coordinator.py",
+        "tools/smeta_generation_lease.py",
+        "tools/build_smeta_norm_rag.py",
+        "tools/smeta_rag_readiness.py",
+        "tools/activate_smeta_rag_generation.py",
+        "tools/activate_qdrant_generation.py"
+      ],
+      "callsites": ["proxy/services/smeta_generation_reconciliation_service.py"]
+    },
+    {
+      "id": "smeta-rag-readiness",
+      "kind": "python_module",
+      "target": "tools.smeta_rag_readiness",
+      "required_files": ["tools/smeta_rag_readiness.py"],
+      "callsites": ["tools/smeta_generation_coordinator.py"]
     }
   ]
 }

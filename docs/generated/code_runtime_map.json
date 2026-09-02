@@ -872,7 +872,8 @@
         "proxy/storage/file_storage.py",
         "sovushka/state.py",
         "tests/test_runtime_paths.py",
-        "tools/gesn_update_from_fgis.py"
+        "tools/gesn_update_from_fgis.py",
+        "tools/smeta_generation_coordinator.py"
       ],
       "lines": 31,
       "module": "backend.runtime_paths",
@@ -4868,6 +4869,7 @@
         "proxy/services/model_connection_security_service.py",
         "proxy/services/openai_compatible_transport_service.py",
         "tests/test_chat_evidence_application_service.py",
+        "tests/test_chat_mail_query.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_capability_service.py",
         "tests/test_model_connection_chat_integration.py",
@@ -4989,6 +4991,7 @@
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/model_connection_resolver_service.py",
         "tests/test_chat_evidence_application_service.py",
+        "tests/test_chat_mail_query.py",
         "tests/test_context_governor_service.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_execution_preset_service.py",
@@ -5206,6 +5209,7 @@
         "proxy/services/canonical_route_service.py",
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_chat_evidence_application_service.py",
+        "tests/test_chat_mail_query.py",
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_connection_chat_integration.py",
         "tests/test_model_connection_embeddings_integration.py",
@@ -5349,7 +5353,8 @@
         "proxy/services/gesn_update_service.py",
         "proxy/services/runtime_dispatcher.py",
         "proxy/services/smeta_generation_reconciliation_service.py",
-        "tests/test_process_status.py"
+        "tests/test_process_status.py",
+        "tools/smeta_generation_lease.py"
       ],
       "lines": 54,
       "module": "proxy.services.process_status",
@@ -6484,7 +6489,7 @@
       "inbound": [
         "proxy/app.py"
       ],
-      "lines": 234,
+      "lines": 292,
       "module": "proxy.services.smeta_generation_reconciliation_service",
       "outbound": [
         "backend/runtime_paths.py",
@@ -7262,7 +7267,8 @@
         "tools/gesn_unify_base.py",
         "tools/gesn_update_from_fgis.py",
         "tools/publish_smeta_norm_dataset.py",
-        "tools/smeta_embedding_parity.py"
+        "tools/smeta_embedding_parity.py",
+        "tools/smeta_generation_coordinator.py"
       ],
       "lines": 48,
       "module": "proxy.smeta_core.base_registry",
@@ -8468,7 +8474,7 @@
     },
     {
       "inbound": [],
-      "lines": 208,
+      "lines": 279,
       "module": "tests.test_activate_smeta_rag_generation",
       "outbound": [
         "tools/activate_smeta_rag_generation.py"
@@ -9082,10 +9088,13 @@
     },
     {
       "inbound": [],
-      "lines": 79,
+      "lines": 133,
       "module": "tests.test_chat_mail_query",
       "outbound": [
-        "proxy/routers/chat.py"
+        "proxy/routers/chat.py",
+        "proxy/services/model_connection_contracts.py",
+        "proxy/services/model_execution_preset_service.py",
+        "proxy/services/openai_compatible_transport_service.py"
       ],
       "path": "tests/test_chat_mail_query.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -11987,7 +11996,7 @@
     },
     {
       "inbound": [],
-      "lines": 60,
+      "lines": 87,
       "module": "tests.test_rebuild_active_smeta_rag",
       "outbound": [],
       "path": "tests/test_rebuild_active_smeta_rag.py",
@@ -12042,7 +12051,7 @@
     },
     {
       "inbound": [],
-      "lines": 309,
+      "lines": 341,
       "module": "tests.test_release_classification",
       "outbound": [
         "tools/release_classification.py"
@@ -12729,7 +12738,7 @@
     },
     {
       "inbound": [],
-      "lines": 143,
+      "lines": 229,
       "module": "tests.test_smeta_generation_coordinator",
       "outbound": [],
       "path": "tests/test_smeta_generation_coordinator.py",
@@ -12738,7 +12747,7 @@
     },
     {
       "inbound": [],
-      "lines": 208,
+      "lines": 368,
       "module": "tests.test_smeta_generation_reconciliation_service",
       "outbound": [],
       "path": "tests/test_smeta_generation_reconciliation_service.py",
@@ -12947,6 +12956,19 @@
         "tools/gesn_import.py"
       ],
       "path": "tests/test_smeta_structured_base.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 141,
+      "module": "tests.test_smeta_update_entrypoints",
+      "outbound": [
+        "tools/build_smeta_structured_base.py",
+        "tools/build_tauri_app.py",
+        "tools/smeta_generation_coordinator.py"
+      ],
+      "path": "tests/test_smeta_update_entrypoints.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -13317,7 +13339,7 @@
     },
     {
       "inbound": [],
-      "lines": 551,
+      "lines": 578,
       "module": "tests.test_tauri_desktop",
       "outbound": [
         "tools/build_release_artifacts.py",
@@ -13601,6 +13623,20 @@
     {
       "inbound": [],
       "lines": 106,
+      "module": "tests.test_update_resilience_matrix",
+      "outbound": [
+        "tools/build_tauri_app.py",
+        "tools/release_classification.py",
+        "tools/vps_patch_apply.py",
+        "tools/windows_update_engine.py"
+      ],
+      "path": "tests/test_update_resilience_matrix.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 106,
       "module": "tests.test_update_service",
       "outbound": [
         "proxy/services/update_service.py"
@@ -13686,7 +13722,7 @@
     },
     {
       "inbound": [],
-      "lines": 1099,
+      "lines": 1116,
       "module": "tests.test_vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -13758,7 +13794,7 @@
     },
     {
       "inbound": [],
-      "lines": 174,
+      "lines": 184,
       "module": "tests.test_windows_runtime_entrypoints",
       "outbound": [
         "tools/build_tauri_app.py",
@@ -13958,6 +13994,7 @@
         "tools/smeta_document_local_run.py",
         "tools/smeta_embedding_parity.py",
         "tools/smeta_generation_coordinator.py",
+        "tools/smeta_generation_lease.py",
         "tools/smeta_mapping_quality.py",
         "tools/smeta_model_quality_benchmark.py",
         "tools/smeta_rag_quality_probe.py",
@@ -14012,7 +14049,7 @@
       ],
       "path": "tools/activate_qdrant_generation.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [
@@ -14029,7 +14066,7 @@
       ],
       "path": "tools/activate_smeta_rag_generation.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [
@@ -14374,7 +14411,7 @@
       ],
       "path": "tools/build_smeta_norm_rag.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [
@@ -14396,11 +14433,12 @@
       "inbound": [
         "proxy/services/gesn_update_service.py",
         "tests/test_smeta_structured_base.py",
+        "tests/test_smeta_update_entrypoints.py",
         "tools/build_smeta_base_v2.py",
         "tools/gesn_update_from_fgis.py",
         "tools/smeta_generation_coordinator.py"
       ],
-      "lines": 504,
+      "lines": 512,
       "module": "tools.build_smeta_structured_base",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -14414,8 +14452,10 @@
     {
       "inbound": [
         "tests/test_installer_windows.py",
+        "tests/test_smeta_update_entrypoints.py",
         "tests/test_software_versions.py",
         "tests/test_tauri_desktop.py",
+        "tests/test_update_resilience_matrix.py",
         "tests/test_windows_runtime_entrypoints.py",
         "tools/build_macos_app.py",
         "tools/build_windows_installer.py",
@@ -14423,7 +14463,7 @@
         "tools/internal_update.py",
         "tools/multiplatform_release.py"
       ],
-      "lines": 573,
+      "lines": 588,
       "module": "tools.build_tauri_app",
       "outbound": [
         "proxy/services/version_service.py",
@@ -15560,17 +15600,18 @@
     },
     {
       "inbound": [],
-      "lines": 117,
+      "lines": 134,
       "module": "tools.rebuild_active_smeta_rag",
       "outbound": [
         "tools/__init__.py",
         "tools/activate_smeta_rag_generation.py",
         "tools/build_smeta_norm_rag.py",
-        "tools/smeta_generation_coordinator.py"
+        "tools/smeta_generation_coordinator.py",
+        "tools/smeta_generation_lease.py"
       ],
       "path": "tools/rebuild_active_smeta_rag.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
+      "status": "RUNTIME_SUPPORT",
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [],
@@ -15622,12 +15663,13 @@
       "inbound": [
         "tests/test_release_classification.py",
         "tests/test_release_orchestrator.py",
+        "tests/test_update_resilience_matrix.py",
         "tests/test_vps_patch.py",
         "tools/github_patch_release.py",
         "tools/release_orchestrator.py",
         "tools/vps_patch.py"
       ],
-      "lines": 284,
+      "lines": 297,
       "module": "tools.release_classification",
       "outbound": [
         "tools/__init__.py"
@@ -15880,20 +15922,39 @@
     },
     {
       "inbound": [
+        "tests/test_smeta_update_entrypoints.py",
         "tools/gesn_update_from_fgis.py",
         "tools/rebuild_active_smeta_rag.py"
       ],
-      "lines": 158,
+      "lines": 213,
       "module": "tools.smeta_generation_coordinator",
       "outbound": [
+        "backend/runtime_paths.py",
+        "proxy/smeta_core/base_registry.py",
         "tools/__init__.py",
         "tools/activate_smeta_rag_generation.py",
         "tools/build_smeta_norm_rag.py",
-        "tools/build_smeta_structured_base.py"
+        "tools/build_smeta_structured_base.py",
+        "tools/smeta_generation_lease.py"
       ],
       "path": "tools/smeta_generation_coordinator.py",
       "status": "PRODUCT_REACHABLE",
-      "windows_runtime_explicit": false
+      "windows_runtime_explicit": true
+    },
+    {
+      "inbound": [
+        "tools/rebuild_active_smeta_rag.py",
+        "tools/smeta_generation_coordinator.py"
+      ],
+      "lines": 80,
+      "module": "tools.smeta_generation_lease",
+      "outbound": [
+        "proxy/services/process_status.py",
+        "tools/__init__.py"
+      ],
+      "path": "tools/smeta_generation_lease.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [
@@ -15955,8 +16016,8 @@
         "tools/__init__.py"
       ],
       "path": "tools/smeta_rag_readiness.py",
-      "status": "TEST_OR_TOOL_ONLY",
-      "windows_runtime_explicit": false
+      "status": "RUNTIME_SUPPORT",
+      "windows_runtime_explicit": true
     },
     {
       "inbound": [
@@ -16204,6 +16265,7 @@
     },
     {
       "inbound": [
+        "tests/test_update_resilience_matrix.py",
         "tests/test_vps_patch.py",
         "tests/test_windows_application_update.py",
         "tools/release_orchestrator.py",
@@ -16306,6 +16368,7 @@
     },
     {
       "inbound": [
+        "tests/test_update_resilience_matrix.py",
         "tests/test_windows_application_update.py",
         "tools/vps_patch_apply.py",
         "tools/windows_release_acceptance.py"
@@ -18331,12 +18394,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 347,
+    "product_reachable": 348,
     "registered_api_routes": 330,
-    "runtime_support": 9,
+    "runtime_support": 11,
     "test_or_tool_only": 623,
-    "tracked_python_files": 980,
-    "tracked_python_lines": 307819
+    "tracked_python_files": 983,
+    "tracked_python_lines": 308796
   },
   "warnings": []
 }

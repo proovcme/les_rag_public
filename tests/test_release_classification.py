@@ -267,6 +267,38 @@ def test_runtime_manifest_must_be_valid_at_both_release_endpoints(
     )
 
 
+def test_runtime_manifest_with_persistent_state_root_is_invalid(release_repo):
+    repo, _base = release_repo
+    manifest = repo / "config" / "windows_runtime_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/"],
+                "include_files": ["pyproject.toml", "uv.lock"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    base = _commit(repo, "runtime manifest base")
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/", "data/"],
+                "include_files": ["pyproject.toml", "uv.lock"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = classify_release(base, _commit(repo, "unsafe runtime manifest"), root=repo)
+
+    assert result.kind == "full"
+    assert any("persistent state" in trigger.reason for trigger in result.triggers)
+
+
 def test_pinned_legacy_public_base_may_introduce_runtime_manifest(
     release_repo, monkeypatch
 ):

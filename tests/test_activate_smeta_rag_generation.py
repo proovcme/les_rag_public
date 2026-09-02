@@ -206,3 +206,74 @@ def test_release_activation_rolls_back_sqlite_when_alias_postcheck_fails(tmp_pat
     assert client.aliases == {"les_smeta_norm_cards": "old_generation"}
     assert old_base.read_bytes() == b"old"
     assert json.loads(rag_active.read_text(encoding="utf-8")) == {"old": True}
+
+
+def test_release_activation_keeps_active_files_when_sqlite_is_locked(
+    tmp_path, monkeypatch
+):
+    staged = tmp_path / "staged"
+    active = tmp_path / "active"
+    staged.mkdir()
+    active.mkdir()
+    new_base = staged / "base.sqlite"
+    old_base = active / "base.sqlite"
+    new_base.write_bytes(b"new")
+    old_base.write_bytes(b"old")
+    rag_source = staged / "rag.json"
+    rag_source.write_text("{}", encoding="utf-8")
+    original_replace = activation.Path.replace
+
+    def locked_replace(path, target):
+        if path == old_base:
+            raise PermissionError("active SQLite is locked")
+        return original_replace(path, target)
+
+    monkeypatch.setattr(activation.Path, "replace", locked_replace)
+
+    with pytest.raises(PermissionError, match="locked"):
+        activation.activate_release(
+            client=object(),
+            alias="renamed_catalog",
+            target="new_generation",
+            report={},
+            rag_manifest_source=rag_source,
+            rag_manifest_destinations=[active / "rag.json"],
+            artifact_pairs=[(new_base, old_base)],
+        )
+
+    assert old_base.read_bytes() == b"old"
+    assert not any(active.glob("*.rollback"))
+    assert not any(active.glob("*.activate"))
+
+
+def test_release_activation_rolls_back_files_when_qdrant_is_unavailable(tmp_path):
+    class UnavailableClient:
+        def collection_exists(self, _target):
+            raise ConnectionError("qdrant unavailable")
+
+    staged = tmp_path / "staged"
+    active = tmp_path / "active"
+    staged.mkdir()
+    active.mkdir()
+    new_base = staged / "base.sqlite"
+    old_base = active / "base.sqlite"
+    new_base.write_bytes(b"new")
+    old_base.write_bytes(b"old")
+    rag_source = staged / "rag.json"
+    rag_active = active / "rag.json"
+    rag_source.write_text("{}", encoding="utf-8")
+    rag_active.write_text('{"old": true}', encoding="utf-8")
+
+    with pytest.raises(ConnectionError, match="unavailable"):
+        activation.activate_release(
+            client=UnavailableClient(),
+            alias="renamed_catalog",
+            target="new_generation",
+            report={},
+            rag_manifest_source=rag_source,
+            rag_manifest_destinations=[rag_active],
+            artifact_pairs=[(new_base, old_base)],
+        )
+
+    assert old_base.read_bytes() == b"old"
+    assert json.loads(rag_active.read_text(encoding="utf-8")) == {"old": True}

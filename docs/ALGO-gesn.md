@@ -24,7 +24,8 @@
      **семя побеждает** (эталон точен).
    `data/gesn_base/gesn2022_unified.parquet` теперь source/staging слой, а не runtime-facing база:
    он собирается из raw ФГИС/ручных импортов через `tools/gesn_unify_base.py`, затем очищается и
-   раскладывается в SQLite через `tools/build_smeta_structured_base.py`. Нормы без `norm_name` или
+   раскладывается в staging SQLite через `tools/build_smeta_structured_base.py`, а активная пара
+   SQLite+RAG публикуется только `tools/smeta_generation_coordinator.py`. Нормы без `norm_name` или
    `norm_unit` не выдаются машине; они попадают в `data/smeta_base/les_smeta_base_manifest.json`
    как excluded source debt.
 2. **Разворот** (`expand_position`): qty_строки = per_unit × объём; kind/name/code/price переносятся.
@@ -95,11 +96,14 @@ cs.smetnoedelo.ru дают **постраничный HTML** на каждую �
 После bulk/import raw-слой пересобирается в единый source parquet и canonical SQLite:
 
     uv run python -m tools.gesn_unify_base
-    uv run python -m tools.build_smeta_structured_base
+    uv run python -m tools.smeta_generation_coordinator \
+      --source data/gesn_base/gesn2022_unified.parquet
 
-Canonical build reads `minimum_norms` from `config/domain/smeta_base_active.json` and checks the floor
-before atomically replacing SQLite. An incomplete build remains an error and cannot overwrite the active
-base. For Windows clean install the releaser creates a verified payload with
+Coordinator reads configured active SQLite/metadata paths, arbitrary RAG alias and `minimum_norms`
+from `config/domain/smeta_base_active.json`. It builds both artifacts beside the active generation,
+checks the floor, exact SQLite SHA and live native RRF, then switches them under one cross-process
+lease. The low-level builder CLI refuses the configured active path. An incomplete or unavailable
+SQLite/Qdrant build remains an error and cannot overwrite the active pair. For Windows clean install the releaser creates a verified payload with
 `uv run python tools/smeta_release_baseline.py create`; manually bundling an old `gesn2022.parquet` or
 an unverified SQLite is prohibited.
 

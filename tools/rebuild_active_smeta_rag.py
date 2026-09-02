@@ -15,6 +15,7 @@ from qdrant_client import QdrantClient
 from tools.activate_smeta_rag_generation import activate
 from tools.build_smeta_norm_rag import build as build_rag_generation
 from tools.smeta_generation_coordinator import run_readiness_gate
+from tools.smeta_generation_lease import generation_lease
 
 
 def _sha256(path: Path) -> str:
@@ -33,7 +34,7 @@ def qdrant_client() -> QdrantClient:
     )
 
 
-def rebuild_active_index(
+def _rebuild_active_index_unlocked(
     *,
     base_path: Path,
     alias: str,
@@ -94,6 +95,22 @@ def rebuild_active_index(
         "generation_dir": str(generation_dir),
         "readiness": report,
     }
+
+
+def rebuild_active_index(
+    *,
+    base_path: Path,
+    alias: str,
+    generations_root: Path,
+    active_manifest_path: Path,
+) -> dict[str, Any]:
+    with generation_lease(generations_root, operation="rebuild-active-rag"):
+        return _rebuild_active_index_unlocked(
+            base_path=base_path,
+            alias=alias,
+            generations_root=generations_root,
+            active_manifest_path=active_manifest_path,
+        )
 
 
 def main() -> int:

@@ -150,12 +150,20 @@ def test_checked_in_registry_closes_every_declared_dynamic_callsite(tmp_path):
     registry_path = root / "installers/windows/runtime-entrypoints.json"
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
     staged = tmp_path / "staged"
+    runtime_callsites = [
+        "proxy/services/smeta_generation_reconciliation_service.py",
+    ]
     for entry in registry["entries"]:
         for relative in [*entry["required_files"], *entry["callsites"]]:
             source = root / relative
             target = staged / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+    for relative in runtime_callsites:
+        source = root / relative
+        target = staged / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
 
     result = validate_registry(
         root=root,
@@ -164,11 +172,13 @@ def test_checked_in_registry_closes_every_declared_dynamic_callsite(tmp_path):
         registry_path=registry_path,
     )
 
-    assert result["entry_count"] == 5
+    assert result["entry_count"] == 7
     assert result["validated_ids"] == [
         "fgis-full-update",
         "fgis-update-supervisor",
         "gesn-update-from-fgis",
         "les-shell",
+        "smeta-rag-readiness",
+        "smeta-rag-rebuild",
         "uvicorn-runtime",
     ]

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -57,9 +58,32 @@ def _alias_target(client: Any, alias: str) -> str:
     return ""
 
 
+def _base_metadata_matches(
+    manifest_path: Path, integrity_path: Path, base_sha: str
+) -> bool:
+    manifest = _json(manifest_path)
+    integrity = _json(integrity_path)
+    return bool(
+        str((manifest.get("output") or {}).get("sha256") or "").casefold()
+        == base_sha
+        and integrity.get("schema") == "les_smeta_base_integrity_v1"
+        and integrity.get("verdict") == "passed"
+        and str(integrity.get("base_sha256") or "").casefold() == base_sha
+    )
+
+
+def _copy_atomic(source: Path, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{os.getpid()}.recover")
+    shutil.copy2(source, temporary)
+    temporary.replace(destination)
+
+
 def reconcile_matching_generation(
     *,
     base_path: Path,
+    active_base_manifest_path: Path | None = None,
+    active_integrity_path: Path | None = None,
     active_manifest_path: Path,
     generations_root: Path,
     alias: str,
@@ -135,6 +159,32 @@ def reconcile_matching_generation(
             "base_sha256": base_sha,
             "physical_generation": target,
         }
+    metadata_recovered = False
+    if active_base_manifest_path is not None or active_integrity_path is not None:
+        if active_base_manifest_path is None or active_integrity_path is None:
+            raise ValueError("both active smeta metadata paths are required")
+        active_base_manifest_path = Path(active_base_manifest_path)
+        active_integrity_path = Path(active_integrity_path)
+        if not _base_metadata_matches(
+            active_base_manifest_path, active_integrity_path, base_sha
+        ):
+            saved_base_manifest = manifest_path.parent / "les_smeta_base_manifest.json"
+            saved_integrity = manifest_path.parent / "les_smeta_base_integrity.json"
+            if not _base_metadata_matches(
+                saved_base_manifest, saved_integrity, base_sha
+            ):
+                return {
+                    "status": "blocked",
+                    "base_sha256": base_sha,
+                    "warning_code": "SMETA_SAVED_BASE_METADATA_INVALID",
+                    "message": (
+                        "Сохранённые метаданные сметной базы не подтверждают "
+                        "активную ревизию SQLite."
+                    ),
+                }
+            _copy_atomic(saved_base_manifest, active_base_manifest_path)
+            _copy_atomic(saved_integrity, active_integrity_path)
+            metadata_recovered = True
     activate(
         client=client,
         alias=alias,
@@ -148,6 +198,7 @@ def reconcile_matching_generation(
         "base_sha256": base_sha,
         "physical_generation": target,
         "manifest": str(manifest_path),
+        "metadata_recovered": metadata_recovered,
     }
 
 
@@ -158,6 +209,8 @@ def _runtime_reconciliation_inputs() -> dict[str, Any]:
     base_path = Path(str(config.get("base_path") or ""))
     return {
         "base_path": base_path,
+        "active_base_manifest_path": Path(str(config.get("manifest_path") or "")),
+        "active_integrity_path": Path(str(config.get("integrity_path") or "")),
         "active_manifest_path": base_path.with_name(
             "les_smeta_norm_rag_manifest.json"
         ),
@@ -230,5 +283,10 @@ def reconcile_runtime_generation(*, apply: bool = True) -> dict[str, Any]:
         if callable(close):
             close()
     if result.get("status") == "build_required" and apply:
-        return start_background_rebuild(**inputs)
+        return start_background_rebuild(
+            base_path=inputs["base_path"],
+            active_manifest_path=inputs["active_manifest_path"],
+            generations_root=inputs["generations_root"],
+            alias=inputs["alias"],
+        )
     return result

@@ -30,6 +30,14 @@ WINDOWS_RUNTIME_MANIFEST_PATH = ROOT / "config" / "windows_runtime_manifest.json
 DESKTOP_VERSION_MAJOR = 5
 DESKTOP_VERSION_MINOR = 1
 WINDOWS_DEPENDENCY_FINGERPRINT_SCHEMA = "les.windows-dependency-fingerprint.v2"
+PERSISTENT_RUNTIME_ROOTS = frozenset(
+    {"data", "storage", "rag_content", "logs", "artifacts"}
+)
+
+
+def _is_persistent_runtime_path(value: str) -> bool:
+    normalized = str(value).replace("\\", "/").strip("/")
+    return bool(normalized) and normalized.split("/", 1)[0].casefold() in PERSISTENT_RUNTIME_ROOTS
 
 
 @lru_cache(maxsize=1)
@@ -48,6 +56,13 @@ def windows_runtime_manifest() -> tuple[frozenset[str], tuple[str, ...]]:
     ]
     if invalid or any(not prefix.endswith("/") for prefix in prefixes):
         raise RuntimeError(f"invalid Windows runtime manifest paths: {invalid}")
+    persistent = [
+        item for item in (*files, *prefixes) if _is_persistent_runtime_path(item)
+    ]
+    if persistent:
+        raise RuntimeError(
+            f"Windows runtime manifest cannot include persistent state: {persistent}"
+        )
     return frozenset(files), prefixes
 
 

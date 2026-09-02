@@ -1,5 +1,21 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.47 all-update/database-resilience candidate:** все активные пути
+> обновления сметной базы (GUI/API ФГИС, Make и CLI) замкнуты на один
+> coordinator; низкоуровневый builder не может заменить configured active
+> SQLite. Общий межпроцессный lease исключает гонку полной публикации и
+> фоновой пересборки, различает свежий незавершённый lock и след упавшего
+> процесса. Startup восстанавливает exact-SHA manifest/integrity после
+> прерванного переключения и поддерживает произвольные configured пути и alias.
+> Windows runtime/patch manifests fail-closed запрещают `data`, `storage`,
+> `RAG_Content`, `logs`, `artifacts`; матрица update-resilience включена в
+> обязательные гейты. Точки: `tools/{smeta_generation_coordinator,
+> smeta_generation_lease,rebuild_active_smeta_rag,build_tauri_app,
+> release_classification}.py`, `proxy/services/
+> smeta_generation_reconciliation_service.py`, runtime manifests и
+> `tests/test_update_resilience_matrix.py`. Статус док↔код: ✅; candidate не
+> установлен и не опубликован.
+
 > **0.30.46 atomic smeta base/index generation candidate:** обновление ФГИС
 > строит SQLite, manifest/integrity и dedicated native-RRF индекс рядом с
 > активной парой, проверяет exact SHA и переключает файлы+Qdrant alias только
