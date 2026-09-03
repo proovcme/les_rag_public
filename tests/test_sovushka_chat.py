@@ -164,8 +164,9 @@ def test_chat_links_source_markers_to_anchored_drawer_rows_and_shows_three_count
     source = inspect.getsource(chat_page.build_chat)
 
     assert "link_source_markers" in source
-    assert 'id=source-{i}' in source
-    assert 'id=source-list-{i}' in source
+    assert 'id={source_anchor_prefix}-{i}' in source
+    assert 'id=source-list-{source_anchor_prefix}-{i}' in source
+    assert 'anchor_prefix=_source_anchor_prefix(meta)' in source
     assert 'source_usage(source, i, answer)' in source
     assert 'def _render_rich_body(text: str, srcs: list | None = None, meta: dict | None = None)' in source
     assert '_link_visible_sources(ans, srcs or [], meta)' in source

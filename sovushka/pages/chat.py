@@ -2488,6 +2488,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
 
         if effective_sources:
+            source_anchor_prefix = _source_anchor_prefix(meta)
             cited_sources = [
                 (i, source)
                 for i, source in enumerate(effective_sources, 1)
@@ -2505,7 +2506,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             label,
                             icon="o_format_quote",
                             on_click=lambda s=source, n=i: _show_source_drawer(s, n),
-                        ).props(f"flat dense no-caps id=source-{i}").classes(
+                        ).props(f"flat dense no-caps id={source_anchor_prefix}-{i}").classes(
                             "sov-source-primary sov-ui-source-chip"
                         ).tooltip("Показать цитату, путь и оригинал")
             with ui.expansion(
@@ -2518,7 +2519,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
                         lbl = f"{i}. {c['file'] or _source_label(source)}"
-                        with ui.row().props(f"id=source-list-{i}").classes("sov-source-row sov-ui-evidence-card"):
+                        with ui.row().props(f"id=source-list-{source_anchor_prefix}-{i}").classes(
+                            "sov-source-row sov-ui-evidence-card"
+                        ):
                             if item.get("open_url"):
                                 with ui.link(
                                     target=str(item["open_url"]),
@@ -3087,6 +3090,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         body, _notes = split_inline_source_notes(text)
         return normalize_inline_math(body)
 
+    def _source_anchor_prefix(meta: dict | None) -> str:
+        history_id = (meta or {}).get("history_id") if isinstance(meta, dict) else None
+        try:
+            return f"source-{int(history_id)}" if history_id is not None else f"source-current-{id(meta)}"
+        except (TypeError, ValueError):
+            return f"source-current-{id(meta)}"
+
     def _link_visible_sources(text: str, srcs: list, meta: dict | None) -> str:
         from sovushka.answer_render import citation_sources, link_source_markers
 
@@ -3097,6 +3107,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         return link_source_markers(
             _format_sources_as_quotes(text),
             source_count=len(effective),
+            anchor_prefix=_source_anchor_prefix(meta),
         )
 
     # ── Богатые формы ПРЯМО В ЧАТЕ (таблицы/mermaid → красиво, не сырой текст) ──

@@ -501,10 +501,16 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     return item
 
 
-def link_source_markers(text: str, *, source_count: int) -> str:
+def link_source_markers(
+    text: str,
+    *,
+    source_count: int,
+    anchor_prefix: str = "source",
+) -> str:
     """Make valid visible source markers navigate to their matching source row."""
 
     limit = max(0, int(source_count))
+    prefix = str(anchor_prefix or "source").strip().strip("#") or "source"
 
     def replace(match: re.Match[str]) -> str:
         label = match.group(0)
@@ -512,7 +518,7 @@ def link_source_markers(text: str, *, source_count: int) -> str:
         valid = [value for value in indexes if 1 <= value <= limit]
         if not valid:
             return label
-        return f"{label}(#source-{valid[0]})"
+        return f"{label}(#{prefix}-{valid[0]})"
 
     return re.sub(
         r"\[Источники?\s+[0-9,;|\s\-–—]+\]",

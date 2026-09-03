@@ -7,17 +7,23 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.55
-номер сборки:              695
-версия Tauri/NSIS:         5.1.695
+версия продукта (SemVer):  0.30.56
+номер сборки:              696
+версия Tauri/NSIS:         5.1.696
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.55 legacy web evidence recovery candidate
-задеплоено на рантайм:     Legion 0.30.54 / build 694 / commit 497d98bc; UPDATE SMOKE ACCEPTED
+dev implementation:       0.30.56 per-answer citation anchors candidate
+задеплоено на рантайм:     Legion 0.30.55 / build 695 / commit 98b3a298; LIVE HISTORY ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.55 после проверки старого web evidence в установленном ЛЕС
-рантайм /api/version:      Legion 0.30.54 / build 694 / desktop 5.1.694 / commit 497d98bc; accepted
+следующий выпуск:          0.30.56 после проверки точного перехода внутри длинного диалога
+рантайм /api/version:      Legion 0.30.55 / build 695 / desktop 5.1.695 / commit 98b3a298; accepted
 ```
+
+> **0.30.56 / build 696 per-answer citation anchors candidate (не
+> опубликован):** локальный адрес источника включает `history_id` ответа.
+> Поэтому `[Источник 1]` в поздней реплике длинного диалога ведёт к источнику
+> именно этой реплики, а не к первому одноимённому элементу сессии. Ответ и
+> evidence не изменяются.
 
 > **0.30.55 / build 695 legacy web evidence recovery candidate (не
 > опубликован):** прежние реплики, созданные до сохранения полного source map,

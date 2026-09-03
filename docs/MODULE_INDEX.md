@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.56 per-answer citation anchors candidate:** адреса цитат scoped по
+> `history_id`, поэтому одинаковые номера источников в разных репликах не
+> конфликтуют. Точки: `sovushka/{answer_render.py,pages/chat.py}`,
+> `tests/{test_answer_render_v16.py,test_sovushka_chat.py}`. Статус док↔код: ✅;
+> candidate не опубликован.
+
 > **0.30.55 legacy web evidence recovery candidate:** история прежних
 > web-реплик восстанавливает URL, заголовки и snippets из сохранённых tool
 > results, когда полный source map ещё не записывался. Повторный поиск и model

@@ -296,6 +296,16 @@ def test_source_marker_ranges_link_and_mark_every_cited_source():
     assert ar.source_usage({}, 3, "Вывод [Источник 1–4]")["code"] == "used"
 
 
+def test_source_marker_links_can_be_scoped_to_one_history_answer():
+    rendered = ar.link_source_markers(
+        "Факт [Источник 1].",
+        source_count=1,
+        anchor_prefix="source-42",
+    )
+
+    assert rendered == "Факт [Источник 1](#source-42-1)."
+
+
 def test_source_count_labels_are_not_conflated():
     assert ar.source_count_labels({"found": 64, "model_visible": 6, "cited": 2}) == [
         "Найдено 64",
