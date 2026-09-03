@@ -28,6 +28,9 @@
   Отдельные регрессии фиксируют обычные model-authored query lines, либеральное
   снятие только presentation wrappers, запрет memory-driven подмены provider,
   runtime-relative attachment handoff и неизменность model-owned workbook rows.
+  Reader принимает короткий markdown-divider, заголовок монтажа с `norm_code` и
+  явные спецификационные таблицы без нормы; stream keepalive и PENDING-history
+  покрыты `test_chat_stream_w51` / `test_chat_history_router`.
 - RAG: contract-versioned named `dense + bm25_sparse`, native RRF, rerank,
   profile-owned overfetch/diversity/evidence limits, hierarchy/parent expansion,
   dimensional readiness, ready-generation guard для ColBERT и dataset integrity.

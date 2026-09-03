@@ -596,6 +596,7 @@ def test_remaining_operator_surfaces_use_uikit_without_page_local_visual_styles(
     assert "sov-history-page" in history
     assert "render_feedback_state(" in history
     assert "action_button(" in history
+    assert "format_chat_request_clock(" in history
     assert "ui.card(" not in history
     assert "_html(" not in history
     assert ".style(" not in history

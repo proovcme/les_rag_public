@@ -325,7 +325,7 @@ def test_model_rag_result_decoder_has_no_regex_or_language_router():
 
     assert "re." not in source
     assert "question" not in source
-    assert "query" not in source
+    assert "row_schema" not in source
 
 
 def test_chat_application_does_not_replace_the_configured_model_for_memory_pressure():
@@ -413,6 +413,87 @@ def test_model_rag_result_does_not_infer_rows_from_prose():
 """
 
     assert service.parse_model_rag_result(answer) is None
+
+
+def test_model_rag_result_reads_english_field_table_with_short_dividers():
+    answer = """**Инженерный вердикт:** цены не найдены, строки всё равно ниже.
+
+| № | source_row | section | title | unit | quantity | norm_code | analogue | coverage | coefficient | evidence_refs |
+|:--|:-----------|:--------|:------|:-----|:---------|:----------|:---------|:----------|:------------|:--------------|
+| 1 | ВОР!R4 | Раздел 1 | Светильник | шт | 25 | ГЭСНм08-03-609-02 | прямое | полное | 1 | Q1.H2 |
+| 2 | ВОР!R5 | Раздел 1 | Бра | шт | 4 |  | аналог | частичное | 1 | Q2.H1 |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert [row["title"] for row in parsed[1]] == ["Светильник", "Бра"]
+    assert [row.get("norm_code") for row in parsed[1]] == ["ГЭСНм08-03-609-02", None]
+    assert parsed[1][0]["quantity"] == 25
+    assert parsed[1][0]["source_row"] == 1
+    assert parsed[1][0]["evidence_refs"] == ["Q1.H2"]
+
+
+def test_model_rag_result_reads_installation_norm_header_with_norm_code_hint():
+    answer = """### Раздел 1. Осветительная аппаратура
+| № | Наименование работ (из ВОР) | Ед. изм. | Кол-во | Норматив монтажа (norm_code) | Аналог/Примечание | Coverage (покрытие) | Evidence_refs |
+|---|---|---|---|---|---|---|---|
+| 1 | Светильник светодиодный | шт. | 25 | ГЭСНм08-03-609-02 | Прямое соответствие | Частичное | Q1.H2 |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[1] == [
+        {
+            "source_row": 1,
+            "section": "Раздел 1. Осветительная аппаратура",
+            "title": "Светильник светодиодный",
+            "unit": "шт.",
+            "quantity": 25,
+            "norm_code": "ГЭСНм08-03-609-02",
+            "analogue": "Прямое соответствие",
+            "coverage": "Частичное",
+            "evidence_refs": ["Q1.H2"],
+        }
+    ]
+
+
+def test_model_rag_result_reads_vor_spec_table_without_norm_headers():
+    answer = """
+### 1. Осветительная аппаратура
+
+| Наименование и техническая характеристика | Ед. изм. | Количество (подтверждено) | Источник данных | Статус |
+| :--- | :---: | :---: | :---: | :---: |
+| Светильник светодиодный накладной, IP65, 30 Вт | шт. | 25 | Спецификация, поз. 1.1 | Подтверждено |
+"""
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    _, rows = parsed
+    assert rows[0]["title"].startswith("Светильник")
+    assert rows[0]["unit"] == "шт."
+    assert rows[0]["quantity"] == 25
+    assert rows[0]["section"].startswith("1.")
+    assert rows[0]["note"] == "Спецификация, поз. 1.1"
+    assert "norm_code" not in rows[0]
+
+
+def test_model_rag_result_reads_source_and_note_columns_together():
+    answer = """
+### 1. Осветительная аппаратура
+
+| Наименование и техническая характеристика | Ед. изм. | Кол-во (из источника) | Источник данных | Примечание |
+| :--- | :---: | :---: | :---: | :--- |
+| Светильник светодиодный накладной, IP65, 30 Вт | шт. | 25 | [Источник 1] | Позиция 1.1 |
+"""
+    parsed = service.parse_model_rag_result(answer)
+    assert parsed is not None
+    _, rows = parsed
+    assert rows[0]["title"].startswith("Светильник")
+    assert rows[0]["quantity"] == 25
+    assert rows[0]["section"].startswith("1.")
+    assert rows[0]["note"] == "[Источник 1]; Позиция 1.1"
+    assert "norm_code" not in rows[0]
 
 
 def test_model_rag_result_reads_explicit_multiline_labelled_blocks():

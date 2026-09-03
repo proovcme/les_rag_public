@@ -7,6 +7,7 @@ from typing import Any
 
 from nicegui import ui
 
+from sovushka.pages.chat import format_chat_request_clock
 from sovushka.state import add_log, api_get
 from sovushka.uikit.components import (
     action_button,
@@ -67,16 +68,16 @@ def build_history(tabs=None, tab_chat=None):
                 session_id = str(session.get("session_id") or "")
                 first_question = str(session.get("first_question") or "Диалог без заголовка")
                 message_count = int(session.get("msg_count") or 0)
-                started_at = str(session.get("started_at") or "")[:16].replace("T", " ")
-                last_at = str(session.get("last_at") or "")[:16].replace("T", " ")
+                in_progress = bool(session.get("in_progress"))
+                clock = format_chat_request_clock(
+                    session.get("last_at") or session.get("started_at")
+                ) or "Дата не указана"
                 with panel(variant="plain", classes="sov-history-row"):
                     with ui.column().classes("sov-history-row__copy"):
                         ui.label(first_question).classes("sov-history-row__title")
                         with ui.row().classes("sov-history-row__meta"):
-                            ui.label(started_at or "Дата не указана")
-                            ui.label(f"{message_count} сообщ.")
-                            if last_at and last_at != started_at:
-                                ui.label(f"последнее {last_at}")
+                            ui.label(clock)
+                            ui.label("выполняется" if in_progress else f"{message_count} сообщ.")
                     action_button(
                         "Открыть",
                         icon="o_arrow_forward",

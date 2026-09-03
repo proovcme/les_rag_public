@@ -231,14 +231,22 @@ async def get_chat_sessions(limit: int = 50, _user=Depends(require_user)):
     """Return chat sessions ordered by last activity."""
     try:
         with sqlite3.connect(rag_meta_db_path()) as conn:
+            ensure_chat_history_schema(conn)
             rows = conn.execute(
                 """
                 SELECT
                     session_id,
-                    MIN(timestamp)   AS started_at,
-                    MAX(timestamp)   AS last_at,
-                    COUNT(*)         AS msg_count,
-                    MIN(question)    AS first_question
+                    MIN(timestamp) AS started_at,
+                    MAX(timestamp) AS last_at,
+                    COUNT(*) AS msg_count,
+                    (
+                        SELECT question
+                        FROM chat_history AS first_row
+                        WHERE first_row.session_id = chat_history.session_id
+                        ORDER BY first_row.id ASC
+                        LIMIT 1
+                    ) AS first_question,
+                    MAX(CASE WHEN crag_status = 'PENDING' THEN 1 ELSE 0 END) AS in_progress
                 FROM chat_history
                 WHERE session_id IS NOT NULL
                 GROUP BY session_id
@@ -254,6 +262,7 @@ async def get_chat_sessions(limit: int = 50, _user=Depends(require_user)):
                 "last_at": row[2],
                 "msg_count": row[3],
                 "first_question": (row[4] or "")[:120],
+                "in_progress": bool(row[5]),
             }
             for row in rows
         ]
