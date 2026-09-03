@@ -84,8 +84,18 @@ MAC_UPDATE_ALLOWED_SUFFIXES = {
     ".js",
 }
 VPS_PATCH_ALLOWED_FILES = {
+    "env.example",
     "sovushka_ng.py",
     "proxy_server.py",
+    "installers/windows/runtime-entrypoints.json",
+    "tools/activate_smeta_rag_generation.py",
+    "tools/build_smeta_norm_rag.py",
+    "tools/build_smeta_structured_base.py",
+    "tools/gesn_update_from_fgis.py",
+    "tools/install_les.py",
+    "tools/rebuild_active_smeta_rag.py",
+    "tools/smeta_generation_coordinator.py",
+    "tools/smeta_generation_lease.py",
     "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
@@ -529,7 +539,7 @@ def _validate_patch_feed(payload: dict) -> dict:
                 raise UpdateError("Обновление пытается изменить запрещённую часть приложения")
             if not (normalized in VPS_PATCH_ALLOWED_FILES or normalized.startswith(VPS_PATCH_ALLOWED_ROOTS)):
                 raise UpdateError("Обновление пытается выйти за список заменяемых файлов")
-            if Path(normalized).suffix.lower() not in VPS_PATCH_SUFFIXES:
+            if normalized != "env.example" and Path(normalized).suffix.lower() not in VPS_PATCH_SUFFIXES:
                 raise UpdateError("Обновление содержит неподдерживаемый тип файла")
             target = root / Path(*rel.parts)
         else:

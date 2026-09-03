@@ -35,6 +35,11 @@ make release RELEASE_ARGS='run --host local --publish'
    содержимое совпадает с доверенным состоянием Git ancestry. Новый клиент и
    helper также принимают доверенный текст независимо от смешения LF/CRLF;
    любое другое содержимое по-прежнему отклоняется checksum guard.
+   Текстовые support-файлы, явно входящие в Windows runtime manifest
+   (`env.example`, registry динамических entrypoint и перечисленные Python
+   maintenance tools), допустимы в soft patch только когда один и тот же exact
+   path разрешён classifier, builder и installed updater. Рассинхрон этих трёх
+   списков является ошибкой release tooling, а не причиной для NSIS.
 3. На текущем Legion (`--host local`) ставит точные candidate bytes штатным
    путём, проверяет identity,
    живые proxy/UI отдельно от внешних capabilities и, если Qdrant был доступен, временный native

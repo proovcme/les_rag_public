@@ -160,6 +160,34 @@ def test_installed_live_acceptance_tool_can_ship_in_runtime_patch(release_repo):
     assert result.triggers == ()
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "env.example",
+        "installers/windows/runtime-entrypoints.json",
+        "tools/activate_smeta_rag_generation.py",
+        "tools/build_smeta_norm_rag.py",
+        "tools/build_smeta_structured_base.py",
+        "tools/gesn_update_from_fgis.py",
+        "tools/install_les.py",
+        "tools/rebuild_active_smeta_rag.py",
+        "tools/smeta_generation_coordinator.py",
+        "tools/smeta_generation_lease.py",
+    ],
+)
+def test_declared_python_runtime_support_files_can_ship_in_patch(release_repo, path):
+    repo, base = release_repo
+    target = repo / path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("VALUE = 1\n", encoding="utf-8")
+
+    result = classify_release(base, _commit(repo, f"runtime support {path}"), root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == (path,)
+    assert result.triggers == ()
+
+
 def test_runtime_manifest_ignores_repo_only_files_and_keeps_visualizer_content(
     release_repo,
 ):

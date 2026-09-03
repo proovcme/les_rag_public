@@ -21,8 +21,18 @@ PATCH_ALLOWED_ROOTS = (
     "skills/",
 )
 PATCH_ALLOWED_FILES = {
+    "env.example",
     "sovushka_ng.py",
     "proxy_server.py",
+    "installers/windows/runtime-entrypoints.json",
+    "tools/activate_smeta_rag_generation.py",
+    "tools/build_smeta_norm_rag.py",
+    "tools/build_smeta_structured_base.py",
+    "tools/gesn_update_from_fgis.py",
+    "tools/install_les.py",
+    "tools/rebuild_active_smeta_rag.py",
+    "tools/smeta_generation_coordinator.py",
+    "tools/smeta_generation_lease.py",
     "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
@@ -91,7 +101,7 @@ def normalize_patch_path(value: str) -> str:
         or normalized.startswith(PATCH_ALLOWED_ROOTS)
     ):
         raise ValueError(f"path is outside patch allowlist: {value}")
-    if Path(normalized).suffix.lower() not in PATCH_SUFFIXES:
+    if normalized != "env.example" and Path(normalized).suffix.lower() not in PATCH_SUFFIXES:
         raise ValueError(f"unsupported patch file type: {value}")
     return normalized
 

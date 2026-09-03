@@ -4,20 +4,30 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-02)
+## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.48
-номер сборки:              688
-версия Tauri/NSIS:         5.1.688
+версия продукта (SemVer):  0.30.49
+номер сборки:              689
+версия Tauri/NSIS:         5.1.689
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.48 model-owned RAG/web/live-workbook candidate
+dev implementation:       0.30.49 transactional soft-update/live acceptance candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.48 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.49 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.49 / build 689 transactional soft-update candidate (не опубликован):**
+> синхронизированы три fail-closed allowlist слоя classifier → builder →
+> installed updater. Текстовые runtime-support файлы, уже явно объявленные в
+> Windows runtime manifest, больше не требуют NSIS только из-за отсутствующей
+> записи во втором списке. Persistent state, desktop/native, зависимости,
+> неизвестные пути и неподдерживаемые типы по-прежнему запрещены; пакет
+> проверяет SHA-256 и применяется через backup/rollback. Кандидат должен быть
+> принят только живым проходом на установленном Legion: update → service smoke
+> → native RRF → диалоговый RAG → переходы к источникам.
 
 > **0.30.48 / build 688 model-owned RAG/web/live-workbook candidate (не
 > установлен и не опубликован):** Qwen формирует обычные поисковые строки;

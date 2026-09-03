@@ -182,6 +182,7 @@
         "proxy/services/retrieval_service.py",
         "tests/test_colbert_late_interaction.py",
         "tools/build_rag_contract_sibling.py",
+        "tools/colbert_live_ab.py",
         "tools/rag_advanced_synthetic_benchmark.py"
       ],
       "lines": 115,
@@ -243,6 +244,8 @@
         "proxy/app.py",
         "proxy/routers/diagnostics.py",
         "proxy/routers/runtime.py",
+        "proxy/services/web_page_reader_service.py",
+        "proxy/services/web_research_config_service.py",
         "proxy/services/web_search_service.py",
         "sovushka/lite_bridge.py",
         "sovushka/state.py",
@@ -573,6 +576,7 @@
         "tests/test_parse_pipeline_w14.py",
         "tests/test_parse_resume.py",
         "tests/test_pdf_contour_service.py",
+        "tests/test_proxy_startup_mutation_policy.py",
         "tests/test_qdrant_adapter_parse.py",
         "tests/test_qdrant_collection_layout.py",
         "tests/test_qdrant_health_count_contract.py",
@@ -1211,6 +1215,8 @@
         "proxy/services/update_service.py",
         "proxy/services/verify_service.py",
         "proxy/services/version_service.py",
+        "proxy/services/web_page_reader_service.py",
+        "proxy/services/web_research_config_service.py",
         "proxy/services/web_search_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
@@ -1248,6 +1254,7 @@
         "proxy/routers/mail.py",
         "proxy_server.py",
         "tests/test_freetoken_provider.py",
+        "tests/test_proxy_startup_mutation_policy.py",
         "tests/test_verify_service.py"
       ],
       "lines": 772,
@@ -2242,7 +2249,8 @@
       "inbound": [
         "proxy/app.py",
         "tests/test_proxy_routers.py",
-        "tests/test_smeta_agent_runners.py"
+        "tests/test_smeta_agent_runners.py",
+        "tests/test_web_research_settings.py"
       ],
       "lines": 585,
       "module": "proxy.routers.settings",
@@ -2253,11 +2261,11 @@
         "proxy/routers/__init__.py",
         "proxy/routers/chat.py",
         "proxy/security.py",
-        "proxy/services/__init__.py",
         "proxy/services/freetoken_cache_profile_service.py",
         "proxy/services/llm_transport_profile_service.py",
         "proxy/services/preset_service.py",
-        "proxy/services/runtime_config_registry_service.py"
+        "proxy/services/runtime_config_registry_service.py",
+        "proxy/services/web_research_config_service.py"
       ],
       "path": "proxy/routers/settings.py",
       "status": "PRODUCT_REACHABLE",
@@ -2397,7 +2405,8 @@
         "tests/test_proxy_security.py",
         "tests/test_request_idempotency_service.py",
         "tests/test_rim_api.py",
-        "tests/test_tools_router.py"
+        "tests/test_tools_router.py",
+        "tests/test_web_research_settings.py"
       ],
       "lines": 230,
       "module": "proxy.security",
@@ -2412,7 +2421,6 @@
     },
     {
       "inbound": [
-        "proxy/routers/settings.py",
         "proxy/services/active_state_service.py",
         "proxy/services/agent_router_service.py",
         "proxy/services/answer_contract_service.py",
@@ -2629,12 +2637,12 @@
         "proxy/services/update_service.py",
         "proxy/services/verify_service.py",
         "proxy/services/version_service.py",
+        "proxy/services/web_page_reader_service.py",
+        "proxy/services/web_research_config_service.py",
         "proxy/services/web_search_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
-        "proxy/services/workflow_plan_service.py",
-        "tests/test_chat_evidence_application_service.py",
-        "tests/test_web_search_service.py"
+        "proxy/services/workflow_plan_service.py"
       ],
       "lines": 2,
       "module": "proxy.services",
@@ -3052,6 +3060,7 @@
         "proxy/services/table_query_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/typed_memory_projection_service.py",
+        "proxy/services/web_research_config_service.py",
         "proxy/services/workbook_tool_service.py"
       ],
       "path": "proxy/services/chat_evidence_application_service.py",
@@ -6911,6 +6920,8 @@
         "proxy/services/tool_registry_service.py",
         "proxy/services/tool_trace_policy.py",
         "proxy/services/trusted_executor_service.py",
+        "proxy/services/web_page_reader_service.py",
+        "proxy/services/web_research_config_service.py",
         "proxy/services/web_search_service.py",
         "proxy/services/workbook_tool_service.py"
       ],
@@ -7069,7 +7080,7 @@
         "tools/vps_patch.py",
         "tools/windows_clean_install.py"
       ],
-      "lines": 1072,
+      "lines": 1082,
       "module": "proxy.services.update_service",
       "outbound": [
         "proxy/__init__.py",
@@ -7133,6 +7144,46 @@
     {
       "inbound": [
         "proxy/services/tool_harness_service.py",
+        "tests/test_web_page_reader_service.py"
+      ],
+      "lines": 214,
+      "module": "proxy.services.web_page_reader_service",
+      "outbound": [
+        "backend/http_client_policy.py",
+        "proxy/__init__.py",
+        "proxy/services/__init__.py",
+        "proxy/services/web_research_config_service.py"
+      ],
+      "path": "proxy/services/web_page_reader_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/routers/settings.py",
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/tool_harness_service.py",
+        "proxy/services/web_page_reader_service.py",
+        "proxy/services/web_search_service.py",
+        "tests/test_chat_evidence_application_service.py",
+        "tests/test_web_page_reader_service.py",
+        "tests/test_web_research_config_service.py",
+        "tests/test_web_search_service.py"
+      ],
+      "lines": 122,
+      "module": "proxy.services.web_research_config_service",
+      "outbound": [
+        "backend/http_client_policy.py",
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/web_research_config_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/services/tool_harness_service.py",
         "tests/test_web_search_service.py"
       ],
       "lines": 234,
@@ -7140,7 +7191,8 @@
       "outbound": [
         "backend/http_client_policy.py",
         "proxy/__init__.py",
-        "proxy/services/__init__.py"
+        "proxy/services/__init__.py",
+        "proxy/services/web_research_config_service.py"
       ],
       "path": "proxy/services/web_search_service.py",
       "status": "PRODUCT_REACHABLE",
@@ -8061,7 +8113,8 @@
     {
       "inbound": [
         "sovushka_ng.py",
-        "tests/test_diag_platform.py"
+        "tests/test_diag_platform.py",
+        "tests/test_web_research_settings.py"
       ],
       "lines": 1602,
       "module": "sovushka.pages.diag",
@@ -9041,7 +9094,6 @@
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
-        "proxy/services/__init__.py",
         "proxy/services/canonical_route_service.py",
         "proxy/services/chat_attachment_service.py",
         "proxy/services/chat_evidence_application_service.py",
@@ -9052,7 +9104,8 @@
         "proxy/services/tool_contract_service.py",
         "proxy/services/tool_harness_service.py",
         "proxy/services/tool_registry_service.py",
-        "proxy/services/trusted_executor_service.py"
+        "proxy/services/trusted_executor_service.py",
+        "proxy/services/web_research_config_service.py"
       ],
       "path": "tests/test_chat_evidence_application_service.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -9365,6 +9418,18 @@
         "backend/colbert_late_interaction.py"
       ],
       "path": "tests/test_colbert_late_interaction.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 135,
+      "module": "tests.test_colbert_live_ab",
+      "outbound": [
+        "tools/colbert_live_ab.py",
+        "tools/rag_golden_set.py"
+      ],
+      "path": "tests/test_colbert_live_ab.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -11624,6 +11689,18 @@
     {
       "inbound": [],
       "lines": 34,
+      "module": "tests.test_proxy_startup_mutation_policy",
+      "outbound": [
+        "backend/qdrant_adapter.py",
+        "proxy/app.py"
+      ],
+      "path": "tests/test_proxy_startup_mutation_policy.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 34,
       "module": "tests.test_public_error_service",
       "outbound": [
         "proxy/services/public_error_service.py"
@@ -12058,7 +12135,7 @@
     },
     {
       "inbound": [],
-      "lines": 341,
+      "lines": 369,
       "module": "tests.test_release_classification",
       "outbound": [
         "tools/release_classification.py"
@@ -13729,7 +13806,7 @@
     },
     {
       "inbound": [],
-      "lines": 1116,
+      "lines": 1137,
       "module": "tests.test_vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -13743,11 +13820,47 @@
     },
     {
       "inbound": [],
+      "lines": 185,
+      "module": "tests.test_web_page_reader_service",
+      "outbound": [
+        "proxy/services/web_page_reader_service.py",
+        "proxy/services/web_research_config_service.py"
+      ],
+      "path": "tests/test_web_page_reader_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 115,
+      "module": "tests.test_web_research_config_service",
+      "outbound": [
+        "proxy/services/web_research_config_service.py"
+      ],
+      "path": "tests/test_web_research_config_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 127,
+      "module": "tests.test_web_research_settings",
+      "outbound": [
+        "proxy/routers/settings.py",
+        "proxy/security.py",
+        "sovushka/pages/diag.py"
+      ],
+      "path": "tests/test_web_research_settings.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 268,
       "module": "tests.test_web_search_service",
       "outbound": [
-        "proxy/services/__init__.py",
         "proxy/services/tool_harness_service.py",
+        "proxy/services/web_research_config_service.py",
         "proxy/services/web_search_service.py"
       ],
       "path": "tests/test_web_search_service.py",
@@ -13911,6 +14024,7 @@
         "tools/checklist_snapshot_spike.py",
         "tools/clean_install_smoke.py",
         "tools/code_runtime_map.py",
+        "tools/colbert_live_ab.py",
         "tools/coreml_embed_worker.py",
         "tools/coreml_embedding_probe.py",
         "tools/coreml_validator_probe.py",
@@ -14584,6 +14698,21 @@
         "tools/__init__.py"
       ],
       "path": "tools/code_runtime_map.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "tests/test_colbert_live_ab.py"
+      ],
+      "lines": 271,
+      "module": "tools.colbert_live_ab",
+      "outbound": [
+        "backend/colbert_late_interaction.py",
+        "tools/__init__.py",
+        "tools/rag_golden_set.py"
+      ],
+      "path": "tools/colbert_live_ab.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -15534,8 +15663,10 @@
     },
     {
       "inbound": [
+        "tests/test_colbert_live_ab.py",
         "tests/test_qwen_baseline.py",
         "tests/test_rag_golden_set.py",
+        "tools/colbert_live_ab.py",
         "tools/measure_weak_retry.py",
         "tools/qwen_baseline.py"
       ],
@@ -15677,7 +15808,7 @@
         "tools/release_orchestrator.py",
         "tools/vps_patch.py"
       ],
-      "lines": 297,
+      "lines": 307,
       "module": "tools.release_classification",
       "outbound": [
         "tools/__init__.py"
@@ -16260,7 +16391,7 @@
         "tools/release_orchestrator.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 797,
+      "lines": 807,
       "module": "tools.vps_patch",
       "outbound": [
         "proxy/services/update_service.py",
@@ -16279,7 +16410,7 @@
         "tools/release_orchestrator.py",
         "tools/windows_release_acceptance.py"
       ],
-      "lines": 978,
+      "lines": 988,
       "module": "tools.vps_patch_apply",
       "outbound": [
         "tools/__init__.py",
@@ -18414,12 +18545,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 348,
+    "product_reachable": 350,
     "registered_api_routes": 332,
     "runtime_support": 11,
-    "test_or_tool_only": 623,
-    "tracked_python_files": 983,
-    "tracked_python_lines": 310621
+    "test_or_tool_only": 629,
+    "tracked_python_files": 991,
+    "tracked_python_lines": 311913
   },
   "warnings": []
 }

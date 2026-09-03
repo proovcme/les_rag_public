@@ -40,8 +40,18 @@ DELETE_ALLOWED_ROOTS = ALLOWED_ROOTS
 DELETE_BRIDGE_HELPER = "tools/vps_patch_apply.py"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 ALLOWED_FILES = {
+    "env.example",
     "sovushka_ng.py",
     "proxy_server.py",
+    "installers/windows/runtime-entrypoints.json",
+    "tools/activate_smeta_rag_generation.py",
+    "tools/build_smeta_norm_rag.py",
+    "tools/build_smeta_structured_base.py",
+    "tools/gesn_update_from_fgis.py",
+    "tools/install_les.py",
+    "tools/rebuild_active_smeta_rag.py",
+    "tools/smeta_generation_coordinator.py",
+    "tools/smeta_generation_lease.py",
     "tools/vps_patch.py",
     "tools/vps_patch_apply.py",
     "tools/smeta_release_baseline.py",
@@ -152,7 +162,7 @@ def safe_relative_path(value: str) -> PurePosixPath:
         raise RuntimeError(f"denied update path: {value}")
     if not (normalized in ALLOWED_FILES or normalized.startswith(ALLOWED_ROOTS)):
         raise RuntimeError(f"path is outside update allowlist: {value}")
-    if Path(normalized).suffix.lower() not in ALLOWED_SUFFIXES:
+    if normalized != "env.example" and Path(normalized).suffix.lower() not in ALLOWED_SUFFIXES:
         raise RuntimeError(f"unsupported update file type: {value}")
     return rel
 

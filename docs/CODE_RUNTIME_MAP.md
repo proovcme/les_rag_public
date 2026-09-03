@@ -19,11 +19,11 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 983 |
-| Строк Python | 310621 |
-| PRODUCT_REACHABLE | 348 |
+| Python-файлов под git | 991 |
+| Строк Python | 311913 |
+| PRODUCT_REACHABLE | 350 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 623 |
+| TEST_OR_TOOL_ONLY | 629 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 332 |
 | Ошибок разбора | 0 |
@@ -34,7 +34,7 @@
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 4977 | 5 |
-| backend/qdrant_adapter.py | 4552 | 28 |
+| backend/qdrant_adapter.py | 4552 | 29 |
 | proxy/routers/chat.py | 4226 | 40 |
 | proxy/services/chat_evidence_application_service.py | 4224 | 7 |
 | sovushka/uikit/tokens.py | 4205 | 2 |
@@ -49,7 +49,7 @@
 | proxy/smeta_core/norm_browser.py | 1659 | 13 |
 | proxy/services/project_pdf_table_service.py | 1653 | 4 |
 | proxy/smeta_core/rim_session.py | 1645 | 6 |
-| sovushka/pages/diag.py | 1602 | 2 |
+| sovushka/pages/diag.py | 1602 | 3 |
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
@@ -61,7 +61,7 @@
 | backend/document_router.py | 1124 | 6 |
 | proxy/routers/rim.py | 1122 | 2 |
 | tools/build_rag_contract_sibling.py | 1114 | 4 |
-| proxy/services/update_service.py | 1072 | 8 |
+| proxy/services/update_service.py | 1082 | 8 |
 
 ## Сметный монолит: фактические потребители
 

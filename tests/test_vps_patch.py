@@ -257,6 +257,27 @@ def test_patch_allowlists_accept_installed_workbook_acceptance_tool():
     assert path in update_service.VPS_PATCH_ALLOWED_FILES
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "env.example",
+        "installers/windows/runtime-entrypoints.json",
+        "tools/activate_smeta_rag_generation.py",
+        "tools/build_smeta_norm_rag.py",
+        "tools/build_smeta_structured_base.py",
+        "tools/gesn_update_from_fgis.py",
+        "tools/install_les.py",
+        "tools/rebuild_active_smeta_rag.py",
+        "tools/smeta_generation_coordinator.py",
+        "tools/smeta_generation_lease.py",
+    ],
+)
+def test_patch_allowlists_accept_declared_runtime_support_files(path):
+    assert vps_patch.normalize_path(path) == path
+    assert vps_patch_apply.safe_relative_path(path).as_posix() == path
+    assert path in update_service.VPS_PATCH_ALLOWED_FILES
+
+
 def test_patch_allowlists_are_synchronized_across_build_and_apply():
     assert release_classification.PATCH_ALLOWED_FILES <= vps_patch.ALLOWED_FILES
     assert vps_patch.ALLOWED_FILES == vps_patch_apply.ALLOWED_FILES
