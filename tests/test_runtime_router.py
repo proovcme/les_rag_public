@@ -272,6 +272,21 @@ async def test_chat_admission_counts_active_dispatcher_reindex(runtime_state, mo
 
 
 @pytest.mark.asyncio
+async def test_runtime_status_does_not_reject_the_request_holding_the_model_slot(runtime_state):
+    state = runtime.get_runtime_state()
+    for _ in range(state.llm_concurrency):
+        await state.llm_semaphore.acquire()
+    try:
+        admission = runtime.chat_admission_for_state(state)
+    finally:
+        for _ in range(state.llm_concurrency):
+            state.llm_semaphore.release()
+
+    assert admission.allowed is True
+    assert "llm_generation_slots=0" not in admission.failures
+
+
+@pytest.mark.asyncio
 async def test_dispatcher_status_endpoint_uses_dispatcher(runtime_state, monkeypatch):
     class FakeDispatcher:
         def status_payload(self):

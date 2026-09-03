@@ -2200,7 +2200,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 972,
+      "lines": 970,
       "module": "proxy.routers.runtime",
       "outbound": [
         "backend/http_client_policy.py",
@@ -12550,7 +12550,7 @@
     },
     {
       "inbound": [],
-      "lines": 364,
+      "lines": 379,
       "module": "tests.test_runtime_router",
       "outbound": [
         "proxy/routers/runtime.py"
@@ -18550,7 +18550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 629,
     "tracked_python_files": 991,
-    "tracked_python_lines": 311936
+    "tracked_python_lines": 311949
   },
   "warnings": []
 }

@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.50
-номер сборки:              690
-версия Tauri/NSIS:         5.1.690
+версия продукта (SemVer):  0.30.51
+номер сборки:              691
+версия Tauri/NSIS:         5.1.691
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.50 live RAG admission candidate
+dev implementation:       0.30.51 live RAG queue/status candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.50 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.51 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.51 / build 691 live RAG queue/status candidate (не опубликован):**
+> runtime status больше не превращает занятый текущим запросом model semaphore
+> в запрет чата `llm_generation_slots=0`. Единственный владелец допуска —
+> bounded очередь генерации; telemetry во время ответа не помечает тот же ответ
+> как заблокированный. Исправление принято только живым диалогом на установленном
+> Legion.
 
 > **0.30.50 / build 690 live RAG admission candidate (не опубликован):** если
 > telemetry доказывает, что точная настроенная локальная answer-модель уже

@@ -37,7 +37,6 @@ from proxy.services.runtime_admission import (
     count_active_jobs,
     evaluate_chat_admission,
     evaluate_memory_pressure,
-    generation_semaphore,
 )
 from proxy.services.runtime_dispatcher import DEFAULT_DATASETS, DispatcherError, RuntimeDispatcher
 from proxy.services.version_service import version_info
@@ -152,7 +151,6 @@ def chat_admission_for_state(state: RuntimeRouterState):
         current_mode=state.current_mode,
         metrics_cache=state.metrics_cache,
         active_jobs=count_active_jobs(state.job_service, state.job_tracker) + active_reindex_jobs,
-        llm_available=getattr(generation_semaphore(state.llm_semaphore), "_value", 1) > 0,
     )
 
 
