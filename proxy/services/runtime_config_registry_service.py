@@ -65,8 +65,9 @@ _FACTOR_PRESENTATION = {
     "LES_CHAT_RESIDENT_MIN_FREE_GB": {
         "label": "Минимум свободной ОЗУ при загруженной модели, ГБ",
         "help_text": (
-            "Жёсткий порог для следующего запроса, когда точная локальная модель "
-            "ответов уже находится в памяти. Не отменяет защиту от swap."
+            "Необязательный дополнительный порог для следующего запроса, когда "
+            "точная локальная модель ответов уже находится в памяти. Ноль не "
+            "отменяет независимую защиту от swap."
         ),
         "category": "reliability",
     },
@@ -99,7 +100,7 @@ _EXPLICIT_FACTOR_DEFAULTS = {
     "LES_SEARXNG_URL": "",
     "LES_CRAWL4AI_URL": "",
     "LES_CRAWL4AI_TOKEN": "",
-    "LES_CHAT_RESIDENT_MIN_FREE_GB": "2.0",
+    "LES_CHAT_RESIDENT_MIN_FREE_GB": "0.0",
 }
 _ROOT = Path(__file__).resolve().parents[2]
 _KEY_RE = re.compile(r"^[A-Z][A-Z0-9_]{1,127}$")

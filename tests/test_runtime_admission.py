@@ -181,6 +181,26 @@ def test_chat_admission_uses_lower_hard_floor_for_exact_resident_ollama_model(mo
     assert result.indexing_chat_policy["hard_min_free_gb"] == 2.0
 
 
+def test_chat_admission_does_not_self_block_exact_resident_model_by_default(monkeypatch):
+    monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
+    monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")
+    monkeypatch.delenv("LES_CHAT_RESIDENT_MIN_FREE_GB", raising=False)
+    result = evaluate_chat_admission(
+        current_mode={"mode": "chat"},
+        metrics_cache={
+            "ram_free_gb": 0.6,
+            "swap_used_gb": 0.0,
+            "swap_pct": 0.0,
+            "llm_loaded_models": ["qwen3.5:9b"],
+        },
+        active_jobs=0,
+    )
+
+    assert result.allowed is True
+    assert result.indexing_chat_policy["model_resident"] is True
+    assert result.indexing_chat_policy["hard_min_free_gb"] == 0.0
+
+
 def test_chat_admission_does_not_treat_embedding_model_as_resident_answer_model(monkeypatch):
     monkeypatch.setenv("LES_LLM_PROVIDER", "ollama")
     monkeypatch.setenv("OLLAMA_MODEL", "qwen3.5:9b")

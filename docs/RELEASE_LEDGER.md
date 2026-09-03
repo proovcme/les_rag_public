@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.49
-номер сборки:              689
-версия Tauri/NSIS:         5.1.689
+версия продукта (SemVer):  0.30.50
+номер сборки:              690
+версия Tauri/NSIS:         5.1.690
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.49 transactional soft-update/live acceptance candidate
+dev implementation:       0.30.50 live RAG admission candidate
 задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.49 только после отдельной installed/live acceptance
+следующий выпуск:          0.30.50 только после отдельной installed/live acceptance
 рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
 ```
+
+> **0.30.50 / build 690 live RAG admission candidate (не опубликован):** если
+> telemetry доказывает, что точная настроенная локальная answer-модель уже
+> резидентна, default RAM loading-floor больше не запрещает запрос после
+> собственного warmup. Защита от swap и явный настраиваемый оператором
+> resident floor остаются независимыми. Исправление принято только после
+> живого диалогового RAG на установленном Legion.
 
 > **0.30.49 / build 689 transactional soft-update candidate (не опубликован):**
 > синхронизированы три fail-closed allowlist слоя classifier → builder →

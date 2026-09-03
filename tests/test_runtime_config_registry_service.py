@@ -127,7 +127,7 @@ def test_assigned_model_timeout_is_named_and_restart_bound(monkeypatch):
         ("LES_RAG_PAYLOAD_INDEX_ENSURE", "true"),
         ("LES_STARTUP_MODEL_WARMUP", "true"),
         ("LES_STARTUP_BACKGROUND_MUTATIONS", "true"),
-        ("LES_CHAT_RESIDENT_MIN_FREE_GB", "2.0"),
+        ("LES_CHAT_RESIDENT_MIN_FREE_GB", "0.0"),
     ],
 )
 def test_startup_actions_are_named_and_restart_bound(monkeypatch, key, default):

@@ -53,11 +53,13 @@ def chat_min_free_gb() -> float:
 
 
 def chat_resident_min_free_gb() -> float:
-    """Hard RAM floor after the exact local answer model is already resident."""
-    return max(
-        memory_critical_min_free_gb(),
-        _env_float("LES_CHAT_RESIDENT_MIN_FREE_GB", 2.0),
-    )
+    """Optional RAM floor after the exact local answer model is already resident.
+
+    Loading capacity is no longer relevant once the configured model is proven
+    resident.  Swap pressure remains independently guarded; operators may still
+    set a non-zero floor for unusually constrained machines.
+    """
+    return max(0.0, _env_float("LES_CHAT_RESIDENT_MIN_FREE_GB", 0.0))
 
 
 def chat_max_swap_pct() -> float:
