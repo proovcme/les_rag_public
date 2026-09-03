@@ -951,14 +951,19 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         heading = stripped.strip("*_`# ")
         heading_parts = heading.split()
         explicit_heading_row: int | None = None
+        heading_row_token = (
+            heading_parts[1].rstrip(":") if len(heading_parts) >= 2 else ""
+        )
         is_block_heading = (
             len(heading_parts) >= 2
             and heading_parts[0].casefold() == "строка"
-            and heading_parts[1].isdigit()
+            and heading_row_token.isdigit()
         )
         if is_block_heading and len(heading_parts) > 2:
             heading_suffix = " ".join(heading_parts[2:]).strip()
-            if heading_suffix.startswith("(") and heading_suffix.endswith(")"):
+            if heading_parts[1].endswith(":"):
+                pass
+            elif heading_suffix.startswith("(") and heading_suffix.endswith(")"):
                 identity_label, identity_delimiter, identity_value = heading_suffix[
                     1:-1
                 ].partition("=")
@@ -997,6 +1002,10 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 continue
             current_block[key] = parsed_source_row
         elif key in {"quantity", "coefficient"}:
+            if clean.casefold() in {
+                "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
+            }:
+                continue
             parsed_number = number(clean)
             if parsed_number is None and key == "coefficient":
                 first_token = clean.split(maxsplit=1)[0].rstrip(".,;")

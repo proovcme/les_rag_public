@@ -7,17 +7,25 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.57
-номер сборки:              697
-версия Tauri/NSIS:         5.1.697
+версия продукта (SemVer):  0.30.58
+номер сборки:              698
+версия Tauri/NSIS:         5.1.698
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.57 long-running SSE candidate
-задеплоено на рантайм:     Legion 0.30.56 / build 696 / commit 4984436a; LIVE RAG + WEB ACCEPTED
+dev implementation:       0.30.58 liberal model-result reader candidate
+задеплоено на рантайм:     Legion 0.30.57 / build 697 / commit e3d09603; LIVE SSE ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.56 / build 696 / desktop 5.1.696 / commit 4984436a; accepted
+рантайм /api/version:      Legion 0.30.57 / build 697 / desktop 5.1.697 / commit e3d09603; accepted
 ```
+
+> **0.30.58 / build 698 liberal model-result reader candidate (не
+> опубликован):** живой 74-позиционный прогон доказал, что Qwen может вернуть
+> явные подписанные поля в естественных блоках `Строка N: название`, тогда как
+> reader принимал только искусственный заголовок без названия. Reader теперь
+> либерально читает такой блок и явное отсутствие количества, сохраняя каждое
+> значение модели. Неполный или неоднозначный ответ по-прежнему не пакуется.
+> Live XLSX acceptance обязателен.
 
 > **0.30.57 / build 697 long-running SSE candidate (не опубликован):** живой
 > пятистрочный XLSX-прогон на 0.30.56 дошёл до 36 RAG-карточек, но UI закрыл
@@ -25,7 +33,9 @@ dev implementation:       0.30.57 long-running SSE candidate
 > собственного read deadline после начала серверной работы. Connect/write/pool,
 > серверные model/tool timeouts и явная остановка пользователем сохраняются.
 > Нет повторного model turn, скрытого retry или изменения ответа. Live XLSX
-> acceptance обязателен до признания исправления готовым.
+> acceptance обязателен до признания полного workbook-контура готовым. На
+> установленном 0.30.57 тот же запрос оставался подключённым 9м 21с и дошёл до
+> штатного финала; прежний клиентский обрыв на 300-й секунде устранён.
 
 > **0.30.56 / build 696 per-answer citation anchors (LIVE ACCEPTED, не
 > опубликован):** локальный адрес источника включает `history_id` ответа.

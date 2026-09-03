@@ -466,6 +466,60 @@ def test_model_rag_result_reads_explicit_multiline_labelled_blocks():
     )
 
 
+def test_model_rag_result_reads_titled_blocks_and_keeps_explicit_missing_quantity():
+    """Regression: a natural model heading must not hide its explicit row fields."""
+
+    answer = """### Строка 984: Шкаф Hyperline (2 шт.)
+* **source_row:** 984
+* **section:** Оборудование
+* **title:** Шкаф напольный 19-дюймовый
+* **unit:** шт.
+* **quantity:** 2
+* **norm_code:** ГЭСНм10-01-055-01 (выбор Qwen)
+* **analogue:** Шкаф металлический
+* **coverage:** Монтаж шкафа
+* **evidence_refs:** Q1.H3, Q4.H2
+
+### Строка 1024: Кабельнесущая продукция
+* **source_row:** 1024
+* **section:** Подзаголовок
+* **title:** Кабельнесущая продукция
+* **unit:** —
+* **quantity:** —
+* **norm_code:** —
+* **analogue:** —
+* **coverage:** Группировка материалов
+* **evidence_refs:** Q3.H1
+"""
+
+    assert service.parse_model_rag_result(answer) == (
+        answer,
+        [
+            {
+                "source_row": 984,
+                "section": "Оборудование",
+                "title": "Шкаф напольный 19-дюймовый",
+                "unit": "шт.",
+                "quantity": 2,
+                "norm_code": "ГЭСНм10-01-055-01 (выбор Qwen)",
+                "analogue": "Шкаф металлический",
+                "coverage": "Монтаж шкафа",
+                "evidence_refs": ["Q1.H3", "Q4.H2"],
+            },
+            {
+                "source_row": 1024,
+                "section": "Подзаголовок",
+                "title": "Кабельнесущая продукция",
+                "unit": "—",
+                "norm_code": "—",
+                "analogue": "—",
+                "coverage": "Группировка материалов",
+                "evidence_refs": ["Q3.H1"],
+            },
+        ],
+    )
+
+
 def test_model_rag_result_reads_source_row_explicit_in_block_heading():
     answer = """### Строка 1 (source_row=1)
 * **section:** Демонтаж
