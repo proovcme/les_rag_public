@@ -8076,7 +8076,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 4977,
+      "lines": 5008,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -13143,7 +13143,7 @@
     },
     {
       "inbound": [],
-      "lines": 1098,
+      "lines": 1103,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -18550,7 +18550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 629,
     "tracked_python_files": 991,
-    "tracked_python_lines": 311949
+    "tracked_python_lines": 311985
   },
   "warnings": []
 }

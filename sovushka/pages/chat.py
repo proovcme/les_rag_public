@@ -2474,7 +2474,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         meta: dict | None = None,
         answer: str = "",
     ):
-        from sovushka.answer_render import citation_drawer_item, citation_sources, source_chip
+        from sovushka.answer_render import (
+            citation_drawer_item,
+            citation_sources,
+            source_chip,
+            source_usage,
+        )
         effective_sources = citation_sources(
             srcs,
             (meta or {}).get("source_map") if isinstance(meta, dict) else None,
@@ -2483,6 +2488,26 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return
 
         if effective_sources:
+            cited_sources = [
+                (i, source)
+                for i, source in enumerate(effective_sources, 1)
+                if source_usage(source, i, answer).get("code") == "used"
+            ]
+            if cited_sources:
+                ui.label("Цитаты в ответе").classes("sov-ui-section-detail")
+                with ui.row().classes("gap-1 flex-wrap sov-cited-source-links"):
+                    for i, source in cited_sources:
+                        c = source_chip(source, i)
+                        label = f"Источник {i}"
+                        if c["file"]:
+                            label += f" · {c['file']}"
+                        ui.button(
+                            label,
+                            icon="o_format_quote",
+                            on_click=lambda s=source, n=i: _show_source_drawer(s, n),
+                        ).props(f"flat dense no-caps id=source-{i}").classes(
+                            "sov-source-primary sov-ui-source-chip"
+                        ).tooltip("Показать цитату, путь и оригинал")
             with ui.expansion(
                 f"Источники · {len(effective_sources)}",
                 icon="o_library_books",
@@ -2493,7 +2518,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         c = source_chip(source, i)
                         item = citation_drawer_item(source, i)
                         lbl = f"{i}. {c['file'] or _source_label(source)}"
-                        with ui.row().props(f"id=source-{i}").classes("sov-source-row sov-ui-evidence-card"):
+                        with ui.row().props(f"id=source-list-{i}").classes("sov-source-row sov-ui-evidence-card"):
                             if item.get("open_url"):
                                 with ui.link(
                                     target=str(item["open_url"]),
@@ -3210,7 +3235,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             with ui.expansion("Диаграмма (код Mermaid)", icon="account_tree").props("dense").classes("w-full"):
                 ui.markdown(f"```mermaid\n{code}\n```").classes("sov-chat-message-text")
 
-    def _render_rich_body(text: str) -> bool:
+    def _render_rich_body(text: str, srcs: list | None = None, meta: dict | None = None) -> bool:
         """Отрисовать тело ответа богато (таблицы/mermaid внутри прозы). True — если
         нарисован хоть один не-текстовый сегмент (тогда сырой ui.label не нужен)."""
         ans = str(text or "")
@@ -3220,6 +3245,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             return False
         if not any(seg["kind"] != "text" for seg in segments):
             return False
+        linked_answer = _link_visible_sources(ans, srcs or [], meta)
+        if any(seg["kind"] == "table" for seg in segments) and linked_answer != _format_sources_as_quotes(ans):
+            ui.markdown(linked_answer).classes("sov-chat-message-text sov-chat-md")
+            return True
         with ui.column().classes("sov-chat-rich w-full gap-2"):
             for seg in segments:
                 if seg["kind"] == "table":
@@ -3227,7 +3256,9 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 elif seg["kind"] == "mermaid":
                     _render_inline_mermaid(seg["code"])
                 else:
-                    ui.markdown(_format_sources_as_quotes(seg["text"])).classes("sov-chat-message-text sov-chat-md")
+                    ui.markdown(_link_visible_sources(seg["text"], srcs or [], meta)).classes(
+                        "sov-chat-message-text sov-chat-md"
+                    )
         return True
 
     # ── ФАЙЛЫ-АРТЕФАКТЫ: готовые документы (смета xlsx, формы) в панели «Файлы» ──
@@ -3679,7 +3710,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             # AI-ответ с таблицей/диаграммой → рисуем формы прямо в пузыре; SVG и прочее,
             # что inline-рендер не ловит, остаётся на «сыром» тексте + кнопке артефакта.
             explicit_artifact = bool(_artifact_from_meta(meta))
-            rich = _render_rich_body(str(text or "")) if (_is_ai and not explicit_artifact) else False
+            rich = _render_rich_body(str(text or ""), srcs or [], meta) if (_is_ai and not explicit_artifact) else False
             if not rich:
                 _disp = _bubble_text(str(text or ""), _mode) if (meta and _is_ai) else str(text or "")
                 if _is_ai:
@@ -3728,7 +3759,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 _render_evidence_header(meta, srcs)     # v0.16: статус-полоска сверху
             # Формы (таблица/mermaid) рисуем виджетами; сырой стрим-label прячем.
             explicit_artifact = bool(_artifact_from_meta(meta))
-            rich = _render_rich_body(str(text or "")) if (meta and not error and not explicit_artifact) else False
+            rich = _render_rich_body(str(text or ""), srcs or [], meta) if (meta and not error and not explicit_artifact) else False
             if rich:
                 label.set_visibility(False)
             else:

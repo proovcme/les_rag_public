@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.52 source navigation candidate:** метки `[Источник N]` в обычном
+> тексте и Markdown-таблицах ведут к компактным кнопкам процитированных
+> документов. Кнопка открывает существующую карточку источника с цитатой,
+> locator, путём и оригиналом. Это только представление уже готового ответа:
+> модельный текст, retrieval и evidence не изменяются. Точки:
+> `sovushka/{answer_render.py,pages/chat.py}`,
+> `tests/{test_answer_render_v16.py,test_sovushka_chat.py}`. Статус док↔код: ✅;
+> candidate не опубликован.
+
 > **0.30.48 model-owned RAG/web/live-workbook candidate:** Qwen-authored query
 > lines are retrieved independently and rendered as balanced `Qx.Hy` groups;
 > only syntactic quote/`search_sources(...)` wrappers are removed, without

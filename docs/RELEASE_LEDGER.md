@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.51
-номер сборки:              691
-версия Tauri/NSIS:         5.1.691
+версия продукта (SemVer):  0.30.52
+номер сборки:              692
+версия Tauri/NSIS:         5.1.692
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.51 live RAG queue/status candidate
-задеплоено на рантайм:     Legion 0.30.42 / build 682 / commit ab5146b2; WORKING BASELINE
+dev implementation:       0.30.52 source navigation candidate
+задеплоено на рантайм:     Legion 0.30.51 / build 691 / commit 280fd4f3; LIVE RAG ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.51 только после отдельной installed/live acceptance
-рантайм /api/version:      Legion 0.30.42 / build 682 / desktop 5.1.682 / commit ab5146b2; accepted
+следующий выпуск:          0.30.52 только после проверки перехода к источнику в установленном ЛЕС
+рантайм /api/version:      Legion 0.30.51 / build 691 / desktop 5.1.691 / commit 280fd4f3; accepted
 ```
+
+> **0.30.52 / build 692 source navigation candidate (не опубликован):**
+> уже выданные моделью метки `[Источник N]` становятся корректными локальными
+> ссылками и ведут к компактной кнопке фактически процитированного документа.
+> Кнопка открывает существующую карточку с найденной цитатой, путём и оригиналом.
+> Markdown-таблицы с такими метками остаются кликабельными; модельный текст,
+> retrieval, нумерация evidence и решение модели не изменяются.
 
 > **0.30.51 / build 691 live RAG queue/status candidate (не опубликован):**
 > runtime status больше не превращает занятый текущим запросом model semaphore

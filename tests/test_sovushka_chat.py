@@ -165,6 +165,11 @@ def test_chat_links_source_markers_to_anchored_drawer_rows_and_shows_three_count
 
     assert "link_source_markers" in source
     assert 'id=source-{i}' in source
+    assert 'id=source-list-{i}' in source
+    assert 'source_usage(source, i, answer)' in source
+    assert 'def _render_rich_body(text: str, srcs: list | None = None, meta: dict | None = None)' in source
+    assert '_link_visible_sources(ans, srcs or [], meta)' in source
+    assert '_render_rich_body(str(text or ""), srcs or [], meta)' in source
     assert "source_count_labels" in source
     assert 'meta.get("source_counts")' in source
 

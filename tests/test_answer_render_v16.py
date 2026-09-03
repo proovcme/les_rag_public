@@ -279,8 +279,8 @@ def test_source_markers_become_links_to_matching_drawer_rows():
         source_count=3,
     )
 
-    assert "[[Источник 2]](#source-2)" in rendered
-    assert "[[Источники 1, 3]](#source-1)" in rendered
+    assert "[Источник 2](#source-2)" in rendered
+    assert "[Источники 1, 3](#source-1)" in rendered
     assert "[Источник 9]" in rendered
 
 

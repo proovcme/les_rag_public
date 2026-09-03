@@ -498,7 +498,7 @@ def link_source_markers(text: str, *, source_count: int) -> str:
         valid = [value for value in indexes if 1 <= value <= limit]
         if not valid:
             return label
-        return f"[{label}](#source-{valid[0]})"
+        return f"{label}(#source-{valid[0]})"
 
     return re.sub(
         r"\[Источники?\s+[0-9,;|\s]+\]",
