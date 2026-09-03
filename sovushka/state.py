@@ -295,7 +295,15 @@ async def api_post_stream(path: str, data: Optional[dict], on_event, base: Optio
         base = PROXY_URL
     got_final = False
     try:
-        async with httpx.AsyncClient(trust_env=trust_env_for_url(base), timeout=300.0) as client:
+        # A chat stream can legitimately stay quiet while the local model resolves
+        # a large evidence packet.  The proxy owns bounded model/tool timeouts and
+        # emits the authoritative final/error event; the UI must not cut that work
+        # off with its own read deadline after progress has already arrived.
+        stream_timeout = httpx.Timeout(connect=10.0, read=None, write=30.0, pool=10.0)
+        async with httpx.AsyncClient(
+            trust_env=trust_env_for_url(base),
+            timeout=stream_timeout,
+        ) as client:
             async with client.stream(
                 "POST", f"{base}{path}", json=_request_payload(path, data), headers=_auth_headers()
             ) as r:

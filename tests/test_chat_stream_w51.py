@@ -313,6 +313,34 @@ async def test_api_post_stream_parses_sse(monkeypatch):
     assert events[-1][1]["crag_status"] == "VERIFIED"
 
 
+@pytest.mark.asyncio
+async def test_api_post_stream_does_not_expire_a_live_long_running_answer(monkeypatch):
+    captured = {}
+    lines = [
+        "event: progress", 'data: {"label": "Собираю смету"}', "",
+        "event: final", 'data: {"answer": "Готово"}', "",
+    ]
+
+    def client_factory(*args, **kwargs):
+        captured["timeout"] = kwargs.get("timeout")
+        return _FakeClient(lines)
+
+    monkeypatch.setattr(sov_state.httpx, "AsyncClient", client_factory)
+
+    got_final = await sov_state.api_post_stream(
+        "/api/chat/stream",
+        {"question": "q"},
+        lambda _event, _payload: None,
+    )
+
+    timeout = captured["timeout"]
+    assert got_final is True
+    assert timeout.connect == 10.0
+    assert timeout.write == 30.0
+    assert timeout.pool == 10.0
+    assert timeout.read is None
+
+
 def test_ui_never_retries_after_progress_started():
     assert sov_state.should_retry_unstreamed_chat(
         got_token=False,

@@ -408,8 +408,11 @@ lightweight GitHub patch feed через 5 секунд после открыт�
 Экран подключений показывает редактируемый `QDRANT_URL` рядом с ролями моделей.
 Экран RAG сначала сообщает состояние основного native RRF, а RAPTOR и ColBERT
 описывает человеческими статусами без circuit/error codes и checkpoint paths.
-Назначенная answer model использует единое 300-секундное окно UI→proxy→transport;
-отсутствие local fallback больше не маскирует первичную ошибку подключения.
+Назначенная answer model использует bounded server-side model/tool timeouts;
+живой SSE после первого progress не обрывается отдельным UI read deadline и
+ждёт authoritative `final`/`error`. Connect/write/pool в UI остаются bounded,
+кнопка явной остановки сохраняется. Отсутствие local fallback больше не
+маскирует первичную ошибку подключения.
 
 Следующий GUI-патч RAG выносит Qdrant URL, answer model, embeddings и fallback
 из «Всех параметров среды», оставляя в advanced fanout/depth/routes,

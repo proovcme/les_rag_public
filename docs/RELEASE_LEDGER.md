@@ -7,17 +7,25 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.56
-номер сборки:              696
-версия Tauri/NSIS:         5.1.696
+версия продукта (SemVer):  0.30.57
+номер сборки:              697
+версия Tauri/NSIS:         5.1.697
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.56 per-answer citation anchors; LIVE ACCEPTED
+dev implementation:       0.30.57 long-running SSE candidate
 задеплоено на рантайм:     Legion 0.30.56 / build 696 / commit 4984436a; LIVE RAG + WEB ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
 рантайм /api/version:      Legion 0.30.56 / build 696 / desktop 5.1.696 / commit 4984436a; accepted
 ```
+
+> **0.30.57 / build 697 long-running SSE candidate (не опубликован):** живой
+> пятистрочный XLSX-прогон на 0.30.56 дошёл до 36 RAG-карточек, но UI закрыл
+> stream до `final`; артефакт не появился. Клиентский SSE больше не имеет
+> собственного read deadline после начала серверной работы. Connect/write/pool,
+> серверные model/tool timeouts и явная остановка пользователем сохраняются.
+> Нет повторного model turn, скрытого retry или изменения ответа. Live XLSX
+> acceptance обязателен до признания исправления готовым.
 
 > **0.30.56 / build 696 per-answer citation anchors (LIVE ACCEPTED, не
 > опубликован):** локальный адрес источника включает `history_id` ответа.

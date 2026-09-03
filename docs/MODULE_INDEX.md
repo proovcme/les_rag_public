@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.57 long-running chat stream candidate:** UI keeps an already active
+> SSE answer open until the proxy emits its authoritative `final` or `error`.
+> Connect/write/pool remain bounded, while the redundant UI read deadline is
+> removed; server-side model/tool limits and explicit user stop remain in
+> force. This does not add a model turn, route, retry, or alter model output.
+> Points: `sovushka/state.py`, `tests/test_chat_stream_w51.py`. Status doc↔code:
+> ✅; live workbook acceptance pending; candidate not published.
+
 > **0.30.56 per-answer citation anchors candidate:** адреса цитат scoped по
 > `history_id`, поэтому одинаковые номера источников в разных репликах не
 > конфликтуют. Точки: `sovushka/{answer_render.py,pages/chat.py}`,
