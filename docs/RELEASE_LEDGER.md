@@ -7,17 +7,24 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.54
-номер сборки:              694
-версия Tauri/NSIS:         5.1.694
+версия продукта (SemVer):  0.30.55
+номер сборки:              695
+версия Tauri/NSIS:         5.1.695
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.54 exact evidence history candidate
-задеплоено на рантайм:     Legion 0.30.53 / build 693 / commit a71df494; LIVE RAG ACCEPTED
+dev implementation:       0.30.55 legacy web evidence recovery candidate
+задеплоено на рантайм:     Legion 0.30.54 / build 694 / commit 497d98bc; UPDATE SMOKE ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.54 после проверки восстановления evidence в установленном ЛЕС
-рантайм /api/version:      Legion 0.30.53 / build 693 / desktop 5.1.693 / commit a71df494; accepted
+следующий выпуск:          0.30.55 после проверки старого web evidence в установленном ЛЕС
+рантайм /api/version:      Legion 0.30.54 / build 694 / desktop 5.1.694 / commit 497d98bc; accepted
 ```
+
+> **0.30.55 / build 695 legacy web evidence recovery candidate (не
+> опубликован):** прежние реплики, созданные до сохранения полного source map,
+> восстанавливают web citations из уже записанных tool results. URL, заголовок
+> и snippet берутся из истории без нового поиска или model turn. Это закрывает
+> живую реплику с `[Источник 1–4]`, где immutable manifest был пуст, потому что
+> evidence пришёл через `web_search`.
 
 > **0.30.54 / build 694 exact evidence history candidate (не опубликован):**
 > история сохраняет полный фактически показанный модели source map вместе с

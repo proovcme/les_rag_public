@@ -154,6 +154,50 @@ async def test_get_chat_history_recovers_pre_fix_source_map_from_evidence_manife
 
 
 @pytest.mark.asyncio
+async def test_get_chat_history_recovers_pre_fix_web_sources_from_tool_trace(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    save_chat_history(
+        question="q4",
+        answer="a4 [Источник 1–2]",
+        sources=["web-one", "web-two"],
+        crag_status="UNVALIDATED",
+        latency_sec=1,
+        tokens=1,
+        session_id="web-trace-session",
+        retrieval_trace={
+            "tool_loop": {
+                "results": [{
+                    "tool": "web_search",
+                    "result": {
+                        "provider": "duckduckgo",
+                        "results": [
+                            {"url": "https://one.example", "title": "One", "snippet": "Excerpt one"},
+                            {"url": "https://two.example", "title": "Two", "snippet": "Excerpt two"},
+                        ],
+                    },
+                    "sources": [
+                        {"url": "https://one.example", "title": "One"},
+                        {"url": "https://two.example", "title": "Two"},
+                    ],
+                }],
+            },
+        },
+    )
+
+    messages = await get_chat_history(session_id="web-trace-session", _user=object())
+
+    restored = messages[-1]["meta"]["source_map"]
+    assert [item["source_ref"] for item in restored] == [
+        "https://one.example",
+        "https://two.example",
+    ]
+    assert [item["snippet"] for item in restored] == ["Excerpt one", "Excerpt two"]
+
+
+@pytest.mark.asyncio
 async def test_get_chat_sessions_summarizes_sessions(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     db_path = tmp_path / "data" / "les_meta_qwen.db"

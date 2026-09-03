@@ -63,7 +63,7 @@ def _history_source_map(retrieval_trace: dict) -> list[dict]:
     manifest = retrieval_trace.get("evidence_manifest")
     visible = manifest.get("model_visible") if isinstance(manifest, dict) else None
     if not isinstance(visible, list):
-        return []
+        visible = []
     restored: list[dict] = []
     for index, raw in enumerate(visible, 1):
         if not isinstance(raw, dict):
@@ -79,7 +79,50 @@ def _history_source_map(retrieval_trace: dict) -> list[dict]:
             "snippet": str(locator.get("excerpt") or ""),
             "locator": locator,
         })
-    return restored
+    if restored:
+        return restored
+
+    tool_loop = retrieval_trace.get("tool_loop")
+    tool_results = tool_loop.get("results") if isinstance(tool_loop, dict) else None
+    if not isinstance(tool_results, list):
+        return []
+    web_by_url: dict[str, dict] = {}
+    for payload in tool_results:
+        if not isinstance(payload, dict) or str(payload.get("tool") or "") not in {"web_search", "web_read"}:
+            continue
+        result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        rows = result.get("results") if isinstance(result.get("results"), list) else []
+        rows_by_url = {
+            str(row.get("url") or ""): row
+            for row in rows
+            if isinstance(row, dict) and str(row.get("url") or "")
+        }
+        for raw_source in payload.get("sources") or []:
+            if not isinstance(raw_source, dict):
+                continue
+            url = str(raw_source.get("url") or result.get("final_url") or "").strip()
+            if not url:
+                continue
+            row = rows_by_url.get(url, {})
+            title = str(raw_source.get("title") or result.get("title") or row.get("title") or "")
+            snippet = str(result.get("text") or row.get("snippet") or "")
+            web_by_url[url] = {
+                "doc_name": title,
+                "source_ref": url,
+                "snippet": snippet,
+                "locator": {
+                    "kind": "web_result",
+                    "url": url,
+                    "title": title,
+                    "provider": str(result.get("provider") or ""),
+                    "excerpt": snippet,
+                },
+            }
+    web_sources = list(web_by_url.values())
+    for index, item in enumerate(web_sources, 1):
+        item["index"] = index
+        item["label"] = f"Источник {index}"
+    return web_sources
 
 
 def _feedback_log_path() -> Path:

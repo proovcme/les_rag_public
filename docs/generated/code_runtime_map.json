@@ -1724,7 +1724,7 @@
         "proxy/app.py",
         "tests/test_chat_history_router.py"
       ],
-      "lines": 383,
+      "lines": 426,
       "module": "proxy.routers.chat_history",
       "outbound": [
         "backend/rag_config.py",
@@ -9136,7 +9136,7 @@
     },
     {
       "inbound": [],
-      "lines": 374,
+      "lines": 418,
       "module": "tests.test_chat_history_router",
       "outbound": [
         "proxy/routers/chat.py",
@@ -18550,7 +18550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 629,
     "tracked_python_files": 991,
-    "tracked_python_lines": 312166
+    "tracked_python_lines": 312253
   },
   "warnings": []
 }

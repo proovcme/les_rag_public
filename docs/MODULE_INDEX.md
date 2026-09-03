@@ -1,5 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.55 legacy web evidence recovery candidate:** история прежних
+> web-реплик восстанавливает URL, заголовки и snippets из сохранённых tool
+> results, когда полный source map ещё не записывался. Повторный поиск и model
+> turn не выполняются. Точки: `proxy/routers/chat_history.py`,
+> `tests/test_chat_history_router.py`. Статус док↔код: ✅; candidate не
+> опубликован.
+
 > **0.30.54 exact evidence history candidate:** полный фактически показанный
 > модели source map и три счётчика сохраняются с репликой. Старые реплики
 > восстанавливают навигацию из immutable evidence manifest. Диапазоны цитат
