@@ -68,7 +68,6 @@ VERSION_SURFACES = {
 }
 
 RELEASE_ONLY_FILES = {
-    "README.md",
     "config/windows_runtime_manifest.json",
     "tools/github_patch_release.py",
     "tools/rag_dataset_story_acceptance.py",
@@ -262,12 +261,19 @@ def classify_release(base: str, target: str, *, root: Path) -> ReleaseClassifica
         if not triggers
         else ()
     )
+    readme_is_package_metadata = bool(
+        manifests[1] is not None
+        and _is_declared_runtime_path("README.md", (manifests[1],))
+        and (manifests[0] is not None or legacy_manifest_introduction)
+    )
 
     for path in _changed_paths(root, base, target):
         parts = PurePosixPath(path).parts
         if parts[:1] in {("docs",), ("tests",), (".github",)}:
             continue
         if path in RELEASE_ONLY_FILES:
+            continue
+        if path == "README.md" and readme_is_package_metadata:
             continue
 
         surface_kind = VERSION_SURFACES.get(path)
