@@ -284,6 +284,18 @@ def test_source_markers_become_links_to_matching_drawer_rows():
     assert "[Источник 9]" in rendered
 
 
+def test_source_marker_ranges_link_and_mark_every_cited_source():
+    rendered = ar.link_source_markers(
+        "См. [Источник 1–4] и [Источники 6-7].",
+        source_count=7,
+    )
+
+    assert "[Источник 1–4](#source-1)" in rendered
+    assert "[Источники 6-7](#source-6)" in rendered
+    assert ar.source_marker_numbers("[Источник 1–4]") == [1, 2, 3, 4]
+    assert ar.source_usage({}, 3, "Вывод [Источник 1–4]")["code"] == "used"
+
+
 def test_source_count_labels_are_not_conflated():
     assert ar.source_count_labels({"found": 64, "model_visible": 6, "cited": 2}) == [
         "Найдено 64",

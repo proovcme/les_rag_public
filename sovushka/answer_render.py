@@ -253,6 +253,27 @@ def normalize_inline_math(text: str) -> str:
     return _INLINE_MATH_RE.sub(_plain, str(text or ""))
 
 
+def source_marker_numbers(text: str) -> list[int]:
+    """Read visible citation numbers, including ordinary model-written ranges."""
+
+    numbers: set[int] = set()
+    for marker in re.findall(
+        r"\[Источники?\s+([0-9,\s;|\-–—]+)\]",
+        str(text or ""),
+        flags=re.IGNORECASE,
+    ):
+        for token in re.finditer(r"(\d+)\s*[\-–—]\s*(\d+)|(\d+)", marker):
+            if token.group(3):
+                numbers.add(int(token.group(3)))
+                continue
+            start, end = int(token.group(1)), int(token.group(2))
+            if start <= end and end - start <= 1000:
+                numbers.update(range(start, end + 1))
+            else:
+                numbers.update((start, end))
+    return sorted(numbers)
+
+
 def source_usage(source: Any, index: int, answer: str = "") -> dict[str, str]:
     """Operator label for a retrieved source without exposing ranking internals."""
     chip = source_chip(source, index)
@@ -263,14 +284,7 @@ def source_usage(source: Any, index: int, answer: str = "") -> dict[str, str]:
             or source.get("usage")
             or ("used" if source.get("used") is True else "")
         ).casefold()
-    cited_numbers: set[int] = set()
-    for marker in re.findall(
-        r"\[Источники?\s+([0-9,\s;|]+)\]",
-        str(answer or ""),
-        flags=re.IGNORECASE,
-    ):
-        cited_numbers.update(int(value) for value in re.findall(r"\d+", marker))
-    marker_used = int(index) in cited_numbers
+    marker_used = int(index) in source_marker_numbers(answer)
     if chip["weak"] or explicit in {"weak", "rejected"}:
         return {"code": "weak", "label": "Слабый", "tone": "warn"}
     if marker_used or explicit in {"used", "cited", "accepted"}:
@@ -494,14 +508,14 @@ def link_source_markers(text: str, *, source_count: int) -> str:
 
     def replace(match: re.Match[str]) -> str:
         label = match.group(0)
-        indexes = [int(value) for value in re.findall(r"\d+", label)]
+        indexes = source_marker_numbers(label)
         valid = [value for value in indexes if 1 <= value <= limit]
         if not valid:
             return label
         return f"{label}(#source-{valid[0]})"
 
     return re.sub(
-        r"\[Источники?\s+[0-9,;|\s]+\]",
+        r"\[Источники?\s+[0-9,;|\s\-–—]+\]",
         replace,
         str(text or ""),
         flags=re.IGNORECASE,

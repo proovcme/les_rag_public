@@ -7887,7 +7887,7 @@
         "tests/test_answer_render_v16.py",
         "tests/test_v020_deploy_stamp_ui.py"
       ],
-      "lines": 610,
+      "lines": 624,
       "module": "sovushka.answer_render",
       "outbound": [
         "sovushka/__init__.py"
@@ -8591,7 +8591,7 @@
     },
     {
       "inbound": [],
-      "lines": 409,
+      "lines": 421,
       "module": "tests.test_answer_render_v16",
       "outbound": [
         "proxy/services/evidence_contract.py",
@@ -18550,7 +18550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 629,
     "tracked_python_files": 991,
-    "tracked_python_lines": 311985
+    "tracked_python_lines": 312011
   },
   "warnings": []
 }

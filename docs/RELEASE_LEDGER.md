@@ -7,17 +7,23 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.52
-номер сборки:              692
-версия Tauri/NSIS:         5.1.692
+версия продукта (SemVer):  0.30.53
+номер сборки:              693
+версия Tauri/NSIS:         5.1.693
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.52 source navigation candidate
-задеплоено на рантайм:     Legion 0.30.51 / build 691 / commit 280fd4f3; LIVE RAG ACCEPTED
+dev implementation:       0.30.53 liberal source-range navigation candidate
+задеплоено на рантайм:     Legion 0.30.52 / build 692 / commit cf08e38a; LIVE RAG ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.52 только после проверки перехода к источнику в установленном ЛЕС
-рантайм /api/version:      Legion 0.30.51 / build 691 / desktop 5.1.691 / commit 280fd4f3; accepted
+следующий выпуск:          0.30.53 после проверки диапазона цитат в установленном ЛЕС
+рантайм /api/version:      Legion 0.30.52 / build 692 / desktop 5.1.692 / commit cf08e38a; accepted
 ```
+
+> **0.30.53 / build 693 liberal source-range navigation candidate (не
+> опубликован):** живой follow-up Qwen выдал обычную метку
+> `[Источник 1–4]`. Представление теперь понимает дефис, короткое и длинное
+> тире, связывает диапазон с первой цитатой и показывает кнопки всех реально
+> указанных источников. Ответ модели остаётся байт-в-байт тем же.
 
 > **0.30.52 / build 692 source navigation candidate (не опубликован):**
 > уже выданные моделью метки `[Источник N]` становятся корректными локальными
