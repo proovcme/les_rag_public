@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.59 local-Qwen result parse candidate:** reader принимает короткий
+> markdown-divider `:--`, заголовок «Норматив монтажа (norm_code)», явные
+> спецификационные таблицы без `norm_code` и секционные `###` кроме `Строка N`.
+> Значения ячеек не переписываются; вопрос не выбирает ЛСР/ВОР. Длинный SSE
+> держит соединение `ping` каждые 15 с, а история сразу показывает PENDING-stub
+> и `in_progress`. Точки: `proxy/services/chat_evidence_application_service.py`,
+> `proxy/routers/{chat,chat_history}.py`, `sovushka/pages/{chat,history}.py`,
+> `tests/{test_chat_evidence_application_service,test_chat_history_router,test_chat_stream_w51,test_sovushka_chat}.py`.
+> Статус док↔код: ✅; candidate not published.
+
 > **0.30.58 liberal model-result reader candidate:** модельный ответ остаётся
 > неизменным, а локальный упаковочный reader принимает обычный явный блок
 > `Строка N: название` и явное отсутствие количества. Значения `source_row`,

@@ -7,17 +7,26 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.58
-номер сборки:              698
-версия Tauri/NSIS:         5.1.698
-ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.58 liberal model-result reader; LIVE XLSX ACCEPTED
+версия продукта (SemVer):  0.30.59
+номер сборки:              699
+версия Tauri/NSIS:         5.1.699
+ветка разработки:          fix/local-qwen-result-parse
+dev implementation:       0.30.59 local-Qwen markdown/history/ping; not deployed
 задеплоено на рантайм:     Legion 0.30.58 / build 698 / commit 4c928375; LIVE XLSX ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
 рантайм /api/version:      Legion 0.30.58 / build 698 / desktop 5.1.698 / commit 4c928375; accepted
 ```
+
+> **0.30.59 / build 699 local-Qwen result parse candidate (не опубликован):**
+> локальный Qwen часто отдаёт markdown с divider `:--`, заголовком
+> «Норматив монтажа (norm_code)» и спецификационной таблицей без колонки нормы.
+> Reader принимает эти явные формы и не меняет значения ячеек. Текст вопроса не
+> выбирает ЛСР/ВОР и не переписывает наименования. Длинный SSE держит
+> соединение серверным `ping` каждые 15 с; история сразу ставит PENDING-stub,
+> сессия видит `in_progress`, а naive SQLite `CURRENT_TIMESTAMP` показывается
+> как UTC. Live XLSX acceptance на этой правке не выполнялся.
 
 > **0.30.58 / build 698 liberal model-result reader (LIVE XLSX ACCEPTED, не
 > опубликован):** живой 74-позиционный прогон доказал, что Qwen может вернуть

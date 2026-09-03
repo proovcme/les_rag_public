@@ -731,7 +731,8 @@ def parse_model_rag_queries(raw: str) -> list[str]:
 def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     """Decode only an unambiguous table; preserve the authored answer and cell values."""
 
-    required_fields = {"title", "unit", "norm_code"}
+    lsr_fields = {"title", "unit", "norm_code"}
+    vor_fields = {"title", "unit", "quantity"}
     header_fields = {
         "source_row": "source_row",
         "№": "source_row",
@@ -743,35 +744,69 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "наименование": "title",
         "наименование работ": "title",
         "наименование работ (из вор)": "title",
+        "наименование и техническая характеристика": "title",
         "unit": "unit",
         "ед. изм.": "unit",
         "ед. изм": "unit",
         "quantity": "quantity",
         "кол-во": "quantity",
+        "кол-во (из источника)": "quantity",
+        "количество": "quantity",
+        "количество (подтверждено)": "quantity",
         "norm_code": "norm_code",
         "norm_code (шифр)": "norm_code",
+        "норматив монтажа (norm_code)": "norm_code",
         "нормативная база (шифр нормы)": "norm_code",
         "нормативная база (norm code)": "norm_code",
         "нормативный код (гэсн/ер)": "norm_code",
         "analogue": "analogue",
         "analogue / coverage": "analogue",
         "аналог/обоснование": "analogue",
+        "аналог/примечание": "analogue",
         "обоснование выбора и аналог": "analogue",
         "coverage": "coverage",
         "coverage (соответствие)": "coverage",
+        "coverage (покрытие)": "coverage",
         "примечание инженера": "coverage",
         "примечание": "coverage_fallback",
         "примечания к составу работ": "coverage",
         "примечания к выбору": "coverage",
+        "источник данных": "source",
+        "чертёж": "chertezh",
+        "чертеж": "chertezh",
+        "ссылка на чертёж": "chertezh",
         "coefficient": "coefficient",
         "coefficient (кэф.)": "coefficient",
         "коэфф.": "coefficient",
         "evidence_refs": "evidence_refs",
     }
 
+    def row_has_required(names: Any) -> bool:
+        present = set(names)
+        return lsr_fields.issubset(present) or vor_fields.issubset(present)
+
     def field_name(value: str) -> str:
         normalized = " ".join(value.replace("**", "").strip().split()).casefold()
-        return header_fields.get(normalized, "")
+        exact = header_fields.get(normalized, "")
+        if exact:
+            return exact
+        if "norm_code" in normalized or normalized.startswith("норматив монтажа"):
+            return "norm_code"
+        if normalized.startswith("наименование"):
+            return "title"
+        if normalized.startswith("ед. изм"):
+            return "unit"
+        if normalized.startswith("кол-во") or normalized.startswith("количество"):
+            return "quantity"
+        if normalized.startswith("источник"):
+            return "source"
+        if normalized.startswith("черт"):
+            return "chertezh"
+        if normalized.startswith("аналог"):
+            return "analogue"
+        if normalized.startswith("coverage"):
+            return "coverage"
+        return ""
 
     def cells(line: str) -> list[str]:
         stripped = line.strip()
@@ -795,7 +830,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             candidate = candidate[1:]
         if candidate.endswith(":"):
             candidate = candidate[:-1]
-        return len(candidate) >= 3 and set(candidate) == {"-"}
+        return len(candidate) >= 2 and set(candidate) == {"-"}
 
     def evidence_refs(value: str) -> list[str]:
         separated = value.replace("<br>", " ").replace("<br/>", " ")
@@ -817,23 +852,43 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
     header_index = 0
     while header_index < len(lines):
         stripped_line = lines[header_index].strip()
-        if stripped_line.startswith("### ") and stripped_line[4:].casefold().startswith(
-            "раздел "
-        ):
-            current_section = stripped_line[4:].strip()
-            header_index += 1
-            continue
+        if stripped_line.startswith("### "):
+            heading_rest = stripped_line[4:].strip()
+            if not heading_rest.casefold().startswith("строка "):
+                current_section = heading_rest
+                header_index += 1
+                continue
         header = cells(lines[header_index])
         mapped_header = [field_name(item) for item in header]
         if "coverage_fallback" in mapped_header:
-            fallback_name = "" if "coverage" in mapped_header else "coverage"
+            fallback_name = "" if "coverage" in mapped_header else (
+                "note" if "norm_code" not in mapped_header else "coverage"
+            )
             mapped_header = [
                 fallback_name if item == "coverage_fallback" else item
                 for item in mapped_header
             ]
+        seen_fields: dict[str, int] = {}
+        for index, name in enumerate(mapped_header):
+            if not name:
+                continue
+            previous = seen_fields.get(name)
+            if previous is None:
+                seen_fields[name] = index
+                continue
+            previous_label = " ".join(header[previous].replace("**", "").strip().split()).casefold()
+            current_label = " ".join(header[index].replace("**", "").strip().split()).casefold()
+            keep_current = name == "source_row" and (
+                current_label.startswith("№") and not previous_label.startswith("№")
+            )
+            if keep_current:
+                mapped_header[previous] = ""
+                seen_fields[name] = index
+            else:
+                mapped_header[index] = ""
         if (
             not header
-            or not required_fields.issubset(set(mapped_header))
+            or not row_has_required(mapped_header)
             or len([item for item in mapped_header if item])
             != len(set(item for item in mapped_header if item))
         ):
@@ -873,9 +928,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     continue
                 if name == "source_row":
                     parsed_source_row = number(value)
-                    if not isinstance(parsed_source_row, int):
-                        return None
-                    row[name] = parsed_source_row
+                    if isinstance(parsed_source_row, int):
+                        row[name] = parsed_source_row
+                    continue
                 elif name in {"quantity", "coefficient"}:
                     numeric_value = value.strip()
                     if numeric_value.casefold() in {
@@ -910,6 +965,12 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             if embedded_refs and not row.get("evidence_refs"):
                 row["evidence_refs"] = embedded_refs
             if row:
+                source_text = str(row.pop("source", "") or "").strip()
+                note_text = str(row.get("note") or "").strip()
+                if source_text and note_text:
+                    row["note"] = f"{source_text}; {note_text}"
+                elif source_text:
+                    row["note"] = source_text
                 if table_section and not row.get("section"):
                     row["section"] = table_section
                 table_rows.append(row)
@@ -925,10 +986,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "unit": "unit",
         "quantity": "quantity",
         "norm_code": "norm_code",
+        "normcode": "norm_code",
         "analogue": "analogue",
         "coverage": "coverage",
         "coefficient": "coefficient",
         "evidence_refs": "evidence_refs",
+        "чертёж": "chertezh",
+        "чертеж": "chertezh",
     }
     block_rows: list[dict[str, Any]] = []
     current_block: dict[str, Any] | None = None
@@ -938,7 +1002,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         nonlocal current_block, invalid_block
         if current_block is None:
             return
-        if not required_fields.issubset(current_block) or not isinstance(
+        if not row_has_required(current_block) or not isinstance(
             current_block.get("source_row"), int
         ):
             invalid_block = True
@@ -979,11 +1043,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 is_block_heading = False
         if is_block_heading:
             flush_block()
-            current_block = (
-                {"source_row": explicit_heading_row}
-                if explicit_heading_row is not None
-                else {}
-            )
+            current_block = {"source_row": int(heading_row_token)}
+            if explicit_heading_row is not None:
+                current_block["source_row"] = explicit_heading_row
             continue
         if current_block is None:
             continue
@@ -997,10 +1059,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             continue
         if key == "source_row":
             parsed_source_row = number(clean)
-            if not isinstance(parsed_source_row, int):
-                invalid_block = True
-                continue
-            current_block[key] = parsed_source_row
+            if isinstance(parsed_source_row, int):
+                current_block[key] = parsed_source_row
+            continue
         elif key in {"quantity", "coefficient"}:
             if clean.casefold() in {
                 "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
@@ -1035,6 +1096,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "quantity": "quantity",
         "norm_code": "norm_code",
         "шифр нормы": "norm_code",
+        "чертёж": "chertezh",
+        "чертеж": "chertezh",
         "аналог": "analogue",
         "обоснование": "coverage",
         "coverage": "coverage",
@@ -1087,7 +1150,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     row[key] = refs
             else:
                 row[key] = clean
-        if not required_fields.issubset(row):
+        if not row_has_required(row):
             return None
         labelled_rows.append(row)
     if labelled_rows:

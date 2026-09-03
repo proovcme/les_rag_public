@@ -152,6 +152,7 @@ router = APIRouter(prefix="/api", tags=["chat"])
 DEFAULT_OPENAI_MODEL = "gpt-5.4"
 _REQUEST_LLM_RUNTIME: ContextVar[Any | None] = ContextVar("request_llm_runtime", default=None)
 _REQUEST_CLOUD_CONSENT: ContextVar[bool | None] = ContextVar("request_cloud_consent", default=None)
+_ACTIVE_HISTORY_ID: ContextVar[int | None] = ContextVar("les_active_history_id", default=None)
 _XLSX_MEDIA = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -1469,6 +1470,19 @@ def _source_lookup_answer(question: str, chunks: list[Any], *, max_sources: int 
     return "\n".join(lines)
 
 
+def begin_chat_history(*, question: str, session_id: str | None) -> int:
+    """Insert a visible PENDING row so a long VOR/LSR run appears in history immediately."""
+    with sqlite3.connect(rag_meta_db_path()) as conn:
+        ensure_chat_history_schema(conn)
+        cur = conn.execute(
+            "INSERT INTO chat_history "
+            "(question, answer, sources, crag_status, latency_sec, tokens, session_id, success) "
+            "VALUES (?, '', '', 'PENDING', 0, 0, ?, 0)",
+            (question, session_id),
+        )
+        return int(cur.lastrowid)
+
+
 def save_chat_history(
     *,
     question: str,
@@ -1490,6 +1504,7 @@ def save_chat_history(
     cache_type: str = "",
     validation_enabled: bool = True,
     success: int | None = None,
+    history_id: int | None = None,
 ) -> int:
     resolved_set = set(resolved_dataset_ids or [])
     source_set = set(source_dataset_ids or [])
@@ -1501,45 +1516,63 @@ def save_chat_history(
         quality = str(trace["quality"].get("status") or "")
     quality = quality or str(trace.get("quality_status") or "")
     success_value = _history_success(crag_status, answer) if success is None else int(bool(success))
+    target_id = history_id if history_id is not None else _ACTIVE_HISTORY_ID.get()
+    values = (
+        question,
+        answer,
+        ",".join(sources),
+        crag_status,
+        latency_sec,
+        tokens,
+        session_id,
+        str(route.get("channel") or ""),
+        str(route.get("reason") or ""),
+        requested_dataset_filter or "",
+        effective_dataset_filter or "",
+        _json_text(resolved_dataset_ids or []),
+        _json_text(resolved_dataset_names or []),
+        _json_text(source_dataset_ids or []),
+        _json_text(source_dataset_names or []),
+        source_dataset_mismatch,
+        _json_text(route),
+        _json_text(trace),
+        _json_text(artifact or {}),
+        quality,
+        cache_type,
+        int(bool(validation_enabled)),
+        success_value,
+    )
     with sqlite3.connect(rag_meta_db_path()) as conn:
         ensure_chat_history_schema(conn)
-        cur = conn.execute(
-            "INSERT INTO chat_history "
-            "("
-            "question, answer, sources, crag_status, latency_sec, tokens, session_id, "
-            "route_channel, route_reason, requested_dataset_filter, effective_dataset_filter, "
-            "resolved_dataset_ids, resolved_dataset_names, source_dataset_ids, source_dataset_names, "
-            "source_dataset_mismatch, query_route_json, retrieval_trace_json, artifact_json, retrieval_quality, "
-            "cache_type, validation_enabled, success"
-            ") "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                question,
-                answer,
-                ",".join(sources),
-                crag_status,
-                latency_sec,
-                tokens,
-                session_id,
-                str(route.get("channel") or ""),
-                str(route.get("reason") or ""),
-                requested_dataset_filter or "",
-                effective_dataset_filter or "",
-                _json_text(resolved_dataset_ids or []),
-                _json_text(resolved_dataset_names or []),
-                _json_text(source_dataset_ids or []),
-                _json_text(source_dataset_names or []),
-                source_dataset_mismatch,
-                _json_text(route),
-                _json_text(trace),
-                _json_text(artifact or {}),
-                quality,
-                cache_type,
-                int(bool(validation_enabled)),
-                success_value,
-            ),
-        )
-        history_id = int(cur.lastrowid)
+        if target_id:
+            cur = conn.execute(
+                "UPDATE chat_history SET "
+                "question=?, answer=?, sources=?, crag_status=?, latency_sec=?, tokens=?, session_id=?, "
+                "route_channel=?, route_reason=?, requested_dataset_filter=?, effective_dataset_filter=?, "
+                "resolved_dataset_ids=?, resolved_dataset_names=?, source_dataset_ids=?, source_dataset_names=?, "
+                "source_dataset_mismatch=?, query_route_json=?, retrieval_trace_json=?, artifact_json=?, "
+                "retrieval_quality=?, cache_type=?, validation_enabled=?, success=? "
+                "WHERE id=?",
+                (*values, int(target_id)),
+            )
+            if cur.rowcount:
+                history_id = int(target_id)
+            else:
+                target_id = None
+        if not target_id:
+            cur = conn.execute(
+                "INSERT INTO chat_history "
+                "("
+                "question, answer, sources, crag_status, latency_sec, tokens, session_id, "
+                "route_channel, route_reason, requested_dataset_filter, effective_dataset_filter, "
+                "resolved_dataset_ids, resolved_dataset_names, source_dataset_ids, source_dataset_names, "
+                "source_dataset_mismatch, query_route_json, retrieval_trace_json, artifact_json, retrieval_quality, "
+                "cache_type, validation_enabled, success"
+                ") "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                values,
+            )
+            history_id = int(cur.lastrowid)
     try:
         update_chat_profile(
             session_id=session_id,
@@ -1694,6 +1727,9 @@ def _clause_lookup_response(
     }
 
 
+CHAT_STREAM_KEEPALIVE_SECONDS = 15.0
+
+
 def _sse_event(event: str, data: Any) -> str:
     """Кадр SSE: `event:` + одно `data:` с JSON-телом. Юникод не эскейпим —
     клиент читает UTF-8."""
@@ -1839,6 +1875,26 @@ def _recoverable_stream_payload(req: ChatRequest, stream_state: dict[str, Any], 
         "cache": "stream_recovered",
         "validation": {"enabled": False, "reason": "stream_recovered_after_partial_answer"},
     }
+
+
+def _complete_pending_history_failure(req: ChatRequest, detail: Any) -> None:
+    if _ACTIVE_HISTORY_ID.get() is None:
+        return
+    try:
+        save_chat_history(
+            question=req.question,
+            answer=str(detail or "Ошибка запроса"),
+            sources=[],
+            crag_status="UNVALIDATED",
+            latency_sec=0.0,
+            tokens=0,
+            session_id=req.session_id,
+            cache_type="stream_error",
+            validation_enabled=False,
+            success=0,
+        )
+    except Exception as error:
+        logger.warning("[CHAT/STREAM] pending history failure save skipped: %s", error)
 
 
 def _persist_recovered_stream_history(
@@ -2013,7 +2069,16 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
         await queue.put(ev)
 
     async def runner() -> None:
+        history_token = None
         try:
+            try:
+                pending_id = begin_chat_history(
+                    question=req.question,
+                    session_id=req.session_id,
+                )
+                history_token = _ACTIVE_HISTORY_ID.set(pending_id)
+            except Exception as err:
+                logger.warning("[CHAT/STREAM] pending history stub failed: %s", err)
             scenario = scenario_for_request(
                 mode=req.mode,
                 question=req.question,
@@ -2044,6 +2109,7 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
+                _complete_pending_history_failure(req, he.detail)
                 public = public_error_payload(status_code=he.status_code, detail=he.detail)
                 await queue.put({"event": "error", "data": {"status": he.status_code, **public}})
         except Exception as e:  # noqa: BLE001 — любую ошибку доносим клиенту как событие
@@ -2053,16 +2119,28 @@ async def chat_stream(req: ChatRequest, _user=Depends(require_user)):
                 recovered = _persist_recovered_stream_history(req, recovered)
                 await queue.put({"event": "final", "data": decorate_payload(recovered)})
             else:
+                _complete_pending_history_failure(req, f"{type(e).__name__}: {e}")
                 public = public_error_payload(status_code=500, detail=str(e))
                 await queue.put({"event": "error", "data": {"status": 500, **public}})
         finally:
+            if history_token is not None:
+                _ACTIVE_HISTORY_ID.reset(history_token)
             await queue.put(None)
 
     async def event_source():
         task = asyncio.create_task(runner())
         try:
             while True:
-                item = await queue.get()
+                try:
+                    item = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=CHAT_STREAM_KEEPALIVE_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    if task.done():
+                        break
+                    yield _sse_event("ping", {"alive": True})
+                    continue
                 if item is None:
                     break
                 yield _sse_event(item["event"], item.get("data", ""))

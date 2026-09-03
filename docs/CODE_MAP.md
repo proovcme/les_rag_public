@@ -1,5 +1,11 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.59 local-Qwen markdown reader:** `parse_model_rag_result` принимает
+> divider из двух дефисов, заголовок монтажа с подсказкой `norm_code` и явные
+> таблицы title/unit/quantity без нормы. Секция может быть любым `###`, кроме
+> заголовка `Строка N`. Ответ и значения ячеек не изменяются; текст вопроса не
+> выбирает ЛСР/ВОР. Stream шлёт `ping` каждые 15 с, history пишет PENDING-stub.
+
 > **0.30.48 model-owned execution boundary:**
 > `chat_evidence_application_service` accepts ordinary Qwen query lines and
 > removes only explicit presentation wrappers; every query is executed and

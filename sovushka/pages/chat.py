@@ -8,7 +8,8 @@ import inspect
 import json
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from datetime import tzinfo as TzInfo
 from pathlib import Path
 from typing import Any, Optional
 
@@ -265,15 +266,20 @@ def artifact_workbook_files(artifact: Any) -> list[dict[str, str]]:
     return files
 
 
-def format_chat_request_clock(requested_at: Any) -> str:
-    """Local date and clock for the user request."""
+def format_chat_request_clock(requested_at: Any, *, tz: TzInfo | None = None) -> str:
+    """Local date and clock for the user request.
 
+    SQLite ``CURRENT_TIMESTAMP`` is naive UTC. Aware ISO values keep their
+    offset. The visible date follows the operator timezone, so a 22:40 UTC
+    turn on 1 September is shown as 02.09 after midnight in UTC+3.
+    """
     if requested_at in (None, ""):
         return ""
+    zone = tz or datetime.now().astimezone().tzinfo
     dt: datetime | None = None
     if isinstance(requested_at, (int, float)):
         try:
-            dt = datetime.fromtimestamp(float(requested_at)).astimezone()
+            dt = datetime.fromtimestamp(float(requested_at), tz=zone)
         except (OverflowError, OSError, ValueError):
             return ""
     else:
@@ -282,9 +288,18 @@ def format_chat_request_clock(requested_at: Any) -> str:
             return ""
         try:
             dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            dt = dt.astimezone()
         except ValueError:
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+                try:
+                    dt = datetime.strptime(raw[:19], fmt)
+                    break
+                except ValueError:
+                    continue
+        if dt is None:
             return ""
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.astimezone(zone)
     return dt.strftime("%d.%m.%Y %H:%M") if dt is not None else ""
 
 
@@ -2312,10 +2327,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         sid = session["session_id"]
         first_q = session.get("first_question") or "Без названия"
         msg_count = session.get("msg_count", 0)
-        started_at = (session.get("started_at") or "")[:16].replace("T", " ")
+        started_at = format_chat_request_clock(
+            session.get("last_at") or session.get("started_at")
+        ) or "Дата не указана"
+        in_progress = bool(session.get("in_progress"))
+        meta = f"{started_at} · {'выполняется' if in_progress else f'{msg_count} сообщ.'}"
         with ui.element("button").classes("sov-session-card") as card:
             _html(f'<span class="sov-session-title">{esc(first_q[:90])}</span>')
-            _html(f'<span class="sov-session-meta">{esc(started_at)} · {msg_count} сообщ.</span>')
+            _html(f'<span class="sov-session-meta">{esc(meta)}</span>')
 
         async def _open(session_id=sid, el=card):
             await _open_session(session_id, el)

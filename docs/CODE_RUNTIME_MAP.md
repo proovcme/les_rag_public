@@ -20,7 +20,7 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 991 |
-| Строк Python | 312413 |
+| Строк Python | 312780 |
 | PRODUCT_REACHABLE | 350 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 629 |
@@ -33,10 +33,10 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| sovushka/pages/chat.py | 5019 | 5 |
+| sovushka/pages/chat.py | 5038 | 6 |
 | backend/qdrant_adapter.py | 4552 | 29 |
-| proxy/services/chat_evidence_application_service.py | 4234 | 7 |
-| proxy/routers/chat.py | 4226 | 40 |
+| proxy/routers/chat.py | 4304 | 40 |
+| proxy/services/chat_evidence_application_service.py | 4297 | 7 |
 | sovushka/uikit/tokens.py | 4205 | 2 |
 | sovushka/pages/documents.py | 3927 | 3 |
 | proxy/routers/datasets.py | 3776 | 16 |

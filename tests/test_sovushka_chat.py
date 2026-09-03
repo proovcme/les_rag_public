@@ -1,5 +1,5 @@
 import inspect
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -54,6 +54,18 @@ def test_chat_timing_uses_backend_wall_clock_and_generation():
         elapsed_sec=50,
         latency_phases={"wall_total": 42.2, "generation": 28.0},
     ).endswith("ответ 42с · модель 28с")
+
+
+def test_chat_bubble_clock_always_includes_date():
+    moscow = timezone(timedelta(hours=3))
+    clock = format_chat_request_clock("2026-08-02T21:09:11+03:00", tz=moscow)
+    assert clock == "02.08.2026 21:09"
+
+
+def test_history_clock_converts_sqlite_utc_to_local_calendar():
+    moscow = timezone(timedelta(hours=3))
+    assert format_chat_request_clock("2026-09-01 22:40:37", tz=moscow) == "02.09.2026 01:40"
+    assert format_chat_request_clock("2026-09-01T22:09:13", tz=moscow) == "02.09.2026 01:09"
 
 
 def test_workbook_chat_filename_never_exposes_path_or_generic_artifact():

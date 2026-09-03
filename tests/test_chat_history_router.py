@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from proxy.routers.chat import save_chat_history
+from proxy.routers.chat import begin_chat_history, save_chat_history
 from proxy.routers.chat_history import (
     ChatFeedbackRequest,
     get_chat_history,
@@ -210,6 +210,79 @@ async def test_get_chat_sessions_summarizes_sessions(tmp_path, monkeypatch):
         "s1": 2,
         "s2": 1,
     }
+    assert all(session["in_progress"] is False for session in sessions)
+
+
+@pytest.mark.asyncio
+async def test_get_chat_sessions_uses_first_question_not_alphabetical(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    save_chat_history(
+        question="Яблоко",
+        answer="a",
+        sources=[],
+        crag_status="VERIFIED",
+        latency_sec=0.1,
+        tokens=1,
+        session_id="alpha-order",
+    )
+    save_chat_history(
+        question="Абрикос",
+        answer="b",
+        sources=[],
+        crag_status="VERIFIED",
+        latency_sec=0.1,
+        tokens=1,
+        session_id="alpha-order",
+    )
+
+    sessions = await get_chat_sessions(_user=object())
+    by_id = {session["session_id"]: session for session in sessions}
+
+    assert by_id["alpha-order"]["first_question"] == "Яблоко"
+    assert by_id["alpha-order"]["msg_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_pending_history_stub_appears_in_sessions_and_completes_same_row(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    history_id = begin_chat_history(question="Собери ВОР", session_id="vor-live")
+
+    sessions = await get_chat_sessions(_user=object())
+    live = next(session for session in sessions if session["session_id"] == "vor-live")
+    messages = await get_chat_history(session_id="vor-live", _user=object())
+
+    assert live["in_progress"] is True
+    assert live["first_question"] == "Собери ВОР"
+    assert messages[-1]["crag"] == "PENDING"
+    assert messages[-1]["text"] == ""
+
+    completed_id = save_chat_history(
+        question="Собери ВОР",
+        answer="Ведомость готова.",
+        sources=[],
+        crag_status="UNVALIDATED",
+        latency_sec=12.0,
+        tokens=8,
+        session_id="vor-live",
+        history_id=history_id,
+    )
+    sessions = await get_chat_sessions(_user=object())
+    live = next(session for session in sessions if session["session_id"] == "vor-live")
+    messages = await get_chat_history(session_id="vor-live", _user=object())
+
+    assert completed_id == history_id
+    assert live["in_progress"] is False
+    assert live["msg_count"] == 1
+    assert messages[-1]["text"] == "Ведомость готова."
+    with sqlite3.connect(db_path) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM chat_history WHERE session_id='vor-live'").fetchone()[0]
+    assert count == 1
 
 
 def test_save_chat_history_uses_active_meta_db_path(tmp_path, monkeypatch):

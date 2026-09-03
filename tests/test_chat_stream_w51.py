@@ -4,6 +4,7 @@
 без сервисов: серверный кадр/события и клиентский парсер SSE.
 """
 import asyncio
+import inspect
 import json
 
 import httpx
@@ -12,6 +13,12 @@ import pytest
 from proxy.routers import chat as chat_router
 from proxy.routers.chat import ChatRequest, _sse_event, chat_stream
 from sovushka import state as sov_state
+
+
+@pytest.fixture(autouse=True)
+def _stub_pending_history(monkeypatch):
+    monkeypatch.setattr(chat_router, "begin_chat_history", lambda **kwargs: 901)
+    monkeypatch.setattr(chat_router, "_complete_pending_history_failure", lambda *_args, **_kwargs: None)
 
 
 # ── серверная сторона ───────────────────────────────────────────────
@@ -339,6 +346,29 @@ async def test_api_post_stream_does_not_expire_a_live_long_running_answer(monkey
     assert timeout.write == 30.0
     assert timeout.pool == 10.0
     assert timeout.read is None
+
+
+@pytest.mark.asyncio
+async def test_api_post_stream_keeps_ping_events(monkeypatch):
+    lines = [
+        "event: ping", 'data: {"alive": true}', "",
+        "event: final", 'data: {"answer": "ok"}', "",
+    ]
+    monkeypatch.setattr(sov_state.httpx, "AsyncClient", lambda *a, **k: _FakeClient(lines))
+    events = []
+    got_final = await sov_state.api_post_stream(
+        "/api/chat/stream",
+        {"question": "q"},
+        lambda e, p: events.append((e, p)),
+    )
+    assert got_final is True
+    assert events[0][0] == "ping"
+    assert events[0][1]["alive"] is True
+
+
+def test_chat_stream_keepalive_is_bounded():
+    assert "CHAT_STREAM_KEEPALIVE_SECONDS" in inspect.getsource(chat_router.chat_stream)
+    assert chat_router.CHAT_STREAM_KEEPALIVE_SECONDS <= 20
 
 
 def test_ui_never_retries_after_progress_started():
