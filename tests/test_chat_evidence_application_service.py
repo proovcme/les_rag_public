@@ -2543,6 +2543,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         assert manifest["schema"] == "les.chat-evidence-manifest.v1"
         assert [item["id"] for item in manifest["model_visible"]] == ["Q1.H1", "Q2.H1"]
         assert manifest["cited_ids"] == ["Q1.H1"]
+        assert history_rows[0]["retrieval_trace"]["source_map"] == result["source_map"]
         assert "rounds" not in tool_loop
         assert "review" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()
         assert "confirm" not in json.dumps(history_rows[0], ensure_ascii=False).casefold()

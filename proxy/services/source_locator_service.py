@@ -18,6 +18,31 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def citation_indexes(answer: str) -> list[int]:
+    """Read explicit visible source labels, including model-written ranges."""
+
+    indexes: set[int] = set()
+    for marker in re.findall(
+        r"\[Источники?\s+([^\]]+)\]",
+        _text(answer),
+        flags=re.IGNORECASE,
+    ):
+        for position, segment in enumerate(marker.split("|")):
+            value = segment.strip()
+            if position and not re.fullmatch(r"[0-9,;\s\-–—]+", value):
+                continue
+            for token in re.finditer(r"(\d+)\s*[\-–—]\s*(\d+)|(\d+)", value):
+                if token.group(3):
+                    indexes.add(int(token.group(3)))
+                    continue
+                start, end = int(token.group(1)), int(token.group(2))
+                if start <= end and end - start <= 1000:
+                    indexes.update(range(start, end + 1))
+                else:
+                    indexes.update((start, end))
+    return sorted(indexes)
+
+
 def _relative_path(source_ref: str, doc_name: str) -> str:
     path = source_ref.split("#", 1)[0].replace("\\", "/").strip("/")
     return path or doc_name.replace("\\", "/").strip("/")
@@ -175,15 +200,10 @@ def evidence_counts(
         valid_handles.add(handle)
 
     cited: set[str] = set()
-    for group in re.findall(
-        r"\[Источники?\s+([0-9,;|\s]+)\]",
-        _text(answer),
-        flags=re.IGNORECASE,
-    ):
-        for raw_index in re.findall(r"\d+", group):
-            handle = index_to_handle.get(int(raw_index))
-            if handle:
-                cited.add(handle)
+    for raw_index in citation_indexes(answer):
+        handle = index_to_handle.get(raw_index)
+        if handle:
+            cited.add(handle)
     for handle in re.findall(r"Q\d+\.H\d+", _text(answer), flags=re.IGNORECASE):
         normalized = handle.upper()
         if normalized in valid_handles:

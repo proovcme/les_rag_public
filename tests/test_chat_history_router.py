@@ -76,6 +76,84 @@ async def test_get_chat_history_filters_by_session(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_chat_history_restores_exact_source_map_and_counts(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    source_map = [{
+        "index": 1,
+        "doc_name": "project.pdf",
+        "source_ref": "Project/project.pdf#page=7",
+        "snippet": "Exact evidence excerpt",
+        "locator": {"kind": "file_excerpt", "relative_path": "Project/project.pdf", "page": 7},
+    }]
+    save_chat_history(
+        question="q4",
+        answer="a4 [Источник 1]",
+        sources=["project.pdf"],
+        crag_status="VERIFIED",
+        latency_sec=1,
+        tokens=1,
+        session_id="source-session",
+        retrieval_trace={
+            "source_map": source_map,
+            "source_counts": {"found": 9, "model_visible": 1, "cited": 1},
+        },
+    )
+
+    messages = await get_chat_history(session_id="source-session", _user=object())
+
+    assert messages[-1]["meta"]["source_map"] == source_map
+    assert messages[-1]["meta"]["source_counts"] == {
+        "found": 9,
+        "model_visible": 1,
+        "cited": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_chat_history_recovers_pre_fix_source_map_from_evidence_manifest(tmp_path, monkeypatch):
+    (tmp_path / "data").mkdir()
+    db_path = tmp_path / "data" / "les_meta_qwen.db"
+    monkeypatch.setenv("RAG_META_DB_PATH", str(db_path))
+    _init_chat_history(db_path)
+    save_chat_history(
+        question="q4",
+        answer="a4 [Источник 1]",
+        sources=["project.pdf"],
+        crag_status="VERIFIED",
+        latency_sec=1,
+        tokens=1,
+        session_id="manifest-session",
+        retrieval_trace={
+            "evidence_manifest": {
+                "model_visible": [{
+                    "id": "S1",
+                    "doc_name": "project.pdf",
+                    "doc_id": "doc-1",
+                    "dataset_id": "project",
+                    "locator": {
+                        "kind": "file_excerpt",
+                        "relative_path": "Project/project.pdf",
+                        "source_ref": "Project/project.pdf#page=7",
+                        "page": 7,
+                        "excerpt": "Exact evidence excerpt",
+                    },
+                }],
+            },
+        },
+    )
+
+    messages = await get_chat_history(session_id="manifest-session", _user=object())
+
+    restored = messages[-1]["meta"]["source_map"][0]
+    assert restored["evidence_ref"] == "S1"
+    assert restored["source_ref"] == "Project/project.pdf#page=7"
+    assert restored["snippet"] == "Exact evidence excerpt"
+
+
+@pytest.mark.asyncio
 async def test_get_chat_sessions_summarizes_sessions(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     db_path = tmp_path / "data" / "les_meta_qwen.db"

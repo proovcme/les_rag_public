@@ -17,11 +17,10 @@ import re
 from typing import Any, Iterable, Mapping
 
 from proxy.services.saferag_service import build_context, source_map_for_context
-from proxy.services.source_locator_service import source_locator
+from proxy.services.source_locator_service import citation_indexes, source_locator
 
 
 SCHEMA = "les.evidence_packet.v1"
-_SOURCE_LABEL_RE = re.compile(r"\[Источник\s+(\d+)\b", re.IGNORECASE)
 _TRACE_KEYS = (
     "mode",
     "quality_status",
@@ -278,7 +277,7 @@ def verify_answer_source_labels(answer: str, source_map: Iterable[Mapping[str, A
         for index, item in enumerate(sources, 1)
         if isinstance(item, Mapping)
     }
-    cited = [int(value) for value in _SOURCE_LABEL_RE.findall(str(answer or ""))]
+    cited = citation_indexes(answer)
     invalid = sorted({value for value in cited if value not in available})
     if not available:
         status = "not_applicable"

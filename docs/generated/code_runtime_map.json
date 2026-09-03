@@ -1724,7 +1724,7 @@
         "proxy/app.py",
         "tests/test_chat_history_router.py"
       ],
-      "lines": 351,
+      "lines": 383,
       "module": "proxy.routers.chat_history",
       "outbound": [
         "backend/rag_config.py",
@@ -3021,7 +3021,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 4224,
+      "lines": 4225,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3073,7 +3073,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_chat_evidence_manifest_service.py"
       ],
-      "lines": 138,
+      "lines": 133,
       "module": "proxy.services.chat_evidence_manifest_service",
       "outbound": [
         "proxy/__init__.py",
@@ -3859,7 +3859,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_evidence_packet_service.py"
       ],
-      "lines": 297,
+      "lines": 296,
       "module": "proxy.services.evidence_packet_service",
       "outbound": [
         "proxy/__init__.py",
@@ -6628,7 +6628,7 @@
         "proxy/services/evidence_packet_service.py",
         "tests/test_source_locator_service.py"
       ],
-      "lines": 195,
+      "lines": 215,
       "module": "proxy.services.source_locator_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9090,7 +9090,7 @@
     },
     {
       "inbound": [],
-      "lines": 2720,
+      "lines": 2721,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9113,7 +9113,7 @@
     },
     {
       "inbound": [],
-      "lines": 65,
+      "lines": 78,
       "module": "tests.test_chat_evidence_manifest_service",
       "outbound": [
         "proxy/services/chat_evidence_manifest_service.py"
@@ -9136,7 +9136,7 @@
     },
     {
       "inbound": [],
-      "lines": 296,
+      "lines": 374,
       "module": "tests.test_chat_history_router",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9896,7 +9896,7 @@
     },
     {
       "inbound": [],
-      "lines": 105,
+      "lines": 106,
       "module": "tests.test_evidence_packet_service",
       "outbound": [
         "proxy/services/evidence_packet_service.py"
@@ -13132,7 +13132,7 @@
     },
     {
       "inbound": [],
-      "lines": 99,
+      "lines": 114,
       "module": "tests.test_source_locator_service",
       "outbound": [
         "proxy/services/source_locator_service.py"
@@ -18550,7 +18550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 629,
     "tracked_python_files": 991,
-    "tracked_python_lines": 312011
+    "tracked_python_lines": 312166
   },
   "warnings": []
 }

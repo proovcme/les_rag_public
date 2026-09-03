@@ -56,6 +56,32 @@ def _json_object(raw: str | None) -> dict:
         return {}
 
 
+def _history_source_map(retrieval_trace: dict) -> list[dict]:
+    direct = retrieval_trace.get("source_map")
+    if isinstance(direct, list):
+        return [dict(item) for item in direct if isinstance(item, dict)]
+    manifest = retrieval_trace.get("evidence_manifest")
+    visible = manifest.get("model_visible") if isinstance(manifest, dict) else None
+    if not isinstance(visible, list):
+        return []
+    restored: list[dict] = []
+    for index, raw in enumerate(visible, 1):
+        if not isinstance(raw, dict):
+            continue
+        locator = dict(raw.get("locator") or {}) if isinstance(raw.get("locator"), dict) else {}
+        restored.append({
+            "index": index,
+            "evidence_ref": str(raw.get("id") or f"S{index}"),
+            "doc_name": str(raw.get("doc_name") or ""),
+            "doc_id": str(raw.get("doc_id") or ""),
+            "dataset_id": str(raw.get("dataset_id") or ""),
+            "source_ref": str(locator.get("source_ref") or ""),
+            "snippet": str(locator.get("excerpt") or ""),
+            "locator": locator,
+        })
+    return restored
+
+
 def _feedback_log_path() -> Path:
     return Path(os.getenv("CHAT_FEEDBACK_LOG_PATH", "logs/chat_feedback.jsonl"))
 
@@ -130,6 +156,12 @@ async def get_chat_history(limit: int = 40, session_id: Optional[str] = None, _u
                 "latency_phases": latency_phases,
                 "elapsed_sec": latency_phases.get("wall_total"),
                 "model_think_sec": latency_phases.get("generation"),
+                "source_map": _history_source_map(retrieval_trace),
+                "source_counts": (
+                    retrieval_trace.get("source_counts")
+                    if isinstance(retrieval_trace.get("source_counts"), dict)
+                    else {}
+                ),
             }
             artifact_payload = _json_object(artifact)
             if artifact_payload:

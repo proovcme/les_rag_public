@@ -7,17 +7,25 @@
 ## Текущее состояние (2026-09-03)
 
 ```
-версия продукта (SemVer):  0.30.53
-номер сборки:              693
-версия Tauri/NSIS:         5.1.693
+версия продукта (SemVer):  0.30.54
+номер сборки:              694
+версия Tauri/NSIS:         5.1.694
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.53 liberal source-range navigation candidate
-задеплоено на рантайм:     Legion 0.30.52 / build 692 / commit cf08e38a; LIVE RAG ACCEPTED
+dev implementation:       0.30.54 exact evidence history candidate
+задеплоено на рантайм:     Legion 0.30.53 / build 693 / commit a71df494; LIVE RAG ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.53 после проверки диапазона цитат в установленном ЛЕС
-рантайм /api/version:      Legion 0.30.52 / build 692 / desktop 5.1.692 / commit cf08e38a; accepted
+следующий выпуск:          0.30.54 после проверки восстановления evidence в установленном ЛЕС
+рантайм /api/version:      Legion 0.30.53 / build 693 / desktop 5.1.693 / commit a71df494; accepted
 ```
+
+> **0.30.54 / build 694 exact evidence history candidate (не опубликован):**
+> история сохраняет полный фактически показанный модели source map вместе с
+> раздельными счётчиками. При чтении прежних реплик карта восстанавливается из
+> уже сохранённого immutable evidence manifest. Поэтому ссылка, цитата, locator,
+> путь и оригинал переживают перезапуск; повторный model turn не выполняется.
+> Диапазоны цитат одинаково понимаются UI, evidence counts, integrity check и
+> manifest.
 
 > **0.30.53 / build 693 liberal source-range navigation candidate (не
 > опубликован):** живой follow-up Qwen выдал обычную метку

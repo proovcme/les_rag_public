@@ -3997,6 +3997,7 @@ async def _execute_chat_evidence_application(
                     found_count=found_count,
                 )
                 retrieval_trace["source_counts"] = source_counts
+                retrieval_trace["source_map"] = answer_source_map
                 evidence_manifest = build_evidence_manifest(
                     query=str(req.question or ""),
                     scope={

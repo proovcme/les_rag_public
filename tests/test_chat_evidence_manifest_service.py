@@ -47,6 +47,19 @@ def test_manifest_freezes_actual_model_visible_handles_scope_and_citations():
     assert manifest["model_visible"][1]["locator"]["card_code"] == "ГЭСН02"
 
 
+def test_manifest_accepts_model_written_source_ranges():
+    chunks = [_chunk(f"Q1.H{index}", f"ГЭСН0{index}") for index in range(1, 5)]
+
+    manifest = build_evidence_manifest(
+        query="подбор норм",
+        scope={"dataset_ids": ["smeta"]},
+        chunks=chunks,
+        answer="Использованы [Источник 1–4].",
+    )
+
+    assert manifest["cited_ids"] == ["Q1.H1", "Q1.H2", "Q1.H3", "Q1.H4"]
+
+
 def test_compact_prior_index_keeps_locators_but_not_full_evidence_bodies():
     manifest = build_evidence_manifest(
         query="подбор норм",

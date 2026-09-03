@@ -1,5 +1,15 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.54 exact evidence history candidate:** полный фактически показанный
+> модели source map и три счётчика сохраняются с репликой. Старые реплики
+> восстанавливают навигацию из immutable evidence manifest. Диапазоны цитат
+> одинаково читаются presentation, source counts, integrity check и manifest;
+> модельный ответ не переписывается. Точки:
+> `proxy/{routers/chat_history.py,services/{chat_evidence_application,
+> chat_evidence_manifest,evidence_packet,source_locator}_service.py}`,
+> `sovushka/answer_render.py` и соответствующие tests. Статус док↔код: ✅;
+> candidate не опубликован.
+
 > **0.30.53 source navigation candidate:** метки `[Источник N]`, перечисления
 > и обычные диапазоны `[Источник 1–4]` в тексте и Markdown-таблицах ведут к
 > компактным кнопкам процитированных

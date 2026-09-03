@@ -103,3 +103,4 @@ def test_answer_citation_check_rejects_invented_and_missing_labels():
     assert verify_answer_source_labels("Факт [Источник 1 | one.pdf]", source_map)["status"] == "supported_labels"
     assert verify_answer_source_labels("Факт [Источник 3 | fake.pdf]", source_map)["status"] == "invalid_labels"
     assert verify_answer_source_labels("Факт без ссылки", source_map)["status"] == "missing_labels"
+    assert verify_answer_source_labels("Факты [Источник 1–2]", source_map)["cited"] == [1, 2]

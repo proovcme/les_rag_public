@@ -6,7 +6,7 @@ import copy
 import re
 from typing import Any, Mapping, Sequence
 
-from proxy.services.source_locator_service import source_map_item
+from proxy.services.source_locator_service import citation_indexes, source_map_item
 
 
 SCHEMA = "les.chat-evidence-manifest.v1"
@@ -25,15 +25,10 @@ def _cited_ids(answer: str, visible: Sequence[Mapping[str, Any]]) -> list[str]:
         index_to_id[position] = identity
         valid.add(identity)
     cited: set[str] = set()
-    for group in re.findall(
-        r"\[Источники?\s+([0-9,;|\s]+)\]",
-        str(answer or ""),
-        flags=re.IGNORECASE,
-    ):
-        for value in re.findall(r"\d+", group):
-            identity = index_to_id.get(int(value))
-            if identity:
-                cited.add(identity)
+    for value in citation_indexes(answer):
+        identity = index_to_id.get(value)
+        if identity:
+            cited.add(identity)
     for value in re.findall(r"Q\d+\.H\d+", str(answer or ""), flags=re.IGNORECASE):
         identity = value.upper()
         if identity in valid:

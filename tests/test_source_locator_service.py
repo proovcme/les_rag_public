@@ -97,3 +97,18 @@ def test_evidence_counts_keep_found_visible_and_cited_independent():
     )
 
     assert counts == {"found": 11, "model_visible": 3, "cited": 2}
+
+
+def test_evidence_counts_accept_model_written_source_ranges():
+    source_map = [
+        {"index": index, "evidence_ref": f"Q1.H{index}"}
+        for index in range(1, 5)
+    ]
+
+    counts = evidence_counts(
+        answer="Вывод [Источник 1–4].",
+        source_map=source_map,
+        found_count=12,
+    )
+
+    assert counts == {"found": 12, "model_visible": 4, "cited": 4}
