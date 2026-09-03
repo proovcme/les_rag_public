@@ -11,19 +11,26 @@
 номер сборки:              696
 версия Tauri/NSIS:         5.1.696
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.56 per-answer citation anchors candidate
-задеплоено на рантайм:     Legion 0.30.55 / build 695 / commit 98b3a298; LIVE HISTORY ACCEPTED
+dev implementation:       0.30.56 per-answer citation anchors; LIVE ACCEPTED
+задеплоено на рантайм:     Legion 0.30.56 / build 696 / commit 4984436a; LIVE RAG + WEB ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          0.30.56 после проверки точного перехода внутри длинного диалога
-рантайм /api/version:      Legion 0.30.55 / build 695 / desktop 5.1.695 / commit 98b3a298; accepted
+следующий выпуск:          публичная публикация приостановлена владельцем
+рантайм /api/version:      Legion 0.30.56 / build 696 / desktop 5.1.696 / commit 4984436a; accepted
 ```
 
-> **0.30.56 / build 696 per-answer citation anchors candidate (не
+> **0.30.56 / build 696 per-answer citation anchors (LIVE ACCEPTED, не
 > опубликован):** локальный адрес источника включает `history_id` ответа.
 > Поэтому `[Источник 1]` в поздней реплике длинного диалога ведёт к источнику
 > именно этой реплики, а не к первому одноимённому элементу сессии. Ответ и
-> evidence не изменяются.
+> evidence не изменяются. На установленном Legion доказан переход диапазона
+> `[Источник 1–4]` к `#source-144-1`, открытие карточки с цитатой и оригиналом,
+> а также новый web-поиск цен: 12 найденных страниц, 9 процитированных,
+> таблица и source cards за 1м 7с. `/api/health` и верхний статус
+> `/api/rag/readiness` ответили `ok`; при этом readiness общей коллекции честно
+> сохраняет отдельный backlog `generation_coverage_incomplete`. `make test` —
+> 1163 passed. Soft-patch заменил только три
+> runtime-файла и сохранил user data untouched.
 
 > **0.30.55 / build 695 legacy web evidence recovery candidate (не
 > опубликован):** прежние реплики, созданные до сохранения полного source map,
