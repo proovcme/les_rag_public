@@ -12135,7 +12135,7 @@
     },
     {
       "inbound": [],
-      "lines": 369,
+      "lines": 395,
       "module": "tests.test_release_classification",
       "outbound": [
         "tools/release_classification.py"
@@ -15808,7 +15808,7 @@
         "tools/release_orchestrator.py",
         "tools/vps_patch.py"
       ],
-      "lines": 307,
+      "lines": 308,
       "module": "tools.release_classification",
       "outbound": [
         "tools/__init__.py"
@@ -18550,7 +18550,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 629,
     "tracked_python_files": 991,
-    "tracked_python_lines": 312380
+    "tracked_python_lines": 312407
   },
   "warnings": []
 }
