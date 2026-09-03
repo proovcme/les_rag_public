@@ -5,8 +5,9 @@
 > `Строка N: название` и явное отсутствие количества. Значения `source_row`,
 > нормы, обоснования и evidence не выводятся из прозы и не исправляются кодом.
 > Точки: `proxy/services/chat_evidence_application_service.py`,
-> `tests/test_chat_evidence_application_service.py`. Статус док↔код: ✅; live
-> workbook acceptance pending; candidate not published.
+> `tests/test_chat_evidence_application_service.py`. Статус док↔код: ✅; installed
+> Legion live workbook accepted (5/5 bound, 128 formulas, automatic XLSX);
+> candidate not published.
 
 > **0.30.57 long-running chat stream candidate:** UI keeps an already active
 > SSE answer open until the proxy emits its authoritative `final` or `error`.

@@ -11,21 +11,25 @@
 номер сборки:              698
 версия Tauri/NSIS:         5.1.698
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.58 liberal model-result reader candidate
-задеплоено на рантайм:     Legion 0.30.57 / build 697 / commit e3d09603; LIVE SSE ACCEPTED
+dev implementation:       0.30.58 liberal model-result reader; LIVE XLSX ACCEPTED
+задеплоено на рантайм:     Legion 0.30.58 / build 698 / commit 4c928375; LIVE XLSX ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.57 / build 697 / desktop 5.1.697 / commit e3d09603; accepted
+рантайм /api/version:      Legion 0.30.58 / build 698 / desktop 5.1.698 / commit 4c928375; accepted
 ```
 
-> **0.30.58 / build 698 liberal model-result reader candidate (не
+> **0.30.58 / build 698 liberal model-result reader (LIVE XLSX ACCEPTED, не
 > опубликован):** живой 74-позиционный прогон доказал, что Qwen может вернуть
 > явные подписанные поля в естественных блоках `Строка N: название`, тогда как
 > reader принимал только искусственный заголовок без названия. Reader теперь
 > либерально читает такой блок и явное отсутствие количества, сохраняя каждое
 > значение модели. Неполный или неоднозначный ответ по-прежнему не пакуется.
-> Live XLSX acceptance обязателен.
+> На установленном Legion отдельный пятистрочный ВОР прошёл полный путь за 6м 27с:
+> Qwen сама сформировала 22 запроса, все 132 карточки `Qx.Hy` были показаны
+> модели, она вернула 5/5 решений, а код автоматически создал XLSX.
+> В файле 5/5 `bound`, 37 ценовых ячеек, 128 формул, 0 ошибок пересчёта,
+> итог 151 811,72 руб. Ответ модели не изменялся и повторный model turn не запускался.
 
 > **0.30.57 / build 697 long-running SSE candidate (не опубликован):** живой
 > пятистрочный XLSX-прогон на 0.30.56 дошёл до 36 RAG-карточек, но UI закрыл
