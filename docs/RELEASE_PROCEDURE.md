@@ -40,6 +40,10 @@ make release RELEASE_ARGS='run --host local --publish'
    maintenance tools), допустимы в soft patch только когда один и тот же exact
    path разрешён classifier, builder и installed updater. Рассинхрон этих трёх
    списков является ошибкой release tooling, а не причиной для NSIS.
+   `README.md` остаётся обязательной package metadata полного runtime, но
+   изменение только его публичного текста не меняет приложение и не входит в
+   cumulative patch: базовый installer уже содержит этот файл, а soft-update
+   не пересобирает Python environment.
 3. На текущем Legion (`--host local`) ставит точные candidate bytes штатным
    путём, проверяет identity,
    живые proxy/UI отдельно от внешних capabilities и, если Qdrant был доступен, временный native

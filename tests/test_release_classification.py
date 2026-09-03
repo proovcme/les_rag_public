@@ -367,3 +367,29 @@ def test_release_only_tooling_does_not_force_full_runtime_release(release_repo):
     assert result.kind == "patch"
     assert result.runtime_files == ()
     assert result.triggers == ()
+
+
+def test_runtime_readme_copy_does_not_force_full_release(release_repo):
+    repo, _ = release_repo
+    (repo / "README.md").write_text("runtime package metadata\n", encoding="utf-8")
+    manifest = repo / "config" / "windows_runtime_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        json.dumps(
+            {
+                "schema": "les.windows-runtime-manifest.v1",
+                "include_prefixes": ["proxy/"],
+                "include_files": ["README.md", "pyproject.toml", "uv.lock"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    base = _commit(repo, "runtime manifest base")
+    (repo / "README.md").write_text("updated public documentation\n", encoding="utf-8")
+    (repo / "proxy" / "existing.py").write_text("VALUE = 2\n", encoding="utf-8")
+
+    result = classify_release(base, _commit(repo, "runtime and docs"), root=repo)
+
+    assert result.kind == "patch"
+    assert result.runtime_files == ("proxy/existing.py",)
+    assert result.triggers == ()

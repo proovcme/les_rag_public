@@ -68,6 +68,7 @@ VERSION_SURFACES = {
 }
 
 RELEASE_ONLY_FILES = {
+    "README.md",
     "config/windows_runtime_manifest.json",
     "tools/github_patch_release.py",
     "tools/rag_dataset_story_acceptance.py",
