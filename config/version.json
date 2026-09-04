@@ -1,7 +1,7 @@
 {
   "schema": "les.version.v1",
-  "product_version": "0.30.61",
-  "build_number": 701,
-  "desktop_version": "5.1.701",
+  "product_version": "0.30.62",
+  "build_number": 702,
+  "desktop_version": "5.1.702",
   "harness_schema_version": "0.24"
 }

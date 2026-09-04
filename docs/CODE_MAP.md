@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.62 model-owned row set:** model-result packaging recognizes ordinary
+> parenthetical Markdown headers and presentation-wrapped absence markers.
+> `expected_source_rows` is not used as an execution gate because its legacy
+> regex estimate is not authoritative for arbitrary sheets. Structural checks
+> remain limited to unique non-empty row identity, real `Qx.Hy`, and an exact
+> selected-code match. The model answer and row set are not rewritten.
+
 > **0.30.61 exact source identity:** `parse_model_rag_result` preserves a
 > non-empty model-authored `source_row` as either its backward-compatible
 > positive integer or exact string locator. `validate_model_rag_result_structure`

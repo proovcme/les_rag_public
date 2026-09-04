@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-09-04)
 
 ```
-версия продукта (SemVer):  0.30.61
-номер сборки:              701
-версия Tauri/NSIS:         5.1.701
+версия продукта (SemVer):  0.30.62
+номер сборки:              702
+версия Tauri/NSIS:         5.1.702
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.61 exact model-authored source identity + product positioning
-задеплоено на рантайм:     Legion 0.30.60 / build 700 / commit e1b90939345497ea9168deeda288e5843d17330d; LIVE RAG ACCEPTED
+dev implementation:       0.30.62 liberal model table + no hidden row-count gate
+задеплоено на рантайм:     Legion 0.30.61 / build 701 / commit aaf83754fddbe879921d24f0fd2b55e8000e18b0; LIVE RAG/XLSX ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.60 / build 700 / desktop 5.1.700 / commit e1b90939345497ea9168deeda288e5843d17330d; aligned
+рантайм /api/version:      Legion 0.30.61 / build 701 / desktop 5.1.701 / commit aaf83754fddbe879921d24f0fd2b55e8000e18b0; aligned
 ```
+
+> **0.30.62 / build 702 liberal model table without hidden count gate
+> (candidate, не опубликован):** живой Qwen-ответ с точными locator’ами и
+> естественными заголовками `title (Наименование)`, `norm_code (Выбранная
+> норма)` и `evidence_refs (Источник)` теперь читается механическим reader.
+> Явные маркеры отсутствия количества/нормы сохраняются и не выдаются за
+> выбранный шифр. Ложный regex-счётчик строк вложения больше не разрешает и не
+> блокирует упаковку: код проверяет только непустую уникальную идентичность,
+> существование `Qx.Hy` и соответствие фактически выбранного шифра карточке.
+> Состав и количество строк остаются решением модели и live-метрикой.
 
 > **0.30.61 / build 701 exact model-authored source identity (candidate, не
 > опубликован):** либеральный model-result reader принимает как числовой

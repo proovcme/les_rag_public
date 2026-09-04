@@ -740,6 +740,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "section": "section",
         "раздел": "section",
         "title": "title",
+        "title (наименование)": "title",
+        "title (описание оборудования из комментариев)": "title",
         "наименование": "title",
         "наименование работ": "title",
         "наименование работ (из вор)": "title",
@@ -749,12 +751,16 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "quantity": "quantity",
         "кол-во": "quantity",
         "norm_code": "norm_code",
+        "norm_code (выбранная норма)": "norm_code",
+        "norm_code (возможная норма монтажа)": "norm_code",
         "norm_code (шифр)": "norm_code",
         "нормативная база (шифр нормы)": "norm_code",
         "нормативная база (norm code)": "norm_code",
         "нормативный код (гэсн/ер)": "norm_code",
         "analogue": "analogue",
         "analogue / coverage": "analogue",
+        "analogue / coverage (обоснование/аналог)": "analogue",
+        "analogue / coverage (обоснование)": "analogue",
         "аналог/обоснование": "analogue",
         "обоснование выбора и аналог": "analogue",
         "coverage": "coverage",
@@ -767,6 +773,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         "coefficient (кэф.)": "coefficient",
         "коэфф.": "coefficient",
         "evidence_refs": "evidence_refs",
+        "evidence_refs (источник)": "evidence_refs",
     }
 
     def field_name(value: str) -> str:
@@ -795,6 +802,24 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             return None
         parsed = number(authored)
         return parsed if isinstance(parsed, int) else authored
+
+    def absence_marker(value: str) -> bool:
+        marker = value.strip().strip("*_` ").strip()
+        if len(marker) >= 2 and (marker[0], marker[-1]) in {
+            ("(", ")"),
+            ("[", "]"),
+        }:
+            marker = marker[1:-1].strip()
+        return marker.casefold() in {
+            "—",
+            "-",
+            "–",
+            "−",
+            "нет",
+            "н/д",
+            "n/a",
+            "na",
+        }
 
     def divider_cell(value: str) -> bool:
         candidate = value.strip()
@@ -885,9 +910,7 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                     row[name] = parsed_source_row
                 elif name in {"quantity", "coefficient"}:
                     numeric_value = value.strip()
-                    if numeric_value.casefold() in {
-                        "—", "-", "–", "−", "нет", "н/д", "n/a", "na",
-                    }:
+                    if absence_marker(numeric_value):
                         continue
                     parsed_number: int | float | None = None
                     if name == "coefficient" and "/" in numeric_value:
@@ -1209,7 +1232,7 @@ def validate_model_rag_result_structure(
     """Validate references before packaging without changing model decisions."""
 
     errors: list[str] = []
-    observed: list[int | str] = []
+    observed_keys: set[tuple[str, str]] = set()
     for row in rows:
         source_row = row.get("source_row")
         is_positive_int = (
@@ -1221,28 +1244,10 @@ def validate_model_rag_result_structure(
         if not is_positive_int and not is_authored_label:
             errors.append("invalid_source_row")
             continue
-        observed.append(source_row)
-    observed_keys = [(type(item).__name__, str(item)) for item in observed]
-    unique_keys = set(observed_keys)
-    for source_row, source_key in zip(observed, observed_keys, strict=True):
-        if observed_keys.count(source_key) > 1:
+        source_key = (type(source_row).__name__, str(source_row))
+        if source_key in observed_keys:
             errors.append(f"duplicate_source_row:{source_row}")
-    if expected_source_rows > 0:
-        if observed and all(isinstance(item, int) for item in observed):
-            observed_set = set(observed)
-            expected = set(range(1, expected_source_rows + 1))
-            errors.extend(
-                f"missing_source_row:{source_row}"
-                for source_row in sorted(expected - observed_set)
-            )
-            errors.extend(
-                f"unexpected_source_row:{source_row}"
-                for source_row in sorted(observed_set - expected)
-            )
-        elif len(unique_keys) != expected_source_rows:
-            errors.append(
-                f"source_row_count_mismatch:{len(unique_keys)}/{expected_source_rows}"
-            )
+        observed_keys.add(source_key)
 
     evidence_by_ref: dict[str, dict[str, Any]] = {}
     for chunk in evidence_chunks:
@@ -1258,6 +1263,25 @@ def validate_model_rag_result_structure(
             if not character.isspace() and character != ":"
         )
 
+    def explicit_absence(value: Any) -> bool:
+        marker = str(value or "").strip().strip("*_` ").strip()
+        if len(marker) >= 2 and (marker[0], marker[-1]) in {
+            ("(", ")"),
+            ("[", "]"),
+        }:
+            marker = marker[1:-1].strip()
+        return marker.casefold() in {
+            "",
+            "—",
+            "-",
+            "–",
+            "−",
+            "нет",
+            "н/д",
+            "n/a",
+            "na",
+        }
+
     for row in rows:
         source_row = row.get("source_row")
         refs = [
@@ -1270,7 +1294,11 @@ def validate_model_rag_result_structure(
             continue
         unknown_refs = [ref for ref in refs if ref not in evidence_by_ref]
         errors.extend(f"unknown_evidence_ref:{ref}" for ref in unknown_refs)
-        selected_code = code_identity(row.get("norm_code"))
+        selected_code = (
+            ""
+            if explicit_absence(row.get("norm_code"))
+            else code_identity(row.get("norm_code"))
+        )
         if selected_code and not any(
             code_identity(evidence_by_ref[ref].get("norm_code")) == selected_code
             for ref in refs

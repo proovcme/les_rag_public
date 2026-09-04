@@ -382,7 +382,32 @@ def test_model_rag_result_preserves_string_source_row_verbatim():
     assert parsed[1][0]["source_row"] == "СМР!R9"
 
 
-def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence():
+def test_model_rag_result_reads_natural_parenthetical_table_headers():
+    answer = """| source_row | section | title (Наименование) | unit | quantity | norm_code (Выбранная норма) | analogue / coverage (Обоснование/Аналог) | coefficient | evidence_refs (Источник) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **СМР!R9** | Общие условия | Итоговая строка | руб. | *(нет)* | *(Нет)* | Не является нормируемой работой. | 1.0 | [Q1.H2] |
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed == (
+        answer,
+        [
+            {
+                "source_row": "СМР!R9",
+                "section": "Общие условия",
+                "title": "Итоговая строка",
+                "unit": "руб.",
+                "norm_code": "*(Нет)*",
+                "analogue": "Не является нормируемой работой.",
+                "coefficient": 1,
+                "evidence_refs": ["Q1.H2"],
+            }
+        ],
+    )
+
+
+def test_model_rag_packaging_requires_unique_rows_and_real_matching_evidence():
     evidence = [
         SimpleNamespace(
             meta={"model_evidence_ref": "Q1.H2", "norm_code": "ГЭСН26-01-055-01"}
@@ -412,12 +437,11 @@ def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence()
     )
 
     assert "duplicate_source_row:1" in errors
-    assert "missing_source_row:2" in errors
     assert "unknown_evidence_ref:Q9.H9" in errors
     assert "norm_code_not_in_referenced_evidence:1" in errors
 
 
-def test_model_rag_packaging_accepts_unique_string_source_rows_by_count():
+def test_model_rag_packaging_accepts_unique_string_source_rows_without_count_gate():
     evidence = [
         SimpleNamespace(
             meta={"model_evidence_ref": "Q1.H1", "norm_code": "ГЭСН26-01-055-01"}
@@ -442,7 +466,7 @@ def test_model_rag_packaging_accepts_unique_string_source_rows_by_count():
     assert service.validate_model_rag_result_structure(
         rows,
         evidence,
-        expected_source_rows=2,
+        expected_source_rows=99,
     ) == []
 
     duplicate_errors = service.validate_model_rag_result_structure(
@@ -452,7 +476,26 @@ def test_model_rag_packaging_accepts_unique_string_source_rows_by_count():
     )
 
     assert "duplicate_source_row:СМР!R9" in duplicate_errors
-    assert "source_row_count_mismatch:1/2" in duplicate_errors
+
+
+def test_model_rag_packaging_preserves_explicit_missing_norm_marker():
+    evidence = [
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q1.H2", "norm_code": "ГЭСН26-01-055-01"}
+        )
+    ]
+
+    assert service.validate_model_rag_result_structure(
+        [
+            {
+                "source_row": "СМР!R9",
+                "norm_code": "*(Нет)*",
+                "evidence_refs": ["Q1.H2"],
+            }
+        ],
+        evidence,
+        expected_source_rows=19,
+    ) == []
 
 
 def test_model_rag_result_does_not_infer_rows_from_prose():

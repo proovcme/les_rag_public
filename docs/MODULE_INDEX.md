@@ -1,5 +1,13 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.62 liberal model table / no hidden count gate:** reader accepts
+> Qwen-authored parenthetical column labels and explicit missing-value markers
+> while preserving the answer. Packaging no longer depends on the legacy regex
+> estimate of attachment rows; only source identity uniqueness and exact
+> evidence/code references are checked. Points:
+> `proxy/services/chat_evidence_application_service.py` and profile tests.
+> Status doc↔code: ✅; installed live XLSX acceptance pending.
+
 > **0.30.61 exact model-authored source identity:** model-result reader,
 > structural integrity check and LSR trace accept non-empty model-authored row
 > locators such as `СМР!R9` and preserve them verbatim through workbook
