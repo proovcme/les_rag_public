@@ -725,7 +725,12 @@ def positions_from_visible_lsr_rows(rows: list[dict[str, Any]]) -> dict[str, Any
         model_source_row = row.get("source_row")
         source_row = (
             model_source_row
-            if isinstance(model_source_row, int) and not isinstance(model_source_row, bool) and model_source_row > 0
+            if (
+                isinstance(model_source_row, int)
+                and not isinstance(model_source_row, bool)
+                and model_source_row > 0
+            )
+            or (isinstance(model_source_row, str) and bool(model_source_row.strip()))
             else idx
         )
         code = _code_from_visible_row(row)

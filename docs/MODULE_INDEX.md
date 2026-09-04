@@ -1,5 +1,14 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.61 exact model-authored source identity:** model-result reader,
+> structural integrity check and LSR trace accept non-empty model-authored row
+> locators such as `СМР!R9` and preserve them verbatim through workbook
+> packaging. Numeric rows retain the strict `1..N` completeness contract;
+> labelled rows are checked for uniqueness and expected count without invented
+> numbering. Points: `proxy/services/{chat_evidence_application,
+> rim_lsr_trace}_service.py`, corresponding tests. Status doc↔code: ✅;
+> installed live XLSX acceptance pending, candidate not published.
+
 > **0.30.59 model-first free-chat guard:** обычный текстовый вопрос всегда
 > проходит в retrieval и модель. Табличный reader и генератор КС доступны
 > только через явные команды/инструменты и больше не возвращают deterministic

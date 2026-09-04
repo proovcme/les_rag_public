@@ -1,5 +1,12 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.61 exact source identity:** `parse_model_rag_result` preserves a
+> non-empty model-authored `source_row` as either its backward-compatible
+> positive integer or exact string locator. `validate_model_rag_result_structure`
+> checks uniqueness and completeness without inventing labels;
+> `positions_from_visible_lsr_rows` carries the same identity into the LSR
+> trace and workbook. No regex, routing or additional model call is involved.
+
 > **0.30.48 model-owned execution boundary:**
 > `chat_evidence_application_service` accepts ordinary Qwen query lines and
 > removes only explicit presentation wrappers; every query is executed and

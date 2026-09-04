@@ -3021,7 +3021,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 4186,
+      "lines": 4206,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -6026,7 +6026,7 @@
         "tests/test_rim_trace_xlsx.py",
         "tests/test_smeta_core.py"
       ],
-      "lines": 822,
+      "lines": 827,
       "module": "proxy.services.rim_lsr_trace_service",
       "outbound": [
         "proxy/__init__.py",
@@ -9088,7 +9088,7 @@
     },
     {
       "inbound": [],
-      "lines": 2781,
+      "lines": 2836,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -12332,7 +12332,7 @@
     },
     {
       "inbound": [],
-      "lines": 394,
+      "lines": 409,
       "module": "tests.test_rim_lsr_trace_service",
       "outbound": [
         "proxy/services/gesn_service.py",
@@ -18548,7 +18548,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 630,
     "tracked_python_files": 991,
-    "tracked_python_lines": 312443
+    "tracked_python_lines": 312538
   },
   "warnings": []
 }

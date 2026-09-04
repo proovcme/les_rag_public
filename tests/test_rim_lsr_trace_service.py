@@ -333,6 +333,21 @@ def test_positions_from_visible_lsr_rows_preserves_model_source_row():
     assert bound["row_bindings"][0]["row"] == 42
 
 
+def test_positions_from_visible_lsr_rows_preserves_string_source_row():
+    bound = positions_from_visible_lsr_rows([
+        {
+            "source_row": "СМР!R9",
+            "basis": "ГЭСН 12-01-034-02",
+            "title": "Устройство обрешетки",
+            "quantity": "61",
+            "unit": "м2",
+        }
+    ])
+
+    assert bound["positions"][0]["source_row"] == "СМР!R9"
+    assert bound["row_bindings"][0]["row"] == "СМР!R9"
+
+
 def test_lsr_trace_from_visible_rows_builds_priced_trace_from_selected_norms():
     lsr = build_lsr_trace_from_visible_rows(
         [

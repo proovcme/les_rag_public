@@ -7,17 +7,27 @@
 ## Текущее состояние (2026-09-04)
 
 ```
-версия продукта (SemVer):  0.30.60
-номер сборки:              700
-версия Tauri/NSIS:         5.1.700
+версия продукта (SemVer):  0.30.61
+номер сборки:              701
+версия Tauri/NSIS:         5.1.701
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.60 exact deploy identity + model-first free-chat guard
-задеплоено на рантайм:     Legion 0.30.59 / build 699 / commit 3bf7850d; LIVE RAG ACCEPTED
+dev implementation:       0.30.61 exact model-authored source identity + product positioning
+задеплоено на рантайм:     Legion 0.30.60 / build 700 / commit e1b90939345497ea9168deeda288e5843d17330d; LIVE RAG ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.59 / build 699 / desktop 5.1.699 / commit 3bf7850d; RAG accepted
+рантайм /api/version:      Legion 0.30.60 / build 700 / desktop 5.1.700 / commit e1b90939345497ea9168deeda288e5843d17330d; aligned
 ```
+
+> **0.30.61 / build 701 exact model-authored source identity (candidate, не
+> опубликован):** либеральный model-result reader принимает как числовой
+> `source_row`, так и точный строковый locator модели (`СМР!R9`,
+> `Комментарии!R2`). Структурная проверка контролирует непустые уникальные
+> идентификаторы и полноту по количеству, не придумывая имена строк. ЛСР-трасса
+> и workbook adapter сохраняют locator без перенумерации. Повторного model turn,
+> regex-маршрутизации и изменения выбранных норм нет. README и публичная
+> стартовая документация позиционируют ЛЕС как локальный RAG с доказательствами
+> для строительной сферы, а не как помощника конкретной должности.
 
 > **0.30.60 / build 700 exact deploy identity (candidate, не опубликован):**
 > `deploy_to_runtime` записывает в runtime stamp полный 40-символьный source

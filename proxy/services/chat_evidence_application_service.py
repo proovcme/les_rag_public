@@ -789,6 +789,13 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
             return None
         return int(parsed) if parsed.is_integer() else parsed
 
+    def source_row_identity(value: str) -> int | str | None:
+        authored = value.strip()
+        if not authored:
+            return None
+        parsed = number(authored)
+        return parsed if isinstance(parsed, int) else authored
+
     def divider_cell(value: str) -> bool:
         candidate = value.strip()
         if candidate.startswith(":"):
@@ -872,8 +879,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
                 if not value:
                     continue
                 if name == "source_row":
-                    parsed_source_row = number(value)
-                    if not isinstance(parsed_source_row, int):
+                    parsed_source_row = source_row_identity(value)
+                    if parsed_source_row is None:
                         return None
                     row[name] = parsed_source_row
                 elif name in {"quantity", "coefficient"}:
@@ -938,9 +945,9 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         nonlocal current_block, invalid_block
         if current_block is None:
             return
-        if not required_fields.issubset(current_block) or not isinstance(
-            current_block.get("source_row"), int
-        ):
+        if not required_fields.issubset(current_block) or current_block.get(
+            "source_row"
+        ) in (None, ""):
             invalid_block = True
         else:
             block_rows.append(current_block)
@@ -996,8 +1003,8 @@ def parse_model_rag_result(raw: str) -> tuple[str, list[dict[str, Any]]] | None:
         if not key or not clean:
             continue
         if key == "source_row":
-            parsed_source_row = number(clean)
-            if not isinstance(parsed_source_row, int):
+            parsed_source_row = source_row_identity(clean)
+            if parsed_source_row is None:
                 invalid_block = True
                 continue
             current_block[key] = parsed_source_row
@@ -1202,27 +1209,40 @@ def validate_model_rag_result_structure(
     """Validate references before packaging without changing model decisions."""
 
     errors: list[str] = []
-    observed: list[int] = []
+    observed: list[int | str] = []
     for row in rows:
         source_row = row.get("source_row")
-        if not isinstance(source_row, int) or source_row <= 0:
+        is_positive_int = (
+            isinstance(source_row, int)
+            and not isinstance(source_row, bool)
+            and source_row > 0
+        )
+        is_authored_label = isinstance(source_row, str) and bool(source_row.strip())
+        if not is_positive_int and not is_authored_label:
             errors.append("invalid_source_row")
             continue
         observed.append(source_row)
-    observed_set = set(observed)
-    for source_row in sorted(observed_set):
-        if observed.count(source_row) > 1:
+    observed_keys = [(type(item).__name__, str(item)) for item in observed]
+    unique_keys = set(observed_keys)
+    for source_row, source_key in zip(observed, observed_keys, strict=True):
+        if observed_keys.count(source_key) > 1:
             errors.append(f"duplicate_source_row:{source_row}")
     if expected_source_rows > 0:
-        expected = set(range(1, expected_source_rows + 1))
-        errors.extend(
-            f"missing_source_row:{source_row}"
-            for source_row in sorted(expected - observed_set)
-        )
-        errors.extend(
-            f"unexpected_source_row:{source_row}"
-            for source_row in sorted(observed_set - expected)
-        )
+        if observed and all(isinstance(item, int) for item in observed):
+            observed_set = set(observed)
+            expected = set(range(1, expected_source_rows + 1))
+            errors.extend(
+                f"missing_source_row:{source_row}"
+                for source_row in sorted(expected - observed_set)
+            )
+            errors.extend(
+                f"unexpected_source_row:{source_row}"
+                for source_row in sorted(observed_set - expected)
+            )
+        elif len(unique_keys) != expected_source_rows:
+            errors.append(
+                f"source_row_count_mismatch:{len(unique_keys)}/{expected_source_rows}"
+            )
 
     evidence_by_ref: dict[str, dict[str, Any]] = {}
     for chunk in evidence_chunks:

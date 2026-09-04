@@ -365,6 +365,23 @@ def test_model_rag_result_preserves_explicit_row_identity_and_norm_code_verbatim
     ]
 
 
+def test_model_rag_result_preserves_string_source_row_verbatim():
+    answer = """### Строка 1
+* **source_row**: СМР!R9
+* **title**: Работа модели
+* **unit**: шт.
+* **quantity**: 3
+* **norm_code**: ГЭСН26-01-055-01
+* **evidence_refs**: Q2.H4
+"""
+
+    parsed = service.parse_model_rag_result(answer)
+
+    assert parsed is not None
+    assert parsed[0] == answer
+    assert parsed[1][0]["source_row"] == "СМР!R9"
+
+
 def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence():
     evidence = [
         SimpleNamespace(
@@ -398,6 +415,44 @@ def test_model_rag_packaging_requires_complete_rows_and_real_matching_evidence()
     assert "missing_source_row:2" in errors
     assert "unknown_evidence_ref:Q9.H9" in errors
     assert "norm_code_not_in_referenced_evidence:1" in errors
+
+
+def test_model_rag_packaging_accepts_unique_string_source_rows_by_count():
+    evidence = [
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q1.H1", "norm_code": "ГЭСН26-01-055-01"}
+        ),
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q2.H1", "norm_code": "ГЭСНм08-02-146-01"}
+        ),
+    ]
+    rows = [
+        {
+            "source_row": "СМР!R9",
+            "norm_code": "ГЭСН26-01-055-01",
+            "evidence_refs": ["Q1.H1"],
+        },
+        {
+            "source_row": "Комментарии!R2",
+            "norm_code": "ГЭСНм08-02-146-01",
+            "evidence_refs": ["Q2.H1"],
+        },
+    ]
+
+    assert service.validate_model_rag_result_structure(
+        rows,
+        evidence,
+        expected_source_rows=2,
+    ) == []
+
+    duplicate_errors = service.validate_model_rag_result_structure(
+        [rows[0], {**rows[1], "source_row": "СМР!R9"}],
+        evidence,
+        expected_source_rows=2,
+    )
+
+    assert "duplicate_source_row:СМР!R9" in duplicate_errors
+    assert "source_row_count_mismatch:1/2" in duplicate_errors
 
 
 def test_model_rag_result_does_not_infer_rows_from_prose():
@@ -1034,7 +1089,7 @@ async def test_chat_lsr_executor_runs_thin_model_decision_adapter(tmp_path, monk
         root=attachment_root,
     )
     decisions = [{
-        "source_row": 1,
+        "source_row": "СМР!R9",
         "section": "ОВ",
         "title": "Монтаж воздуховода",
         "unit": "м",
@@ -1049,7 +1104,7 @@ async def test_chat_lsr_executor_runs_thin_model_decision_adapter(tmp_path, monk
             "schema": "rim_lsr_v1",
             "sections": [],
             "summary": {"input_rows": 1, "bound_rows": 1, "flags": []},
-            "row_bindings": [{"row": 1, "status": "bound"}],
+            "row_bindings": [{"row": "СМР!R9", "status": "bound"}],
         }
 
     def render(_trace, output_path, **_kwargs):

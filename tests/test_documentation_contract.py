@@ -60,7 +60,7 @@ def test_documentation_contract_ignores_external_anchors_and_code_fences(tmp_pat
 def test_real_roadmap_has_product_contract_and_four_workstreams():
     text = (ROOT / "ROADMAP_TO_V1.md").read_text(encoding="utf-8")
 
-    assert "помощник ГИП/РП" in text
+    assert "локальный RAG с доказательствами для строительной сферы" in text
     assert "## 1. RAG и evidence" in text
     assert "## 2. Работа ГИП/РП" in text
     assert "## 3. Агент" in text
