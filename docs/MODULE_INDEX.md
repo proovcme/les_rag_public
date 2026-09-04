@@ -8,7 +8,10 @@
 > The unchanged decisions go to `build_lsr_workbook`, which owns the visible
 > bound/conflict/partial result. Points:
 > `proxy/services/chat_evidence_application_service.py` and its focused tests.
-> Status doc↔code: ✅; installed live XLSX acceptance pending.
+> Status doc↔code: ✅; installed live XLSX accepted: 5/5 bound, 126 formulas,
+> total 192 210,06 RUB, artifact/checkpoint/hash verified. One model preamble
+> was executed as an extra query; this remains a non-blocking P1 parser/latency
+> follow-up and must not be fixed with keyword or regex routing.
 
 > **0.30.63 live-RAG P1 stabilization:** readiness compares the active mutable
 > user catalog with its current MetaDB projection while retaining the older

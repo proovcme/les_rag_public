@@ -12,11 +12,11 @@
 версия Tauri/NSIS:         5.1.704
 ветка разработки:          codex/model-rag-result
 dev implementation:       0.30.64 model-result packaging continuity candidate
-задеплоено на рантайм:     Legion 0.30.63 / build 703 / commit c19fa649517ecdf650cd9cdc79e102497251bf7b; LIVE RAG/SOURCES ACCEPTED
+задеплоено на рантайм:     Legion 0.30.64 / build 704 / commit 4591a666edf26928506d20438e28f735b96a6e6a; LIVE RAG/SOURCES/XLSX ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.63 / build 703 / desktop 5.1.703 / commit c19fa649517ecdf650cd9cdc79e102497251bf7b; aligned
+рантайм /api/version:      Legion 0.30.64 / build 704 / desktop 5.1.704 / commit 4591a666edf26928506d20438e28f735b96a6e6a; aligned
 ```
 
 > **0.30.64 / build 704 model-result packaging continuity (candidate, не
@@ -30,7 +30,13 @@ dev implementation:       0.30.64 model-result packaging continuity candidate
 > в `build_lsr_workbook`, чтобы конфликт был виден в partial XLSX. Пустой,
 > дублированный `source_row` и отсутствующий/неизвестный `Qx.Hy` по-прежнему
 > блокируют упаковку. Повторный model call, regex-routing и выбор нормы кодом не
-> добавлены. Installed live XLSX acceptance ожидается.
+> добавлены. Installed live acceptance на отдельной пользовательской ВОР:
+> `5/5 bound`, 5 норм, 126 формул без formula errors, итог без НДС
+> `192 210,06 руб.`, artifact/checkpoint/download SHA подтверждены, elapsed
+> `185,067 с`. Qwen добавила вступительную строку перед пятью запросами; reader
+> исполнил её как шестой запрос, поэтому модели были показаны 36 карточек вместо
+> необходимых 30. Результат не повреждён, но синтаксическое отделение обычной
+> преамбулы от списка и лишняя latency остаются P1 без keyword/regex routing.
 
 > **0.30.63 / build 703 live-RAG P1 stabilization (candidate, не опубликован):**
 > readiness общей mutable-коллекции сверяет Qdrant с текущим user-owned
