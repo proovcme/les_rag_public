@@ -1,5 +1,20 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.63 live-RAG P1 stabilization:** readiness compares the active mutable
+> user catalog with its current MetaDB projection while retaining the older
+> activation generation count as diagnostics. An unbuilt ColBERT generation is
+> shown as bypassed instead of presenting a stale circuit error as a current
+> RAG failure. Source opening resolves historical chunk-level `:budget:` IDs
+> back to the exact MetaDB document across retained lexical generations, so
+> saved answers and existing indexes open the original without reindexing.
+> Sovushka clears both scope state and visible
+> project/dataset checkboxes, treats path/doc ID as an auditable locator, and
+> explains a cache miss as a freshly generated answer. Model text, evidence,
+> retrieval order and dataset scope rules are unchanged. Points:
+> `proxy/services/{rag_readiness,document_explorer}_service.py`,
+> `sovushka/{answer_render.py,pages/chat.py}` and focused tests. Status
+> doc↔code: ✅; installed live acceptance pending, candidate not published.
+
 > **0.30.62 liberal model table / no hidden count gate:** reader accepts
 > Qwen-authored parenthetical column labels and explicit missing-value markers
 > while preserving the answer. Packaging no longer depends on the legacy regex
@@ -1364,6 +1379,13 @@ file card. После progress UI не запускает duplicate `/api/chat`.
 `rag/document-explorer` добавляет guarded `GET /api/documents/by-id/{doc_id}/raw` и
 `GET /api/documents/by-id/{doc_id}/viewer` для office-preview;
 legacy-история без `source_map` сохраняет прежний path fallback.
+
+**0.30.63 / build 703:** исторический citation chunk ID сначала разрешается
+через retained lexical generations. Если старая поисковая проекция уже
+отсутствует, ссылка несёт сохранённую точную пару `dataset_id + doc_name` в
+Document Explorer; fuzzy/regex-подбор и reindex не используются.
+Browser-facing ссылки на документ и карточку нормы используют штатный
+same-origin `/lite-api` bridge, а не ошибочный `/api` на NiceGUI-порту.
 
 **0.27.39 / build 556:** рабочие tab-panel переключаются без искусственного
 slide-transition; Самовар принимает вставленный абсолютный путь и выводит имя

@@ -7,17 +7,33 @@
 ## Текущее состояние (2026-09-04)
 
 ```
-версия продукта (SemVer):  0.30.62
-номер сборки:              702
-версия Tauri/NSIS:         5.1.702
+версия продукта (SemVer):  0.30.63
+номер сборки:              703
+версия Tauri/NSIS:         5.1.703
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.62 liberal model table + no hidden row-count gate
-задеплоено на рантайм:     Legion 0.30.61 / build 701 / commit aaf83754fddbe879921d24f0fd2b55e8000e18b0; LIVE RAG/XLSX ACCEPTED
+dev implementation:       0.30.63 live-RAG P1 stabilization candidate
+задеплоено на рантайм:     Legion 0.30.62 / build 702 / commit 2ff86b2d9647345d86f3d24b2c6136ef6aabd12c; LIVE RAG/XLSX ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.61 / build 701 / desktop 5.1.701 / commit aaf83754fddbe879921d24f0fd2b55e8000e18b0; aligned
+рантайм /api/version:      Legion 0.30.62 / build 702 / desktop 5.1.702 / commit 2ff86b2d9647345d86f3d24b2c6136ef6aabd12c; aligned
 ```
+
+> **0.30.63 / build 703 live-RAG P1 stabilization (candidate, не опубликован):**
+> readiness общей mutable-коллекции сверяет Qdrant с текущим user-owned
+> MetaDB-каталогом, а прежний activation count оставляет отдельной диагностикой.
+> Не построенный ColBERT показывается как optional bypass, а не как текущая
+> красная поломка из-за старого circuit error. Источники прежних ответов и
+> существующих индексов с chunk-level `:budget:` ID находятся во всех retained
+> lexical generations; если старая проекция уже удалена, ссылка передаёт
+> сохранённую точную пару `dataset_id + doc_name` во второй exact lookup — без
+> fuzzy matching и reindex. Browser-facing source links идут через штатный
+> same-origin `/lite-api` bridge с UI 8051 на proxy 8050. Совушка честно очищает
+> состояние и видимые галочки области, принимает doc/path locator без ложного
+> «Нет source_ref» и объясняет cache miss как свежую генерацию. Ответ модели,
+> evidence, порядок retrieval и правила scope не изменяются. Проверки: 154
+> focused passed; `make verify` собрал 1181 проверку, `make test` — 1181 passed.
+> Установленная live-приёмка ожидается.
 
 > **0.30.62 / build 702 liberal model table without hidden count gate
 > (candidate, не опубликован):** живой Qwen-ответ с точными locator’ами и

@@ -1,5 +1,22 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.63 live-RAG P1 stabilization:**
+> `rag_readiness_service` uses current user-owned MetaDB coverage for the
+> incrementally updated general collection and exposes the activation-time
+> generation count separately. ColBERT readiness is derived from the active
+> generation contract; an unavailable optional index is bypassed, while its
+> last error remains diagnostic. `DocumentExplorer.get_document` resolves
+> historical Qdrant/lexical chunk IDs across retained generations; if that
+> retired projection is already absent, citation links carry the saved exact
+> `dataset_id + doc_name` into `DocumentExplorer.get_document_by_source`.
+> Old citations therefore remain openable without reindex or filename guessing.
+> `answer_render.py` sends browser-facing document/norm-card links through the
+> existing same-origin `/lite-api` bridge (NiceGUI is on 8051, API on 8050) and
+> accepts typed doc/path locators even when legacy
+> `source_ref` is empty. The scope dialog clears its visible checkboxes together
+> with state, and technical cache status uses user-readable Russian labels.
+> None of these paths modifies model output, query text, evidence or routing.
+
 > **0.30.62 model-owned row set:** model-result packaging recognizes ordinary
 > parenthetical Markdown headers and presentation-wrapped absence markers.
 > `expected_source_rows` is not used as an execution gate because its legacy

@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import subprocess
 from pathlib import Path
+from typing import Annotated
 from backend.runtime_paths import mutable_path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,6 +21,17 @@ from proxy.services.native_open_service import open_native_file
 from proxy.services.pdf_contour_service import audit_pdf, render_page_preview
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
+
+SourceDataset = Annotated[str, Query(max_length=240)]
+SourceDocument = Annotated[str, Query(max_length=2000)]
+
+
+def _document_by_identity(doc_id: str, dataset_id: str = "", doc_name: str = "") -> dict | None:
+    service = explorer()
+    document = service.get_document(doc_id)
+    if document is None and dataset_id and doc_name:
+        document = service.get_document_by_source(dataset_id, doc_name)
+    return document
 
 
 @router.get("/datasets")
@@ -64,10 +76,12 @@ async def dataset_index_quality(
 @router.get("/by-id/{doc_id}")
 async def document_by_id(
     doc_id: str,
+    dataset_id: SourceDataset = "",
+    doc_name: SourceDocument = "",
     _user=Depends(require_user),
 ):
     try:
-        document = explorer().get_document(doc_id)
+        document = _document_by_identity(doc_id, dataset_id, doc_name)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if document is None:
@@ -78,6 +92,8 @@ async def document_by_id(
 @router.get("/by-id/{doc_id}/raw")
 async def document_raw_by_id(
     doc_id: str,
+    dataset_id: SourceDataset = "",
+    doc_name: SourceDocument = "",
     _user=Depends(require_user),
 ):
     """Return the indexed original through stable metadata identity.
@@ -86,7 +102,7 @@ async def document_raw_by_id(
     uploaded and external documents live under different guarded roots.
     """
     try:
-        document = explorer().get_document(doc_id)
+        document = _document_by_identity(doc_id, dataset_id, doc_name)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if document is None:
@@ -106,11 +122,13 @@ async def document_viewer_by_id(
     doc_id: str,
     locator: str = Query(default="", max_length=240),
     sheet: str = Query(default="", max_length=180),
+    dataset_id: SourceDataset = "",
+    doc_name: SourceDocument = "",
     _user=Depends(require_user),
 ):
     """Render office/text evidence through stable document identity."""
     try:
-        document = explorer().get_document(doc_id)
+        document = _document_by_identity(doc_id, dataset_id, doc_name)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if document is None:
@@ -235,10 +253,12 @@ async def document_pdf_contour_preview(
 @router.post("/by-id/{doc_id}/open-native")
 async def open_document_native(
     doc_id: str,
+    dataset_id: SourceDataset = "",
+    doc_name: SourceDocument = "",
     _admin=Depends(require_admin),
 ):
     try:
-        document = explorer().get_document(doc_id)
+        document = _document_by_identity(doc_id, dataset_id, doc_name)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if document is None:

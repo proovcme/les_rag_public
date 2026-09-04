@@ -34,6 +34,18 @@ from sovushka.state import (
 from sovushka.uikit import action_button, select_field
 
 
+def _clear_scope_selection(
+    selected_projects: set,
+    selected_datasets: set,
+    checkboxes: list[Any],
+) -> None:
+    """Clear both the scope state and the checkboxes currently shown in the dialog."""
+    selected_projects.clear()
+    selected_datasets.clear()
+    for checkbox in checkboxes:
+        checkbox.set_value(False)
+
+
 async def _copy_text(text: str) -> None:
     """Скопировать в буфер. navigator.clipboard работает только в secure-context
     (https/localhost); за туннелем по http — fallback на execCommand через textarea."""
@@ -400,7 +412,13 @@ def _operator_technical_chips(meta: dict | None) -> list[str]:
         context_window = trace.get("context_window") if isinstance(trace.get("context_window"), dict) else {}
         if context_window:
             out.append(f"CTX {context_window.get('expanded_count', 0)}/{context_window.get('input_count', 0)}")
-    out.append(f"CACHE {str(meta.get('cache') or 'miss').upper()}")
+    cache_state = str(meta.get("cache") or "miss").strip().lower()
+    if cache_state in {"hit", "semantic", "session", "exact"}:
+        out.append("Кэш: использован сохранённый ответ")
+    elif cache_state == "miss":
+        out.append("Кэш: не использован — ответ сформирован заново")
+    elif cache_state == "stream_recovered":
+        out.append("Ответ восстановлен после обрыва соединения")
     if validation:
         out.append("VALIDATOR ON" if validation.get("enabled") else "VALIDATOR OFF")
     if scenario.get("id"):
@@ -1150,6 +1168,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         # фоновом asyncio-таске нельзя (slot stack empty). Данные тянет _prefetch_scope.
                         data = scope_opts_cache["data"] or {}
                         sel_p = set(scope_state["project_ids"]); sel_d = set(scope_state["dataset_ids"])
+                        scope_checkboxes: list[Any] = []
                         with ui.dialog() as dlg, ui.card().style(
                             "background:var(--bg-panel);border:1px solid var(--border);min-width:620px;max-width:700px;"
                             "max-height:82vh;padding:18px;"):
@@ -1214,6 +1233,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     cb.on("update:model-value", _toggle)
                                     if disabled:
                                         cb.disable()
+                                    scope_checkboxes.append(cb)
                                     return cb
 
                                 ui.label("ПРОЕКТЫ").classes("sov-scope-section-title")
@@ -1246,7 +1266,13 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                             sub=meta, icon="o_auto_stories", disabled=not available)
                             with ui.row().classes("sov-scope-dialog-actions"):
                                 ui.button("Все источники", on_click=lambda: (_apply_all_scope(), dlg.close())).props("flat no-caps")
-                                ui.button("Очистить выбор", on_click=lambda: (sel_p.clear(), sel_d.clear(), _update_selection_note())).props("flat no-caps")
+                                ui.button(
+                                    "Очистить выбор",
+                                    on_click=lambda: (
+                                        _clear_scope_selection(sel_p, sel_d, scope_checkboxes),
+                                        _update_selection_note(),
+                                    ),
+                                ).props("flat no-caps")
                                 ui.button("Применить выбор", icon="o_check", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("unelevated no-caps color=primary")
                         dlg.open()
 
@@ -2382,8 +2408,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         'sandbox="allow-scripts allow-same-origin allow-popups"></iframe>'
                         '</div>'
                     )
-                if item.get("source_ref"):
-                    source_ref_val = str(item.get("source_ref") or "")
+                if item.get("has_auditable_locator"):
+                    source_ref_val = str(item.get("source_ref") or item.get("copy_text") or "")
                     with ui.row().classes("gap-2 items-center flex-wrap").style("margin-top:6px;"):
                         citation_text = f"{title}\n{item.get('snippet') or source_ref_val}".strip()
                         _copy_button("Цитату", citation_text, icon="o_format_quote", classes="sov-answer-act")
@@ -2417,11 +2443,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         with ui.row().classes("gap-2 items-center flex-wrap"):
                             ui.label(f"Путь: {item['relative_path']}").classes("sov-source-technical__ref")
                             _copy_button("Копировать путь", str(item["relative_path"]), classes="sov-answer-act")
-                    with ui.expansion("Техническая ссылка").props("dense").classes(
-                        "sov-source-technical"
-                    ):
-                        ui.label(str(item["source_ref"])).classes("sov-source-technical__ref")
-                        _copy_button("Скопировать", str(item["source_ref"]), classes="sov-answer-act")
+                    if item.get("source_ref"):
+                        with ui.expansion("Техническая ссылка").props("dense").classes(
+                            "sov-source-technical"
+                        ):
+                            ui.label(str(item["source_ref"])).classes("sov-source-technical__ref")
+                            _copy_button("Скопировать", str(item["source_ref"]), classes="sov-answer-act")
                 else:
                     ui.label(str(item.get("unavailable_reason") or "Нет source_ref")).classes("src-tag src-tag-warn")
                 if item.get("snippet"):

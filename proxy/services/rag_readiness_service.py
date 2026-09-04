@@ -15,7 +15,11 @@ from typing import Any
 from qdrant_client import QdrantClient, models
 
 from backend.rag_config import index_contract_status, rag_collection_name, rag_meta_db_path
-from proxy.services.rag_advanced_policy_service import load_policy, load_status
+from proxy.services.rag_advanced_policy_service import (
+    colbert_generation_readiness,
+    load_policy,
+    load_status,
+)
 
 
 _CACHE_LOCK = threading.Lock()
@@ -175,14 +179,17 @@ def _general_status(
         else {}
     )
     if dataset_id and dataset_id in generation_datasets:
-        expected = int(generation_datasets[dataset_id])
+        expected_generation = int(generation_datasets[dataset_id])
     elif not dataset_id and actual_contract.get("generation_points") is not None:
-        expected = int(actual_contract.get("generation_points") or 0)
+        expected_generation = int(actual_contract.get("generation_points") or 0)
     else:
-        # Legacy fallback is diagnostic only. A clean generation may split one
-        # source point into several budget-safe child points, so the activated
-        # alias contract is the authoritative destination count.
-        expected = _source_chunks(dataset_id)
+        expected_generation = None
+    # The general collection is incrementally updated after a generation is
+    # activated.  Its current user-owned MetaDB projection is therefore the
+    # authoritative coverage count; the activation-time generation count stays
+    # visible as provenance instead of turning a complete live RRF red.
+    expected_source = _source_chunks(dataset_id)
+    expected = expected_source if expected_source is not None else expected_generation
     channel_complete = bool(total > 0 and total == dense == sparse)
     fingerprint_complete = bool(fingerprint and compatible == total)
     source_complete = expected is not None and expected > 0 and expected == total
@@ -215,8 +222,8 @@ def _general_status(
                 "dense_points": 0,
                 "sparse_points": 0,
                 "compatible_fingerprint_points": 0,
-                "expected_source_points": 0,
-                "expected_generation_points": 0,
+                "expected_source_points": expected_source,
+                "expected_generation_points": expected_generation,
                 "lexical": {**lexical, "ready": lexical_complete},
                 "rrf_ready": False,
             }
@@ -251,8 +258,8 @@ def _general_status(
             "dense_points": dense,
             "sparse_points": sparse,
             "compatible_fingerprint_points": compatible,
-            "expected_source_points": expected,
-            "expected_generation_points": expected,
+            "expected_source_points": expected_source,
+            "expected_generation_points": expected_generation,
             "lexical": {
                 **lexical,
                 "ready": lexical_complete,
@@ -470,13 +477,30 @@ def rag_readiness(*, dataset_id: str | None = None, force: bool = False) -> dict
         general = _general_status(client, aliases, dataset_id=dataset_id)
         advanced_policy = load_policy()
         advanced_status = load_status()
+        colbert_status = advanced_status.get("colbert") or {}
+        colbert_effective = colbert_generation_readiness(
+            advanced_policy,
+            colbert_status,
+            index_contract_status(),
+        )
         optional_stages = {
-            name: {
-                "mode": str((advanced_policy.get(name) or {}).get("mode") or "off"),
-                "status": str((advanced_status.get(name) or {}).get("readiness") or "not_built"),
-                "reason": str((advanced_status.get(name) or {}).get("last_bypass_reason") or ""),
-            }
-            for name in ("raptor", "colbert")
+            "raptor": {
+                "mode": str((advanced_policy.get("raptor") or {}).get("mode") or "off"),
+                "status": str((advanced_status.get("raptor") or {}).get("readiness") or "not_built"),
+                "reason": str((advanced_status.get("raptor") or {}).get("last_bypass_reason") or ""),
+            },
+            "colbert": {
+                "mode": str(colbert_effective["mode"]),
+                "status": (
+                    "ready"
+                    if colbert_effective["ready"]
+                    else "disabled"
+                    if colbert_effective["mode"] == "off"
+                    else "bypassed"
+                ),
+                "reason": str(colbert_effective["reason"]),
+                "last_error_code": str(colbert_status.get("last_error_code") or ""),
+            },
         }
         payload = {
             "schema": "les.rag.readiness.v1",

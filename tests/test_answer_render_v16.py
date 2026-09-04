@@ -192,10 +192,58 @@ def test_citation_drawer_item_uses_stable_document_id_for_raw_link():
         "snippet": "Фрагмент",
     })
 
-    assert item["open_url"] == "/api/documents/by-id/doc%2031/raw#page=4"
-    assert item["viewer_url"] == "/api/documents/by-id/doc%2031/raw#page=4"
-    assert item["native_open_url"] == "/api/documents/by-id/doc%2031/open-native"
+    assert item["open_url"] == "/lite-api/documents/by-id/doc%2031/raw#page=4"
+    assert item["viewer_url"] == "/lite-api/documents/by-id/doc%2031/raw#page=4"
+    assert item["native_open_url"] == "/lite-api/documents/by-id/doc%2031/open-native"
     assert item["locator"] == "стр.4"
+
+
+def test_citation_drawer_item_treats_chunk_document_id_as_auditable_locator():
+    item = ar.citation_drawer_item({
+        "doc_id": "node-31:budget:7e357c6e73593252",
+        "doc_name": "План.pdf",
+        "snippet": "Проверяемый фрагмент",
+        "locator": {
+            "kind": "file_excerpt",
+            "doc_id": "node-31:budget:7e357c6e73593252",
+            "relative_path": "Проект/План.pdf",
+            "page": 4,
+            "excerpt": "Проверяемый фрагмент",
+        },
+    })
+
+    assert item["open_url"].startswith(
+        "/lite-api/documents/by-id/node-31%3Abudget%3A7e357c6e73593252/raw"
+    )
+    assert item["copy_text"] == "Проект/План.pdf"
+    assert item["unavailable_reason"] == ""
+    assert item["has_auditable_locator"] is True
+
+
+def test_citation_drawer_item_carries_exact_source_provenance_in_document_urls():
+    item = ar.citation_drawer_item({
+        "doc_id": "old-node:budget:7e357c6e73593252",
+        "dataset_id": "project-7",
+        "doc_name": "Сметы/Исторический проект.pdf",
+        "source_ref": "Сметы/Исторический проект.pdf#p4",
+        "snippet": "Проверяемый фрагмент",
+    })
+
+    expected_query = (
+        "dataset_id=project-7&"
+        "doc_name=%D0%A1%D0%BC%D0%B5%D1%82%D1%8B%2F"
+        "%D0%98%D1%81%D1%82%D0%BE%D1%80%D0%B8%D1%87%D0%B5%D1%81%D0%BA%D0%B8%D0%B9+"
+        "%D0%BF%D1%80%D0%BE%D0%B5%D0%BA%D1%82.pdf"
+    )
+    assert item["open_url"] == (
+        "/lite-api/documents/by-id/old-node%3Abudget%3A7e357c6e73593252/raw?"
+        f"{expected_query}#page=4"
+    )
+    assert item["viewer_url"] == item["open_url"]
+    assert item["native_open_url"] == (
+        "/lite-api/documents/by-id/old-node%3Abudget%3A7e357c6e73593252/open-native?"
+        f"{expected_query}"
+    )
 
 
 def test_citation_drawer_item_uses_stable_document_id_for_office_preview():
@@ -205,8 +253,8 @@ def test_citation_drawer_item_uses_stable_document_id_for_office_preview():
         "source_ref": "Титул.docx#para4",
     })
 
-    assert item["open_url"] == "/api/documents/by-id/doc-31/raw"
-    assert item["viewer_url"] == "/api/documents/by-id/doc-31/viewer?locator=para4"
+    assert item["open_url"] == "/lite-api/documents/by-id/doc-31/raw"
+    assert item["viewer_url"] == "/lite-api/documents/by-id/doc-31/viewer?locator=para4"
 
 
 def test_typed_file_locator_exposes_original_folder_path_and_quote_actions():
@@ -224,7 +272,7 @@ def test_typed_file_locator_exposes_original_folder_path_and_quote_actions():
     })
 
     assert item["locator_kind"] == "file_excerpt"
-    assert item["open_url"] == "/api/documents/by-id/doc-31/raw#page=4"
+    assert item["open_url"] == "/lite-api/documents/by-id/doc-31/raw#page=4"
     assert item["actions"] == {
         "open_original": True,
         "show_in_folder": True,
@@ -248,7 +296,7 @@ def test_typed_norm_card_opens_card_not_a_fake_file():
 
     assert item["locator_kind"] == "norm_card"
     assert item["open_url"] == ""
-    assert item["norm_card_url"].startswith("/api/lsr/norms/browse?q=")
+    assert item["norm_card_url"].startswith("/lite-api/lsr/norms/browse?q=")
     assert item["actions"]["open_norm_card"] is True
     assert item["actions"]["open_original"] is False
 

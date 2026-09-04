@@ -1,5 +1,26 @@
 # Unified Construction Harness — Failure Ledger (v0.8)
 
+## 2026-09-04 — Источник из живого ответа открывался как chunk ID
+
+- **Симптом:** карточка источника показывала цитату и путь, но просмотр PDF
+  открывал `/api/documents/by-id/<chunk>:budget:<hash>/raw` и получал 404;
+  рядом ошибочно выводилось «Нет source_ref».
+- **Причина:** Qdrant/lexical payload исторически хранит chunk-level `doc_id`,
+  тогда как Document Explorer открывает исходники по UUID строки `documents`.
+  Дополнительно браузерная ссылка шла на относительный `/api` NiceGUI-порта
+  8051, хотя API работает на proxy-порту 8050 и для этого уже существует
+  same-origin `/lite-api` bridge. UI считал только legacy `source_ref`
+  достаточным для технической ссылки, хотя typed locator уже содержал документ
+  и относительный путь.
+- **Исправление:** Document Explorer сначала находит exact chunk identity во
+  всех retained lexical generations. Если прежняя поисковая проекция уже
+  удалена, карточка передаёт сохранённые `dataset_id + doc_name`, и API делает
+  второй строго точный lookup исходного документа. Неполные имена не
+  угадываются; browser-facing ссылки идут через `/lite-api`; typed
+  `doc_id`/path считается проверяемым locator. Работает со
+  старыми индексами и историей без reindex, модельный ответ и retrieval не
+  изменяются.
+
 ## 2026-09-01 — Windows runtime потерял динамический FGIS supervisor
 
 - **Симптом:** build 678 прошёл оба installed bootstrap, API/UI, process hygiene

@@ -335,6 +335,85 @@ class DocumentExplorer:
                 """,
                 (doc_id,),
             ).fetchone()
+            if row is None:
+                # Search results historically expose the chunk-level payload
+                # id (for example ``...:budget:...``), not ``documents.id``.
+                # Resolve that identity across retained logical/physical
+                # lexical generations back to the source document so old
+                # indexes and saved conversations remain openable without a
+                # reindex. Exact chunk identity stays the lookup key.
+                chunk = conn.execute(
+                    """
+                    SELECT dataset_id, doc_name
+                    FROM lexical_chunks
+                    WHERE doc_id = ? OR point_id = ?
+                    ORDER BY
+                        CASE WHEN collection = ? THEN 0 ELSE 1 END,
+                        updated_at DESC,
+                        id DESC
+                    LIMIT 1
+                    """,
+                    (doc_id, doc_id, self.collection_name),
+                ).fetchone()
+                if chunk is not None:
+                    row = conn.execute(
+                        """
+                        SELECT
+                            id,
+                            dataset_id,
+                            file_name,
+                            COALESCE(status, '') AS status,
+                            COALESCE(file_size, 0) AS file_size,
+                            COALESCE(chunk_count, 0) AS chunk_count,
+                            COALESCE(doc_type, '') AS doc_type,
+                            COALESCE(content_type, '') AS content_type,
+                            COALESCE(domain, '') AS domain,
+                            COALESCE(source_path, '') AS source_path,
+                            COALESCE(last_error, '') AS last_error
+                        FROM documents
+                        WHERE dataset_id = ? AND file_name = ?
+                        ORDER BY id
+                        LIMIT 1
+                        """,
+                        (str(chunk["dataset_id"] or ""), str(chunk["doc_name"] or "")),
+                    ).fetchone()
+        return dict(row) if row else None
+
+    def get_document_by_source(self, dataset_id: str, doc_name: str) -> dict[str, Any] | None:
+        """Resolve one document by its exact source provenance.
+
+        Saved chat history may retain a chunk identity after that search
+        projection has been replaced.  The dataset/document pair is the
+        durable identity already stored with the citation; keep this lookup
+        exact so opening a source never guesses a neighbouring file.
+        """
+        dataset_id = str(dataset_id or "").strip()
+        doc_name = str(doc_name or "").strip()
+        if not dataset_id or not doc_name:
+            return None
+        with self.connect() as conn:
+            _ensure_tables(conn)
+            row = conn.execute(
+                """
+                SELECT
+                    id,
+                    dataset_id,
+                    file_name,
+                    COALESCE(status, '') AS status,
+                    COALESCE(file_size, 0) AS file_size,
+                    COALESCE(chunk_count, 0) AS chunk_count,
+                    COALESCE(doc_type, '') AS doc_type,
+                    COALESCE(content_type, '') AS content_type,
+                    COALESCE(domain, '') AS domain,
+                    COALESCE(source_path, '') AS source_path,
+                    COALESCE(last_error, '') AS last_error
+                FROM documents
+                WHERE dataset_id = ? AND file_name = ?
+                ORDER BY id
+                LIMIT 1
+                """,
+                (dataset_id, doc_name),
+            ).fetchone()
         return dict(row) if row else None
 
     def document_chunks(

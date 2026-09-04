@@ -32,6 +32,57 @@ def test_user_readiness_separates_backend_contract_optional_and_query_dimensions
     assert result["query_quality"]["status"] == "weak"
 
 
+def test_readiness_reports_unproven_colbert_as_bypassed_not_degraded(monkeypatch):
+    monkeypatch.setattr(
+        service,
+        "QdrantClient",
+        lambda **kwargs: SimpleNamespace(close=lambda: None),
+    )
+    monkeypatch.setattr(service, "_aliases", lambda client: {})
+    monkeypatch.setattr(
+        service,
+        "_general_status",
+        lambda client, aliases, dataset_id=None: {"rrf_ready": True},
+    )
+    monkeypatch.setattr(service, "_smeta_status", lambda client, aliases: {"ready": True})
+    monkeypatch.setattr(
+        service,
+        "load_policy",
+        lambda: {
+            "raptor": {"mode": "off"},
+            "colbert": {"mode": "adaptive"},
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "load_status",
+        lambda: {
+            "raptor": {"readiness": "not_built"},
+            "colbert": {
+                "readiness": "degraded",
+                "last_error_code": "COLBERT_RERANK_FAILED",
+                "last_bypass_reason": "COLBERT_RERANK_FAILED",
+                "circuit_state": "open",
+            },
+        },
+    )
+    monkeypatch.setattr(
+        service,
+        "index_contract_status",
+        lambda: {"compatible": True, "actual": {}},
+    )
+
+    result = service.rag_readiness(force=True)
+
+    assert result["user_status"]["overall"] == "ready"
+    assert result["user_status"]["optional_stages"]["colbert"] == {
+        "mode": "adaptive",
+        "status": "bypassed",
+        "reason": "not_ready",
+        "last_error_code": "COLBERT_RERANK_FAILED",
+    }
+
+
 def test_general_rrf_ready_requires_contract_channels_fingerprint_and_alias(monkeypatch):
     monkeypatch.setattr(service, "rag_collection_name", lambda: "les_rag")
     monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 10)
@@ -165,6 +216,41 @@ def test_source_chunk_count_excludes_system_catalogs(monkeypatch, tmp_path):
 
     assert service._source_chunks(None) == 18
     assert service._source_chunks("user-b") == 7
+
+
+def test_general_readiness_uses_current_user_catalog_after_generation_grows(monkeypatch):
+    """Incremental user indexing must not leave an otherwise complete RRF red."""
+
+    monkeypatch.setattr(service, "rag_collection_name", lambda: "les_rag")
+    monkeypatch.setattr(service, "_source_chunks", lambda dataset_id: 101_366)
+    monkeypatch.setattr(
+        service,
+        "_lexical_status",
+        lambda collection, dataset_id=None: {"ready": False},
+    )
+    monkeypatch.setattr(
+        service,
+        "index_contract_status",
+        lambda: {
+            "status": "compatible",
+            "compatible": True,
+            "actual": {
+                "point_embedding_fingerprint": "fp",
+                "generation_points": 76_918,
+            },
+        },
+    )
+
+    result = service._general_status(
+        FakeClient(points=101_366),
+        {"les_rag": "les_rag_v563"},
+        dataset_id=None,
+    )
+
+    assert result["state"] == "ready"
+    assert result["rrf_ready"] is True
+    assert result["expected_source_points"] == 101_366
+    assert result["expected_generation_points"] == 76_918
 
 
 def test_general_direct_config_is_active_and_legacy_lexical_marker_is_optional(monkeypatch):

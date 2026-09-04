@@ -34,6 +34,7 @@ from sovushka.pages.chat import (
     format_chat_request_clock,
     workbook_chat_filename,
     should_skip_chat_resource_gate,
+    _clear_scope_selection,
     _preserved_attachment,
 )
 from proxy.routers.chat import ChatRequest, _attachment_source_label, _question_with_attachment
@@ -151,6 +152,31 @@ def test_chat_request_accepts_explicit_multi_document_scope_and_response_length(
 def test_chat_request_accepts_explicit_selected_sources_only_capability():
     assert ChatRequest(question="q", selected_sources_only=True).selected_sources_only is True
     assert ChatRequest(question="q").selected_sources_only is None
+
+
+def test_clear_scope_selection_resets_state_and_visible_checkboxes():
+    class Checkbox:
+        def __init__(self):
+            self.values = []
+
+        def set_value(self, value):
+            self.values.append(value)
+
+    selected_projects = {1, 2}
+    selected_datasets = {"ds-a"}
+    project_checkbox = Checkbox()
+    dataset_checkbox = Checkbox()
+
+    _clear_scope_selection(
+        selected_projects,
+        selected_datasets,
+        [project_checkbox, dataset_checkbox],
+    )
+
+    assert selected_projects == set()
+    assert selected_datasets == set()
+    assert project_checkbox.values == [False]
+    assert dataset_checkbox.values == [False]
 
 
 def test_ai_plain_markdown_is_rendered_as_markdown_widget():
@@ -1050,7 +1076,8 @@ def test_operator_status_chips_hide_internal_trace_from_first_layer():
 
     tech = _operator_technical_chips(meta)
     assert "KOT NTD_FIRE 0.8" in tech
-    assert "CACHE MISS" in tech
+    assert "Кэш: не использован — ответ сформирован заново" in tech
+    assert all("CACHE" not in label for label in tech)
     assert "CONTRACT_CHECK WARN" in tech
     assert "MISSING answer" in tech
     assert "SCENARIO table_query" in tech

@@ -336,7 +336,13 @@ def citation_artifact(sources: list) -> dict:
         items.append({"n": i, "file": c["file"], "locator": c["locator"], "kind": c["kind"],
                       "source_ref": str(source_ref or "") if c["has_ref"] else "",
                       "doc_id": str(s.get("doc_id") or typed_locator.get("doc_id") or "") if isinstance(s, dict) else "",
-                      "dataset_id": str(s.get("dataset_id") or "") if isinstance(s, dict) else "",
+                      "dataset_id": str(s.get("dataset_id") or typed_locator.get("dataset_id") or "") if isinstance(s, dict) else "",
+                      "doc_name": str(
+                          s.get("doc_name")
+                          or typed_locator.get("doc_name")
+                          or typed_locator.get("relative_path")
+                          or ""
+                      ) if isinstance(s, dict) else "",
                       "snippet": str(typed_locator.get("excerpt") or snippet), "has_ref": c["has_ref"], "weak": c["weak"],
                       "usage": usage["code"], "usage_label": usage["label"]})
     return {"type": "citations", "title": "Цитаты", "count": len(items), "items": items}
@@ -392,6 +398,13 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
         item["snippet"] = str(typed_locator["excerpt"])
     source_ref = str(item.get("source_ref") or "")
     doc_id = str(item.get("doc_id") or "")
+    dataset_id = str(item.get("dataset_id") or "")
+    doc_name = str(item.get("doc_name") or "")
+    document_params = (
+        {"dataset_id": dataset_id, "doc_name": doc_name}
+        if dataset_id and doc_name else {}
+    )
+    document_query = f"?{urlencode(document_params)}" if document_params else ""
     file_part, _, location = source_ref.partition("#")
     if not location and isinstance(source, dict):
         locator = source.get("locator")
@@ -411,7 +424,7 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     web_url = ""
     if locator_kind == "norm_card":
         card_code = str(typed_locator.get("card_code") or "")
-        norm_card_url = f"/api/lsr/norms/browse?q={quote(card_code, safe='')}" if card_code else ""
+        norm_card_url = f"/lite-api/lsr/norms/browse?q={quote(card_code, safe='')}" if card_code else ""
         source_ref = str(typed_locator.get("source_ref") or card_code)
         file_part = ""
         location = ""
@@ -430,20 +443,20 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
     elif item.get("weak"):
         unavailable_reason = "Источник слабый/vector: точное место не гарантировано, доступно копирование source_ref."
     elif doc_id:
-        open_url = f"/api/documents/by-id/{quote(doc_id, safe='')}/raw"
+        open_url = f"/lite-api/documents/by-id/{quote(doc_id, safe='')}/raw{document_query}"
         page_match = re.search(r"(?:^|[#;&])(?:p|page=?)\s*(\d+)(?:$|[#;&])", location, re.I)
         if suffix == ".pdf" and page_match:
             open_url += f"#page={int(page_match.group(1))}"
         if suffix == ".pdf" or suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
             viewer_url = open_url
         elif suffix in _EMBEDDED_VIEW_EXTENSIONS:
-            params: dict[str, object] = {}
+            params: dict[str, object] = dict(document_params)
             if location:
                 params["locator"] = location
             if isinstance(source, dict) and source.get("sheet"):
                 params["sheet"] = source["sheet"]
             query = f"?{urlencode(params)}" if params else ""
-            viewer_url = f"/api/documents/by-id/{quote(doc_id, safe='')}/viewer{query}"
+            viewer_url = f"/lite-api/documents/by-id/{quote(doc_id, safe='')}/viewer{query}"
     elif "/" in file_part or suffix in _EMBEDDED_VIEW_EXTENSIONS or suffix in {".doc", ".xls"}:
         open_url = f"/lite-api/rag/file/raw?path={quote(file_part)}"
         page_match = re.search(r"(?:^|[#;&])(?:p|page=?)\s*(\d+)(?:$|[#;&])", location, re.I)
@@ -468,10 +481,17 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
                         pass
             viewer_url = f"/lite-api/rag/file/viewer?{urlencode(params)}"
     native_open_url = (
-        f"/api/documents/by-id/{quote(doc_id, safe='')}/open-native"
+        f"/lite-api/documents/by-id/{quote(doc_id, safe='')}/open-native{document_query}"
         if doc_id and locator_kind in {"legacy", "file_excerpt"} else
-        f"/api/documents/open-native-by-ref?path={quote(file_part)}"
+        f"/lite-api/documents/open-native-by-ref?path={quote(file_part)}"
         if item.get("has_ref") and file_part and locator_kind in {"legacy", "file_excerpt"} else ""
+    )
+    has_auditable_locator = bool(
+        source_ref
+        or doc_id
+        or typed_locator.get("relative_path")
+        or norm_card_url
+        or web_url
     )
     # Нормативные/расчётные refs вида "ГЭСН-2022#06-..." или "ГОСТ...#clause=..."
     # не являются локальными файлами. Не пугаем оператора техническим предупреждением: ref остаётся
@@ -495,6 +515,7 @@ def citation_drawer_item(source: Any, index: int | None = None) -> dict:
         "is_pdf": file_part.lower().endswith(".pdf"),
         "unavailable_reason": unavailable_reason,
         "copy_text": source_ref if source_ref else str(typed_locator.get("relative_path") or item.get("file", "")),
+        "has_auditable_locator": has_auditable_locator,
         "stamp_status": source.get("pdf_stamp_status") or source.get("stamp_status") if isinstance(source, dict) else "",
         "sheet_number": source.get("pdf_sheet_number") or source.get("sheet_number") if isinstance(source, dict) else "",
     })

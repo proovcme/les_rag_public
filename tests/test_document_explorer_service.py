@@ -121,6 +121,19 @@ def test_document_explorer_lists_datasets_and_documents(explorer):
     assert docs["documents"][0]["source_path"] == "/src/sp7.docx"
 
 
+def test_document_explorer_resolves_exact_dataset_and_document_name(explorer):
+    document = explorer.get_document_by_source("fire", "NTD/СП 7.13130.docx")
+
+    assert document is not None
+    assert document["id"] == "doc-1"
+    assert document["dataset_id"] == "fire"
+    assert document["file_name"] == "NTD/СП 7.13130.docx"
+
+
+def test_document_explorer_does_not_guess_source_document(explorer):
+    assert explorer.get_document_by_source("fire", "СП 7.13130.docx") is None
+
+
 def test_document_explorer_adds_missing_lexical_schema_without_reindex(tmp_path):
     db = tmp_path / "legacy-meta.db"
     with sqlite3.connect(db) as conn:
@@ -194,6 +207,23 @@ def test_document_explorer_opens_document_and_chunks_by_id(explorer):
     assert result["document"]["id"] == "doc-1"
     assert result["total"] == 2
     assert [chunk["chunk_ord"] for chunk in result["chunks"]] == [1, 2]
+
+
+def test_document_explorer_resolves_budget_chunk_id_to_source_document(explorer):
+    chunk_id = "node-31:budget:7e357c6e73593252"
+    with explorer.connect() as conn:
+        conn.execute(
+            "UPDATE lexical_chunks SET collection = ?, doc_id = ? WHERE point_id = ?",
+            ("les_test_v563", chunk_id, "p1"),
+        )
+        conn.commit()
+
+    document = explorer.get_document(chunk_id)
+
+    assert document is not None
+    assert document["id"] == "doc-1"
+    assert document["dataset_id"] == "fire"
+    assert document["file_name"] == "NTD/СП 7.13130.docx"
 
 
 def test_document_explorer_doc_id_falls_back_to_dataset_and_file_name(explorer):
@@ -307,6 +337,39 @@ async def test_document_raw_by_id_uses_metadata_identity(monkeypatch, tmp_path):
 
     assert Path(response.path).resolve() == source.resolve()
     assert response.filename == "Титул.docx"
+
+
+@pytest.mark.asyncio
+async def test_document_raw_by_id_falls_back_to_exact_source_provenance(monkeypatch, tmp_path):
+    source = tmp_path / "Исторический проект.pdf"
+    source.write_bytes(b"pdf")
+
+    class StubExplorer:
+        def get_document(self, doc_id):
+            assert doc_id == "old-chunk-id"
+            return None
+
+        def get_document_by_source(self, dataset_id, doc_name):
+            assert dataset_id == "project-7"
+            assert doc_name == "Сметы/Исторический проект.pdf"
+            return {
+                "id": "current-doc-id",
+                "dataset_id": dataset_id,
+                "file_name": doc_name,
+                "source_path": str(source),
+            }
+
+    monkeypatch.setattr(documents_router, "explorer", lambda: StubExplorer())
+
+    response = await documents_router.document_raw_by_id(
+        "old-chunk-id",
+        dataset_id="project-7",
+        doc_name="Сметы/Исторический проект.pdf",
+        _user=object(),
+    )
+
+    assert Path(response.path).resolve() == source.resolve()
+    assert response.filename == "Сметы/Исторический проект.pdf"
 
 
 @pytest.mark.asyncio
