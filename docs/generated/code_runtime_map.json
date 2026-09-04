@@ -3021,7 +3021,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 4234,
+      "lines": 4260,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -9088,7 +9088,7 @@
     },
     {
       "inbound": [],
-      "lines": 2879,
+      "lines": 2917,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -18548,7 +18548,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 630,
     "tracked_python_files": 991,
-    "tracked_python_lines": 313004
+    "tracked_python_lines": 313068
   },
   "warnings": []
 }

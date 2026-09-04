@@ -1300,12 +1300,25 @@ def validate_model_rag_result_structure(
             else code_identity(row.get("norm_code"))
         )
         if selected_code and not any(
-            code_identity(evidence_by_ref[ref].get("norm_code")) == selected_code
+            (
+                (evidence_code := code_identity(evidence_by_ref[ref].get("norm_code")))
+                and evidence_code in selected_code
+            )
             for ref in refs
             if ref in evidence_by_ref
         ):
             errors.append(f"norm_code_not_in_referenced_evidence:{source_row}")
     return list(dict.fromkeys(errors))
+
+
+def blocking_model_rag_result_errors(errors: Sequence[str]) -> list[str]:
+    """Keep evidence-code disagreement visible without withholding the model draft."""
+
+    return [
+        error
+        for error in errors
+        if not str(error).startswith("norm_code_not_in_referenced_evidence:")
+    ]
 
 
 def model_rag_search_tool_schema() -> list[dict[str, Any]]:
@@ -3781,6 +3794,7 @@ async def _execute_chat_evidence_application(
                     parsed_model_result = parse_model_rag_result(answer)
                     model_result_rows: list[dict[str, Any]] = []
                     model_result_errors: list[str] = []
+                    model_result_blocking_errors: list[str] = []
                     if parsed_model_result is not None:
                         answer, model_result_rows = parsed_model_result
                         from proxy.services.smeta_chat_adapter_service import (
@@ -3794,13 +3808,24 @@ async def _execute_chat_evidence_application(
                                 attachment_context
                             ),
                         )
-                        if model_result_errors:
+                        model_result_blocking_errors = blocking_model_rag_result_errors(
+                            model_result_errors
+                        )
+                        if model_result_blocking_errors:
                             retrieval_trace["model_result"] = {
                                 "schema": "les_model_rag_result_v1",
                                 "status": "structural_error",
                                 "row_count": len(model_result_rows),
                                 "packaged": False,
                                 "errors": model_result_errors,
+                            }
+                        elif model_result_errors:
+                            retrieval_trace["model_result"] = {
+                                "schema": "les_model_rag_result_v1",
+                                "status": "accepted_with_integrity_warning",
+                                "row_count": len(model_result_rows),
+                                "packaged": False,
+                                "warnings": model_result_errors,
                             }
                     else:
                         retrieval_trace["model_result"] = {
@@ -3821,7 +3846,7 @@ async def _execute_chat_evidence_application(
                     if (
                         parsed_model_result is not None
                         and model_result_rows
-                        and not model_result_errors
+                        and not model_result_blocking_errors
                         and attachment_id
                         and packaging_tools
                         and workbook_tool_executor is not None
@@ -3925,6 +3950,7 @@ async def _execute_chat_evidence_application(
                             "status": "accepted_unchanged",
                             "row_count": len(model_result_rows),
                             "packaging": packaging_trace,
+                            "warnings": model_result_errors,
                         }
 
                 try:

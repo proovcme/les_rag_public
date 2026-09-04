@@ -1,5 +1,14 @@
 # CODE_MAP — карта кода Л.Е.С. (LES_v2)
 
+> **0.30.64 model-result packaging continuity:** the model-result reader keeps
+> the full model-authored `norm_code`, including adjacent explanation. An exact
+> referenced card code may occur inside that field without being rewritten.
+> A real `norm_code ↔ Qx.Hy` disagreement remains an integrity warning, but it
+> no longer withholds the workbook: `build_lsr_workbook` receives the original
+> decisions and reports its own bound/conflict/partial result. Missing or
+> unknown evidence refs and invalid/duplicate row identities remain blocking.
+> No extra model call, regex route or code-authored norm selection is added.
+
 > **0.30.63 live-RAG P1 stabilization:**
 > `rag_readiness_service` uses current user-owned MetaDB coverage for the
 > incrementally updated general collection and exposes the activation-time
@@ -27,7 +36,7 @@
 > **0.30.61 exact source identity:** `parse_model_rag_result` preserves a
 > non-empty model-authored `source_row` as either its backward-compatible
 > positive integer or exact string locator. `validate_model_rag_result_structure`
-> checks uniqueness and completeness without inventing labels;
+> checks uniqueness without inventing labels;
 > `positions_from_visible_lsr_rows` carries the same identity into the LSR
 > trace and workbook. No regex, routing or additional model call is involved.
 

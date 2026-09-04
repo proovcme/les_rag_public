@@ -441,6 +441,44 @@ def test_model_rag_packaging_requires_unique_rows_and_real_matching_evidence():
     assert "norm_code_not_in_referenced_evidence:1" in errors
 
 
+def test_model_rag_packaging_keeps_model_wording_and_treats_code_link_mismatch_as_advisory():
+    evidence = [
+        SimpleNamespace(
+            meta={"model_evidence_ref": "Q1.H2", "norm_code": "ГЭСНм08-04-751-02"}
+        )
+    ]
+
+    assert service.validate_model_rag_result_structure(
+        [
+            {
+                "source_row": "ВОР!R5",
+                "norm_code": "ГЭСНм08-04-751-02 (Аналог: прокладка в коробах)",
+                "evidence_refs": ["Q1.H2"],
+            }
+        ],
+        evidence,
+        expected_source_rows=1,
+    ) == []
+
+    advisory = service.validate_model_rag_result_structure(
+        [
+            {
+                "source_row": "ВОР!R5",
+                "norm_code": "ГЭСНм08-04-751-01 (выбор модели)",
+                "evidence_refs": ["Q1.H2"],
+            }
+        ],
+        evidence,
+        expected_source_rows=1,
+    )
+
+    assert advisory == ["norm_code_not_in_referenced_evidence:ВОР!R5"]
+    assert service.blocking_model_rag_result_errors(advisory) == []
+    assert service.blocking_model_rag_result_errors(
+        advisory + ["unknown_evidence_ref:Q9.H9"]
+    ) == ["unknown_evidence_ref:Q9.H9"]
+
+
 def test_model_rag_packaging_accepts_unique_string_source_rows_without_count_gate():
     evidence = [
         SimpleNamespace(

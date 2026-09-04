@@ -7,17 +7,30 @@
 ## Текущее состояние (2026-09-04)
 
 ```
-версия продукта (SemVer):  0.30.63
-номер сборки:              703
-версия Tauri/NSIS:         5.1.703
+версия продукта (SemVer):  0.30.64
+номер сборки:              704
+версия Tauri/NSIS:         5.1.704
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.63 live-RAG P1 stabilization candidate
-задеплоено на рантайм:     Legion 0.30.62 / build 702 / commit 2ff86b2d9647345d86f3d24b2c6136ef6aabd12c; LIVE RAG/XLSX ACCEPTED
+dev implementation:       0.30.64 model-result packaging continuity candidate
+задеплоено на рантайм:     Legion 0.30.63 / build 703 / commit c19fa649517ecdf650cd9cdc79e102497251bf7b; LIVE RAG/SOURCES ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.62 / build 702 / desktop 5.1.702 / commit 2ff86b2d9647345d86f3d24b2c6136ef6aabd12c; aligned
+рантайм /api/version:      Legion 0.30.63 / build 703 / desktop 5.1.703 / commit c19fa649517ecdf650cd9cdc79e102497251bf7b; aligned
 ```
+
+> **0.30.64 / build 704 model-result packaging continuity (candidate, не
+> опубликован):** живой installed прогон на новой 5-строчной ВОР доказал, что
+> Qwen сформировала 5 собственных запросов, получила 5 групп `Qx.Hy` по 6
+> карточек и вернула все 5 решений без дополнительного model turn. XLSX был
+> ошибочно удержан локальной проверкой: пояснение рядом с `norm_code` делало
+> буквальное равенство ложным, а одно реальное несовпадение ссылки блокировало
+> весь артефакт. Reader теперь принимает точный шифр внутри неизменённого поля;
+> реальное несовпадение остаётся warning и передаётся вместе с исходным решением
+> в `build_lsr_workbook`, чтобы конфликт был виден в partial XLSX. Пустой,
+> дублированный `source_row` и отсутствующий/неизвестный `Qx.Hy` по-прежнему
+> блокируют упаковку. Повторный model call, regex-routing и выбор нормы кодом не
+> добавлены. Installed live XLSX acceptance ожидается.
 
 > **0.30.63 / build 703 live-RAG P1 stabilization (candidate, не опубликован):**
 > readiness общей mutable-коллекции сверяет Qdrant с текущим user-owned
