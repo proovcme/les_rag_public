@@ -44,6 +44,18 @@ _ENGINE_NAMES = {
     "mlx",
     "ollama",
 }
+_CHAT_MODEL_BYPASS_CALLS: dict[str, frozenset[str]] = {
+    "proxy/services/chat_evidence_application_service.py": frozenset(
+        {"maybe_answer_table_query"}
+    ),
+    "proxy/routers/chat.py": frozenset({"is_ks_forms_query"}),
+}
+_KEYWORD_SCOPE_FUNCTIONS: dict[str, frozenset[str]] = {
+    "proxy/services/retrieval_service.py": frozenset(
+        {"resolve_dataset_ids", "retrieve_chat_chunks"}
+    ),
+    "proxy/routers/datasets.py": frozenset({"search"}),
+}
 
 # Existing direct transports are migration debt, pinned by exact path + function.
 # New callsites must use ContextGovernor instead of expanding this baseline.
@@ -295,6 +307,24 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
             continue
         name = _call_name(node)
         short_name = name.split(".")[-1]
+        if short_name in _CHAT_MODEL_BYPASS_CALLS.get(relative, frozenset()):
+            yield ArchitectureViolation(
+                "CHAT_MODEL_BYPASS",
+                relative,
+                node.lineno,
+                f"free chat calls legacy interceptor {short_name}() before model final",
+            )
+        function_name = _enclosing_function_name(node, parents)
+        if (
+            short_name == "classify_query"
+            and function_name in _KEYWORD_SCOPE_FUNCTIONS.get(relative, frozenset())
+        ):
+            yield ArchitectureViolation(
+                "KEYWORD_SCOPE_ROUTING",
+                relative,
+                node.lineno,
+                f"{function_name}() derives retrieval scope from question text",
+            )
         if short_name == "activate_profile_revision" and relative not in _ACTIVATION_BOUNDARIES:
             yield ArchitectureViolation(
                 "IMPLICIT_PROFILE_ACTIVATION",
@@ -310,7 +340,6 @@ def _python_violations(root: Path, path: Path, text: str) -> Iterable[Architectu
         ).lower()
         is_http_post = short_name in {"post", "urlopen"}
         if is_http_post and any(marker in call_text for marker in _MODEL_ENDPOINT_MARKERS):
-            function_name = _enclosing_function_name(node, parents)
             if (
                 (relative, function_name) not in INFERENCE_CALLSITE_BASELINE
                 and not _contains_context_governor(function)

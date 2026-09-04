@@ -51,6 +51,44 @@ def test_rejects_forced_workbook_language_membership(tmp_path: Path) -> None:
     assert "FORCED_WORKBOOK_CALL" in _codes(tmp_path)
 
 
+def test_rejects_legacy_table_answer_inside_model_chat(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/chat_evidence_application_service.py",
+        """def execute(question, chunks):
+    return maybe_answer_table_query(question, chunks)
+""",
+    )
+
+    assert "CHAT_MODEL_BYPASS" in _codes(tmp_path)
+
+
+def test_rejects_natural_language_ks_hook_inside_chat_router(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/routers/chat.py",
+        """def run_chat(question):
+    if is_ks_forms_query(question):
+        return answer_ks_forms_query(question)
+    return model(question)
+""",
+    )
+
+    assert "CHAT_MODEL_BYPASS" in _codes(tmp_path)
+
+
+def test_rejects_keyword_scope_routing_inside_retrieval(tmp_path: Path) -> None:
+    _write(
+        tmp_path,
+        "proxy/services/retrieval_service.py",
+        """def resolve_dataset_ids(question):
+    return classify_query(question).dataset_filter
+""",
+    )
+
+    assert "KEYWORD_SCOPE_ROUTING" in _codes(tmp_path)
+
+
 def test_rejects_regex_inside_model_result_decoder(tmp_path: Path) -> None:
     _write(
         tmp_path,

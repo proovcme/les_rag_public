@@ -95,11 +95,13 @@ test-model-connections-live:
 
 verify:
 	uv run python tools/sync_version_contract.py --check
+	uv run python tools/code_runtime_map.py --check
 	uv run python -m compileall -q $(PKGS)
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/verify --collect-only -q $(CURRENT_TESTS)
 	@echo "OK — verify зелёный (синтаксис + импорт-смоук current gate)."
 
 test:
+	uv run python tools/code_runtime_map.py --check
 	uv run python -m pytest --basetemp=$(PYTEST_BASETEMP)/test -q --durations=20 $(CURRENT_TESTS)
 
 test-unit:

@@ -297,14 +297,12 @@ def test_mcp_filled_ks_preserves_draft_status():
     assert result["document_status"] == "draft_from_lsr_not_execution_fact"
 
 
-def test_ks_forms_hook_runs_before_smeta_profile():
-    """Explicit filled-form command stays deterministic before general profile RAG."""
+def test_natural_language_ks_request_has_no_pre_model_hook():
+    """Only an explicit slash command may build a form before the model."""
     import inspect
 
     from proxy.routers import chat as chat_router
 
     source = inspect.getsource(chat_router._run_chat)
-    ks_at = source.find("is_ks_forms_query(req.question)")
-    evidence_at = source.find("run_chat_evidence_application(")
-    assert ks_at >= 0 and evidence_at >= 0
-    assert ks_at < evidence_at
+    assert "is_ks_forms_query(req.question)" not in source
+    assert "run_chat_evidence_application(" in source

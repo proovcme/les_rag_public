@@ -364,8 +364,7 @@ async def search(req: SearchRequest, _user=Depends(require_user)):
     if not query:
         raise HTTPException(status_code=400, detail="query or question is required")
 
-    query_route = classify_query(query)
-    effective_dataset_filter = req.dataset_filter or query_route.dataset_filter
+    effective_dataset_filter = req.dataset_filter
     dataset_ids = await resolve_dataset_ids(
         state.backend,
         req.dataset_ids,
@@ -405,8 +404,8 @@ async def search(req: SearchRequest, _user=Depends(require_user)):
         "count": len(chunks),
         "route": {
             "dataset_filter": effective_dataset_filter,
-            "reason": "explicit_filter" if req.dataset_filter else query_route.reason,
-            "expanded": query_route.expanded_query != query,
+            "reason": "explicit_filter" if req.dataset_filter else "all_corpus",
+            "expanded": False,
             "kot": retrieval.kot.payload(),
         },
         "chunks": [

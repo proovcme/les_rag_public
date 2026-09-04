@@ -592,12 +592,6 @@ async def resolve_dataset_ids(
 
     effective_filter = dataset_filter
     ds_list = None
-    if not effective_filter and not dataset_ids:
-        route = classify_query(question)
-        effective_filter = route.dataset_filter
-        if effective_filter:
-            logger.info("[CHAT] query_route='%s' dataset_filter='%s'", route.reason, effective_filter)
-
     if effective_filter and not dataset_ids:
         try:
             ds_list = await rag_backend.list_datasets()
@@ -700,10 +694,10 @@ async def retrieve_chat_chunks(
     # W2.3 (ADR-3): ранней реранк-ветки больше нет — реранкер работает ПОВЕРХ
     # гибридного пула (vector + lexical → RRF → rerank), а не вместо него.
 
-    # Dynamic top-k scaling for structured, legal, or technical queries
+    # Query wording never changes dataset scope or the profile-owned candidate
+    # limit. Structured wording may inform explicitly enabled retrieval layers,
+    # but it cannot widen the model-facing search by itself.
     is_structured = any(word in question.casefold() for word in ("перечен", "состав", "список", "разделы", "все разделы", "перечисли"))
-    effective_filter = dataset_ids or classify_query(question).dataset_filter
-    is_technical_or_legal = bool(effective_filter and "MAIL" not in str(effective_filter))
     
     bounded_result_limit = max(1, int(result_limit)) if result_limit is not None else None
     bounded_candidate_limit = (
@@ -712,33 +706,11 @@ async def retrieve_chat_chunks(
     if bounded_result_limit is not None and bounded_candidate_limit is not None:
         bounded_candidate_limit = max(bounded_candidate_limit, bounded_result_limit)
     merged_top_k = bounded_candidate_limit or bounded_result_limit or CHAT_TOP_K
-    if bounded_result_limit is None and (is_structured or is_technical_or_legal):
-        merged_top_k = max(CHAT_TOP_K, 256)
-        
+
     has_refs = bool(extract_norm_refs(question) or extract_norm_refs(retrieval_query))
-    pool_k = max(RERANK_POOL_K, merged_top_k * 2) if has_refs or is_structured or is_technical_or_legal else RERANK_POOL_K
-    # ADR-12 стадия-1: для технических/правовых классов сначала маршрутизируем запрос
-    # к документам-узлам (LLM-роутер по каталогу, см. doc_router), затем стадия-2 ищет
-    # ТОЛЬКО в них. За флагом LES_TYPED_RETRIEVAL; пусто/сбой → плоский поиск.
+    pool_k = max(RERANK_POOL_K, merged_top_k * 2) if has_refs or is_structured else RERANK_POOL_K
     effective_doc_filter = list(doc_filter or [])
     _rt: dict[str, float] = {}  # под-фазовый тайминг ретрива (профилирование латентности)
-    if (
-        bounded_result_limit is None
-        and os.getenv("LES_TYPED_RETRIEVAL", "false").strip().lower() == "true"
-        and is_technical_or_legal
-    ):
-        _s = time.monotonic()
-        try:
-            from proxy.services.doc_router import route_documents
-            routed_doc_filter = await route_documents(
-                question=question, expanded_query=retrieval_query,
-                dataset_ids=dataset_ids, rag_backend=rag_backend,
-            ) or None
-            effective_doc_filter = effective_doc_filter or routed_doc_filter or []
-        except Exception as _route_err:  # noqa: BLE001 — роутинг best-effort
-            logger.warning("[DOC_ROUTER] fallback на плоский поиск: %s", _route_err)
-            effective_doc_filter = effective_doc_filter or []
-        _rt["route"] = round(time.monotonic() - _s, 3)
     if hybrid_backend() != "qdrant_native" or not hasattr(rag_backend, "retrieve_native_hybrid"):
         log_error("[RETR] required native RRF backend is unavailable")
         return blocked_result("native_rrf_unavailable")
@@ -837,7 +809,6 @@ async def retrieve_chat_chunks(
         and (
             raptor_mode == "always"
             or is_structured
-            or is_technical_or_legal
             or len(question.split()) >= 6
         )
     )

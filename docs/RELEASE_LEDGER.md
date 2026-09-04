@@ -4,20 +4,30 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-03)
+## Текущее состояние (2026-09-04)
 
 ```
-версия продукта (SemVer):  0.30.58
-номер сборки:              698
-версия Tauri/NSIS:         5.1.698
+версия продукта (SemVer):  0.30.59
+номер сборки:              699
+версия Tauri/NSIS:         5.1.699
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.58 liberal model-result reader; LIVE XLSX ACCEPTED
+dev implementation:       0.30.59 model-first free-chat guard; live acceptance pending
 задеплоено на рантайм:     Legion 0.30.58 / build 698 / commit 4c928375; LIVE XLSX ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
 рантайм /api/version:      Legion 0.30.58 / build 698 / desktop 5.1.698 / commit 4c928375; accepted
 ```
+
+> **0.30.59 / build 699 model-first free-chat guard (candidate, не
+> опубликован):** обычный вопрос больше не может по ключевым словам получить
+> ранний табличный dump или ответ генератора КС вместо модели. Текст вопроса не
+> выбирает dataset scope и не расширяет profile-owned candidate pool до 256;
+> explicit project/dataset/profile scope и явные команды/tools сохранены.
+> Architecture gate блокирует возврат table/KS model bypass и keyword scope
+> routing. Generated runtime map теперь проверяется до запуска долгого pytest,
+> а не последним тестом после полного прогона. Установленный accepted runtime
+> 0.30.58 не изменён до зелёных общих гейтов и живой приёмки кандидата.
 
 > **0.30.58 / build 698 liberal model-result reader (LIVE XLSX ACCEPTED, не
 > опубликован):** живой 74-позиционный прогон доказал, что Qwen может вернуть

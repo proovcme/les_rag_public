@@ -355,14 +355,14 @@ def test_metadb_requeues_existing_pdf_with_systemic_mojibake(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_retrieve_debug_returns_ranked_chunks_and_inferred_dataset(dataset_state):
+async def test_retrieve_debug_reports_advisory_route_without_applying_it(dataset_state):
     dataset_state.datasets[0].name = "NTD_FIRE_Index"
     result = await datasets.retrieve_debug(
         datasets.RetrievalDebugRequest(question="ширина путей эвакуации"),
         _user=object(),
     )
 
-    assert result["dataset_ids"] == ["ds-1"]
+    assert result["dataset_ids"] is None
     assert result["query_route"]["dataset_filter"] == "NTD_FIRE"
     assert result["embedding"]["collection"]
     assert result["embedding"]["meta_db"]
@@ -421,8 +421,9 @@ async def test_search_returns_ranked_chunks_without_generation(dataset_state):
     )
 
     assert result["query"] == "ширина путей эвакуации"
-    assert result["dataset_filter"] == "NTD_FIRE"
-    assert result["dataset_ids"] == ["ds-1"]
+    assert result["dataset_filter"] is None
+    assert result["dataset_ids"] is None
+    assert result["route"]["reason"] == "all_corpus"
     assert result["count"] == 1
     assert result["chunks"][0]["rank"] == 1
     assert result["chunks"][0]["doc_name"] == "СП 3.13130.docx"
@@ -442,6 +443,8 @@ async def test_search_accepts_question_alias(dataset_state):
     )
 
     assert result["query"] == "ширина путей эвакуации"
+    assert result["dataset_filter"] is None
+    assert result["route"]["reason"] == "all_corpus"
     assert result["chunks"][0]["doc_id"] == "doc-1"
 
 

@@ -3736,28 +3736,6 @@ async def _run_chat(req: ChatRequest, token_sink=None):
                 "command": cmd_payload,
             }
 
-    from proxy.services.ks_forms_chat_service import (
-        answer_ks_forms_query,
-        is_ks_forms_query,
-    )
-    if is_ks_forms_query(req.question):
-        ks_res = await asyncio.to_thread(
-            answer_ks_forms_query,
-            req.question,
-            project_id=int(pid) if pid else None,
-            session_id=str(req.session_id or ""),
-        )
-        return {
-            "answer": ks_res.get("answer") or "",
-            "crag_status": "DETERMINISTIC",
-            "sources": [],
-            "query_route": _profile_route(
-                "ks_forms", "filled" if ks_res.get("ok") else "clarify"
-            ),
-            "validation": {"enabled": False, "reason": "deterministic_ks_forms"},
-            "command": ks_res.get("command"),
-        }
-
     # Операторские заметки не создаются, не читаются и не подмешиваются в чат.
     # Контекст ниже содержит только явное вложение, LES.md, typed dataset passport
     # и историю текущей сессии, которую читает модель.

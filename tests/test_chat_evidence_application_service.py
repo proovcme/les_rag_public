@@ -2124,7 +2124,13 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
         "rules_pre_verdict",
         lambda *_args, **_kwargs: pytest.fail("ordinary chat must not invoke semantic validator"),
     )
-    monkeypatch.setattr(service, "maybe_answer_table_query", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        service,
+        "maybe_answer_table_query",
+        lambda *_a, **_k: pytest.fail(
+            "ordinary chat must not invoke the legacy table answer interceptor"
+        ),
+    )
     monkeypatch.setattr(service, "dataset_memory_prompt_excerpt", lambda *_a, **_k: "")
     active_transport = None
     active_connection = None

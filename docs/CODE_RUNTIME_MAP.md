@@ -20,10 +20,10 @@
 | Метрика | Значение |
 | --- | --- |
 | Python-файлов под git | 991 |
-| Строк Python | 312413 |
-| PRODUCT_REACHABLE | 350 |
+| Строк Python | 312414 |
+| PRODUCT_REACHABLE | 349 |
 | RUNTIME_SUPPORT | 11 |
-| TEST_OR_TOOL_ONLY | 629 |
+| TEST_OR_TOOL_ONLY | 630 |
 | DORMANT_CANDIDATE | 1 |
 | Зарегистрированных API-маршрутов | 332 |
 | Ошибок разбора | 0 |
@@ -35,11 +35,11 @@
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
 | sovushka/pages/chat.py | 5019 | 5 |
 | backend/qdrant_adapter.py | 4552 | 29 |
-| proxy/services/chat_evidence_application_service.py | 4234 | 7 |
-| proxy/routers/chat.py | 4226 | 40 |
 | sovushka/uikit/tokens.py | 4205 | 2 |
+| proxy/routers/chat.py | 4204 | 40 |
+| proxy/services/chat_evidence_application_service.py | 4186 | 7 |
 | sovushka/pages/documents.py | 3927 | 3 |
-| proxy/routers/datasets.py | 3776 | 16 |
+| proxy/routers/datasets.py | 3775 | 16 |
 | sovushka/styles.py | 3264 | 3 |
 | sovushka/pages/samovar.py | 2966 | 3 |
 | proxy/services/smeta_chat_adapter_service.py | 2450 | 15 |
@@ -53,8 +53,8 @@
 | proxy/services/checklist_review_service.py | 1518 | 2 |
 | proxy/routers/mail.py | 1476 | 3 |
 | proxy/services/cad_bim_graph.py | 1425 | 8 |
-| proxy/services/retrieval_service.py | 1409 | 10 |
 | proxy/services/tool_harness_service.py | 1408 | 12 |
+| proxy/services/retrieval_service.py | 1380 | 10 |
 | proxy/services/rim_agent_turn_service.py | 1286 | 2 |
 | proxy/services/smeta_artifact_service.py | 1236 | 3 |
 | proxy/services/context_memory_service.py | 1171 | 7 |

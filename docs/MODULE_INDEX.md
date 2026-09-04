@@ -1,5 +1,18 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.30.59 model-first free-chat guard:** обычный текстовый вопрос всегда
+> проходит в retrieval и модель. Табличный reader и генератор КС доступны
+> только через явные команды/инструменты и больше не возвращают deterministic
+> final по словам вопроса. `resolve_dataset_ids` и `/api/datasets/search` не
+> выводят scope из текста; слова вроде «стоимость», «пожар», «вентиляция» или
+> «список» не меняют выбранный корпус и не расширяют profile-owned `candidate_k`
+> до 256. Architecture gate запрещает возврат этих обходов. Точки:
+> `proxy/{routers/{chat,datasets}.py,services/{chat_evidence_application,
+> retrieval}_service.py}`, `tools/architecture_contract_gate.py` и профильные
+> tests. `make verify/test` проверяют generated runtime map до долгого pytest,
+> поэтому её рассинхрон больше не всплывает в конце прогона. Статус док↔код:
+> ✅; live acceptance pending, candidate not published.
+
 > **0.30.58 liberal model-result reader candidate:** модельный ответ остаётся
 > неизменным, а локальный упаковочный reader принимает обычный явный блок
 > `Строка N: название` и явное отсутствие количества. Значения `source_row`,

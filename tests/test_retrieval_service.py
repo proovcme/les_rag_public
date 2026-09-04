@@ -319,7 +319,7 @@ def test_retrieval_query_normalization_keeps_fire_and_hvac_questions_intact():
 
 
 @pytest.mark.asyncio
-async def test_resolve_dataset_ids_infers_filter_from_question():
+async def test_resolve_dataset_ids_never_infers_scope_from_question():
     backend = FakeBackend()
 
     resolved = await resolve_dataset_ids(
@@ -330,7 +330,7 @@ async def test_resolve_dataset_ids_infers_filter_from_question():
         question="список разделов проектной документации по постановлению 87",
     )
 
-    assert resolved == ["ds-3"]
+    assert resolved is None
 
 
 @pytest.mark.asyncio
@@ -419,7 +419,26 @@ async def test_retrieve_chat_chunks_preserves_native_rrf_when_reranker_is_disabl
         "reason": "disabled",
         "preserved_order": "native_rrf",
     }
-    assert backend.calls[0] == {"question": "q", "dataset_ids": ["ds-1"], "top_k": 256}
+    assert backend.calls[0] == {"question": "q", "dataset_ids": ["ds-1"], "top_k": 64}
+
+
+@pytest.mark.asyncio
+async def test_question_wording_never_expands_profile_owned_candidate_limit():
+    backend = FakeBackend()
+
+    await retrieve_chat_chunks(
+        question="перечисли состав и все разделы проекта",
+        dataset_ids=["ds-1"],
+        rag_backend=backend,
+        reranker_enabled=False,
+        reranker_available=True,
+        reranker_cls=FakeReranker,
+        mlx_url="http://mlx",
+        logger=SimpleNamespace(info=lambda *a: None, warning=lambda *a: None),
+        return_trace=True,
+    )
+
+    assert backend.calls[0]["top_k"] == 64
 
 
 @pytest.mark.asyncio
@@ -467,7 +486,7 @@ async def test_retrieve_chat_chunks_can_use_qdrant_native_hybrid(monkeypatch):
     assert result.trace.fusion == "rrf"
     assert result.chunks[0].doc_name == "native.docx"
     assert backend.native_calls == [
-        {"question": "q", "dataset_ids": ["ds-1"], "top_k": 256, "doc_filter": ["doc.md"]}
+        {"question": "q", "dataset_ids": ["ds-1"], "top_k": 64, "doc_filter": ["doc.md"]}
     ]
     assert backend.calls == []
 

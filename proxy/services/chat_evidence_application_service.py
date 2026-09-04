@@ -2073,30 +2073,6 @@ async def _execute_chat_evidence_application(
             }
     state.chat_metrics["cache_miss"] = state.chat_metrics.get("cache_miss", 0) + 1
 
-    table_result = maybe_answer_table_query(
-        req.question,
-        chunks,
-        storage_root=mutable_path("./storage/datasets"),
-    )
-    if table_result:
-        return _table_query_response(
-            state=state,
-            question=req.question,
-            table_result=table_result,
-            chunks=chunks,
-            t_search=t_search,
-            session_id=req.session_id,
-            requested_dataset_filter=req.dataset_filter,
-            effective_dataset_filter=effective_dataset_filter,
-            resolved_dataset_ids=_dataset_ids,
-            resolved_dataset_names=resolved_dataset_names,
-            dataset_name_by_id=dataset_name_by_id,
-            query_route_payload=query_route_payload,
-            retrieval_trace=retrieval_trace,
-            cache_marker=cache_marker,
-            use_validation=use_validation,
-        )
-
     if not chunks:
         retrieval_trace["empty_retrieval"] = {
             "schema": "empty_retrieval_model_first_v1",
@@ -2122,30 +2098,6 @@ async def _execute_chat_evidence_application(
         "will_be_cloud": will_be_cloud,
         "context_radius": context_radius,
     }
-    expanded_table_chunks = [*chunks, *context_windows.chunks]
-    table_result = maybe_answer_table_query(
-        req.question,
-        expanded_table_chunks,
-        storage_root=mutable_path("./storage/datasets"),
-    )
-    if table_result:
-        return _table_query_response(
-            state=state,
-            question=req.question,
-            table_result=table_result,
-            chunks=expanded_table_chunks,
-            t_search=t_search,
-            session_id=req.session_id,
-            requested_dataset_filter=req.dataset_filter,
-            effective_dataset_filter=effective_dataset_filter,
-            resolved_dataset_ids=_dataset_ids,
-            resolved_dataset_names=resolved_dataset_names,
-            dataset_name_by_id=dataset_name_by_id,
-            query_route_payload=query_route_payload,
-            retrieval_trace=retrieval_trace,
-            cache_marker=cache_marker,
-            use_validation=use_validation,
-        )
     # ПЕРФ: валидатор теперь аддитивный/быстрый (rules+coreml fail-open) — ему НЕ нужен второй
     # дорогой проход expand_context_windows (это удваивало context-фазу, 2.7-5.7с на сложных).
     # Переиспользуем контекст ответа: те же чанки, валидатор проверяет ответ по ним.

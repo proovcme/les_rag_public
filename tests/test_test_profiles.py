@@ -58,6 +58,14 @@ def test_canonical_pytest_profiles_use_workspace_local_temp() -> None:
         assert "%TEMP%" not in command
 
 
+def test_slow_gates_fail_fast_on_stale_generated_runtime_map() -> None:
+    for target in ("verify", "test"):
+        command = _dry_make(target)
+        runtime_map_check = command.index("tools/code_runtime_map.py --check")
+        pytest_start = command.index("python -m pytest")
+        assert runtime_map_check < pytest_start
+
+
 def test_historical_harness_has_explicit_opt_in_profile() -> None:
     command = _dry_make("test-legacy")
 

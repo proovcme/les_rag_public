@@ -9,6 +9,12 @@ planner/model-review шага и JSON-протокола между модель
 
 ## Активный поток
 
+Обычный текст не является командой. Подстроки вроде `стоимост`, `КС-2`,
+`пожар`, `вентиляция` или `список` не могут вернуть готовый ответ кодом, выбрать
+датасет, сузить корпус или расширить число кандидатов. Scope приходит только из
+явного выбора пользователя, проекта или effective profile binding. Расчётные
+сервисы остаются доступными как явные команды и model tools.
+
 1. Effective chat profile задаёт `candidate_k`, `document_diversity_k` и
    `model_evidence_k`. Заводские значения — `64 / 2 / 6`; пользовательская
    ревизия хранит свои значения, GUI показывает effective policy.
@@ -74,5 +80,3 @@ planner/model-review шага и JSON-протокола между модель
 - `proxy/services/web_{research_config,search,page_reader}_service.py`
 - `proxy/services/rag_{readiness,pipeline_status,advanced_policy}_service.py`
 - `sovushka/pages/{chat,profiles,diag}.py`
-
-Сметное ядро `proxy/smeta_core/**` этим модулем не изменяется.

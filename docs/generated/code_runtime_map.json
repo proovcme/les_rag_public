@@ -1640,7 +1640,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_version_service_v19.py"
       ],
-      "lines": 4226,
+      "lines": 4204,
       "module": "proxy.routers.chat",
       "outbound": [
         "backend/inference/routing.py",
@@ -1776,7 +1776,7 @@
         "tests/test_scope_model_v21.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 3776,
+      "lines": 3775,
       "module": "proxy.routers.datasets",
       "outbound": [
         "backend/converter.py",
@@ -3021,7 +3021,7 @@
         "tests/test_scope_clarification_v22.py",
         "tests/test_sovushka_chat.py"
       ],
-      "lines": 4234,
+      "lines": 4186,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3572,7 +3572,6 @@
     },
     {
       "inbound": [
-        "proxy/services/retrieval_service.py",
         "tests/test_retrieval_service.py"
       ],
       "lines": 212,
@@ -3582,7 +3581,7 @@
         "proxy/services/__init__.py"
       ],
       "path": "proxy/services/doc_router.py",
-      "status": "PRODUCT_REACHABLE",
+      "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
     {
@@ -5938,7 +5937,7 @@
         "tests/test_retrieval_service.py",
         "tools/coreml_validator_probe.py"
       ],
-      "lines": 1409,
+      "lines": 1380,
       "module": "proxy.services.retrieval_service",
       "outbound": [
         "backend/colbert_late_interaction.py",
@@ -5947,7 +5946,6 @@
         "backend/rag_hierarchy.py",
         "proxy/__init__.py",
         "proxy/services/__init__.py",
-        "proxy/services/doc_router.py",
         "proxy/services/kot_service.py",
         "proxy/services/lexical_index_service.py",
         "proxy/services/parent_card_hydration_service.py",
@@ -8603,7 +8601,7 @@
     },
     {
       "inbound": [],
-      "lines": 196,
+      "lines": 234,
       "module": "tests.test_architecture_contract_gate",
       "outbound": [
         "tools/architecture_contract_gate.py"
@@ -9090,7 +9088,7 @@
     },
     {
       "inbound": [],
-      "lines": 2775,
+      "lines": 2781,
       "module": "tests.test_chat_evidence_application_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -9598,7 +9596,7 @@
     },
     {
       "inbound": [],
-      "lines": 1554,
+      "lines": 1557,
       "module": "tests.test_datasets_router",
       "outbound": [
         "backend/converter.py",
@@ -10503,7 +10501,7 @@
     },
     {
       "inbound": [],
-      "lines": 310,
+      "lines": 308,
       "module": "tests.test_ks_forms_service",
       "outbound": [
         "proxy/routers/chat.py",
@@ -12258,7 +12256,7 @@
     },
     {
       "inbound": [],
-      "lines": 1209,
+      "lines": 1228,
       "module": "tests.test_retrieval_service",
       "outbound": [
         "backend/interface.py",
@@ -13447,7 +13445,7 @@
     },
     {
       "inbound": [],
-      "lines": 208,
+      "lines": 216,
       "module": "tests.test_test_profiles",
       "outbound": [
         "tools/platform_release_gate.py"
@@ -14194,7 +14192,7 @@
       "inbound": [
         "tests/test_architecture_contract_gate.py"
       ],
-      "lines": 372,
+      "lines": 401,
       "module": "tools.architecture_contract_gate",
       "outbound": [
         "tools/__init__.py"
@@ -18545,12 +18543,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 350,
+    "product_reachable": 349,
     "registered_api_routes": 332,
     "runtime_support": 11,
-    "test_or_tool_only": 629,
+    "test_or_tool_only": 630,
     "tracked_python_files": 991,
-    "tracked_python_lines": 312413
+    "tracked_python_lines": 312414
   },
   "warnings": []
 }
