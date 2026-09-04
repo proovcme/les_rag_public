@@ -7,20 +7,26 @@
 ## Текущее состояние (2026-09-04)
 
 ```
-версия продукта (SemVer):  0.30.59
-номер сборки:              699
-версия Tauri/NSIS:         5.1.699
+версия продукта (SemVer):  0.30.60
+номер сборки:              700
+версия Tauri/NSIS:         5.1.700
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.59 model-first free-chat guard; live acceptance pending
-задеплоено на рантайм:     Legion 0.30.58 / build 698 / commit 4c928375; LIVE XLSX ACCEPTED
+dev implementation:       0.30.60 exact deploy identity + model-first free-chat guard
+задеплоено на рантайм:     Legion 0.30.59 / build 699 / commit 3bf7850d; LIVE RAG ACCEPTED
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
 следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.58 / build 698 / desktop 5.1.698 / commit 4c928375; accepted
+рантайм /api/version:      Legion 0.30.59 / build 699 / desktop 5.1.699 / commit 3bf7850d; RAG accepted
 ```
 
+> **0.30.60 / build 700 exact deploy identity (candidate, не опубликован):**
+> `deploy_to_runtime` записывает в runtime stamp полный 40-символьный source
+> commit, а не сокращённое имя. Это устраняет ложный отказ живого workbook
+> acceptance до начала запроса и связывает проверяемый runtime с точной
+> immutable revision. Обход или ослабление приёмщика не применялись.
+
 > **0.30.59 / build 699 model-first free-chat guard (candidate, не
-> опубликован):** обычный вопрос больше не может по ключевым словам получить
+> опубликован; LIVE RAG ACCEPTED):** обычный вопрос больше не может по ключевым словам получить
 > ранний табличный dump или ответ генератора КС вместо модели. Текст вопроса не
 > выбирает dataset scope и не расширяет profile-owned candidate pool до 256;
 > explicit project/dataset/profile scope и явные команды/tools сохранены.
@@ -29,7 +35,12 @@ dev implementation:       0.30.59 model-first free-chat guard; live acceptance p
 > а не последним тестом после полного прогона. `SMETA_BASELINE_ROOT` позволяет
 > ship из чистого worktree проверить фактический persistent state без копии баз
 > в Git. Установленный accepted runtime 0.30.58 не изменён до зелёных общих
-> гейтов и живой приёмки кандидата.
+> гейтов. На установленном Legion вопрос о составе электроснабжения и стоимости
+> дошёл до Qwen, дал связный ответ с 27 использованными источниками за 1м55с;
+> follow-up про данные для КС-2 остался модельным диалогом, не создал форму и
+> дал ответ с 23 источниками за 3м17с. Длинный второй ход остаётся отдельным
+> performance-дефектом, но прежние keyword bypass и сырой table dump не
+> воспроизвелись.
 
 > **0.30.58 / build 698 liberal model-result reader (LIVE XLSX ACCEPTED, не
 > опубликован):** живой 74-позиционный прогон доказал, что Qwen может вернуть

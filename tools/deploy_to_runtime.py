@@ -84,6 +84,12 @@ def _git(args: list[str]) -> str:
                           capture_output=True, text=True).stdout
 
 
+def _source_commit() -> str:
+    """Return the exact immutable source revision written to the runtime stamp."""
+
+    return _git(["rev-parse", "HEAD"]).strip()
+
+
 def _paths_from_status(out: str) -> list[str]:
     files: list[str] = []
     for line in out.splitlines():
@@ -279,6 +285,8 @@ def main(argv: list[str] | None = None) -> int:
             from proxy.services.version_service import write_deploy_stamp
             sp = write_deploy_stamp(dev_root=DEV, runtime_root=RT,
                                     deployed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                    deployed_commit=_source_commit(),
+                                    deployed_branch=_git(["rev-parse", "--abbrev-ref", "HEAD"]).strip(),
                                     notes=[f"copied {len(copied)} files"])
             print(f"  ⓘ deploy stamp: {sp}")
         except Exception as _e:  # noqa: BLE001

@@ -33,6 +33,17 @@ def test_backend_change_restarts_the_proxy_service():
     assert deploy_to_runtime._service_for_path("backend/qdrant_adapter.py") == "me.ovc.les.proxy"
 
 
+def test_deploy_stamp_identity_uses_full_source_commit(monkeypatch):
+    full_commit = "a" * 40
+    monkeypatch.setattr(
+        deploy_to_runtime,
+        "_git",
+        lambda args: full_commit + "\n" if args == ["rev-parse", "HEAD"] else "",
+    )
+
+    assert deploy_to_runtime._source_commit() == full_commit
+
+
 def test_clean_commit_deploy_uses_runtime_stamp_as_diff_baseline(monkeypatch, tmp_path):
     runtime = tmp_path / "runtime"
     runtime.mkdir()
