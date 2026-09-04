@@ -66,6 +66,16 @@ def test_slow_gates_fail_fast_on_stale_generated_runtime_map() -> None:
         assert runtime_map_check < pytest_start
 
 
+def test_ship_can_verify_the_real_persistent_smeta_root_from_a_clean_worktree() -> None:
+    command = _dry_make_with_variable(
+        "smoke-active-artifacts",
+        "SMETA_BASELINE_ROOT",
+        "C:/LES/state",
+    )
+
+    assert "tools.smeta_release_baseline verify-root --root C:/LES/state" in command
+
+
 def test_historical_harness_has_explicit_opt_in_profile() -> None:
     command = _dry_make("test-legacy")
 

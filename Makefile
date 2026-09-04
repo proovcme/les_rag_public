@@ -36,6 +36,7 @@ UPDATER_TESTS ?= tests/test_release_classification.py tests/test_release_receipt
 POST_DEPLOY_RETRIES ?= 12
 POST_DEPLOY_DELAY ?= 1
 SMETA_BASE_UPDATE_ARGS ?= --all --rate 1.0
+SMETA_BASELINE_ROOT ?= .
 
 help:
 	@echo "make verify       — офлайн-гейт: compileall (синтаксис) + pytest --collect-only (импорт-смоук)"
@@ -169,7 +170,7 @@ smeta-base-update:
 	uv run python -m tools.gesn_update_from_fgis $(SMETA_BASE_UPDATE_ARGS)
 
 smoke-active-artifacts:
-	uv run python -m tools.smeta_release_baseline verify-root --root .
+	uv run python -m tools.smeta_release_baseline verify-root --root $(SMETA_BASELINE_ROOT)
 
 smoke-general-native-rrf:
 	uv run python tools/rag_golden_set.py --cases golden/general_native_rrf_release_smoke.json --require-native-rrf

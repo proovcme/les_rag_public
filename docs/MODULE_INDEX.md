@@ -10,8 +10,10 @@
 > `proxy/{routers/{chat,datasets}.py,services/{chat_evidence_application,
 > retrieval}_service.py}`, `tools/architecture_contract_gate.py` и профильные
 > tests. `make verify/test` проверяют generated runtime map до долгого pytest,
-> поэтому её рассинхрон больше не всплывает в конце прогона. Статус док↔код:
-> ✅; live acceptance pending, candidate not published.
+> поэтому её рассинхрон больше не всплывает в конце прогона. Изолированный
+> worktree может проверить реальные immutable сметные артефакты через явный
+> `SMETA_BASELINE_ROOT`, не копируя пользовательские базы в checkout. Статус
+> док↔код: ✅; live acceptance pending, candidate not published.
 
 > **0.30.58 liberal model-result reader candidate:** модельный ответ остаётся
 > неизменным, а локальный упаковочный reader принимает обычный явный блок

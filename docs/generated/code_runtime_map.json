@@ -13445,7 +13445,7 @@
     },
     {
       "inbound": [],
-      "lines": 216,
+      "lines": 226,
       "module": "tests.test_test_profiles",
       "outbound": [
         "tools/platform_release_gate.py"
@@ -18548,7 +18548,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 630,
     "tracked_python_files": 991,
-    "tracked_python_lines": 312414
+    "tracked_python_lines": 312424
   },
   "warnings": []
 }

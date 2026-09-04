@@ -26,8 +26,10 @@ dev implementation:       0.30.59 model-first free-chat guard; live acceptance p
 > explicit project/dataset/profile scope и явные команды/tools сохранены.
 > Architecture gate блокирует возврат table/KS model bypass и keyword scope
 > routing. Generated runtime map теперь проверяется до запуска долгого pytest,
-> а не последним тестом после полного прогона. Установленный accepted runtime
-> 0.30.58 не изменён до зелёных общих гейтов и живой приёмки кандидата.
+> а не последним тестом после полного прогона. `SMETA_BASELINE_ROOT` позволяет
+> ship из чистого worktree проверить фактический persistent state без копии баз
+> в Git. Установленный accepted runtime 0.30.58 не изменён до зелёных общих
+> гейтов и живой приёмки кандидата.
 
 > **0.30.58 / build 698 liberal model-result reader (LIVE XLSX ACCEPTED, не
 > опубликован):** живой 74-позиционный прогон доказал, что Qwen может вернуть
