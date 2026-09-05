@@ -418,7 +418,8 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert ".sov-mode-example" in styles
     assert 'classes("sov-composer-footer")' in source
     assert 'aria_label="Отправить"' in source
-    assert 'rows=3 autogrow borderless aria-label="Ваш запрос"' in source
+    assert 'rows=2 autogrow borderless aria-label="Ваш запрос"' in source
+    assert 'min-height:48px!important;max-height:min(240px,25dvh)' in uikit
     assert ".sov-composer-footer" in uikit
     assert ".sov-mode-guidance-disclosure" in uikit
     assert ".sov-mode-guidance-disclosure {\n  width: 100%;" in uikit

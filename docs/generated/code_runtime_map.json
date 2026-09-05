@@ -13297,7 +13297,7 @@
     },
     {
       "inbound": [],
-      "lines": 1132,
+      "lines": 1133,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -18807,7 +18807,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 636,
     "tracked_python_files": 1002,
-    "tracked_python_lines": 314918
+    "tracked_python_lines": 314919
   },
   "warnings": []
 }
