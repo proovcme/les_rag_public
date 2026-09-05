@@ -7929,6 +7929,7 @@
         "sovushka/checklist_review_view.py",
         "sovushka/components/__init__.py",
         "sovushka/components/charts.py",
+        "sovushka/components/chat_project_navigation.py",
         "sovushka/components/chat_workspace.py",
         "sovushka/components/header.py",
         "sovushka/config.py",
@@ -8029,6 +8030,7 @@
     {
       "inbound": [
         "sovushka/components/charts.py",
+        "sovushka/components/chat_project_navigation.py",
         "sovushka/components/chat_workspace.py",
         "sovushka/components/header.py"
       ],
@@ -8062,7 +8064,24 @@
         "sovushka/pages/chat.py",
         "tests/test_chat_workspace_ui.py"
       ],
-      "lines": 240,
+      "lines": 138,
+      "module": "sovushka.components.chat_project_navigation",
+      "outbound": [
+        "sovushka/__init__.py",
+        "sovushka/components/__init__.py",
+        "sovushka/state.py",
+        "sovushka/uikit/__init__.py"
+      ],
+      "path": "sovushka/components/chat_project_navigation.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "sovushka/pages/chat.py",
+        "tests/test_chat_workspace_ui.py"
+      ],
+      "lines": 257,
       "module": "sovushka.components.chat_workspace",
       "outbound": [
         "sovushka/__init__.py",
@@ -8080,7 +8099,7 @@
         "tests/test_freetoken_provider.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 932,
+      "lines": 921,
       "module": "sovushka.components.header",
       "outbound": [
         "backend/auth.py",
@@ -8178,7 +8197,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 5078,
+      "lines": 5035,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -8186,6 +8205,7 @@
         "sovushka/__init__.py",
         "sovushka/answer_render.py",
         "sovushka/components/charts.py",
+        "sovushka/components/chat_project_navigation.py",
         "sovushka/components/chat_workspace.py",
         "sovushka/pages/__init__.py",
         "sovushka/pages/verify.py",
@@ -8436,6 +8456,7 @@
     {
       "inbound": [
         "sovushka/checklist_review_panel.py",
+        "sovushka/components/chat_project_navigation.py",
         "sovushka/components/chat_workspace.py",
         "sovushka/components/header.py",
         "sovushka/pages/chat.py",
@@ -8504,6 +8525,7 @@
     },
     {
       "inbound": [
+        "sovushka/components/chat_project_navigation.py",
         "sovushka/components/chat_workspace.py",
         "sovushka/pages/chat.py",
         "sovushka/pages/model_connections.py",
@@ -8574,7 +8596,7 @@
         "sovushka/uikit/__init__.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 4229,
+      "lines": 4314,
       "module": "sovushka.uikit.tokens",
       "outbound": [
         "sovushka/__init__.py",
@@ -8588,7 +8610,7 @@
       "inbound": [
         "tests/test_sovushka_data_workspace.py"
       ],
-      "lines": 462,
+      "lines": 467,
       "module": "sovushka_ng",
       "outbound": [
         "proxy/services/verify_service.py",
@@ -9352,9 +9374,10 @@
     },
     {
       "inbound": [],
-      "lines": 107,
+      "lines": 162,
       "module": "tests.test_chat_workspace_ui",
       "outbound": [
+        "sovushka/components/chat_project_navigation.py",
         "sovushka/components/chat_workspace.py",
         "sovushka/uikit/__init__.py"
       ],
@@ -13274,7 +13297,7 @@
     },
     {
       "inbound": [],
-      "lines": 1131,
+      "lines": 1132,
       "module": "tests.test_sovushka_chat",
       "outbound": [
         "proxy/routers/chat.py",
@@ -13392,7 +13415,7 @@
     },
     {
       "inbound": [],
-      "lines": 663,
+      "lines": 659,
       "module": "tests.test_sovushka_uikit",
       "outbound": [
         "sovushka/components/header.py",
@@ -18779,12 +18802,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 353,
+    "product_reachable": 354,
     "registered_api_routes": 340,
     "runtime_support": 11,
     "test_or_tool_only": 636,
-    "tracked_python_files": 1001,
-    "tracked_python_lines": 314510
+    "tracked_python_files": 1002,
+    "tracked_python_lines": 314753
   },
   "warnings": []
 }

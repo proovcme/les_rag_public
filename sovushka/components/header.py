@@ -13,7 +13,7 @@ from proxy.services.llm_transport_profile_service import freetoken_prompt_chars_
 from sovushka.components.charts import _html
 from sovushka.state import api_get, last_api_error_text, proxy_online
 from sovushka.styles import _DARK_THEME, _LIGHT_THEME
-from sovushka.uikit.components import acronym_identity
+from sovushka.uikit.components import acronym_identity, action_button
 
 
 def _smeta_runtime_settings(engine: str, model: str) -> dict[str, str]:
@@ -32,7 +32,7 @@ def _smeta_runtime_settings(engine: str, model: str) -> dict[str, str]:
 
 def visible_workspace_sections() -> tuple[str, ...]:
     """Product-visible workspace sections; legacy RIM remains data-compatible only."""
-    return ("chat", "data", "studio", "cad_bim_placeholder", "history")
+    return ("chat", "data", "history")
 
 
 def build_header(
@@ -61,7 +61,7 @@ def build_header(
         "position:sticky;top:0;z-index:999;"
         "background:var(--bg-panel);border-bottom:1px solid var(--border);"
         "display:flex;align-items:center;padding:0 16px;height:56px;gap:0;"
-    ):
+    ) as header_container:
         # ── Лого ──────────────────────────────────────────────────────────────
         with ui.row().classes("items-center sov-brand-block").style(
             "gap:6px;margin-right:12px;white-space:nowrap;flex-wrap:nowrap;"
@@ -210,14 +210,6 @@ def build_header(
                     "/classic?tab=chat",
                     "Перейти в рабочий чат",
                 )
-                studio_placeholder = ui.button(
-                    "Студия · скоро",
-                    color=None,
-                    icon="o_edit_note",
-                ).props('flat no-caps disable aria-label="Студия — скоро"').classes(
-                    "sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"
-                ).tooltip("Раздел готовится к выпуску")
-                nav_buttons["studio"] = studio_placeholder
                 _primary_button(
                     "config",
                     "Конфигурация",
@@ -250,12 +242,6 @@ def build_header(
                 )
                 if include_data:
                     tab_refs["data"] = ui.tab("Данные", icon="o_database")
-                    ui.button(
-                        "CAD/BIM · скоро",
-                        icon="o_view_in_ar",
-                    ).props('flat no-caps disable aria-label="CAD/BIM — скоро"').classes(
-                        "sov-secondary-placeholder"
-                    ).tooltip("Раздел готовится к выпуску")
                 tab_refs["history"]  = ui.tab("История",        icon="o_history")
 
         for key, label in {
@@ -291,15 +277,11 @@ def build_header(
                             label,
                             on_click=lambda tab=tab_refs[key]: tabs.set_value(tab),
                         )
-                if include_data:
-                    ui.menu_item("CAD/BIM · скоро").props(
-                        'disable aria-label="CAD/BIM — скоро"'
-                    )
 
         # ── Служебная зона: статус и действия собраны в один ровный блок ─────
         with ui.column().classes("sov-ui-header-controls").style(
             "flex-shrink:0;margin-left:8px;"
-        ):
+        ) as utility_controls:
 
             # W5.3: индикатор доступности proxy (зелёный — на связи, красный — нет)
             with ui.row().classes("sov-runtime-state"):
@@ -919,6 +901,13 @@ def build_header(
             ).props("flat no-caps dense").classes(
                 "sov-ui-header-action sov-ui-header-account"
             ).tooltip(f"Сеанс: {account_detail}. Нажмите, чтобы выйти")
+
+    if active_primary == "chat":
+        with header_container:
+            with action_button("Приложение", icon="o_more_horiz", variant="quiet",
+                               classes="sov-chat-application-menu-button"):
+                with ui.menu().classes("sov-chat-utility-menu") as utility_menu:
+                    utility_controls.move(utility_menu)
 
     return tabs, tab_refs
 

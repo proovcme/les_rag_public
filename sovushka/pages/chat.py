@@ -16,6 +16,7 @@ from nicegui import context, ui
 
 from sovushka.components.charts import _html, esc
 from sovushka.components.chat_workspace import ChatWorkspace
+from sovushka.components.chat_project_navigation import ChatProjectNavigation
 from sovushka.safe_markup import sanitize_svg
 from sovushka.state import (
     add_log,
@@ -907,9 +908,21 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     </script>
     """)
 
+    workspace = ChatWorkspace(
+        on_open=lambda record: _activate_workspace_session(record),
+        get_session_id=lambda: state.get("session_id"),
+        is_busy=lambda: _sending["v"], is_admin=is_admin,
+    )
+    project_navigation = ChatProjectNavigation(
+        workspace, on_new=lambda: _clear_chat(), on_history=lambda: _toggle_history(),
+        on_data=(lambda: tabs.set_value(tab_documents)) if tabs is not None and tab_documents is not None else None,
+    )
+    workspace.on_change = project_navigation.refresh
+
     with ui.element("div").classes(
-        "sov-chat-shell sov-artifacts-collapsed sov-ui-shell"
+        "sov-chat-shell sov-artifacts-collapsed sov-ui-shell sov-chat-workspace"
     ) as chat_shell:
+        project_navigation.render()
         history_drawer = ui.element("aside").classes("sov-history-drawer")
         history_drawer.set_visibility(False)
 
@@ -951,65 +964,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         with ui.element("main").classes("sov-chat-main"):
             with ui.row().classes("sov-chat-topbar"):
                 with ui.row().classes("items-center gap-2"):
-                    action_button(
-                        icon="o_history",
-                        on_click=lambda: _toggle_history(),
-                        variant="quiet",
-                        icon_only=True,
-                        aria_label="История чата",
-                        classes="sov-icon-btn sov-topbar-icon-action",
-                    )
-                    with ui.column().classes("sov-chat-heading"):
-                        _html(
-                            '<div class="sov-chat-identity" title="Система Обработки и Выдачи: '
-                            'Умная, Шаблонизированная, Классифицированная, Автоматизированная" '
-                            'aria-label="С.О.В.У.Ш.К.А. — Система Обработки и Выдачи: '
-                            'Умная, Шаблонизированная, Классифицированная, Автоматизированная">'
-                            '<span class="sov-owl-mark" aria-hidden="true">'
-                            '<svg viewBox="0 0 32 32" focusable="false">'
-                            '<path d="M7 10 10 5l6 4 6-4 3 5v9c0 6-4 10-9 10S7 25 7 19Z"/>'
-                            '<circle cx="12" cy="15" r="3.5"/>'
-                            '<circle cx="20" cy="15" r="3.5"/>'
-                            '<circle class="sov-owl-eye" cx="12" cy="15" r="1.25"/>'
-                            '<circle class="sov-owl-eye" cx="20" cy="15" r="1.25"/>'
-                            '<path class="sov-owl-beak" d="m16 17-2.2 3h4.4Z"/>'
-                            '</svg>'
-                            '</span>'
-                            '<span class="sov-chat-identity-copy">'
-                            '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>'
-                            '<span class="sov-chat-subtitle sov-acronym-expansion">'
-                            'Система Обработки и Выдачи: Умная, Шаблонизированная, '
-                            'Классифицированная, Автоматизированная'
-                            '</span>'
-                            '</span>'
-                            '</div>'
-                        )
-                with ui.row().classes("items-center gap-2"):
-                    if tabs is not None and tab_documents is not None:
-                        action_button(
-                            "Документы",
-                            icon="o_folder_open",
-                            on_click=lambda: tabs.set_value(tab_documents),
-                            variant="quiet",
-                            icon_only=True,
-                            aria_label="Документы",
-                            classes="sov-artifacts-open-btn sov-topbar-icon-action",
-                        ).tooltip("Открыть документы датасетов")
-                    workspace = ChatWorkspace(
-                        on_open=lambda record: _activate_workspace_session(record),
-                        get_session_id=lambda: state.get("session_id"),
-                        is_busy=lambda: _sending["v"], is_admin=is_admin,
-                    )
-                    workspace.render()
-                    action_button(
-                        "Артефакты",
-                        icon="o_view_sidebar",
-                        on_click=lambda: _open_artifacts(),
-                        variant="quiet",
-                        icon_only=True,
-                        aria_label="Открыть артефакты",
-                        classes="sov-artifacts-open-btn sov-topbar-icon-action",
-                    ).tooltip("Открыть панель результатов и файлов")
+                    action_button("Проекты", icon="menu", variant="quiet",
+                                  classes="sov-project-mobile-toggle", on_click=project_navigation.toggle)
+                    project_navigation.render_heading()
+                with ui.row().classes("sov-workspace-header-actions"):
+                    action_button("Память", icon="o_bookmark_border", variant="quiet",
+                                  on_click=lambda: workspace.run(workspace.open_memory))
+                    action_button("Файлы", icon="o_description", variant="quiet",
+                                  on_click=lambda: _open_artifacts())
                     # v0.22 ScopeSelector — ОБЛАСТЬ ПОИСКА (весь RAG / проект(ы) / датасет(ы) / mixed).
                     # Заменяет неясную выпадашку: явные группы Проекты/Датасеты/Непривязанные/Системные.
                     scope_state = {
@@ -1029,22 +991,24 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         classes="sov-scope-btn",
                     ).tooltip(
                         "Область поиска: в каких проектах и датасетах ЛЕС будет искать источники.")
-                    selected_sources_only_switch = ui.switch(
-                        "Только выбранные источники",
-                        value=bool(scope_state["selected_sources_only"]),
-                    ).props("dense")
-                    selected_sources_only_switch.tooltip(
-                        "Отключает публичный веб-поиск для этого диалога; выбор датасета сам по себе веб не запрещает."
-                    )
-                    selected_sources_only_switch.on_value_change(
-                        lambda event: scope_state.__setitem__(
-                            "selected_sources_only", bool(event.value)
+                    with ui.column().classes("w-full gap-2") as search_controls:
+                        selected_sources_only_switch = ui.switch(
+                            "Только выбранные источники",
+                            value=bool(scope_state["selected_sources_only"]),
+                        ).props("dense")
+                        selected_sources_only_switch.tooltip(
+                            "Отключает публичный веб-поиск для этого диалога; выбор датасета сам по себе веб не запрещает."
                         )
-                    )
-                    reranker_checkbox = checkbox_field("Реранкер", value=False)
-                    reranker_checkbox.tooltip(
-                        "Дополнительно оценивает найденные источники. Может увеличить время ответа."
-                    )
+                        selected_sources_only_switch.on_value_change(
+                            lambda event: scope_state.__setitem__(
+                                "selected_sources_only", bool(event.value)
+                            )
+                        )
+                        reranker_checkbox = checkbox_field("Реранкер", value=False)
+                        reranker_checkbox.tooltip(
+                            "Дополнительно оценивает найденные источники. Может увеличить время ответа."
+                        )
+                    search_controls.set_visibility(False)
 
                     def _scope_label() -> str:
                         st = scope_state["scope_type"]
@@ -1315,25 +1279,6 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         validation_chip = ui.label("CRAG ON").classes("sov-chip")
                         model_chip = ui.label("МОДЕЛЬ —").classes("sov-chip sov-model-chip")
                     technical_status.set_visibility(False)
-                    action_button(
-                        "Новый чат",
-                        icon="o_add_comment",
-                        on_click=lambda: _clear_chat(),
-                        variant="quiet",
-                        icon_only=True,
-                        aria_label="Новый чат",
-                        classes="sov-new-chat-btn sov-topbar-icon-action",
-                    ).tooltip("Новая сессия без памяти прошлого диалога")
-                    with action_button(
-                        icon="o_more_horiz",
-                        variant="quiet",
-                        icon_only=True,
-                        aria_label="Действия чата",
-                        classes="sov-mobile-chat-menu",
-                    ):
-                        with ui.menu().classes("sov-mobile-chat-actions"):
-                            ui.menu_item("История", on_click=lambda: _toggle_history())
-                            ui.menu_item("Артефакты", on_click=lambda: _open_artifacts())
 
             scope_files_panel = ui.element("div").classes("sov-scope-files-panel")
             scope_files_panel.set_visibility(False)
@@ -1357,7 +1302,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                     empty_state_ref = {"el": _html(
                         '<div class="sov-chat-empty">'
                         '<div class="sov-chat-empty-title">С чего начнём?</div>'
-                        '<div class="sov-chat-empty-copy">Выберите режим, область поиска или прикрепите файл.</div>'
+                        '<div class="sov-chat-empty-copy">Задайте вопрос, приложите документ или выберите источники. ЛЕС поможет разобраться и подготовить результат.</div>'
                         '</div>'
                     )}
 
@@ -1490,17 +1435,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 if notify:
                     ui.notify("Вложение снято", type="info")
 
+            with ui.row().classes("sov-workspace-context") as context_row:
+                ui.label("Источники").classes("sov-workspace-owner")
+                scope_btn.move(context_row)
+
             with ui.element("div").classes("sov-composer") as composer_box:
                 indexing_banner = ui.label("").classes("sov-indexing-banner")
                 indexing_banner.set_visibility(False)
-                with ui.row().classes("sov-composer-prompt-head"):
-                    ui.label("Ваш запрос").classes("sov-composer-prompt-label")
-                    ui.label("Enter — отправить · Shift+Enter — новая строка").classes(
-                        "sov-composer-key-hint"
-                    )
                 chat_input = ui.textarea(
-                    placeholder="Напишите вопрос или задачу для Л.Е.С…"
-                ).classes("sov-composer-input").props("rows=1 autogrow borderless")
+                    placeholder="Напишите задачу для ЛЕС…"
+                ).classes("sov-composer-input").props('rows=3 autogrow borderless aria-label="Ваш запрос"')
                 try:
                     preset_question = (context.client.request.query_params.get("question") or "").strip()
                     if preset_question:
@@ -1541,74 +1485,78 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 with ui.element("div").classes("sov-composer-footer"):
                     with ui.row().classes("sov-composer-actions"):
                         action_button(
-                            icon="o_attach_file",
+                            "Прикрепить", icon="o_attach_file",
                             on_click=lambda: attach_dialog.open(),
-                            variant="secondary",
-                            icon_only=True,
+                            variant="quiet",
                             aria_label="Прикрепить файл",
                             classes="sov-composer-action sov-attach-btn",
                         ).tooltip("Прикрепить файл")
-                        mode_select = select_field(
-                            _MODE_OPTIONS,
-                            value=out_mode_val["v"],
-                            label="Режим",
-                            on_change=lambda event: _set_mode(str(event.value)),
-                            aria_label="Режим работы",
-                            classes="sov-mode-select",
-                        )
                         response_settings_btn = action_button(
-                            icon="o_tune",
+                            "Настройки", icon="o_tune",
                             variant="quiet",
-                            icon_only=True,
+                            on_click=lambda: response_settings_dialog.open(),
                             aria_label="Настройки ответа",
                             classes="sov-response-settings-btn",
                         )
-                        with response_settings_btn:
-                            with ui.menu().classes("sov-response-settings-menu"):
-                                section_heading("Настройки ответа")
-                                response_length_select = select_field(
-                                    {
-                                        "short": "Короткий",
-                                        "standard": "Обычный",
-                                        "detailed": "Подробный",
-                                        "maximum": "Максимальный",
-                                    },
-                                    value="standard",
-                                    label="Длина ответа",
-                                    classes="sov-response-length-select",
-                                )
-                                with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False).classes(
-                                    "sov-mode-guidance-disclosure"
-                                ):
-                                    for _mode_key, _guide in CHAT_MODE_GUIDANCE.items():
-                                        with ui.element("div").classes("sov-mode-guide") as _guide_panel:
-                                            with ui.row().classes("sov-mode-guide-head"):
-                                                ui.label(str(_guide["title"])).classes("sov-mode-guide-title")
-                                                ui.label(str(_guide["description"])).classes("sov-mode-guide-copy")
-                                            ui.label(str(_guide["data_hint"])).classes("sov-mode-data-hint")
-                                            with ui.row().classes("sov-mode-examples"):
-                                                for _example in _guide["examples"]:
-                                                    action_button(
-                                                        str(_example),
-                                                        on_click=lambda _event, example=_example: _fill_prompt(str(example)),
-                                                        variant="quiet", classes="sov-mode-example",
-                                                    )
-                                        _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
-                                        _mode_hint_refs[_mode_key] = _guide_panel
-                                action_button(
-                                    "Применить активную версию",
-                                    icon="o_sync",
-                                    on_click=lambda: (
-                                        apply_active_profile.__setitem__("v", True),
-                                        ui.notify(
-                                            "Активная версия применится к следующему сообщению",
-                                            type="info",
-                                        ),
+                        with ui.dialog() as response_settings_dialog, panel(variant="raised", classes="sov-ui-dialog") as response_settings_panel:
+                            section_heading("Настройки ответа")
+                            mode_select = select_field(
+                                _MODE_OPTIONS,
+                                value=out_mode_val["v"],
+                                label="Режим",
+                                on_change=lambda event: _set_mode(str(event.value)),
+                                aria_label="Режим работы",
+                                classes="sov-mode-select",
+                            )
+
+                            response_length_select = select_field(
+                                {
+                                    "short": "Короткий",
+                                    "standard": "Обычный",
+                                    "detailed": "Подробный",
+                                    "maximum": "Максимальный",
+                                },
+                                value="standard",
+                                label="Длина ответа",
+                                classes="sov-response-length-select",
+                            )
+                            with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False).classes(
+                                "sov-mode-guidance-disclosure"
+                            ):
+                                for _mode_key, _guide in CHAT_MODE_GUIDANCE.items():
+                                    with ui.element("div").classes("sov-mode-guide") as _guide_panel:
+                                        with ui.row().classes("sov-mode-guide-head"):
+                                            ui.label(str(_guide["title"])).classes("sov-mode-guide-title")
+                                            ui.label(str(_guide["description"])).classes("sov-mode-guide-copy")
+                                        ui.label(str(_guide["data_hint"])).classes("sov-mode-data-hint")
+                                        with ui.row().classes("sov-mode-examples"):
+                                            for _example in _guide["examples"]:
+                                                action_button(
+                                                    str(_example),
+                                                    on_click=lambda _event, example=_example: _fill_prompt(str(example)),
+                                                    variant="quiet", classes="sov-mode-example",
+                                                )
+                                    _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
+                                    _mode_hint_refs[_mode_key] = _guide_panel
+                            action_button(
+                                "Применить активную версию",
+                                icon="o_sync",
+                                on_click=lambda: (
+                                    apply_active_profile.__setitem__("v", True),
+                                    ui.notify(
+                                        "Активная версия применится к следующему сообщению",
+                                        type="info",
                                     ),
-                                    variant="quiet",
-                                    compact=True,
-                                    classes="sov-apply-profile-action",
-                                )
+                                ),
+                                variant="quiet",
+                                compact=True,
+                                classes="sov-apply-profile-action",
+                            )
+                            section_heading("Поиск")
+                            search_controls.move(response_settings_panel)
+                            search_controls.set_visibility(True)
+                            action_button("Готово", variant="primary", on_click=response_settings_dialog.close,
+                                          classes="self-end")
                         stop_dialog_btn = ui.button(
                             "Остановить диалог",
                             icon="o_stop_circle",
@@ -1625,6 +1573,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             aria_label="Отправить",
                             classes="sov-send-btn",
                         )
+                ui.label("Enter — отправить · Shift+Enter — новая строка").classes("sov-composer-key-hint")
 
         # Резиновый layout: разделитель между чатом и артефактами (таскать по ширине).
         artifact_divider = ui.element("div").classes("sov-resize-divider")
@@ -3877,7 +3826,14 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         chat_column.clear()
         _clear_file_artifacts()
         with chat_column:
-            _render_chat_bubble(system_msg, "chat-msg-sys")
+            if not state.get("chat_history") and not state.get("chat_pending"):
+                empty_state_ref["el"] = _html(
+                    '<div class="sov-chat-empty"><div class="sov-chat-empty-title">С чего начнём?</div>'
+                    '<div class="sov-chat-empty-copy">Задайте вопрос, приложите документ или выберите источники. '
+                    'ЛЕС поможет разобраться и подготовить результат.</div></div>'
+                )
+            else:
+                _render_chat_bubble(system_msg, "chat-msg-sys")
             for msg in state.get("chat_history", []):
                 _render_msg(msg)
             if state.get("chat_pending"):
@@ -3934,6 +3890,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         finally:
             workspace.navigating = False
         await workspace.run(workspace.restore)
+        await project_navigation.refresh()
 
     asyncio.create_task(_restore_workspace_history())
 

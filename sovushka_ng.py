@@ -290,7 +290,7 @@ async def classic_chat_page(request: Request):
     _apply_theme()
 
     # Chat shell: chat/history plus one unified Data workspace.
-    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell"):
+    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell") as app_shell:
         tabs, tr = build_header(
             is_admin,
             role,
@@ -329,11 +329,16 @@ async def classic_chat_page(request: Request):
             "ИСТОРИЯ": tab_history,
         }.get(_last_tab) or tab_chat
 
+        if _target == tab_chat:
+            app_shell.classes(add="sov-app-shell--chat")
+
         def _save_chat_tab(e):
             try:
                 val = e.args if isinstance(e.args, str) else (e.args[0] if isinstance(e.args, (list, tuple)) and e.args else None)
                 if val:
                     app.storage.user["last_chat_tab"] = str(val)
+                    app_shell.classes(add="sov-app-shell--chat" if str(val) == "AI ЧАТ" else "",
+                                      remove="" if str(val) == "AI ЧАТ" else "sov-app-shell--chat")
                     primary = {"AI ЧАТ": "chat"}.get(str(val))
                     for key, button in (tr.get("_primary_nav") or {}).items():
                         if key == primary:
@@ -381,7 +386,7 @@ async def classic_admin_page(request: Request):
     _apply_theme()
 
     # Layout: Header (со встроенными табами) + Content + Footer
-    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell"):
+    with ui.column().classes("w-full h-screen no-wrap gap-0 sov-ui-shell sov-app-shell") as app_shell:
         # Граф знаний: canvas-2D со своей физикой + тумблер «связи НТД» (Олегу зашёл больше cosmos).
         # /graph-cosmos (3d-force-graph) оставлен как альтернатива.
         visualizer_url = "/graph"

@@ -19,9 +19,9 @@
 
 | Метрика | Значение |
 | --- | --- |
-| Python-файлов под git | 1001 |
-| Строк Python | 314510 |
-| PRODUCT_REACHABLE | 353 |
+| Python-файлов под git | 1002 |
+| Строк Python | 314753 |
+| PRODUCT_REACHABLE | 354 |
 | RUNTIME_SUPPORT | 11 |
 | TEST_OR_TOOL_ONLY | 636 |
 | DORMANT_CANDIDATE | 1 |
@@ -33,10 +33,10 @@
 | Файл | Строк | Прямых потребителей |
 | --- | --- | --- |
 | proxy/smeta_core/document_workflow.py | 9530 | 20 |
-| sovushka/pages/chat.py | 5078 | 5 |
+| sovushka/pages/chat.py | 5035 | 5 |
 | backend/qdrant_adapter.py | 4552 | 29 |
+| sovushka/uikit/tokens.py | 4314 | 2 |
 | proxy/services/chat_evidence_application_service.py | 4291 | 8 |
-| sovushka/uikit/tokens.py | 4229 | 2 |
 | proxy/routers/chat.py | 4204 | 40 |
 | sovushka/pages/documents.py | 3927 | 3 |
 | proxy/routers/datasets.py | 3775 | 16 |

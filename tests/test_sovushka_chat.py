@@ -309,7 +309,7 @@ def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
 
     assert "Новый чат" in source
-    assert "sov-new-chat-btn" in source
+    assert "on_new=lambda: _clear_chat()" in source
     assert "model_chip = ui.label(\"МОДЕЛЬ —\")" in source
     assert "_refresh_active_model_chip" in source
     assert "api_get(\"/api/status\")" in source
@@ -386,11 +386,9 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     styles = Path("sovushka/styles.py").read_text(encoding="utf-8")
     uikit = Path("sovushka/uikit/tokens.py").read_text(encoding="utf-8")
 
-    assert '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>' in source
-    assert "С.О.В.У.Ш.К.А. · Чат" not in source
-    assert "Умная, Шаблонизированная, " in source
-    assert "Классифицированная, Автоматизированная" in source
-    assert 'class="sov-owl-mark"' in source
+    assert 'project_navigation.render_heading()' in source
+    assert 'project_navigation.render()' in source
+    assert 'sov-chat-workspace' in source
     assert "technical_status.set_visibility(False)" in source
     assert 'with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False)' in source
     assert '"sov-mode-guidance-disclosure"' in source
@@ -404,10 +402,10 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert 'aria_label="Настройки ответа"' in source
     assert 'response_length_select = select_field(' in source
     assert '"response_length": str(response_length_select.value or "standard")' in source
-    assert 'aria_label="Действия чата"' in source
-    assert 'classes="sov-mobile-chat-menu"' in source
-    for label in ("История", "Артефакты"):
-        assert f'"{label}"' in source
+    assert 'classes="sov-project-mobile-toggle"' in source
+    assert 'on_click=project_navigation.toggle' in source
+    assert "on_history=lambda: _toggle_history()" in source
+    assert "on_click=lambda: _open_artifacts()" in source
     assert 'ui.menu_item("Новый чат"' not in source
     assert 'ui.menu_item(\n                                    "Документы"' not in source
     assert ".sov-mobile-chat-menu" in uikit
@@ -420,7 +418,7 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert ".sov-mode-example" in styles
     assert 'classes("sov-composer-footer")' in source
     assert 'aria_label="Отправить"' in source
-    assert 'props("rows=1 autogrow borderless")' in source
+    assert 'rows=3 autogrow borderless aria-label="Ваш запрос"' in source
     assert ".sov-composer-footer" in uikit
     assert ".sov-mode-guidance-disclosure" in uikit
     assert ".sov-mode-guidance-disclosure {\n  width: 100%;" in uikit
@@ -835,6 +833,9 @@ class _FakeAsyncClient:
 
 @pytest.mark.asyncio
 async def test_free_mode_injects_session_memory(monkeypatch):
+    from unittest.mock import AsyncMock
+    # This unit checks legacy memory packets, not persistent provider capability probes.
+    monkeypatch.setattr(chat_router, "_refresh_stale_bound_model_capabilities", AsyncMock())
     monkeypatch.setattr(
         chat_router,
         "_effective_model_connection_mode",

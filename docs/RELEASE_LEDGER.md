@@ -5,21 +5,41 @@
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
 ## Текущее состояние (2026-09-05)
+### 0.31.1 — approved redesign, publication re-authorized
+
+Owner approved the new project/chat layout and requested Configuration in its footer,
+then authorized release after successful checks. Candidate 0.31.1/build707 includes
+visible creatable projects and their chats, coherent composer, settings dialog and
+compact app chrome. Studio/CAD placeholders are hidden; their code is retained.
+The model/RAG/result core is unchanged by this UI revision. Installed host remains
+0.31.0 until the next acceptance transaction; public version remains 0.30.64.
+
+### Earlier 0.31.0 publication cancelled by owner — 2026-09-05
+
+Owner rejected the current chat composition and requested visible, creatable projects
+and a full chat UI redesign. No GitHub draft/tag/publication was created. The already
+running local acceptance finished safely (install, smoke, rollback, reinstall):
+artifact `d71b6349acb7a66e23e77507`, target `923de58772735fcdd79066e4e13ee89450ccb336`.
+Local runtime remains the 0.31.0 candidate; public release remains 0.30.64.
+A separate UI-only preview at localhost:18952 uses temporary project/memory SQLite;
+model sending is disabled. It is not an installed product change or release proof.
+Publication must wait for owner acceptance of the redesigned UI and remaining live
+model/RAG/XLSX verification.
 
 ```
-версия продукта (SemVer):  0.31.0 (dev candidate)
-номер сборки:              706
-версия Tauri/NSIS:         5.1.706
+версия продукта (SemVer):  0.31.1 (dev candidate)
+номер сборки:              707
+версия Tauri/NSIS:         5.1.707
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.31.0 projects, explicit memory and shared green dialogs; not deployed
-задеплоено на рантайм:     Legion test host 0.30.64 / build 704 / commit 44d0ebebdaa43b1ceed7bede73819b65043f691f; aligned
+dev implementation:       0.31.1 approved chat redesign; release checks pending
+задеплоено на рантайм:     Legion test host 0.31.0 / build 706 / commit 923de58772735fcdd79066e4e13ee89450ccb336; candidate only
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.64 (immutable)
-следующий выпуск:          0.31.0 разрешён владельцем; gate/installed acceptance pending
-рантайм /api/version:      0.30.64 / build 704 / desktop 5.1.704 / commit 44d0ebebdaa43b1ceed7bede73819b65043f691f; aligned
+следующий выпуск:          0.31.1 разрешён после зелёных gates и приёмки нового UI
+рантайм /api/version:      0.31.0 / build 706; installed acceptance completed, not published
 ```
 
-> **0.31.0 / build 706 — candidate, not deployed or published:** project-owned
+> **0.31.0 / build 706 — installed candidate, NOT published:** project-owned
 > sessions, explicit editable/enabled notes, ordinary/project memory isolation,
 > whole-note Governor packets in active query/final calls. Target local9–100B;
 > isolated realQwen9B memory conditioning 4/4 (save/edit/disable/ordinary isolation).

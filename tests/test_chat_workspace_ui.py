@@ -105,3 +105,58 @@ def test_source_and_response_dialogs_reuse_approved_memory_controls():
     assert 'panel(variant="raised", classes="sov-ui-dialog")' in source
     assert 'min-width:620px' not in source
     assert 'section_heading("Настройки ответа")' in source
+
+@pytest.mark.asyncio
+async def test_created_project_is_opened_and_navigation_notified(monkeypatch):
+    events = []
+    async def post(path, data):
+        if path == '/api/projects':
+            assert data == {'name': 'School'}
+            return {'id': 9, 'name': 'School'}
+        return {'session_id': 'new-project-chat', 'project_id': 9}
+    async def get(path):
+        return {'sessions': []}
+    async def opened(record):
+        events.append(('opened',record['project_id']))
+        return True
+    async def changed():
+        events.append(('changed',workspace.active['project_id']))
+    monkeypatch.setattr(module,'api_post',post)
+    monkeypatch.setattr(module,'api_get',get)
+    workspace = module.ChatWorkspace(on_open=opened,get_session_id=lambda:'old',is_busy=lambda:False,on_change=changed)
+    await workspace.create_project(' School ')
+    assert workspace.project_names[9] == 'School'
+    assert events == [('opened',9),('changed',9)]
+
+@pytest.mark.asyncio
+async def test_project_creation_does_not_write_when_busy(monkeypatch):
+    async def forbidden(*args,**kwargs):
+        pytest.fail('Busy navigation must not create a project')
+    monkeypatch.setattr(module,'api_post',forbidden)
+    workspace = module.ChatWorkspace(on_open=forbidden,get_session_id=lambda:'old',is_busy=lambda:True)
+    with pytest.raises(RuntimeError):
+        await workspace.create_project('School')
+
+
+def test_chat_redesign_keeps_projects_and_configuration_visible():
+    from pathlib import Path
+    source = Path('sovushka/pages/chat.py').read_text(encoding='utf-8')
+    assert 'ChatProjectNavigation' in source
+    assert 'sov-chat-workspace' in source
+    navigation = Path('sovushka/components/chat_project_navigation.py').read_text(encoding='utf-8')
+    assert 'Создать проект' in navigation
+    assert 'Конфигурация' in navigation
+    assert '/les/classic' in navigation
+    assert 'Студия' not in navigation and 'CAD' not in navigation
+@pytest.mark.parametrize('destination', ['history', 'data'])
+def test_mobile_navigation_closes_before_opening_another_surface(destination):
+    from types import SimpleNamespace
+    from sovushka.components.chat_project_navigation import ChatProjectNavigation
+    events = []
+    nav = ChatProjectNavigation(None, on_new=None, on_history=lambda:events.append('history'),
+                                on_data=lambda:events.append('data'))
+    nav.sidebar = SimpleNamespace(classes=lambda **kwargs:events.append('closed'))
+    nav.mobile_open = True
+    getattr(nav, 'open_' + destination)()
+    assert events == ['closed', destination]
+    assert not nav.mobile_open

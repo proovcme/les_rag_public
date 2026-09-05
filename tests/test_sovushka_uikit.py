@@ -230,7 +230,7 @@ def test_navigation_has_one_icon_column_and_equal_primary_rows():
     header = Path("sovushka/components/header.py").read_text(encoding="utf-8")
     assert 'with ui.row().classes("sov-primary-nav sov-mobile-primary-nav")' in header
     assert header.count("_primary_button(") == 3
-    assert '"sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"' in header
+    assert '"sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"' not in header
     assert ".sov-mobile-primary-nav" in UIKIT_CSS
     assert "env(safe-area-inset-bottom)" in UIKIT_CSS
     mobile_nav = UIKIT_CSS[UIKIT_CSS.index(".sov-mobile-primary-nav") :]
@@ -279,17 +279,13 @@ def test_critical_surfaces_use_uikit_and_blocked_state():
 
     assert "ui.add_head_html(UIKIT_CSS)" in shell
     assert shell.count("sov-ui-shell") >= 2
-    assert shell.count("sov-app-shell") == 2
+    assert shell.count("sov-ui-shell sov-app-shell") == 2
     assert shell.count("sov-app-content") == 2
     assert "sov-ui-header" in header
     assert "sov-ui-documents" in documents
     assert "sov-ui-evidence-card" in chat
-    assert '<span class="sov-chat-title sov-acronym-title">С.О.В.У.Ш.К.А.</span>' in chat
-    assert "С.О.В.У.Ш.К.А. · Чат" not in chat
-    assert "Умная, Шаблонизированная, " in chat
-    assert "Классифицированная, Автоматизированная" in chat
-    assert 'class="sov-owl-mark"' in chat
-    assert 'aria-label="С.О.В.У.Ш.К.А. — Система Обработки и Выдачи: ' in chat
+    assert 'project_navigation.render_heading()' in chat
+    assert 'sov-chat-workspace' in chat
     assert 'aria-label="Выбрать область"' not in chat
     assert "sov-attach-btn" in chat
     assert 'render_feedback_state(' in chat
@@ -368,8 +364,8 @@ def test_product_navigation_has_one_data_destination_and_dormant_surfaces():
     assert 'ui.tab("Документы"' not in header
     assert 'ui.tab("Датасеты"' not in header
     assert 'ui.tab("Почта"' not in header
-    assert '"CAD/BIM · скоро"' in header
-    assert 'aria-label="CAD/BIM — скоро"' in header
+    assert '"CAD/BIM · скоро"' not in header
+    assert 'aria-label="CAD/BIM — скоро"' not in header
     assert '"documents": "data"' in shell
     assert '"datasets": "data"' in shell
     assert '"mail": "chat"' in shell
@@ -410,10 +406,10 @@ def test_critical_navigation_and_stage_three_to_five_controls_are_visible():
     assert 'tab_refs[key].tooltip(label)' in header
     assert 'f"sov-nav-switch sov-nav-switch--{key}"' in header
     assert "sov-nav-switch--active" in header
-    assert '"Студия · скоро"' in header
-    assert '"Раздел готовится к выпуску"' in header
-    assert '"sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"' in header
-    assert '.props(\'flat no-caps disable aria-label="Студия — скоро"\')' in header
+    assert '"Студия · скоро"' not in header
+    assert '"Раздел готовится к выпуску"' not in header
+    assert '"sov-nav-switch sov-nav-switch--studio sov-nav-switch--placeholder"' not in header
+    assert '.props(\'flat no-caps disable aria-label="Студия — скоро"\')' not in header
     assert ".sov-nav-switch--placeholder.q-btn--disabled" in UIKIT_CSS
     assert "/classic?tab=studio" not in header
     assert "tabs.set_value(tab_refs[key])" in header

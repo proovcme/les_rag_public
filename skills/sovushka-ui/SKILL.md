@@ -61,7 +61,7 @@ embedding engine, Docker or Qdrant is absent.
 - Keep icon column at 20 px and icon-to-label gap at 8 px.
 - Make repeated navigation rows equal in size and left alignment.
 - Keep text contrast at WCAG 2.2 AA, visible focus and reduced-motion support.
-- Prefer vertical working surfaces; do not add a permanent content sidebar.
+- Prefer vertical working surfaces. Owner-approved chat redesign (2026-09-05) permits one visible project/chat sidebar, replacing the old chat rail with compact application chrome; do not stack duplicate navigation rails.
 - Do not add dependencies, downloaded fonts, page-local visual hex values, or
   decorative one-off components.
 - If three places repeat the same visual role, extract it into the UI kit.

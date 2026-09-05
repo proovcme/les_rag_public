@@ -20,11 +20,12 @@ def _required(payload):
 
 
 class ChatWorkspace:
-    def __init__(self, *, on_open, get_session_id, is_busy, is_admin=True):
+    def __init__(self, *, on_open, get_session_id, is_busy, is_admin=True, on_change=None):
         self.on_open = on_open
         self.get_session_id = get_session_id
         self.is_busy = is_busy
         self.is_admin = is_admin
+        self.on_change = on_change
         self.active = {}
         self.project_names = {}
         self.button = None
@@ -68,7 +69,21 @@ class ChatWorkspace:
             label = self.project_names.get(pid, "Проект") if pid else "Обычный чат"
             self.button.set_text(label)
             self.button.props(f'aria-label="{label.replace(chr(34), chr(39))}"')
+        if self.on_change:
+            await self.on_change()
         return True
+
+    async def create_project(self, title):
+        title = str(title or '').strip()
+        if not self.is_admin:
+            raise RuntimeError('Создание проекта недоступно для этой учётной записи.')
+        if not title:
+            raise RuntimeError('Введите название проекта.')
+        async def create():
+            project = _required(await api_post('/api/projects', {'name': title}))
+            self.project_names[project['id']] = project['name']
+            return await self._open_project(project['id'])
+        return await self._navigate(create)
 
     async def open_project(self, project_id):
         return await self._navigate(lambda: self._open_project(project_id))
@@ -104,6 +119,8 @@ class ChatWorkspace:
         self.active = _required(await api_patch(f"/api/workspace/sessions/{quote(sid, safe='')}", {
             "scope": dict(scope), "role": role, "title": self.active.get("title") or title[:120],
         }))
+        if self.on_change:
+            await self.on_change()
         return self.active
 
     async def restore(self):
