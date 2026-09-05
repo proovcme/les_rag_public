@@ -6,12 +6,18 @@
   const nav = document.querySelector('.sov-project-navigation');
   const rows = [...document.querySelectorAll('.sov-project-chat-list button')];
   const failures = [];
+  const thread = document.querySelector('.sov-chat-scroll');
+  const composer = document.querySelector('.sov-composer');
+  const create = document.querySelector('.sov-project-create');
+  const dialogInputs = [...document.querySelectorAll('.q-dialog .sov-ui-panel input')];
   const tolerance = 2;
   if (!nav || !footer) return {schema: 'les.chat-ui-regression.v1', failures: ['navigation_missing']};
   const navVisible = getComputedStyle(nav).display !== 'none';
   if (document.documentElement.scrollWidth > innerWidth + tolerance) failures.push('horizontal_page_overflow');
   if (document.documentElement.scrollHeight > innerHeight + tolerance) failures.push('vertical_page_overflow');
   if (navVisible) {
+    if (create?.closest('.sov-project-navigation-body')) failures.push('create_project_inside_scroll');
+    if (create && (rect(create).top < rect(nav).top || rect(create).bottom > innerHeight)) failures.push('create_project_outside_viewport');
     const box = rect(footer);
     if (box.top < -tolerance || box.bottom > innerHeight + tolerance) failures.push('footer_outside_viewport');
     for (let ancestor = footer.parentElement; ancestor; ancestor = ancestor.parentElement) {
@@ -26,9 +32,19 @@
     if (rows.some(el => !el.classList.contains('sov-project-nav-row'))) failures.push('chat_button_render_aborted');
     if (rows.some(el => rect(el).height > 46)) failures.push('multiline_chat_row');
   }
+  // An empty two-line composer must leave at least half the window for reading.
+  const input = composer?.querySelector('textarea');
+  if (thread && input && !input.value && innerHeight >= 650 && rect(thread).height < innerHeight * .5) failures.push('conversation_too_small');
+  for (const input of dialogInputs) {
+    const box = rect(input);
+    if (!box.width || !box.height) continue;
+    if (document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) !== input) failures.push('dialog_input_intercepted');
+  }
   return {
     schema: 'les.chat-ui-regression.v1', viewport: [innerWidth, innerHeight],
     chat_count: rows.length, navigation_visible: navVisible,
     footer_bottom: navVisible ? rect(footer).bottom : null, failures,
+    conversation_height: thread ? rect(thread).height : null,
+    composer_height: composer ? rect(composer).height : null,
   };
 })()

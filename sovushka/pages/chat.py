@@ -1444,7 +1444,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                 indexing_banner.set_visibility(False)
                 chat_input = ui.textarea(
                     placeholder="Напишите задачу для ЛЕС…"
-                ).classes("sov-composer-input").props('rows=3 autogrow borderless aria-label="Ваш запрос"')
+                ).classes("sov-composer-input").props('rows=2 autogrow borderless aria-label="Ваш запрос"')
                 try:
                     preset_question = (context.client.request.query_params.get("question") or "").strip()
                     if preset_question:

@@ -1,6 +1,8 @@
 """Visible project/session navigation for the ordinary chat workspace."""
 from __future__ import annotations
 
+import asyncio
+
 from nicegui import ui
 
 from sovushka.state import api_get
@@ -21,12 +23,18 @@ class ChatProjectNavigation:
         self.projects = []
         self.sessions = []
         self.mobile_open = False
+        self.visible_sessions = 20
+        self._rendered = None
+        self._owner = None
 
     def render(self):
         with ui.element('aside').classes('sov-project-navigation') as self.sidebar:
             section_heading('Проекты и чаты')
             action_button('Новый чат', icon='add', variant='secondary',
                           classes='sov-project-nav-row', on_click=self.new_chat)
+            if self.workspace.is_admin:
+                action_button('Создать проект', icon='o_create_new_folder', variant='quiet',
+                              classes='sov-project-nav-row sov-project-create', on_click=self.open_create)
             self.body = ui.column().classes('sov-project-navigation-body')
             with ui.column().classes('sov-project-navigation-footer'):
                 if self.on_data:
@@ -72,15 +80,16 @@ class ChatProjectNavigation:
     async def refresh(self):
         active = self.workspace.active
         pid = active.get('project_id')
-        projects = await api_get('/api/projects')
         suffix = f'?project_id={pid}' if pid else ''
-        sessions = await api_get(f'/api/workspace/sessions{suffix}')
+        projects, sessions = await asyncio.gather(
+            api_get('/api/projects'), api_get(f'/api/workspace/sessions{suffix}'))
         if self.owner_label:
             self.owner_label.set_text(self.workspace.project_names.get(pid, 'Проект') if pid else 'Без проекта')
             self.title_label.set_text(active.get('title') or 'Новый чат')
             self.title_tooltip.set_text(active.get('title') or 'Новый чат')
-        self.body.clear()
         if projects is None or sessions is None:
+            self._rendered = None
+            self.body.clear()
             with self.body:
                 ui.label('Не удалось загрузить проекты и чаты.').classes('sov-workspace-owner')
                 action_button('Повторить', variant='quiet', on_click=self.refresh)
@@ -90,6 +99,18 @@ class ChatProjectNavigation:
         self.workspace.project_names = {row['id']: row['name'] for row in self.projects}
         if self.owner_label and pid:
             self.owner_label.set_text(self.workspace.project_names.get(pid, 'Проект'))
+        snapshot = (self.projects, self.sessions, dict(active))
+        if snapshot == self._rendered:
+            return
+        self._rendered = snapshot
+        if self._owner != pid:
+            self.visible_sessions = 20
+            self._owner = pid
+        self._render_body()
+
+    def _render_body(self):
+        pid = self.workspace.active.get('project_id')
+        self.body.clear()
         with self.body:
             self._project_row(None, 'Без проекта')
             if pid is None:
@@ -101,9 +122,10 @@ class ChatProjectNavigation:
                 self._project_row(project['id'], project['name'])
                 if pid == project['id']:
                     self._session_rows()
-            if self.workspace.is_admin:
-                action_button('Создать проект', icon='add', variant='secondary',
-                              classes='sov-project-nav-row', on_click=self.open_create)
+
+    def show_more(self):
+        self.visible_sessions += 20
+        self._render_body()
 
     def _project_row(self, pid, title):
         selected = self.workspace.active.get('project_id') == pid
@@ -112,13 +134,18 @@ class ChatProjectNavigation:
                 self.close()
         action_button(title, icon='o_folder_open' if pid else 'o_chat_bubble_outline',
                       variant='quiet', on_click=choose,
-                      classes='sov-project-nav-row' + (' sov-project-nav-row--active' if selected else ''))
+                      classes='sov-project-nav-row' + (' sov-project-nav-row--active' if selected else '')).tooltip(title)
 
     def _session_rows(self):
+        visible = self.sessions[:self.visible_sessions]
+        active_id = self.workspace.active.get('session_id')
+        active_row = next((row for row in self.sessions if row['session_id'] == active_id), None)
+        if active_row is not None and active_row not in visible:
+            visible.append(active_row)
         with ui.column().classes('sov-project-chat-list'):
             if not self.sessions:
                 ui.label('Пока нет чатов').classes('sov-workspace-owner')
-            for session in self.sessions:
+            for session in visible:
                 sid = session['session_id']
                 async def choose(session_id=sid):
                     if await self.workspace.run(lambda: self.workspace.open_session(session_id)):
@@ -128,6 +155,9 @@ class ChatProjectNavigation:
                               icon='o_chat_bubble_outline', variant='quiet', on_click=choose,
                               classes='sov-project-nav-row' + (' sov-project-chat--active' if selected else '')).tooltip(
                                   session.get('title') or session.get('first_question') or 'Новый чат')
+            if len(self.sessions) > self.visible_sessions:
+                action_button('Показать ещё', icon='expand_more', variant='quiet',
+                              classes='sov-project-nav-row', on_click=self.show_more)
 
     def open_create(self):
         with ui.dialog() as dialog, panel(variant='raised', classes='sov-workspace-dialog'):

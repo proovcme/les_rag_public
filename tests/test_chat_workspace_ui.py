@@ -34,14 +34,75 @@ async def test_large_history_with_multiline_title_does_not_abort_project_navigat
         nav.render()
         nav.render_heading()
         await nav.refresh()
+        assert len([b for b in buttons if b.text in {r['title'] for r in sessions}]) == 20
+        while nav.visible_sessions < len(sessions):
+            nav.show_more()
 
     chat_buttons = [button for button in buttons if button.text in {row["title"] for row in sessions}]
-    assert len(chat_buttons) == 114
+    assert {button.text for button in chat_buttons} == {row['title'] for row in sessions}
     assert all("sov-project-nav-row" in button.classes for button in chat_buttons)
     assert next(button for button in chat_buttons if button.text == title).props["aria-label"] == title
     assert {"Рабочий проект", "Создать проект", "Конфигурация"} <= {button.text for button in buttons}
     assert nav.title_label.text == title
     assert nav.title_tooltip.text == title
+
+
+@pytest.mark.asyncio
+async def test_navigation_reuses_unchanged_rows_and_keeps_create_outside_scroll(monkeypatch):
+    from types import SimpleNamespace
+    from nicegui import Client, ui
+    from nicegui.page import page
+    from sovushka.components import chat_project_navigation as navigation
+    started = set()
+    ready = asyncio.Event()
+    async def get(path):
+        started.add(path)
+        if len(started) == 2:
+            ready.set()
+        await asyncio.wait_for(ready.wait(), 1)
+        return [{'id': i, 'name': f'Проект {i}'} for i in range(60)] if path == '/api/projects' else []
+    monkeypatch.setattr(navigation, 'api_get', get)
+    workspace = SimpleNamespace(active={}, project_names={}, is_admin=True)
+    nav = navigation.ChatProjectNavigation(workspace, on_new=None, on_history=None)
+    with Client(page('/__navigation_stability')):
+        nav.render()
+        create = next(e for e in nav.sidebar.descendants() if isinstance(e, ui.button) and e.text == 'Создать проект')
+        assert create.parent_slot.parent is nav.sidebar
+        await nav.refresh()
+        old_ids = [e.id for e in nav.body.descendants()]
+        await nav.refresh()
+        assert [e.id for e in nav.body.descendants()] == old_ids
+
+
+def test_shared_dialog_surface_accepts_pointer_events():
+    from sovushka.uikit import UIKIT_CSS
+    assert '.q-dialog__inner > .sov-ui-panel' in UIKIT_CSS
+    rule = UIKIT_CSS.split('.q-dialog__inner > .sov-ui-panel', 1)[1].split('}', 1)[0]
+    assert 'pointer-events: auto' in rule
+
+
+@pytest.mark.asyncio
+async def test_old_active_session_remains_visible_after_project_change(monkeypatch):
+    from types import SimpleNamespace
+    from nicegui import Client, ui
+    from nicegui.page import page
+    from sovushka.components import chat_project_navigation as navigation
+    sessions = [{'session_id': str(i), 'title': f'Чат {i}'} for i in range(60)]
+    async def get(path):
+        return [{'id': 7, 'name': 'Школа'}] if path == '/api/projects' else sessions
+    monkeypatch.setattr(navigation, 'api_get', get)
+    workspace = SimpleNamespace(active={'session_id': '0'}, project_names={}, is_admin=False)
+    nav = navigation.ChatProjectNavigation(workspace, on_new=None, on_history=None)
+    with Client(page('/__older_active_chat')):
+        nav.render()
+        await nav.refresh()
+        nav.show_more()
+        workspace.active = {'session_id': '25', 'project_id': 7}
+        await nav.refresh()
+        buttons = [e for e in nav.body.descendants() if isinstance(e, ui.button)]
+        assert next(e for e in buttons if 'sov-project-chat--active' in e.classes).text == 'Чат 25'
+        assert len([e for e in buttons if e.text.startswith('Чат ')]) <= 21
+        assert not any(e.text == 'Создать проект' for e in nav.sidebar.descendants() if isinstance(e, ui.button))
 
 
 @pytest.mark.asyncio

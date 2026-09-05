@@ -1,5 +1,11 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.6 — регрессии чата:** `ChatProjectNavigation.refresh/show_more` —
+> параллельная загрузка, сохранение неизменных строк, порции по20; создание
+> закреплено над списком. Shared UI kit исправляет hit-testing диалогов и
+> компактную компоновку. Doc↔code: ✅; [UI kit](modules/sovushka-uikit.md),
+> [приёмка](acceptance/chat-workspace-0.31.6.md). Статус установки — RELEASE_LEDGER.
+
 > **0.31.5 candidate — новый экран чата:** `ChatProjectNavigation` показывает
 > проекты, создание и чаты выбранного проекта; footer сохраняет Данные/Историю/
 > Конфигурацию. `ChatWorkspace.on_change` обновляет навигацию после открытия и
