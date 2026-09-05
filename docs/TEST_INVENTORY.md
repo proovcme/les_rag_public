@@ -1,5 +1,13 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+0.31.5: `test_chat_workspace_ui` включает настоящий NiceGUI render114 чатов
+с многострочным названием и проверку, что проекты/управление не потерялись.
+`test_sovushka_uikit` ловит переносы/кавычки/слэши в accessible label.
+Read-only `tools/chat_workspace_ui_probe.js` — ручной browser gate для viewport,
+clipping ancestors и высоты строк; выполнять после layout-изменений на desktop
+и390px с открытой панелью. Он не заменяется static CSS assertions.
+[Условия и фактическая приёмка](acceptance/chat-workspace-0.31.5.md).
+
 `WORKSPACE_TESTS` (0.31.0) входит в канонический gate: `test_chat_session_service`,
 `test_workspace_router`, `test_workspace_memory`, `test_workspace_memory_router`,
 `test_workspace_context`, `test_chat_workspace_ui`. Проверяет scope/миграцию,

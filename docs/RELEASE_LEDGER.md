@@ -5,6 +5,21 @@
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
 ## Текущее состояние (2026-09-05)
+### 0.31.5 — final viewport containment
+
+Removed inherited680px chat minimum and62px old navigation margin; the grid row
+now fits the remaining viewport. With116 chats, footer is fully inside both its
+clipping ancestor and viewport:735/755px desktop,824/844px at390px mobile width.
+No horizontal or vertical page overflow. This completes the build710 sidebar fix.
+
+Real Qwen3.5:9b live probe on installed0.31.3/build709 (backend unchanged through
+0.31.5) passed with explicit output formatting:6 model-authored RAG queries,
+5 source rows accepted_unchanged, downloaded XLSX12877bytes,
+SHA25679a45487e04fbfc7f3bdb00af22602079188f7d32e8581f76bec8a7635034fdf.
+Two earlier failed9B probes remain recorded below; this is evidence for the
+explicitly formatted request, not a general model-quality guarantee. No fixture
+or substituted document was used, and model decisions/code guards were unchanged.
+
 ### 0.31.4 — navigation stays visible with large history
 
 Installed UI showed 114 legacy chats pushing the Configuration footer below the

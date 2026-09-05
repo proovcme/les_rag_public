@@ -4229,7 +4229,7 @@ html {
 /* Owner-approved chat workspace: one visible project list and one conversation. */
 .sov-chat-workspace.sov-chat-shell {
   grid-template-columns: 256px minmax(0, 1fr) 8px var(--sov-artifacts-w, 420px);
-  height: 100dvh; min-height: 0; gap: 0; padding: 0; overflow: hidden;
+  height: 100dvh; min-height: 0; grid-template-rows:minmax(0,1fr); gap: 0; padding: 0; overflow: hidden;
 }
 .sov-chat-workspace.sov-artifacts-collapsed {grid-template-columns:256px minmax(0,1fr);}
 .sov-project-navigation {display:flex;flex-direction:column;gap:var(--sov-ui-space-6);padding:24px 16px;background:var(--bg-panel);border-right:var(--sov-ui-border);min-width:0;min-height:0;overflow:hidden;}
@@ -4247,7 +4247,7 @@ html {
 .sov-workspace-owner {color:var(--dim);font-size:var(--sov-ui-font-size-meta);overflow-wrap:anywhere;}
 .sov-workspace-heading {gap:4px;min-width:0;}
 .sov-workspace-title {font-size:20px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;}
-.sov-chat-workspace .sov-chat-main {border:0;border-radius:0;box-shadow:none;background:var(--bg);}
+.sov-chat-workspace .sov-chat-main {min-height:0;border:0;border-radius:0;box-shadow:none;background:var(--bg);}
 .sov-chat-workspace .sov-chat-topbar {padding:20px 28px;min-height:92px;gap:16px;background:var(--bg-panel);border-bottom:var(--sov-ui-border);}
 .sov-workspace-header-actions {gap:4px;align-items:center;flex-wrap:wrap;}
 .sov-chat-workspace .sov-chat-scroll {background:var(--bg);}
@@ -4271,7 +4271,7 @@ html {
 .sov-project-mobile-toggle {display:none!important;}
 .sov-app-shell--chat.sov-app-shell {display:flex!important;flex-direction:column;overflow:hidden;}
 .sov-app-shell--chat > .sov-ui-header {width:100%!important;height:56px!important;min-height:56px;padding:0 16px!important;flex-direction:row;align-items:center!important;border-right:0;border-bottom:var(--sov-ui-border);box-shadow:none;}
-.sov-app-shell--chat > .sov-app-content {height:calc(100dvh - 56px);min-height:0;}
+.sov-app-shell--chat > .sov-app-content {height:calc(100dvh - 56px);min-height:0;margin:0!important;flex:1;}
 .sov-app-shell--chat .sov-chat-workspace {height:calc(100dvh - 56px);}
 .sov-app-shell--chat .sov-primary-nav,.sov-app-shell--chat .les-top-tabs,.sov-app-shell--chat .sov-sidebar-caption,.sov-app-shell--chat .sov-mobile-sections-button {display:none!important;}
 .sov-app-shell--chat .sov-ui-version-badge {width:auto;align-self:center;margin:0 12px!important;}

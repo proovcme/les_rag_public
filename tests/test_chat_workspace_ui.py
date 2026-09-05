@@ -6,6 +6,45 @@ from sovushka.components import chat_workspace as module
 
 
 @pytest.mark.asyncio
+async def test_large_history_with_multiline_title_does_not_abort_project_navigation(monkeypatch):
+    from types import SimpleNamespace
+    from nicegui import Client
+    from nicegui.page import page
+    from sovushka.components import chat_project_navigation as navigation
+
+    title = 'Смета\n\nПроект "Школа" C:\\new\\test'
+    sessions = [{"session_id": str(i), "title": title if i == 5 else f"Чат {i}"} for i in range(114)]
+    projects = [{"id": 7, "name": "Рабочий проект"}]
+    buttons = []
+    real_button = navigation.action_button
+
+    def capture(*args, **kwargs):
+        button = real_button(*args, **kwargs)
+        buttons.append(button)
+        return button
+
+    async def get(path):
+        return projects if path == "/api/projects" else sessions
+
+    monkeypatch.setattr(navigation, "action_button", capture)
+    monkeypatch.setattr(navigation, "api_get", get)
+    workspace = SimpleNamespace(active={"session_id": "5", "title": title}, project_names={}, is_admin=True)
+    nav = navigation.ChatProjectNavigation(workspace, on_new=None, on_history=None)
+    with Client(page('/__chat_navigation_regression')):
+        nav.render()
+        nav.render_heading()
+        await nav.refresh()
+
+    chat_buttons = [button for button in buttons if button.text in {row["title"] for row in sessions}]
+    assert len(chat_buttons) == 114
+    assert all("sov-project-nav-row" in button.classes for button in chat_buttons)
+    assert next(button for button in chat_buttons if button.text == title).props["aria-label"] == title
+    assert {"Рабочий проект", "Создать проект", "Конфигурация"} <= {button.text for button in buttons}
+    assert nav.title_label.text == title
+    assert nav.title_tooltip.text == title
+
+
+@pytest.mark.asyncio
 async def test_open_project_restores_last_session_without_choosing_sources(monkeypatch):
     opened = []
     record = {"session_id": "last", "project_id": 7, "scope": {"dataset_ids": ["chosen"]}}
