@@ -4310,5 +4310,13 @@ html {
   .sov-chat-workspace .sov-send-btn {width:auto!important;min-width:132px!important;padding:8px 12px!important;}
   .sov-chat-workspace .sov-send-btn .q-btn__content {gap:8px!important;font-size:var(--sov-ui-font-size-control)!important;}
 }
+/* Long chat questions remain readable on hover without expanding navigation rows. */
+.sov-project-chat-list .sov-project-nav-row {min-width:0;max-width:100%;}
+.sov-project-chat-list .sov-project-nav-row .q-btn__content {min-width:0;flex-wrap:nowrap;}
+.sov-project-chat-list .sov-project-nav-row .block {display:block;min-width:0;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;overflow-wrap:normal;}
+.sov-project-chat-list .sov-project-nav-row .q-icon {flex:0 0 var(--sov-ui-icon-column);}
+.sov-chat-workspace .sov-chat-topbar > .nicegui-row:first-child {flex:1;min-width:0;}
+.sov-workspace-heading {flex:1;min-width:0;overflow:hidden;}
+.sov-workspace-title {width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 </style>
 """

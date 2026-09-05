@@ -17,6 +17,7 @@ class ChatProjectNavigation:
         self.sidebar = None
         self.owner_label = None
         self.title_label = None
+        self.title_tooltip = None
         self.projects = []
         self.sessions = []
         self.mobile_open = False
@@ -44,6 +45,8 @@ class ChatProjectNavigation:
         with ui.column().classes('sov-workspace-heading'):
             self.owner_label = ui.label('Без проекта').classes('sov-workspace-owner')
             self.title_label = ui.label('Новый чат').classes('sov-workspace-title')
+            with self.title_label:
+                self.title_tooltip = ui.tooltip('Новый чат')
 
     def toggle(self):
         self.mobile_open = not self.mobile_open
@@ -75,6 +78,7 @@ class ChatProjectNavigation:
         if self.owner_label:
             self.owner_label.set_text(self.workspace.project_names.get(pid, 'Проект') if pid else 'Без проекта')
             self.title_label.set_text(active.get('title') or 'Новый чат')
+            self.title_tooltip.set_text(active.get('title') or 'Новый чат')
         self.body.clear()
         if projects is None or sessions is None:
             with self.body:
@@ -122,7 +126,8 @@ class ChatProjectNavigation:
                 selected = self.workspace.active.get('session_id') == sid
                 action_button(session.get('title') or session.get('first_question') or 'Новый чат',
                               icon='o_chat_bubble_outline', variant='quiet', on_click=choose,
-                              classes='sov-project-nav-row' + (' sov-project-chat--active' if selected else ''))
+                              classes='sov-project-nav-row' + (' sov-project-chat--active' if selected else '')).tooltip(
+                                  session.get('title') or session.get('first_question') or 'Новый чат')
 
     def open_create(self):
         with ui.dialog() as dialog, panel(variant='raised', classes='sov-workspace-dialog'):

@@ -8064,7 +8064,7 @@
         "sovushka/pages/chat.py",
         "tests/test_chat_workspace_ui.py"
       ],
-      "lines": 138,
+      "lines": 143,
       "module": "sovushka.components.chat_project_navigation",
       "outbound": [
         "sovushka/__init__.py",
@@ -8596,7 +8596,7 @@
         "sovushka/uikit/__init__.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 4314,
+      "lines": 4322,
       "module": "sovushka.uikit.tokens",
       "outbound": [
         "sovushka/__init__.py",
@@ -18807,7 +18807,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 636,
     "tracked_python_files": 1002,
-    "tracked_python_lines": 314753
+    "tracked_python_lines": 314766
   },
   "warnings": []
 }

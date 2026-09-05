@@ -5,6 +5,13 @@
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
 ## Текущее состояние (2026-09-05)
+### 0.31.2 — compact chat titles
+
+Owner caught long chat titles expanding navigation during final UI acceptance.
+Titles now occupy one line in navigation and header; their full text is preserved
+and shown in tooltips. Browser regression: 44px navigation row, 27px heading,
+no horizontal page overflow. Build708 supersedes the unpublished build707 candidate.
+
 ### 0.31.1 — approved redesign, publication re-authorized
 
 Owner approved the new project/chat layout and requested Configuration in its footer,
@@ -27,15 +34,15 @@ Publication must wait for owner acceptance of the redesigned UI and remaining li
 model/RAG/XLSX verification.
 
 ```
-версия продукта (SemVer):  0.31.1 (dev candidate)
-номер сборки:              707
-версия Tauri/NSIS:         5.1.707
+версия продукта (SemVer):  0.31.2 (dev candidate)
+номер сборки:              708
+версия Tauri/NSIS:         5.1.708
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.31.1 approved chat redesign; release checks pending
+dev implementation:       0.31.2 approved chat redesign and compact titles; release checks pending
 задеплоено на рантайм:     Legion test host 0.31.0 / build 706 / commit 923de58772735fcdd79066e4e13ee89450ccb336; candidate only
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
 последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.64 (immutable)
-следующий выпуск:          0.31.1 разрешён после зелёных gates и приёмки нового UI
+следующий выпуск:          0.31.2 разрешён после зелёных gates и приёмки нового UI
 рантайм /api/version:      0.31.0 / build 706; installed acceptance completed, not published
 ```
 
