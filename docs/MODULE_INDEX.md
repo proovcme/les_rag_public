@@ -1,11 +1,12 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
-> **0.31.2 candidate — новый экран чата:** `ChatProjectNavigation` показывает
+> **0.31.3 candidate — новый экран чата:** `ChatProjectNavigation` показывает
 > проекты, создание и чаты выбранного проекта; footer сохраняет Данные/Историю/
 > Конфигурацию. `ChatWorkspace.on_change` обновляет навигацию после открытия и
 > сохранения. Настройки ответа/поиска — общий диалог; composer без наложений.
 > Общая оболочка компактна только в чате; Studio/CAD placeholders скрыты.
 > Длинные названия чатов занимают одну строку; полный текст доступен в tooltip.
+> `action_button` экранирует accessible label: переносы и кавычки не ломают навигацию.
 > Doc↔code: ✅; [UI kit](modules/sovushka-uikit.md),
 > [проекты](modules/project-workspace.md). Публикация после приёмки владельца.
 

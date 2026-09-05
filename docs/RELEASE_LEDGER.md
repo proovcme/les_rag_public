@@ -5,6 +5,16 @@
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
 ## Текущее состояние (2026-09-05)
+### 0.31.3 — multiline title acceptance fix
+
+Installed UI acceptance of build708 exposed a shared button property parser failure
+on legacy titles containing newlines or quotes. Accessible labels are now escaped
+as string literals, preserving the full title and completing button styling.
+Two real-NiceGUI regression cases failed before the fix and pass afterward;
+51 UI-kit/navigation tests pass. Build709 supersedes unpublished build708.
+Installed host is 0.31.2/build708 after successful install/rollback/reinstall;
+public remains 0.30.64 until final candidate acceptance and publication.
+
 ### 0.31.2 — compact chat titles
 
 Owner caught long chat titles expanding navigation during final UI acceptance.

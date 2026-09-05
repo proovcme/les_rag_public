@@ -69,7 +69,7 @@ def action_button(
     props = ["flat", "no-caps"]
     accessible_name = aria_label or label
     if accessible_name:
-        props.append(f'aria-label="{accessible_name}"')
+        props.append(f'aria-label={accessible_name!r}')
     button = ui.button(
         "" if icon_only else label,
         icon=icon,

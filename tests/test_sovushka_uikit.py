@@ -10,6 +10,15 @@ from sovushka.uikit.states import feedback_state
 from sovushka.uikit.tokens import UIKIT_CSS
 
 
+@pytest.mark.parametrize("label", ['Длинное название\n\nследующая строка', 'Проект "Школа" C:\\new\\test'])
+def test_action_button_preserves_arbitrary_title_and_finishes_styling(label):
+    button = components_module.action_button(label, variant="quiet", classes="sov-project-nav-row")
+    assert button.text == label
+    assert button.props["aria-label"] == label
+    assert button.props["flat"] is True
+    assert "sov-project-nav-row" in button.classes
+
+
 @pytest.mark.parametrize("kind", ["loading", "empty", "error", "blocked"])
 def test_feedback_states_have_human_copy(kind: str):
     state = feedback_state(kind, error_code="rag_test")

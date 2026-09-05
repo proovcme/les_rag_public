@@ -13415,7 +13415,7 @@
     },
     {
       "inbound": [],
-      "lines": 659,
+      "lines": 668,
       "module": "tests.test_sovushka_uikit",
       "outbound": [
         "sovushka/components/header.py",
@@ -18807,7 +18807,7 @@
     "runtime_support": 11,
     "test_or_tool_only": 636,
     "tracked_python_files": 1002,
-    "tracked_python_lines": 314766
+    "tracked_python_lines": 314775
   },
   "warnings": []
 }
