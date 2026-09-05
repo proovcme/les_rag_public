@@ -5,6 +5,27 @@
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
 ## Текущее состояние (2026-09-05)
+### Опубликован0.31.5 / build711 — 2026-09-05 14:23MSK
+
+- Public release: https://github.com/proovcme/les_rag_public/releases/tag/v0.31.5
+- Product/runtime:0.31.5, build711, desktop5.1.711.
+- Exact installed/published commit:`6cd1e50d4e5e80672dd274a630375422edcc472e`.
+- Artifact:`57b43c3b5c337c7949624958`; gate:`db0a30287910da5c142fba10`.
+- `make verify`:1242 collected; `make test`:1242 passed; updater:271 passed.
+- Accepted attempt:`cb32e69365a64d7daf1745627277d3eb` completed14:22:14MSK;
+  install→smoke/nativeRRF→rollback→reinstall proved. Earlier failed continuity
+  attempt`d4da312c197c4c449ae94fbfbe1c0d11` is retained; runtime was restored,
+  Qdrant readiness/contract rechecked, identical bytes accepted on retry.
+- Publication:`postflight_verified`; public main/tag/feed/assets/receipt checked,
+  public release is neither draft nor prerelease. Metadata title/body improved
+  afterward; asset bytes were not changed.
+- Installed UI:115 chats,1280×720, footer bottom680px, geometry probe failures:0.
+- Patch SHA256:`5b596e618cede401e9b844cf12bc6e21e2d5847c6a1230aa261a57bfb7569ad8`.
+- [Permanent regressions and model evidence](acceptance/chat-workspace-0.31.5.md).
+
+This post-publication documentation update does not rebuild/redeploy/relabel the
+accepted product. Entries below preserve the candidate history and its failures.
+
 ### 0.31.5 — final viewport containment
 
 Removed inherited680px chat minimum and62px old navigation margin; the grid row
@@ -71,7 +92,7 @@ Publication must wait for owner acceptance of the redesigned UI and remaining li
 model/RAG/XLSX verification.
 
 ```
-версия продукта (SemVer):  0.31.2 (dev candidate)
+версия продукта (SemVer):  0.31.2 (historical dev snapshot; superseded above)
 номер сборки:              708
 версия Tauri/NSIS:         5.1.708
 ветка разработки:          codex/model-rag-result

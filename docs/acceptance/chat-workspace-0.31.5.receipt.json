@@ -1,0 +1,81 @@
+{
+  "schema": "les.workspace-regression-record.v1",
+  "recorded_at": "2026-09-05",
+  "version": "0.31.5",
+  "build": 711,
+  "target_commit": "6cd1e50d4e5e80672dd274a630375422edcc472e",
+  "artifact_id": "57b43c3b5c337c7949624958",
+  "gate_id": "db0a30287910da5c142fba10",
+  "accepted_attempt": "cb32e69365a64d7daf1745627277d3eb",
+  "publication_stage": "postflight_verified",
+  "release_url": "https://github.com/proovcme/les_rag_public/releases/tag/v0.31.5",
+  "tests": {
+    "updater": 271,
+    "focused_ui": 52,
+    "core": 1242
+  },
+  "installed_ui": {
+    "chat_count": 115,
+    "failures": [],
+    "viewport": [
+      1280,
+      720
+    ],
+    "footer_bottom": 680
+  },
+  "preview_ui": [
+    {
+      "chat_count": 116,
+      "failures": [],
+      "viewport": [
+        772,
+        755
+      ]
+    },
+    {
+      "chat_count": 116,
+      "failures": [],
+      "viewport": [
+        390,
+        844
+      ],
+      "footer_bottom": 824
+    }
+  ],
+  "live_model": {
+    "workbook_sha256": "79a45487e04fbfc7f3bdb00af22602079188f7d32e8581f76bec8a7635034fdf",
+    "model": "qwen3.5:9b",
+    "workbook_count": 1,
+    "workbook_bytes": 12877,
+    "status": "accepted_unchanged",
+    "earlier_failed_probes": 2,
+    "rows": 5,
+    "requires_explicit_output_format": true,
+    "backend_unchanged_in_release": true,
+    "runtime_version": "0.31.3",
+    "queries": 6,
+    "runtime_build": 709
+  },
+  "assets": [
+    {
+      "name": "latest.json",
+      "sha256": "07ce21d4a15bc5ada7980e5d2a87d8d5e7c551f4852d6ff95aa2b4c891d96df5"
+    },
+    {
+      "name": "les-patch.zip",
+      "sha256": "5b596e618cede401e9b844cf12bc6e21e2d5847c6a1230aa261a57bfb7569ad8"
+    },
+    {
+      "name": "les-patch.zip.sha256",
+      "sha256": "4871e990cea2784012b45899b6701178cf1f7def693f8a2902e173c64ec6638f"
+    },
+    {
+      "name": "les-update.json",
+      "sha256": "4955c4df467caeb3ee11c13e5543fdcc2cbc16ff342f9371c5c4607d744216fc"
+    },
+    {
+      "name": "release-notes.md",
+      "sha256": "5dd5dcd4f85fbe6ae683327df3c39f3678f09439c8120ca99b73eeb32a2a3312"
+    }
+  ]
+}
