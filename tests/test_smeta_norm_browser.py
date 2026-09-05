@@ -2,6 +2,62 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+
+def test_native_rrf_equal_scores_are_stable_before_rank_fusion(monkeypatch, tmp_path):
+    from proxy.smeta_core import norm_browser as browser
+
+    high = SimpleNamespace(id="p-high", score=0.8, payload={"norm_key": "z-high"})
+    first = SimpleNamespace(id="p-a", score=0.5, payload={"norm_key": "a-tie"})
+    second = SimpleNamespace(id="p-b", score=0.5, payload={"norm_key": "b-tie"})
+    low = SimpleNamespace(id="p-low", score=0.2, payload={"norm_key": "a-low"})
+    replies = iter(([high, second, first, low], [high, first, second, low]))
+    closed = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def collection_exists(self, collection):
+            return True
+
+        def query_points(self, **kwargs):
+            assert kwargs["query"].fusion == "rrf"
+            assert [p.using for p in kwargs["prefetch"]] == ["dense", "bm25_sparse"]
+            return SimpleNamespace(points=next(replies))
+
+        def close(self):
+            closed.append(True)
+
+    class Embed:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def encode_sync(self, texts):
+            return [[0.1] for _ in texts]
+
+    monkeypatch.setattr(browser, "QdrantClient", Client)
+    monkeypatch.setattr(browser, "EmbedClient", Embed)
+    monkeypatch.setattr(browser, "_rag_collection", lambda: "test-named-collection")
+    monkeypatch.setattr(browser, "_rag_embedding_model", lambda: "test-embedder")
+    monkeypatch.setattr(browser, "_rag_manifest_status", lambda **kwargs: (True, ""))
+    monkeypatch.setattr(browser, "_rag_index_mode", lambda path: "hybrid")
+    monkeypatch.setattr(browser, "_rag_dense_contract", lambda path: (True, "", "ollama", "ollama"))
+    monkeypatch.setattr(browser, "_cards_by_norm_keys", lambda keys, **kwargs: [
+        {"norm_key": key} for key in keys
+    ])
+    outputs = []
+    for _ in range(2):
+        trace = {}
+        result = browser._rag_cards_many(["cable installation"], limit=4,
+                                        base_path=tmp_path / "base.sqlite", trace=trace)
+        assert trace["status"] == "ok"
+        outputs.append([c["norm_key"] for c in result["cable installation"]])
+    assert outputs[0] == outputs[1] == ["z-high", "a-tie", "b-tie", "a-low"]
+    assert len(closed) == 2
 
 
 def _base(path):
@@ -429,7 +485,9 @@ def test_browse_keeps_wide_pool_until_reranker(monkeypatch, tmp_path):
         lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
     )
 
-    result = norm_browser.browse_norms("обычная работа", limit=5, base_path=tmp_path / "base.sqlite")
+    result = norm_browser.browse_norms_many(
+        ["обычная работа"], limit=5, base_path=tmp_path / "base.sqlite", rerank=True,
+    )["обычная работа"]
 
     assert seen["input"] == 24
     assert len(result["cards"]) == 5
@@ -458,7 +516,7 @@ def test_mass_triage_runs_reranker_for_every_document_row(monkeypatch, tmp_path)
         lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
     )
 
-    results = norm_browser.browse_norms_many(queries, limit=5, base_path=tmp_path / "base.sqlite")
+    results = norm_browser.browse_norms_many(queries, limit=5, base_path=tmp_path / "base.sqlite", rerank=True)
 
     assert set(results) == set(queries)
     assert seen == queries
@@ -554,7 +612,8 @@ def test_rim_reranks_lexical_only_shortlist_without_hidden_query_expansion(
     assert result["retrieval_trace"]["query_expansion"] is False
 
 
-def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_path):
+@pytest.mark.parametrize("choice", [None, False])
+def test_norm_browse_skips_reranker_by_default_or_explicit_choice(monkeypatch, tmp_path, choice):
     from proxy.smeta_core import norm_browser
 
     lexical = [{"norm_key": "l:1", "norm_code": "L-1", "title": "lex"}]
@@ -573,8 +632,9 @@ def test_agent_can_explicitly_skip_reranker_for_narrow_search(monkeypatch, tmp_p
         lambda **_kwargs: {"status": "trusted", "trusted_for_pricing": True},
     )
 
+    kwargs = {} if choice is None else {"rerank": choice}
     result = norm_browser.browse_norms_many(
-        ["спорная работа"], limit=5, base_path=tmp_path / "base.sqlite", rerank=False,
+        ["спорная работа"], limit=5, base_path=tmp_path / "base.sqlite", **kwargs,
     )["спорная работа"]
 
     assert result["retrieval_trace"]["reranked"] is False

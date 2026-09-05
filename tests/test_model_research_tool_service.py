@@ -5,6 +5,24 @@ import pytest
 from proxy.services.model_research_tool_service import ModelResearchToolService
 
 
+@pytest.mark.parametrize("choice", [None, False, True])
+def test_smeta_retrieval_bridge_forwards_chat_reranker_choice(monkeypatch, choice):
+    from proxy.services.model_research_tool_service import retrieve_smeta_norm_cards
+    from proxy.smeta_core import norm_browser
+
+    seen = {}
+
+    def browse(queries, **kwargs):
+        seen.update(kwargs)
+        return {queries[0]: {"cards": [{"norm_key": "source:1"}]}}
+
+    monkeypatch.setattr(norm_browser, "browse_norms_many", browse)
+    kwargs = {} if choice is None else {"reranker_enabled": choice}
+    result = retrieve_smeta_norm_cards("query", limit=6, **kwargs)
+    assert seen == {"limit": 6, "rerank": choice is True}
+    assert result["cards"] == [{"norm_key": "source:1"}]
+
+
 class _Retrieval:
     def __init__(self):
         self.chunks = [
@@ -132,7 +150,8 @@ async def test_search_sources_exposes_only_configured_evidence_limit_to_the_mode
 
 
 @pytest.mark.asyncio
-async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
+@pytest.mark.parametrize("reranker_enabled", [False, True])
+async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit(reranker_enabled):
     general_calls = []
     smeta_calls = []
 
@@ -140,8 +159,8 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
         general_calls.append(kwargs)
         pytest.fail("estimator search must not read the general les_rag collection")
 
-    def smeta_retrieve(query, *, limit):
-        smeta_calls.append((query, limit))
+    def smeta_retrieve(query, *, limit, reranker_enabled):
+        smeta_calls.append((query, limit, reranker_enabled))
         return {
             "backend": "typed_sqlite_fts+smeta_norm_qdrant_hybrid",
             "cards": [
@@ -167,7 +186,7 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
     service = ModelResearchToolService(
         retrieve=general_retrieve,
         frozen_dataset_ids=("smeta-system-dataset",),
-        retrieval_kwargs={"rag_backend": "les_rag"},
+        retrieval_kwargs={"rag_backend": "les_rag", "reranker_enabled": reranker_enabled},
         fallback=lambda *_args: pytest.fail("fallback must not run"),
         smeta_norm_retrieve=smeta_retrieve,
         model_evidence_k=4,
@@ -178,7 +197,7 @@ async def test_estimator_search_uses_dedicated_smeta_rrf_and_configured_limit():
     )
 
     assert general_calls == []
-    assert smeta_calls == [("монтаж контрольного кабеля", 4)]
+    assert smeta_calls == [("монтаж контрольного кабеля", 4, reranker_enabled)]
     assert len(result.chunks) == 4
     assert len(result.payload["result"]["hits"]) == 4
     assert result.payload["trace"]["rag"]["collection"] == "customer_configured_smeta_cards"
@@ -196,7 +215,7 @@ async def test_estimator_search_never_falls_back_when_dedicated_rrf_is_not_ready
         frozen_dataset_ids=("smeta-system-dataset",),
         retrieval_kwargs={"rag_backend": "les_rag"},
         fallback=lambda *_args: pytest.fail("fallback must not run"),
-        smeta_norm_retrieve=lambda _query, *, limit: {
+        smeta_norm_retrieve=lambda _query, *, limit, reranker_enabled: {
             "cards": [{"norm_code": "ГЭСН01-01-001-01", "title": "Лексический шум"}],
             "retrieval_trace": {
                 "rag": {

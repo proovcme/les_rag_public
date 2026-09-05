@@ -1,5 +1,12 @@
 # TEST_INVENTORY — текущая карта проверок ЛЕС
 
+`WORKSPACE_TESTS` (0.31.0) входит в канонический gate: `test_chat_session_service`,
+`test_workspace_router`, `test_workspace_memory`, `test_workspace_memory_router`,
+`test_workspace_context`, `test_chat_workspace_ui`. Проверяет scope/миграцию,
+CRUD и исключение памяти, сохранение evidence в model packets, гонки навигации
+и общий UI kit. Изолированная живая проверка memory conditioning на Qwen3.5:9B
+описана в [модуле проектов](modules/project-workspace.md); не заменяет installed приёмку.
+
 > **Статус: актуально.** Источник команд — `Makefile`; состав конкретных наборов
 > задают его именованные переменные. Исторические счётчики и описание прежних
 > поколений тестов перенесены в

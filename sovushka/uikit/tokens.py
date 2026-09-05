@@ -2,7 +2,21 @@
 
 UIKIT_CSS = """
 <style id="sovushka-uikit">
+.sov-ui-dialog,
+.sov-workspace-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sov-ui-space-3);
+}
+.sov-ui-dialog-scroll {
+  height: min(440px, 46vh);
+  width: 100%;
+}
 :root {
+  --q-primary: var(--accent) !important;
   --sov-ui-font-prose: "Segoe UI Variable Text", "Segoe UI", -apple-system,
     BlinkMacSystemFont, system-ui, sans-serif;
   --sov-ui-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
@@ -1121,6 +1135,16 @@ html {
   font-size: 11px;
   line-height: 1.4;
   overflow-wrap: anywhere;
+}
+
+.sov-ui-checkbox {
+  min-height: var(--sov-ui-hit);
+  font-family: var(--sov-ui-font-prose);
+  font-size: var(--sov-ui-font-size-control);
+  color: var(--text);
+}
+.sov-ui-checkbox .q-checkbox__inner--truthy {
+  color: var(--accent) !important;
 }
 
 .sov-chat-timing {

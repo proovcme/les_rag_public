@@ -327,7 +327,7 @@ def test_chat_ui_has_new_chat_model_chip_answer_badge_and_wrapping_tables():
     assert "serr = stream_state[\"error\"] or {}" in source
     assert "ensure_session_id()" in source
     assert "Сессия восстановлена." in source
-    assert "persist_session_id(_new_session_id())" in source
+    assert "await workspace.run(workspace.new_session)" in source
 
 
 def test_chat_ui_can_stop_only_the_active_answer_stream():
@@ -395,14 +395,14 @@ def test_chat_ui_primary_surface_uses_progressive_disclosure():
     assert 'with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False)' in source
     assert '"sov-mode-guidance-disclosure"' in source
     assert 'classes("sov-mode-guide")' in source
-    assert 'classes("sov-mode-example")' in source
+    assert 'classes="sov-mode-example"' in source
     assert "select_field(" in source
     assert 'classes="sov-mode-select"' in source
     assert "on_change=lambda event: _set_mode(str(event.value))" in source
     assert "lambda _event, example=_example: _fill_prompt(str(example))" in source
     assert '"Настройки ответа"' in source
     assert 'aria_label="Настройки ответа"' in source
-    assert 'response_length_select = ui.select(' in source
+    assert 'response_length_select = select_field(' in source
     assert '"response_length": str(response_length_select.value or "standard")' in source
     assert 'aria_label="Действия чата"' in source
     assert 'classes="sov-mobile-chat-menu"' in source

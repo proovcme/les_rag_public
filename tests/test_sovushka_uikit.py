@@ -209,6 +209,7 @@ def test_component_registry_stays_small_and_explicit():
     for primitive in (
         "action_button",
         "text_field",
+        "checkbox_field",
         "panel",
         "section_heading",
         "status_badge",
@@ -305,11 +306,13 @@ def test_workspace_navigation_has_no_separate_smeta_project():
     assert "rim" not in sections
 
 
-def test_chat_ui_cannot_disable_required_reranker():
+def test_chat_ui_reranker_is_opt_in_per_turn_and_resets_with_new_chat():
     chat = Path("sovushka/pages/chat.py").read_text(encoding="utf-8")
 
-    assert 'ui.switch("Реранкер"' not in chat
-    assert '"reranker_enabled":' not in chat
+    assert 'checkbox_field("Реранкер", value=False)' in chat
+    assert '"reranker_enabled": bool(reranker_checkbox.value)' in chat
+    clear_chat = chat.split("def _clear_chat():", 1)[1].split("\n    def ", 1)[0]
+    assert "reranker_checkbox.set_value(False)" in clear_chat
 
 
 def test_project_ui_skill_is_complete_and_points_to_canonical_contract():

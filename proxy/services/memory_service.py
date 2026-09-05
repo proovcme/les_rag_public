@@ -49,6 +49,7 @@ _WORD_RE = re.compile(r"[а-яёa-z0-9]{4,}", re.IGNORECASE)
 def _connect() -> sqlite3.Connection:
     conn = sqlite3.connect(rag_meta_db_path())
     conn.row_factory = sqlite3.Row
+    conn.execute("BEGIN IMMEDIATE")
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS les_notes (
@@ -59,14 +60,16 @@ def _connect() -> sqlite3.Connection:
         )
         """
     )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(les_notes)")}
     for col, ddl in (
         ("project_id", "ALTER TABLE les_notes ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"),
         ("auto", "ALTER TABLE les_notes ADD COLUMN auto INTEGER NOT NULL DEFAULT 0"),
+        ("enabled", "ALTER TABLE les_notes ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1"),
+        ("source_session_id", "ALTER TABLE les_notes ADD COLUMN source_session_id TEXT"),
     ):
-        try:  # Q3: партиция по объекту; auto=1 — авто-заметка (распознанный факт, не «запомни:»)
+        if col not in columns:
             conn.execute(ddl)
-        except sqlite3.OperationalError:
-            pass
+    conn.commit()
     return conn
 
 
@@ -77,12 +80,13 @@ def _connect_read_only() -> sqlite3.Connection:
     return conn
 
 
-def create_note(text: str, dataset_filter: str = "", project_id: int = 0, auto: bool = False) -> dict[str, Any]:
+def create_note(text: str, dataset_filter: str = "", project_id: int = 0, auto: bool = False,
+                *, source_session_id: str | None = None) -> dict[str, Any]:
     now = time.time()
     with _connect() as conn:
         cur = conn.execute(
-            "INSERT INTO les_notes(text, dataset_filter, project_id, auto, created_at) VALUES (?,?,?,?,?)",
-            (text.strip(), dataset_filter, int(project_id), 1 if auto else 0, now),
+            "INSERT INTO les_notes(text, dataset_filter, project_id, auto, created_at, source_session_id) VALUES (?,?,?,?,?,?)",
+            (text.strip(), dataset_filter, int(project_id), 1 if auto else 0, now, source_session_id),
         )
         conn.commit()
         note_id = cur.lastrowid
@@ -93,7 +97,8 @@ def create_note(text: str, dataset_filter: str = "", project_id: int = 0, auto: 
     except Exception as edge_err:
         logger.warning("[EDGES] derive note#%s skipped: %s", note_id, edge_err)
     return {"id": note_id, "text": text.strip(), "dataset_filter": dataset_filter,
-            "project_id": int(project_id), "created_at": now}
+            "project_id": int(project_id), "created_at": now, "enabled": True,
+            "source_session_id": source_session_id}
 
 
 def list_notes(limit: int = 50, project_id: int | None = None) -> list[dict[str, Any]]:
@@ -108,8 +113,11 @@ def list_notes(limit: int = 50, project_id: int | None = None) -> list[dict[str,
     return [dict(row) for row in rows]
 
 
-def project_note_items(*, limit: int = 5, project_id: int | None = None) -> list[dict[str, Any]]:
+def project_note_items(*, limit: int = 5, project_id: int | None = None,
+                       explicit_only: bool = False) -> list[dict[str, Any]]:
     """Read notes for typed projection without schema creation or other writes."""
+    if not Path(rag_meta_db_path()).is_file():
+        return []
     try:
         with _connect_read_only() as conn:
             table = conn.execute(
@@ -118,24 +126,58 @@ def project_note_items(*, limit: int = 5, project_id: int | None = None) -> list
             if not table:
                 return []
             columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(les_notes)")}
-            if project_id is not None and "project_id" in columns:
-                rows = conn.execute(
-                    "SELECT * FROM les_notes WHERE project_id IN (0, ?) ORDER BY id DESC LIMIT ?",
-                    (int(project_id), max(0, int(limit))),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM les_notes ORDER BY id DESC LIMIT ?",
-                    (max(0, int(limit)),),
-                ).fetchall()
+            clauses = []
+            params: list[Any] = []
+            if "project_id" in columns:
+                clauses.append("project_id IN (0, ?)")
+                params.append(int(project_id or 0))
+            if "enabled" in columns:
+                clauses.append("enabled=1")
+            if explicit_only and "auto" in columns:
+                clauses.append("auto=0")
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            rows = conn.execute(
+                "SELECT * FROM les_notes" + where + " ORDER BY id DESC LIMIT ?",
+                (*params, max(0, int(limit))),
+            ).fetchall()
     except sqlite3.OperationalError:
-        return []
+        if not Path(rag_meta_db_path()).exists():
+            return []
+        raise
     return [dict(row) for row in rows]
 
 
-def delete_note(note_id: int) -> bool:
+def validate_note_text(text: str) -> str:
+    text = text.strip()
+    if not text or len(text) > 2000:
+        raise ValueError("Текст заметки должен содержать от 1 до 2000 символов")
+    return text
+
+
+def update_note(note_id: int, *, project_id: int, text: str | None = None,
+                enabled: bool | None = None) -> dict[str, Any] | None:
+    """Edit only an explicitly addressed scope; never move a note between projects."""
+    if text is not None:
+        text = validate_note_text(text)
     with _connect() as conn:
-        cur = conn.execute("DELETE FROM les_notes WHERE id=?", (note_id,))
+        conn.execute(
+            "UPDATE les_notes SET text=COALESCE(?, text), enabled=COALESCE(?, enabled), "
+            "auto=CASE WHEN ? THEN 0 ELSE auto END "
+            "WHERE id=? AND project_id=?",
+            (text, int(enabled) if enabled is not None else None,
+             text is not None or enabled is not None, note_id, project_id),
+        )
+        row = conn.execute("SELECT * FROM les_notes WHERE id=? AND project_id=?",
+                           (note_id, project_id)).fetchone()
+    return dict(row) if row else None
+
+
+def delete_note(note_id: int, *, project_id: int | None = None) -> bool:
+    with _connect() as conn:
+        if project_id is None:  # Compatibility for the explicit legacy delete command.
+            cur = conn.execute("DELETE FROM les_notes WHERE id=?", (note_id,))
+        else:
+            cur = conn.execute("DELETE FROM les_notes WHERE id=? AND project_id=?", (note_id, project_id))
         conn.commit()
     return cur.rowcount > 0
 
@@ -176,7 +218,7 @@ def recall_context(
 
     scored_notes = [
         (score, note)
-        for note in list_notes(limit=200)
+        for note in project_note_items(limit=200)
         if (score := _overlap_score(query_words, note["text"])) >= min_score
     ]
     scored_notes.sort(key=lambda pair: -pair[0])
@@ -417,7 +459,7 @@ def maybe_handle_memory_command(question: str, dataset_filter: str = "", project
     match = FORGET_NOTE_RE.match(text)
     if match:
         note_id = int(match.group("id"))
-        ok = delete_note(note_id)
+        ok = delete_note(note_id, project_id=project_id)
         return {
             "answer": f"✓ Заметка #{note_id} удалена." if ok else f"Заметки #{note_id} нет.",
             "operation": "note_delete",
@@ -426,7 +468,7 @@ def maybe_handle_memory_command(question: str, dataset_filter: str = "", project
 
     match = LIST_NOTES_RE.match(text)
     if match:
-        notes = list_notes(limit=30, project_id=project_id or None)
+        notes = list_notes(limit=30, project_id=project_id)
         if not notes:
             answer = "Заметок пока нет. Создать: «запомни: …»"
         else:

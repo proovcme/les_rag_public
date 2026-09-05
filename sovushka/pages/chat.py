@@ -15,6 +15,7 @@ from typing import Any, Optional
 from nicegui import context, ui
 
 from sovushka.components.charts import _html, esc
+from sovushka.components.chat_workspace import ChatWorkspace
 from sovushka.safe_markup import sanitize_svg
 from sovushka.state import (
     add_log,
@@ -31,7 +32,7 @@ from sovushka.state import (
     refresh_samovar,
     state,
 )
-from sovushka.uikit import action_button, select_field
+from sovushka.uikit import action_button, checkbox_field, panel, section_heading, select_field, text_field
 
 
 def _clear_scope_selection(
@@ -994,6 +995,12 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                             aria_label="Документы",
                             classes="sov-artifacts-open-btn sov-topbar-icon-action",
                         ).tooltip("Открыть документы датасетов")
+                    workspace = ChatWorkspace(
+                        on_open=lambda record: _activate_workspace_session(record),
+                        get_session_id=lambda: state.get("session_id"),
+                        is_busy=lambda: _sending["v"], is_admin=is_admin,
+                    )
+                    workspace.render()
                     action_button(
                         "Артефакты",
                         icon="o_view_sidebar",
@@ -1033,6 +1040,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         lambda event: scope_state.__setitem__(
                             "selected_sources_only", bool(event.value)
                         )
+                    )
+                    reranker_checkbox = checkbox_field("Реранкер", value=False)
+                    reranker_checkbox.tooltip(
+                        "Дополнительно оценивает найденные источники. Может увеличить время ответа."
                     )
 
                     def _scope_label() -> str:
@@ -1076,7 +1087,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         else:
                             scope_state["scope_type"] = "datasets"
                         # back-compat: одиночный проект → project_state (карта объекта и пр.)
-                        project_state["id"] = scope_state["project_ids"][0] if scope_state["scope_type"] == "project" else None
+                        project_state["id"] = workspace.active.get("project_id")
                         scope_state["label"] = _scope_label()
                         scope_btn.set_text(scope_state["label"])
                         try:
@@ -1089,7 +1100,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         scope_state["dataset_ids"] = []
                         scope_state["scope_type"] = "all"
                         scope_state["label"] = _scope_label()
-                        project_state["id"] = None
+                        project_state["id"] = workspace.active.get("project_id")
                         scope_btn.set_text(scope_state["label"])
                         try:
                             asyncio.create_task(_refresh_scope_files_panel())
@@ -1169,26 +1180,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         data = scope_opts_cache["data"] or {}
                         sel_p = set(scope_state["project_ids"]); sel_d = set(scope_state["dataset_ids"])
                         scope_checkboxes: list[Any] = []
-                        with ui.dialog() as dlg, ui.card().style(
-                            "background:var(--bg-panel);border:1px solid var(--border);min-width:620px;max-width:700px;"
-                            "max-height:82vh;padding:18px;"):
-                            with ui.row().classes("sov-scope-dialog-head"):
-                                ui.icon("o_travel_explore").classes("sov-scope-dialog-icon")
-                                with ui.column().classes("gap-0"):
-                                    ui.label("Область поиска").classes("sov-scope-dialog-title")
-                                    ui.label("Выберите источники, которые увидит модель").classes("sov-scope-dialog-subtitle")
+                        with ui.dialog() as dlg, panel(variant="raised", classes="sov-ui-dialog"):
+                            section_heading("Область поиска", "Выберите источники, которые увидит модель")
                             if not data.get("projects") and not data.get("datasets"):
-                                ui.label("Список проектов и датасетов пока не загрузился.").style(
-                                    "font-size:.66rem;color:var(--warn);")
+                                ui.label("Список проектов и датасетов пока не загрузился.").classes("sov-muted")
                                 async def _reload_scope_dialog():
                                     await _prefetch_scope(force=True)
                                     dlg.close()
                                     _open_scope_dialog()
-                                ui.button("Обновить список", icon="o_refresh", on_click=_reload_scope_dialog).props(
-                                    "dense flat no-caps"
-                                ).style("font-size:.64rem;color:var(--accent);")
-                            search = ui.input(placeholder="Поиск по проектам и базам…").props(
-                                "dense outlined clearable prepend-icon=o_search").classes("sov-scope-search")
+                                action_button("Обновить список", icon="o_refresh", on_click=_reload_scope_dialog)
+                            search = text_field(label="Поиск", placeholder="По проектам и базам", clearable=True, classes="w-full")
                             selection_note = ui.label(
                                 f"Выбрано: {len(sel_p) + len(sel_d)}"
                             ).classes("sov-scope-selection-note")
@@ -1209,7 +1210,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     parts.append("база ЛЕС")
                                 return " · ".join(parts)
 
-                            with ui.scroll_area().style("max-height:46vh;width:100%;"):
+                            with ui.scroll_area().classes("sov-ui-dialog-scroll"):
                                 def _row_match(name: str) -> bool:
                                     q = (search.value or "").strip().lower()
                                     return not q or q in name.lower()
@@ -1224,7 +1225,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                             ui.label(label).classes("sov-scope-option-title")
                                             if sub:
                                                 ui.label(sub).classes("sov-scope-option-meta")
-                                        cb = ui.checkbox(value=key in store).props("dense color=primary")
+                                        cb = checkbox_field("", value=key in store).props(f'aria-label={json.dumps(label)}')
 
                                     def _toggle(e, k=key, s=store):
                                         s.add(k) if e.args else s.discard(k)
@@ -1265,15 +1266,16 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                         _cb(_dataset_title(d), str(d["id"]), sel_d,
                                             sub=meta, icon="o_auto_stories", disabled=not available)
                             with ui.row().classes("sov-scope-dialog-actions"):
-                                ui.button("Все источники", on_click=lambda: (_apply_all_scope(), dlg.close())).props("flat no-caps")
-                                ui.button(
+                                action_button("Все источники", on_click=lambda: (_apply_all_scope(), dlg.close()), variant="quiet")
+                                action_button(
                                     "Очистить выбор",
                                     on_click=lambda: (
                                         _clear_scope_selection(sel_p, sel_d, scope_checkboxes),
                                         _update_selection_note(),
                                     ),
-                                ).props("flat no-caps")
-                                ui.button("Применить выбор", icon="o_check", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close())).props("unelevated no-caps color=primary")
+                                    variant="quiet",
+                                )
+                                action_button("Применить выбор", icon="o_check", on_click=lambda: (_apply_scope(sel_p, sel_d), dlg.close()), variant="primary")
                         dlg.open()
 
                     async def _scope_click():
@@ -1563,8 +1565,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                         )
                         with response_settings_btn:
                             with ui.menu().classes("sov-response-settings-menu"):
-                                ui.label("Настройки ответа").classes("sov-tools-title")
-                                response_length_select = ui.select(
+                                section_heading("Настройки ответа")
+                                response_length_select = select_field(
                                     {
                                         "short": "Короткий",
                                         "standard": "Обычный",
@@ -1573,7 +1575,8 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                     },
                                     value="standard",
                                     label="Длина ответа",
-                                ).props("outlined dense options-dense").classes("sov-response-length-select")
+                                    classes="sov-response-length-select",
+                                )
                                 with ui.expansion("Примеры запросов", icon="o_lightbulb", value=False).classes(
                                     "sov-mode-guidance-disclosure"
                                 ):
@@ -1585,10 +1588,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
                                             ui.label(str(_guide["data_hint"])).classes("sov-mode-data-hint")
                                             with ui.row().classes("sov-mode-examples"):
                                                 for _example in _guide["examples"]:
-                                                    ui.button(
+                                                    action_button(
                                                         str(_example),
                                                         on_click=lambda _event, example=_example: _fill_prompt(str(example)),
-                                                    ).props("flat dense no-caps").classes("sov-mode-example")
+                                                        variant="quiet", classes="sov-mode-example",
+                                                    )
                                         _guide_panel.set_visibility(_mode_key == out_mode_val["v"])
                                         _mode_hint_refs[_mode_key] = _guide_panel
                                 action_button(
@@ -1648,7 +1652,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             files_artifacts_panel.set_visibility(False)
 
     with ui.dialog() as advanced_dialog:
-        with ui.card().classes("sov-advanced-dialog"):
+        with panel(variant="raised", classes="sov-ui-dialog sov-advanced-dialog"):
             with ui.row().classes("w-full items-center justify-between"):
                 with ui.column().classes("gap-0"):
                     _html('<div class="sov-panel-title">Расширенный запрос</div>')
@@ -2325,7 +2329,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     async def _load_sessions():
         sessions_col.clear()
-        data = await api_get("/api/chat/sessions?limit=40")
+        pid = workspace.active.get("project_id")
+        suffix = f"?project_id={pid}" if pid else ""
+        result = await api_get(f"/api/workspace/sessions{suffix}")
+        data = result.get("sessions", []) if isinstance(result, dict) else list(result or [])
         if not data:
             with sessions_col:
                 _html('<div class="sov-muted" style="padding:14px;">Нет сохранённых сессий</div>')
@@ -2336,12 +2343,11 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     def _render_session_card(session: dict):
         sid = session["session_id"]
-        first_q = session.get("first_question") or "Без названия"
-        msg_count = session.get("msg_count", 0)
-        started_at = (session.get("started_at") or "")[:16].replace("T", " ")
+        first_q = session.get("title") or session.get("first_question") or "Новый чат"
+        started_at = (session.get("created_at") or session.get("started_at") or "")[:16].replace("T", " ")
         with ui.element("button").classes("sov-session-card") as card:
             _html(f'<span class="sov-session-title">{esc(first_q[:90])}</span>')
-            _html(f'<span class="sov-session-meta">{esc(started_at)} · {msg_count} сообщ.</span>')
+            _html(f'<span class="sov-session-meta">{esc(started_at)}</span>')
 
         async def _open(session_id=sid, el=card):
             await _open_session(session_id, el)
@@ -2349,24 +2355,49 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         card.on("click", _open)
 
     async def _open_session(session_id: str, el=None):
-        from sovushka.state import persist_session_id
+        await workspace.run(lambda: workspace.open_session(session_id))
 
+    async def _activate_workspace_session(record: dict) -> bool:
+        from sovushka.state import persist_session_id
+        session_id = record["session_id"]
         add_log(f"[ИСТОРИЯ] Загружаю сессию {session_id[:8]}...")
         msgs = await api_get(f"/api/chat/history?session_id={session_id}")
         if msgs is None:
             add_log("[ИСТОРИЯ] Ошибка загрузки сессии")
-            return
+            return False
+        _clear_attachment(notify=False)
+        _clear_file_artifacts()
+        artifact_panel.clear()
+        with artifact_panel:
+            _render_empty_artifacts()
+        detail_dataset.set_value("(все датасеты)")
+        chat_input.set_value("")
+        _pending_target_files["v"] = []
+        _pending_target_file["v"] = ""
+        state["chat_pending"] = None
+        reranker_checkbox.set_value(False)
+        scope_state.clear()
+        scope_state.update(record.get("scope") or {
+            "scope_type": "none", "project_ids": [], "dataset_ids": [],
+            "selected_sources_only": False,
+        })
+        project_state["id"] = record.get("project_id")
+        scope_state["label"] = _scope_label()
+        scope_btn.set_text(scope_state["label"])
+        selected_sources_only_switch.set_value(bool(scope_state.get("selected_sources_only")))
+        role = record.get("role", default_chat_mode())
+        mode_select.set_value(role if role in visible_chat_modes() else default_chat_mode())
         state["chat_history"] = msgs
-        state["load_session_id"] = session_id
+        state["load_session_id"] = None
         state["session_id"] = persist_session_id(session_id)
         if selected_session_card["el"]:
             selected_session_card["el"].classes(remove="sov-session-card-active")
-        if el:
-            el.classes(add="sov-session-card-active")
-            selected_session_card["el"] = el
-        _render_chat_history("Сессия загружена из истории.")
+        _render_chat_history("Продолжение чата." if msgs else "Новый чат. Выберите источники или задайте вопрос.")
+        scope_opts_cache["data"] = None
         history_drawer.set_visibility(False)
         _scroll_chat_to_tail(force=True)
+        await _refresh_scope_files_panel()
+        return True
 
     def _source_label(source) -> str:
         # v0.16: «N · file · абз.85» вместо сырого пути; нет ref → «без ссылки» (не фейк-линк).
@@ -3874,8 +3905,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         state["session_id"] = state["load_session_id"]
         state["load_session_id"] = None
         persist_session_id(state["session_id"])
-        _render_chat_history("Сессия загружена из истории.")
-        _scroll_chat_to_tail(force=True)
+        asyncio.create_task(_open_session(state["session_id"]))
         return True
 
     # Хук для вкладки ИСТОРИЯ: после выбора сессии чат перерисовывается сразу,
@@ -3897,7 +3927,15 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             _render_chat_history("Сессия восстановлена.")
             _scroll_chat_to_tail(force=True)
 
-    asyncio.create_task(_load_history())
+    async def _restore_workspace_history():
+        workspace.navigating = True
+        try:
+            await _load_history()
+        finally:
+            workspace.navigating = False
+        await workspace.run(workspace.restore)
+
+    asyncio.create_task(_restore_workspace_history())
 
     async def load_output_template(e):
         content = e.content.read()
@@ -4014,27 +4052,10 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
 
     chat_input.on("input", lambda: _update_prompt_preview())
 
-    def _clear_chat():
-        from sovushka.state import _new_session_id, persist_session_id
-
-        chat_column.clear()
-        with chat_column:
-            empty_state_ref["el"] = _html(
-                '<div class="sov-chat-empty">'
-                '<div class="sov-chat-empty-title">Новый чат</div>'
-                '<div class="sov-chat-empty-copy">Выберите режим, область поиска или прикрепите файл.</div>'
-                '</div>'
-            )
-        artifact_panel.clear()
-        with artifact_panel:
-            _render_empty_artifacts()
-        _clear_file_artifacts()
-        state["chat_history"].clear()
-        state["session_id"] = persist_session_id(_new_session_id())
-        state["load_session_id"] = None
-        state["chat_pending"] = None
-        asyncio.create_task(_refresh_active_model_chip())
-        add_log("[ЧАТ] История очищена, новая сессия")
+    async def _clear_chat():
+        if await workspace.run(workspace.new_session):
+            reranker_checkbox.set_value(False)
+            await _refresh_active_model_chip()
 
     _sending = {"v": False}
     _active_send_task: dict[str, asyncio.Task | None] = {"task": None}
@@ -4169,6 +4190,17 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
     async def _do_send(question: str):
         if _sending["v"]:
             return
+        _sending["v"] = True
+        try:
+            await workspace.persist(
+                scope={key: scope_state.get(key) for key in (
+                    "scope_type", "project_ids", "dataset_ids", "selected_sources_only"
+                )}, role=out_mode_val["v"], title=question,
+            )
+        except RuntimeError as error:
+            _sending["v"] = False
+            ui.notify(str(error), type="negative")
+            return
         try:
             empty_state_ref["el"].set_visibility(False)
         except Exception:
@@ -4288,6 +4320,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
             "output_directive": extra_prompt or None,
             "session_id": state.get("session_id"),
             "response_length": str(response_length_select.value or "standard"),
+            "reranker_enabled": bool(reranker_checkbox.value),
         }
         payload["selected_sources_only"] = bool(
             scope_state.get("selected_sources_only", False)
@@ -4312,8 +4345,7 @@ def build_chat(is_admin: bool, tabs=None, tab_mermaid=None, tab_documents=None):
         payload["scope"] = {"scope_type": scope_state["scope_type"],
                             "project_ids": scope_state["project_ids"],
                             "dataset_ids": scope_state["dataset_ids"]}
-        if project_state["id"]:  # back-compat: одиночный проект → project_id
-            payload["project_id"] = project_state["id"]
+        payload["project_id"] = workspace.active.get("project_id")
         payload.update(_attachment_chat_payload(sent_attachment))
         if pasted_context:
             existing_ctx = str(payload.get("attachment_context") or "").strip()

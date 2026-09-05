@@ -250,8 +250,7 @@ class ChatRequest(BaseModel):
     question: str
     dataset_ids: Optional[List[str]] = None
     dataset_filter: Optional[str] = None
-    # Legacy-compatible input only. Production RAG always follows the mandatory
-    # runtime reranker policy and ignores client attempts to disable it.
+    # Explicit per-turn opt-in from the chat checkbox; omitted/null means off.
     reranker_enabled: Optional[bool] = None
     semantic_cache_enabled: Optional[bool] = None
     validation_enabled: Optional[bool] = None
@@ -3749,8 +3748,9 @@ async def _run_chat(req: ChatRequest, token_sink=None):
     # LES.md: контекст папки/проекта — ВСЕГДА (как CLAUDE.md для harness). Симметрия датасет↔проект
     # (#2): если выбран ДАТАСЕТ без проекта (pid=0), резолвим его объект и подмешиваем тот же LES.md,
     # что и в режиме проекта — иначе режим датасета терял контекст (системы/стадия/состав папки).
-    _les_pid = pid
-    if not _les_pid and req.dataset_ids:
+    from proxy.services.typed_memory_projection_service import resolve_session_memory_scope
+    _les_pid, _workspace_registered = resolve_session_memory_scope(req.session_id, pid)
+    if not _workspace_registered and not _les_pid and req.dataset_ids:
         try:
             from proxy.services.project_service import project_for_dataset
             _les_pid = project_for_dataset(req.dataset_ids[0]) or 0

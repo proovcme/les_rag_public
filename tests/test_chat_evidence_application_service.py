@@ -2559,7 +2559,7 @@ async def test_actual_chat_shadow_failure_preserves_legacy_answer_history_and_mo
             return _async_value(FakeRetrieval())
         pytest.fail("estimator model-RAG must not call the general les_rag retriever")
 
-    def retrieve_smeta_fixture(query, *, limit):
+    def retrieve_smeta_fixture(query, *, limit, reranker_enabled):
         assert limit == 6
         rag_queries.append(query)
         return {

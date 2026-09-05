@@ -4,20 +4,46 @@
 > commit в dev, какой задеплоен на рантайм, что вошло. Сверяй с `GET /api/version` и `git log`.
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
-## Текущее состояние (2026-09-04)
+## Текущее состояние (2026-09-05)
 
 ```
-версия продукта (SemVer):  0.30.64
-номер сборки:              704
-версия Tauri/NSIS:         5.1.704
+версия продукта (SemVer):  0.31.0 (dev candidate)
+номер сборки:              706
+версия Tauri/NSIS:         5.1.706
 ветка разработки:          codex/model-rag-result
-dev implementation:       0.30.64 model-result packaging continuity candidate
-задеплоено на рантайм:     Legion 0.30.64 / build 704 / commit 4591a666edf26928506d20438e28f735b96a6e6a; LIVE RAG/SOURCES/XLSX ACCEPTED
+dev implementation:       0.31.0 projects, explicit memory and shared green dialogs; not deployed
+задеплоено на рантайм:     Legion test host 0.30.64 / build 704 / commit 44d0ebebdaa43b1ceed7bede73819b65043f691f; aligned
 последний полный Windows-выпуск: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.0
-последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.28 (immutable)
-следующий выпуск:          публичная публикация приостановлена владельцем
-рантайм /api/version:      Legion 0.30.64 / build 704 / desktop 5.1.704 / commit 4591a666edf26928506d20438e28f735b96a6e6a; aligned
+последний публичный patch: https://github.com/proovcme/les_rag_public/releases/tag/v0.30.64 (immutable)
+следующий выпуск:          0.31.0 разрешён владельцем; gate/installed acceptance pending
+рантайм /api/version:      0.30.64 / build 704 / desktop 5.1.704 / commit 44d0ebebdaa43b1ceed7bede73819b65043f691f; aligned
 ```
+
+> **0.31.0 / build 706 — candidate, not deployed or published:** project-owned
+> sessions, explicit editable/enabled notes, ordinary/project memory isolation,
+> whole-note Governor packets in active query/final calls. Target local9–100B;
+> isolated realQwen9B memory conditioning 4/4 (save/edit/disable/ordinary isolation).
+> Memory dialog approved by owner as whole-product visual reference; green tokens
+> shared by project/memory/source and response-setting controls. `make verify`
+> collected 1234 tests; `make test` passed all 1234. Full installed
+> UI/model/RAG/XLSX acceptance remains before publication.
+> Includes the unreleased 0.30.65 changes below.
+
+> **0.30.65 / build 705 — incorporated into 0.31.0, never published:** native-RRF
+> equal scores receive a stable identity tie-break before downstream rank fusion.
+> Native scores, candidate membership and model queries are preserved.
+> Reranker is now off by default, with an explicit chat checkbox shared by
+> normal and estimate research; new chat resets it. Environment flags no longer
+> override the choice. Combined candidate: `make verify` collected 1186 tests;
+> `make test` passed 1186; separate model-research/documentation checks passed 19.
+> The first full run hit WinError 5 replacing a temporary activation-test file;
+> its isolated repeat and the unchanged full repeat passed. Installed checkbox
+> UI acceptance has not been performed.
+> The earlier tie-only gate passed 1183 tests. Four live read-only
+> repeats confirmed unchanged embeddings/raw scores and stable rehydrated order;
+> full installed model→XLSX acceptance is pending. A same-pool reranker experiment
+> on 17 requests gave strict expected-code top-6 visibility 4/4 before vs 3/4
+> after reranking; this is limited retrieval evidence, not a general quality verdict.
 
 > **0.30.64 / build 704 model-result packaging continuity (candidate, не
 > опубликован):** живой installed прогон на новой 5-строчной ВОР доказал, что

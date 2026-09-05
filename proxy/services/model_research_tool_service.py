@@ -23,12 +23,14 @@ class _SmetaNormChunk:
     meta: dict[str, Any]
 
 
-def retrieve_smeta_norm_cards(query: str, *, limit: int = 6) -> dict[str, Any]:
+def retrieve_smeta_norm_cards(
+    query: str, *, limit: int = 6, reranker_enabled: bool = False,
+) -> dict[str, Any]:
     """Read model-facing cards from the dedicated smeta dense+sparse RRF."""
 
-    from proxy.smeta_core.norm_browser import browse_norms
+    from proxy.smeta_core.norm_browser import browse_norms_many
 
-    return browse_norms(query, limit=limit)
+    return browse_norms_many([query], limit=limit, rerank=reranker_enabled)[query]
 
 
 def _chunk_payload(chunk: Any) -> dict[str, Any]:
@@ -102,6 +104,7 @@ class ModelResearchToolService:
                 self._smeta_norm_retrieve,
                 query,
                 limit=self._model_evidence_k,
+                reranker_enabled=self._retrieval_kwargs.get("reranker_enabled") is True,
             )
             trace = dict(browse.get("retrieval_trace") or {})
             rag_trace = trace.get("rag") if isinstance(trace.get("rag"), Mapping) else {}

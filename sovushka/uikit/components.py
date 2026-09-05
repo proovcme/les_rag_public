@@ -36,6 +36,11 @@ def status_badge(label: str, tone: str = "muted") -> Any:
     return ui.label(label).classes(f"sov-ui-status sov-ui-status--{safe_tone}")
 
 
+def checkbox_field(label: str, *, value: bool = False) -> Any:
+    """Visible, keyboard-accessible boolean choice with shared control tokens."""
+    return ui.checkbox(label, value=value).props("dense color=primary").classes("sov-ui-checkbox")
+
+
 def action_button(
     label: str = "",
     *,

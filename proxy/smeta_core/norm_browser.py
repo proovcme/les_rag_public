@@ -741,7 +741,16 @@ def _rag_cards_many(
                 limit=max(1, min(limit, 50)),
                 with_payload=True,
             )
-            keys = [str((point.payload or {}).get("norm_key") or "") for point in result.points]
+            # Native RRF may return equal-score points in arbitrary order.
+            # Freeze ties before downstream rank fusion assigns positional weight;
+            # the native score remains primary and no candidate is added or removed.
+            ordered_points = sorted(result.points, key=lambda point: (
+                -float(point.score),
+                str((point.payload or {}).get("norm_key") or "").casefold(),
+                str((point.payload or {}).get("norm_key") or ""),
+                str(point.id),
+            ))
+            keys = [str((point.payload or {}).get("norm_key") or "") for point in ordered_points]
             out[query] = _cards_by_norm_keys(keys, base_path=base_path)
             rehydrated_counts[query] = len(out[query])
             missing_counts[query] = max(0, len([key for key in keys if key]) - len(out[query]))
@@ -836,10 +845,6 @@ def _rerank_cards(
     fuse_with_input: bool = True,
 ) -> tuple[list[dict[str, Any]], bool, str]:
     """Fuse cross-encoder order with hybrid retrieval and expose transport failure."""
-    if os.getenv("LES_SMETA_NORM_RERANK", "true").strip().casefold() not in {
-        "1", "true", "yes", "on",
-    }:
-        return cards[:limit], False, "disabled"
     if len(cards) <= 3:
         return cards[:limit], False, "pool_too_small"
     chunks = [
@@ -1433,7 +1438,7 @@ def rank_norm_catalog_tables(
 
 
 def browse_norms(query: str, *, limit: int = 8, base_path: str | Path | None = None) -> dict[str, Any]:
-    return browse_norms_many([query], limit=limit, base_path=base_path, rerank=True)[str(query)]
+    return browse_norms_many([query], limit=limit, base_path=base_path, rerank=False)[str(query)]
 
 
 def _table_listing(
@@ -1546,7 +1551,7 @@ def browse_norms_many(
         }
     # The configured cross-encoder owns batching. A document with many rows
     # must receive the same retrieval contract as a one-row query.
-    rerank_enabled = bool(rerank) if rerank is not None else True
+    rerank_enabled = rerank is True
     variants_by_query = {
         query: (
             _query_variants(query)

@@ -96,24 +96,12 @@ _SOURCE_NAME_STOPWORDS = {
 
 
 def required_reranker_policy(requested: Optional[bool] = None) -> tuple[bool, dict[str, Any]]:
-    """Resolve the optional reranker from runtime policy, never from a client toggle.
-
-    ``reranker_enabled`` remains accepted by the chat API for backward compatibility,
-    but an old UI or API client cannot silently change the server's retrieval path.
-    Native RRF is the production ranking contract; reranking is opt-in.
-    """
-    runtime_enabled = os.getenv("RERANKER_ENABLED", "false").strip().casefold() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-    return runtime_enabled, {
-        "enabled": runtime_enabled,
-        "reason": "optional_runtime_stage",
+    """Native RRF is the default; only an explicit chat choice enables reranking."""
+    enabled = requested is True
+    return enabled, {
+        "enabled": enabled,
+        "reason": "explicit_chat_choice" if requested is not None else "default_disabled",
         "explicit_override": requested is not None,
-        "legacy_request_ignored": requested is not None,
-        "legacy_request_value": requested,
     }
 
 

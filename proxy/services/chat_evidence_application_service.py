@@ -141,7 +141,11 @@ from proxy.services.model_research_tool_service import (
 from proxy.services.source_locator_service import evidence_counts, source_map_item
 from proxy.services.chat_evidence_manifest_service import build_evidence_manifest
 from proxy.services.chat_capability_scope_service import filter_profile_tools
-from proxy.services.typed_memory_projection_service import MemoryLimits, project_memory
+from proxy.services.typed_memory_projection_service import (
+    MemoryLimits,
+    project_memory,
+    resolve_session_memory_scope,
+)
 from proxy.services.web_research_config_service import (
     WebResearchConfig,
     capture_web_research_config,
@@ -478,6 +482,19 @@ def _text_context_objects(prefix: str, text: str) -> tuple[ContextObject, ...]:
     )
 
 
+def workspace_note_objects(
+    candidates: Sequence[ContextCandidate], *, registered: bool,
+) -> tuple[ContextObject, ...]:
+    """Explicit workspace notes remain optional advisory context, never evidence."""
+    if not registered:
+        return ()
+    return tuple(
+        item for candidate in candidates
+        if candidate.kind == ContextKind.WORKING_MEMORY
+        for item in candidate.objects if item.object_id.startswith("note:")
+    )
+
+
 def govern_inference_messages(
     *,
     preset: ModelExecutionPreset,
@@ -524,6 +541,7 @@ def context_packet_trace(packet: ContextPacket, *, purpose: str) -> dict[str, An
             "kind": section.kind.value,
             "items": len(section.objects),
             "tokens": section.token_count,
+            "object_ids": list(section.object_ids),
         }
         if section.kind in visible_kinds:
             item["objects"] = [
@@ -1736,10 +1754,14 @@ async def _execute_chat_evidence_application(
     # suppress, or relabel the model's engineering conclusion.
     use_validation = False
     memory_project_id = 0
+    workspace_memory_registered = False
     project_memory_advisory = ""
     try:
-        memory_project_id = int(getattr(req, "project_id", 0) or 0)
-        if memory_project_id > 0:
+        memory_project_id, workspace_memory_registered = resolve_session_memory_scope(
+            str(req.session_id or ""), int(getattr(req, "project_id", 0) or 0) or None,
+        )
+        memory_project_id = int(memory_project_id or 0)
+        if memory_project_id > 0 and not workspace_memory_registered:
             project_memory_advisory = get_memory_port().recall_project_advisory(
                 memory_project_id, str(req.question or "")
             )
@@ -2303,6 +2325,10 @@ async def _execute_chat_evidence_application(
             "items": len(typed_memory.items),
             "omitted": typed_memory.omitted,
             "cursor": typed_memory.cursor,
+            "project_id": typed_memory.project_id,
+            "registered_session": workspace_memory_registered,
+            "item_ids": [item.item_id for item in typed_memory.items],
+            "omitted_item_ids": list(typed_memory.omitted_item_ids),
         }
     except Exception as memory_error:  # noqa: BLE001 - memory is advisory, never an answer blocker
         logger.warning("[TYPED_MEMORY] projection skipped: %s", type(memory_error).__name__)
@@ -2743,7 +2769,9 @@ async def _execute_chat_evidence_application(
                             "dataset_ids": [str(item) for item in _dataset_ids],
                         },
                         checkpoint=(),
-                        working_memory=(),
+                        working_memory=workspace_note_objects(
+                            memory_candidates, registered=workspace_memory_registered,
+                        ),
                         evidence=selector_evidence,
                         source_map=selector_source_map,
                         tool_exchange=(),
@@ -3535,7 +3563,9 @@ async def _execute_chat_evidence_application(
                         )
                     if model_driven_retrieval:
                         answer_checkpoint = ()
-                        answer_working_memory = ()
+                        answer_working_memory = workspace_note_objects(
+                            memory_candidates, registered=workspace_memory_registered,
+                        )
                     answer_tool_exchange = (
                         []
                         if model_driven_retrieval
@@ -4207,18 +4237,19 @@ async def _execute_chat_evidence_application(
                         for item in evidence_sources
                         if isinstance(item, dict) and item.get("is_evidence")
                     ]
-                    get_memory_port().enqueue_rag_turn(
-                        memory_project_id,
-                        {
-                            "question": str(req.question or ""),
-                            "answer": answer,
-                            "crag_status": crag_status,
-                            "query_route": query_route_payload,
-                            "evidence_refs": memory_refs,
-                            "retrieval_fingerprint": focused_fingerprint,
-                            "cache_hit": False,
-                        },
-                    )
+                    if not workspace_memory_registered:
+                        get_memory_port().enqueue_rag_turn(
+                            memory_project_id,
+                            {
+                                "question": str(req.question or ""),
+                                "answer": answer,
+                                "crag_status": crag_status,
+                                "query_route": query_route_payload,
+                                "evidence_refs": memory_refs,
+                                "retrieval_fingerprint": focused_fingerprint,
+                                "cache_hit": False,
+                            },
+                        )
                 except Exception as memory_error:  # queue pressure cannot fail chat
                     logger.warning("[MEMORY] grounded turn enqueue skipped: %s", memory_error)
 

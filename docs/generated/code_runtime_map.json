@@ -638,6 +638,7 @@
         "proxy/services/cad_bim_graph.py",
         "proxy/services/canonical_promotion_service.py",
         "proxy/services/chat_profile_service.py",
+        "proxy/services/chat_session_service.py",
         "proxy/services/checklist_review_service.py",
         "proxy/services/colbert_generation_service.py",
         "proxy/services/context_memory_service.py",
@@ -997,6 +998,8 @@
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
         "proxy/routers/verify.py",
+        "proxy/routers/workspace.py",
+        "proxy/routers/workspace_memory.py",
         "proxy/security.py",
         "proxy/services/__init__.py",
         "proxy/services/active_state_service.py",
@@ -1021,6 +1024,7 @@
         "proxy/services/chat_evidence_manifest_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/chat_provider_session_service.py",
+        "proxy/services/chat_session_service.py",
         "proxy/services/checklist_param_rules.py",
         "proxy/services/checklist_report_service.py",
         "proxy/services/checklist_review_service.py",
@@ -1257,7 +1261,7 @@
         "tests/test_proxy_startup_mutation_policy.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 772,
+      "lines": 776,
       "module": "proxy.app",
       "outbound": [
         "backend/http_client_policy.py",
@@ -1301,6 +1305,8 @@
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
         "proxy/routers/verify.py",
+        "proxy/routers/workspace.py",
+        "proxy/routers/workspace_memory.py",
         "proxy/services/colbert_generation_service.py",
         "proxy/services/job_service.py",
         "proxy/services/mail_registry_service.py",
@@ -1550,7 +1556,9 @@
         "proxy/routers/tasks.py",
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
-        "proxy/routers/verify.py"
+        "proxy/routers/verify.py",
+        "proxy/routers/workspace.py",
+        "proxy/routers/workspace_memory.py"
       ],
       "lines": 2,
       "module": "proxy.routers",
@@ -1708,6 +1716,7 @@
         "proxy/services/table_query_service.py",
         "proxy/services/tool_registry_service.py",
         "proxy/services/trusted_executor_service.py",
+        "proxy/services/typed_memory_projection_service.py",
         "proxy/services/version_service.py",
         "proxy/services/workbook_tool_service.py",
         "proxy/services/workflow_checkpoint_service.py",
@@ -2363,6 +2372,42 @@
     },
     {
       "inbound": [
+        "proxy/app.py",
+        "tests/test_workspace_router.py"
+      ],
+      "lines": 60,
+      "module": "proxy.routers.workspace",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/routers/__init__.py",
+        "proxy/security.py",
+        "proxy/services/chat_session_service.py"
+      ],
+      "path": "proxy/routers/workspace.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/app.py",
+        "tests/test_workspace_memory_router.py"
+      ],
+      "lines": 74,
+      "module": "proxy.routers.workspace_memory",
+      "outbound": [
+        "proxy/__init__.py",
+        "proxy/routers/__init__.py",
+        "proxy/security.py",
+        "proxy/services/chat_session_service.py",
+        "proxy/services/memory_service.py",
+        "proxy/services/project_service.py"
+      ],
+      "path": "proxy/routers/workspace_memory.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
         "proxy/routers/artifacts.py",
         "proxy/routers/auth.py",
         "proxy/routers/chat.py",
@@ -2394,6 +2439,8 @@
         "proxy/routers/tools.py",
         "proxy/routers/updates.py",
         "proxy/routers/verify.py",
+        "proxy/routers/workspace.py",
+        "proxy/routers/workspace_memory.py",
         "tests/test_artifacts_router.py",
         "tests/test_candidate_acceptance_service.py",
         "tests/test_checklist_review_api.py",
@@ -2406,7 +2453,8 @@
         "tests/test_request_idempotency_service.py",
         "tests/test_rim_api.py",
         "tests/test_tools_router.py",
-        "tests/test_web_research_settings.py"
+        "tests/test_web_research_settings.py",
+        "tests/test_workspace_memory_router.py"
       ],
       "lines": 230,
       "module": "proxy.security",
@@ -2443,6 +2491,7 @@
         "proxy/services/chat_evidence_manifest_service.py",
         "proxy/services/chat_profile_service.py",
         "proxy/services/chat_provider_session_service.py",
+        "proxy/services/chat_session_service.py",
         "proxy/services/checklist_param_rules.py",
         "proxy/services/checklist_report_service.py",
         "proxy/services/checklist_review_service.py",
@@ -3019,9 +3068,10 @@
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_notebook_study_chat_policy.py",
         "tests/test_scope_clarification_v22.py",
-        "tests/test_sovushka_chat.py"
+        "tests/test_sovushka_chat.py",
+        "tests/test_workspace_context.py"
       ],
-      "lines": 4260,
+      "lines": 4291,
       "module": "proxy.services.chat_evidence_application_service",
       "outbound": [
         "backend/inference/routing.py",
@@ -3119,6 +3169,27 @@
         "proxy/services/__init__.py"
       ],
       "path": "proxy/services/chat_provider_session_service.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "proxy/routers/workspace.py",
+        "proxy/routers/workspace_memory.py",
+        "proxy/services/typed_memory_projection_service.py",
+        "tests/test_chat_session_service.py",
+        "tests/test_workspace_context.py",
+        "tests/test_workspace_memory_router.py",
+        "tests/test_workspace_router.py"
+      ],
+      "lines": 193,
+      "module": "proxy.services.chat_session_service",
+      "outbound": [
+        "backend/rag_config.py",
+        "proxy/__init__.py",
+        "proxy/services/__init__.py"
+      ],
+      "path": "proxy/services/chat_session_service.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -3367,7 +3438,8 @@
         "tests/test_context_governor_service.py",
         "tests/test_model_preset_workflow_parity.py",
         "tests/test_sovushka_chat.py",
-        "tests/test_typed_memory_projection_service.py"
+        "tests/test_typed_memory_projection_service.py",
+        "tests/test_workspace_context.py"
       ],
       "lines": 241,
       "module": "proxy.services.context_governor_service",
@@ -3388,7 +3460,8 @@
         "proxy/services/notebook_service.py",
         "proxy/services/typed_memory_projection_service.py",
         "tests/test_context_memory_service.py",
-        "tests/test_typed_memory_projection_service.py"
+        "tests/test_typed_memory_projection_service.py",
+        "tests/test_workspace_context.py"
       ],
       "lines": 1171,
       "module": "proxy.services.context_memory_service",
@@ -4794,12 +4867,16 @@
       "inbound": [
         "proxy/routers/chat.py",
         "proxy/routers/tasks.py",
+        "proxy/routers/workspace_memory.py",
         "proxy/services/project_service.py",
         "proxy/services/typed_memory_projection_service.py",
         "tests/test_memory_service.py",
-        "tests/test_typed_memory_projection_service.py"
+        "tests/test_typed_memory_projection_service.py",
+        "tests/test_workspace_context.py",
+        "tests/test_workspace_memory.py",
+        "tests/test_workspace_memory_router.py"
       ],
-      "lines": 438,
+      "lines": 480,
       "module": "proxy.services.memory_service",
       "outbound": [
         "backend/rag_config.py",
@@ -5010,7 +5087,8 @@
         "tests/test_live_workbook_acceptance_contract.py",
         "tests/test_model_execution_preset_service.py",
         "tests/test_model_preset_workflow_parity.py",
-        "tests/test_openai_compatible_transport_service.py"
+        "tests/test_openai_compatible_transport_service.py",
+        "tests/test_workspace_context.py"
       ],
       "lines": 211,
       "module": "proxy.services.model_execution_preset_service",
@@ -5027,7 +5105,7 @@
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_model_research_tool_service.py"
       ],
-      "lines": 221,
+      "lines": 224,
       "module": "proxy.services.model_research_tool_service",
       "outbound": [
         "proxy/__init__.py",
@@ -5495,6 +5573,7 @@
         "proxy/routers/datasets.py",
         "proxy/routers/projects.py",
         "proxy/routers/runtime.py",
+        "proxy/routers/workspace_memory.py",
         "proxy/services/construction_harness_service.py",
         "proxy/services/forms_service.py",
         "proxy/services/graph_edges_service.py",
@@ -5505,9 +5584,11 @@
         "proxy/services/smeta_chat_application_service.py",
         "scripts/smoke_unified_v11.py",
         "scripts/smoke_unified_v12.py",
+        "tests/test_chat_session_service.py",
         "tests/test_forms_service_w113.py",
         "tests/test_les_action_service.py",
-        "tests/test_project_service_w171.py"
+        "tests/test_project_service_w171.py",
+        "tests/test_workspace_memory_router.py"
       ],
       "lines": 323,
       "module": "proxy.services.project_service",
@@ -5937,7 +6018,7 @@
         "tests/test_retrieval_service.py",
         "tools/coreml_validator_probe.py"
       ],
-      "lines": 1380,
+      "lines": 1368,
       "module": "proxy.services.retrieval_service",
       "outbound": [
         "backend/colbert_late_interaction.py",
@@ -7012,15 +7093,18 @@
     },
     {
       "inbound": [
+        "proxy/routers/chat.py",
         "proxy/services/chat_evidence_application_service.py",
         "tests/test_model_preset_workflow_parity.py",
-        "tests/test_typed_memory_projection_service.py"
+        "tests/test_typed_memory_projection_service.py",
+        "tests/test_workspace_context.py"
       ],
-      "lines": 267,
+      "lines": 302,
       "module": "proxy.services.typed_memory_projection_service",
       "outbound": [
         "proxy/__init__.py",
         "proxy/services/__init__.py",
+        "proxy/services/chat_session_service.py",
         "proxy/services/context_governor_service.py",
         "proxy/services/context_memory_service.py",
         "proxy/services/memory_port.py",
@@ -7484,6 +7568,7 @@
         "proxy/smeta_core/document_workflow.py",
         "tests/test_estimate_harness.py",
         "tests/test_flexible_code_resolver.py",
+        "tests/test_model_research_tool_service.py",
         "tests/test_smeta_core.py",
         "tests/test_smeta_norm_browser.py",
         "tools/smeta_rag_quality_probe.py",
@@ -7491,7 +7576,7 @@
         "tools/smeta_rerank_ab_probe.py",
         "tools/smeta_retrieval_recall_probe.py"
       ],
-      "lines": 1659,
+      "lines": 1664,
       "module": "proxy.smeta_core.norm_browser",
       "outbound": [
         "backend/inference/bm25_sparse.py",
@@ -7844,6 +7929,7 @@
         "sovushka/checklist_review_view.py",
         "sovushka/components/__init__.py",
         "sovushka/components/charts.py",
+        "sovushka/components/chat_workspace.py",
         "sovushka/components/header.py",
         "sovushka/config.py",
         "sovushka/lite_bridge.py",
@@ -7943,6 +8029,7 @@
     {
       "inbound": [
         "sovushka/components/charts.py",
+        "sovushka/components/chat_workspace.py",
         "sovushka/components/header.py"
       ],
       "lines": 1,
@@ -7967,6 +8054,23 @@
         "sovushka/components/__init__.py"
       ],
       "path": "sovushka/components/charts.py",
+      "status": "PRODUCT_REACHABLE",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [
+        "sovushka/pages/chat.py",
+        "tests/test_chat_workspace_ui.py"
+      ],
+      "lines": 240,
+      "module": "sovushka.components.chat_workspace",
+      "outbound": [
+        "sovushka/__init__.py",
+        "sovushka/components/__init__.py",
+        "sovushka/state.py",
+        "sovushka/uikit/__init__.py"
+      ],
+      "path": "sovushka/components/chat_workspace.py",
       "status": "PRODUCT_REACHABLE",
       "windows_runtime_explicit": false
     },
@@ -8074,7 +8178,7 @@
         "tests/test_v020_deploy_stamp_ui.py",
         "tests/test_verify_service.py"
       ],
-      "lines": 5046,
+      "lines": 5078,
       "module": "sovushka.pages.chat",
       "outbound": [
         "proxy/services/kot_service.py",
@@ -8082,6 +8186,7 @@
         "sovushka/__init__.py",
         "sovushka/answer_render.py",
         "sovushka/components/charts.py",
+        "sovushka/components/chat_workspace.py",
         "sovushka/pages/__init__.py",
         "sovushka/pages/verify.py",
         "sovushka/safe_markup.py",
@@ -8331,6 +8436,7 @@
     {
       "inbound": [
         "sovushka/checklist_review_panel.py",
+        "sovushka/components/chat_workspace.py",
         "sovushka/components/header.py",
         "sovushka/pages/chat.py",
         "sovushka/pages/diag.py",
@@ -8398,14 +8504,16 @@
     },
     {
       "inbound": [
+        "sovushka/components/chat_workspace.py",
         "sovushka/pages/chat.py",
         "sovushka/pages/model_connections.py",
         "sovushka/uikit/components.py",
         "sovushka/uikit/states.py",
         "sovushka/uikit/tokens.py",
-        "sovushka_ng.py"
+        "sovushka_ng.py",
+        "tests/test_chat_workspace_ui.py"
       ],
-      "lines": 29,
+      "lines": 31,
       "module": "sovushka.uikit",
       "outbound": [
         "sovushka/__init__.py",
@@ -8434,7 +8542,7 @@
         "sovushka_ng.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 252,
+      "lines": 257,
       "module": "sovushka.uikit.components",
       "outbound": [
         "sovushka/__init__.py",
@@ -8466,7 +8574,7 @@
         "sovushka/uikit/__init__.py",
         "tests/test_sovushka_uikit.py"
       ],
-      "lines": 4205,
+      "lines": 4229,
       "module": "sovushka.uikit.tokens",
       "outbound": [
         "sovushka/__init__.py",
@@ -9186,6 +9294,18 @@
     },
     {
       "inbound": [],
+      "lines": 110,
+      "module": "tests.test_chat_session_service",
+      "outbound": [
+        "proxy/services/chat_session_service.py",
+        "proxy/services/project_service.py"
+      ],
+      "path": "tests/test_chat_session_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
       "lines": 46,
       "module": "tests.test_chat_source_lookup",
       "outbound": [
@@ -9227,6 +9347,18 @@
         "proxy/routers/chat.py"
       ],
       "path": "tests/test_chat_table_query.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 107,
+      "module": "tests.test_chat_workspace_ui",
+      "outbound": [
+        "sovushka/components/chat_workspace.py",
+        "sovushka/uikit/__init__.py"
+      ],
+      "path": "tests/test_chat_workspace_ui.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -11113,10 +11245,11 @@
     },
     {
       "inbound": [],
-      "lines": 240,
+      "lines": 259,
       "module": "tests.test_model_research_tool_service",
       "outbound": [
-        "proxy/services/model_research_tool_service.py"
+        "proxy/services/model_research_tool_service.py",
+        "proxy/smeta_core/norm_browser.py"
       ],
       "path": "tests/test_model_research_tool_service.py",
       "status": "TEST_OR_TOOL_ONLY",
@@ -12878,7 +13011,7 @@
     },
     {
       "inbound": [],
-      "lines": 885,
+      "lines": 945,
       "module": "tests.test_smeta_norm_browser",
       "outbound": [
         "proxy/smeta_core/norm_browser.py",
@@ -13259,7 +13392,7 @@
     },
     {
       "inbound": [],
-      "lines": 660,
+      "lines": 663,
       "module": "tests.test_sovushka_uikit",
       "outbound": [
         "sovushka/components/header.py",
@@ -13980,6 +14113,61 @@
         "proxy/services/workflow_checkpoint_service.py"
       ],
       "path": "tests/test_workflow_checkpoint_service.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 208,
+      "module": "tests.test_workspace_context",
+      "outbound": [
+        "proxy/services/chat_evidence_application_service.py",
+        "proxy/services/chat_session_service.py",
+        "proxy/services/context_governor_service.py",
+        "proxy/services/context_memory_service.py",
+        "proxy/services/memory_service.py",
+        "proxy/services/model_execution_preset_service.py",
+        "proxy/services/typed_memory_projection_service.py"
+      ],
+      "path": "tests/test_workspace_context.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 82,
+      "module": "tests.test_workspace_memory",
+      "outbound": [
+        "proxy/services/memory_service.py"
+      ],
+      "path": "tests/test_workspace_memory.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 72,
+      "module": "tests.test_workspace_memory_router",
+      "outbound": [
+        "proxy/routers/workspace_memory.py",
+        "proxy/security.py",
+        "proxy/services/chat_session_service.py",
+        "proxy/services/memory_service.py",
+        "proxy/services/project_service.py"
+      ],
+      "path": "tests/test_workspace_memory_router.py",
+      "status": "TEST_OR_TOOL_ONLY",
+      "windows_runtime_explicit": false
+    },
+    {
+      "inbound": [],
+      "lines": 43,
+      "module": "tests.test_workspace_router",
+      "outbound": [
+        "proxy/routers/workspace.py",
+        "proxy/services/chat_session_service.py"
+      ],
+      "path": "tests/test_workspace_router.py",
       "status": "TEST_OR_TOOL_ONLY",
       "windows_runtime_explicit": false
     },
@@ -18497,6 +18685,54 @@
       "source": "proxy/routers/runtime.py"
     },
     {
+      "handler": "list_memory",
+      "method": "GET",
+      "path": "/api/workspace/memory",
+      "source": "proxy/routers/workspace_memory.py"
+    },
+    {
+      "handler": "create_memory",
+      "method": "POST",
+      "path": "/api/workspace/memory",
+      "source": "proxy/routers/workspace_memory.py"
+    },
+    {
+      "handler": "delete_memory",
+      "method": "DELETE",
+      "path": "/api/workspace/memory/{note_id}",
+      "source": "proxy/routers/workspace_memory.py"
+    },
+    {
+      "handler": "update_memory",
+      "method": "PATCH",
+      "path": "/api/workspace/memory/{note_id}",
+      "source": "proxy/routers/workspace_memory.py"
+    },
+    {
+      "handler": "sessions_list",
+      "method": "GET",
+      "path": "/api/workspace/sessions",
+      "source": "proxy/routers/workspace.py"
+    },
+    {
+      "handler": "sessions_create",
+      "method": "POST",
+      "path": "/api/workspace/sessions",
+      "source": "proxy/routers/workspace.py"
+    },
+    {
+      "handler": "sessions_get",
+      "method": "GET",
+      "path": "/api/workspace/sessions/{session_id}",
+      "source": "proxy/routers/workspace.py"
+    },
+    {
+      "handler": "sessions_update",
+      "method": "PATCH",
+      "path": "/api/workspace/sessions/{session_id}",
+      "source": "proxy/routers/workspace.py"
+    },
+    {
       "handler": "chat_completions",
       "method": "POST",
       "path": "/v1/chat/completions",
@@ -18543,12 +18779,12 @@
   "summary": {
     "dormant_candidates": 1,
     "parse_warnings": 0,
-    "product_reachable": 349,
-    "registered_api_routes": 332,
+    "product_reachable": 353,
+    "registered_api_routes": 340,
     "runtime_support": 11,
-    "test_or_tool_only": 630,
-    "tracked_python_files": 991,
-    "tracked_python_lines": 313068
+    "test_or_tool_only": 636,
+    "tracked_python_files": 1001,
+    "tracked_python_lines": 314510
   },
   "warnings": []
 }

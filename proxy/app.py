@@ -27,6 +27,8 @@ from proxy.routers.artifacts import router as artifacts_router
 from proxy.routers.filemap import router as filemap_router
 from proxy.routers.tasks import notes_router, router as tasks_router
 from proxy.routers.projects import router as projects_router
+from proxy.routers.workspace import router as workspace_router
+from proxy.routers.workspace_memory import router as workspace_memory_router
 from proxy.routers.lsr import router as lsr_router
 from proxy.routers.rim import router as rim_router
 from proxy.routers.external_radar import router as external_radar_router
@@ -733,6 +735,8 @@ def create_app():
     fastapi_app.include_router(filemap_router)
     fastapi_app.include_router(tasks_router)
     fastapi_app.include_router(projects_router)
+    fastapi_app.include_router(workspace_router)
+    fastapi_app.include_router(workspace_memory_router)
     fastapi_app.include_router(lsr_router)
     fastapi_app.include_router(rim_router)
     fastapi_app.include_router(external_radar_router)

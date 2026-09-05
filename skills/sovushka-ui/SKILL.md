@@ -7,6 +7,12 @@ description: Use when designing, implementing, reviewing, or documenting the LES
 
 ## Overview
 
+Owner-approved visual reference (2026-09-05): the Memory dialog in
+`sovushka/components/chat_workspace.py`. Apply its calm raised surface, visible
+labels, inset groups, consistent spacing and one green primary action across LES.
+Use the brand `--accent`; do not introduce blue primary buttons. Existing legacy
+screens are migrated incrementally; do not claim whole-app completion prematurely.
+
 Keep Sovushka visually calm, dense and predictable through one token layer and a
 small component registry. Optimize the user's working path before adding
 decoration.

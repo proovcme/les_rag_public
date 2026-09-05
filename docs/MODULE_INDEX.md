@@ -1,5 +1,24 @@
 # MODULE_INDEX — карта модулей Л.Е.С.
 
+> **0.31.0 candidate — проекты и явная память:** durable chat ownership и
+> scoped history (`chat_session_service`, `workspace` router), editable enabled
+> `les_notes` (`workspace_memory` router), `ChatWorkspace` UI и registered-only
+> whole-note ContextGovernor packets. Local 9–100B, real9B memory probe 4/4.
+> Doc↔code: ✅; installed acceptance pending.
+> [Модуль проектов и памяти](modules/project-workspace.md).
+
+> **0.30.65 candidate — optional chat reranker and stable native-RRF ties:**
+> `required_reranker_policy` defaults off; chat `checkbox_field` sends the explicit
+> per-turn choice, forwarded by `retrieve_smeta_norm_cards` to norm browser.
+> Normal and estimate research share this choice; new chats reset it.
+> `proxy/smeta_core/norm_browser.py::_rag_cards_many` retains descending native
+> scores and resolves equal scores by stable norm/point identity before typed
+> rehydration and downstream rank fusion. No candidates, queries, models or
+> retrieval pool changes in the tie fix. Reranking is now separately opt-in.
+> Regression: retrieval service, model research, norm browser and chat/UI kit tests.
+> Doc↔code: ✅; live read-only retrieval verified, installed full-chat acceptance
+> and publication pending. See [ADR-15](ADR-15-model-rag-result.md).
+
 > **0.30.64 model-result packaging continuity:** Qwen-authored explanations
 > beside `norm_code` are accepted when the referenced card code is present,
 > without trimming or rewriting the field. A real code/evidence disagreement

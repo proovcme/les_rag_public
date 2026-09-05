@@ -117,11 +117,13 @@ class FailingNativeBackend(FakeBackend):
     ("runtime_value", "requested", "expected"),
     [
         (None, False, False),
-        ("true", False, True),
-        ("false", True, False),
+        (None, None, False),
+        ("true", None, False),
+        ("true", False, False),
+        ("false", True, True),
     ],
 )
-def test_required_reranker_policy_ignores_legacy_client_override(
+def test_reranker_is_off_by_default_and_follows_explicit_chat_choice(
     monkeypatch,
     runtime_value,
     requested,
@@ -137,10 +139,8 @@ def test_required_reranker_policy_ignores_legacy_client_override(
     assert enabled is expected
     assert trace == {
         "enabled": expected,
-        "reason": "optional_runtime_stage",
-        "explicit_override": True,
-        "legacy_request_ignored": True,
-        "legacy_request_value": requested,
+        "reason": "explicit_chat_choice" if requested is not None else "default_disabled",
+        "explicit_override": requested is not None,
     }
 
 

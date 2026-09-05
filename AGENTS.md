@@ -10,8 +10,9 @@
 внешние пользовательские компоненты. Mac остаётся dev/reference-контуром и не определяет Windows defaults.
 
 Инвариант RAG: любой текущий и будущий dataset индексируется в единую contract-versioned named
-collection как `dense + bm25_sparse`; production retrieval всегда выполняет native RRF, затем общий
-rerank и parent/context expansion. Typed SQLite/reader tools дают exact rows/cards; они не выбирают
+collection как `dense + bm25_sparse`; production retrieval всегда выполняет native RRF, затем
+опциональный rerank (по умолчанию выключен, включается галочкой в чате) и parent/context expansion.
+Typed SQLite/reader tools дают exact rows/cards; они не выбирают
 профессиональное решение вместо модели. Unnamed vectors, sparse sidecar, копирование legacy dense,
 domain-prose в query и dataset/case-specific boosts запрещены.
 
