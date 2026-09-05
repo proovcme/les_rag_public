@@ -12,7 +12,11 @@ from sovushka.uikit.tokens import UIKIT_CSS
 
 @pytest.mark.parametrize("label", ['Длинное название\n\nследующая строка', 'Проект "Школа" C:\\new\\test'])
 def test_action_button_preserves_arbitrary_title_and_finishes_styling(label):
-    button = components_module.action_button(label, variant="quiet", classes="sov-project-nav-row")
+    from nicegui import Client
+    from nicegui.page import page
+
+    with Client(page('/__action_button_regression')):
+        button = components_module.action_button(label, variant="quiet", classes="sov-project-nav-row")
     assert button.text == label
     assert button.props["aria-label"] == label
     assert button.props["flat"] is True
