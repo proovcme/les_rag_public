@@ -5,6 +5,18 @@
 > Модель — locia `SERVER_BUILD_LEDGER`. Канон-бэклог — [../ROADMAP_TO_V1.md](../ROADMAP_TO_V1.md).
 
 ## Текущее состояние (2026-09-05)
+### 0.31.4 — navigation stays visible with large history
+
+Installed UI showed 114 legacy chats pushing the Configuration footer below the
+viewport. The chat list now scrolls within a bounded height, while the navigation
+body takes the remaining space and footer stays visible. Browser regression with
+116 chats: rows44px, list166px, footer bottom716px in a755px viewport, no page overflow.
+Build710 supersedes unpublished build709; model/RAG/result code remains unchanged.
+Build709 acceptance passed on retry after a cold smeta catalogue timeout and proved rollback.
+The original 9B live request returned no table; clarification returned a table with
+invalid evidence references, correctly blocked from packaging. These are failed
+model-quality probes, not successful XLSX acceptance; do not report them as passing.
+
 ### 0.31.3 — multiline title acceptance fix
 
 Installed UI acceptance of build708 exposed a shared button property parser failure
