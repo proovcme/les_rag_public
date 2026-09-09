@@ -360,6 +360,20 @@ def provision_archive(archive: Path, state_root: Path) -> dict[str, Any]:
     return {**validation, "action": "installed"}
 
 
+def _link_safe(path: Path) -> Path:
+    """Resolve junctions/symlinks before creating anything underneath them.
+
+    The Windows runtime keeps ``storage`` and ``data`` as junctions into the
+    persistent state root.  Creating a new subdirectory through such a junction
+    fails with ``FileExistsError [WinError 183]`` even with ``exist_ok=True``,
+    so every path built from ``state_root`` is resolved to its real target first.
+    """
+    try:
+        return path.resolve()
+    except OSError:
+        return path
+
+
 def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
     """Restore a broken/partial baseline from the verified release payload.
 
@@ -394,7 +408,7 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
 
     state_root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    backup_root = state_root / "storage" / "recovery" / f"smeta_baseline_{stamp}"
+    backup_root = _link_safe(state_root / "storage") / "recovery" / f"smeta_baseline_{stamp}"
     backed_up: list[str] = []
     with tempfile.TemporaryDirectory(prefix="les-smeta-repair-", dir=state_root) as temporary:
         staging = Path(temporary)
@@ -417,7 +431,7 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
             # read access to a malformed Windows ACL. The replacement is fully
             # extracted and validated before this transaction starts.
             for relative in REQUIRED_FILES:
-                source = state_root / Path(*relative.parts)
+                source = _link_safe(state_root / Path(*relative.parts))
                 if not source.is_file():
                     continue
                 target = backup_root / Path(*relative.parts)
@@ -426,17 +440,17 @@ def repair_archive(archive: Path, state_root: Path) -> dict[str, Any]:
                 backed_up.append(relative.as_posix())
             for relative in REQUIRED_FILES:
                 source = staging / Path(*relative.parts)
-                target = state_root / Path(*relative.parts)
+                target = _link_safe(state_root / Path(*relative.parts))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(source, target)
                 installed.append(relative)
         except OSError:
             for relative in reversed(installed):
-                (state_root / Path(*relative.parts)).unlink(missing_ok=True)
+                (_link_safe(state_root / Path(*relative.parts))).unlink(missing_ok=True)
             for value in reversed(backed_up):
                 relative = PurePosixPath(value)
                 saved = backup_root / Path(*relative.parts)
-                target = state_root / Path(*relative.parts)
+                target = _link_safe(state_root / Path(*relative.parts))
                 target.parent.mkdir(parents=True, exist_ok=True)
                 if saved.is_file():
                     os.replace(saved, target)

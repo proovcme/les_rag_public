@@ -169,7 +169,10 @@ async def run_diagnostics(_internal=Depends(require_internal_or_admin)):
     async def _chk_qdrant_runtime():
         qdrant_url = os.getenv("QDRANT_URL", "http://127.0.0.1:6333").rstrip("/")
         try:
-            async with httpx.AsyncClient(timeout=2.0) as client:
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(qdrant_url),
+                timeout=2.0,
+            ) as client:
                 response = await client.get(f"{qdrant_url}/collections")
                 response.raise_for_status()
             return "ok", "доступен", "доступен", qdrant_url

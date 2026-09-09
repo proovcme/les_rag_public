@@ -33,6 +33,7 @@ from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.schema import Document, TextNode
 from qdrant_client import models
 
+from backend.http_client_policy import trust_env_for_url
 from backend.runtime_paths import mutable_path
 
 from .converter import convert_to_markdown_for_indexing, normalize_pdf_text
@@ -828,7 +829,10 @@ class EmbedClient:
             response = await self.connection_transport.embed(connection, texts)
         else:
             secret_store = self._connection_secret_store or EnvironmentSecretStore(ENV_PATH)
-            async with httpx.AsyncClient(timeout=EMBED_TIMEOUT) as client:
+            async with httpx.AsyncClient(
+                trust_env=trust_env_for_url(connection.base_url),
+                timeout=EMBED_TIMEOUT,
+            ) as client:
                 transport = OpenAICompatibleTransport(
                     client=client,
                     secret_store=secret_store,
@@ -976,7 +980,9 @@ class EmbedClient:
             return await self._encode_connection_async(payload_texts)
         if self.connection_mode == "shadow":
             self._shadow_compare()
-        async with httpx.AsyncClient(timeout=30.0) as c:
+        # Эмбеддер стоит на loopback: унаследованный ALL_PROXY (в том числе socks4,
+        # который httpx не поддерживает) не должен уводить туда запросы.
+        async with httpx.AsyncClient(trust_env=trust_env_for_url(self.url), timeout=30.0) as c:
             r = await c.post(
                 self.url,
                 json={"model": self.model, "input": payload_texts},
